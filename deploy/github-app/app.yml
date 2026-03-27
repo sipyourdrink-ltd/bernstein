@@ -1,0 +1,34 @@
+# GitHub App manifest for Bernstein orchestrator.
+#
+# Use this to create a GitHub App via the manifest flow:
+#   https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
+#
+# Alternatively, create the app manually at https://github.com/settings/apps/new
+# using these settings as a guide.
+
+name: bernstein-orchestrator
+description: >-
+  Multi-agent orchestration for CLI coding agents.
+  Converts GitHub issues, PRs, and pushes into Bernstein tasks.
+url: https://github.com/chernistry/bernstein
+
+# Webhook configuration
+hook_attributes:
+  url: https://YOUR_SERVER/webhooks/github
+  active: true
+
+# Permissions (minimum required)
+default_permissions:
+  issues: write          # Read issues, create comments, manage labels
+  pull_requests: write   # Read PRs, create review comments
+  contents: read         # Read repository contents and commits
+
+# Events to subscribe to
+default_events:
+  - issues
+  - pull_request
+  - pull_request_review_comment
+  - push
+
+# App settings
+public: false

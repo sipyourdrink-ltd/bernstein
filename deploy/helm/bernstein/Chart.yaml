@@ -1,0 +1,27 @@
+apiVersion: v2
+name: bernstein
+description: Multi-agent orchestration for CLI coding agents
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+icon: https://via.placeholder.com/256?text=Bernstein
+
+keywords:
+  - ai
+  - agents
+  - orchestration
+  - llm
+
+maintainers:
+  - name: Bernstein Contributors
+
+dependencies:
+  - name: postgresql
+    version: "15.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+
+  - name: redis
+    version: "19.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled

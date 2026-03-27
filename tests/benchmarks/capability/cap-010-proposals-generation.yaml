@@ -1,0 +1,7 @@
+id: cap-010
+goal: "Proposals module generates structured upgrade proposals"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.evolution.proposals
+max_cost_usd: 0.0
+max_duration_seconds: 15

@@ -1,0 +1,21 @@
+name: Delete master branch
+
+on:
+  create:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete master branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "::warning::Branch 'master' was pushed. Deleting — use 'main' instead."
+          gh api repos/${{ github.repository }}/git/refs/heads/master -X DELETE || true

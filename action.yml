@@ -1,0 +1,79 @@
+name: "Bernstein — Multi-Agent Orchestration"
+description: "Run Bernstein to orchestrate CLI coding agents from GitHub Actions. Supports ad-hoc tasks and automatic CI-fix mode."
+author: "Bernstein contributors"
+
+branding:
+  icon: "cpu"
+  color: "blue"
+
+inputs:
+  task:
+    description: >
+      Task description for Bernstein, or the literal string "fix-ci" to
+      automatically download failed job logs and attempt a fix.
+    required: true
+  budget:
+    description: "Dollar cap for the run (0 = unlimited)."
+    required: false
+    default: "5.00"
+  cli:
+    description: "Which agent CLI to use (claude, codex, gemini, qwen)."
+    required: false
+    default: "claude"
+  max-retries:
+    description: "Number of retry attempts in fix-ci mode."
+    required: false
+    default: "3"
+  python-version:
+    description: "Python version to install."
+    required: false
+    default: "3.12"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+
+    - name: Install Bernstein
+      shell: bash
+      run: uv tool install bernstein
+
+    - name: Run Bernstein
+      shell: bash
+      env:
+        INPUT_TASK: ${{ inputs.task }}
+        INPUT_BUDGET: ${{ inputs.budget }}
+        INPUT_CLI: ${{ inputs.cli }}
+        INPUT_MAX_RETRIES: ${{ inputs.max-retries }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: bash "${{ github.action_path }}/action/entrypoint.sh"
+
+    - name: Commit and push results
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        if [ -z "$(git status --porcelain)" ]; then
+          echo "No changes to commit."
+          exit 0
+        fi
+
+        git config user.name "bernstein[bot]"
+        git config user.email "bernstein-bot@users.noreply.github.com"
+        git add -A
+        git commit -m "fix: apply bernstein auto-fix
+
+        Triggered by GitHub Action run.
+        Task: ${INPUT_TASK:-unknown}"
+
+        # Push to the current branch
+        BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+        git push origin "HEAD:${BRANCH}"

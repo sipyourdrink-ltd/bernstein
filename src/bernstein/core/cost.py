@@ -1,0 +1,429 @@
+"""Intelligent cost optimization engine.
+
+Provides:
+- EpsilonGreedyBandit: learns which model gives best ROI per task type
+- ModelCascade: provides cascade config (cheapest viable → escalate on failure)
+- Cost projection utilities for ``bernstein cost``
+
+The bandit tracks per-(role, model) arms.  After MIN_OBSERVATIONS it converges
+on the cheapest model whose success_rate >= QUALITY_THRESHOLD.  Until then it
+explores with probability EPSILON.
+
+Cascade order (cheapest → most expensive):
+    haiku  →  sonnet  →  opus
+
+State is persisted to ``.sdd/metrics/bandit_state.json`` so it survives
+orchestrator restarts.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import random
+import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+from bernstein.core.models import Complexity, Scope, Task
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+EPSILON: float = 0.1  # 10% explore, 90% exploit
+MIN_OBSERVATIONS: int = 5  # arms trusted only after this many samples
+QUALITY_THRESHOLD: float = 0.80  # minimum success_rate to consider an arm
+
+# Approximate cost per 1k tokens (input+output blended average), USD.
+# Updated 2026-03-28 from official API pricing pages.
+# Used only as a tiebreaker when multiple arms meet the quality threshold.
+_MODEL_COST_USD_PER_1K: dict[str, float] = {
+    # Claude (Anthropic) — per 1M tokens: Opus $5/$25, Sonnet $3/$15, Haiku $1/$5
+    "haiku": 0.003,  # ($1 + $5) / 2 / 1000
+    "sonnet": 0.009,  # ($3 + $15) / 2 / 1000
+    "opus": 0.015,  # ($5 + $25) / 2 / 1000
+    # OpenAI — per 1M tokens: GPT-5.4 $2.50/$15, o3 $2/$8, o4-mini $1.10/$4.40
+    "gpt-5.4": 0.00875,  # ($2.50 + $15) / 2 / 1000
+    "gpt-5.4-mini": 0.002625,  # ($0.75 + $4.50) / 2 / 1000
+    "o3": 0.005,  # ($2 + $8) / 2 / 1000
+    "o4-mini": 0.00275,  # ($1.10 + $4.40) / 2 / 1000
+    # Gemini (Google) — per 1M tokens: 3-pro ~$3/$15, 3-flash $0.50/$3, 2.5-pro $1.25/$10
+    "gemini-3": 0.009,  # ($3 + $15) / 2 / 1000
+    "gemini-2.5-pro": 0.005625,  # ($1.25 + $10) / 2 / 1000
+    "gemini-2.5-flash": 0.0014,  # ($0.30 + $2.50) / 2 / 1000
+    "gemini-3-flash": 0.00175,  # ($0.50 + $3) / 2 / 1000
+    # Qwen — open-weight, very cheap via API
+    "qwen3-coder": 0.00056,  # ($0.22 + $0.90) / 2 / 1000
+    "qwen-max": 0.001,
+    "qwen-plus": 0.0005,
+    "qwen-turbo": 0.0002,
+}
+
+# Cascade order — index 0 is cheapest
+CASCADE: list[str] = ["haiku", "sonnet", "opus"]
+
+
+def _model_cost(model: str) -> float:
+    """Rough cost per 1k tokens for a model name."""
+    model_lower = model.lower()
+    for key, cost in _MODEL_COST_USD_PER_1K.items():
+        if key in model_lower:
+            return cost
+    return 0.005  # safe unknown default
+
+
+# ---------------------------------------------------------------------------
+# Bandit state
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BanditArm:
+    """Single (role, model) arm tracked by the bandit."""
+
+    role: str
+    model: str
+    observations: int = 0
+    successes: int = 0
+    total_cost_usd: float = 0.0
+    total_latency_s: float = 0.0
+
+    @property
+    def success_rate(self) -> float:
+        if self.observations == 0:
+            return 1.0  # optimistic initialisation
+        return self.successes / self.observations
+
+    @property
+    def avg_cost_usd(self) -> float:
+        if self.observations == 0:
+            return _model_cost(self.model) * 100  # rough estimate
+        return self.total_cost_usd / self.observations
+
+    @property
+    def avg_latency_s(self) -> float:
+        if self.observations == 0:
+            return 0.0
+        return self.total_latency_s / self.observations
+
+    def record(self, success: bool, cost_usd: float = 0.0, latency_s: float = 0.0) -> None:
+        self.observations += 1
+        if success:
+            self.successes += 1
+        self.total_cost_usd += cost_usd
+        self.total_latency_s += latency_s
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "model": self.model,
+            "observations": self.observations,
+            "successes": self.successes,
+            "total_cost_usd": self.total_cost_usd,
+            "total_latency_s": self.total_latency_s,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> BanditArm:
+        return cls(
+            role=d["role"],
+            model=d["model"],
+            observations=d.get("observations", 0),
+            successes=d.get("successes", 0),
+            total_cost_usd=d.get("total_cost_usd", 0.0),
+            total_latency_s=d.get("total_latency_s", 0.0),
+        )
+
+
+class EpsilonGreedyBandit:
+    """Epsilon-greedy multi-armed bandit for model selection per task role.
+
+    Explores with probability ``epsilon`` and exploits (picks cheapest arm
+    meeting the quality threshold) the rest of the time.  Arms with fewer
+    than ``min_observations`` are always considered for exploration.
+
+    Usage::
+
+        bandit = EpsilonGreedyBandit.load(workdir / ".sdd" / "metrics")
+        model = bandit.select(role="backend")
+        ...
+        bandit.record(role="backend", model=model, success=True, cost_usd=0.05)
+        bandit.save(workdir / ".sdd" / "metrics")
+    """
+
+    STATE_FILE = "bandit_state.json"
+
+    def __init__(
+        self,
+        epsilon: float = EPSILON,
+        min_observations: int = MIN_OBSERVATIONS,
+        quality_threshold: float = QUALITY_THRESHOLD,
+    ) -> None:
+        self.epsilon = epsilon
+        self.min_observations = min_observations
+        self.quality_threshold = quality_threshold
+        # key: (role, model) → BanditArm
+        self._arms: dict[tuple[str, str], BanditArm] = {}
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def load(cls, metrics_dir: Path) -> EpsilonGreedyBandit:
+        """Load bandit state from disk, returning a fresh instance on error."""
+        bandit = cls()
+        state_path = metrics_dir / cls.STATE_FILE
+        if not state_path.exists():
+            return bandit
+        try:
+            data = json.loads(state_path.read_text())
+            for arm_dict in data.get("arms", []):
+                arm = BanditArm.from_dict(arm_dict)
+                bandit._arms[(arm.role, arm.model)] = arm
+        except Exception as exc:
+            logger.warning("Could not load bandit state from %s: %s", state_path, exc)
+        return bandit
+
+    def save(self, metrics_dir: Path) -> None:
+        """Persist bandit state to disk."""
+        state_path = metrics_dir / self.STATE_FILE
+        try:
+            metrics_dir.mkdir(parents=True, exist_ok=True)
+            data = {"arms": [arm.to_dict() for arm in self._arms.values()]}
+            state_path.write_text(json.dumps(data, indent=2))
+        except Exception as exc:
+            logger.warning("Could not save bandit state to %s: %s", state_path, exc)
+
+    # ------------------------------------------------------------------
+    # Core API
+    # ------------------------------------------------------------------
+
+    def select(self, role: str, candidate_models: list[str] | None = None) -> str:
+        """Select a model for a given role using epsilon-greedy strategy.
+
+        Args:
+            role: Task role (e.g. "backend", "qa").
+            candidate_models: If provided, restrict selection to these models.
+                              Defaults to the full CASCADE list.
+
+        Returns:
+            Model name string (e.g. "haiku", "sonnet", "opus").
+        """
+        models = candidate_models if candidate_models else list(CASCADE)
+
+        # Exploration: random choice with probability epsilon
+        if random.random() < self.epsilon:
+            chosen = random.choice(models)
+            logger.debug("Bandit[%s]: explore → %s", role, chosen)
+            return chosen
+
+        # Exploitation: pick cheapest arm that meets quality threshold
+        # If arm hasn't been sufficiently observed, treat it as a candidate too
+        qualifying: list[tuple[str, float]] = []  # (model, avg_cost)
+        for model in models:
+            arm = self._arms.get((role, model))
+            if arm is None or arm.observations < self.min_observations:
+                # Unknown/under-observed → include as candidate with nominal cost
+                qualifying.append((model, _model_cost(model)))
+            elif arm.success_rate >= self.quality_threshold:
+                qualifying.append((model, arm.avg_cost_usd))
+
+        if not qualifying:
+            # All arms are under-performing — fall back to cheapest model to
+            # keep trying (cascade will escalate on actual failures)
+            fallback = min(models, key=_model_cost)
+            logger.debug("Bandit[%s]: all arms under-threshold, fallback → %s", role, fallback)
+            return fallback
+
+        # Among qualifying arms, pick the cheapest
+        chosen = min(qualifying, key=lambda t: t[1])[0]
+        logger.debug("Bandit[%s]: exploit → %s (cost=%.5f)", role, chosen, dict(qualifying)[chosen])
+        return chosen
+
+    def record(
+        self,
+        role: str,
+        model: str,
+        success: bool,
+        cost_usd: float = 0.0,
+        latency_s: float = 0.0,
+    ) -> None:
+        """Record an observation for a (role, model) arm.
+
+        Args:
+            role: Task role.
+            model: Model used.
+            success: Whether the task succeeded (including janitor pass).
+            cost_usd: Actual USD cost incurred.
+            latency_s: Task duration in seconds.
+        """
+        key = (role, model)
+        if key not in self._arms:
+            self._arms[key] = BanditArm(role=role, model=model)
+        self._arms[key].record(success=success, cost_usd=cost_usd, latency_s=latency_s)
+        logger.debug(
+            "Bandit[%s/%s]: recorded success=%s, cost=%.5f — arm now: obs=%d, success_rate=%.2f",
+            role,
+            model,
+            success,
+            cost_usd,
+            self._arms[key].observations,
+            self._arms[key].success_rate,
+        )
+
+    def summary(self) -> list[dict[str, Any]]:
+        """Return a summary of all arm statistics, sorted by role then cost."""
+        rows: list[dict[str, Any]] = []
+        for arm in sorted(self._arms.values(), key=lambda a: (a.role, _model_cost(a.model))):
+            rows.append(
+                {
+                    "role": arm.role,
+                    "model": arm.model,
+                    "observations": arm.observations,
+                    "success_rate": round(arm.success_rate, 3),
+                    "avg_cost_usd": round(arm.avg_cost_usd, 6),
+                    "avg_latency_s": round(arm.avg_latency_s, 1),
+                    "trusted": arm.observations >= self.min_observations,
+                    "meets_quality": arm.success_rate >= self.quality_threshold,
+                }
+            )
+        return rows
+
+
+# ---------------------------------------------------------------------------
+# Model cascade
+# ---------------------------------------------------------------------------
+
+
+def get_cascade_model(task: Task, retry_count: int = 0) -> str:
+    """Return the appropriate cascade model for a task given its retry count.
+
+    Cascade: haiku (0) → sonnet (1) → opus (2+).
+    High-complexity or large-scope tasks skip haiku.
+    Manager/architect/security roles skip straight to sonnet or opus.
+
+    Args:
+        task: The task to route.
+        retry_count: Number of previous failures for this task.
+
+    Returns:
+        Model name string.
+    """
+    # High-stakes roles always start at sonnet or opus
+    if (
+        task.role in ("manager", "architect", "security")
+        or task.complexity == Complexity.HIGH
+        or task.scope == Scope.LARGE
+        or task.priority == 1
+    ):
+        cascade = ["sonnet", "opus"]
+    else:
+        cascade = list(CASCADE)  # ["haiku", "sonnet", "opus"]
+
+    idx = min(retry_count, len(cascade) - 1)
+    return cascade[idx]
+
+
+# ---------------------------------------------------------------------------
+# Cost projection utilities
+# ---------------------------------------------------------------------------
+
+
+def _days_in_window(records: list[dict[str, Any]], days: int) -> list[dict[str, Any]]:  # type: ignore[reportUnusedFunction]
+    """Filter records to those within the last N days."""
+    cutoff = time.time() - days * 86400
+    return [r for r in records if r.get("timestamp", 0) >= cutoff]
+
+
+def compute_savings_vs_opus(records: list[dict[str, Any]]) -> float:
+    """Estimate savings vs a hypothetical all-Opus baseline.
+
+    For each task that completed with a model cheaper than Opus, estimate
+    what Opus would have cost and compute the delta.
+
+    Args:
+        records: Task metric records from tasks.jsonl.
+
+    Returns:
+        Total estimated savings in USD.
+    """
+    opus_cost_per_1k = _MODEL_COST_USD_PER_1K["opus"]
+    savings = 0.0
+    for rec in records:
+        actual_cost = float(rec.get("cost_usd", 0.0) or 0.0)
+        tokens_in = int(rec.get("tokens_prompt", 0) or 0)
+        tokens_out = int(rec.get("tokens_completion", 0) or 0)
+        total_tokens = tokens_in + tokens_out
+        model = (rec.get("model") or "").lower()
+        if total_tokens > 0 and "opus" not in model and model != "fast-path":
+            opus_estimated = (total_tokens / 1000) * opus_cost_per_1k
+            savings += max(opus_estimated - actual_cost, 0.0)
+    return savings
+
+
+def compute_daily_cost(records: list[dict[str, Any]], days: int = 7) -> list[dict[str, Any]]:
+    """Compute per-day cost totals for the last N days.
+
+    Args:
+        records: Task metric records.
+        days: Number of days to include.
+
+    Returns:
+        List of dicts with ``date`` (YYYY-MM-DD) and ``cost_usd``, sorted ascending.
+    """
+    cutoff = time.time() - days * 86400
+    daily: dict[str, float] = {}
+    for rec in records:
+        ts = rec.get("timestamp", 0.0)
+        if ts < cutoff:
+            continue
+        cost = float(rec.get("cost_usd", 0.0) or 0.0)
+        date_str = time.strftime("%Y-%m-%d", time.localtime(ts))
+        daily[date_str] = daily.get(date_str, 0.0) + cost
+    return [{"date": d, "cost_usd": round(c, 6)} for d, c in sorted(daily.items())]
+
+
+def project_monthly_cost(records: list[dict[str, Any]], window_days: int = 7) -> float:
+    """Project monthly cost based on recent daily spend.
+
+    Args:
+        records: All task metric records.
+        window_days: Number of recent days to base projection on.
+
+    Returns:
+        Projected 30-day cost in USD.
+    """
+    daily = compute_daily_cost(records, days=window_days)
+    if not daily:
+        return 0.0
+    avg_daily = sum(d["cost_usd"] for d in daily) / len(daily)
+    return avg_daily * 30
+
+
+def estimate_run_cost(task_count: int, model: str = "sonnet") -> tuple[float, float]:
+    """Estimate cost range for a planned run before spending anything.
+
+    Uses average token consumption per task (roughly 50k-150k tokens) and
+    the model's per-1k-token pricing to produce a low-high range.
+
+    Args:
+        task_count: Number of tasks to be spawned.
+        model: Default model name (e.g. "sonnet", "opus", "haiku").
+
+    Returns:
+        Tuple of (low_estimate_usd, high_estimate_usd).
+    """
+    cost_per_1k = _model_cost(model)
+    # Conservative range: 50k tokens (small task) to 150k tokens (large task)
+    low_tokens_per_task = 50
+    high_tokens_per_task = 150
+    low = task_count * low_tokens_per_task * cost_per_1k
+    high = task_count * high_tokens_per_task * cost_per_1k
+    return (round(low, 2), round(high, 2))

@@ -1,0 +1,46 @@
+name: "Bernstein CI Fix"
+
+# Trigger when another workflow (e.g. "CI") completes with a failure.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+# Only one fix attempt at a time per branch.
+concurrency:
+  group: bernstein-fix-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  fix:
+    name: Auto-fix with Bernstein
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          # Need full history for bernstein worktree operations
+          fetch-depth: 0
+
+      - name: Run Bernstein CI fix
+        uses: ./
+        with:
+          task: fix-ci
+          budget: "5.00"
+          cli: claude
+          max-retries: "3"
+        env:
+          # Provide the API key for whichever CLI agent you use.
+          # For Claude Code:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # For Codex:
+          # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # For Gemini CLI:
+          # GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}

@@ -1,0 +1,833 @@
+"""FastAPI task server — central coordination point for all agents.
+
+Agents pull tasks via HTTP, report completion, and send heartbeats.
+State is held in-memory and flushed periodically to JSONL for persistence.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import os
+import time
+from contextlib import asynccontextmanager
+from dataclasses import asdict
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from bernstein.core.a2a import A2AHandler
+from bernstein.core.bulletin import BulletinBoard, MessageBoard, MessageType
+from bernstein.core.cluster import NodeRegistry
+from bernstein.core.models import (
+    ClusterConfig,
+    NodeInfo,
+    Task,
+)
+from bernstein.core.task_store import (
+    ProgressEntry,
+    TaskStore,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Callable
+
+    from starlette.responses import Response as StarletteResponse
+
+
+# ---------------------------------------------------------------------------
+# Auth middleware — bearer token validation
+# ---------------------------------------------------------------------------
+
+# Paths that are always accessible without auth (health checks, agent card)
+_PUBLIC_PATHS = frozenset(
+    {
+        "/health",
+        "/.well-known/agent.json",
+        "/docs",
+        "/openapi.json",
+        "/webhooks/github",
+        "/webhooks/slack/commands",
+        "/webhooks/slack/events",
+        "/dashboard",
+        "/dashboard/data",
+        "/dashboard/file_locks",
+        "/events",
+    }
+)
+
+
+class BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Validate Bearer token on all requests when auth is configured.
+
+    When ``auth_token`` is set, every request must include a matching
+    ``Authorization: Bearer <token>`` header. Health and discovery
+    endpoints are exempt.
+    """
+
+    def __init__(self, app: Any, auth_token: str | None = None) -> None:
+        super().__init__(app)
+        self._token = auth_token
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Any],
+    ) -> StarletteResponse:
+        if self._token is None:
+            response: StarletteResponse = await call_next(request)
+            return response
+
+        path = request.url.path
+        if path in _PUBLIC_PATHS:
+            response = await call_next(request)
+            return response
+
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid Authorization header"},
+            )
+        token = auth_header[7:]  # Strip "Bearer "
+        if token != self._token:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Invalid auth token"},
+            )
+        response = await call_next(request)
+        return response
+
+
+# Write methods that mutate state
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+class ReadOnlyMiddleware(BaseHTTPMiddleware):
+    """Block all write operations when the server is in read-only mode.
+
+    Useful for public demo deployments where the dashboard should be
+    visible but task mutation must be disabled entirely.  All GET/HEAD/OPTIONS
+    requests pass through; any write method returns 405.
+    """
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Any],
+    ) -> StarletteResponse:
+        if request.method in _WRITE_METHODS:
+            return JSONResponse(
+                status_code=405,
+                content={"detail": "Server is in read-only mode"},
+                headers={"Allow": "GET, HEAD, OPTIONS"},
+            )
+        response: StarletteResponse = await call_next(request)
+        return response
+
+
+# TypedDicts and related types are now imported from task_store module
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request / response schemas
+# ---------------------------------------------------------------------------
+
+_SIGNAL_TYPE = Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"]
+
+
+class CompletionSignalSchema(BaseModel):
+    """Pydantic schema for a single completion signal in API requests."""
+
+    type: _SIGNAL_TYPE
+    value: str
+
+
+class TaskCreate(BaseModel):
+    """Body for POST /tasks."""
+
+    title: str
+    description: str
+    role: str
+    priority: int = 2
+    scope: str = "medium"
+    complexity: str = "medium"
+    estimated_minutes: int = 30
+    depends_on: list[str] = Field(default_factory=list)
+    owned_files: list[str] = Field(default_factory=list)
+    cell_id: str | None = None
+    task_type: str = "standard"
+    upgrade_details: dict[str, Any] | None = None
+    model: str | None = None  # Manager hint: "opus", "sonnet", "haiku"
+    effort: str | None = None  # Manager hint: "max", "high", "medium", "low"
+    batch_eligible: bool = False  # Non-urgent: eligible for provider batch APIs at ~50% cost
+    completion_signals: list[CompletionSignalSchema] = Field(default_factory=lambda: list[CompletionSignalSchema]())
+    slack_context: dict[str, Any] | None = None  # Slack slash command metadata
+
+
+class TaskResponse(BaseModel):
+    """Serialised task returned by every task endpoint."""
+
+    id: str
+    title: str
+    description: str
+    role: str
+    priority: int
+    scope: str
+    complexity: str
+    estimated_minutes: int
+    status: str
+    depends_on: list[str]
+    owned_files: list[str]
+    assigned_agent: str | None
+    result_summary: str | None
+    cell_id: str | None
+    task_type: str
+    upgrade_details: dict[str, Any] | None
+    model: str | None
+    effort: str | None
+    batch_eligible: bool = False
+    completion_signals: list[dict[str, str]] = Field(default_factory=lambda: list[dict[str, str]]())
+    slack_context: dict[str, Any] | None = None
+    created_at: float
+    progress_log: list[ProgressEntry] = Field(default_factory=lambda: list[ProgressEntry]())
+    version: int = 1
+
+
+class TaskCompleteRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/complete."""
+
+    result_summary: str
+
+
+class TaskFailRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/fail."""
+
+    reason: str = ""
+
+
+class TaskCancelRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/cancel."""
+
+    reason: str = ""
+
+
+class TaskBlockRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/block."""
+
+    reason: str = ""
+
+
+class TaskPatchRequest(BaseModel):
+    """Body for PATCH /tasks/{task_id} — manager corrections."""
+
+    role: str | None = None
+    priority: int | None = None
+    model: str | None = None
+
+
+class TaskProgressRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/progress."""
+
+    message: str = ""
+    percent: int = 0
+    # Structured snapshot fields for stall detection (optional)
+    files_changed: int | None = None
+    tests_passing: int | None = None
+    errors: int | None = None
+    last_file: str = ""
+
+
+class BatchClaimRequest(BaseModel):
+    """Body for POST /tasks/claim-batch."""
+
+    task_ids: list[str]
+    agent_id: str
+
+
+class BatchClaimResponse(BaseModel):
+    """Response for POST /tasks/claim-batch."""
+
+    claimed: list[str]
+    failed: list[str]
+
+
+class RoleCounts(BaseModel):
+    """Per-role open task counts."""
+
+    role: str
+    open: int
+    claimed: int
+    done: int
+    failed: int
+    cost_usd: float = 0.0
+
+
+class StatusResponse(BaseModel):
+    """Body for GET /status."""
+
+    total: int
+    open: int
+    claimed: int
+    done: int
+    failed: int
+    per_role: list[RoleCounts]
+    total_cost_usd: float = 0.0
+
+
+class HeartbeatRequest(BaseModel):
+    """Body for POST /agents/{agent_id}/heartbeat."""
+
+    role: str = ""
+    status: Literal["starting", "working", "idle", "dead"] = "working"
+
+
+class HeartbeatResponse(BaseModel):
+    """Response for heartbeat."""
+
+    agent_id: str
+    acknowledged: bool
+    server_ts: float
+
+
+class HealthResponse(BaseModel):
+    """Response for GET /health."""
+
+    status: str
+    uptime_s: float
+    task_count: int
+    agent_count: int
+    is_readonly: bool = False
+
+
+class BulletinPostRequest(BaseModel):
+    """Body for POST /bulletin."""
+
+    agent_id: str
+    type: MessageType = "status"
+    content: str
+    cell_id: str | None = None
+
+
+# -- Cluster schemas -------------------------------------------------------
+
+
+class NodeCapacitySchema(BaseModel):
+    """Advertised capacity of a cluster node."""
+
+    max_agents: int = 6
+    available_slots: int = 6
+    active_agents: int = 0
+    gpu_available: bool = False
+    supported_models: list[str] = Field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+
+
+class NodeRegisterRequest(BaseModel):
+    """Body for POST /cluster/nodes."""
+
+    name: str = ""
+    url: str = ""
+    capacity: NodeCapacitySchema = Field(default_factory=NodeCapacitySchema)
+    labels: dict[str, str] = Field(default_factory=dict)
+    cell_ids: list[str] = Field(default_factory=list)
+
+
+class NodeHeartbeatRequest(BaseModel):
+    """Body for POST /cluster/nodes/{node_id}/heartbeat."""
+
+    capacity: NodeCapacitySchema | None = None
+
+
+class NodeResponse(BaseModel):
+    """Serialised node in API responses."""
+
+    id: str
+    name: str
+    url: str
+    status: str
+    capacity: NodeCapacitySchema
+    last_heartbeat: float
+    registered_at: float
+    labels: dict[str, str]
+    cell_ids: list[str]
+
+
+class ClusterStatusResponse(BaseModel):
+    """Response for GET /cluster/status."""
+
+    topology: str
+    total_nodes: int
+    online_nodes: int
+    offline_nodes: int
+    total_capacity: int
+    available_slots: int
+    active_agents: int
+    nodes: list[NodeResponse]
+
+
+class BulletinMessageResponse(BaseModel):
+    """Single bulletin message in responses."""
+
+    agent_id: str
+    type: str
+    content: str
+    timestamp: float
+    cell_id: str | None
+
+
+# -- Delegation schemas ----------------------------------------------------
+
+
+class DelegationPostRequest(BaseModel):
+    """Body for POST /delegations."""
+
+    origin_agent: str
+    target_role: str
+    description: str
+    deadline: float = 0.0
+    cell_id: str | None = None
+
+
+class DelegationClaimRequest(BaseModel):
+    """Body for POST /delegations/{id}/claim."""
+
+    agent_id: str
+
+
+class DelegationResultRequest(BaseModel):
+    """Body for POST /delegations/{id}/result."""
+
+    agent_id: str
+    result: str
+
+
+class DelegationResponse(BaseModel):
+    """Single delegation in API responses."""
+
+    id: str
+    origin_agent: str
+    target_role: str
+    description: str
+    deadline: float
+    status: str
+    claimed_by: str | None
+    result: str | None
+    created_at: float
+    cell_id: str | None
+
+
+# -- A2A protocol schemas --------------------------------------------------
+
+
+class A2ATaskSendRequest(BaseModel):
+    """Body for POST /a2a/tasks/send — receive a task from an external A2A agent."""
+
+    sender: str
+    message: str
+    role: str = "backend"
+
+
+class A2AArtifactRequest(BaseModel):
+    """Body for POST /a2a/tasks/{id}/artifacts — attach an artifact."""
+
+    name: str
+    data: str = ""
+    content_type: str = "text/plain"
+
+
+class A2AArtifactResponse(BaseModel):
+    """Single artifact in responses."""
+
+    name: str
+    content_type: str
+    data: str
+    created_at: float
+
+
+class A2ATaskResponse(BaseModel):
+    """Serialised A2A task in responses."""
+
+    id: str
+    bernstein_task_id: str | None
+    sender: str
+    message: str
+    status: str
+    artifacts: list[A2AArtifactResponse]
+    created_at: float
+    updated_at: float
+
+
+class A2AAgentCardResponse(BaseModel):
+    """Agent Card response for /.well-known/agent.json."""
+
+    name: str
+    description: str
+    capabilities: list[str]
+    protocol_version: str
+    endpoint: str
+    provider: str
+
+
+# TaskStore is now imported from task_store.py (facade pattern for existing imports)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+# _parse_upgrade_dict is now imported from task_store.py
+
+
+def a2a_task_to_response(task: Any) -> A2ATaskResponse:
+    """Convert an A2ATask to its Pydantic response model."""
+    return A2ATaskResponse(
+        id=task.id,
+        bernstein_task_id=task.bernstein_task_id,
+        sender=task.sender,
+        message=task.message,
+        status=task.status.value,
+        artifacts=[
+            A2AArtifactResponse(
+                name=a.name,
+                content_type=a.content_type,
+                data=a.data,
+                created_at=a.created_at,
+            )
+            for a in task.artifacts
+        ],
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
+
+
+def node_to_response(node: NodeInfo) -> NodeResponse:
+    """Convert a NodeInfo to a Pydantic response model."""
+    return NodeResponse(
+        id=node.id,
+        name=node.name,
+        url=node.url,
+        status=node.status.value,
+        capacity=NodeCapacitySchema(
+            max_agents=node.capacity.max_agents,
+            available_slots=node.capacity.available_slots,
+            active_agents=node.capacity.active_agents,
+            gpu_available=node.capacity.gpu_available,
+            supported_models=node.capacity.supported_models,
+        ),
+        last_heartbeat=node.last_heartbeat,
+        registered_at=node.registered_at,
+        labels=node.labels,
+        cell_ids=node.cell_ids,
+    )
+
+
+def task_to_response(task: Task) -> TaskResponse:
+    """Convert a domain Task to a Pydantic response model."""
+    return TaskResponse(
+        id=task.id,
+        title=task.title,
+        description=task.description,
+        role=task.role,
+        priority=task.priority,
+        scope=task.scope.value,
+        complexity=task.complexity.value,
+        estimated_minutes=task.estimated_minutes,
+        status=task.status.value,
+        depends_on=task.depends_on,
+        owned_files=task.owned_files,
+        assigned_agent=task.assigned_agent,
+        result_summary=task.result_summary,
+        cell_id=task.cell_id,
+        task_type=task.task_type.value,
+        upgrade_details=asdict(task.upgrade_details) if task.upgrade_details else None,
+        model=task.model,
+        effort=task.effort,
+        batch_eligible=task.batch_eligible,
+        completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
+        slack_context=task.slack_context,
+        created_at=task.created_at,
+        progress_log=list(cast("list[ProgressEntry]", task.progress_log)),  # type: ignore[reportUnknownMemberType]
+        version=task.version,
+    )
+
+
+# ---------------------------------------------------------------------------
+# SSE event bus — fan-out to all connected dashboard clients
+# ---------------------------------------------------------------------------
+
+
+class SSEBus:
+    """Fan-out event bus for Server-Sent Events.
+
+    Each connected client gets its own asyncio.Queue.  Publishing an event
+    pushes it to every queue.  Disconnected clients are cleaned up lazily.
+    """
+
+    def __init__(self) -> None:
+        self._subscribers: list[asyncio.Queue[str]] = []
+
+    def subscribe(self) -> asyncio.Queue[str]:
+        """Create a new subscriber queue."""
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=64)
+        self._subscribers.append(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue[str]) -> None:
+        """Remove a subscriber queue."""
+        with contextlib.suppress(ValueError):
+            self._subscribers.remove(queue)
+
+    @property
+    def subscriber_count(self) -> int:
+        """Number of active subscribers."""
+        return len(self._subscribers)
+
+    def publish(self, event_type: str, data: str = "{}") -> None:
+        """Push an event to all subscribers (non-blocking)."""
+        message = f"event: {event_type}\ndata: {data}\n\n"
+        for queue in list(self._subscribers):
+            with contextlib.suppress(asyncio.QueueFull):
+                queue.put_nowait(message)
+
+
+# ---------------------------------------------------------------------------
+# Background: stale-agent reaper
+# ---------------------------------------------------------------------------
+
+
+async def _reaper_loop(store: TaskStore, interval_s: float = 30.0) -> None:
+    """Periodically mark stale agents as dead."""
+    while True:
+        await asyncio.sleep(interval_s)
+        store.mark_stale_dead()
+
+
+async def _node_reaper_loop(node_reg: NodeRegistry, interval_s: float = 15.0) -> None:
+    """Periodically mark stale cluster nodes as offline."""
+    while True:
+        await asyncio.sleep(interval_s)
+        node_reg.mark_stale()
+
+
+async def _sse_heartbeat_loop(bus: SSEBus, interval_s: float = 15.0) -> None:
+    """Send periodic heartbeat events to keep SSE connections alive."""
+    while True:
+        await asyncio.sleep(interval_s)
+        bus.publish("heartbeat", json.dumps({"ts": time.time()}))
+
+
+# ---------------------------------------------------------------------------
+# Helpers used by route modules
+# ---------------------------------------------------------------------------
+
+DEFAULT_JSONL_PATH = Path(".sdd/runtime/tasks.jsonl")
+
+
+def read_log_tail(path: Path, offset: int = 0) -> str:
+    """Read a log file from *offset* bytes, skipping the partial first line.
+
+    Args:
+        path: Path to the log file.
+        offset: Byte offset to start reading from.
+
+    Returns:
+        Log content as a string, with partial leading line stripped when
+        offset is mid-line.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return ""
+    if size == 0:
+        return ""
+    with open(path, "rb") as f:
+        f.seek(offset)
+        data = f.read()
+    if not data:
+        return ""
+    text = data.decode("utf-8", errors="replace")
+    # When seeking into the middle of a file, the first partial line is
+    # incomplete — strip it so callers only see whole lines.
+    if offset > 0 and not text.startswith("\n"):
+        idx = text.find("\n")
+        if idx == -1:
+            return ""
+        text = text[idx + 1 :]
+    return text
+
+
+# ---------------------------------------------------------------------------
+# App factory
+# ---------------------------------------------------------------------------
+
+
+def create_app(
+    jsonl_path: Path = DEFAULT_JSONL_PATH,
+    metrics_jsonl_path: Path | None = None,
+    auth_token: str | None = None,
+    cluster_config: ClusterConfig | None = None,
+    plan_mode: bool = False,
+    readonly: bool = False,
+    slack_signing_secret: str | None = None,
+) -> FastAPI:
+    """Build and return the FastAPI application.
+
+    Args:
+        jsonl_path: Where to persist the JSONL task log.
+        metrics_jsonl_path: Path to the metrics JSONL for cost reporting.
+            Defaults to <jsonl_path.parent.parent>/metrics/tasks.jsonl.
+        auth_token: If set, all API requests must include a matching
+            ``Authorization: Bearer <token>`` header.
+        cluster_config: Cluster mode configuration. If provided and
+            enabled, node registration and cluster endpoints are active.
+        readonly: If True, all write operations (POST/PUT/PATCH/DELETE) are
+            rejected with 405.  The dashboard, events stream, and read
+            endpoints remain fully accessible.  Useful for public demo
+            deployments.
+        slack_signing_secret: Slack app signing secret for verifying webhook
+            request signatures.  Defaults to ``SLACK_SIGNING_SECRET`` env var.
+
+    Returns:
+        Configured FastAPI app with all routes registered.
+    """
+    from bernstein.core.routes.agents import router as agents_router
+    from bernstein.core.routes.costs import router as costs_router
+    from bernstein.core.routes.dashboard import router as dashboard_router
+    from bernstein.core.routes.quality import router as quality_router
+    from bernstein.core.routes.slack import router as slack_router
+    from bernstein.core.routes.status import router as status_router
+    from bernstein.core.routes.tasks import router as tasks_router
+    from bernstein.core.routes.webhooks import router as webhooks_router
+
+    # Resolve auth token: explicit arg > env var > None
+    effective_token = auth_token or os.environ.get("BERNSTEIN_AUTH_TOKEN")
+
+    # Cluster setup
+    effective_cluster = cluster_config or ClusterConfig()
+    node_registry = NodeRegistry(effective_cluster)
+
+    store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
+    sse_bus = SSEBus()
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        # Startup: replay persisted state
+        store.replay_jsonl()
+        # Launch the stale-agent reaper
+        reaper = asyncio.create_task(_reaper_loop(store))
+        # Launch SSE heartbeat loop
+        sse_heartbeat = asyncio.create_task(_sse_heartbeat_loop(sse_bus))
+        # Launch node-stale reaper if cluster mode is on
+        node_reaper: asyncio.Task[None] | None = None
+        if effective_cluster.enabled:
+            node_reaper = asyncio.create_task(
+                _node_reaper_loop(node_registry, interval_s=effective_cluster.node_heartbeat_interval_s)
+            )
+        yield
+        # Shutdown
+        reaper.cancel()
+        sse_heartbeat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reaper
+        with contextlib.suppress(asyncio.CancelledError):
+            await sse_heartbeat
+        if node_reaper is not None:
+            node_reaper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await node_reaper
+        await store.flush_buffer()
+
+    application = FastAPI(title="Bernstein Task Server", version="0.1.0", lifespan=lifespan)
+
+    # Read-only mode — blocks all writes before auth is even checked
+    if readonly:
+        application.add_middleware(ReadOnlyMiddleware)
+
+    # Auth middleware — only enforced when a token is configured
+    application.add_middleware(BearerAuthMiddleware, auth_token=effective_token)
+
+    # Attach shared state for route modules to access via request.app.state
+    bulletin = BulletinBoard()
+    message_board = MessageBoard()
+    a2a_handler = A2AHandler(server_url="http://localhost:8052")
+
+    application.state.store = store  # type: ignore[attr-defined]
+    application.state.bulletin = bulletin  # type: ignore[attr-defined]
+    application.state.message_board = message_board  # type: ignore[attr-defined]
+    application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
+    application.state.node_registry = node_registry  # type: ignore[attr-defined]
+    application.state.sse_bus = sse_bus  # type: ignore[attr-defined]
+    application.state.runtime_dir = jsonl_path.parent  # type: ignore[attr-defined]  # .sdd/runtime/
+    application.state.sdd_dir = jsonl_path.parent.parent  # type: ignore[attr-defined]  # .sdd/
+    application.state.readonly = readonly  # type: ignore[attr-defined]
+    application.state.slack_signing_secret = (  # type: ignore[attr-defined]
+        slack_signing_secret or os.environ.get("SLACK_SIGNING_SECRET") or ""
+    )
+
+    # Plan mode: initialize PlanStore when enabled
+    if plan_mode:
+        from bernstein.core.plan_approval import PlanStore
+
+        application.state.plan_store = PlanStore(jsonl_path.parent.parent)  # type: ignore[attr-defined]
+    else:
+        application.state.plan_store = None  # type: ignore[attr-defined]
+
+    # Mount routers
+    application.include_router(agents_router)
+    application.include_router(tasks_router)
+    application.include_router(status_router)
+    application.include_router(webhooks_router)
+    application.include_router(slack_router)
+    application.include_router(costs_router)
+    application.include_router(dashboard_router)
+    application.include_router(quality_router)
+
+    # Plan approval routes (always mounted; returns 503 if plan_mode is off)
+    from bernstein.core.routes.plans import router as plans_router
+
+    application.include_router(plans_router)
+
+    return application
+
+
+# Default app instance for `uvicorn bernstein.core.server:app`
+# Auth token and cluster config are read from environment at import time.
+_default_cluster_enabled = os.environ.get("BERNSTEIN_CLUSTER_ENABLED", "").lower() in ("1", "true", "yes")
+_default_cluster_config = (
+    ClusterConfig(
+        enabled=_default_cluster_enabled,
+        auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
+        bind_host=os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1"),
+    )
+    if _default_cluster_enabled
+    else None
+)
+
+
+def get_app() -> FastAPI:
+    """Get or create the default FastAPI app (lazy singleton)."""
+    return create_app(
+        auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
+        cluster_config=_default_cluster_config,
+        readonly=os.environ.get("BERNSTEIN_READONLY", "").lower() in ("1", "true", "yes"),
+        slack_signing_secret=os.environ.get("SLACK_SIGNING_SECRET"),
+    )
+
+
+# Lazy app instance for uvicorn (bernstein.core.server:app).
+# Uses __getattr__ to avoid circular import at module load time.
+_app: FastAPI | None = None
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy module-level attribute for ``app``."""
+    global _app
+    if name == "app":
+        if _app is None:
+            _app = get_app()
+        return _app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

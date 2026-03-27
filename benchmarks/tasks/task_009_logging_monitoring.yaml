@@ -1,0 +1,58 @@
+id: task-009
+name: "Add logging and monitoring hooks"
+description: >
+  Set up structured logging (structlog), request/response middleware,
+  Prometheus metrics, a /health endpoint, error tracking, and a monitoring
+  setup guide. All subsystems can be built in parallel after the logging
+  foundation is established.
+category: observability
+parallelizable: true
+
+subtasks:
+  - id: t009-a
+    role: backend
+    description: "Configure structlog with JSON renderer and log level from env"
+    estimated_minutes: 10
+    depends_on: []
+
+  - id: t009-b
+    role: backend
+    description: "Add request/response logging middleware (method, path, status, latency)"
+    estimated_minutes: 8
+    depends_on: [t009-a]
+
+  - id: t009-c
+    role: backend
+    description: "Add Prometheus counters and histograms for request metrics"
+    estimated_minutes: 12
+    depends_on: [t009-a]
+
+  - id: t009-d
+    role: backend
+    description: "Add GET /health endpoint returning JSON status"
+    estimated_minutes: 6
+    depends_on: [t009-a]
+
+  - id: t009-e
+    role: backend
+    description: "Integrate Sentry SDK for exception tracking"
+    estimated_minutes: 10
+    depends_on: [t009-b]
+
+  - id: t009-f
+    role: qa
+    description: "Test that structured log output matches expected schema"
+    estimated_minutes: 8
+    depends_on: [t009-b]
+
+  - id: t009-g
+    role: qa
+    description: "Test Prometheus /metrics endpoint exposes expected series"
+    estimated_minutes: 8
+    depends_on: [t009-c]
+
+  - id: t009-h
+    role: docs
+    description: "Write monitoring setup guide (Grafana dashboard, alert rules)"
+    estimated_minutes: 6
+    depends_on: [t009-c, t009-d]

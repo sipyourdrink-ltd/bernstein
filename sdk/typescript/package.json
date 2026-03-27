@@ -1,0 +1,54 @@
+{
+  "name": "@bernstein/sdk",
+  "version": "0.1.0",
+  "description": "Integration SDK for Bernstein — connect CI/CD, issue trackers, and chat tools",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    },
+    "./adapters/jira": {
+      "import": "./dist/adapters/jira.js",
+      "types": "./dist/adapters/jira.d.ts"
+    },
+    "./adapters/linear": {
+      "import": "./dist/adapters/linear.js",
+      "types": "./dist/adapters/linear.d.ts"
+    },
+    "./adapters/slack": {
+      "import": "./dist/adapters/slack.js",
+      "types": "./dist/adapters/slack.d.ts"
+    },
+    "./adapters/teams": {
+      "import": "./dist/adapters/teams.js",
+      "types": "./dist/adapters/teams.d.ts"
+    },
+    "./adapters/github-actions": {
+      "import": "./dist/adapters/github-actions.js",
+      "types": "./dist/adapters/github-actions.d.ts"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint src --ext .ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/bernstein",
+    "directory": "sdk/typescript"
+  },
+  "keywords": ["bernstein", "orchestration", "sdk", "jira", "linear", "slack", "teams", "ci-cd"]
+}

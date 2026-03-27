@@ -1,0 +1,1012 @@
+"""Thread-safe in-memory task store with JSONL persistence.
+
+All task mutations go through this class so the JSONL log stays consistent.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import heapq
+import json
+import time
+import uuid
+from collections import deque
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any, Literal, TypedDict, cast
+
+from fastapi import HTTPException
+
+from bernstein.core.models import (
+    AgentSession,
+    CompletionSignal,
+    ProgressSnapshot,
+    RiskAssessment,
+    RollbackPlan,
+    Task,
+    TaskStatus,
+    TaskType,
+    UpgradeProposalDetails,
+)
+
+# ---------------------------------------------------------------------------
+# TypedDicts for file-based state records
+# ---------------------------------------------------------------------------
+
+
+class TaskRecord(TypedDict):
+    """JSONL record format for persisted tasks."""
+
+    id: str
+    title: str
+    description: str
+    role: str
+    priority: int
+    scope: str
+    complexity: str
+    estimated_minutes: int
+    status: str
+    task_type: str
+    upgrade_details: dict[str, Any] | None
+    depends_on: list[str]
+    owned_files: list[str]
+    assigned_agent: str | None
+    result_summary: str | None
+    cell_id: str | None
+    batch_eligible: bool
+    slack_context: dict[str, Any] | None
+    version: int
+
+
+class ArchiveRecord(TypedDict):
+    """Archive JSONL entry written when a task reaches a terminal state."""
+
+    task_id: str
+    title: str
+    role: str
+    status: str
+    created_at: float
+    completed_at: float
+    duration_seconds: float
+    result_summary: str | None
+    cost_usd: float | None
+
+
+class ProgressEntry(TypedDict):
+    """Single entry in a task's progress_log."""
+
+    timestamp: float
+    message: str
+    percent: int
+
+
+class SnapshotEntry(TypedDict):
+    """A single machine-readable progress snapshot for stall detection."""
+
+    timestamp: float
+    files_changed: int
+    tests_passing: int
+    errors: int
+    last_file: str
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _parse_upgrade_dict(raw: dict[str, Any] | None) -> UpgradeProposalDetails | None:
+    if not raw:
+        return None
+    risk = RiskAssessment(**raw.get("risk_assessment", {}))
+    rollback = RollbackPlan(**raw.get("rollback_plan", {}))
+    return UpgradeProposalDetails(
+        current_state=raw.get("current_state", ""),
+        proposed_change=raw.get("proposed_change", ""),
+        benefits=raw.get("benefits", []),
+        risk_assessment=risk,
+        rollback_plan=rollback,
+        cost_estimate_usd=raw.get("cost_estimate_usd", 0.0),
+        performance_impact=raw.get("performance_impact", ""),
+    )
+
+
+# ---------------------------------------------------------------------------
+# TaskStore
+# ---------------------------------------------------------------------------
+
+DEFAULT_ARCHIVE_PATH = Path(".sdd/archive/tasks.jsonl")
+
+
+class TaskStore:
+    """Thread-safe in-memory task store with JSONL persistence.
+
+    All mutations go through this class so the JSONL log stays consistent.
+    """
+
+    def __init__(
+        self,
+        jsonl_path: Path,
+        archive_path: Path = DEFAULT_ARCHIVE_PATH,
+        metrics_jsonl_path: Path | None = None,
+    ) -> None:
+        self._tasks: dict[str, Task] = {}
+        self._agents: dict[str, AgentSession] = {}
+        # Secondary indices for O(1) status/role lookups
+        self._by_status: dict[TaskStatus, dict[str, Task]] = {s: {} for s in TaskStatus}
+        self._by_role_status: dict[tuple[str, TaskStatus], list[str]] = {}
+        # Min-heaps keyed by (role, status) — entries are (priority, task_id)
+        # Uses lazy deletion: stale entries are discarded in claim_next()
+        self._priority_queues: dict[tuple[str, TaskStatus], list[tuple[int, str]]] = {}
+        self._jsonl_path: Path = jsonl_path
+        self._archive_path: Path = archive_path
+        self._metrics_jsonl_path: Path = (
+            metrics_jsonl_path
+            if metrics_jsonl_path is not None
+            else jsonl_path.parent.parent / "metrics" / "tasks.jsonl"
+        )
+        self._lock: asyncio.Lock = asyncio.Lock()
+        self._write_buffer: list[str] = []
+        self._dirty: bool = False
+        self._start_ts: float = time.time()
+        self._cost_cache: dict[str, float] = {}
+        self._cost_cache_mtime: float = 0.0
+        self._cost_cache_offset: int = 0
+        # In-memory progress snapshots for stall detection (last 10 per task)
+        self._progress_snapshots: dict[str, deque[ProgressSnapshot]] = {}
+
+    # -- status summary ------------------------------------------------------
+
+    def status_summary(self) -> dict[str, Any]:
+        """Return aggregated task counts for the dashboard."""
+
+        # Build per-role breakdown across all statuses
+        role_counts: dict[str, dict[str, int]] = {}
+        for task in self._tasks.values():
+            if task.role not in role_counts:
+                role_counts[task.role] = {"open": 0, "claimed": 0, "done": 0, "failed": 0}
+            status_key = task.status.value
+            if status_key in role_counts[task.role]:
+                role_counts[task.role][status_key] += 1
+
+        # Sum cost from in-memory tasks
+        total_cost = 0.0
+        for t in self._tasks.values():
+            if hasattr(t, "cost_usd") and t.cost_usd:
+                total_cost += t.cost_usd
+
+        # Also sum from metrics JSONL (external cost data)
+        cost_by_role = self._read_cost_by_role()
+        metrics_cost = sum(cost_by_role.values())
+        if metrics_cost > total_cost:
+            total_cost = metrics_cost
+
+        # Build per_role list with cost
+        per_role = []
+        for role, counts in sorted(role_counts.items()):
+            entry: dict[str, Any] = {"role": role, **counts}
+            if role in cost_by_role:
+                entry["cost_usd"] = round(cost_by_role[role], 4)
+            per_role.append(entry)
+
+        return {
+            "total": len(self._tasks),
+            "open": len(self._by_status.get(TaskStatus.OPEN, {})),
+            "claimed": len(self._by_status.get(TaskStatus.CLAIMED, {})),
+            "done": len(self._by_status.get(TaskStatus.DONE, {})),
+            "failed": len(self._by_status.get(TaskStatus.FAILED, {})),
+            "per_role": per_role,
+            "total_cost_usd": round(total_cost, 4),
+        }
+
+    # -- index helpers -------------------------------------------------------
+
+    def _index_add(self, task: Task) -> None:
+        """Add *task* to secondary indices at its current status."""
+        self._by_status[task.status][task.id] = task
+        key = (task.role, task.status)
+        ids = self._by_role_status.setdefault(key, [])
+        if task.id not in ids:
+            ids.append(task.id)
+        if task.status == TaskStatus.OPEN:
+            pq = self._priority_queues.setdefault(key, [])
+            heapq.heappush(pq, (task.priority, task.id))
+
+    def _index_remove(self, task: Task) -> None:
+        """Remove *task* from secondary indices at its current status."""
+        self._by_status[task.status].pop(task.id, None)
+        ids = self._by_role_status.get((task.role, task.status))
+        if ids is not None:
+            with contextlib.suppress(ValueError):
+                ids.remove(task.id)
+
+    # -- persistence --------------------------------------------------------
+
+    def replay_jsonl(self) -> None:
+        """Rebuild state from the JSONL log on disk.
+
+        Each line is a JSON object with at least ``id`` and ``status``.
+        Lines are replayed in order so the last write wins.
+        """
+        if not self._jsonl_path.exists():
+            return
+        for raw_line in self._jsonl_path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                record: TaskRecord = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            task_id: str = record.get("id", "")
+            if not task_id:
+                continue
+            if task_id in self._tasks:
+                task = self._tasks[task_id]
+                self._index_remove(task)
+                task.status = TaskStatus(record.get("status", task.status.value))
+                task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
+                task.result_summary = record.get("result_summary", task.result_summary)
+                self._index_add(task)
+            else:
+                task = Task.from_dict(cast("dict[str, Any]", record))
+                self._tasks[task_id] = task
+                self._index_add(task)
+
+    _BUFFER_MAX: int = 10
+
+    async def _flush_buffer_unlocked(self) -> None:
+        """Write buffered JSONL records to disk. Caller must hold self._lock."""
+        if not self._write_buffer:
+            return
+        self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        data = "".join(self._write_buffer)
+        self._write_buffer.clear()
+
+        def _write() -> None:
+            with self._jsonl_path.open("a") as f:
+                f.write(data)
+
+        await asyncio.to_thread(_write)
+
+    async def _append_jsonl(self, record: TaskRecord) -> None:
+        """Buffer a JSON record for batch JSONL writing.
+
+        Records accumulate until the buffer reaches _BUFFER_MAX entries, then
+        flush to disk in a single write.  Callers must eventually call
+        flush_buffer() (e.g. on shutdown) to drain any remaining records.
+        """
+        line = json.dumps(record, default=str) + "\n"
+        self._write_buffer.append(line)
+        if len(self._write_buffer) >= self._BUFFER_MAX:
+            await self._flush_buffer_unlocked()
+
+    async def flush_buffer(self) -> None:
+        """Flush any buffered JSONL records to disk (acquires the store lock)."""
+        async with self._lock:
+            await self._flush_buffer_unlocked()
+
+    def read_archive(self, limit: int = 50) -> list[ArchiveRecord]:
+        """Return the last *limit* archived task records, oldest-first.
+
+        Reads from the archive JSONL file on disk.
+
+        Args:
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of archive records, oldest-first (last N from file).
+        """
+        if not self._archive_path.exists():
+            return []
+
+        records: list[ArchiveRecord] = []
+        try:
+            with self._archive_path.open() as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            return []
+
+        return records[-limit:]
+
+    async def _append_archive(self, task: Task, completed_at: float) -> None:
+        """Append a completed/failed task record to the archive JSONL."""
+        self._archive_path.parent.mkdir(parents=True, exist_ok=True)
+        record: ArchiveRecord = {
+            "task_id": task.id,
+            "title": task.title,
+            "role": task.role,
+            "status": task.status.value,
+            "created_at": task.created_at,
+            "completed_at": completed_at,
+            "duration_seconds": round(completed_at - task.created_at, 3),
+            "result_summary": task.result_summary,
+            "cost_usd": None,
+        }
+        line = json.dumps(record, default=str) + "\n"
+
+        def _write() -> None:
+            with self._archive_path.open("a") as f:
+                f.write(line)
+
+        await asyncio.to_thread(_write)
+
+    def _task_to_record(self, task: Task) -> TaskRecord:
+        """Serialise a Task to a dict suitable for JSONL storage."""
+        return {
+            "id": task.id,
+            "title": task.title,
+            "description": task.description,
+            "role": task.role,
+            "priority": task.priority,
+            "scope": task.scope.value,
+            "complexity": task.complexity.value,
+            "estimated_minutes": task.estimated_minutes,
+            "status": task.status.value,
+            "task_type": task.task_type.value,
+            "upgrade_details": asdict(task.upgrade_details) if task.upgrade_details else None,
+            "depends_on": task.depends_on,
+            "owned_files": task.owned_files,
+            "assigned_agent": task.assigned_agent,
+            "result_summary": task.result_summary,
+            "cell_id": task.cell_id,
+            "batch_eligible": task.batch_eligible,
+            "slack_context": task.slack_context,
+            "version": task.version,
+        }
+
+    # -- public API ---------------------------------------------------------
+
+    @staticmethod
+    def _detect_cycle(tasks: dict[str, Task], new_task: Task) -> list[str] | None:
+        """Return the cycle path if adding *new_task* creates a dependency cycle, else None.
+
+        Args:
+            tasks: Existing tasks (not yet including new_task).
+            new_task: The task about to be inserted.
+
+        Returns:
+            A list of task IDs forming the cycle (first == last), or None.
+        """
+        # Build adjacency map including the new task.
+        graph: dict[str, list[str]] = {t.id: list(t.depends_on) for t in tasks.values()}
+        graph[new_task.id] = list(new_task.depends_on)
+
+        # DFS from new_task only — existing tasks were validated on insertion.
+        visited: set[str] = set()
+        path: list[str] = []
+
+        def dfs(node: str) -> list[str] | None:
+            if node in path:
+                cycle_start = path.index(node)
+                return [*path[cycle_start:], node]
+            if node in visited:
+                return None
+            visited.add(node)
+            path.append(node)
+            for neighbour in graph.get(node, []):
+                result = dfs(neighbour)
+                if result is not None:
+                    return result
+            path.pop()
+            return None
+
+        return dfs(new_task.id)
+
+    async def create(self, req: dict[str, Any]) -> Task:
+        """Create a new task and persist it.
+
+        Args:
+            req: Validated creation request (TaskCreate from server).
+
+        Returns:
+            The newly created Task.
+
+        Raises:
+            HTTPException: 422 if depends_on references a non-existent task or creates a cycle.
+        """
+        from bernstein.core.models import Complexity, Scope
+
+        # Determine batch eligibility: use caller's flag, then auto-detect for non-critical tasks
+        batch_eligible: bool = getattr(req, "batch_eligible", False)
+        complexity_val = Complexity(req.complexity)
+        if not batch_eligible and req.priority != 1:
+            from bernstein.core.fast_path import TaskLevel, classify_task
+
+            _probe = Task(
+                id="__probe__",
+                title=req.title,
+                description=req.description,
+                role=req.role,
+                priority=req.priority,
+                scope=Scope(req.scope),
+                complexity=complexity_val,
+                model=req.model,
+            )
+            _cls = classify_task(_probe)
+            batch_eligible = _cls.level in (TaskLevel.L0, TaskLevel.L1)
+
+        task = Task(
+            id=uuid.uuid4().hex[:12],
+            title=req.title,
+            description=req.description,
+            role=req.role,
+            priority=req.priority,
+            scope=Scope(req.scope),
+            complexity=complexity_val,
+            estimated_minutes=req.estimated_minutes,
+            depends_on=req.depends_on,
+            owned_files=req.owned_files,
+            cell_id=req.cell_id,
+            task_type=TaskType(req.task_type),
+            upgrade_details=_parse_upgrade_dict(req.upgrade_details),
+            model=req.model,
+            effort=req.effort,
+            batch_eligible=batch_eligible,
+            completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
+            slack_context=req.slack_context,
+        )
+        async with self._lock:
+            if task.depends_on:
+                missing = [dep for dep in task.depends_on if dep not in self._tasks]
+                if missing:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"depends_on references non-existent task(s): {', '.join(missing)}",
+                    )
+                cycle = self._detect_cycle(self._tasks, task)
+                if cycle is not None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Circular dependency detected: " + " -> ".join(cycle),
+                    )
+            self._tasks[task.id] = task
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+        return task
+
+    async def claim_next(self, role: str) -> Task | None:
+        """Claim the highest-priority open task for *role*.
+
+        Priority is ascending (1 = critical). Among equal priorities,
+        the first inserted task wins (dict insertion order).
+
+        Args:
+            role: Agent role to match.
+
+        Returns:
+            The claimed Task, or None if nothing is available.
+        """
+        async with self._lock:
+            pq = self._priority_queues.get((role, TaskStatus.OPEN))
+            if not pq:
+                return None
+            task: Task | None = None
+            while pq:
+                _priority, task_id = heapq.heappop(pq)
+                candidate = self._tasks.get(task_id)
+                if candidate is not None and candidate.status == TaskStatus.OPEN:
+                    task = candidate
+                    break
+            if task is None:
+                return None
+            self._index_remove(task)
+            task.status = TaskStatus.CLAIMED
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            return task
+
+    async def claim_by_id(
+        self,
+        task_id: str,
+        expected_version: int | None = None,
+        agent_role: str | None = None,
+    ) -> Task:
+        """Claim a specific task by ID with optional optimistic locking and role matching.
+
+        When ``expected_version`` is provided, the claim only succeeds if
+        the task's current version matches (compare-and-swap). This
+        prevents two nodes from claiming the same task in a distributed
+        cluster.
+
+        When ``agent_role`` is provided, the claim only succeeds if the
+        task's role matches the agent's role (role-locked claiming).
+
+        Args:
+            task_id: Task identifier.
+            expected_version: If set, CAS — reject if task.version != this.
+            agent_role: If set, reject if task.role != agent_role.
+
+        Returns:
+            The claimed Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+            ValueError: If expected_version doesn't match (CAS conflict) or
+                if agent_role doesn't match task role.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if expected_version is not None and task.version != expected_version:
+                raise ValueError(
+                    f"Version conflict: task {task_id} is at version {task.version}, expected {expected_version}"
+                )
+            if agent_role is not None and task.role != agent_role:
+                raise ValueError(
+                    f"role mismatch: task {task_id} requires role '{task.role}', agent has role '{agent_role}'"
+                )
+            if task.status == TaskStatus.OPEN:
+                self._index_remove(task)
+                task.status = TaskStatus.CLAIMED
+                task.version += 1
+                self._index_add(task)
+                await self._append_jsonl(self._task_to_record(task))
+            return task
+
+    async def claim_batch(
+        self,
+        task_ids: list[str],
+        agent_id: str,
+        agent_role: str | None = None,
+    ) -> tuple[list[str], list[str]]:
+        """Atomically claim multiple tasks by ID with optional role matching.
+
+        Tasks that are not in OPEN status are skipped and reported as failed.
+        If agent_role is provided, tasks with mismatched roles are also
+        reported as failed (not claimed).
+
+        Args:
+            task_ids: List of task identifiers to claim.
+            agent_id: The agent claiming the tasks.
+            agent_role: If set, only tasks with matching role can be claimed.
+
+        Returns:
+            A tuple of (claimed_ids, failed_ids).
+        """
+        claimed: list[str] = []
+        failed: list[str] = []
+        async with self._lock:
+            for task_id in task_ids:
+                task = self._tasks.get(task_id)
+                if task is None or task.status != TaskStatus.OPEN:
+                    failed.append(task_id)
+                    continue
+                if agent_role is not None and task.role != agent_role:
+                    failed.append(task_id)
+                    continue
+                self._index_remove(task)
+                task.status = TaskStatus.CLAIMED
+                task.assigned_agent = agent_id
+                task.version += 1
+                self._index_add(task)
+                await self._append_jsonl(self._task_to_record(task))
+                claimed.append(task_id)
+        return claimed, failed
+
+    async def complete(self, task_id: str, result_summary: str) -> Task:
+        """Mark a task as done.
+
+        Args:
+            task_id: Task identifier.
+            result_summary: Human-readable summary of what was done.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            self._index_remove(task)
+            task.status = TaskStatus.DONE
+            task.result_summary = result_summary
+            task.version += 1
+            self._index_add(task)
+            completed_at = time.time()
+            await self._append_jsonl(self._task_to_record(task))
+            await self._append_archive(task, completed_at)
+            return task
+
+    async def fail(self, task_id: str, reason: str) -> Task:
+        """Mark a task as failed.
+
+        Args:
+            task_id: Task identifier.
+            reason: Why it failed.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            self._index_remove(task)
+            task.status = TaskStatus.FAILED
+            task.result_summary = reason
+            task.version += 1
+            self._index_add(task)
+            completed_at = time.time()
+            await self._append_jsonl(self._task_to_record(task))
+            await self._append_archive(task, completed_at)
+            return task
+
+    async def block(self, task_id: str, reason: str) -> Task:
+        """Mark a task as blocked (requires human intervention).
+
+        Args:
+            task_id: Task identifier.
+            reason: Why the task is blocked.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            self._index_remove(task)
+            task.status = TaskStatus.BLOCKED
+            task.result_summary = reason
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
+            return task
+
+    async def add_progress(self, task_id: str, message: str, percent: int) -> Task:
+        """Append an intermediate progress update to a task.
+
+        Args:
+            task_id: Task identifier.
+            message: Human-readable progress message.
+            percent: Completion percentage (0-100).
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            entry: ProgressEntry = {"timestamp": time.time(), "message": message, "percent": percent}
+            progress: list[ProgressEntry] = cast("list[ProgressEntry]", task.progress_log)  # type: ignore[reportUnknownMemberType]
+            progress.append(entry)
+            return task
+
+    def add_snapshot(
+        self,
+        task_id: str,
+        files_changed: int,
+        tests_passing: int,
+        errors: int,
+        last_file: str,
+    ) -> ProgressSnapshot:
+        """Store a progress snapshot for a task (last 10 kept).
+
+        Args:
+            task_id: Task identifier.
+            files_changed: Number of files modified since agent start.
+            tests_passing: Number of tests currently passing (-1 = unknown).
+            errors: Number of active errors / compilation failures.
+            last_file: Last file the agent was editing.
+
+        Returns:
+            The new ProgressSnapshot.
+        """
+        snap = ProgressSnapshot(
+            timestamp=time.time(),
+            files_changed=files_changed,
+            tests_passing=tests_passing,
+            errors=errors,
+            last_file=last_file,
+        )
+        q = self._progress_snapshots.setdefault(task_id, deque(maxlen=10))
+        q.append(snap)
+        return snap
+
+    def get_snapshots(self, task_id: str) -> list[ProgressSnapshot]:
+        """Return stored progress snapshots for a task, oldest-first.
+
+        Args:
+            task_id: Task identifier.
+
+        Returns:
+            List of ProgressSnapshot objects (up to 10), oldest-first.
+        """
+        return list(self._progress_snapshots.get(task_id, deque()))
+
+    async def cancel(self, task_id: str, reason: str) -> Task:
+        """Cancel a task that has not yet finished.
+
+        Args:
+            task_id: Task identifier.
+            reason: Why it was cancelled.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+            ValueError: If the task is in a terminal state (done, failed, cancelled).
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status not in (TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
+                raise ValueError(f"Task '{task_id}' cannot be cancelled from status '{task.status.value}'")
+            self._index_remove(task)
+            task.status = TaskStatus.CANCELLED
+            task.result_summary = reason
+            task.version += 1
+            self._index_add(task)
+            completed_at = time.time()
+            await self._append_jsonl(self._task_to_record(task))
+            await self._append_archive(task, completed_at)
+            return task
+
+    async def update(
+        self,
+        task_id: str,
+        role: str | None,
+        priority: int | None,
+        model: str | None = None,
+    ) -> Task:
+        """Update mutable task fields (role, priority, model) — manager corrections.
+
+        Only open or failed tasks can be reassigned; claimed/in-progress tasks
+        are left to finish before the new assignment takes effect.
+
+        Args:
+            task_id: Task identifier.
+            role: New role if provided.
+            priority: New priority if provided.
+            model: New model hint if provided (e.g. "haiku", "sonnet", "opus").
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if role is not None and role != task.role:
+                # Role change requires re-indexing (role is part of secondary index key)
+                self._index_remove(task)
+                task.role = role
+                self._index_add(task)
+            if priority is not None:
+                task.priority = priority
+            if model is not None:
+                task.model = model
+            task.version += 1
+            await self._append_jsonl(self._task_to_record(task))
+            return task
+
+    async def prioritize(self, task_id: str) -> Task:
+        """Set a task's priority to 0 (highest) so it is claimed next.
+
+        Works on any non-terminal task (open, claimed, in_progress).
+
+        Args:
+            task_id: Task identifier.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            task.priority = 0
+            task.version += 1
+            await self._append_jsonl(self._task_to_record(task))
+            return task
+
+    async def force_claim(self, task_id: str) -> Task:
+        """Force a task back to open with priority 0 so it is claimed immediately.
+
+        If the task is already open its priority is set to 0 and it stays open.
+        If it is in a terminal state (done, failed, cancelled) it is returned
+        unchanged — only open/claimed/in_progress tasks can be force-claimed.
+
+        Args:
+            task_id: Task identifier.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+            ValueError: If the task is in a terminal state and cannot be re-queued.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            terminal = {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}
+            if task.status in terminal:
+                raise ValueError(
+                    f"Task '{task_id}' is in terminal state '{task.status.value}' and cannot be force-claimed"
+                )
+            if task.status != TaskStatus.OPEN:
+                # Reset claimed/in_progress back to open
+                self._index_remove(task)
+                task.status = TaskStatus.OPEN
+                self._index_add(task)
+            task.priority = 0
+            task.version += 1
+            await self._append_jsonl(self._task_to_record(task))
+            return task
+
+    def list_tasks(
+        self,
+        status: str | None = None,
+        cell_id: str | None = None,
+    ) -> list[Task]:
+        """Return all tasks, optionally filtered by status and/or cell_id.
+
+        When status='open', tasks whose dependencies are not all done are
+        excluded (they are not yet available for agents to pick up).
+
+        Args:
+            status: If provided, only tasks with this status are returned.
+            cell_id: If provided, only tasks in this cell are returned.
+
+        Returns:
+            List of matching tasks.
+        """
+        if status is not None:
+            try:
+                ts = TaskStatus(status)
+                tasks: list[Task] = list(self._by_status[ts].values())
+            except ValueError:
+                tasks = []
+        else:
+            tasks = list(self._tasks.values())
+        if cell_id is not None:
+            tasks = [t for t in tasks if t.cell_id == cell_id]
+        if status == "open":
+            done_ids = {t.id for t in self._by_status[TaskStatus.DONE].values()}
+            tasks = [t for t in tasks if all(dep in done_ids for dep in t.depends_on)]
+        return tasks
+
+    def get_task(self, task_id: str) -> Task | None:
+        """Look up a single task by id."""
+        return self._tasks.get(task_id)
+
+    # -- agents / heartbeats ------------------------------------------------
+
+    def heartbeat(self, agent_id: str, role: str, status: Literal["starting", "working", "idle", "dead"]) -> float:
+        """Record agent heartbeat.
+
+        Args:
+            agent_id: Unique agent identifier.
+            role: Agent's role.
+            status: Agent's self-reported status.
+
+        Returns:
+            Server timestamp of the heartbeat.
+        """
+        now = time.time()
+        if agent_id in self._agents:
+            self._agents[agent_id].heartbeat_ts = now
+            self._agents[agent_id].status = status
+        else:
+            self._agents[agent_id] = AgentSession(
+                id=agent_id,
+                role=role,
+                heartbeat_ts=now,
+                status=status,
+            )
+        return now
+
+    def stale_agents(self, threshold_s: float = 60.0) -> list[AgentSession]:
+        """Return agents whose last heartbeat is older than *threshold_s*."""
+        now = time.time()
+        return [a for a in self._agents.values() if now - a.heartbeat_ts > threshold_s]
+
+    def mark_stale_dead(self, threshold_s: float = 60.0) -> int:
+        """Mark agents with stale heartbeats as dead.
+
+        Returns:
+            Number of agents marked dead.
+        """
+        count = 0
+        for agent in self.stale_agents(threshold_s):
+            agent.status = "dead"
+            count += 1
+        return count
+
+    # -- status summary / cost tracking --------------------------------------
+
+    def _read_cost_by_role(self) -> dict[str, float]:
+        """Return cost_usd summed per role, using an mtime+offset-based cache.
+
+        The metrics JSONL is append-only, so when the file changes we only
+        read bytes beyond the last known offset.  This makes the hot path
+        O(new_lines) instead of O(all_lines).
+        """
+        if not self._metrics_jsonl_path.exists():
+            return dict(self._cost_cache)
+        stat = self._metrics_jsonl_path.stat()
+        mtime = stat.st_mtime
+        if mtime == self._cost_cache_mtime:
+            return dict(self._cost_cache)
+        file_size = stat.st_size
+        # Handle truncation: if offset is past end of file, reset.
+        if self._cost_cache_offset > file_size:
+            self._cost_cache_offset = 0
+            self._cost_cache = {}
+        with self._metrics_jsonl_path.open("rb") as fh:
+            fh.seek(self._cost_cache_offset)
+            new_bytes = fh.read()
+            new_offset = self._cost_cache_offset + len(new_bytes)
+        for raw_line in new_bytes.decode(errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                record_data: dict[str, Any] = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            role = record_data.get("role", "")
+            cost = record_data.get("cost_usd")
+            if role and isinstance(cost, (int, float)):
+                self._cost_cache[role] = self._cost_cache.get(role, 0.0) + float(cost)
+        self._cost_cache_offset = new_offset
+        self._cost_cache_mtime = mtime
+        return dict(self._cost_cache)
+
+    @property
+    def agents(self) -> dict[str, AgentSession]:
+        """All known agent sessions."""
+        return self._agents
+
+    @property
+    def agent_count(self) -> int:
+        """Number of known agents."""
+        return len(self._agents)
+
+    def cost_by_role(self) -> dict[str, float]:
+        """Return cost_usd summed per role (public accessor)."""
+        return self._read_cost_by_role()
+
+    @property
+    def start_ts(self) -> float:
+        """Server start timestamp."""
+        return self._start_ts
+
+    @property
+    def metrics_jsonl_path(self) -> Path:
+        """Path to the metrics JSONL file (for dashboard cost history)."""
+        return self._metrics_jsonl_path

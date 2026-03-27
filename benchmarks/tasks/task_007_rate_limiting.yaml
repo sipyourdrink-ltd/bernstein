@@ -1,0 +1,45 @@
+id: task-007
+name: "Add rate limiting + tests"
+description: >
+  Implement sliding-window rate limiting with Redis. Integrate into the
+  middleware chain, add per-route configuration, expose rate-limit headers,
+  and cover with both unit and integration tests.
+category: feature
+parallelizable: true
+
+subtasks:
+  - id: t007-a
+    role: backend
+    description: "Implement RateLimiter class with Redis sliding window"
+    estimated_minutes: 15
+    depends_on: []
+
+  - id: t007-b
+    role: backend
+    description: "Integrate RateLimiter into the Flask middleware chain"
+    estimated_minutes: 10
+    depends_on: [t007-a]
+
+  - id: t007-c
+    role: backend
+    description: "Add per-route rate limit configuration via decorator"
+    estimated_minutes: 8
+    depends_on: [t007-b]
+
+  - id: t007-d
+    role: backend
+    description: "Add X-RateLimit-* response headers"
+    estimated_minutes: 6
+    depends_on: [t007-b]
+
+  - id: t007-e
+    role: qa
+    description: "Write unit tests for RateLimiter class (with Redis mock)"
+    estimated_minutes: 12
+    depends_on: [t007-a]
+
+  - id: t007-f
+    role: qa
+    description: "Write integration tests for rate limiting end-to-end"
+    estimated_minutes: 10
+    depends_on: [t007-c, t007-d]

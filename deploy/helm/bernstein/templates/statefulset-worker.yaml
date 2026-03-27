@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "bernstein.fullname" . }}-worker
+  labels:
+    {{- include "bernstein.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  serviceName: {{ include "bernstein.fullname" . }}-worker
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bernstein.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "bernstein.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - "python"
+            - "-m"
+            - "bernstein.core.orchestrator"
+          envFrom:
+            - configMapRef:
+                name: {{ include "bernstein.fullname" . }}-config
+          env:
+            - name: BERNSTEIN_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.authSecretName" . }}
+                  key: {{ .Values.auth.secretKey }}
+            {{- if .Values.providerKeys.existingSecret }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.providerKeysSecretName" . }}
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.providerKeysSecretName" . }}
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.providerKeysSecretName" . }}
+                  key: GOOGLE_API_KEY
+                  optional: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: worker-state
+              mountPath: /workspace/.sdd/worker
+      {{- if not .Values.worker.persistence.enabled }}
+      volumes:
+        - name: worker-state
+          emptyDir: {}
+      {{- end }}
+  {{- if .Values.worker.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: worker-state
+      spec:
+        accessModes:
+          - {{ .Values.worker.persistence.accessMode }}
+        resources:
+          requests:
+            storage: {{ .Values.worker.persistence.size }}
+        {{- if .Values.worker.persistence.storageClass }}
+        storageClassName: {{ .Values.worker.persistence.storageClass }}
+        {{- end }}
+  {{- end }}

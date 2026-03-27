@@ -1,0 +1,38 @@
+id: task-004
+name: "Fix 5 linting violations"
+description: >
+  Resolve five Ruff/flake8 violations spread across different modules.
+  Each fix is independent of the others.
+category: maintenance
+parallelizable: true
+
+subtasks:
+  - id: t004-a
+    role: backend
+    description: "Fix E501 line-length violation in api/users.py"
+    estimated_minutes: 4
+    depends_on: []
+
+  - id: t004-b
+    role: backend
+    description: "Fix F401 unused import in services/auth.py"
+    estimated_minutes: 4
+    depends_on: []
+
+  - id: t004-c
+    role: backend
+    description: "Fix B006 mutable default argument in models/user.py"
+    estimated_minutes: 4
+    depends_on: []
+
+  - id: t004-d
+    role: backend
+    description: "Fix ANN001 missing type annotation in utils/pagination.py"
+    estimated_minutes: 4
+    depends_on: []
+
+  - id: t004-e
+    role: backend
+    description: "Fix SIM118 dict.keys() in loop in core/router.py"
+    estimated_minutes: 4
+    depends_on: []

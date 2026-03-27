@@ -1,0 +1,14 @@
+{
+  "scenario_name": "bernstein-sonnet",
+  "total_instances": 300,
+  "resolved": 117,
+  "failed": 183,
+  "errors": 0,
+  "skipped": 0,
+  "resolve_rate": 0.39,
+  "mean_wall_time_s": 196.8328517156132,
+  "median_wall_time_s": 196.05236958703438,
+  "total_cost_usd": 126.44045155316546,
+  "mean_cost_per_instance_usd": 0.42146817184388485,
+  "mean_tokens_per_instance": 28108.363333333335
+}

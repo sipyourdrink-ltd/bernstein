@@ -1,0 +1,37 @@
+# Prometheus Adapter values for converting Bernstein metrics to Kubernetes custom metrics.
+# This configuration enables HPA scaling based on task queue depth.
+#
+# Install with:
+#   helm install prometheus-adapter prometheus-community/prometheus-adapter \
+#     --namespace monitoring \
+#     -f deploy/helm/prometheus-adapter-values.yaml
+
+# Point to your Prometheus instance
+prometheus:
+  url: http://prometheus-kube-prometheus-prometheus.monitoring.svc
+  port: 9090
+
+# Custom metrics rules — convert Prometheus metrics to Kubernetes custom metrics
+rules:
+  custom:
+    # Queue depth metric for HPA scaling
+    - seriesQuery: 'bernstein_task_queue_depth'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "^bernstein_task_(.+)"
+        as: "bernstein_task_${1}"
+      metricsQuery: '<<.Series>>{<<.LabelMatchers>>}'
+
+# Ensure the adapter can discover services in all namespaces
+rbac:
+  create: true
+
+# Recommended: use HTTPS to Prometheus
+# prometheus:
+#   url: https://prometheus-kube-prometheus-prometheus.monitoring.svc
+#   tls:
+#     enabled: true
+#     insecureSkipVerify: false

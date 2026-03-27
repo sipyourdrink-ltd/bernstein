@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*
+
+# IDE / AI tooling
+.DS_Store
+.idea/
+.vscode/
+.claude/
+*.swp
+
+# Bernstein workspace state (bootstrapped on first run)
+.sdd/
+
+# Proprietary: agent role prompts, design specs, development plans
+templates/roles/
+docs/specs/
+docs/plans/
+
+# Cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Coverage
+.coverage
+
+# Git worktrees
+.worktrees/
+
+# Other
+node_modules/
+*.pid
+*.log
+docs/social/
+docs/content-calendar.md

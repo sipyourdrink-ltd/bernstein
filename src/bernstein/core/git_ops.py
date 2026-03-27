@@ -1,0 +1,102 @@
+"""Centralized git write operations for Bernstein.
+
+Single source of truth for all git mutations — commit, push, merge, revert,
+worktree lifecycle, and staging.  Every other module delegates here instead of
+calling ``subprocess.run(["git", ...])`` directly.
+
+This module acts as a facade, re-exporting functionality from:
+- git_basic: Core git operations (run, status, staging, commits)
+- git_pr: Pull requests, branching, and worktree management
+"""
+
+from bernstein.core.git_basic import (
+    GitResult,
+    checkout_discard,
+    commit,
+    conventional_commit,
+    create_tag,
+    diff_cached,
+    diff_cached_names,
+    diff_cached_stat,
+    diff_head,
+    fetch,
+    is_git_repo,
+    list_tags,
+    rev_parse_head,
+    revert_commit,
+    run_git,
+    safe_push,
+    stage_all_except,
+    stage_files,
+    stage_task_files,
+    status_porcelain,
+    tag,
+    unstage_paths,
+    version_from_commits,
+)
+from bernstein.core.git_pr import (
+    MergeResult,
+    PullRequestResult,
+    _parse_conflict_files,
+    apply_diff,
+    bisect_regression,
+    branch_delete,
+    create_branch,
+    create_github_pr,
+    create_task_branch,
+    delete_old_branches,
+    enable_pr_auto_merge,
+    merge_branch,
+    merge_with_conflict_detection,
+    push_branch,
+    push_head_as,
+    worktree_add,
+    worktree_list,
+    worktree_remove,
+)
+
+__all__ = [
+    # git_basic
+    "GitResult",
+    # git_pr
+    "MergeResult",
+    "PullRequestResult",
+    "_parse_conflict_files",
+    "apply_diff",
+    "bisect_regression",
+    "branch_delete",
+    "checkout_discard",
+    "commit",
+    "conventional_commit",
+    "create_branch",
+    "create_github_pr",
+    "create_tag",
+    "create_task_branch",
+    "delete_old_branches",
+    "diff_cached",
+    "diff_cached_names",
+    "diff_cached_stat",
+    "diff_head",
+    "enable_pr_auto_merge",
+    "fetch",
+    "is_git_repo",
+    "list_tags",
+    "merge_branch",
+    "merge_with_conflict_detection",
+    "push_branch",
+    "push_head_as",
+    "rev_parse_head",
+    "revert_commit",
+    "run_git",
+    "safe_push",
+    "stage_all_except",
+    "stage_files",
+    "stage_task_files",
+    "status_porcelain",
+    "tag",
+    "unstage_paths",
+    "version_from_commits",
+    "worktree_add",
+    "worktree_list",
+    "worktree_remove",
+]

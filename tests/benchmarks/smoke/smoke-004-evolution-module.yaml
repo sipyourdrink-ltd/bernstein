@@ -1,0 +1,11 @@
+id: smoke-004
+goal: "Evolution module loads without errors"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.evolution
+  - type: import_succeeds
+    module: bernstein.evolution.detector
+  - type: import_succeeds
+    module: bernstein.evolution.proposals
+max_cost_usd: 0.0
+max_duration_seconds: 10

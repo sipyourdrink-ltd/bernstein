@@ -1,0 +1,14 @@
+{
+  "scenario_name": "bernstein-mixed",
+  "total_instances": 300,
+  "resolved": 112,
+  "failed": 188,
+  "errors": 0,
+  "skipped": 0,
+  "resolve_rate": 0.37333333333333335,
+  "mean_wall_time_s": 176.60374525116154,
+  "median_wall_time_s": 175.9208233886551,
+  "total_cost_usd": 48.18352148048561,
+  "mean_cost_per_instance_usd": 0.16061173826828537,
+  "mean_tokens_per_instance": 22086.633333333335
+}

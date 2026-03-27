@@ -1,0 +1,86 @@
+# Bernstein — Kubernetes Service Manifests
+# Standalone (non-Helm) service definitions for multi-instance deployments.
+# For Helm-managed deployments, see deploy/helm/bernstein/templates/service.yaml.
+#
+# Apply with:
+#   kubectl apply -f templates/service.yaml -n bernstein
+
+---
+# Task Server ClusterIP service — primary entry point for workers and orchestrators
+apiVersion: v1
+kind: Service
+metadata:
+  name: bernstein-server
+  namespace: default
+  labels:
+    app: bernstein
+    component: server
+  annotations:
+    # Istio — opt-in to service mesh traffic management
+    # Uncomment if Istio is installed:
+    # service.istio.io/canonical-name: bernstein-server
+    # service.istio.io/canonical-revision: latest
+
+    # Linkerd — opt-in annotation
+    # Uncomment if Linkerd is installed:
+    # linkerd.io/inject: enabled
+spec:
+  type: ClusterIP
+  selector:
+    app: bernstein
+    component: server
+  ports:
+    - name: http
+      port: 8052
+      targetPort: 8052
+      protocol: TCP
+
+---
+# Headless service for worker StatefulSet — enables stable DNS per worker pod.
+# Workers are accessible at:
+#   bernstein-worker-0.bernstein-workers.bernstein.svc.cluster.local:8052
+# This is used by the orchestrator for direct pod addressing when needed.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bernstein-workers
+  namespace: default
+  labels:
+    app: bernstein
+    component: worker
+spec:
+  clusterIP: None  # headless — no VIP, DNS returns pod IPs directly
+  selector:
+    app: bernstein
+    component: worker
+  ports:
+    - name: http
+      port: 8052
+      targetPort: 8052
+      protocol: TCP
+
+---
+# Metrics service — exposes /metrics endpoint for Prometheus scraping.
+# Separate service allows finer-grained NetworkPolicy and ServiceMonitor config.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bernstein-metrics
+  namespace: default
+  labels:
+    app: bernstein
+    component: server
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8052"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: bernstein
+    component: server
+  ports:
+    - name: metrics
+      port: 8052
+      targetPort: 8052
+      protocol: TCP

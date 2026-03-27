@@ -1,0 +1,7 @@
+id: stretch-002
+goal: "Multiple agents work concurrently on independent tasks without conflicts"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.multi_cell
+max_cost_usd: 0.10
+max_duration_seconds: 600

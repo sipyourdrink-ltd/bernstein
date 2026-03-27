@@ -1,0 +1,10 @@
+id: cap-001
+goal: "Router selects appropriate model based on task complexity"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.router
+  - type: import_succeeds
+    module: bernstein.core.router
+    attribute: route_task
+max_cost_usd: 0.0
+max_duration_seconds: 15

@@ -1,0 +1,44 @@
+id: task-005
+name: "Add error handling to all endpoints"
+description: >
+  Add consistent error handling (try/except, proper HTTP status codes, JSON
+  error bodies) to five existing endpoints. Verify with a QA pass afterward.
+category: reliability
+parallelizable: true
+
+subtasks:
+  - id: t005-a
+    role: backend
+    description: "Add error handling to GET /users (400/500, JSON body)"
+    estimated_minutes: 6
+    depends_on: []
+
+  - id: t005-b
+    role: backend
+    description: "Add error handling to POST /users (422 validation errors)"
+    estimated_minutes: 6
+    depends_on: []
+
+  - id: t005-c
+    role: backend
+    description: "Add error handling to DELETE /users/{id} (404 not found)"
+    estimated_minutes: 6
+    depends_on: []
+
+  - id: t005-d
+    role: backend
+    description: "Add error handling to GET /posts (500 with correlation ID)"
+    estimated_minutes: 6
+    depends_on: []
+
+  - id: t005-e
+    role: backend
+    description: "Add error handling to POST /posts (400/422)"
+    estimated_minutes: 6
+    depends_on: []
+
+  - id: t005-f
+    role: qa
+    description: "Verify all error responses match the error schema"
+    estimated_minutes: 10
+    depends_on: [t005-a, t005-b, t005-c, t005-d, t005-e]

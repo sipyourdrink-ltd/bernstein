@@ -1,0 +1,7 @@
+id: cap-004
+goal: "Metrics are recorded to .sdd/metrics/ in JSONL format"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.metrics
+max_cost_usd: 0.0
+max_duration_seconds: 15

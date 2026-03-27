@@ -1,0 +1,7 @@
+id: stretch-003
+goal: "System proposes and applies a valid code improvement to itself"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.upgrade_executor
+max_cost_usd: 0.20
+max_duration_seconds: 600

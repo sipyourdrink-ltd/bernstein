@@ -1,0 +1,17 @@
+{{- if .Values.server.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "bernstein.fullname" . }}-server-sdd
+  labels:
+    {{- include "bernstein.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.server.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.server.persistence.size }}
+  {{- if .Values.server.persistence.storageClass }}
+  storageClassName: {{ .Values.server.persistence.storageClass }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,14 @@
+{
+  "scenario_name": "solo-sonnet",
+  "total_instances": 300,
+  "resolved": 73,
+  "failed": 227,
+  "errors": 0,
+  "skipped": 0,
+  "resolve_rate": 0.24333333333333335,
+  "mean_wall_time_s": 95.9164258578066,
+  "median_wall_time_s": 95.52618479351719,
+  "total_cost_usd": 42.20265217006056,
+  "mean_cost_per_instance_usd": 0.1406755072335352,
+  "mean_tokens_per_instance": 9543.056666666667
+}

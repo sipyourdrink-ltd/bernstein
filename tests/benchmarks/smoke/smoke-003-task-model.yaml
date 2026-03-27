@@ -1,0 +1,14 @@
+id: smoke-003
+goal: "Task dataclass can be instantiated with required fields"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.models
+    attribute: Task
+  - type: import_succeeds
+    module: bernstein.core.models
+    attribute: Scope
+  - type: import_succeeds
+    module: bernstein.core.models
+    attribute: Complexity
+max_cost_usd: 0.0
+max_duration_seconds: 10

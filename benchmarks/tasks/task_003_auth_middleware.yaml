@@ -1,0 +1,45 @@
+id: task-003
+name: "Add auth middleware + tests + docs"
+description: >
+  Add JWT-based authentication middleware to protect existing endpoints.
+  Include token issuance, validation, refresh logic, integration tests,
+  and API documentation updates.
+category: feature
+parallelizable: true
+
+subtasks:
+  - id: t003-a
+    role: backend
+    description: "Implement JWT validation middleware (PyJWT, Bearer header)"
+    estimated_minutes: 15
+    depends_on: []
+
+  - id: t003-b
+    role: backend
+    description: "Add /auth/token and /auth/refresh endpoints"
+    estimated_minutes: 12
+    depends_on: [t003-a]
+
+  - id: t003-c
+    role: backend
+    description: "Apply @require_auth decorator to all resource endpoints"
+    estimated_minutes: 10
+    depends_on: [t003-a]
+
+  - id: t003-d
+    role: qa
+    description: "Write unit tests for JWT validation and token refresh"
+    estimated_minutes: 12
+    depends_on: [t003-b]
+
+  - id: t003-e
+    role: qa
+    description: "Write integration tests covering protected routes"
+    estimated_minutes: 10
+    depends_on: [t003-b, t003-c]
+
+  - id: t003-f
+    role: docs
+    description: "Document auth flow and add OpenAPI security schemes"
+    estimated_minutes: 8
+    depends_on: [t003-b]

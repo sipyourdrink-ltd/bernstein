@@ -1,0 +1,45 @@
+id: task-002
+name: "Refactor module into clean architecture"
+description: >
+  Break up a monolithic users.py module into a clean layered architecture:
+  repository (data access), service (business logic), and API (HTTP layer).
+  Update all tests accordingly.
+category: refactor
+parallelizable: true
+
+subtasks:
+  - id: t002-a
+    role: backend
+    description: "Extract UserRepository protocol and in-memory implementation"
+    estimated_minutes: 12
+    depends_on: []
+
+  - id: t002-b
+    role: backend
+    description: "Implement UserRepository backed by SQLAlchemy"
+    estimated_minutes: 15
+    depends_on: [t002-a]
+
+  - id: t002-c
+    role: backend
+    description: "Implement UserService with business logic"
+    estimated_minutes: 15
+    depends_on: [t002-a]
+
+  - id: t002-d
+    role: backend
+    description: "Wire dependency injection in app factory"
+    estimated_minutes: 10
+    depends_on: [t002-b, t002-c]
+
+  - id: t002-e
+    role: qa
+    description: "Update and expand unit tests for new layers"
+    estimated_minutes: 12
+    depends_on: [t002-d]
+
+  - id: t002-f
+    role: docs
+    description: "Update architecture docs and module docstrings"
+    estimated_minutes: 8
+    depends_on: [t002-a]

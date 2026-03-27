@@ -1,0 +1,7 @@
+id: cap-009
+goal: "Invariant checker validates system state integrity"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.evolution.invariants
+max_cost_usd: 0.0
+max_duration_seconds: 15

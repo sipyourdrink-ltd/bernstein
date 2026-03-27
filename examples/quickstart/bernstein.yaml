@@ -1,0 +1,10 @@
+goal: "Add input validation, error handling, and tests to the TODO API"
+
+cli: auto
+team: [backend, qa]
+budget: "$5"
+
+constraints:
+  - "Python 3.12+ with Flask"
+  - "pytest for all tests"
+  - "Return proper HTTP status codes for errors"

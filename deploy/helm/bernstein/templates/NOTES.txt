@@ -1,0 +1,38 @@
+1. Get the Bernstein task server endpoint:
+  {{- if .Values.ingress.enabled }}
+  export BERNSTEIN_HOST=$(kubectl get ingress {{ include "bernstein.fullname" . }} -o jsonpath='.status.loadBalancer.ingress[0].hostname')
+  export BERNSTEIN_URL=http://$BERNSTEIN_HOST{{ .Values.ingress.hosts[0].paths[0].path }}
+  {{- else }}
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "bernstein.fullname" . }} 8052:{{ .Values.server.service.port }}
+  export BERNSTEIN_URL=http://127.0.0.1:8052
+  {{- end }}
+
+2. Check the server status:
+  curl -s $BERNSTEIN_URL/status | jq .
+
+3. Create a task:
+  curl -X POST $BERNSTEIN_URL/tasks \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $(kubectl get secret -n {{ .Release.Namespace }} {{ include "bernstein.fullname" . }}-auth -o jsonpath='.data.auth-token' | base64 -d)" \
+    -d '{
+      "goal": "Your goal here",
+      "model": "claude-opus-4.5",
+      "effort": "medium"
+    }'
+
+4. View task server logs:
+  kubectl logs -n {{ .Release.Namespace }} -l app={{ include "bernstein.name" . }},component=server --tail=100 -f
+
+5. View orchestrator logs:
+  kubectl logs -n {{ .Release.Namespace }} -l app={{ include "bernstein.name" . }},component=orchestrator --tail=100 -f
+
+6. View worker logs:
+  kubectl logs -n {{ .Release.Namespace }} -l app={{ include "bernstein.name" . }},component=worker --tail=100 -f
+
+{{- if .Values.prometheus.enabled }}
+7. Prometheus metrics are exposed on :9090/metrics for each component.
+{{- end }}
+
+Learn more at: https://github.com/anthropics/bernstein
+
+For configuration details, see values.yaml inline documentation.

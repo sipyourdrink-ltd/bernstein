@@ -1,0 +1,38 @@
+id: task-006
+name: "Write integration test suite"
+description: >
+  Build a comprehensive integration test suite covering user CRUD flows,
+  auth flows, rate limiting, and error conditions. Includes shared fixtures.
+category: testing
+parallelizable: true
+
+subtasks:
+  - id: t006-a
+    role: qa
+    description: "Create conftest.py with test fixtures (DB, test client, seed data)"
+    estimated_minutes: 15
+    depends_on: []
+
+  - id: t006-b
+    role: qa
+    description: "Write user CRUD integration tests (create, read, update, delete)"
+    estimated_minutes: 12
+    depends_on: [t006-a]
+
+  - id: t006-c
+    role: qa
+    description: "Write auth flow integration tests (login, refresh, logout)"
+    estimated_minutes: 12
+    depends_on: [t006-a]
+
+  - id: t006-d
+    role: qa
+    description: "Write rate limiting behavior tests"
+    estimated_minutes: 10
+    depends_on: [t006-a]
+
+  - id: t006-e
+    role: qa
+    description: "Write error condition tests (invalid input, missing auth, 404s)"
+    estimated_minutes: 8
+    depends_on: [t006-a]

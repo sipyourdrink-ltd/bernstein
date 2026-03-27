@@ -1,0 +1,2304 @@
+"""Orchestrator loop: watch tasks, spawn agents, verify completion, repeat.
+
+The orchestrator is DETERMINISTIC CODE, not an LLM. It matches tasks to agents
+via the spawner and verifies completion via the janitor. See ADR-001.
+
+This module is the public facade. Heavy lifting lives in:
+- tick_pipeline.py   — task fetching, batching, server interaction, TypedDicts
+- task_lifecycle.py  — claim/spawn, completion processing, retry/decompose
+- agent_lifecycle.py — agent tracking, heartbeat, crash detection, reaping
+"""
+
+from __future__ import annotations
+
+import concurrent.futures
+import contextlib
+import json
+import logging
+import os
+import re
+import signal
+import time
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, ClassVar
+
+import httpx
+
+from bernstein.core.agent_lifecycle import (
+    check_kill_signals,
+    check_stale_agents,
+    check_stalled_tasks,
+    reap_dead_agents,
+    recycle_idle_agents,
+    refresh_agent_states,
+    send_shutdown_signals,
+)
+from bernstein.core.agent_signals import AgentSignalManager
+from bernstein.core.approval import ApprovalGate, ApprovalMode
+from bernstein.core.bulletin import BulletinBoard, BulletinMessage
+from bernstein.core.cluster import NodeHeartbeatClient
+from bernstein.core.context import refresh_knowledge_base
+from bernstein.core.cost_tracker import CostTracker
+from bernstein.core.evolution import EvolutionCoordinator, UpgradeStatus
+from bernstein.core.fast_path import (
+    FastPathStats,
+    load_fast_path_config,
+)
+from bernstein.core.file_locks import FileLockManager
+from bernstein.core.graph import TaskGraph
+from bernstein.core.merge_queue import MergeQueue
+from bernstein.core.metrics import get_collector
+from bernstein.core.models import (
+    AgentSession,
+    ClusterConfig,
+    ClusterTopology,
+    NodeCapacity,
+    OrchestratorConfig,
+    ProgressSnapshot,
+    Task,
+    TaskType,
+)
+from bernstein.core.notifications import NotificationManager, NotificationPayload
+from bernstein.core.quarantine import QuarantineStore
+from bernstein.core.rate_limit_tracker import RateLimitTracker
+from bernstein.core.recorder import RunRecorder
+from bernstein.core.retrospective import generate_retrospective
+from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
+from bernstein.core.signals import read_unresolved_pivots
+from bernstein.core.task_lifecycle import (
+    auto_decompose_task,
+    claim_and_spawn_batches,
+    collect_completion_data,
+    maybe_retry_task,
+    process_completed_tasks,
+    retry_or_fail_task,
+    should_auto_decompose,
+)
+from bernstein.core.tick_pipeline import (
+    CompletionData,
+    RuffViolation,
+    TestResults,
+    block_task,
+    complete_task,
+    fail_task,
+    fetch_all_tasks,
+    group_by_role,
+    parse_backlog_file,
+)
+from bernstein.core.tick_pipeline import (
+    compute_total_spent as compute_total_spent,
+)
+from bernstein.core.tick_pipeline import (
+    total_spent_cache as total_spent_cache,
+)
+from bernstein.core.token_monitor import check_token_growth
+from bernstein.evolution.governance import AdaptiveGovernor, GovernanceEntry, ProjectContext
+from bernstein.evolution.risk import RiskScorer
+
+# Preserve underscore-prefixed aliases so existing test imports keep working
+_compute_total_spent = compute_total_spent
+_total_spent_cache = total_spent_cache
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
+
+    from bernstein.core.quality_gates import QualityGatesConfig
+    from bernstein.core.spawner import AgentSpawner
+    from bernstein.evolution.loop import EvolutionLoop
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases so external code that does
+#   from bernstein.core.orchestrator import _fail_task, _complete_task, ...
+# continues to work.
+# ---------------------------------------------------------------------------
+_task_from_dict: Callable[[dict[str, Any]], Task] = lambda raw: Task.from_dict(raw)  # noqa: E731
+_fetch_all_tasks = fetch_all_tasks
+_fail_task = fail_task
+_block_task = block_task
+_complete_task = complete_task
+_parse_backlog_file = parse_backlog_file
+
+
+class Orchestrator:
+    """The main loop: watch tasks, spawn agents, verify completion, repeat.
+
+    The orchestrator is a deterministic scheduler. It never calls an LLM
+    directly. It polls the task server, groups work into batches, spawns
+    short-lived agents via the spawner, and verifies done tasks via the
+    janitor.
+
+    Args:
+        config: Orchestrator tuning knobs.
+        spawner: Agent spawner (owns the CLI adapter).
+        workdir: Project working directory for janitor verification.
+        client: httpx client for server communication (injectable for testing).
+    """
+
+    _SPAWN_BACKOFF_BASE_S: float = 30.0  # base backoff; actual = base * 2^failures
+    _SPAWN_BACKOFF_MAX_S: float = 300.0  # ceiling for exponential backoff
+    _MAX_SPAWN_FAILURES: int = 3  # consecutive failures before marking tasks failed
+    _MAX_DEAD_AGENTS_KEPT: int = 20  # purge oldest dead agents beyond this
+    _MAX_PROCESSED_DONE: int = 500  # cap _processed_done_tasks set size
+    _MANAGER_REVIEW_COMPLETION_THRESHOLD: int = 3  # trigger review after this many completions
+    _MANAGER_REVIEW_STALL_S: float = 300.0  # trigger review after 5 min of no progress
+
+    def __init__(
+        self,
+        config: OrchestratorConfig,
+        spawner: AgentSpawner,
+        workdir: Path,
+        client: httpx.Client | None = None,
+        evolution: EvolutionCoordinator | None = None,
+        router: TierAwareRouter | None = None,
+        bulletin: BulletinBoard | None = None,
+        cluster_config: ClusterConfig | None = None,
+        notifier: NotificationManager | None = None,
+        quality_gate_config: QualityGatesConfig | None = None,
+    ) -> None:
+        self._config = config
+        self._spawner = spawner
+        self._workdir = workdir
+        self._bulletin: BulletinBoard | None = bulletin
+        self._notifier: NotificationManager | None = notifier
+        self._cluster_config = cluster_config
+        self._quality_gate_config: QualityGatesConfig | None = quality_gate_config
+        _headers: dict[str, str] = {}
+        if config.auth_token:
+            _headers["Authorization"] = f"Bearer {config.auth_token}"
+        self._client = client or httpx.Client(
+            timeout=10.0,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+            headers=_headers,
+        )
+        self._agents: dict[str, AgentSession] = {}
+        self._lock_manager = FileLockManager(workdir)
+        self._file_ownership: dict[str, str] = {}  # filepath -> agent_id (legacy alias; use _lock_manager)
+        self._task_to_session: dict[str, str] = {}  # task_id -> agent_id (reverse index)
+        self._processed_done_tasks: set[str] = set()  # avoid re-processing done tasks
+        self._retried_task_ids: set[str] = set()  # tasks that already have a retry queued
+        self._decomposed_task_ids: set[str] = set()  # large tasks queued for decomposition
+        # Crash recovery: per-task crash count and preserved worktrees for resume
+        self._crash_counts: dict[str, int] = {}  # task_id -> crash count
+        self._preserved_worktrees: dict[str, Path] = {}  # task_id -> worktree to reuse
+        self._running = False
+        self._tick_count = 0
+        # Track spawn failures per batch for backoff: task_ids -> (fail_count, last_fail_ts)
+        self._spawn_failures: dict[frozenset[str], tuple[int, float]] = {}
+        # Track last backlog replenishment timestamp
+        self._last_replenish_ts: float = 0.0
+        # Run completion summary state
+        self._summary_written: bool = False
+        self._run_start_ts: float = time.time()
+        # Background thread pool for non-blocking ruff/pytest runs
+        self._executor: concurrent.futures.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        self._pending_ruff_future: concurrent.futures.Future[list[RuffViolation]] | None = None
+        self._pending_test_future: concurrent.futures.Future[TestResults] | None = None
+
+        # Provider-aware routing and health tracking
+        self._router = router
+        if self._router is not None and not self._router.state.providers:
+            providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
+            if providers_yaml.exists():
+                load_providers_from_yaml(providers_yaml, self._router)
+
+        # Rate-limit-aware scheduling: tracks per-provider throttle state.
+        self._rate_limit_tracker = RateLimitTracker()
+
+        # Self-evolution feedback loop
+        if config.evolution_enabled:
+            self._evolution = evolution or EvolutionCoordinator(
+                state_dir=workdir / ".sdd",
+            )
+        else:
+            self._evolution: EvolutionCoordinator | None = None
+
+        # Adaptive governance: adjusts metric weights each evolution cycle.
+        # Always initialize the governor — it's lightweight and evolve mode
+        # can be activated at runtime via evolve.json even if not in config.
+        self._governor = AdaptiveGovernor(state_dir=workdir / ".sdd")
+
+        # Strategic Risk Scorer: scores proposals before routing
+        self._risk_scorer = RiskScorer()
+        self._last_cycle_risk_scores: list[float] = []
+
+        # Pre-initialize the global metrics collector with the correct path so
+        # subsequent calls to get_collector() (without args) write to the right
+        # directory regardless of cwd at call time.
+        get_collector(workdir / ".sdd" / "metrics")
+
+        # Fast-path: deterministic execution for trivial tasks (L0).
+        # Load patterns from routing.yaml so the YAML config is authoritative.
+        routing_yaml = workdir / ".sdd" / "config" / "routing.yaml"
+        if routing_yaml.exists():
+            load_fast_path_config(routing_yaml)
+        self._fast_path_stats = FastPathStats()
+
+        # Cross-run task quarantine: skip repeatedly-failing tasks
+        self._quarantine = QuarantineStore(workdir / ".sdd" / "runtime" / "quarantine.json")
+
+        # Adaptive polling backoff: multiplied by 2 each idle tick, reset on work.
+        self._idle_multiplier: int = 1
+
+        # Per-run cost budget tracker.  When budget_usd > 0 the tracker
+        # emits warnings at 80%/95% and blocks spawns at 100%.
+        run_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        self._run_id = run_id
+        self._cost_tracker = CostTracker(
+            run_id=run_id,
+            budget_usd=config.budget_usd,
+        )
+
+        # Deterministic replay recorder: appends events to
+        # .sdd/runs/{run_id}/replay.jsonl for post-hoc debugging.
+        self._recorder = RunRecorder(run_id=run_id, sdd_dir=workdir / ".sdd")
+
+        # Approval gate: controls whether verified work is merged directly,
+        # held for interactive review, or pushed as a GitHub PR.
+        # merge_strategy="pr" activates PR mode by default; "direct" forces auto.
+        # An explicit approval override ("review" or "pr") takes precedence.
+        if config.approval != "auto":
+            _effective_approval = config.approval
+        elif config.merge_strategy == "direct":
+            _effective_approval = "auto"
+        else:
+            # merge_strategy="pr" (default) -> PR mode
+            _effective_approval = "pr"
+        _approval_mode = ApprovalMode(_effective_approval)
+        self._approval_gate: ApprovalGate | None = (
+            ApprovalGate(
+                mode=_approval_mode,
+                workdir=workdir,
+                auto_merge=config.auto_merge,
+                pr_labels=config.pr_labels,
+            )
+            if _approval_mode != ApprovalMode.AUTO
+            else None
+        )
+
+        # Manager queue review: trigger after N completions/failures or stall.
+        self._completions_since_review: int = 0
+        self._failures_since_review: int = 0
+        self._last_review_ts: float = 0.0
+
+        # Hot-reload: track source file mtimes so the orchestrator can
+        # detect when agents modify its own code and restart in-place.
+        self._source_mtime: float = time.time()
+
+        # Agent signal manager: writes WAKEUP/SHUTDOWN files into
+        # .sdd/runtime/signals/{session_id}/ for stale agent detection.
+        self._signal_mgr = AgentSignalManager(self._workdir)
+
+        # FIFO merge queue: serializes branch merges so only one runs at a time.
+        # Conflict resolution tasks are created by process_completed_tasks when
+        # a MergeResult reports conflicting_files.
+        self._merge_queue = MergeQueue()
+
+        # Progress-snapshot stall detection state (see check_stalled_tasks).
+        # Tracks how many consecutive identical snapshots each task has had.
+        self._stall_counts: dict[str, int] = {}  # task_id -> consecutive identical count
+        self._last_snapshot: dict[str, ProgressSnapshot | None] = {}  # task_id -> last snapshot
+        self._last_snapshot_ts: dict[str, float] = {}  # task_id -> last snapshot timestamp
+
+        # Idle-agent recycling: tracks when a SHUTDOWN was sent to an idle agent
+        # so the grace period can be enforced (30 s before SIGKILL).
+        self._idle_shutdown_ts: dict[str, float] = {}  # session_id -> shutdown_sent_ts
+
+        # Cluster heartbeat client: when cluster mode is enabled and this node
+        # is a worker (server_url points to a remote central server), send
+        # periodic heartbeats with current capacity.
+        self._heartbeat_client: NodeHeartbeatClient | None = None
+        if cluster_config and cluster_config.enabled and cluster_config.server_url:
+            self._heartbeat_client = NodeHeartbeatClient(
+                server_url=cluster_config.server_url,
+                interval_s=cluster_config.node_heartbeat_interval_s,
+                auth_token=cluster_config.auth_token or config.auth_token,
+                capacity_fn=self._current_capacity,
+            )
+
+    # -- Hot-reload source detection -----------------------------------------
+
+    # Key source files whose modification triggers an orchestrator restart.
+    _HOT_RELOAD_SOURCES: ClassVar[list[str]] = [
+        "src/bernstein/core/orchestrator.py",
+        "src/bernstein/core/spawner.py",
+        "src/bernstein/core/router.py",
+        "src/bernstein/core/server.py",
+        "src/bernstein/core/models.py",
+    ]
+
+    def _check_source_changed(self) -> bool:
+        """Check if orchestrator source files changed since last tick.
+
+        Compares mtime of key source files against the timestamp recorded
+        at startup (or the last restart).  When any file is newer, a
+        restart is warranted so the orchestrator picks up the new code.
+
+        Returns:
+            True if at least one source file was modified after startup.
+        """
+        from pathlib import Path as _Path
+
+        for rel in self._HOT_RELOAD_SOURCES:
+            src = _Path(rel)
+            try:
+                if src.exists() and src.stat().st_mtime > self._source_mtime:
+                    logger.info("Source changed: %s", rel)
+                    return True
+            except OSError:
+                continue
+        return False
+
+    def _current_capacity(self) -> NodeCapacity:
+        """Build a NodeCapacity snapshot reflecting current agent usage."""
+        alive = sum(1 for a in self._agents.values() if a.status != "dead")
+        return NodeCapacity(
+            max_agents=self._config.max_agents,
+            available_slots=max(0, self._config.max_agents - alive),
+            active_agents=alive,
+        )
+
+    @property
+    def active_agents(self) -> dict[str, AgentSession]:
+        """Currently tracked agent sessions, keyed by session id."""
+        return dict(self._agents)
+
+    @property
+    def bulletin(self) -> BulletinBoard | None:
+        """The bulletin board, if one was provided."""
+        return self._bulletin
+
+    def _post_bulletin(self, msg_type: str, content: str) -> None:
+        """Post a message to the bulletin board if one is configured.
+
+        Args:
+            msg_type: Message category (status, alert, finding, etc.).
+            content: Free-text message body.
+        """
+        if self._bulletin is None:
+            return
+        from typing import cast as _cast
+
+        from bernstein.core.bulletin import MessageType
+
+        self._bulletin.post(
+            BulletinMessage(
+                agent_id="orchestrator",
+                type=_cast("MessageType", msg_type),
+                content=content,
+            )
+        )
+
+    def _notify(self, event: str, title: str, body: str, **metadata: Any) -> None:
+        """Fire a notification event if a NotificationManager is configured.
+
+        Args:
+            event: Notification event name (e.g. ``"run.completed"``).
+            title: Short human-readable title.
+            body: Longer description / summary.
+            **metadata: Arbitrary key-value pairs attached to the payload.
+        """
+        if self._notifier is None:
+            return
+        payload = NotificationPayload(event=event, title=title, body=body, metadata=dict(metadata))
+        self._notifier.notify(event, payload)
+
+    # -- Core tick -----------------------------------------------------------
+
+    def tick(self) -> TickResult:
+        """Execute one orchestrator cycle.
+
+        Steps:
+            1. Fetch tasks by status (open/claimed/done/failed) via filtered queries.
+            2. Group open tasks into role-based batches.
+            3. Spawn agents if capacity allows.
+            4. Check done tasks and run janitor.
+            5. Reap dead/stale agents and fail their tasks.
+
+        Returns:
+            Summary of what happened this tick.
+        """
+        result = TickResult()
+        self._tick_count += 1
+        base = self._config.server_url
+        _tick_http_reads = 0  # counts GET requests this tick (should stay at 1)
+
+        # Record tick start for deterministic replay
+        self._recorder.record("tick_start", tick=self._tick_count)
+
+        # 0. Ingest any new backlog files before fetching tasks
+        try:
+            self.ingest_backlog()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("ingest_backlog failed: %s", exc)
+
+        # 1. Fetch all tasks in a single bulk request, bucketed client-side.
+        try:
+            tasks_by_status = fetch_all_tasks(self._client, base)
+            _tick_http_reads += 1  # single GET /tasks (no status filter)
+        except httpx.HTTPError as exc:
+            logger.error("Failed to fetch tasks: %s", exc)
+            result.errors.append(f"fetch_all: {exc}")
+            return result
+
+        logger.debug(
+            "tick #%d: %d HTTP read(s) this tick (open=%d claimed=%d done=%d failed=%d)",
+            self._tick_count,
+            _tick_http_reads,
+            len(tasks_by_status.get("open", [])),
+            len(tasks_by_status.get("claimed", [])),
+            len(tasks_by_status.get("done", [])),
+            len(tasks_by_status.get("failed", [])),
+        )
+
+        # The server returns tasks matching the requested status; apply the
+        # dependency filter here for "open" tasks.
+        done_tasks = tasks_by_status["done"]
+        done_ids = {t.id for t in done_tasks}
+        open_tasks = [t for t in tasks_by_status["open"] if all(dep in done_ids for dep in t.depends_on)]
+        result.open_tasks = len(open_tasks)
+
+        # 1b. Hold back tasks blocked by unresolved high-severity pivots
+        ready_tasks = open_tasks
+        try:
+            unresolved = read_unresolved_pivots(self._workdir)
+            if unresolved:
+                blocked_ids: set[str] = set()
+                for pivot in unresolved:
+                    blocked_ids.update(pivot.affected_tickets)
+                if blocked_ids:
+                    before = len(ready_tasks)
+                    ready_tasks = [t for t in ready_tasks if t.id not in blocked_ids]
+                    held = before - len(ready_tasks)
+                    if held:
+                        logger.warning(
+                            "Holding %d task(s) pending VP pivot review: %s",
+                            held,
+                            blocked_ids,
+                        )
+        except OSError as exc:
+            logger.warning("Failed to read pivot signals: %s", exc)
+
+        # 1c. Build task graph and compute optimal parallelism
+        all_tasks = [t for status_tasks in tasks_by_status.values() for t in status_tasks]
+        task_graph = TaskGraph(all_tasks)
+        analysis = task_graph.analyse()
+
+        if analysis.parallel_width < self._config.max_agents and analysis.parallel_width > 0:
+            logger.debug(
+                "Graph parallel width (%d) < max_agents (%d) -- dependency filter already limits concurrency",
+                analysis.parallel_width,
+                self._config.max_agents,
+            )
+
+        if analysis.bottlenecks:
+            logger.info(
+                "Graph bottleneck(s): %s -- %d downstream tasks blocked",
+                analysis.bottlenecks,
+                sum(len(task_graph.dependents(b)) for b in analysis.bottlenecks),
+            )
+
+        # Persist graph snapshot for dashboard / debugging
+        try:
+            task_graph.save(self._workdir / ".sdd" / "runtime")
+        except OSError as exc:
+            logger.debug("Failed to save task graph: %s", exc)
+
+        # 3. Count alive agents, spawn if capacity (capped by graph parallel width)
+        # 2b. Rate-limit recovery: restore providers whose throttle window expired.
+        _recovered = self._rate_limit_tracker.recover_expired_throttles(self._router)
+        if _recovered:
+            logger.info("Rate-limit: recovered providers %s", _recovered)
+        # Sync active-agent counts into the router for load-spreading scores.
+        if self._router is not None:
+            self._router.update_active_agent_counts(self._rate_limit_tracker.get_all_active_counts())
+
+        refresh_agent_states(self, tasks_by_status)
+        alive_count = sum(1 for a in self._agents.values() if a.status != "dead")
+        result.active_agents = alive_count
+
+        # 3a. Build alive-per-role map for task distribution prioritization.
+        # Starving roles (0 alive agents) get scheduled before well-served roles.
+        _alive_per_role: dict[str, int] = {}
+        for _agent in self._agents.values():
+            if _agent.status != "dead":
+                _alive_per_role[_agent.role] = _alive_per_role.get(_agent.role, 0) + 1
+
+        # 2. Group into batches with starving-role prioritization wired in
+        batches = group_by_role(ready_tasks, self._config.max_tasks_per_agent, alive_per_role=_alive_per_role)
+
+        # Track which task IDs are already assigned to active agents
+        assigned_task_ids: set[str] = set()
+        for agent in self._agents.values():
+            if agent.status != "dead":
+                assigned_task_ids.update(agent.task_ids)
+
+        # 3b. Claim tasks and spawn agents for ready batches (skip if budget is exhausted)
+        if self._config.dry_run:
+            for batch in batches:
+                for task in batch:
+                    logger.info(
+                        "[DRY RUN] Would spawn %s agent for: %s (model=%s, effort=%s)",
+                        task.role,
+                        task.title,
+                        task.model,
+                        task.effort,
+                    )
+                    result.dry_run_planned.append((task.role, task.title, task.model, task.effort))
+        elif self._cost_tracker.budget_usd > 0 and self._cost_tracker.status().should_stop:
+            _bs = self._cost_tracker.status()
+            logger.warning(
+                "Budget cap ($%.2f) reached ($%.2f spent, %.0f%%), skipping agent spawning",
+                _bs.budget_usd,
+                _bs.spent_usd,
+                _bs.percentage_used * 100,
+            )
+            self._notify(
+                "budget.warning",
+                "Budget cap reached",
+                f"Spending cap of ${_bs.budget_usd:.2f} reached. "
+                f"${_bs.spent_usd:.2f} spent ({_bs.percentage_used * 100:.0f}%). "
+                "Agent spawning paused.",
+                budget_usd=round(_bs.budget_usd, 2),
+                spent_usd=round(_bs.spent_usd, 4),
+                percent_used=round(_bs.percentage_used * 100, 1),
+            )
+        else:
+            claim_and_spawn_batches(self, batches, alive_count, assigned_task_ids, done_ids, result)
+
+        # 4. Check done tasks, run janitor, record evolution metrics
+        process_completed_tasks(self, done_tasks, result)
+
+        # 4b. Use cached failed tasks and maybe retry with escalation
+        failed_tasks = tasks_by_status["failed"]
+        for task in failed_tasks:
+            if self._maybe_retry_task(task):
+                result.retried.append(task.id)
+
+        # 4b.5 Track completions/failures for manager review trigger
+        self._completions_since_review += len(result.verified)
+        self._failures_since_review += len([t for t in failed_tasks if t.id not in self._retried_task_ids])
+
+        # Check for explicit review trigger (e.g. from `bernstein review` CLI)
+        _review_flag = self._workdir / ".sdd" / "runtime" / "review_requested"
+        if _review_flag.exists():
+            _review_flag.unlink(missing_ok=True)
+            self._completions_since_review = max(
+                self._completions_since_review,
+                self._MANAGER_REVIEW_COMPLETION_THRESHOLD,
+            )
+
+        # Run manager queue review when triggered (periodic correction pass)
+        if self._should_trigger_manager_review(self._failures_since_review):
+            self._run_manager_queue_review()
+
+        # 4c. Check heartbeat-based staleness; send WAKEUP/SHUTDOWN as needed
+        check_stale_agents(self)
+
+        # 4d. Check progress-snapshot-based stalls; send WAKEUP/SHUTDOWN/kill
+        check_stalled_tasks(self)
+
+        # 4d-ii. Token growth monitor: alert on quadratic growth, kill runaway agents
+        check_token_growth(self)
+
+        # 4e. Recycle idle agents (task already resolved but process still alive,
+        #     or no heartbeat for idle threshold). SHUTDOWN → 30s grace → SIGKILL.
+        recycle_idle_agents(self, tasks_by_status)
+
+        # 5. Reap dead/stale agents and fail their tasks
+        reap_dead_agents(self, result, tasks_by_status)
+
+        # 6. Run evolution analysis cycle every N ticks
+        if self._evolution is not None and self._tick_count % self._config.evolution_tick_interval == 0:
+            self._run_evolution_cycle(result)
+
+        # 6b. Refresh knowledge base every 5 evolution intervals
+        if self._tick_count % (self._config.evolution_tick_interval * 5) == 0:
+            try:
+                refresh_knowledge_base(self._workdir)
+            except OSError as exc:
+                logger.warning("Knowledge base refresh failed: %s", exc)
+
+        # 7. Check evolve mode: if all tasks done and no agents alive, trigger new cycle
+        self._check_evolve(result, tasks_by_status)
+
+        # 8. Replenish backlog in evolve mode when tasks run out
+        self._replenish_backlog(result)
+
+        # 8b. Generate run completion summary for non-evolve runs (reuse cached tasks)
+        if (
+            not self._config.evolve_mode
+            and result.open_tasks == 0
+            and result.active_agents == 0
+            and not self._summary_written
+        ):
+            self._generate_run_summary(tasks_by_status["done"], tasks_by_status["failed"])
+
+        # 9. Log summary
+        self._log_summary(result)
+
+        # 10. Record replay events for deterministic replay
+        self._record_tick_events(result, tasks_by_status)
+
+        return result
+
+    def run(self) -> None:
+        """Run the orchestrator loop until stopped.
+
+        Blocks the calling thread. Call ``stop()`` from another thread or
+        a signal handler to break the loop. Individual tick failures are
+        caught and logged so a single bad tick cannot kill the loop.
+        """
+        self._running = True
+        logger.info(
+            "Orchestrator started (poll=%ds, max_agents=%d, server=%s)",
+            self._config.poll_interval_s,
+            self._config.max_agents,
+            self._config.server_url,
+        )
+        # Start cluster heartbeat client (registers this node with central server)
+        if self._heartbeat_client is not None:
+            self._heartbeat_client.start()
+            logger.info("Cluster heartbeat client started")
+        self._post_bulletin("status", "run started")
+        self._notify("run.started", "Bernstein run started", "Agents are being spawned.")
+        self._recorder.record(
+            "run_started",
+            run_id=self._run_id,
+            max_agents=self._config.max_agents,
+            budget_usd=self._config.budget_usd,
+        )
+        consecutive_failures = 0
+        max_consecutive_failures = 10
+        while self._running:
+            tick_result: TickResult | None = None
+            try:
+                tick_result = self.tick()
+                consecutive_failures = 0
+            except Exception:
+                consecutive_failures += 1
+                logger.exception(
+                    "Tick %d failed (%d consecutive failures)",
+                    self._tick_count,
+                    consecutive_failures,
+                )
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error(
+                        "Stopping after %d consecutive tick failures",
+                        consecutive_failures,
+                    )
+                    break
+            if self._config.dry_run:
+                break
+            # Adaptive backoff: double sleep when idle, reset when work is found.
+            if tick_result is not None and (tick_result.spawned or tick_result.verified or tick_result.retried):
+                self._idle_multiplier = 1
+            else:
+                self._idle_multiplier = min(self._idle_multiplier * 2, 1024)
+            time.sleep(min(self._config.poll_interval_s * self._idle_multiplier, 30.0))
+
+            # Check if a restart was requested (own source code changed)
+            restart_flag = self._workdir / ".sdd" / "runtime" / "restart_requested"
+            needs_restart = False
+            if restart_flag.exists():
+                restart_flag.unlink(missing_ok=True)
+                needs_restart = True
+            elif self._config.evolve_mode and self._check_source_changed():
+                needs_restart = True
+
+            if needs_restart:
+                logger.info("Restarting orchestrator (own code updated)")
+                self._save_session_state()
+                self._restart()
+                return  # _restart calls os.execv, but just in case
+
+        self._cleanup()
+        self._post_bulletin("status", "run stopped")
+        self._recorder.record(
+            "run_completed",
+            run_id=self._run_id,
+            ticks=self._tick_count,
+            fingerprint=self._recorder.fingerprint(),
+        )
+        logger.info(
+            "Orchestrator stopped (replay: %s, fingerprint: %s)",
+            self._recorder.path,
+            self._recorder.fingerprint()[:16] + "...",
+        )
+
+    def stop(self) -> None:
+        """Signal the run loop to exit after the current tick.
+
+        Also writes SHUTDOWN signal files to all active agents so they can
+        save WIP and exit cleanly before the orchestrator terminates.
+        """
+        self._running = False
+        with contextlib.suppress(Exception):
+            send_shutdown_signals(self, reason="orchestrator_stopped")
+
+    # -- Delegating methods (keep as methods for backward compat) -----------
+
+    def _refresh_agent_states(self, tasks_snapshot: dict[str, list[Task]]) -> None:
+        """Delegate to agent_lifecycle.refresh_agent_states."""
+        refresh_agent_states(self, tasks_snapshot)
+
+    def _claim_and_spawn_batches(
+        self,
+        batches: list[list[Task]],
+        alive_count: int,
+        assigned_task_ids: set[str],
+        done_ids: set[str],
+        result: TickResult,
+    ) -> None:
+        """Delegate to task_lifecycle.claim_and_spawn_batches."""
+        claim_and_spawn_batches(self, batches, alive_count, assigned_task_ids, done_ids, result)
+
+    def _process_completed_tasks(self, done_tasks: list[Task], result: TickResult) -> None:
+        """Delegate to task_lifecycle.process_completed_tasks."""
+        process_completed_tasks(self, done_tasks, result)
+
+    def _maybe_retry_task(self, task: Task) -> bool:
+        """Delegate to task_lifecycle.maybe_retry_task."""
+        return maybe_retry_task(
+            task,
+            retried_task_ids=self._retried_task_ids,
+            max_task_retries=self._config.max_task_retries,
+            client=self._client,
+            server_url=self._config.server_url,
+            quarantine=self._quarantine,
+        )
+
+    def _reap_dead_agents(self, result: TickResult, tasks_snapshot: dict[str, list[Task]]) -> None:
+        """Delegate to agent_lifecycle.reap_dead_agents."""
+        reap_dead_agents(self, result, tasks_snapshot)
+
+    def _check_stale_agents(self) -> None:
+        """Delegate to agent_lifecycle.check_stale_agents."""
+        check_stale_agents(self)
+
+    def _check_kill_signals(self, result: TickResult) -> None:
+        """Delegate to agent_lifecycle.check_kill_signals."""
+        check_kill_signals(self, result)
+
+    def _send_shutdown_signals(self, reason: str) -> None:
+        """Delegate to agent_lifecycle.send_shutdown_signals."""
+        send_shutdown_signals(self, reason)
+
+    def _find_session_for_task(self, task_id: str) -> AgentSession | None:
+        """Return the agent session that owns *task_id*, or None.
+
+        Args:
+            task_id: ID of the task to look up.
+
+        Returns:
+            Matching AgentSession, or None if not found.
+        """
+        agent_id = self._task_to_session.get(task_id)
+        if agent_id is None:
+            return None
+        return self._agents.get(agent_id)
+
+    def _record_provider_health(
+        self,
+        session: AgentSession,
+        success: bool,
+        latency_ms: float = 0.0,
+        cost_usd: float = 0.0,
+        tokens: int = 0,
+    ) -> None:
+        """Update provider health and cost in the router based on task outcome.
+
+        No-op when no router is configured or the session has no provider.
+
+        Args:
+            session: Agent session whose provider to update.
+            success: Whether the task completed successfully.
+            latency_ms: Approximate task latency in milliseconds.
+            cost_usd: Cost of the task in USD.
+            tokens: Number of tokens used.
+        """
+        if self._router is not None and session.provider is not None:
+            self._router.update_provider_health(session.provider, success, latency_ms)
+            if cost_usd > 0 or tokens > 0:
+                self._router.record_provider_cost(session.provider, tokens, cost_usd)
+
+    def _release_file_ownership(self, agent_id: str) -> None:
+        """Release all files owned by the given agent."""
+        self._lock_manager.release(agent_id)
+        # Always clean the legacy dict so code that reads _file_ownership directly stays consistent
+        to_remove = [fp for fp, owner in self._file_ownership.items() if owner == agent_id]
+        for fp in to_remove:
+            del self._file_ownership[fp]
+
+    def _release_task_to_session(self, task_ids: list[str]) -> None:
+        """Remove reverse-index entries for the given task IDs."""
+        for tid in task_ids:
+            self._task_to_session.pop(tid, None)
+
+    def _collect_completion_data(self, session: AgentSession) -> CompletionData:
+        """Delegate to task_lifecycle.collect_completion_data."""
+        return collect_completion_data(self._workdir, session)
+
+    def _should_trigger_manager_review(self, failed_count: int) -> bool:
+        """Return True when a manager queue review is warranted.
+
+        Triggers on:
+        - 3+ completions since last review
+        - Any task failure
+        - 5 minutes of no review (stall guard)
+
+        Args:
+            failed_count: Number of tasks failed since last review.
+
+        Returns:
+            True if the manager should review the queue.
+        """
+        now = time.time()
+        if self._completions_since_review >= self._MANAGER_REVIEW_COMPLETION_THRESHOLD:
+            return True
+        if failed_count > 0:
+            return True
+        return self._last_review_ts > 0 and (now - self._last_review_ts) >= self._MANAGER_REVIEW_STALL_S
+
+    def _run_manager_queue_review(self) -> None:
+        """Invoke manager queue review and apply corrections.
+
+        Fetches the task queue, calls the ManagerAgent to review it, and
+        applies corrections (reassign, cancel, change_priority, add_task)
+        via the task server.  All changes go through the server so the
+        deterministic orchestrator remains in full control.
+        """
+        from bernstein import get_templates_dir
+        from bernstein.core.manager import ManagerAgent
+
+        try:
+            budget_pct = 1.0
+            if self._cost_tracker.budget_usd > 0:
+                status = self._cost_tracker.status()
+                budget_pct = max(0.0, 1.0 - status.percentage_used)
+
+            workdir = self._workdir
+            manager = ManagerAgent(
+                server_url=self._config.server_url,
+                workdir=workdir,
+                templates_dir=get_templates_dir(workdir),
+            )
+
+            result = manager.review_queue_sync(
+                completed_count=self._completions_since_review,
+                failed_count=self._failures_since_review,
+                budget_remaining_pct=budget_pct,
+            )
+
+            self._last_review_ts = time.time()
+            self._completions_since_review = 0
+            self._failures_since_review = 0
+
+            if result.skipped:
+                return
+
+            base = self._config.server_url
+            for correction in result.corrections:
+                try:
+                    if correction.action == "reassign" and correction.task_id and correction.new_role:
+                        self._client.patch(
+                            f"{base}/tasks/{correction.task_id}",
+                            json={"role": correction.new_role},
+                        )
+                        logger.info(
+                            "Manager review: reassigned %s to role=%s (%s)",
+                            correction.task_id,
+                            correction.new_role,
+                            correction.reason,
+                        )
+                    elif correction.action == "change_priority" and correction.task_id and correction.new_priority:
+                        self._client.patch(
+                            f"{base}/tasks/{correction.task_id}",
+                            json={"priority": correction.new_priority},
+                        )
+                        logger.info(
+                            "Manager review: changed priority of %s to %d (%s)",
+                            correction.task_id,
+                            correction.new_priority,
+                            correction.reason,
+                        )
+                    elif correction.action == "cancel" and correction.task_id:
+                        self._client.post(
+                            f"{base}/tasks/{correction.task_id}/cancel",
+                            json={"reason": correction.reason or "manager review"},
+                        )
+                        logger.info(
+                            "Manager review: cancelled %s (%s)",
+                            correction.task_id,
+                            correction.reason,
+                        )
+                    elif correction.action == "add_task" and correction.new_task:
+                        self._client.post(
+                            f"{base}/tasks",
+                            json=correction.new_task,
+                        )
+                        logger.info(
+                            "Manager review: added task %r (%s)",
+                            correction.new_task.get("title"),
+                            correction.reason,
+                        )
+                except httpx.HTTPError as exc:
+                    logger.warning("Manager review: correction %s failed: %s", correction.action, exc)
+
+            if result.corrections:
+                self._post_bulletin(
+                    "status",
+                    f"Manager review applied {len(result.corrections)} correction(s): {result.reasoning}",
+                )
+
+        except Exception as exc:
+            logger.warning("Manager queue review failed: %s", exc)
+
+    def _retry_or_fail_task(
+        self,
+        task_id: str,
+        reason: str,
+        tasks_snapshot: dict[str, list[Task]] | None = None,
+    ) -> None:
+        """Delegate to task_lifecycle.retry_or_fail_task."""
+        retry_or_fail_task(
+            task_id,
+            reason,
+            client=self._client,
+            server_url=self._config.server_url,
+            max_task_retries=self._config.max_task_retries,
+            retried_task_ids=self._retried_task_ids,
+            tasks_snapshot=tasks_snapshot,
+        )
+
+    def _check_file_overlap(self, batch: list[Task]) -> bool:
+        """Return True if any file in *batch* is currently owned by an active agent.
+
+        Checks both the in-memory ``_file_ownership`` dict (cross-referenced
+        against live agent status) and the persistent ``_lock_manager`` (for
+        crash-recovery locks held across process restarts).  Dead agents do not
+        block new batches even if they appear in the ownership index.
+        """
+        all_files = [f for task in batch for f in task.owned_files]
+        if not all_files:
+            return False
+
+        # In-memory ownership check — filters out dead agents explicitly.
+        for fpath in all_files:
+            owner_id = self._file_ownership.get(fpath)
+            if owner_id:
+                session = self._agents.get(owner_id)
+                if session and session.status == "working":
+                    logger.debug(
+                        "File %s owned by active agent %s, deferring batch",
+                        fpath,
+                        owner_id,
+                    )
+                    return True
+
+        # Persistent lock check (survives crashes via FileLockManager TTL).
+        conflicts = self._lock_manager.check_conflicts(all_files)
+        if conflicts:
+            for fpath, lock in conflicts:
+                logger.debug(
+                    "File %s locked by agent %s (task %s), deferring batch",
+                    fpath,
+                    lock.agent_id,
+                    lock.task_id,
+                )
+            return True
+        return False
+
+    def _should_auto_decompose(self, task: Task) -> bool:
+        """Delegate to task_lifecycle.should_auto_decompose."""
+        return should_auto_decompose(task, self._decomposed_task_ids)
+
+    def _auto_decompose_task(self, task: Task) -> None:
+        """Delegate to task_lifecycle.auto_decompose_task."""
+        auto_decompose_task(
+            task,
+            client=self._client,
+            server_url=self._config.server_url,
+            decomposed_task_ids=self._decomposed_task_ids,
+        )
+
+    # -- Session and cleanup ------------------------------------------------
+
+    def _save_session_state(self) -> None:
+        """Persist session state for fast resume on next start.
+
+        Queries the task server for current task statuses and writes a
+        session snapshot to ``.sdd/runtime/session.json``.  Errors are
+        silently caught -- session saving is best-effort.
+        """
+        try:
+            from bernstein.core.session import SessionState, save_session
+
+            resp = self._client.get(f"{self._config.server_url}/tasks")
+            resp.raise_for_status()
+            from typing import cast as _cast_session
+
+            tasks_data: Any = resp.json()
+            task_list: list[dict[str, Any]] = []
+            if isinstance(tasks_data, list):
+                task_list = _cast_session("list[dict[str, Any]]", tasks_data)
+            elif isinstance(tasks_data, dict):
+                raw_dict = _cast_session("dict[str, Any]", tasks_data)
+                task_list = _cast_session("list[dict[str, Any]]", raw_dict.get("tasks", []))
+
+            done_ids: list[str] = [str(t["id"]) for t in task_list if t.get("status") == "done"]
+            pending_ids: list[str] = [str(t["id"]) for t in task_list if t.get("status") in ("claimed", "in_progress")]
+
+            state = SessionState(
+                saved_at=time.time(),
+                goal="",
+                completed_task_ids=done_ids,
+                pending_task_ids=pending_ids,
+                cost_spent=self._cost_tracker.spent_usd,
+            )
+            save_session(self._workdir, state)
+            logger.info("Session state saved (%d done, %d pending)", len(done_ids), len(pending_ids))
+        except Exception:
+            logger.debug("Failed to save session state (best-effort)", exc_info=True)
+
+    def _cleanup(self) -> None:
+        """Release resources held by the orchestrator."""
+        # Save session state before releasing resources
+        self._save_session_state()
+
+        # Stop cluster heartbeat client (unregisters from central server)
+        if self._heartbeat_client is not None:
+            self._heartbeat_client.stop()
+            logger.info("Cluster heartbeat client stopped")
+
+        # Cancel pending futures first
+        for future in (self._pending_ruff_future, self._pending_test_future):
+            if future is not None and not future.done():
+                future.cancel()
+        self._pending_ruff_future = None
+        self._pending_test_future = None
+
+        # Shut down the thread pool
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            # Python <3.9 doesn't have cancel_futures
+            self._executor.shutdown(wait=False)
+        logger.info("Executor shut down, background test/ruff processes released")
+
+    def _restart(self) -> None:
+        """Replace the current process with a fresh orchestrator."""
+        import sys
+
+        logger.info("Exec'ing fresh orchestrator process")
+        os.execv(sys.executable, [sys.executable, *sys.argv])
+
+    # -- Evolve mode ---------------------------------------------------------
+
+    # Priority rotation for evolve mode -- each cycle emphasizes a different area
+    _EVOLVE_FOCUS_AREAS: ClassVar[list[str]] = [
+        "new_features",
+        "user_interface",
+        "test_coverage",
+        "code_quality",
+        "performance",
+        "documentation",
+    ]
+
+    def _check_evolve(self, result: TickResult, tasks_by_status: dict[str, list[Task]]) -> None:
+        """If evolve mode is on and all tasks are done, trigger a new cycle.
+
+        Args:
+            result: Current tick result (mutated in place).
+            tasks_by_status: Pre-fetched task snapshot keyed by status string.
+        """
+        evolve_path = self._workdir / ".sdd" / "runtime" / "evolve.json"
+        if not evolve_path.exists():
+            return
+
+        try:
+            evolve_cfg = json.loads(evolve_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+
+        if not evolve_cfg.get("enabled"):
+            return
+
+        # Only trigger when idle: no open/claimed tasks, no alive agents
+        open_tasks = tasks_by_status.get("open", [])
+        claimed_tasks = tasks_by_status.get("claimed", [])
+        alive = sum(1 for a in self._agents.values() if a.status != "dead")
+        if open_tasks or claimed_tasks or alive > 0:
+            return  # Still working
+
+        # Check cycle limits
+        cycle_count = evolve_cfg.get("_cycle_count", 0)
+        max_cycles = evolve_cfg.get("max_cycles", 0)
+        if max_cycles > 0 and cycle_count >= max_cycles:
+            logger.info("Evolve: max cycles (%d) reached, stopping", max_cycles)
+            return
+
+        # Check budget cap
+        budget_usd = evolve_cfg.get("budget_usd", 0)
+        spent_usd = evolve_cfg.get("_spent_usd", 0.0)
+        if budget_usd > 0 and spent_usd >= budget_usd:
+            logger.info("Evolve: budget cap ($%.2f) reached, stopping", budget_usd)
+            return
+
+        # Diminishing returns backoff
+        consecutive_empty = evolve_cfg.get("_consecutive_empty", 0)
+        backoff_factor = min(2**consecutive_empty, 8) if consecutive_empty >= 3 else 1
+
+        last_cycle_ts = evolve_cfg.get("_last_cycle_ts", 0)
+        base_interval = evolve_cfg.get("interval_s", 300)
+        effective_interval = base_interval * backoff_factor
+        if time.time() - last_cycle_ts < effective_interval:
+            return
+
+        cycle_number = cycle_count + 1
+        cycle_start = time.time()
+        logger.info(
+            "Evolve: triggering cycle %d (backoff=%dx, interval=%ds)",
+            cycle_number,
+            backoff_factor,
+            effective_interval,
+        )
+
+        # Step 1: ANALYZE
+        tasks_completed = len(tasks_by_status.get("done", []))
+        tasks_failed = len(tasks_by_status.get("failed", []))
+
+        # Step 2: VERIFY
+        test_info = self._evolve_run_tests()
+
+        # Step 3: COMMIT
+        committed = self._evolve_auto_commit()
+
+        # Step 3b: GOVERN
+        # _governor is always non-None here because _check_evolve only runs
+        # when evolve_mode is enabled, and we initialize the governor in that case.
+        assert self._governor is not None, "AdaptiveGovernor must be initialized in evolve mode"
+        weights_before = self._governor.get_current_weights()
+        test_pass_rate = test_info.get("passed", 0) / max(test_info.get("passed", 0) + test_info.get("failed", 0), 1)
+        gov_context = ProjectContext(
+            cycle_number=cycle_number,
+            test_pass_rate=test_pass_rate,
+            lint_violations=evolve_cfg.get("_lint_violations", 0),
+            security_issues_last_5_cycles=evolve_cfg.get("_security_issues", 0),
+            codebase_size_files=evolve_cfg.get("_codebase_files", 0),
+            consecutive_empty_cycles=consecutive_empty,
+        )
+        weights_after, weight_reason = self._governor.adjust_weights(weights_before, gov_context)
+        self._governor.persist_weights(weights_after, reason=weight_reason)
+        self._governor.log_decision(
+            GovernanceEntry(
+                cycle=cycle_number,
+                timestamp=datetime.now(UTC).isoformat(),
+                weights_before=weights_before.to_dict(),
+                weights_after=weights_after.to_dict(),
+                weight_change_reason=weight_reason,
+                proposals_evaluated=tasks_completed + tasks_failed,
+                proposals_applied=tasks_completed,
+                risk_scores=self._last_cycle_risk_scores,
+                outcome_metrics={
+                    "test_pass_rate": test_pass_rate,
+                    "committed": 1.0 if committed else 0.0,
+                },
+            )
+        )
+        logger.info(
+            "Evolve: governance cycle %d -- weights adjusted (%s)",
+            cycle_number,
+            weight_reason,
+        )
+
+        # Step 4: PLAN
+        focus_areas: list[str] = list(self._EVOLVE_FOCUS_AREAS)
+        focus_idx: int = cycle_count % len(focus_areas)
+        focus: str = str(focus_areas[focus_idx])
+        self._evolve_spawn_manager(
+            cycle_number=cycle_number,
+            focus_area=focus,
+            test_summary=test_info.get("summary", ""),
+        )
+
+        # Track diminishing returns
+        produced_changes = committed or tasks_completed > 0
+        if produced_changes:
+            evolve_cfg["_consecutive_empty"] = 0
+        else:
+            evolve_cfg["_consecutive_empty"] = consecutive_empty + 1
+
+        # Update state
+        now = time.time()
+        evolve_cfg["_cycle_count"] = cycle_number
+        evolve_cfg["_last_cycle_ts"] = now
+        with contextlib.suppress(OSError):
+            evolve_path.write_text(json.dumps(evolve_cfg))
+
+        # Log cycle metrics
+        self._log_evolve_cycle(
+            cycle_number,
+            now,
+            {
+                "focus_area": focus,
+                "tasks_completed": tasks_completed,
+                "tasks_failed": tasks_failed,
+                "tests_passed": test_info.get("passed", 0),
+                "tests_failed": test_info.get("failed", 0),
+                "commits_made": 1 if committed else 0,
+                "backoff_factor": backoff_factor,
+                "consecutive_empty": evolve_cfg.get("_consecutive_empty", 0),
+                "duration_s": round(now - cycle_start, 2),
+            },
+        )
+
+        self._post_bulletin(
+            "status",
+            f"evolve cycle {cycle_number} complete: focus={focus}, completed={tasks_completed}, committed={committed}",
+        )
+
+    _REPLENISH_COOLDOWN_S: float = 60.0
+    _REPLENISH_MAX_TASKS: int = 5
+
+    def _run_ruff_check(self) -> list[RuffViolation]:
+        """Run ruff check and return parsed violations (runs in a background thread)."""
+        import subprocess
+
+        proc = subprocess.Popen(
+            ["uv", "run", "ruff", "check", ".", "--output-format", "json"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=self._workdir,
+            start_new_session=True,
+        )
+        try:
+            stdout, _ = proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.wait()
+            return []
+        return json.loads(stdout) if stdout.strip() else []
+
+    def _create_ruff_tasks(self, violations: list[RuffViolation]) -> None:
+        """Create backlog tasks from ruff violations."""
+        if not violations:
+            logger.debug("Replenish: no ruff violations found, backlog is clean")
+            return
+
+        by_rule: dict[str, RuffViolation] = {}
+        for v in violations:
+            code = (v.get("code") or "unknown").strip()
+            if code not in by_rule:
+                by_rule[code] = v
+
+        base = self._config.server_url
+        created = 0
+        for code, v in by_rule.items():
+            if created >= self._REPLENISH_MAX_TASKS:
+                break
+            filename = v.get("filename", "")
+            message = v.get("message", "")
+            row = v.get("location", {}).get("row", "?")
+            task_payload = {
+                "title": f"Fix ruff violation {code}",
+                "description": (
+                    f"Fix all occurrences of ruff rule {code}.\n"
+                    f"Example: {filename}:{row} -- {message}\n"
+                    f"Run `uv run ruff check . --select {code}` to find all instances."
+                ),
+                "role": "backend",
+                "priority": 3,
+                "model": "sonnet",
+                "effort": "low",
+            }
+            try:
+                resp = self._client.post(f"{base}/tasks", json=task_payload)
+                resp.raise_for_status()
+                created += 1
+                logger.info("Replenish: created task for ruff rule %s", code)
+            except httpx.HTTPError as exc:
+                logger.warning("Replenish: failed to create task for %s: %s", code, exc)
+
+        if created:
+            logger.info("Replenish: created %d lint-fix task(s)", created)
+
+    def _replenish_backlog(self, result: TickResult) -> None:
+        """Create fix tasks from ruff lint violations when evolve mode is idle."""
+        if not self._config.evolve_mode:
+            return
+        if result.open_tasks > 0:
+            return
+
+        # Harvest a completed ruff future
+        if self._pending_ruff_future is not None:
+            if not self._pending_ruff_future.done():
+                return  # still running; skip this tick
+            try:
+                violations: list[RuffViolation] = self._pending_ruff_future.result()
+            except (concurrent.futures.CancelledError, RuntimeError) as exc:
+                logger.warning("Replenish: ruff check failed: %s", exc)
+                self._pending_ruff_future = None
+                return
+            self._pending_ruff_future = None
+            self._create_ruff_tasks(violations)
+            return
+
+        # Check cooldown before submitting a new run
+        now = time.time()
+        if now - self._last_replenish_ts < self._REPLENISH_COOLDOWN_S:
+            return
+
+        self._last_replenish_ts = now
+        self._pending_ruff_future = self._executor.submit(self._run_ruff_check)
+        logger.debug("Replenish: ruff check submitted to background thread")
+
+    def _run_pytest(self) -> TestResults:
+        """Run pytest and return parsed results (runs in a background thread)."""
+        import subprocess
+
+        info: TestResults = {"passed": 0, "failed": 0, "summary": ""}
+        proc = subprocess.Popen(
+            ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=self._workdir,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.wait()
+            info["summary"] = "pytest timed out after 120s"
+            logger.warning("Background pytest timed out, killed process group")
+            return info
+
+        output = stdout + stderr
+        info["summary"] = output.strip().splitlines()[-1] if output.strip() else ""
+        match = re.search(r"(\d+) passed", output)
+        if match:
+            info["passed"] = int(match.group(1))
+        match = re.search(r"(\d+) failed", output)
+        if match:
+            info["failed"] = int(match.group(1))
+        return info
+
+    def _evolve_run_tests(self) -> TestResults:
+        """Return test results from a background pytest run."""
+        info: TestResults = {"passed": 0, "failed": 0, "summary": ""}
+
+        if self._pending_test_future is not None:
+            if not self._pending_test_future.done():
+                return info
+            try:
+                info = self._pending_test_future.result()
+            except (concurrent.futures.CancelledError, RuntimeError) as exc:
+                logger.warning("Evolve: test run failed: %s", exc)
+                info["summary"] = f"test run error: {exc}"
+            self._pending_test_future = None
+            return info
+
+        self._pending_test_future = self._executor.submit(self._run_pytest)
+        return info
+
+    @staticmethod
+    def _generate_evolve_commit_msg(staged_files: list[str]) -> str:
+        """Build a short, descriptive commit message from the list of staged files."""
+        if not staged_files:
+            return "Evolve: housekeeping"
+
+        LABEL_RULES: list[tuple[str, str]] = [
+            ("src/bernstein/cli/dashboard", "improve dashboard"),
+            ("src/bernstein/cli/main", "update CLI"),
+            ("src/bernstein/cli/cost", "add cost tracking"),
+            ("src/bernstein/cli/", "update CLI"),
+            ("src/bernstein/core/orchestrator", "fix orchestrator"),
+            ("src/bernstein/core/server", "fix server"),
+            ("src/bernstein/core/models", "extend models"),
+            ("src/bernstein/core/spawner", "fix spawner"),
+            ("src/bernstein/core/", "update core"),
+            ("src/bernstein/adapters/", "refactor adapters"),
+            ("src/bernstein/evolution/", "tune evolution"),
+            ("src/bernstein/agents/", "update agents"),
+            ("tests/", "update tests"),
+            ("docs/", "update docs"),
+            ("README", "update README"),
+            ("CONTRIBUTING", "update CONTRIBUTING"),
+            (".sdd/backlog/", "add backlog tasks"),
+        ]
+
+        seen: set[str] = set()
+        labels: list[str] = []
+        for path in staged_files:
+            for prefix, label in LABEL_RULES:
+                if prefix in path and label not in seen:
+                    seen.add(label)
+                    labels.append(label)
+                    break
+
+        if not labels:
+            first = staged_files[0].split("/")[-1]
+            labels = [f"update {first}"]
+
+        summary = "; ".join(labels[:3])
+        return f"Evolve: {summary}"
+
+    def _evolve_auto_commit(self) -> bool:
+        """Auto-commit and push any uncommitted changes from the last cycle."""
+        import subprocess
+
+        from bernstein.core.git_ops import (
+            checkout_discard,
+            conventional_commit,
+            safe_push,
+            stage_all_except,
+            status_porcelain,
+        )
+
+        try:
+            changed = status_porcelain(self._workdir)
+            if not changed:
+                return False
+
+            stage_all_except(self._workdir, exclude=[".sdd/runtime/", ".sdd/metrics/"])
+
+            test_result = subprocess.run(
+                ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+                capture_output=True,
+                text=True,
+                cwd=self._workdir,
+                timeout=300,
+            )
+            if test_result.returncode != 0:
+                logger.warning("Evolve: tests failed, rolling back changes")
+                checkout_discard(self._workdir)
+                return False
+
+            result = conventional_commit(self._workdir, evolve=True)
+            if not result.ok:
+                logger.warning("Evolve: commit failed: %s", result.stderr)
+                return False
+
+            safe_push(self._workdir, "main")
+            logger.info("Evolve: auto-committed and pushed changes")
+
+            if "src/bernstein/" in changed:
+                logger.info("Evolve: own source code changed, signaling restart")
+                restart_flag = self._workdir / ".sdd" / "runtime" / "restart_requested"
+                restart_flag.parent.mkdir(parents=True, exist_ok=True)
+                restart_flag.write_text(str(time.time()))
+
+            return True
+
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("Evolve: auto-commit failed: %s", exc)
+            return False
+
+    def _evolve_spawn_manager(
+        self,
+        cycle_number: int = 0,
+        focus_area: str = "new_features",
+        test_summary: str = "",
+    ) -> None:
+        """Spawn a manager agent to analyze the codebase and create new tasks."""
+        base = self._config.server_url
+
+        research_context = ""
+        try:
+            from bernstein.core.researcher import format_research_context, run_research_sync
+
+            report = run_research_sync(self._workdir)
+            research_context = format_research_context(report)
+            if research_context:
+                logger.info("Evolve: research produced %d bytes of context", len(research_context))
+        except Exception as exc:
+            logger.debug("Evolve: research unavailable: %s", exc)
+
+        focus_instructions = {
+            "new_features": "Focus on missing features that block real usage.",
+            "user_interface": (
+                "Focus on the CLI dashboard and user-facing experience. "
+                "Improve the Textual dashboard (src/bernstein/cli/dashboard.py): "
+                "better live metrics display, clearer task status, more useful panels. "
+                "Also improve CLI output quality and error messages."
+            ),
+            "test_coverage": "Focus on test gaps and missing edge-case coverage.",
+            "code_quality": "Focus on code smells, type safety, and refactoring.",
+            "performance": "Focus on performance bottlenecks and efficiency.",
+            "documentation": "Focus on missing docs that block contributors.",
+        }
+        focus_text = focus_instructions.get(focus_area, "Focus on high-impact improvements.")
+
+        description = (
+            f"You are a PRODUCT DIRECTOR in EVOLVE mode (cycle {cycle_number}). "
+            "Think strategically: what would make this project genuinely useful "
+            "to developers? What do competitors lack? What's the shortest path "
+            "to a feature that gets people excited?\n\n"
+            "Create tasks for specialist agents to implement. "
+            "You plan, they code.\n\n"
+            f"## This cycle's focus: {focus_area.replace('_', ' ')}\n"
+            f"{focus_text}\n\n"
+            + (f"## Current test state\n```\n{test_summary}\n```\n\n" if test_summary else "")
+            + "## Rules (from self-evolving systems research)\n"
+            "- NEVER create tasks that are cosmetic, trivial, or busy-work\n"
+            "- Each task must have a measurable outcome (test passes, "
+            "benchmark improves, bug is fixed)\n"
+            "- Prefer config/prompt changes over code changes (cheaper, safer)\n"
+            "- If tests already pass at 100%, focus on functionality, not more tests\n"
+            "- If architecture is clean, focus on features users actually need\n"
+            "- Create 3-5 tasks MAX. Quality over quantity.\n\n"
+            "## Prioritization\n"
+            "1. Bugs and broken functionality (P1)\n"
+            "2. Missing features that block real usage (P1)\n"
+            "3. Performance and reliability (P2)\n"
+            "4. Code quality and test gaps (P2)\n"
+            "5. Documentation (P3 -- only if truly missing)\n\n"
+            "## Process\n"
+            "1. Run `uv run pytest tests/ -q` to see current test state\n"
+            "2. Read key files to understand architecture\n"
+            "3. Identify 3-5 high-impact improvements\n"
+            "4. Create tasks via HTTP. YOU decide model and effort per task:\n"
+            f"   curl -X POST {base}/tasks -H 'Content-Type: application/json' \\\n"
+            '   -d \'{"title": "...", "description": "...", '
+            '"role": "backend", "priority": 2, '
+            '"model": "sonnet", "effort": "high"}\'\n\n'
+            "## Model/effort selection (you decide per task)\n"
+            '- model: "opus" (deep reasoning, slow) or "sonnet" (fast, default)\n'
+            '- effort: "max" (100 turns), "high" (50), "medium" (30), "low" (15)\n'
+            "- Use sonnet/high for most implementation tasks (fast)\n"
+            "- Use opus/max ONLY for complex architecture or security reviews\n"
+            "- Use sonnet/low for simple fixes, typos, config changes\n\n"
+            "## Task size -- KEEP THEM SMALL\n"
+            "Each task MUST be completable in ONE file change, under 10 minutes.\n"
+            "BAD: 'Implement entire web research module'\n"
+            "GOOD: 'Add Tavily search function to researcher.py'\n"
+            "GOOD: 'Add --evolve flag handling to cli/main.py'\n"
+            "Break big features into 3-5 atomic file-level tasks.\n\n"
+            "## README\n"
+            "Every 3rd cycle, create a task to update README.md with:\n"
+            "- Current feature state, correct CLI usage, accurate test count.\n\n"
+            "5. Then exit.\n\n"
+            "IMPORTANT: Do NOT implement changes yourself. Only create tasks."
+        )
+
+        if research_context:
+            description += research_context
+
+        task_body = {
+            "title": f"Evolve cycle {cycle_number}: {focus_area.replace('_', ' ')}",
+            "description": description,
+            "role": "manager",
+            "priority": 1,
+            "scope": "medium",
+            "complexity": "medium",
+        }
+
+        try:
+            resp = self._client.post(f"{base}/tasks", json=task_body)
+            resp.raise_for_status()
+            task_id = resp.json().get("id", "?")
+            logger.info("Evolve: created manager task %s (focus=%s)", task_id, focus_area)
+        except httpx.HTTPError as exc:
+            logger.error("Evolve: failed to create manager task: %s", exc)
+
+    def _log_evolve_cycle(
+        self,
+        cycle_number: int,
+        timestamp: float,
+        metrics: dict[str, Any] | None = None,
+    ) -> None:
+        """Append an entry to the evolve_cycles.jsonl log."""
+        metrics_dir = self._workdir / ".sdd" / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        log_path = metrics_dir / "evolve_cycles.jsonl"
+        entry: dict[str, Any] = {
+            "cycle": cycle_number,
+            "timestamp": timestamp,
+            "iso_time": datetime.fromtimestamp(timestamp, tz=UTC).isoformat(),
+            "tick": self._tick_count,
+        }
+        if metrics:
+            entry.update(metrics)
+        try:
+            with log_path.open("a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except OSError as exc:
+            logger.warning("Evolve: failed to write cycle log: %s", exc)
+
+    # -- Evolution integration -----------------------------------------------
+
+    def make_evolution_loop(self, **kwargs: Any) -> EvolutionLoop:
+        """Create an EvolutionLoop wired to this orchestrator's AdaptiveGovernor.
+
+        Passes the orchestrator's governor so the evolution loop shares the
+        same weight history and governance log as the orchestrator's evolve
+        cycles.  Any extra keyword arguments are forwarded to ``EvolutionLoop``.
+
+        Returns:
+            A fully-wired ``EvolutionLoop`` instance.
+        """
+        from bernstein.evolution.loop import EvolutionLoop
+
+        return EvolutionLoop(
+            state_dir=self._workdir / ".sdd",
+            repo_root=self._workdir,
+            governor=self._governor,
+            **kwargs,
+        )
+
+    def _run_evolution_cycle(self, result: TickResult) -> None:
+        """Run an evolution analysis cycle and create upgrade tasks from proposals."""
+        assert self._evolution is not None
+        try:
+            proposals = self._evolution.run_analysis_cycle()
+
+            # Score each proposal with Strategic Risk Score before routing
+            cycle_risk_scores: list[float] = []
+            for proposal in proposals:
+                target_files = proposal.risk_assessment.affected_components
+                # Estimate diff size from description length (heuristic)
+                diff_estimate = max(len(proposal.proposed_change) // 10, 10)
+                risk_score = self._risk_scorer.score_proposal(
+                    target_files=target_files,
+                    diff_size=diff_estimate,
+                    test_coverage_delta=0.0,  # unknown pre-execution
+                )
+                cycle_risk_scores.append(risk_score.composite_risk)
+                if self._risk_scorer.is_high_risk(risk_score):
+                    logger.info(
+                        "Proposal %s (%s) flagged high-risk (%.2f) — routing to sandbox",
+                        proposal.id,
+                        proposal.title,
+                        risk_score.composite_risk,
+                    )
+                else:
+                    logger.info(
+                        "Proposal %s (%s) low-risk (%.2f) — fast-tracking",
+                        proposal.id,
+                        proposal.title,
+                        risk_score.composite_risk,
+                    )
+            self._last_cycle_risk_scores = cycle_risk_scores
+
+            # Persist pending proposals
+            self._persist_pending_proposals()
+
+            # Execute approved proposals; rollback on failure
+            executed = self._evolution.execute_pending_upgrades()
+            for proposal in executed:
+                logger.info(
+                    "Applied upgrade %s: %s (status=%s)",
+                    proposal.id,
+                    proposal.title,
+                    proposal.status.value,
+                )
+
+            if not proposals:
+                return
+
+            _task_eligible_statuses = {UpgradeStatus.PENDING, UpgradeStatus.APPROVED}
+            base = self._config.server_url
+            for proposal in proposals:
+                if proposal.status not in _task_eligible_statuses:
+                    continue
+                try:
+                    # Score for task priority routing
+                    target_files = proposal.risk_assessment.affected_components
+                    diff_estimate = max(len(proposal.proposed_change) // 10, 10)
+                    risk_score = self._risk_scorer.score_proposal(
+                        target_files=target_files,
+                        diff_size=diff_estimate,
+                        test_coverage_delta=0.0,
+                    )
+                    is_high = self._risk_scorer.is_high_risk(risk_score)
+                    task_body = {
+                        "title": f"Upgrade: {proposal.title}",
+                        "description": proposal.description,
+                        "role": "backend",
+                        "priority": 1 if is_high else 2,
+                        "scope": "large" if is_high else "medium",
+                        "complexity": "high" if is_high else "medium",
+                        "estimated_minutes": 60 if is_high else 30,
+                        "task_type": TaskType.UPGRADE_PROPOSAL.value,
+                    }
+                    resp = self._client.post(f"{base}/tasks", json=task_body)
+                    resp.raise_for_status()
+                    logger.info(
+                        "Created upgrade task for proposal %s: %s (risk=%.2f)",
+                        proposal.id,
+                        proposal.title,
+                        risk_score.composite_risk,
+                    )
+                except httpx.HTTPError as exc:
+                    logger.warning(
+                        "Failed to create upgrade task for proposal %s: %s",
+                        proposal.id,
+                        exc,
+                    )
+                    result.errors.append(f"evolution_task: {exc}")
+        except (OSError, ValueError, RuntimeError) as exc:
+            logger.error("Evolution analysis cycle failed: %s", exc)
+            result.errors.append(f"evolution: {exc}")
+
+    def _persist_pending_proposals(self) -> None:
+        """Write pending upgrade proposals to .sdd/upgrades/pending.json."""
+        if self._evolution is None:
+            return
+        upgrades_dir = self._workdir / ".sdd" / "upgrades"
+        upgrades_dir.mkdir(parents=True, exist_ok=True)
+        pending_path = upgrades_dir / "pending.json"
+        pending = self._evolution.get_pending_upgrades()
+        data = [
+            {
+                "id": p.id,
+                "title": p.title,
+                "category": p.category.value,
+                "description": p.description,
+                "status": p.status.value,
+                "confidence": p.confidence,
+                "created_at": p.created_at,
+            }
+            for p in pending
+        ]
+        pending_path.write_text(json.dumps(data, indent=2))
+
+    # -- Backlog -------------------------------------------------------------
+
+    def _sync_backlog_file(self, task: Task) -> None:
+        """Move the matching .md file from backlog/open/ to backlog/closed/."""
+        open_dir = self._workdir / ".sdd" / "backlog" / "open"
+        if not open_dir.exists():
+            return
+
+        closed_dir = self._workdir / ".sdd" / "backlog" / "closed"
+        closed_dir.mkdir(parents=True, exist_ok=True)
+
+        title_words = self._backlog_words_from_title(task.title)
+
+        best_match: str | None = None
+        best_score = 0
+        for md_file in open_dir.glob("*.md"):
+            slug = re.sub(r"^\d+-", "", md_file.name[:-3])
+            file_words = set(slug.split("-"))
+            significant_file_words = {w for w in file_words if len(w) >= 4}
+            overlap = title_words & significant_file_words
+            if overlap and len(overlap) > best_score:
+                best_score = len(overlap)
+                best_match = md_file.name
+
+        if best_match is None:
+            return
+
+        src = open_dir / best_match
+        dst = closed_dir / best_match
+        if not src.exists():
+            return
+
+        content = src.read_text(encoding="utf-8")
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        summary = task.result_summary or ""
+        content += f"\n\n---\n**completed**: {ts}\n**task_id**: {task.id}\n**result**: {summary}\n"
+        dst.write_text(content, encoding="utf-8")
+        src.unlink()
+        logger.info("Synced backlog: %s -> closed/", best_match)
+
+    def ingest_backlog(self) -> int:
+        """Scan .sdd/backlog/open/ and POST any new files to the task server.
+
+        Returns:
+            Number of files ingested this call.
+        """
+        open_dir = self._workdir / ".sdd" / "backlog" / "open"
+        if not open_dir.exists():
+            return 0
+
+        claimed_dir = self._workdir / ".sdd" / "backlog" / "claimed"
+
+        count = 0
+        for md_file in sorted(open_dir.glob("*.md")):
+            if (claimed_dir / md_file.name).exists():
+                continue
+
+            content = md_file.read_text(encoding="utf-8")
+            payload = parse_backlog_file(md_file.name, content)
+
+            try:
+                resp = self._client.post(f"{self._config.server_url}/tasks", json=payload)
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                logger.warning("ingest_backlog: POST /tasks failed for %s: %s", md_file.name, exc)
+                continue
+
+            claimed_dir.mkdir(parents=True, exist_ok=True)
+            md_file.rename(claimed_dir / md_file.name)
+            count += 1
+            logger.info("Ingested backlog file: %s", md_file.name)
+
+        return count
+
+    @staticmethod
+    def _backlog_words_from_title(title: str) -> set[str]:
+        """Extract significant lowercase words (>=4 chars) from a task title."""
+        expanded = re.sub(r"([a-z])([A-Z])", r"\1 \2", title)
+        tokens = re.split(r"[^a-zA-Z0-9]+", expanded.lower())
+        return {w for w in tokens if len(w) >= 4}
+
+    # -- Run summary --------------------------------------------------------
+
+    def _generate_run_summary(
+        self,
+        done_tasks: list[Task],
+        failed_tasks: list[Task],
+    ) -> None:
+        """Write a run completion summary to .sdd/runtime/summary.md."""
+        runtime_dir = self._workdir / ".sdd" / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        summary_path = runtime_dir / "summary.md"
+
+        total_completed = len(done_tasks)
+        total_failed = len(failed_tasks)
+        wall_clock_s = time.time() - self._run_start_ts
+
+        collector = get_collector(self._workdir / ".sdd" / "metrics")
+        total_cost = collector.get_total_cost()
+        files_modified: int = sum(getattr(m, "files_modified", 0) for m in collector.task_metrics.values())
+
+        task_lines: list[str] = []
+        for task in sorted(done_tasks, key=lambda t: t.title):
+            task_lines.append(f"- [x] {task.title}")
+        for task in sorted(failed_tasks, key=lambda t: t.title):
+            task_lines.append(f"- [ ] {task.title} *(failed)*")
+
+        hours, rem = divmod(int(wall_clock_s), 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours:
+            duration_str = f"{hours}h {minutes}m {seconds}s"
+        elif minutes:
+            duration_str = f"{minutes}m {seconds}s"
+        else:
+            duration_str = f"{seconds}s"
+
+        lines = [
+            "# Run Summary",
+            "",
+            f"**Total completed:** {total_completed}",
+            f"**Total failed:** {total_failed}",
+            f"**Files modified:** {files_modified}",
+            f"**Estimated cost:** ${total_cost:.4f}",
+            f"**Wall-clock duration:** {duration_str}",
+            "",
+            "## Tasks",
+            "",
+        ]
+        lines.extend(task_lines)
+        lines.append("")
+
+        summary_path.write_text("\n".join(lines))
+        self._summary_written = True
+        logger.info("Run complete. Summary at .sdd/runtime/summary.md")
+
+        self._post_bulletin(
+            "status",
+            f"run complete: {total_completed} tasks done, {total_failed} failed, "
+            f"${total_cost:.4f} spent, {duration_str} elapsed",
+        )
+        self._notify(
+            "run.completed",
+            "Bernstein run complete",
+            f"{total_completed} tasks done, {total_failed} failed in {duration_str}.",
+            tasks_completed=total_completed,
+            tasks_failed=total_failed,
+            files_modified=files_modified,
+            cost_usd=round(total_cost, 4),
+            duration=duration_str,
+        )
+
+        generate_retrospective(
+            done_tasks=done_tasks,
+            failed_tasks=failed_tasks,
+            collector=collector,
+            runtime_dir=runtime_dir,
+            run_start_ts=self._run_start_ts,
+        )
+
+    def _record_tick_events(self, result: TickResult, tasks_by_status: dict[str, list[Task]]) -> None:
+        """Record replay events from a completed tick for deterministic replay."""
+        # Record spawned agents
+        for session_id in result.spawned:
+            session = self._agents.get(session_id)
+            if session is not None:
+                self._recorder.record(
+                    "agent_spawned",
+                    agent_id=session.id,
+                    role=session.role,
+                    model=session.model_config.model if session.model_config else None,
+                    task_ids=session.task_ids,
+                    agent_source=session.agent_source,
+                )
+                for tid in session.task_ids:
+                    self._recorder.record(
+                        "task_claimed",
+                        task_id=tid,
+                        agent_id=session.id,
+                        model=session.model_config.model if session.model_config else None,
+                    )
+
+        # Record verified (completed) tasks
+        for task_id in result.verified:
+            session = self._find_session_for_task(task_id)
+            cost = 0.0
+            if session is not None:
+                cost = self._cost_tracker.status().spent_usd
+            self._recorder.record(
+                "task_completed",
+                task_id=task_id,
+                agent_id=session.id if session else None,
+                cost_usd=round(cost, 4),
+            )
+
+        # Record verification failures
+        for task_id, failed_signals in result.verification_failures:
+            self._recorder.record(
+                "task_verification_failed",
+                task_id=task_id,
+                failed_signals=failed_signals,
+            )
+
+        # Record reaped agents
+        for agent_id in result.reaped:
+            self._recorder.record("agent_reaped", agent_id=agent_id)
+
+        # Record retried tasks
+        for task_id in result.retried:
+            self._recorder.record("task_retried", task_id=task_id)
+
+    def _log_summary(self, result: TickResult) -> None:
+        """Write a one-line summary and agent state snapshot each tick."""
+        log_dir = self._workdir / ".sdd" / "runtime"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "orchestrator.log"
+
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        alive = sum(1 for a in self._agents.values() if a.status != "dead")
+        fp = self._fast_path_stats
+        fp_tag = f" fast_path={fp.tasks_bypassed} saved=${fp.estimated_cost_saved_usd:.2f}" if fp.tasks_bypassed else ""
+        line = (
+            f"[{ts}] open={result.open_tasks} agents={alive} "
+            f"spawned={len(result.spawned)} reaped={len(result.reaped)} "
+            f"verified={len(result.verified)} errors={len(result.errors)}{fp_tag}\n"
+        )
+        with log_path.open("a") as f:
+            f.write(line)
+
+        # Dump agent state for the live dashboard
+        agents_snapshot = [
+            {
+                "id": s.id,
+                "role": s.role,
+                "status": s.status,
+                "model": s.model_config.model if s.model_config else None,
+                "task_ids": s.task_ids,
+                "pid": s.pid,
+                "spawn_ts": s.spawn_ts,
+                "runtime_s": round(time.time() - s.spawn_ts) if s.spawn_ts > 0 else 0,
+                "agent_source": s.agent_source,
+                "cell_id": s.cell_id,
+                "parent_id": s.parent_id,
+            }
+            for s in self._agents.values()
+        ]
+        state_path = log_dir / "agents.json"
+        try:
+            with state_path.open("w") as f:
+                json.dump({"ts": time.time(), "agents": agents_snapshot}, f)
+        except OSError:
+            pass
+
+
+class TickResult:
+    """Summary of one orchestrator tick.
+
+    Pure data container -- no logic, no side effects.
+    """
+
+    def __init__(self) -> None:
+        self.open_tasks: int = 0
+        self.active_agents: int = 0
+        self.spawned: list[str] = []
+        self.reaped: list[str] = []
+        self.verified: list[str] = []
+        self.verification_failures: list[tuple[str, list[str]]] = []
+        self.retried: list[str] = []
+        self.errors: list[str] = []
+        # Populated when dry_run=True: (role, title, model, effort) tuples
+        self.dry_run_planned: list[tuple[str, str, str | None, str | None]] = []
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+    from pathlib import Path
+
+    from bernstein.adapters.registry import get_adapter
+    from bernstein.core.seed import SeedConfig, parse_seed
+    from bernstein.core.spawner import AgentSpawner
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=8052)
+    parser.add_argument("--adapter", type=str, default="claude")
+    parser.add_argument("--cells", type=int, default=1, help="Number of parallel cells (1=single-cell)")
+    args = parser.parse_args()
+
+    workdir = Path.cwd()
+
+    # Configure logging so errors are visible in spawner.log (stdout/stderr)
+    log_dir = workdir / ".sdd" / "runtime"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stderr),
+            logging.FileHandler(log_dir / "orchestrator-debug.log"),
+        ],
+    )
+
+    try:
+        # Try to load adapter from seed if available
+        adapter_name = args.adapter
+        seed_path = workdir / "bernstein.yaml"
+        seed: SeedConfig | None = None
+        if seed_path.exists():
+            try:
+                seed = parse_seed(seed_path)
+                adapter_name = getattr(seed, "cli", adapter_name)
+            except Exception as exc:
+                logger.warning("Failed to parse seed for adapter config: %s", exc)
+
+        if adapter_name == "auto":
+            # Auto mode: default to Claude Code (primary), others used via routing
+            adapter_inst = get_adapter("claude")
+            if not adapter_inst:
+                # Fallback: try any available adapter
+                for fallback_name in ("codex", "gemini", "qwen"):
+                    adapter_inst = get_adapter(fallback_name)
+                    if adapter_inst:
+                        logger.info("Auto mode: using %s as primary adapter", fallback_name)
+                        break
+        else:
+            adapter_inst = get_adapter(adapter_name)
+        if not adapter_inst:
+            logger.error("No adapter found (tried: %s)", adapter_name)
+            sys.exit(1)
+
+        # Create TierAwareRouter from providers.yaml if available
+        router: TierAwareRouter | None = None
+        providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
+        if providers_yaml.exists():
+            router = TierAwareRouter()
+            load_providers_from_yaml(providers_yaml, router)
+            logger.info("Loaded TierAwareRouter from %s", providers_yaml)
+
+        # Load MCP config from user global + project seed
+        mcp_config = None
+        if adapter_name == "claude":
+            from bernstein.adapters.claude import load_mcp_config
+
+            project_mcp = None
+            if seed_path.exists():
+                try:
+                    seed_cfg = parse_seed(seed_path)
+                    project_mcp = seed_cfg.mcp_servers
+                except Exception as exc:
+                    logger.warning("Failed to parse seed for MCP config: %s", exc)
+            mcp_config = load_mcp_config(project_servers=project_mcp)
+            if mcp_config:
+                logger.info("Loaded MCP config with %d server(s)", len(mcp_config.get("mcpServers", {})))
+
+        # Initialize MCPManager from seed mcp_servers config
+        from bernstein.core.mcp_manager import MCPManager, parse_server_configs
+
+        mcp_manager: MCPManager | None = None
+        if seed and seed.mcp_servers:
+            mcp_server_configs = parse_server_configs(seed.mcp_servers)
+            if mcp_server_configs:
+                mcp_manager = MCPManager(mcp_server_configs)
+                mcp_manager.start_all()
+                logger.info(
+                    "MCPManager started %d server(s): %s",
+                    len(mcp_server_configs),
+                    ", ".join(mcp_manager.server_names),
+                )
+
+        # Load agency catalog from seed config
+        from bernstein.core.agency_loader import load_agency_catalog
+
+        agency_catalog = None
+        if seed and seed.agent_catalog:
+            catalog_path = Path(seed.agent_catalog)
+            if not catalog_path.is_absolute():
+                catalog_path = workdir / catalog_path
+            agency_catalog = load_agency_catalog(catalog_path)
+            if agency_catalog:
+                logger.info("Loaded %d agency agents from %s", len(agency_catalog), catalog_path)
+
+        # Build catalog registry and populate loaded_agents from Agency cache
+        import asyncio as _asyncio
+
+        from bernstein.agents.agency_provider import AgencyProvider as _AgencyProvider
+        from bernstein.agents.catalog import CatalogRegistry as _CatalogRegistry
+
+        catalog_registry: _CatalogRegistry | None = seed.catalogs if seed else None
+        if catalog_registry is None:
+            catalog_registry = _CatalogRegistry.default()
+
+        agency_cache_path = _AgencyProvider.default_cache_path()
+        if agency_cache_path.exists():
+            try:
+                _provider = _AgencyProvider(local_path=agency_cache_path)
+                _agency_agents = _asyncio.run(_provider.fetch_agents())
+                for _a in _agency_agents:
+                    catalog_registry.register_agent(_a)
+                logger.info(
+                    "Loaded %d Agency specialist(s) into catalog from %s",
+                    len(_agency_agents),
+                    agency_cache_path,
+                )
+            except Exception as _exc:
+                logger.warning("Failed to load Agency agents into catalog: %s", _exc)
+
+        from bernstein import get_templates_dir
+        from bernstein.core.mcp_registry import MCPRegistry
+
+        mcp_registry_path = workdir / ".sdd" / "config" / "mcp_servers.yaml"
+        mcp_registry: MCPRegistry | None = None
+        if mcp_registry_path.exists():
+            mcp_registry = MCPRegistry(config_path=mcp_registry_path)
+            logger.info("Loaded MCP auto-discovery registry from %s", mcp_registry_path)
+
+        spawner = AgentSpawner(
+            adapter=adapter_inst,
+            templates_dir=get_templates_dir(workdir),
+            workdir=workdir,
+            router=router,
+            mcp_config=mcp_config,
+            mcp_registry=mcp_registry,
+            mcp_manager=mcp_manager,
+            agency_catalog=agency_catalog,
+            catalog=catalog_registry,
+            use_worktrees=seed.worktree_setup is not None if seed else False,
+            worktree_setup_config=seed.worktree_setup if seed else None,
+            enable_caching=True,
+        )
+        budget_usd = 0.0
+        dry_run = False
+        approval_mode = "auto"
+        merge_strategy = "pr"
+        auto_merge = True
+        run_config_path = workdir / ".sdd" / "runtime" / "run_config.json"
+        if run_config_path.exists():
+            try:
+                run_cfg = json.loads(run_config_path.read_text())
+                budget_usd = float(run_cfg.get("budget_usd", 0.0))
+                dry_run = bool(run_cfg.get("dry_run", False))
+                approval_mode = str(run_cfg.get("approval", "auto"))
+                merge_strategy = str(run_cfg.get("merge_strategy", "pr"))
+                auto_merge = bool(run_cfg.get("auto_merge", True))
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        # Resolve cluster-aware settings from env vars + seed config
+        server_url = os.environ.get("BERNSTEIN_SERVER_URL", f"http://127.0.0.1:{args.port}")
+        auth_token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
+
+        # Build cluster config: env vars take precedence over seed file
+        cluster_cfg: ClusterConfig | None = seed.cluster if seed else None
+        cluster_enabled = os.environ.get("BERNSTEIN_CLUSTER_ENABLED", "").lower() in ("1", "true", "yes")
+        if cluster_enabled:
+            cluster_cfg = ClusterConfig(
+                enabled=True,
+                topology=(cluster_cfg.topology if cluster_cfg else ClusterTopology.STAR),
+                auth_token=auth_token or (cluster_cfg.auth_token if cluster_cfg else None),
+                node_heartbeat_interval_s=(cluster_cfg.node_heartbeat_interval_s if cluster_cfg else 15),
+                node_timeout_s=(cluster_cfg.node_timeout_s if cluster_cfg else 60),
+                server_url=os.environ.get("BERNSTEIN_SERVER_URL") or (cluster_cfg.server_url if cluster_cfg else None),
+                bind_host=os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1"),
+            )
+
+        config = OrchestratorConfig(
+            server_url=server_url,
+            max_agents=seed.max_agents if seed else 6,
+            budget_usd=budget_usd,
+            dry_run=dry_run,
+            auth_token=auth_token,
+            approval=approval_mode,
+            merge_strategy=merge_strategy,
+            auto_merge=auto_merge,
+        )
+
+        if args.cells > 1:
+            from bernstein.core.models import Cell
+            from bernstein.core.multi_cell import MultiCellOrchestrator
+
+            multi_orchestrator = MultiCellOrchestrator(
+                config=config,
+                spawner=spawner,
+                workdir=workdir,
+            )
+            for i in range(args.cells):
+                cell_id = f"cell-{i + 1}"
+                role = "vp" if i == 0 else "manager"
+                cell = Cell(
+                    id=cell_id,
+                    name=f"Cell {i + 1} ({role})",
+                    max_workers=config.max_agents,
+                )
+                multi_orchestrator.register_cell(cell)
+            logger.info(
+                "Starting MultiCellOrchestrator with %d cells (VP on cell-1)",
+                args.cells,
+            )
+
+            def _multi_signal_handler(signum: int, _frame: object) -> None:
+                logger.info("Signal %d received, stopping multi-cell orchestrator", signum)
+                multi_orchestrator.stop()
+
+            signal.signal(signal.SIGINT, _multi_signal_handler)
+            signal.signal(signal.SIGTERM, _multi_signal_handler)
+            try:
+                multi_orchestrator.run()
+            finally:
+                if mcp_manager is not None:
+                    mcp_manager.stop_all()
+        else:
+            orchestrator = Orchestrator(
+                config=config,
+                spawner=spawner,
+                workdir=workdir,
+                router=router,
+                cluster_config=cluster_cfg,
+                quality_gate_config=seed.quality_gates if seed else None,
+            )
+
+            def _signal_handler(signum: int, _frame: object) -> None:
+                logger.info("Signal %d received, stopping orchestrator", signum)
+                orchestrator.stop()
+
+            signal.signal(signal.SIGINT, _signal_handler)
+            signal.signal(signal.SIGTERM, _signal_handler)
+            try:
+                orchestrator.run()
+            finally:
+                if mcp_manager is not None:
+                    mcp_manager.stop_all()
+    except Exception:
+        logger.exception("Orchestrator crashed")
+        sys.exit(1)
