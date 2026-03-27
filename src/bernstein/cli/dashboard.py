@@ -213,7 +213,7 @@ class BernsteinApp(App):
         yield Header(show_clock=True)
         with Vertical(id="agents-panel") as v:
             v.border_title = "🤖 Agents"
-            yield Static("[dim]Waiting for agents...[/]", id="no-agents")
+            yield Static("[dim]Waiting for agents...[/]")
         with Horizontal(id="spark-row"):
             yield Sparkline([], summary_function=max, id="spark")
         with Vertical(id="tasks-panel") as v:
@@ -239,16 +239,16 @@ class BernsteinApp(App):
     def _update_agents(self) -> None:
         panel = self.query_one("#agents-panel")
         agents = _load_agents()
-
-        # Remove old cards
-        for child in list(panel.children):
-            if isinstance(child, AgentCard) or child.id == "no-agents":
-                child.remove()
-
         alive = [a for a in agents if a.get("status") != "dead"]
 
+        # Remove old dynamic children (AgentCard and placeholder Static)
+        for child in list(panel.children):
+            if isinstance(child, (AgentCard, Static)):
+                child.remove()
+
         if not alive:
-            panel.mount(Static("[dim]Waiting for agents...[/]", id="no-agents"))
+            # No fixed id — avoids DuplicateIds on rapid re-mount
+            panel.mount(Static("[dim]Waiting for agents...[/]"))
         else:
             for a in alive:
                 panel.mount(AgentCard(a))
