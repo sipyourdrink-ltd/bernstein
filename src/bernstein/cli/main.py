@@ -155,8 +155,9 @@ def _find_seed_file() -> Path | None:
 @click.option("--max-cycles", default=0, help="Stop after N evolve cycles (0=unlimited).")
 @click.option("--budget", default=0.0, help="Stop after $N spent (0=unlimited).")
 @click.option("--interval", default=300, help="Seconds between evolve cycles (default 5min).")
+@click.option("--headless", is_flag=True, default=False, help="Run without dashboard (for overnight/CI).")
 @click.pass_context
-def cli(ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int, budget: float, interval: int) -> None:
+def cli(ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int, budget: float, interval: int, headless: bool) -> None:
     """Bernstein — multi-agent orchestration for CLI coding agents.
 
     \b
@@ -242,6 +243,10 @@ def cli(ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int, bud
             f"{f', max_cycles={max_cycles}' if max_cycles else ''}"
             f"{f', budget=${budget:.2f}' if budget else ''})"
         )
+
+    if headless:
+        console.print("[bold green]Running headless.[/bold green] Check .sdd/runtime/ for logs.")
+        return
 
     # Show live dashboard (blocks until Ctrl+C / q)
     from bernstein.cli.dashboard import run_dashboard
