@@ -185,11 +185,13 @@ async def run_research(workdir: Path) -> ResearchReport:
         for q in queries:
             if searches_left <= 0:
                 break
+            # Check cache BEFORE calling _search so we can track API calls accurately
+            was_cached = cache.get(q) is not None
             result = await _search(q, cache)
             if result is not None:
                 target.append(result)
             # Only count non-cached as an actual API search
-            if cache.get(q) is None or result is None:
+            if not was_cached:
                 searches_left -= 1
                 report.searches_performed += 1
 

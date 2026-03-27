@@ -139,10 +139,10 @@ class TestRunResearch:
             await run_research(tmp_path)
             first_count = mock_search.call_count
 
-            # Second run should use cache (fewer or zero API calls)
+            # Second run should use cache exclusively — zero new API calls
             mock_search.reset_mock()
             await run_research(tmp_path)
-            assert mock_search.call_count < first_count
+            assert mock_search.call_count == 0
 
     @pytest.mark.asyncio()
     async def test_handles_tavily_failure_gracefully(self, tmp_path: Path) -> None:
@@ -168,3 +168,5 @@ class TestRunResearch:
 
         # Should not exceed MAX_SEARCHES_PER_CYCLE (10)
         assert call_count <= 10
+        # searches_performed should match actual API calls (not just failures)
+        assert report.searches_performed == call_count

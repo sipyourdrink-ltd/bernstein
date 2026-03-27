@@ -273,7 +273,8 @@ class TestClaudeAdapterMcpFlag:
                 mcp_config=mcp,
             )
 
-            cmd = mock_popen.call_args.args[0]
+            # First Popen call is the claude command; second is the wrapper script
+            cmd = mock_popen.call_args_list[0].args[0]
             assert "--mcp-config" in cmd
             mcp_idx = cmd.index("--mcp-config")
             mcp_json = json.loads(cmd[mcp_idx + 1])
@@ -296,5 +297,5 @@ class TestClaudeAdapterMcpFlag:
                 mcp_config=None,
             )
 
-            cmd = mock_popen.call_args.args[0]
+            cmd = mock_popen.call_args_list[0].args[0]
             assert "--mcp-config" not in cmd

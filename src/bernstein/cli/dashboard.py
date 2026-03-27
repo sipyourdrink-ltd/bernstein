@@ -171,17 +171,12 @@ class BernsteinApp(App):
 
     CSS = """
     Screen {
-        background: #0a0a0a;
+        background: $background;
     }
 
     Header {
-        background: #111;
-        color: #00ff88;
+        color: $accent;
         text-style: bold;
-    }
-
-    Footer {
-        background: #111;
     }
 
     #main {
@@ -190,14 +185,14 @@ class BernsteinApp(App):
 
     #col-agents {
         width: 1fr;
-        border-right: heavy #222;
+        border-right: heavy $border;
         padding: 0 1;
         overflow-y: auto;
     }
 
     #col-tasks {
         width: 1fr;
-        border-right: heavy #222;
+        border-right: heavy $border;
         padding: 0;
     }
 
@@ -209,8 +204,8 @@ class BernsteinApp(App):
     .col-header {
         text-align: center;
         text-style: bold;
-        color: #666;
-        background: #111;
+        color: $text-muted;
+        background: $surface;
         height: 1;
         padding: 0 1;
     }
@@ -227,26 +222,25 @@ class BernsteinApp(App):
     }
 
     DataTable > .datatable--cursor {
-        background: #1a2a1a;
+        background: $accent 15%;
     }
 
     DataTable > .datatable--header {
-        background: #111;
+        background: $surface;
         text-style: bold;
-        color: #888;
+        color: $text-muted;
     }
 
     RichLog {
         height: 1fr;
         scrollbar-size: 1 1;
-        background: #0a0a0a;
     }
 
     #bottom-bar {
         height: auto;
         max-height: 5;
-        background: #0f0f0f;
-        border-top: heavy #222;
+        background: $surface;
+        border-top: heavy $border;
     }
 
     #stats-row {
@@ -260,17 +254,17 @@ class BernsteinApp(App):
     }
 
     #chat-input {
-        background: #111;
+        background: $surface;
         border: none;
-        color: #00ff88;
+        color: $accent;
     }
 
     #chat-input:focus {
-        border: tall #00ff88;
+        border: tall $accent;
     }
 
     #no-agents {
-        color: #444;
+        color: $text-muted;
         text-align: center;
         padding: 2;
     }
@@ -374,7 +368,7 @@ class BernsteinApp(App):
         for t in data:
             st = t.get("status", "open")
             icon = {"done": "✓", "failed": "✗", "claimed": "⚡", "open": "·"}.get(st, "?")
-            color = {"done": "bright_green", "failed": "bright_red", "claimed": "bright_yellow", "open": "#555"}.get(st, "white")
+            color = {"done": "green", "failed": "red", "claimed": "yellow", "open": "dim"}.get(st, "white")
             table.add_row(
                 Text(f" {icon}", style=f"bold {color}"),
                 Text(t.get("role", "-").upper(), style=color),
