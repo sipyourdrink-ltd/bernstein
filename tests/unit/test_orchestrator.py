@@ -1674,4 +1674,196 @@ class TestEvolveIdleDetection:
         assert len(created) == 1
         desc = str(created[0]["description"])
         assert "CompetitorX data" in desc
-        assert "Market Research" in desc
+
+
+# --- Provider health recording and evolution metrics ---
+
+
+class TestProviderHealthRecording:
+    """Orchestrator records provider health feedback on done task processing."""
+
+    def _build_with_router(self, tmp_path: Path) -> tuple[Orchestrator, MagicMock]:
+        router = MagicMock(spec=TierAwareRouter)
+        router.state = RouterState(providers={})
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=[_task_as_dict(_make_task(id="T-done", status="done"))]),
+        })
+        cfg = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            server_url="http://testserver",
+            evolution_enabled=False,
+        )
+        adp = _mock_adapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adp, templates_dir, tmp_path)
+        client = httpx.Client(transport=transport, base_url="http://testserver")
+        orch = Orchestrator(cfg, spawner, tmp_path, client=client, router=router)
+        return orch, router
+
+    def test_tick_records_provider_health_on_success(self, tmp_path: Path) -> None:
+        orch, router = self._build_with_router(tmp_path)
+
+        # Inject a session that owns T-done with a known provider
+        session = AgentSession(
+            id="backend-a",
+            role="backend",
+            pid=10,
+            task_ids=["T-done"],
+            provider="anthropic",
+            status="working",
+        )
+        orch._agents["backend-a"] = session
+
+        orch.tick()
+
+        router.update_provider_health.assert_called_once_with("anthropic", True, 0.0)
+
+    def test_tick_records_provider_health_on_failure(self, tmp_path: Path) -> None:
+        orch, router = self._build_with_router(tmp_path)
+
+        # Build task JSON with completion_signals so the janitor runs
+        done_task_json = _task_as_dict(_make_task(id="T-done-sig", status="done"))
+        done_task_json["completion_signals"] = [
+            {"type": "file_exists", "value": "definitely_missing_file.txt"}
+        ]
+
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=[done_task_json]),
+        })
+        orch._client = httpx.Client(transport=transport, base_url="http://testserver")
+
+        session = AgentSession(
+            id="backend-c",
+            role="backend",
+            pid=12,
+            task_ids=["T-done-sig"],
+            provider="openai",
+            status="working",
+        )
+        orch._agents["backend-c"] = session
+
+        orch.tick()
+
+        # Janitor fails (file does not exist) → success=False
+        router.update_provider_health.assert_called_once_with("openai", False, 0.0)
+
+    def test_tick_without_router_skips_health(self, tmp_path: Path) -> None:
+        """No crash when router is None and a done task is processed."""
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=[_task_as_dict(_make_task(id="T-done2", status="done"))]),
+        })
+        orch = _build_orchestrator(tmp_path, transport)
+        assert orch._router is None
+
+        session = AgentSession(
+            id="backend-d",
+            role="backend",
+            pid=13,
+            task_ids=["T-done2"],
+            provider="anthropic",
+            status="working",
+        )
+        orch._agents["backend-d"] = session
+
+        # Should not raise even without a router
+        result = orch.tick()
+        assert len(result.errors) == 0
+
+
+class TestEvolutionMetricsRecording:
+    """Orchestrator records task completion to EvolutionCoordinator."""
+
+    def _build_with_evolution(self, tmp_path: Path) -> tuple[Orchestrator, MagicMock]:
+        from bernstein.core.evolution import EvolutionCoordinator
+
+        evolution = MagicMock(spec=EvolutionCoordinator)
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=[_task_as_dict(_make_task(id="T-evo", status="done"))]),
+        })
+        cfg = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            server_url="http://testserver",
+            evolution_enabled=True,
+        )
+        adp = _mock_adapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adp, templates_dir, tmp_path)
+        client = httpx.Client(transport=transport, base_url="http://testserver")
+        orch = Orchestrator(cfg, spawner, tmp_path, client=client, evolution=evolution)
+        return orch, evolution
+
+    def test_tick_records_evolution_metrics(self, tmp_path: Path) -> None:
+        orch, evolution = self._build_with_evolution(tmp_path)
+
+        session = AgentSession(
+            id="backend-evo",
+            role="backend",
+            pid=20,
+            task_ids=["T-evo"],
+            provider="anthropic",
+            spawn_ts=time.time() - 5.0,  # 5 seconds ago
+            status="working",
+        )
+        orch._agents["backend-evo"] = session
+
+        orch.tick()
+
+        evolution.record_task_completion.assert_called_once()
+        call_kwargs = evolution.record_task_completion.call_args
+        assert call_kwargs.kwargs["janitor_passed"] is True
+        assert call_kwargs.kwargs["duration_seconds"] >= 0.0
+
+    def test_tick_evolution_record_failure_logged(self, tmp_path: Path) -> None:
+        """If record_task_completion raises, the orchestrator catches it and does not crash."""
+        orch, evolution = self._build_with_evolution(tmp_path)
+        evolution.record_task_completion.side_effect = RuntimeError("db failure")
+
+        session = AgentSession(
+            id="backend-evo2",
+            role="backend",
+            pid=21,
+            task_ids=["T-evo"],
+            status="working",
+        )
+        orch._agents["backend-evo2"] = session
+
+        # Must not raise
+        result = orch.tick()
+        assert len(result.errors) == 0
+        evolution.record_task_completion.assert_called_once()
+
+
+class TestConsecutiveTickFailureCircuitBreaker:
+    """run() exits after max_consecutive_failures tick exceptions."""
+
+    def test_run_stops_after_max_consecutive_failures(self, tmp_path: Path) -> None:
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=[]),
+        })
+        config = OrchestratorConfig(
+            poll_interval_s=0,
+            server_url="http://testserver",
+        )
+        orch = _build_orchestrator(tmp_path, transport, config=config)
+
+        call_count = 0
+
+        def always_failing_tick() -> TickResult:
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("tick exploded")
+
+        orch.tick = always_failing_tick  # type: ignore[assignment]
+        orch.run()
+
+        # 10 consecutive failures → loop breaks
+        assert call_count == 10

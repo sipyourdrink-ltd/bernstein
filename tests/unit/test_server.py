@@ -560,6 +560,129 @@ async def test_status_cost_per_role_breakdown(
     assert abs(roles_by_name["qa"]["cost_usd"] - 0.30) < 1e-9
 
 
+# -- upgrade task creation -------------------------------------------------
+
+@pytest.mark.anyio
+async def test_create_upgrade_task(client: AsyncClient) -> None:
+    """POST /tasks with task_type=upgrade_proposal stores upgrade_details."""
+    upgrade_details = {
+        "current_state": "old impl",
+        "proposed_change": "new impl",
+        "benefits": ["faster", "safer"],
+        "risk_assessment": {"level": "low", "breaking_changes": False, "affected_components": [], "mitigation": ""},
+        "rollback_plan": {"steps": ["revert commit"], "revert_commit": None, "data_migration": "", "estimated_rollback_minutes": 30},
+        "cost_estimate_usd": 0.5,
+        "performance_impact": "minor",
+    }
+    resp = await client.post("/tasks", json={
+        **TASK_PAYLOAD,
+        "task_type": "upgrade_proposal",
+        "upgrade_details": upgrade_details,
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["task_type"] == "upgrade_proposal"
+    assert data["upgrade_details"] is not None
+    assert data["upgrade_details"]["current_state"] == "old impl"
+    assert data["upgrade_details"]["proposed_change"] == "new impl"
+    assert data["upgrade_details"]["benefits"] == ["faster", "safer"]
+
+
+@pytest.mark.anyio
+async def test_create_task_with_model_effort(client: AsyncClient) -> None:
+    """POST /tasks with model and effort stores both fields."""
+    resp = await client.post("/tasks", json={
+        **TASK_PAYLOAD,
+        "model": "opus",
+        "effort": "max",
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["model"] == "opus"
+    assert data["effort"] == "max"
+
+
+@pytest.mark.anyio
+async def test_create_task_with_depends_on(client: AsyncClient) -> None:
+    """POST /tasks with depends_on stores the dependency list."""
+    resp = await client.post("/tasks", json={
+        **TASK_PAYLOAD,
+        "depends_on": ["T-other"],
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["depends_on"] == ["T-other"]
+
+
+# -- JSONL replay edge cases -----------------------------------------------
+
+@pytest.mark.anyio
+async def test_replay_handles_empty_lines(jsonl_path: Path) -> None:
+    """replay_jsonl skips blank lines between records without error."""
+    record = {
+        "id": "t1",
+        "title": "Task one",
+        "description": "d",
+        "role": "backend",
+        "status": "open",
+    }
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_path.write_text("\n" + json.dumps(record) + "\n\n")
+
+    store = TaskStore(jsonl_path)
+    store.replay_jsonl()
+
+    tasks = store.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].id == "t1"
+
+
+@pytest.mark.anyio
+async def test_replay_handles_malformed_json(jsonl_path: Path) -> None:
+    """replay_jsonl skips corrupt lines and continues replaying the rest."""
+    good = {"id": "t2", "title": "Good", "description": "d", "role": "backend", "status": "open"}
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_path.write_text(
+        "not-valid-json\n"
+        + json.dumps(good) + "\n"
+        + "{broken\n"
+    )
+
+    store = TaskStore(jsonl_path)
+    store.replay_jsonl()
+
+    tasks = store.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].id == "t2"
+
+
+@pytest.mark.anyio
+async def test_replay_last_write_wins(jsonl_path: Path) -> None:
+    """replay_jsonl applies later records for the same task id (last-write-wins)."""
+    base = {"id": "t3", "title": "Task", "description": "d", "role": "backend", "status": "open"}
+    update = {"id": "t3", "status": "done", "result_summary": "finished"}
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonl_path.write_text(json.dumps(base) + "\n" + json.dumps(update) + "\n")
+
+    store = TaskStore(jsonl_path)
+    store.replay_jsonl()
+
+    task = store.get_task("t3")
+    assert task is not None
+    assert task.status.value == "done"
+    assert task.result_summary == "finished"
+
+
+@pytest.mark.anyio
+async def test_replay_nonexistent_file(tmp_path: Path) -> None:
+    """replay_jsonl is a no-op when the JSONL file does not exist."""
+    missing_path = tmp_path / "nonexistent.jsonl"
+    store = TaskStore(missing_path)
+    store.replay_jsonl()  # must not raise
+
+    assert store.list_tasks() == []
+
+
 @pytest.mark.anyio
 async def test_status_cost_skips_malformed_metrics_lines(
     client_with_metrics: AsyncClient, metrics_jsonl_path: Path
@@ -576,3 +699,114 @@ async def test_status_cost_skips_malformed_metrics_lines(
     assert resp.status_code == 200
     data = resp.json()
     assert abs(data["total_cost_usd"] - 1.0) < 1e-9
+
+
+# -- POST /bulletin ---------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_post_bulletin_creates_message(client: AsyncClient) -> None:
+    """POST /bulletin returns 201 with correct fields."""
+    resp = await client.post("/bulletin", json={
+        "agent_id": "agent-42",
+        "type": "finding",
+        "content": "Found a bug in the parser",
+        "cell_id": "cell-1",
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["agent_id"] == "agent-42"
+    assert data["type"] == "finding"
+    assert data["content"] == "Found a bug in the parser"
+    assert data["cell_id"] == "cell-1"
+    assert data["timestamp"] > 0
+
+
+@pytest.mark.anyio
+async def test_get_bulletin_since_filters(client: AsyncClient) -> None:
+    """GET /bulletin?since=X only returns messages newer than X."""
+    r1 = await client.post("/bulletin", json={
+        "agent_id": "agent-1",
+        "type": "status",
+        "content": "First message",
+    })
+    ts_first = r1.json()["timestamp"]
+
+    await client.post("/bulletin", json={
+        "agent_id": "agent-2",
+        "type": "status",
+        "content": "Second message",
+    })
+
+    resp = await client.get("/bulletin", params={"since": ts_first})
+    assert resp.status_code == 200
+    messages = resp.json()
+    contents = [m["content"] for m in messages]
+    assert "Second message" in contents
+    assert "First message" not in contents
+
+
+@pytest.mark.anyio
+async def test_get_bulletin_empty(client: AsyncClient) -> None:
+    """GET /bulletin returns empty list when no messages exist."""
+    resp = await client.get("/bulletin")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+# -- POST /tasks/{id}/claim -------------------------------------------------
+
+@pytest.mark.anyio
+async def test_claim_by_id_sets_status(client: AsyncClient) -> None:
+    """POST /tasks/{id}/claim changes status to claimed."""
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = create_resp.json()["id"]
+
+    resp = await client.post(f"/tasks/{task_id}/claim")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == task_id
+    assert data["status"] == "claimed"
+
+
+@pytest.mark.anyio
+async def test_claim_by_id_unknown_task(client: AsyncClient) -> None:
+    """POST /tasks/{id}/claim returns 404 for nonexistent task."""
+    resp = await client.post("/tasks/nonexistent-id/claim")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_claim_by_id_already_claimed(client: AsyncClient) -> None:
+    """Claiming an already-claimed task still returns the task."""
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = create_resp.json()["id"]
+
+    await client.post(f"/tasks/{task_id}/claim")
+    resp = await client.post(f"/tasks/{task_id}/claim")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == task_id
+    assert data["status"] == "claimed"
+
+
+# -- GET /tasks/{id} --------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_get_task_by_id(client: AsyncClient) -> None:
+    """GET /tasks/{id} returns the task."""
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = create_resp.json()["id"]
+
+    resp = await client.get(f"/tasks/{task_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == task_id
+    assert data["title"] == TASK_PAYLOAD["title"]
+    assert data["role"] == TASK_PAYLOAD["role"]
+
+
+@pytest.mark.anyio
+async def test_get_task_unknown(client: AsyncClient) -> None:
+    """GET /tasks/{id} returns 404 for nonexistent task."""
+    resp = await client.get("/tasks/no-such-task")
+    assert resp.status_code == 404
