@@ -1,0 +1,110 @@
+"""OpenAI Codex CLI adapter."""
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+from pathlib import Path
+
+from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+
+
+class CodexAdapter(CLIAdapter):
+    """Spawn and monitor OpenAI Codex CLI sessions."""
+
+    def spawn(
+        self,
+        *,
+        prompt: str,
+        workdir: Path,
+        model_config: ModelConfig,
+        session_id: str,
+    ) -> SpawnResult:
+        log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            "codex",
+            "--model", model_config.model,
+            "--approval-mode", "full-auto",
+            "--quiet",
+            prompt,
+        ]
+
+        with log_path.open("w") as log_file:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=workdir,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+
+        return SpawnResult(pid=proc.pid, log_path=log_path)
+
+    def is_alive(self, pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def kill(self, pid: int) -> None:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except OSError:
+            pass
+
+    def name(self) -> str:
+        return "Codex"
+
+    def detect_tier(self) -> ApiTierInfo | None:
+        """Detect Codex API tier based on environment configuration.
+
+        Checks OPENAI_API_KEY and OPENAI_ORG_ID to determine tier:
+        - With organization ID = Enterprise tier
+        - With paid account (sk-proj...) = Pro tier
+        - Default = Free tier
+
+        Returns:
+            ApiTierInfo with detected tier and rate limits.
+        """
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        org_id = os.environ.get("OPENAI_ORG_ID", "")
+
+        if not api_key:
+            return None
+
+        # Determine tier from environment and key format
+        if org_id:
+            tier = ApiTier.ENTERPRISE
+            rate_limit = RateLimit(
+                requests_per_minute=500,
+                tokens_per_minute=90000,
+            )
+        elif api_key.startswith("sk-proj"):
+            tier = ApiTier.PRO
+            rate_limit = RateLimit(
+                requests_per_minute=100,
+                tokens_per_minute=10000,
+            )
+        elif api_key.startswith("sk-"):
+            tier = ApiTier.PLUS
+            rate_limit = RateLimit(
+                requests_per_minute=60,
+                tokens_per_minute=5000,
+            )
+        else:
+            tier = ApiTier.FREE
+            rate_limit = RateLimit(
+                requests_per_minute=20,
+                tokens_per_minute=2000,
+            )
+
+        return ApiTierInfo(
+            provider=ProviderType.CODEX,
+            tier=tier,
+            rate_limit=rate_limit,
+            is_active=True,
+        )

@@ -1,0 +1,10 @@
+id: smoke-002
+goal: "CLI entry point loads without import errors"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.cli.main
+  - type: import_succeeds
+    module: bernstein.cli.main
+    attribute: cli
+max_cost_usd: 0.0
+max_duration_seconds: 10

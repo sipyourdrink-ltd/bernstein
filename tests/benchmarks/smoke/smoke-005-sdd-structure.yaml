@@ -1,0 +1,11 @@
+id: smoke-005
+goal: "Bootstrap creates .sdd/ directory structure"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.bootstrap
+    attribute: bootstrap_from_seed
+  - type: import_succeeds
+    module: bernstein.core.bootstrap
+    attribute: bootstrap_from_goal
+max_cost_usd: 0.0
+max_duration_seconds: 10

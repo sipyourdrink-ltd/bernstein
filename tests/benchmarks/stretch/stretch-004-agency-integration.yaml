@@ -1,0 +1,7 @@
+id: stretch-004
+goal: "Agency loader discovers and loads external agent definitions"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.agency_loader
+max_cost_usd: 0.05
+max_duration_seconds: 120

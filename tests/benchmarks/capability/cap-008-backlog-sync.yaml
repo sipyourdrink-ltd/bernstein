@@ -1,0 +1,8 @@
+id: cap-008
+goal: "Backlog sync creates server tasks from .md files"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.sync
+    attribute: sync_backlog_to_server
+max_cost_usd: 0.0
+max_duration_seconds: 15

@@ -1,0 +1,7 @@
+id: cap-006
+goal: "Circuit breaker trips after configured failure threshold"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.evolution.circuit
+max_cost_usd: 0.0
+max_duration_seconds: 15

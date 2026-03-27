@@ -1,0 +1,7 @@
+id: stretch-005
+goal: "Cost tracking accurately accounts for all token usage across agents"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.metrics
+max_cost_usd: 0.05
+max_duration_seconds: 120

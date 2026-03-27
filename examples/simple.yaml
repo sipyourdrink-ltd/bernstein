@@ -1,0 +1,4 @@
+goal: "Add user authentication with JWT tokens"
+cli: claude
+team: [backend, security, qa]
+budget: "$10"

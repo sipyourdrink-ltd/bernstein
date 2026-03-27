@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*
+
+# IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Bernstein runtime state (regenerated on each run)
+.sdd/runtime/
+.sdd/metrics/
+.sdd/upgrades/
+.sdd/invariants.lock
+.sdd/sandboxes/
+.sdd/backlog/done/
+.sdd/backlog/PLAN.md
+.sdd/config.json
+.sdd/config.yaml
+.sdd/config/
+.sdd/agents/definitions/
+.sdd/evolution/
+.sdd/researches/
+
+# Proprietary: agent prompts, design specs, development plans
+templates/roles/
+templates/prompts/
+docs/specs/
+docs/plans/
+
+# Seed file (contains operational config)
+bernstein.yaml
+
+# Cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Other
+node_modules/
+*.pid
+*.log
