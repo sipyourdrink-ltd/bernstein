@@ -1,7 +1,14 @@
-"""Textual 8.x live dashboard for Bernstein agent orchestration."""
+"""Textual 8.x live dashboard for Bernstein agent orchestration.
+
+Three-panel layout with live agent log windows:
+- Top: Agent cards with mini PiP log tails
+- Middle: Task list
+- Bottom: Stats bar + sparkline
+"""
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections import deque
 from pathlib import Path
@@ -10,14 +17,13 @@ from typing import Any
 import httpx
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.reactive import reactive
 from textual.widgets import (
     DataTable,
     Footer,
     Header,
-    ProgressBar,
-    Rule,
+    RichLog,
     Sparkline,
     Static,
 )
@@ -44,13 +50,28 @@ def _load_agents() -> list[dict[str, Any]]:
         return []
 
 
+def _tail_log(session_id: str, n_lines: int = 6) -> list[str]:
+    """Read last N lines from an agent's log file."""
+    p = Path(f".sdd/runtime/{session_id}.log")
+    if not p.exists():
+        return ["[dim]waiting for output...[/]"]
+    try:
+        text = p.read_text(errors="replace")
+        lines = text.strip().splitlines()
+        if not lines:
+            return ["[dim]agent thinking...[/]"]
+        return lines[-n_lines:]
+    except OSError:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Widgets
 # ---------------------------------------------------------------------------
 
 
-class AgentCard(Static):
-    """One agent rendered as a compact status card."""
+class AgentLogWidget(Static):
+    """Agent card with embedded live log tail — a PiP window."""
 
     def __init__(self, agent: dict[str, Any], **kw: Any) -> None:
         super().__init__(**kw)
@@ -64,35 +85,27 @@ class AgentCard(Static):
         runtime_s = int(a.get("runtime_s", 0))
         m, s = divmod(runtime_s, 60)
         n_tasks = len(a.get("task_ids", []))
-        aid = a.get("id", "?")[-8:]
+        aid = a.get("id", "?")
 
         color = {"working": "yellow", "starting": "cyan", "dead": "red"}.get(status, "green")
 
-        # Build a runtime bar (visual)
-        max_bar = 20
-        filled = min(max_bar, runtime_s // 30) if runtime_s > 0 else 0
-        bar = "█" * filled + "░" * (max_bar - filled)
-
         t = Text()
-        t.append(f" {role:<12}", style=f"bold {color}")
-        t.append(f" {model:<7}", style="italic")
-        t.append(f" {status:<9}", style=color)
-        t.append(f" {m}:{s:02d}  ", style="dim")
-        t.append(bar, style=color)
+        # Header line
+        t.append(f" ● {role}", style=f"bold {color}")
+        t.append(f"  {model}", style="italic dim")
+        t.append(f"  {status}", style=color)
+        t.append(f"  {m}:{s:02d}", style="dim")
         t.append(f"  {n_tasks} task(s)", style="dim")
-        t.append(f"  [{aid}]", style="dim italic")
+        t.append(f"  [{aid[-8:]}]\n", style="dim italic")
+
+        # Mini log tail (small font effect via dimming)
+        log_lines = _tail_log(aid, n_lines=4)
+        for line in log_lines:
+            # Truncate long lines
+            display = line[:100] + "…" if len(line) > 100 else line
+            t.append(f"  │ {display}\n", style="dim")
+
         return t
-
-
-class CompletionSpark(Static):
-    """Sparkline of task completion rate over time."""
-
-    def __init__(self, history: list[float], **kw: Any) -> None:
-        super().__init__(**kw)
-        self._history = history
-
-    def compose(self) -> ComposeResult:
-        yield Sparkline(self._history, summary_function=max)
 
 
 class StatsPanel(Static):
@@ -104,31 +117,33 @@ class StatsPanel(Static):
     failed = reactive(0)
     elapsed = reactive(0)
     agents_alive = reactive(0)
+    evolve = reactive(False)
 
     def render(self) -> Text:
         pct = int(self.done / self.total * 100) if self.total > 0 else 0
         m, s = divmod(self.elapsed, 60)
 
         t = Text()
-        t.append("  ⏱ ", style="dim")
-        t.append(f"{m}m{s:02d}s", style="bold")
-        t.append("   📋 ", style="dim")
-        t.append(f"{self.total}", style="bold")
-        t.append(" tasks  ", style="dim")
-        t.append(f"✓{self.done}", style="bold green")
-        t.append(f"  ⚡{self.working}", style="bold yellow")
-        t.append(f"  ✗{self.failed}", style="bold red")
-        t.append(f"   🤖 {self.agents_alive}", style="bold cyan")
-        t.append(" agents  ", style="dim")
+        if self.evolve:
+            t.append(" ∞ EVOLVE ", style="bold white on dark_cyan")
+            t.append(" ", style="")
 
-        # ASCII progress bar
-        bar_w = 30
+        t.append(f" ⏱ {m}m{s:02d}s", style="bold")
+        t.append(f"  📋 {self.total}", style="bold")
+        t.append(f"  ✓{self.done}", style="bold green")
+        t.append(f"  ⚡{self.working}", style="bold yellow")
+        if self.failed:
+            t.append(f"  ✗{self.failed}", style="bold red")
+        t.append(f"  🤖 {self.agents_alive}", style="bold cyan")
+
+        # Progress bar
+        bar_w = 25
         filled = int(pct / 100 * bar_w)
         t.append("  [", style="dim")
         t.append("━" * filled, style="bold green")
-        t.append("╺" if filled < bar_w else "", style="yellow")
-        remaining = bar_w - filled - (1 if filled < bar_w else 0)
-        t.append("─" * remaining, style="dim")
+        if filled < bar_w:
+            t.append("╺", style="yellow")
+            t.append("─" * (bar_w - filled - 1), style="dim")
         t.append("]", style="dim")
         t.append(f" {pct}%", style="bold green" if pct == 100 else "bold")
 
@@ -151,17 +166,21 @@ class BernsteinApp(App):
         background: $surface;
     }
 
+    #top-row {
+        height: 1fr;
+        min-height: 10;
+    }
+
     #agents-panel {
-        height: auto;
-        max-height: 50%;
+        width: 1fr;
         border: round $accent;
         border-title-color: $accent;
         padding: 0 1;
-        margin: 0 0 1 0;
+        overflow-y: auto;
     }
 
     #tasks-panel {
-        height: 1fr;
+        width: 1fr;
         border: round $primary;
         border-title-color: $primary;
         padding: 0;
@@ -179,15 +198,12 @@ class BernsteinApp(App):
         margin: 0 1;
     }
 
-    AgentCard {
-        height: 1;
+    AgentLogWidget {
+        height: auto;
+        max-height: 8;
         padding: 0;
-    }
-
-    #no-agents {
-        color: $text-muted;
-        text-align: center;
-        padding: 1;
+        margin: 0 0 1 0;
+        background: $surface-darken-1;
     }
 
     DataTable {
@@ -202,23 +218,26 @@ class BernsteinApp(App):
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh"),
+        ("s", "stop_bernstein", "Stop"),
     ]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._start_ts = time.time()
         self._completion_history: deque[float] = deque(maxlen=60)
+        self._evolve_enabled = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Vertical(id="agents-panel") as v:
-            v.border_title = "🤖 Agents"
-            yield Static("[dim]Waiting for agents...[/]")
+        with Horizontal(id="top-row"):
+            with Vertical(id="agents-panel") as v:
+                v.border_title = "🤖 Agents"
+                yield Static("[dim]Waiting for agents...[/]")
+            with Vertical(id="tasks-panel") as v:
+                v.border_title = "📋 Tasks"
+                yield DataTable(id="tasks-table")
         with Horizontal(id="spark-row"):
             yield Sparkline([], summary_function=max, id="spark")
-        with Vertical(id="tasks-panel") as v:
-            v.border_title = "📋 Tasks"
-            yield DataTable(id="tasks-table")
         yield StatsPanel(id="stats-bar")
         yield Footer()
 
@@ -227,6 +246,15 @@ class BernsteinApp(App):
         table.add_columns("", "Role", "Title")
         table.cursor_type = "row"
         table.zebra_stripes = True
+
+        # Check evolve mode
+        evolve_path = Path(".sdd/runtime/evolve.json")
+        if evolve_path.exists():
+            try:
+                cfg = json.loads(evolve_path.read_text())
+                self._evolve_enabled = cfg.get("enabled", False)
+            except Exception:
+                pass
 
         self.set_interval(2.0, self._poll)
         self._poll()
@@ -241,17 +269,16 @@ class BernsteinApp(App):
         agents = _load_agents()
         alive = [a for a in agents if a.get("status") != "dead"]
 
-        # Remove old dynamic children (AgentCard and placeholder Static)
+        # Remove old dynamic children
         for child in list(panel.children):
-            if isinstance(child, (AgentCard, Static)):
+            if isinstance(child, (AgentLogWidget, Static)):
                 child.remove()
 
         if not alive:
-            # No fixed id — avoids DuplicateIds on rapid re-mount
             panel.mount(Static("[dim]Waiting for agents...[/]"))
         else:
             for a in alive:
-                panel.mount(AgentCard(a))
+                panel.mount(AgentLogWidget(a))
 
     def _update_tasks(self) -> None:
         table = self.query_one("#tasks-table", DataTable)
@@ -259,18 +286,17 @@ class BernsteinApp(App):
         if not isinstance(tasks_data, list):
             return
         table.clear()
-        # Sort: claimed first, then open, then done, then failed
         order = {"claimed": 0, "in_progress": 0, "open": 1, "done": 2, "failed": 3}
         tasks_data.sort(key=lambda t: order.get(t.get("status", "open"), 9))
 
         for t in tasks_data:
             status = t.get("status", "open")
             icon = {
-                "done": "  ✓ ",
-                "failed": "  ✗ ",
-                "claimed": "  ⚡",
-                "open": "  · ",
-            }.get(status, "  ? ")
+                "done": " ✓ ",
+                "failed": " ✗ ",
+                "claimed": " ⚡",
+                "open": " · ",
+            }.get(status, " ? ")
             color = {
                 "done": "green",
                 "failed": "red",
@@ -293,19 +319,40 @@ class BernsteinApp(App):
             bar.done = status_data.get("done", 0)
             bar.working = status_data.get("claimed", 0)
             bar.failed = status_data.get("failed", 0)
-
-            # Track completion over time for sparkline
             self._completion_history.append(float(bar.done))
 
         bar.agents_alive = sum(1 for a in agents if a.get("status") not in ("dead", None))
         bar.elapsed = int(time.time() - self._start_ts)
+        bar.evolve = self._evolve_enabled
 
-        # Update sparkline
         spark = self.query_one("#spark", Sparkline)
         spark.data = list(self._completion_history) if self._completion_history else [0.0]
 
     def action_refresh(self) -> None:
         self._poll()
+
+    def action_stop_bernstein(self) -> None:
+        """Stop all bernstein processes and exit dashboard."""
+        import signal
+        # Kill via PID files
+        for name in ("watchdog", "spawner", "server"):
+            pid_path = Path(f".sdd/runtime/{name}.pid")
+            if pid_path.exists():
+                try:
+                    pid = int(pid_path.read_text().strip())
+                    os.kill(pid, signal.SIGTERM)
+                except (ValueError, OSError):
+                    pass
+                pid_path.unlink(missing_ok=True)
+        # Kill agents
+        for a in _load_agents():
+            pid = a.get("pid")
+            if pid:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except OSError:
+                    pass
+        self.exit(message="Bernstein stopped.")
 
 
 def run_dashboard() -> None:
