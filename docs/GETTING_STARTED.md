@@ -210,6 +210,135 @@ When a task moves to `done`, the janitor checks completion signals
 
 ---
 
+## Headless mode
+
+Run without the live dashboard — useful for overnight runs or CI pipelines:
+
+```bash
+bernstein --headless
+```
+
+Output is written to `.sdd/runtime/` logs instead of the terminal.  Combine
+with a goal or seed file as normal:
+
+```bash
+bernstein --headless -g "Refactor the auth module"
+bernstein --headless --seed-file bernstein.yaml
+```
+
+---
+
+## Continuous self-improvement (evolve mode)
+
+`--evolve` runs a continuous loop where Bernstein analyses its own metrics,
+proposes improvements, validates them in a sandbox, and applies the safe ones
+automatically.
+
+```bash
+# Run indefinitely
+bernstein --evolve
+
+# Stop after 10 cycles
+bernstein --evolve --max-cycles 10
+
+# Stop after spending $5
+bernstein --evolve --budget 5
+
+# Run cycles every 2 minutes instead of the default 5
+bernstein --evolve --interval 120
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--evolve` / `-e` | — | Enable continuous self-improvement mode |
+| `--max-cycles N` | `0` (unlimited) | Stop after N evolve cycles |
+| `--budget N` | `0` (unlimited) | Stop after $N spent |
+| `--interval N` | `300` | Seconds between cycles |
+
+Combine `--headless` with `--evolve` for unattended overnight runs:
+
+```bash
+bernstein --evolve --max-cycles 20 --budget 10 --headless
+```
+
+Low-risk proposals (L0/L1) are applied automatically.  Higher-risk proposals
+(L2+) are saved to `.sdd/evolution/deferred.jsonl` for human review — see
+`bernstein evolve review` below.
+
+---
+
+## Managing evolution proposals
+
+The `bernstein evolve` subcommand lets you inspect and approve pending
+proposals.
+
+### List proposals awaiting review
+
+```bash
+bernstein evolve review
+```
+
+### Approve a proposal
+
+```bash
+bernstein evolve approve <PROPOSAL_ID>
+
+# Attribute the approval to a specific reviewer
+bernstein evolve approve <PROPOSAL_ID> --reviewer alice
+```
+
+### Run the autoresearch loop manually
+
+```bash
+# Default: 2-hour window, up to 24 proposals
+bernstein evolve run
+
+# Short exploratory session
+bernstein evolve run --window 30m
+
+# Longer session with more experiments
+bernstein evolve run --window 4h --max-proposals 48
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--window` | `2h` | Duration (e.g. `30m`, `1h30m`, `4h`) |
+| `--max-proposals N` | `24` | Max proposals evaluated per session |
+| `--cycle N` | `300` | Seconds per experiment cycle |
+
+Results are logged to `.sdd/evolution/experiments.jsonl`.
+
+---
+
+## Benchmark suite
+
+Run the golden benchmark suite to measure Bernstein's capabilities:
+
+```bash
+# Run all tiers (smoke, capability, stretch)
+bernstein benchmark run
+
+# Run only the smoke tier (fast sanity check)
+bernstein benchmark run --tier smoke
+
+# Run only stretch benchmarks
+bernstein benchmark run --tier stretch
+
+# Run without saving results
+bernstein benchmark run --no-save
+```
+
+Results are saved to `.sdd/benchmarks/YYYY-MM-DD.jsonl` by default.  The
+suite is organised into three tiers:
+
+| Tier | Purpose |
+|------|---------|
+| `smoke` | Fast sanity checks — should always pass |
+| `capability` | Core feature validation |
+| `stretch` | Aspirational targets, expected to fail until the system matures |
+
+---
+
 ## Next steps
 
 - See `docs/DESIGN.md` for the full architecture
