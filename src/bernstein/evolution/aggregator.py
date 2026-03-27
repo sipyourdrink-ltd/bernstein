@@ -1014,10 +1014,12 @@ class MetricsAggregator:
 
     def _write_analysis_outputs(self, result: dict[str, Any]) -> None:
         """Write trends and anomalies to .sdd/analysis/."""
+        if self._analysis_dir is None:
+            return
         try:
-            self._analysis_dir.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
+            self._analysis_dir.mkdir(parents=True, exist_ok=True)
 
-            trends_path = self._analysis_dir / "trends.json"  # type: ignore[operator]
+            trends_path = self._analysis_dir / "trends.json"
             trends_data = {
                 "generated_at": time.time(),
                 "period_days": 7,
@@ -1025,7 +1027,7 @@ class MetricsAggregator:
             }
             trends_path.write_text(json.dumps(trends_data, indent=2), encoding="utf-8")
 
-            anomalies_path = self._analysis_dir / "anomalies.json"  # type: ignore[operator]
+            anomalies_path = self._analysis_dir / "anomalies.json"
             anomalies_data = {
                 "generated_at": time.time(),
                 "anomalies": [asdict(a) for a in result.get("anomalies", [])],

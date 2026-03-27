@@ -7,11 +7,14 @@ Bottom: sparkline + stats + chat input.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections import deque
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from rich.text import Text
@@ -40,7 +43,8 @@ SERVER_URL = "http://127.0.0.1:8052"
 def _get(path: str) -> Any:
     try:
         return httpx.get(f"{SERVER_URL}{path}", timeout=3.0).json()
-    except Exception:
+    except Exception as exc:
+        logger.warning("Dashboard GET %s failed: %s", path, exc)
         return None
 
 
@@ -50,7 +54,8 @@ def _load_agents() -> list[dict[str, Any]]:
         return []
     try:
         return json.loads(p.read_text()).get("agents", [])
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to load agents.json: %s", exc)
         return []
 
 
@@ -319,8 +324,8 @@ class BernsteinApp(App):
         if evolve_p.exists():
             try:
                 self._evolve = json.loads(evolve_p.read_text()).get("enabled", False)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to read evolve.json: %s", exc)
 
         self.set_interval(2.0, self._poll)
         self._poll()

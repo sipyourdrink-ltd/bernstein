@@ -1375,8 +1375,8 @@ if __name__ == "__main__":
             try:
                 seed = parse_seed(seed_path)
                 adapter_name = getattr(seed, "cli", adapter_name)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to parse seed for adapter config: %s", exc)
 
         adapter_inst = get_adapter(adapter_name)
         if not adapter_inst:
@@ -1400,8 +1400,8 @@ if __name__ == "__main__":
                 try:
                     seed_cfg = parse_seed(seed_path)
                     project_mcp = seed_cfg.mcp_servers
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to parse seed for MCP config: %s", exc)
             mcp_config = load_mcp_config(project_servers=project_mcp)
             if mcp_config:
                 logger.info("Loaded MCP config with %d server(s)", len(mcp_config.get("mcpServers", {})))

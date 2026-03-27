@@ -12,7 +12,7 @@ import shutil
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -302,7 +302,7 @@ def _get_tasks_by_status(
     try:
         resp = client.get(f"{server_url}/tasks", params={"status": status})
         resp.raise_for_status()
-        return resp.json()  # type: ignore[no-any-return]
+        return cast(list[dict[str, Any]], resp.json())
     except httpx.ConnectError:
         raise
     except httpx.HTTPError as exc:

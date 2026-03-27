@@ -1,11 +1,14 @@
 """Automatic tier hijacking — detects and routes to free tier opportunities."""
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
+
+logger = logging.getLogger(__name__)
 
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType, RateLimit
 from bernstein.core.router import ProviderConfig, Tier, TierAwareRouter
@@ -177,9 +180,9 @@ class TierHijacker:
                 opportunity = detector.detect()
                 if opportunity:
                     opportunities.append(opportunity)
-            except Exception:
+            except Exception as exc:
                 # Don't let detector failures break scanning
-                pass
+                logger.warning("Detector %s failed: %s", type(detector).__name__, exc)
 
         # Check for unused quotas in registered providers
         quota_opportunities = self._scan_provider_quotas()
@@ -254,7 +257,8 @@ class TierHijacker:
             result = sock.connect_ex(("localhost", 11434))
             sock.close()
             return result == 0
-        except Exception:
+        except Exception as exc:
+            logger.warning("Ollama availability check failed: %s", exc)
             return False
 
     def _check_lm_studio_available(self) -> bool:
@@ -266,7 +270,8 @@ class TierHijacker:
             result = sock.connect_ex(("localhost", 1234))
             sock.close()
             return result == 0
-        except Exception:
+        except Exception as exc:
+            logger.warning("LM Studio availability check failed: %s", exc)
             return False
 
     def hijack_for_task(

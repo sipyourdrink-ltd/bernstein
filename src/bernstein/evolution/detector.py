@@ -277,9 +277,11 @@ class OpportunityDetector:
 
     def _write_opportunities(self, opportunities: list[ImprovementOpportunity]) -> None:
         """Write detected opportunities to .sdd/analysis/opportunities.json."""
+        if self._analysis_dir is None:
+            return
         try:
-            self._analysis_dir.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
-            opportunities_path = self._analysis_dir / "opportunities.json"  # type: ignore[operator]
+            self._analysis_dir.mkdir(parents=True, exist_ok=True)
+            opportunities_path = self._analysis_dir / "opportunities.json"
             data = {
                 "generated_at": time.time(),
                 "count": len(opportunities),

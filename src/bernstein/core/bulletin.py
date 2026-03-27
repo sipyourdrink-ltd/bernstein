@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 MessageType = Literal["alert", "blocker", "finding", "status", "dependency"]
 
@@ -163,15 +163,15 @@ class BulletinBoard:
                 data: dict[str, object] = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            ts = float(data.get("timestamp", 0.0))  # type: ignore[arg-type]
+            ts = float(cast(float, data.get("timestamp", 0.0)))
             if ts in existing_ts:
                 continue
             msg = BulletinMessage(
                 agent_id=str(data.get("agent_id", "")),
-                type=data.get("type", "status"),  # type: ignore[arg-type]
+                type=cast(MessageType, data.get("type", "status")),
                 content=str(data.get("content", "")),
                 timestamp=ts,
-                cell_id=data.get("cell_id") if data.get("cell_id") is not None else None,  # type: ignore[arg-type]
+                cell_id=cast("str | None", data.get("cell_id")),
             )
             with self._lock:
                 self._messages.append(msg)

@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path  # noqa: TC003 — used at runtime in parse_seed
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 
@@ -166,7 +166,7 @@ def parse_seed(path: Path) -> SeedConfig:
     cli_raw = data.get("cli", "claude")
     if cli_raw not in _VALID_CLIS:
         raise SeedError(f"cli must be one of {sorted(_VALID_CLIS)}, got: {cli_raw!r}")
-    cli: Literal["claude", "codex", "gemini", "qwen"] = cli_raw  # type: ignore[assignment]
+    cli = cast(Literal["claude", "codex", "gemini", "qwen"], cli_raw)
 
     max_agents_raw = data.get("max_agents", 6)
     if not isinstance(max_agents_raw, int) or max_agents_raw < 1:

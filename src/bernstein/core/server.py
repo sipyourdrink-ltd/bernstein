@@ -11,15 +11,16 @@ import contextlib
 import json
 import time
 import uuid
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from bernstein.core.bulletin import BulletinBoard, BulletinMessage
+from bernstein.core.bulletin import BulletinBoard, BulletinMessage, MessageType
 from bernstein.core.models import (
     AgentSession,
     RiskAssessment,
@@ -116,7 +117,7 @@ class HeartbeatRequest(BaseModel):
     """Body for POST /agents/{agent_id}/heartbeat."""
 
     role: str = ""
-    status: str = "working"
+    status: Literal["starting", "working", "idle", "dead"] = "working"
 
 
 class HeartbeatResponse(BaseModel):
@@ -140,7 +141,7 @@ class BulletinPostRequest(BaseModel):
     """Body for POST /bulletin."""
 
     agent_id: str
-    type: str = "status"  # alert, blocker, finding, status, dependency
+    type: MessageType = "status"
     content: str
     cell_id: str | None = None
 
@@ -436,7 +437,7 @@ class TaskStore:
 
     # -- agents / heartbeats ------------------------------------------------
 
-    def heartbeat(self, agent_id: str, role: str, status: str) -> float:
+    def heartbeat(self, agent_id: str, role: str, status: Literal["starting", "working", "idle", "dead"]) -> float:
         """Record agent heartbeat.
 
         Args:
@@ -450,13 +451,13 @@ class TaskStore:
         now = time.time()
         if agent_id in self._agents:
             self._agents[agent_id].heartbeat_ts = now
-            self._agents[agent_id].status = status  # type: ignore[assignment]
+            self._agents[agent_id].status = status
         else:
             self._agents[agent_id] = AgentSession(
                 id=agent_id,
                 role=role,
                 heartbeat_ts=now,
-                status=status,  # type: ignore[assignment]
+                status=status,
             )
         return now
 
@@ -656,7 +657,7 @@ def create_app(
     store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Startup: replay persisted state
         store.replay_jsonl()
         # Launch the stale-agent reaper
@@ -763,7 +764,7 @@ def create_app(
         """Append a message to the bulletin board."""
         msg = BulletinMessage(
             agent_id=body.agent_id,
-            type=body.type,  # type: ignore[arg-type]
+            type=body.type,
             content=body.content,
             cell_id=body.cell_id,
         )
@@ -791,7 +792,9 @@ def create_app(
             for m in messages
         ]
 
-    # Attach store and bulletin for testing access
+    # Attach store and bulletin for testing access.
+    # FastAPI's `state` is a plain object with no predefined attributes;
+    # type: ignore[attr-defined] is the standard pattern here.
     application.state.store = store  # type: ignore[attr-defined]
     application.state.bulletin = bulletin  # type: ignore[attr-defined]
 

@@ -11,7 +11,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import httpx
 
@@ -224,7 +224,7 @@ def parse_tasks_response(raw: str) -> list[dict[str, Any]]:
         raise ValueError(f"LLM response is not valid JSON: {exc}") from exc
     if not isinstance(parsed, list):
         raise ValueError(f"Expected a JSON array, got {type(parsed).__name__}")
-    return parsed  # type: ignore[no-any-return]
+    return cast(list[dict[str, Any]], parsed)
 
 
 def _parse_completion_signal(raw: dict[str, str]) -> CompletionSignal:
@@ -246,7 +246,10 @@ def _parse_completion_signal(raw: dict[str, str]) -> CompletionSignal:
         raise ValueError(f"Invalid completion signal type: {sig_type!r}")
     if not sig_value:
         raise ValueError(f"Completion signal value cannot be empty (type={sig_type})")
-    return CompletionSignal(type=sig_type, value=sig_value)  # type: ignore[arg-type]
+    return CompletionSignal(
+        type=cast(Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"], sig_type),
+        value=sig_value,
+    )
 
 
 def _parse_risk_assessment(raw: dict[str, Any]) -> RiskAssessment:
@@ -432,8 +435,7 @@ def parse_review_response(raw: str) -> dict[str, Any]:
     if verdict not in _VALID_VERDICTS:
         raise ValueError(f"Invalid verdict: {verdict!r}. Must be one of {sorted(_VALID_VERDICTS)}")
 
-    return parsed  # type: ignore[no-any-return]
-
+    return cast(dict[str, Any], parsed)
 
 
 
@@ -486,7 +488,7 @@ async def _post_task_to_server(
 
     resp = await client.post(f"{server_url}/tasks", json=body)
     resp.raise_for_status()
-    return resp.json()["id"]  # type: ignore[no-any-return]
+    return cast(str, resp.json()["id"])
 
 
 async def _fetch_existing_tasks(
@@ -967,8 +969,8 @@ if __name__ == "__main__":
                 if seed.model:
                     model_name = seed.model
                     provider_name = "openrouter" # Assume paid if custom model
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to parse seed for model config: %s", exc)
 
         agent = ManagerAgent(
             server_url=server_url,

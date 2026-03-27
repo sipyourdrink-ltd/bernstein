@@ -13,6 +13,7 @@ import re
 import subprocess
 import uuid
 from pathlib import Path
+from typing import Literal, cast
 
 import httpx
 
@@ -389,7 +390,7 @@ def _parse_judge_response(raw: str) -> JudgeVerdict:
     flagged = confidence < JUDGE_CONFIDENCE_THRESHOLD
 
     return JudgeVerdict(
-        verdict=verdict_str,  # type: ignore[arg-type]
+        verdict=cast(Literal["accept", "retry"], verdict_str),
         confidence=confidence,
         feedback=feedback,
         flagged_for_review=flagged,

@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import time
 from pathlib import Path
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 import yaml
 
@@ -54,7 +57,8 @@ class FileUpgradeExecutor:
             else:
                 # Role templates need special handling
                 return self._apply_role_template(proposal)
-        except Exception:
+        except Exception as exc:
+            logger.exception("Failed to execute upgrade %s: %s", proposal.category, exc)
             return False
 
     def rollback_upgrade(self, proposal: UpgradeProposal) -> bool:
@@ -67,7 +71,8 @@ class FileUpgradeExecutor:
                     backup_path.unlink()
             self._backup_files.clear()
             return True
-        except Exception:
+        except Exception as exc:
+            logger.exception("Failed to rollback upgrade: %s", exc)
             return False
 
     # ------------------------------------------------------------------
