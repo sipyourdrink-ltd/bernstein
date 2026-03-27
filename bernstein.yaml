@@ -1,0 +1,20 @@
+goal: >
+  Improve Bernstein itself: read your own codebase, compare against docs/DESIGN.md,
+  identify gaps between design and implementation, fix bugs, increase test coverage,
+  and wire up the self-evolution feedback loop. Check .sdd/backlog/open/ for
+  starter tickets with specific tasks.
+cli: claude
+max_agents: 4
+model: opus
+constraints:
+  - "Python 3.12+, strict typing (Pyright strict), Ruff linting"
+  - "File-based state in .sdd/ only — no databases"
+  - "Short-lived agents only — no long-running sessions (ADR-001)"
+  - "Run tests before marking tasks complete: uv run pytest tests/ -x -q"
+  - "Do NOT modify files outside your task's owned_files"
+  - "Commit with descriptive messages after completing each task"
+context_files:
+  - docs/DESIGN.md
+  - CLAUDE.md
+  - docs/decisions/001-agent-lifecycle.md
+  - docs/decisions/003-self-evolution.md

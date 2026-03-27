@@ -197,13 +197,25 @@ def cli(ctx: click.Context, goal: str | None) -> None:
                 console.print(f"[red]Error:[/red] {exc}")
                 raise SystemExit(1) from exc
         else:
-            console.print(
-                'No bernstein.yaml found.\n\n'
-                '[bold]Quick start:[/bold]\n'
-                '  bernstein "Build a REST API with auth"\n\n'
-                'Or create a bernstein.yaml in this directory.\n'
-            )
-            return
+            # No seed file, no goal — check if backlog has tasks
+            backlog_dir = workdir / ".sdd" / "backlog" / "open"
+            has_backlog = backlog_dir.exists() and any(backlog_dir.glob("*.md"))
+            if has_backlog:
+                console.print(f"[dim]No seed file — loading {sum(1 for _ in backlog_dir.glob('*.md'))} tasks from backlog[/dim]")
+                from bernstein.core.bootstrap import bootstrap_from_goal
+                try:
+                    bootstrap_from_goal("Execute backlog tasks", workdir=workdir, port=port)
+                except RuntimeError as exc:
+                    console.print(f"[red]Error:[/red] {exc}")
+                    raise SystemExit(1) from exc
+            else:
+                console.print(
+                    'No bernstein.yaml or backlog tasks found.\n\n'
+                    '[bold]Quick start:[/bold]\n'
+                    '  bernstein -g "Build a REST API with auth"\n\n'
+                    'Or create a bernstein.yaml / add .md tasks to .sdd/backlog/open/\n'
+                )
+                return
     else:
         console.print("[dim]Already running.[/dim]")
 

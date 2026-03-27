@@ -39,9 +39,6 @@ templates/prompts/
 docs/specs/
 docs/plans/
 
-# Seed file (contains operational config)
-bernstein.yaml
-
 # Cache
 .pytest_cache/
 .ruff_cache/
