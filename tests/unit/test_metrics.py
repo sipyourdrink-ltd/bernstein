@@ -378,6 +378,7 @@ class TestJsonlFileWriting:
         collector._write_metric_point(
             MetricType.ERROR_RATE, 1.0, {"key": "val"}
         )
+        collector.flush()
         today = datetime.now().strftime("%Y-%m-%d")
         f = collector._metrics_dir / f"error_rate_{today}.jsonl"
         data = json.loads(f.read_text().strip())
@@ -389,6 +390,7 @@ class TestJsonlFileWriting:
     def test_multiple_points_appended(self, collector: MetricsCollector) -> None:
         for i in range(5):
             collector._write_metric_point(MetricType.ERROR_RATE, float(i), {})
+        collector.flush()
         today = datetime.now().strftime("%Y-%m-%d")
         f = collector._metrics_dir / f"error_rate_{today}.jsonl"
         lines = f.read_text().strip().splitlines()
@@ -396,6 +398,7 @@ class TestJsonlFileWriting:
 
     def test_file_named_by_date(self, collector: MetricsCollector) -> None:
         collector._write_metric_point(MetricType.API_USAGE, 1.0, {})
+        collector.flush()
         today = datetime.now().strftime("%Y-%m-%d")
         expected = collector._metrics_dir / f"api_usage_{today}.jsonl"
         assert expected.exists()

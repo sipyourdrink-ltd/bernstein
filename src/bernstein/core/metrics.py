@@ -130,6 +130,10 @@ class MetricsCollector:
         # Rate limiting tracking
         self._request_timestamps: list[float] = []
 
+        # Write buffer for batched file I/O
+        self._buffer: list[tuple[Path, str]] = []
+        self._buffer_limit: int = 50
+
     # -- Task Metrics --------------------------------------------------------
 
     def start_task(self, task_id: str, role: str, model: str, provider: str) -> TaskMetrics:
@@ -229,6 +233,9 @@ class MetricsCollector:
 
         # Update usage quota
         self._update_usage_quota(metrics.provider, metrics.model, tokens_used)
+
+        # Flush buffered points — task completion is a natural checkpoint
+        self._flush_buffer()
 
         return metrics
 
@@ -336,6 +343,7 @@ class MetricsCollector:
                 },
             )
 
+        self._flush_buffer()
         return metrics
 
     # -- Provider Health -----------------------------------------------------
@@ -523,6 +531,8 @@ class MetricsCollector:
         if task_id in self._task_metrics:
             self._task_metrics[task_id].janitor_passed = passed
 
+        self._flush_buffer()
+
     def record_free_tier_usage(
         self,
         provider: str,
@@ -563,6 +573,8 @@ class MetricsCollector:
                 {**labels, "quota_type": "tokens"},
             )
 
+        self._flush_buffer()
+
     # -- Error Tracking ------------------------------------------------------
 
     def record_error(
@@ -594,6 +606,7 @@ class MetricsCollector:
 
         # Update provider health
         self._update_provider_health(provider, success=False)
+        self._flush_buffer()
 
     # -- Persistence ---------------------------------------------------------
 
@@ -621,8 +634,36 @@ class MetricsCollector:
             "labels": labels,
         }
 
-        with filepath.open("a") as f:
-            f.write(json.dumps(point) + "\n")
+        self._buffer.append((filepath, json.dumps(point)))
+        if len(self._buffer) >= self._buffer_limit:
+            self._flush_buffer()
+
+    def _flush_buffer(self) -> None:
+        """Batch-write all buffered metric points, grouped by file path."""
+        if not self._buffer:
+            return
+        # Group lines by file path
+        by_file: dict[Path, list[str]] = {}
+        for filepath, line in self._buffer:
+            by_file.setdefault(filepath, []).append(line)
+        self._buffer = []
+        for filepath, lines in by_file.items():
+            try:
+                with filepath.open("a") as f:
+                    f.write("\n".join(lines) + "\n")
+            except OSError:
+                logger.exception("Failed to flush metrics to %s", filepath)
+
+    def flush(self) -> None:
+        """Flush the write buffer to disk. Call this each orchestrator tick."""
+        self._flush_buffer()
+
+    def __del__(self) -> None:
+        """Flush remaining buffered metrics on garbage collection."""
+        try:
+            self._flush_buffer()
+        except Exception:  # noqa: BLE001
+            pass
 
     def record_api_call(
         self,
@@ -662,6 +703,8 @@ class MetricsCollector:
 
         if success:
             self._update_provider_health(provider, True)
+
+        self._flush_buffer()
 
     # -- Query Methods -------------------------------------------------------
 

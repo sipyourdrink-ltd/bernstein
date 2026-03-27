@@ -5,7 +5,7 @@
 ### Agent orchestration for code that writes itself
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-800+-2ea44f)]()
+[![Tests](https://img.shields.io/badge/tests-1210+-2ea44f)]()
 [![License](https://img.shields.io/badge/license-PolyForm_NC-f89820)](LICENSE)
 
 </div>
@@ -36,11 +36,26 @@ cli: claude
 ```
 
 ```bash
-bernstein          # starts agents, shows live dashboard
-bernstein stop     # graceful shutdown
+bernstein                      # starts agents, shows live dashboard
+bernstein --headless           # run without dashboard (overnight/CI)
+bernstein --evolve             # continuous self-improvement mode
+bernstein --evolve \
+  --max-cycles 10 \
+  --budget 5.00 \
+  --interval 300               # evolve with limits
+bernstein stop                 # graceful shutdown
 ```
 
 Option B — put `.md` task files in `.sdd/backlog/open/` with YAML frontmatter. Bernstein loads them automatically on start.
+
+## Commands
+
+```
+bernstein             Start from seed file or backlog
+bernstein stop        Gracefully stop all agents and the task server
+bernstein evolve      Manage self-evolution proposals
+bernstein benchmark   Run the tiered golden benchmark suite
+```
 
 ## Architecture
 
@@ -111,7 +126,7 @@ src/bernstein/
 | Scheduling | Deterministic code | LLM | LLM | Graph |
 | Agent lifetime | Short (minutes) | Long-running | Long-running | Long-running |
 | Verification | Built-in janitor | Manual | Manual | Manual |
-| Self-evolution | Risk-gated | No | No | No |
+| Self-evolution | Risk-gated (L0–L3) + continuous `--evolve` mode | No | No | No |
 | Works with CLI agents | Yes | No | No | No |
 | Multi-provider | Claude/Codex/Gemini/Qwen | API-only | API-only | API-only |
 

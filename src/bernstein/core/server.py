@@ -178,6 +178,9 @@ class TaskStore:
     ) -> None:
         self._tasks: dict[str, Task] = {}
         self._agents: dict[str, AgentSession] = {}
+        # Secondary indices for O(1) status/role lookups
+        self._by_status: dict[TaskStatus, dict[str, Task]] = {s: {} for s in TaskStatus}
+        self._by_role_status: dict[tuple[str, TaskStatus], list[str]] = {}
         self._jsonl_path: Path = jsonl_path
         self._archive_path: Path = archive_path
         self._metrics_jsonl_path: Path = (
@@ -188,6 +191,28 @@ class TaskStore:
         self._lock: asyncio.Lock = asyncio.Lock()
         self._dirty: bool = False
         self._start_ts: float = time.time()
+        self._cost_cache: dict[str, float] = {}
+        self._cost_cache_mtime: float = 0.0
+
+    # -- index helpers -------------------------------------------------------
+
+    def _index_add(self, task: Task) -> None:
+        """Add *task* to secondary indices at its current status."""
+        self._by_status[task.status][task.id] = task
+        key = (task.role, task.status)
+        ids = self._by_role_status.setdefault(key, [])
+        if task.id not in ids:
+            ids.append(task.id)
+
+    def _index_remove(self, task: Task) -> None:
+        """Remove *task* from secondary indices at its current status."""
+        self._by_status[task.status].pop(task.id, None)
+        ids = self._by_role_status.get((task.role, task.status))
+        if ids is not None:
+            try:
+                ids.remove(task.id)
+            except ValueError:
+                pass
 
     # -- persistence --------------------------------------------------------
 
@@ -212,13 +237,15 @@ class TaskStore:
                 continue
             if task_id in self._tasks:
                 task = self._tasks[task_id]
+                self._index_remove(task)
                 task.status = TaskStatus(record.get("status", task.status.value))
                 task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                 task.result_summary = record.get("result_summary", task.result_summary)
+                self._index_add(task)
             else:
                 from bernstein.core.models import Complexity, Scope
 
-                self._tasks[task_id] = Task(
+                task = Task(
                     id=task_id,
                     title=record.get("title", ""),
                     description=record.get("description", ""),
@@ -236,14 +263,19 @@ class TaskStore:
                     result_summary=record.get("result_summary"),
                     cell_id=record.get("cell_id"),
                 )
+                self._tasks[task_id] = task
+                self._index_add(task)
 
     async def _append_jsonl(self, record: dict[str, Any]) -> None:
         """Append a single JSON record to the JSONL log."""
         self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, default=str) + "\n"
-        # Blocking write is fine — file is local, lines are small.
-        with self._jsonl_path.open("a") as f:
-            f.write(line)
+
+        def _write() -> None:
+            with self._jsonl_path.open("a") as f:
+                f.write(line)
+
+        await asyncio.to_thread(_write)
 
     async def _append_archive(self, task: Task, completed_at: float) -> None:
         """Append a completed/failed task record to the archive JSONL."""
@@ -260,8 +292,12 @@ class TaskStore:
             "cost_usd": None,
         }
         line = json.dumps(record, default=str) + "\n"
-        with self._archive_path.open("a") as f:
-            f.write(line)
+
+        def _write() -> None:
+            with self._archive_path.open("a") as f:
+                f.write(line)
+
+        await asyncio.to_thread(_write)
 
     def _task_to_record(self, task: Task) -> dict[str, Any]:
         """Serialise a Task to a dict suitable for JSONL storage."""
@@ -316,6 +352,7 @@ class TaskStore:
         )
         async with self._lock:
             self._tasks[task.id] = task
+            self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
         return task
 
@@ -332,12 +369,13 @@ class TaskStore:
             The claimed Task, or None if nothing is available.
         """
         async with self._lock:
-            candidates = [t for t in self._tasks.values() if t.role == role and t.status == TaskStatus.OPEN]
-            if not candidates:
+            open_ids = self._by_role_status.get((role, TaskStatus.OPEN), [])
+            if not open_ids:
                 return None
-            candidates.sort(key=lambda t: t.priority)
-            task = candidates[0]
+            task = min((self._tasks[tid] for tid in open_ids), key=lambda t: t.priority)
+            self._index_remove(task)
             task.status = TaskStatus.CLAIMED
+            self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
             return task
 
@@ -358,7 +396,9 @@ class TaskStore:
             if task is None:
                 raise KeyError(task_id)
             if task.status == TaskStatus.OPEN:
+                self._index_remove(task)
                 task.status = TaskStatus.CLAIMED
+                self._index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
             return task
 
@@ -379,8 +419,10 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            self._index_remove(task)
             task.status = TaskStatus.DONE
             task.result_summary = result_summary
+            self._index_add(task)
             completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
@@ -403,8 +445,10 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            self._index_remove(task)
             task.status = TaskStatus.FAILED
             task.result_summary = reason
+            self._index_add(task)
             completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
@@ -424,9 +468,14 @@ class TaskStore:
         Returns:
             List of matching tasks.
         """
-        tasks = list(self._tasks.values())
         if status is not None:
-            tasks = [t for t in tasks if t.status.value == status]
+            try:
+                ts = TaskStatus(status)
+                tasks: list[Task] = list(self._by_status[ts].values())
+            except ValueError:
+                tasks = []
+        else:
+            tasks = list(self._tasks.values())
         if cell_id is not None:
             tasks = [t for t in tasks if t.cell_id == cell_id]
         return tasks
@@ -481,10 +530,18 @@ class TaskStore:
     # -- status summary -----------------------------------------------------
 
     def _read_cost_by_role(self) -> dict[str, float]:
-        """Read metrics JSONL and return cost_usd summed per role."""
-        cost_by_role: dict[str, float] = {}
+        """Return cost_usd summed per role, using an mtime-based cache.
+
+        The metrics JSONL is only re-read when the file has changed since the
+        last call.  On a busy system this makes /status O(1) instead of
+        O(lines-in-file).
+        """
         if not self._metrics_jsonl_path.exists():
-            return cost_by_role
+            return dict(self._cost_cache)
+        mtime = self._metrics_jsonl_path.stat().st_mtime
+        if mtime == self._cost_cache_mtime:
+            return dict(self._cost_cache)
+        cost_by_role: dict[str, float] = {}
         for raw_line in self._metrics_jsonl_path.read_text().splitlines():
             line = raw_line.strip()
             if not line:
@@ -497,30 +554,28 @@ class TaskStore:
             cost = record.get("cost_usd")
             if role and isinstance(cost, (int, float)):
                 cost_by_role[role] = cost_by_role.get(role, 0.0) + float(cost)
-        return cost_by_role
+        self._cost_cache = cost_by_role
+        self._cost_cache_mtime = mtime
+        return dict(self._cost_cache)
 
     def status_summary(self) -> StatusResponse:
         """Build a dashboard summary of task counts."""
-        tasks = list(self._tasks.values())
-        total = len(tasks)
+        total = len(self._tasks)
+        open_count = len(self._by_status[TaskStatus.OPEN])
+        claimed_count = len(self._by_status[TaskStatus.CLAIMED])
+        done_count = len(self._by_status[TaskStatus.DONE])
+        failed_count = len(self._by_status[TaskStatus.FAILED])
 
-        def _count(s: TaskStatus) -> int:
-            return sum(1 for t in tasks if t.status == s)
-
-        # Per-role breakdown
+        # Per-role breakdown using _by_role_status index
+        all_roles = {role for role, _ in self._by_role_status}
         roles: dict[str, dict[str, int]] = {}
-        for t in tasks:
-            if t.role not in roles:
-                roles[t.role] = {"open": 0, "claimed": 0, "done": 0, "failed": 0}
-            bucket = roles[t.role]
-            if t.status == TaskStatus.OPEN:
-                bucket["open"] += 1
-            elif t.status == TaskStatus.CLAIMED:
-                bucket["claimed"] += 1
-            elif t.status == TaskStatus.DONE:
-                bucket["done"] += 1
-            elif t.status == TaskStatus.FAILED:
-                bucket["failed"] += 1
+        for role in all_roles:
+            roles[role] = {
+                "open": len(self._by_role_status.get((role, TaskStatus.OPEN), [])),
+                "claimed": len(self._by_role_status.get((role, TaskStatus.CLAIMED), [])),
+                "done": len(self._by_role_status.get((role, TaskStatus.DONE), [])),
+                "failed": len(self._by_role_status.get((role, TaskStatus.FAILED), [])),
+            }
 
         cost_by_role = self._read_cost_by_role()
         total_cost_usd = sum(cost_by_role.values())
@@ -531,10 +586,10 @@ class TaskStore:
 
         return StatusResponse(
             total=total,
-            open=_count(TaskStatus.OPEN),
-            claimed=_count(TaskStatus.CLAIMED),
-            done=_count(TaskStatus.DONE),
-            failed=_count(TaskStatus.FAILED),
+            open=open_count,
+            claimed=claimed_count,
+            done=done_count,
+            failed=failed_count,
             per_role=per_role,
             total_cost_usd=total_cost_usd,
         )
