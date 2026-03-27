@@ -1,9 +1,8 @@
-"""Textual 8.x live dashboard for Bernstein agent orchestration.
+"""Bernstein TUI — retro-futuristic agent orchestration dashboard.
 
-Three-panel layout with live agent log windows:
-- Top: Agent cards with task titles and mini PiP log tails
-- Middle: Task list + Activity Log (toggleable)
-- Bottom: Stats bar + sparkline
+Design: Bloomberg terminal meets early macOS. Dark, clean, information-dense.
+Three columns: Agents (live logs) | Tasks (status board) | Activity feed.
+Bottom: sparkline + stats + chat input.
 """
 from __future__ import annotations
 
@@ -17,26 +16,30 @@ from typing import Any
 import httpx
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.reactive import reactive
 from textual.widgets import (
     DataTable,
+    Digits,
     Footer,
     Header,
     Input,
+    Label,
+    LoadingIndicator,
     RichLog,
+    Rule,
     Sparkline,
     Static,
 )
 
 SERVER_URL = "http://127.0.0.1:8052"
 
+# ── Data fetching ──────────────────────────────────────────────────
+
 
 def _get(path: str) -> Any:
     try:
-        resp = httpx.get(f"{SERVER_URL}{path}", timeout=3.0)
-        resp.raise_for_status()
-        return resp.json()
+        return httpx.get(f"{SERVER_URL}{path}", timeout=3.0).json()
     except Exception:
         return None
 
@@ -51,230 +54,172 @@ def _load_agents() -> list[dict[str, Any]]:
         return []
 
 
-def _tail_log(session_id: str, n_lines: int = 6) -> list[str]:
-    """Read last N lines from an agent's log file."""
+def _tail_log(session_id: str, n: int = 5) -> list[str]:
     p = Path(f".sdd/runtime/{session_id}.log")
     if not p.exists():
         return ["waiting for output..."]
     try:
-        text = p.read_text(errors="replace")
-        lines = text.strip().splitlines()
-        if not lines:
-            return ["agent thinking..."]
-        return lines[-n_lines:]
+        lines = p.read_text(errors="replace").strip().splitlines()
+        return lines[-n:] if lines else ["agent working..."]
     except OSError:
         return []
 
 
-def _collect_recent_activity(agents: list[dict[str, Any]], n_lines: int = 20) -> list[str]:
-    """Collect the most recent log lines across all active agents."""
-    entries: list[tuple[float, str, str]] = []  # (mtime, agent_id, line)
-    for a in agents:
-        aid = a.get("id", "")
-        if not aid:
-            continue
-        p = Path(f".sdd/runtime/{aid}.log")
-        if not p.exists():
-            continue
-        try:
-            mtime = p.stat().st_mtime
-            text = p.read_text(errors="replace")
-            lines = text.strip().splitlines()
-            role = a.get("role", "?")
-            for line in lines[-5:]:  # Last 5 lines per agent
-                trimmed = line.strip()
-                if trimmed:
-                    entries.append((mtime, f"[{role}]", trimmed))
-        except OSError:
-            continue
-
-    # Sort by recency and take last N
-    entries.sort(key=lambda e: e[0])
-    result: list[str] = []
-    for _, tag, line in entries[-n_lines:]:
-        display = line[:120] + "…" if len(line) > 120 else line
-        result.append(f"{tag} {display}")
-    return result
+# ── Widgets ────────────────────────────────────────────────────────
 
 
-def _resolve_task_titles(task_ids: list[str]) -> list[str]:
-    """Look up task titles from the server for given IDs."""
-    if not task_ids:
-        return []
-    tasks_data = _get("/tasks")
-    if not isinstance(tasks_data, list):
-        return task_ids  # Fallback to IDs
-    title_map = {t.get("id", ""): t.get("title", t.get("id", "?")) for t in tasks_data}
-    return [title_map.get(tid, tid) for tid in task_ids]
+class AgentWidget(Static):
+    """Single agent: header + live log tail."""
 
-
-# ---------------------------------------------------------------------------
-# Widgets
-# ---------------------------------------------------------------------------
-
-
-class AgentLogWidget(Static):
-    """Agent card with task titles and embedded live log tail."""
-
-    def __init__(self, agent: dict[str, Any], task_titles: list[str] | None = None, **kw: Any) -> None:
+    def __init__(self, agent: dict[str, Any], tasks: dict[str, str], **kw: Any) -> None:
         super().__init__(**kw)
-        self._agent = agent
-        self._task_titles = task_titles or []
+        self._a = agent
+        self._tasks = tasks
 
     def render(self) -> Text:
-        a = self._agent
+        a = self._a
         role = a.get("role", "?")
+        model = (a.get("model") or "?").upper()
         status = a.get("status", "?")
-        model = a.get("model") or "?"
-        runtime_s = int(a.get("runtime_s", 0))
-        m, s = divmod(runtime_s, 60)
-        aid = a.get("id", "?")
+        runtime = int(a.get("runtime_s", 0))
+        m, s = divmod(runtime, 60)
+        aid = a.get("id", "")
 
-        color = {"working": "yellow", "starting": "cyan", "dead": "red"}.get(status, "green")
+        color = {"working": "bright_yellow", "starting": "bright_cyan", "dead": "bright_red"}.get(status, "bright_green")
+        dot = {"working": "◉", "starting": "◎", "dead": "◌"}.get(status, "●")
 
         t = Text()
-        # Header line
-        t.append(f" ● {role}", style=f"bold {color}")
-        t.append(f"  {model}", style="italic dim")
-        t.append(f"  {status}", style=color)
+        # ── Header line ──
+        t.append(f" {dot} ", style=f"bold {color}")
+        t.append(f"{role.upper()}", style=f"bold {color}")
+        t.append(f"  {model}", style="bold dim")
         t.append(f"  {m}:{s:02d}", style="dim")
-        t.append(f"  [{aid[-8:]}]\n", style="dim italic")
 
         # Task titles
-        if self._task_titles:
-            for title in self._task_titles[:3]:
-                display = title[:80] + "…" if len(title) > 80 else title
-                t.append(f"  → {display}\n", style="bold dim")
-        else:
-            n_tasks = len(a.get("task_ids", []))
-            t.append(f"  {n_tasks} task(s)\n", style="dim")
+        for tid in a.get("task_ids", [])[:2]:
+            title = self._tasks.get(tid, tid[:12])
+            t.append(f"\n   → {title[:60]}", style="italic dim")
 
-        # Mini log tail
-        log_lines = _tail_log(aid, n_lines=3)
-        for line in log_lines:
-            display = line[:100] + "…" if len(line) > 100 else line
-            t.append(f"  │ {display}\n", style="dim")
+        # Log tail
+        lines = _tail_log(aid, 3)
+        for line in lines:
+            clean = line[:90] + "…" if len(line) > 90 else line
+            t.append(f"\n   {clean}", style="dim")
 
         return t
 
 
-class StatsPanel(Static):
-    """Bottom stats bar with progress."""
+class BigStats(Static):
+    """Large stats display — the focal point."""
 
-    total = reactive(0)
     done = reactive(0)
-    working = reactive(0)
-    failed = reactive(0)
+    total = reactive(0)
+    agents = reactive(0)
     elapsed = reactive(0)
-    agents_alive = reactive(0)
     evolve = reactive(False)
+    failed = reactive(0)
 
     def render(self) -> Text:
         pct = int(self.done / self.total * 100) if self.total > 0 else 0
         m, s = divmod(self.elapsed, 60)
+        h, m = divmod(m, 60)
 
         t = Text()
+
         if self.evolve:
-            t.append(" ∞ EVOLVE ", style="bold white on dark_cyan")
+            t.append(" ∞ ", style="bold white on dark_cyan")
             t.append(" ", style="")
 
-        t.append(f" ⏱ {m}m{s:02d}s", style="bold")
-        t.append(f"  📋 {self.total}", style="bold")
-        t.append(f"  ✓{self.done}", style="bold green")
-        t.append(f"  ⚡{self.working}", style="bold yellow")
-        if self.failed:
-            t.append(f"  ✗{self.failed}", style="bold red")
-        t.append(f"  🤖 {self.agents_alive}", style="bold cyan")
+        # Big progress fraction
+        t.append(f" {self.done}", style="bold bright_green")
+        t.append(f"/{self.total}", style="bold")
+        t.append("  ", style="")
 
-        # Progress bar with gradient
-        bar_w = 30
+        # Progress bar — wider, gradient
+        bar_w = 35
         filled = int(pct / 100 * bar_w)
-        t.append("  [", style="dim")
-        # Gradient: red → yellow → green based on fill position
-        for i in range(filled):
-            ratio = i / max(bar_w - 1, 1)
-            if ratio < 0.4:
-                seg_style = "bold red"
-            elif ratio < 0.7:
-                seg_style = "bold yellow"
+        t.append("▐", style="dim")
+        for i in range(bar_w):
+            if i < filled:
+                r = i / max(bar_w - 1, 1)
+                style = "bold bright_red" if r < 0.3 else ("bold bright_yellow" if r < 0.6 else "bold bright_green")
+                t.append("█", style=style)
             else:
-                seg_style = "bold green"
-            t.append("━", style=seg_style)
-        if filled < bar_w:
-            t.append("╺", style="yellow" if filled > 0 else "dim")
-            t.append("─" * (bar_w - filled - 1), style="dim")
-        t.append("]", style="dim")
-        pct_style = "bold bright_green" if pct == 100 else ("bold green" if pct >= 50 else "bold yellow")
-        t.append(f" {pct}%", style=pct_style)
+                t.append("░", style="dim")
+        t.append("▌", style="dim")
+        t.append(f" {pct}%", style="bold bright_green" if pct == 100 else "bold")
+
+        t.append(f"  {self.agents} agents", style="bold bright_cyan")
+        if self.failed:
+            t.append(f"  {self.failed} failed", style="bold bright_red")
+
+        if h:
+            t.append(f"  {h}h{m:02d}m", style="dim")
+        else:
+            t.append(f"  {m}m{s:02d}s", style="dim")
 
         return t
 
 
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
+# ── App ────────────────────────────────────────────────────────────
 
 
 class BernsteinApp(App):
-    """Bernstein — Agent Orchestra live dashboard."""
 
-    TITLE = "Bernstein"
+    TITLE = "BERNSTEIN"
     SUB_TITLE = "Agent Orchestra"
 
     CSS = """
     Screen {
-        background: $surface;
+        background: #0a0a0a;
     }
 
-    #top-row {
+    Header {
+        background: #111;
+        color: #00ff88;
+        text-style: bold;
+    }
+
+    Footer {
+        background: #111;
+    }
+
+    #main {
         height: 1fr;
-        min-height: 10;
     }
 
-    #agents-panel {
+    #col-agents {
         width: 1fr;
-        border: round $accent;
-        border-title-color: $accent;
+        border-right: heavy #222;
         padding: 0 1;
         overflow-y: auto;
     }
 
-    #tasks-panel {
+    #col-tasks {
         width: 1fr;
-        border: round $primary;
-        border-title-color: $primary;
+        border-right: heavy #222;
         padding: 0;
     }
 
-    #activity-panel {
+    #col-activity {
         width: 1fr;
-        border: round $secondary;
-        border-title-color: $secondary;
         padding: 0 1;
     }
 
-    #activity-panel.hidden {
-        display: none;
-    }
-
-    #stats-bar {
+    .col-header {
+        text-align: center;
+        text-style: bold;
+        color: #666;
+        background: #111;
         height: 1;
-        dock: bottom;
-        background: $panel;
         padding: 0 1;
     }
 
-    #spark-row {
-        height: 3;
-        margin: 0 1;
-    }
-
-    AgentLogWidget {
+    AgentWidget {
         height: auto;
-        max-height: 10;
-        padding: 0;
+        max-height: 12;
         margin: 0 0 1 0;
-        background: $surface-darken-1;
+        padding: 0;
     }
 
     DataTable {
@@ -282,17 +227,52 @@ class BernsteinApp(App):
     }
 
     DataTable > .datatable--cursor {
-        background: $accent 20%;
+        background: #1a2a1a;
+    }
+
+    DataTable > .datatable--header {
+        background: #111;
+        text-style: bold;
+        color: #888;
     }
 
     RichLog {
         height: 1fr;
         scrollbar-size: 1 1;
+        background: #0a0a0a;
+    }
+
+    #bottom-bar {
+        height: auto;
+        max-height: 5;
+        background: #0f0f0f;
+        border-top: heavy #222;
+    }
+
+    #stats-row {
+        height: 1;
+        padding: 0 1;
+    }
+
+    #spark-row {
+        height: 3;
+        padding: 0 1;
     }
 
     #chat-input {
-        dock: bottom;
-        margin: 0 0 1 0;
+        background: #111;
+        border: none;
+        color: #00ff88;
+    }
+
+    #chat-input:focus {
+        border: tall #00ff88;
+    }
+
+    #no-agents {
+        color: #444;
+        text-align: center;
+        padding: 2;
     }
     """
 
@@ -300,47 +280,51 @@ class BernsteinApp(App):
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh"),
         ("s", "stop_bernstein", "Stop"),
-        ("l", "toggle_logs", "Logs"),
+        ("l", "toggle_activity", "Activity"),
+        ("slash", "focus_chat", "Chat"),
     ]
 
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, **kw: Any) -> None:
+        super().__init__(**kw)
         self._start_ts = time.time()
-        self._completion_history: deque[float] = deque(maxlen=60)
-        self._evolve_enabled = False
-        self._logs_visible = True
-        self._last_log_lines: list[str] = []
+        self._history: deque[float] = deque(maxlen=60)
+        self._evolve = False
+        self._activity_visible = True
+        self._task_titles: dict[str, str] = {}
+        self._last_activity: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Horizontal(id="top-row"):
-            with Vertical(id="agents-panel") as v:
-                v.border_title = "🤖 Agents"
-                yield Static("[dim]Waiting for agents...[/]")
-            with Vertical(id="tasks-panel") as v:
-                v.border_title = "📋 Tasks"
+        with Horizontal(id="main"):
+            with Vertical(id="col-agents"):
+                yield Static("AGENTS", classes="col-header")
+                yield Static("[dim]Waiting...[/]", id="no-agents")
+            with Vertical(id="col-tasks"):
+                yield Static("TASKS", classes="col-header")
                 yield DataTable(id="tasks-table")
-            with Vertical(id="activity-panel") as v:
-                v.border_title = "📝 Activity Log"
+            with Vertical(id="col-activity"):
+                yield Static("ACTIVITY", classes="col-header")
                 yield RichLog(id="activity-log", wrap=True, markup=True)
-        with Horizontal(id="spark-row"):
-            yield Sparkline([], summary_function=max, id="spark")
-        yield Input(placeholder="Type a task and press Enter (sent as P1 priority)...", id="chat-input")
-        yield StatsPanel(id="stats-bar")
+        with Vertical(id="bottom-bar"):
+            yield BigStats(id="stats-row")
+            with Horizontal(id="spark-row"):
+                yield Sparkline([], summary_function=max, id="spark")
+            yield Input(
+                placeholder="/ Type a task and press Enter...",
+                id="chat-input",
+            )
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one("#tasks-table", DataTable)
-        table.add_columns("", "Role", "Title")
-        table.cursor_type = "row"
-        table.zebra_stripes = True
+        t = self.query_one("#tasks-table", DataTable)
+        t.add_columns("", "ROLE", "TASK")
+        t.cursor_type = "row"
+        t.zebra_stripes = True
 
-        # Check evolve mode
-        evolve_path = Path(".sdd/runtime/evolve.json")
-        if evolve_path.exists():
+        evolve_p = Path(".sdd/runtime/evolve.json")
+        if evolve_p.exists():
             try:
-                cfg = json.loads(evolve_path.read_text())
-                self._evolve_enabled = cfg.get("enabled", False)
+                self._evolve = json.loads(evolve_p.read_text()).get("enabled", False)
             except Exception:
                 pass
 
@@ -348,126 +332,122 @@ class BernsteinApp(App):
         self._poll()
 
     def _poll(self) -> None:
-        self._update_agents()
         self._update_tasks()
+        self._update_agents()
         self._update_stats()
-        self._update_activity_log()
+        self._update_activity()
+
+    # ── Agents ──
 
     def _update_agents(self) -> None:
-        panel = self.query_one("#agents-panel")
+        col = self.query_one("#col-agents")
         agents = _load_agents()
         alive = [a for a in agents if a.get("status") != "dead"]
 
-        # Remove old dynamic children
-        for child in list(panel.children):
-            if isinstance(child, (AgentLogWidget, Static)):
-                child.remove()
+        # Remove dynamic widgets
+        for child in list(col.children):
+            if isinstance(child, (AgentWidget, Static)) and child.id != "col-agents":
+                if not child.has_class("col-header"):
+                    child.remove()
 
         if not alive:
-            panel.mount(Static("[dim]Waiting for agents...[/]"))
+            col.mount(Static("[dim]Waiting for agents...[/]", id="no-agents"))
         else:
-            # Batch-resolve task titles for all agents
-            all_task_ids: list[str] = []
             for a in alive:
-                all_task_ids.extend(a.get("task_ids", []))
+                col.mount(AgentWidget(a, self._task_titles))
 
-            title_map: dict[str, str] = {}
-            if all_task_ids:
-                tasks_data = _get("/tasks")
-                if isinstance(tasks_data, list):
-                    title_map = {t.get("id", ""): t.get("title", "?") for t in tasks_data}
-
-            for a in alive:
-                task_ids = a.get("task_ids", [])
-                titles = [title_map.get(tid, tid) for tid in task_ids]
-                panel.mount(AgentLogWidget(a, task_titles=titles))
+    # ── Tasks ──
 
     def _update_tasks(self) -> None:
         table = self.query_one("#tasks-table", DataTable)
-        tasks_data = _get("/tasks")
-        if not isinstance(tasks_data, list):
+        data = _get("/tasks")
+        if not isinstance(data, list):
             return
+
+        # Cache task titles for agent display
+        self._task_titles = {t.get("id", ""): t.get("title", "?") for t in data}
+
         table.clear()
         order = {"claimed": 0, "in_progress": 0, "open": 1, "done": 2, "failed": 3}
-        tasks_data.sort(key=lambda t: order.get(t.get("status", "open"), 9))
+        data.sort(key=lambda t: order.get(t.get("status", "open"), 9))
 
-        for t in tasks_data:
-            status = t.get("status", "open")
-            icon = {
-                "done": " ✓ ",
-                "failed": " ✗ ",
-                "claimed": " ⚡",
-                "open": " · ",
-            }.get(status, " ? ")
-            color = {
-                "done": "green",
-                "failed": "red",
-                "claimed": "yellow",
-                "open": "dim",
-            }.get(status, "white")
+        for t in data:
+            st = t.get("status", "open")
+            icon = {"done": "✓", "failed": "✗", "claimed": "⚡", "open": "·"}.get(st, "?")
+            color = {"done": "bright_green", "failed": "bright_red", "claimed": "bright_yellow", "open": "#555"}.get(st, "white")
             table.add_row(
-                Text(icon, style=f"bold {color}"),
-                Text(t.get("role", "-"), style=color),
-                Text(t.get("title", "-"), style=color if status != "open" else ""),
+                Text(f" {icon}", style=f"bold {color}"),
+                Text(t.get("role", "-").upper(), style=color),
+                Text(t.get("title", "-"), style=color if st != "open" else ""),
             )
 
+    # ── Stats ──
+
     def _update_stats(self) -> None:
-        status_data = _get("/status")
-        bar = self.query_one("#stats-bar", StatsPanel)
+        sd = _get("/status")
+        bar = self.query_one("#stats-row", BigStats)
         agents = _load_agents()
 
-        if status_data:
-            bar.total = status_data.get("total", 0)
-            bar.done = status_data.get("done", 0)
-            bar.working = status_data.get("claimed", 0)
-            bar.failed = status_data.get("failed", 0)
-            self._completion_history.append(float(bar.done))
+        if sd:
+            bar.total = sd.get("total", 0)
+            bar.done = sd.get("done", 0)
+            bar.failed = sd.get("failed", 0)
+            self._history.append(float(bar.done))
 
-        bar.agents_alive = sum(1 for a in agents if a.get("status") not in ("dead", None))
+        bar.agents = sum(1 for a in agents if a.get("status") not in ("dead", None))
         bar.elapsed = int(time.time() - self._start_ts)
-        bar.evolve = self._evolve_enabled
+        bar.evolve = self._evolve
 
         spark = self.query_one("#spark", Sparkline)
-        spark.data = list(self._completion_history) if self._completion_history else [0.0]
+        spark.data = list(self._history) if self._history else [0.0]
 
-    def _update_activity_log(self) -> None:
-        """Update the activity log panel with recent agent output."""
+    # ── Activity ──
+
+    def _update_activity(self) -> None:
+        log = self.query_one("#activity-log", RichLog)
         agents = _load_agents()
-        lines = _collect_recent_activity(agents, n_lines=20)
-        # Only write new lines to avoid flicker
-        new_lines = lines[len(self._last_log_lines):] if len(lines) > len(self._last_log_lines) else lines
-        if new_lines != self._last_log_lines[-len(new_lines):] if self._last_log_lines else True:
-            log_widget = self.query_one("#activity-log", RichLog)
-            for line in new_lines:
-                log_widget.write(line)
-            self._last_log_lines = lines
+
+        # Collect last 2 lines from each alive agent
+        new_lines: list[str] = []
+        for a in agents:
+            if a.get("status") == "dead":
+                continue
+            aid = a.get("id", "")
+            role = a.get("role", "?")
+            lines = _tail_log(aid, 2)
+            for line in lines:
+                clean = line[:100] + "…" if len(line) > 100 else line
+                new_lines.append(f"[bold]{role}[/] {clean}")
+
+        # Only write new lines (avoid duplicates)
+        for line in new_lines:
+            if line not in self._last_activity:
+                log.write(line)
+        self._last_activity = new_lines
+
+    # ── Actions ──
 
     def action_refresh(self) -> None:
         self._poll()
 
-    def action_toggle_logs(self) -> None:
-        """Toggle the Activity Log panel."""
-        panel = self.query_one("#activity-panel")
-        self._logs_visible = not self._logs_visible
-        if self._logs_visible:
-            panel.remove_class("hidden")
-        else:
-            panel.add_class("hidden")
+    def action_focus_chat(self) -> None:
+        self.query_one("#chat-input", Input).focus()
+
+    def action_toggle_activity(self) -> None:
+        col = self.query_one("#col-activity")
+        self._activity_visible = not self._activity_visible
+        col.display = self._activity_visible
 
     def action_stop_bernstein(self) -> None:
-        """Stop all bernstein processes and exit dashboard."""
         import signal
-        # Kill via PID files
         for name in ("watchdog", "spawner", "server"):
-            pid_path = Path(f".sdd/runtime/{name}.pid")
-            if pid_path.exists():
+            pp = Path(f".sdd/runtime/{name}.pid")
+            if pp.exists():
                 try:
-                    pid = int(pid_path.read_text().strip())
-                    os.kill(pid, signal.SIGTERM)
+                    os.kill(int(pp.read_text().strip()), signal.SIGTERM)
                 except (ValueError, OSError):
                     pass
-                pid_path.unlink(missing_ok=True)
-        # Kill agents
+                pp.unlink(missing_ok=True)
         for a in _load_agents():
             pid = a.get("pid")
             if pid:
@@ -478,12 +458,10 @@ class BernsteinApp(App):
         self.exit(message="Bernstein stopped.")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Send user message as a P1 task to the server."""
         text = event.value.strip()
         if not text:
             return
         event.input.value = ""
-
         try:
             resp = httpx.post(
                 f"{SERVER_URL}/tasks",
@@ -498,16 +476,14 @@ class BernsteinApp(App):
                 timeout=5.0,
             )
             if resp.status_code == 201:
-                self.notify(f"Task created: {text[:50]}", severity="information")
+                self.notify(f"→ {text[:50]}", severity="information")
             else:
                 self.notify(f"Failed: {resp.status_code}", severity="error")
         except Exception as exc:
             self.notify(f"Error: {exc}", severity="error")
-
         self._poll()
 
 
 def run_dashboard() -> None:
-    """Entry point for the live dashboard."""
     app = BernsteinApp()
     app.run()
