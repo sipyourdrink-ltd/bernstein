@@ -1,0 +1,96 @@
+name: Publish VS Code Extension
+
+on:
+  push:
+    tags:
+      - 'ext-v*'   # trigger: git tag ext-v0.1.0 && git push --tags
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to create GitHub Release
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/vscode/package-lock.json
+
+      - name: Validate extension icon (>= 128x128)
+        run: |
+          node -e "
+          const fs = require('fs');
+          const buf = fs.readFileSync('packages/vscode/media/bernstein-icon.png');
+          if (buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4E || buf[3] !== 0x47) {
+            console.error('ERROR: media/bernstein-icon.png is not a valid PNG file');
+            process.exit(1);
+          }
+          const width = buf.readUInt32BE(16);
+          const height = buf.readUInt32BE(20);
+          console.log('Icon dimensions: ' + width + 'x' + height);
+          if (width < 128 || height < 128) {
+            console.error('ERROR: Icon must be at least 128x128 pixels (got ' + width + 'x' + height + ')');
+            process.exit(1);
+          }
+          console.log('Icon validation passed.');
+          "
+
+      - name: Install dependencies
+        working-directory: packages/vscode
+        run: npm ci
+
+      - name: Type check
+        working-directory: packages/vscode
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        working-directory: packages/vscode
+        run: npm test
+
+      - name: Build extension
+        working-directory: packages/vscode
+        run: npm run compile
+
+      - name: Package extension
+        working-directory: packages/vscode
+        run: npx vsce package --no-dependencies
+
+      # Publish to VS Code Marketplace (requires VS_MARKETPLACE_TOKEN secret)
+      - name: Publish to VS Code Marketplace
+        if: ${{ secrets.VS_MARKETPLACE_TOKEN != '' }}
+        uses: HaaLeo/publish-vscode-extension@v1
+        with:
+          pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
+          registryUrl: https://marketplace.visualstudio.com
+
+      # Publish to Open VSX — used by Cursor, VSCodium, Gitpod (requires OPEN_VSX_TOKEN secret)
+      - name: Publish to Open VSX
+        if: ${{ secrets.OPEN_VSX_TOKEN != '' }}
+        uses: HaaLeo/publish-vscode-extension@v1
+        with:
+          pat: ${{ secrets.OPEN_VSX_TOKEN }}
+          registryUrl: https://open-vsx.org
+
+      # Upload VSIX as GitHub Release asset for direct installation fallback
+      - name: Create GitHub Release with VSIX
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/vscode/*.vsix
+          body: |
+            ## Bernstein VS Code Extension ${{ github.ref_name }}
+
+            ### Install options
+
+            1. **VS Code Marketplace** — search "bernstein" in VS Code extensions
+            2. **Cursor / Open VSX** — search "bernstein" in Cursor extensions
+            3. **Manual install from VSIX**:
+               ```
+               code --install-extension bernstein-*.vsix
+               ```
+               or: Extensions panel → ⋯ → Install from VSIX…
+          draft: false
+          prerelease: false

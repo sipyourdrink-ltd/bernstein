@@ -1,0 +1,18 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "bernstein.fullname" . }}
+  labels:
+    {{- include "bernstein.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "bernstein.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+{{- end }}

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Adapters — Bernstein</title>
+  <meta name="description" content="Bernstein adapter reference: Claude Code, Codex CLI, Gemini CLI, Qwen, and how to add your own. Feature matrix, install instructions, model mapping." />
+  <link rel="stylesheet" href="style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="script.js"></script>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="adapters.html" class="nav-link active" data-page="adapters.html">Adapters</a>
+      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <span id="theme-icon">◑</span>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub ↗
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Page hero ── -->
+<div class="page-hero">
+  <div class="container">
+    <h1>Adapters</h1>
+    <p>Bernstein is model-agnostic. Use Claude, Codex, Gemini, Qwen — or any CLI agent — without changing your orchestration. Switch providers without rewriting anything.</p>
+  </div>
+</div>
+
+<!-- ── Doc layout ── -->
+<div class="doc-layout">
+
+  <!-- sidebar -->
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#why">Why model-agnostic</a></li>
+      <li><a href="#matrix">Feature matrix</a></li>
+      <li><a href="#claude">Claude Code</a></li>
+      <li><a href="#codex">Codex CLI</a></li>
+      <li><a href="#gemini">Gemini CLI</a></li>
+      <li><a href="#qwen">Qwen</a></li>
+      <li><a href="#generic">Generic adapter</a></li>
+      <li><a href="#custom">Add a custom adapter</a></li>
+      <li><a href="#mixing">Mixing adapters in one run</a></li>
+    </ul>
+  </aside>
+
+  <!-- content -->
+  <main class="doc-content">
+
+    <h2 id="why">Why model-agnostic</h2>
+
+    <p>Every major AI lab now ships an agent framework that works best (or only) with their own models. That creates fragility: today's best model is rarely tomorrow's, and enterprise teams can't afford to rewrite orchestration every time they evaluate a new provider.</p>
+
+    <p>Bernstein decouples orchestration from model choice. The <strong>orchestrator is deterministic Python</strong> — it schedules tasks, routes models, and verifies results without talking to any LLM. Each CLI agent is a thin subprocess adapter. Swapping the adapter is a one-line config change.</p>
+
+    <p>Concrete benefits:</p>
+    <ul>
+      <li><strong>Cost arbitrage</strong> — route simple formatting tasks to free-tier models, save expensive capacity for architecture and security work.</li>
+      <li><strong>Provider redundancy</strong> — hit a rate limit on one provider? Re-route open tasks to another without restarting the run.</li>
+      <li><strong>Future-proof</strong> — your task graph, roles, and prompts outlive any single model generation.</li>
+    </ul>
+
+    <h2 id="matrix">Feature matrix</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Claude Code</th>
+          <th>Codex CLI</th>
+          <th>Gemini CLI</th>
+          <th>Qwen</th>
+          <th>Generic</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Model selection</td>
+          <td>opus / sonnet / haiku</td>
+          <td>gpt-5.4 / o3 / o4-mini</td>
+          <td>gemini-3-pro / 3-flash / 2.5-pro</td>
+          <td>qwen3-coder / qwen-max</td>
+          <td>Pass-through</td>
+        </tr>
+        <tr>
+          <td>Effort levels</td>
+          <td>max / high / medium / low</td>
+          <td>—</td>
+          <td>—</td>
+          <td>—</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>MCP config injection</td>
+          <td>✓</td>
+          <td>—</td>
+          <td>—</td>
+          <td>—</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>Structured JSON output</td>
+          <td>✓ (stream-json)</td>
+          <td>—</td>
+          <td>—</td>
+          <td>—</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>Tier detection</td>
+          <td>✓ (API key prefix)</td>
+          <td>✓ (org ID / key prefix)</td>
+          <td>✓ (GCP project / key format)</td>
+          <td>✓ (provider env vars)</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>Auto-approval</td>
+          <td><code>--dangerously-skip-permissions</code></td>
+          <td><code>--approval-mode full-auto</code></td>
+          <td><code>--sandbox none</code></td>
+          <td><code>-y</code></td>
+          <td>Via <code>extra_args</code></td>
+        </tr>
+        <tr>
+          <td>Web search</td>
+          <td>Via MCP</td>
+          <td>Native</td>
+          <td>Native</td>
+          <td>Via Tavily (optional)</td>
+          <td>Depends on CLI</td>
+        </tr>
+        <tr>
+          <td>OpenAI-compatible backends</td>
+          <td>—</td>
+          <td>—</td>
+          <td>—</td>
+          <td>✓ (OpenRouter, Together, Oxen)</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>Local / offline models</td>
+          <td>—</td>
+          <td>—</td>
+          <td>—</td>
+          <td>✓ (via OpenAI-compatible server)</td>
+          <td>✓</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 id="claude">Claude Code</h2>
+
+    <p><strong>Provider:</strong> Anthropic &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli claude</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash">npm install -g @anthropic-ai/claude-code
+export ANTHROPIC_API_KEY=sk-ant-...</code></pre>
+    </div>
+
+    <p>The Claude adapter has the most integration depth: it uses <code>--output-format stream-json</code> to parse structured output, maps effort levels to <code>--effort</code> and <code>--max-turns</code>, and passes MCP server config directly via <code>--mcp-config</code>.</p>
+
+    <p>Model mapping:</p>
+    <table>
+      <thead>
+        <tr><th>Bernstein tier</th><th>Claude model</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>opus</code></td><td>claude-opus-4-6</td></tr>
+        <tr><td><code>sonnet</code></td><td>claude-sonnet-4-6</td></tr>
+        <tr><td><code>haiku</code></td><td>claude-haiku-4-5-20251001</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="codex">Codex CLI</h2>
+
+    <p><strong>Provider:</strong> OpenAI &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli codex</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash">npm install -g @openai/codex
+export OPENAI_API_KEY=sk-proj-...</code></pre>
+    </div>
+
+    <p>Runs in <code>--approval-mode full-auto</code> with <code>--quiet</code> to suppress interactive prompts. Pass any OpenAI model name directly via <code>--model</code>. Recommended model: <code>gpt-5.4</code> (Mar 2026). The o-series reasoning models (<code>o3</code>, <code>o4-mini</code>) are also supported. Tier detection checks for <code>OPENAI_ORG_ID</code> (enterprise) and key prefix (<code>sk-proj</code> = pro).</p>
+
+    <h2 id="gemini">Gemini CLI</h2>
+
+    <p><strong>Provider:</strong> Google &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli gemini</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash">npm install -g @google/gemini-cli
+export GOOGLE_API_KEY=AIza...</code></pre>
+    </div>
+
+    <p>Runs with <code>--sandbox none</code>. The default model is <code>gemini-3-pro</code> (preview, Mar 2026). Gemini 2.5 Pro/Flash are GA but <a href="https://ai.google.dev/gemini-api/docs/models" target="_blank" rel="noopener">deprecating June 2026</a>. For Vertex AI / enterprise use, set <code>GOOGLE_CLOUD_PROJECT</code> — tier detection will pick this up and apply higher rate limits accordingly.</p>
+
+    <h2 id="qwen">Qwen</h2>
+
+    <p><strong>Provider:</strong> Alibaba / OpenRouter / any OpenAI-compatible &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli qwen</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash">npm install -g qwen-code</code></pre>
+    </div>
+
+    <p>The Qwen adapter is the most flexible: it routes to different backends depending on which API keys are set. Priority order:</p>
+
+    <table>
+      <thead>
+        <tr><th>Backend</th><th>Env var</th><th>Use case</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>OpenRouter (paid)</td><td><code>OPENROUTER_API_KEY_PAID</code></td><td>Best quality via OpenRouter</td></tr>
+        <tr><td>OpenRouter (free)</td><td><code>OPENROUTER_API_KEY_FREE</code></td><td>Free-tier routing, rate-limited</td></tr>
+        <tr><td>Together.ai</td><td><code>TOGETHERAI_USER_KEY</code></td><td>Open-source models, fast inference</td></tr>
+        <tr><td>Oxen</td><td><code>OXEN_API_KEY</code></td><td>Enterprise open-source</td></tr>
+        <tr><td>Default (native Qwen)</td><td><code>DASHSCOPE_API_KEY</code></td><td>Alibaba Cloud, qwen-max / coder</td></tr>
+      </tbody>
+    </table>
+
+    <p>This makes Qwen a good choice for cost-sensitive runs: route simple tasks to OpenRouter free-tier, keep expensive capacity for complex ones.</p>
+
+    <h2 id="generic">Generic adapter</h2>
+
+    <p><strong>CLI flag:</strong> <code>--cli generic</code></p>
+
+    <p>The generic adapter wraps any CLI agent without writing Python. Configure it via <code>bernstein.yaml</code>:</p>
+
+    <div class="code-block">
+      <pre><code class="language-yaml">cli: generic
+cli_options:
+  command: aider        # the binary name
+  prompt_flag: --message
+  model_flag: --model
+  extra_args:
+    - --yes
+    - --no-git</code></pre>
+    </div>
+
+    <p>Bernstein calls: <code>aider --model &lt;model&gt; --yes --no-git --message &lt;prompt&gt;</code>. Any coding agent with a non-interactive mode works.</p>
+
+    <h2 id="custom">Add a custom adapter</h2>
+
+    <p>If you need deeper integration than the generic adapter provides (structured output parsing, custom tier detection, etc.), implement the <code>CLIAdapter</code> interface:</p>
+
+    <div class="code-block">
+      <pre><code class="language-python">from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.models import ModelConfig
+from pathlib import Path
+from typing import Any
+
+class MyAgentAdapter(CLIAdapter):
+    def spawn(
+        self,
+        *,
+        prompt: str,
+        workdir: Path,
+        model_config: ModelConfig,
+        session_id: str,
+        mcp_config: dict[str, Any] | None = None,
+    ) -> SpawnResult:
+        log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        cmd = ["my-agent", "--model", model_config.model, "-p", prompt]
+
+        import subprocess
+        with log_path.open("w") as log_file:
+            proc = subprocess.Popen(
+                cmd, cwd=workdir,
+                stdout=log_file, stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+
+        return SpawnResult(pid=proc.pid, log_path=log_path)
+
+    def name(self) -> str:
+        return "My Agent"</code></pre>
+    </div>
+
+    <p>Register it in your project:</p>
+
+    <div class="code-block">
+      <pre><code class="language-python"># bernstein_plugins.py (auto-discovered at startup)
+from bernstein.adapters.registry import register_adapter
+from my_package.adapter import MyAgentAdapter
+
+register_adapter("my-agent", MyAgentAdapter())</code></pre>
+    </div>
+
+    <p>Then use it: <code>bernstein run --cli my-agent</code>.</p>
+
+    <h2 id="mixing">Mixing adapters in one run</h2>
+
+    <p>Different task roles can use different adapters. Configure per-role overrides in <code>bernstein.yaml</code>:</p>
+
+    <div class="code-block">
+      <pre><code class="language-yaml">goal: "Add auth, write tests, and document the API"
+
+# Default adapter for all roles (auto-detects installed agents)
+cli: auto
+
+# Per-role overrides
+role_config:
+  qa:
+    cli: codex          # GPT-5.4 for test generation
+    model: gpt-5.4
+  docs:
+    cli: gemini         # Gemini Flash for docs — cheaper
+    model: gemini-3-flash</code></pre>
+    </div>
+
+    <p>The orchestrator assigns each task to the right adapter based on role. All tasks write to the same <code>.sdd/</code> state — adapter choice is transparent to the rest of the system.</p>
+
+    <p>See the <a href="https://github.com/chernistry/bernstein/tree/main/examples/multi-model">multi-model example</a> for a working demo with three adapters in a single run.</p>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein · <a href="https://alexchernysh.com/bernstein" target="_blank" rel="noopener">Homepage</a> · <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> · Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

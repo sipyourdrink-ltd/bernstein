@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bernstein.fullname" . }}-server
+  labels:
+    {{- include "bernstein.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.server.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bernstein.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        {{- include "bernstein.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: server
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - "python"
+            - "-m"
+            - "uvicorn"
+            - "bernstein.core.server:app"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8052"
+          ports:
+            - name: http
+              containerPort: 8052
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "bernstein.fullname" . }}-config
+          env:
+            - name: BERNSTEIN_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.authSecretName" . }}
+                  key: {{ .Values.auth.secretKey }}
+            {{- if .Values.providerKeys.existingSecret }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.providerKeysSecretName" . }}
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.providerKeysSecretName" . }}
+                  key: OPENAI_API_KEY
+                  optional: true
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+          volumeMounts:
+            - name: sdd-data
+              mountPath: /workspace/.sdd
+      volumes:
+        - name: sdd-data
+          {{- if .Values.server.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "bernstein.fullname" . }}-server-sdd
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

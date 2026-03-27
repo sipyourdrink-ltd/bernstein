@@ -1,0 +1,190 @@
+version: "3.9"
+
+# Bernstein cluster-mode deployment
+#
+# Roles:
+#   bernstein-server      — task server + web dashboard (port 8052)
+#   bernstein-orchestrator — reads the backlog, spawns workers via HTTP
+#   bernstein-worker      — claims and executes tasks (scale with --scale)
+#   prometheus            — scrapes /metrics from bernstein-server (port 9090)
+#   grafana               — pre-built agent dashboards (port 3000, admin/admin)
+#   postgres              — shared relational state (future: persistent task store)
+#   redis                 — distributed locks + bulletin board (future)
+#
+# Usage:
+#   docker compose up -d
+#   docker compose up --scale bernstein-worker=4
+#
+# Dashboards:
+#   Bernstein web UI  → http://localhost:8052/dashboard
+#   Prometheus        → http://localhost:9090
+#   Grafana           → http://localhost:3000  (admin / admin)
+#
+# Required env vars (copy .env.example → .env):
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, BERNSTEIN_AUTH_TOKEN
+
+x-bernstein-common: &bernstein-common
+  image: bernstein:latest
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    BERNSTEIN_SERVER_URL: http://bernstein-server:8052
+    BERNSTEIN_AUTH_TOKEN: ${BERNSTEIN_AUTH_TOKEN:-changeme}
+    BERNSTEIN_BIND_HOST: "0.0.0.0"
+    BERNSTEIN_CLUSTER_ENABLED: "true"
+    # LLM provider keys — set in .env
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    # Future: database / cache URLs
+    BERNSTEIN_DATABASE_URL: postgresql://bernstein:bernstein@postgres:5432/bernstein
+    BERNSTEIN_REDIS_URL: redis://redis:6379/0
+  volumes:
+    - sdd-data:/workspace/.sdd
+    - project-data:/workspace/project
+  depends_on:
+    bernstein-server:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  # ── Task server ────────────────────────────────────────────────────────────
+  # Runs uvicorn directly so the container's PID 1 is the server (not a wrapper).
+  # The BERNSTEIN_* env vars are read by the FastAPI app at module load time.
+  bernstein-server:
+    image: bernstein:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["python", "-m", "uvicorn"]
+    command:
+      - "bernstein.core.server:app"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8052"
+    environment:
+      BERNSTEIN_BIND_HOST: "0.0.0.0"
+      BERNSTEIN_CLUSTER_ENABLED: "true"
+      BERNSTEIN_AUTH_TOKEN: ${BERNSTEIN_AUTH_TOKEN:-changeme}
+      BERNSTEIN_DATABASE_URL: postgresql://bernstein:bernstein@postgres:5432/bernstein
+      BERNSTEIN_REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8052:8052"
+    volumes:
+      - sdd-data:/workspace/.sdd
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8052/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── Orchestrator ───────────────────────────────────────────────────────────
+  # Connects to bernstein-server via BERNSTEIN_SERVER_URL, claims tasks,
+  # and spawns CLI agents. Does NOT start its own server.
+  bernstein-orchestrator:
+    <<: *bernstein-common
+    entrypoint: ["python", "-m", "bernstein.core.orchestrator"]
+    command: []
+    depends_on:
+      bernstein-server:
+        condition: service_healthy
+
+  # ── Worker nodes (scale with: docker compose up --scale bernstein-worker=N) ─
+  # Each worker is an independent orchestrator instance that claims and executes
+  # tasks from the shared task server.
+  bernstein-worker:
+    <<: *bernstein-common
+    entrypoint: ["python", "-m", "bernstein.core.orchestrator"]
+    command: []
+    depends_on:
+      bernstein-server:
+        condition: service_healthy
+
+  # ── Monitoring ─────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      bernstein-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboard.json:/var/lib/grafana/dashboards/bernstein.json:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ── Infrastructure ─────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bernstein
+      POSTGRES_PASSWORD: bernstein
+      POSTGRES_DB: bernstein
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bernstein"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  sdd-data:
+    driver: local
+  project-data:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local

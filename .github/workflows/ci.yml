@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv run ruff check src/
+      - run: uv run ruff format --check src/
+
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv run pyright
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - run: uv run python scripts/run_tests.py -x
+
+  # Auto-fix lint issues and push a fix commit (only on main, only if lint fails)
+  autofix:
+    name: Auto-fix lint
+    runs-on: ubuntu-latest
+    needs: [lint]
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Auto-fix ruff
+        run: |
+          uv run ruff check src/ --fix --unsafe-fixes || true
+          uv run ruff format src/
+      - name: Commit and push fixes
+        run: |
+          git diff --quiet && echo "Nothing to fix" && exit 0
+          git config user.name "bernstein[bot]"
+          git config user.email "bernstein-bot@users.noreply.github.com"
+          git add -A
+          git commit -m "style: auto-fix ruff lint and format"
+          git push
+
+  # Self-healing: open a GitHub Issue on main when CI fails
+  self-heal:
+    name: Self-heal
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: >
+      failure() &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'push'
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Create ci-fix issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="[ci-fix] CI failing on main — run ${{ github.run_id }}"
+          BODY="CI failure on commit \`${{ github.sha }}\`. Run: $RUN_URL"
+          OPEN=$(gh issue list --label ci-fix --state open --json number --jq length 2>/dev/null || echo 0)
+          if [ "$OPEN" = "0" ]; then
+            gh issue create --title "$TITLE" --body "$BODY" --label "bug" || true
+          fi

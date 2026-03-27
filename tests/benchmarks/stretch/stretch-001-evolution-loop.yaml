@@ -1,0 +1,10 @@
+id: stretch-001
+goal: "Full evolution loop: detect regression → propose fix → apply → verify"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.evolution.detector
+    attribute: OpportunityDetector
+  - type: import_succeeds
+    module: bernstein.evolution.aggregator
+max_cost_usd: 0.05
+max_duration_seconds: 300

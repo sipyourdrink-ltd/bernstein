@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 200" width="700" height="200">
+  <defs>
+    <style>
+      @media (prefers-color-scheme: light) {
+        .bg { fill: #ffffff; }
+        .box-fill { fill: #f6f8fa; }
+        .box-stroke { stroke: #d1d5da; }
+        .box-text { fill: #1f2328; }
+        .box-accent-fill { fill: #dafbe1; }
+        .box-accent-stroke { stroke: #1a7f37; }
+        .box-accent-text { fill: #1a7f37; }
+        .box-blue-fill { fill: #ddf4ff; }
+        .box-blue-stroke { stroke: #0969da; }
+        .box-blue-text { fill: #0969da; }
+        .box-agent-fill { fill: #fff8c5; }
+        .box-agent-stroke { stroke: #bf8700; }
+        .box-agent-text { fill: #6a3d00; }
+        .arrow-line { stroke: #656d76; fill: none; }
+        .arrow-head { fill: #656d76; }
+        .label-text { fill: #656d76; }
+        .bracket-line { stroke: #d1d5da; fill: none; }
+        .check-fill { fill: #1a7f37; }
+      }
+      @media (prefers-color-scheme: dark) {
+        .bg { fill: #0d1117; }
+        .box-fill { fill: #161b22; }
+        .box-stroke { stroke: #30363d; }
+        .box-text { fill: #e6edf3; }
+        .box-accent-fill { fill: #0d1f17; }
+        .box-accent-stroke { stroke: #3fb950; }
+        .box-accent-text { fill: #3fb950; }
+        .box-blue-fill { fill: #0d1b2e; }
+        .box-blue-stroke { stroke: #58a6ff; }
+        .box-blue-text { fill: #58a6ff; }
+        .box-agent-fill { fill: #1e1a0d; }
+        .box-agent-stroke { stroke: #d29922; }
+        .box-agent-text { fill: #e3b341; }
+        .arrow-line { stroke: #484f58; fill: none; }
+        .arrow-head { fill: #484f58; }
+        .label-text { fill: #484f58; }
+        .bracket-line { stroke: #30363d; fill: none; }
+        .check-fill { fill: #3fb950; }
+      }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" class="arrow-head"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="700" height="200" rx="8" ry="8" class="bg"/>
+
+  <!-- 1. Goal box -->
+  <rect x="20" y="74" width="72" height="44" rx="8" ry="8" class="box-accent-fill"/>
+  <rect x="20" y="74" width="72" height="44" rx="8" ry="8" fill="none" stroke-width="1.5" class="box-accent-stroke"/>
+  <text x="56" y="101" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="13" font-weight="bold" class="box-accent-text">Goal</text>
+
+  <!-- Arrow: Goal -> Manager -->
+  <line x1="92" y1="96" x2="128" y2="96" stroke-width="1.5" marker-end="url(#arrowhead)" class="arrow-line"/>
+
+  <!-- 2. Manager box -->
+  <rect x="130" y="74" width="90" height="44" rx="8" ry="8" class="box-blue-fill"/>
+  <rect x="130" y="74" width="90" height="44" rx="8" ry="8" fill="none" stroke-width="1.5" class="box-blue-stroke"/>
+  <text x="175" y="101" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="13" font-weight="bold" class="box-blue-text">Manager</text>
+
+  <!-- Arrow: Manager -> fan-out point -->
+  <line x1="220" y1="96" x2="260" y2="96" stroke-width="1.5" class="arrow-line"/>
+
+  <!-- Fan-out lines -->
+  <path d="M 260,96 L 275,96 L 275,40 L 300,40" stroke-width="1.5" fill="none" class="arrow-line" marker-end="url(#arrowhead)"/>
+  <line x1="260" y1="96" x2="300" y2="96" stroke-width="1.5" class="arrow-line" marker-end="url(#arrowhead)"/>
+  <path d="M 260,96 L 275,96 L 275,152 L 300,152" stroke-width="1.5" fill="none" class="arrow-line" marker-end="url(#arrowhead)"/>
+
+  <!-- "parallel" label -->
+  <text x="284" y="18" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="9" class="label-text">parallel</text>
+
+  <!-- Left bracket -->
+  <path d="M 296,28 L 290,28 L 290,164 L 296,164" stroke-width="1" fill="none" class="bracket-line"/>
+
+  <!-- 3a. Backend agent -->
+  <rect x="302" y="20" width="96" height="40" rx="8" ry="8" class="box-agent-fill"/>
+  <rect x="302" y="20" width="96" height="40" rx="8" ry="8" fill="none" stroke-width="1.5" class="box-agent-stroke"/>
+  <text x="350" y="45" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="12" font-weight="bold" class="box-agent-text">Backend</text>
+
+  <!-- 3b. QA agent -->
+  <rect x="302" y="76" width="96" height="40" rx="8" ry="8" class="box-agent-fill"/>
+  <rect x="302" y="76" width="96" height="40" rx="8" ry="8" fill="none" stroke-width="1.5" class="box-agent-stroke"/>
+  <text x="350" y="101" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="12" font-weight="bold" class="box-agent-text">QA</text>
+
+  <!-- 3c. Security agent -->
+  <rect x="302" y="132" width="96" height="40" rx="8" ry="8" class="box-agent-fill"/>
+  <rect x="302" y="132" width="96" height="40" rx="8" ry="8" fill="none" stroke-width="1.5" class="box-agent-stroke"/>
+  <text x="350" y="157" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="12" font-weight="bold" class="box-agent-text">Security</text>
+
+  <!-- Right bracket -->
+  <path d="M 402,28 L 408,28 L 408,164 L 402,164" stroke-width="1" fill="none" class="bracket-line"/>
+
+  <!-- Fan-in lines -->
+  <path d="M 398,40 L 416,40 L 416,96 L 440,96" stroke-width="1.5" fill="none" class="arrow-line"/>
+  <line x1="398" y1="96" x2="440" y2="96" stroke-width="1.5" class="arrow-line"/>
+  <path d="M 398,152 L 416,152 L 416,96 L 440,96" stroke-width="1.5" fill="none" class="arrow-line"/>
+  <line x1="436" y1="96" x2="450" y2="96" stroke-width="1.5" class="arrow-line" marker-end="url(#arrowhead)"/>
+
+  <!-- 4. Janitor box -->
+  <rect x="452" y="74" width="88" height="44" rx="8" ry="8" class="box-fill"/>
+  <rect x="452" y="74" width="88" height="44" rx="8" ry="8" fill="none" stroke-width="1.5" class="box-stroke"/>
+  <text x="496" y="101" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="13" font-weight="bold" class="box-text">Janitor</text>
+
+  <!-- Arrow: Janitor -> Commits -->
+  <line x1="540" y1="96" x2="576" y2="96" stroke-width="1.5" marker-end="url(#arrowhead)" class="arrow-line"/>
+
+  <!-- 5. Commits box with checkmark -->
+  <rect x="578" y="74" width="102" height="44" rx="8" ry="8" class="box-accent-fill"/>
+  <rect x="578" y="74" width="102" height="44" rx="8" ry="8" fill="none" stroke-width="1.5" class="box-accent-stroke"/>
+  <text x="607" y="101" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="14" class="check-fill">&#x2713;</text>
+  <text x="624" y="101" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="13" font-weight="bold" class="box-accent-text">Commits</text>
+
+  <!-- Bottom labels for each stage -->
+  <text x="56" y="185" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="9" class="label-text">input</text>
+  <text x="175" y="185" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="9" class="label-text">plan</text>
+  <text x="350" y="185" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="9" class="label-text">execute</text>
+  <text x="496" y="185" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="9" class="label-text">verify</text>
+  <text x="629" y="185" text-anchor="middle" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="9" class="label-text">output</text>
+</svg>

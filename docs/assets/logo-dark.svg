@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 80" width="400" height="80">
+  <defs>
+    <linearGradient id="baton-d" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#e8e8e8;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#888;stop-opacity:1"/>
+    </linearGradient>
+  </defs>
+  <!-- Baton -->
+  <line x1="18" y1="58" x2="62" y2="14" stroke="url(#baton-d)" stroke-width="3" stroke-linecap="round"/>
+  <!-- Grip -->
+  <ellipse cx="16" cy="60" rx="5" ry="3" transform="rotate(-50 16 60)" fill="#ccc" opacity="0.7"/>
+  <!-- Tip glow -->
+  <circle cx="63" cy="13" r="3" fill="#7c6aef" opacity="0.6"/>
+  <circle cx="63" cy="13" r="1.5" fill="#a78bfa"/>
+  <!-- Text -->
+  <text x="82" y="52" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="38" font-weight="600" fill="#f0f0f0" letter-spacing="-1">bernstein</text>
+</svg>

@@ -1,0 +1,84 @@
+/* Bernstein TUI — slim, htop-inspired dark theme */
+
+Screen {
+    background: $surface;
+}
+
+/* No Header or Footer — everything is inline */
+
+#top-bar {
+    dock: top;
+    height: 1;
+    background: $primary-darken-3;
+    color: $text;
+    padding: 0 1;
+    content-align: left middle;
+}
+
+/* Thin separator between status bar and body */
+#main-body {
+    height: 1fr;
+}
+
+#task-list {
+    height: 1fr;
+    min-height: 6;
+    border: none;
+    scrollbar-size: 1 1;
+}
+
+/* Slim cursor and row styling */
+#task-list > .datatable--cursor {
+    background: $primary-darken-1;
+}
+
+#task-list > .datatable--header {
+    background: $surface-darken-1;
+    text-style: bold;
+    height: 1;
+}
+
+#action-bar {
+    height: 1;
+    background: $surface-darken-2;
+    color: $text;
+    padding: 0 1;
+    display: none;
+}
+
+#agent-log {
+    height: 8;
+    min-height: 4;
+    border-top: solid #333;
+    padding: 0 1;
+    scrollbar-size: 1 1;
+}
+
+/* Status colour classes (kept for any custom usage) */
+.status-open {
+    color: white;
+}
+
+.status-claimed {
+    color: cyan;
+}
+
+.status-in-progress {
+    color: yellow;
+}
+
+.status-done {
+    color: green;
+}
+
+.status-failed {
+    color: red;
+}
+
+.status-blocked {
+    color: $text-muted;
+}
+
+.status-cancelled {
+    color: $text-muted;
+}

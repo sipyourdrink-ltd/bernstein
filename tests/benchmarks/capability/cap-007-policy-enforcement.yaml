@@ -1,0 +1,7 @@
+id: cap-007
+goal: "Policy engine blocks disallowed actions"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.policy
+max_cost_usd: 0.0
+max_duration_seconds: 15

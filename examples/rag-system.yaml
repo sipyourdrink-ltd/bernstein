@@ -1,0 +1,14 @@
+goal: "Build a RAG system for legal documents with hybrid retrieval, typed answers, and page-level grounding"
+cli: auto
+team: auto
+budget: "$50"
+max_agents: 8
+constraints:
+  - "Python 3.12+ only"
+  - "Use Qdrant for vector storage"
+  - "FastAPI for the API layer"
+  - "All retrieval must return page-level provenance"
+  - "Support both deterministic and free-text answer types"
+context_files:
+  - "docs/question-schema.json"
+  - "docs/scoring-rubric.md"

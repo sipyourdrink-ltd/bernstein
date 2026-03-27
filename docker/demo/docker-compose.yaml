@@ -1,0 +1,95 @@
+# Demo deployment for demo.bernstein.dev
+#
+# Architecture:
+#   bernstein-server   — task API + dashboard (internal only, not exposed to internet)
+#   bernstein-demo     — demo cycle: seed tasks, run real agents, reset every 15 min
+#   caddy              — HTTPS reverse proxy, public-facing on 80/443
+#
+# Setup:
+#   1. cp docker/demo/.env.demo.example docker/demo/.env.demo
+#   2. Fill in ANTHROPIC_API_KEY (or OPENAI_API_KEY)
+#   3. Point demo.bernstein.dev DNS at this server
+#   4. docker compose -f docker/demo/docker-compose.yaml --env-file docker/demo/.env.demo up -d
+#
+# The dashboard is served at https://demo.bernstein.dev/dashboard
+# Real agents run tasks on a Flask sample project and restart every 15 minutes.
+
+services:
+  # ── Task server ──────────────────────────────────────────────────────────
+  # Serves the API and dashboard. NOT exposed directly to the internet —
+  # Caddy proxies only read-only paths to the public.
+  #
+  # No auth token — server is not exposed on host ports; Caddy is the security
+  # boundary.  Leaving auth off means GET /tasks/* and GET /agents/* work for
+  # public viewers (diff modal, live output streams) without credentials.
+  # NOT readonly — the internal bernstein-demo orchestrator needs write access.
+  bernstein-server:
+    build:
+      context: ../..
+      dockerfile: docker/demo/Dockerfile
+    entrypoint: ["python", "-m", "uvicorn"]
+    command:
+      - "bernstein.core.server:app"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8052"
+    volumes:
+      - sdd-data:/workspace/.sdd
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8052/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # ── Demo orchestrator + cycle ─────────────────────────────────────────────
+  # Seeds demo tasks, runs real Claude Code / Codex agents on the sample
+  # project, then resets every 15 minutes and starts over.
+  bernstein-demo:
+    build:
+      context: ../..
+      dockerfile: docker/demo/Dockerfile
+    entrypoint: ["/usr/local/bin/demo-cycle"]
+    environment:
+      BERNSTEIN_SERVER_URL: http://bernstein-server:8052
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      DEMO_CYCLE_INTERVAL: ${DEMO_CYCLE_INTERVAL:-900}
+    volumes:
+      - sdd-data:/workspace/.sdd
+      - project-data:/workspace/project
+    working_dir: /workspace/project
+    depends_on:
+      bernstein-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Public HTTPS reverse proxy ────────────────────────────────────────────
+  # Caddy handles TLS automatically (Let's Encrypt) and exposes only
+  # read-only dashboard/event paths to the public internet.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      bernstein-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  sdd-data:
+    driver: local
+  project-data:
+    driver: local
+  caddy-data:
+    driver: local
+  caddy-config:
+    driver: local

@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bernstein.fullname" . }}-orchestrator
+  labels:
+    {{- include "bernstein.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+spec:
+  replicas: {{ .Values.orchestrator.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bernstein.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+  template:
+    metadata:
+      labels:
+        {{- include "bernstein.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: orchestrator
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: orchestrator
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - "python"
+            - "-m"
+            - "bernstein.core.orchestrator"
+          envFrom:
+            - configMapRef:
+                name: {{ include "bernstein.fullname" . }}-config
+          env:
+            - name: BERNSTEIN_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.authSecretName" . }}
+                  key: {{ .Values.auth.secretKey }}
+            {{- if .Values.providerKeys.existingSecret }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.providerKeysSecretName" . }}
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.providerKeysSecretName" . }}
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: GOOGLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bernstein.providerKeysSecretName" . }}
+                  key: GOOGLE_API_KEY
+                  optional: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

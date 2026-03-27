@@ -1,0 +1,141 @@
+# Default values for bernstein Helm chart.
+
+image:
+  repository: bernstein
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ── Task Server ───────────────────────────────────────────────────────────────
+server:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 8052
+  # Persistent volume for .sdd/ state
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 10Gi
+
+# ── Orchestrator ──────────────────────────────────────────────────────────────
+orchestrator:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# ── Workers ───────────────────────────────────────────────────────────────────
+worker:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  # Each worker needs its own git worktree state
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 20Gi
+  # HPA: scale workers based on task queue depth and CPU
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 20
+    # Queue depth metric (tasks per replica): requires Prometheus Adapter
+    # Set to empty string to disable queue-depth scaling and use CPU only
+    # Typical values: "2" (scale when 2+ tasks per replica), "5" (when 5+ tasks per replica)
+    targetQueueDepth: "2"
+    targetCPUUtilizationPercentage: 70
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+auth:
+  # Name of an existing K8s Secret containing BERNSTEIN_AUTH_TOKEN
+  # If empty, a token is auto-generated at install time
+  existingSecret: ""
+  secretKey: auth-token
+
+# ── LLM Provider Keys ─────────────────────────────────────────────────────────
+# Set these in a Secret and reference via envFrom, or provide inline (not recommended for prod)
+providerKeys:
+  # Name of an existing K8s Secret with LLM API keys
+  existingSecret: ""
+  # Keys expected in the secret:
+  #   ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY,
+  #   OPENROUTER_API_KEY, TAVILY_API_KEY
+
+# ── PostgreSQL (bitnami/postgresql sub-chart) ─────────────────────────────────
+postgresql:
+  enabled: true
+  auth:
+    username: bernstein
+    password: bernstein
+    database: bernstein
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# ── Redis (bitnami/redis sub-chart) ──────────────────────────────────────────
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      enabled: true
+      size: 2Gi
+
+# ── Ingress ───────────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: bernstein.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# ── Prometheus Monitoring (Prometheus Operator required) ──────────────────────
+prometheus:
+  enabled: false
+
+# ── Pod configuration ─────────────────────────────────────────────────────────
+podAnnotations: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

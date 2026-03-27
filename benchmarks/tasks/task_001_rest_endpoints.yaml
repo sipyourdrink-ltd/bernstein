@@ -1,0 +1,32 @@
+id: task-001
+name: "Add REST endpoints (3 routes) + tests"
+description: >
+  Add GET /users, POST /users, and DELETE /users/{id} endpoints to an existing
+  Flask application, including full test coverage for each route.
+category: feature
+parallelizable: true
+
+subtasks:
+  - id: t001-a
+    role: backend
+    description: "Add GET /users endpoint with pagination support"
+    estimated_minutes: 8
+    depends_on: []
+
+  - id: t001-b
+    role: backend
+    description: "Add POST /users endpoint with input validation"
+    estimated_minutes: 10
+    depends_on: []
+
+  - id: t001-c
+    role: backend
+    description: "Add DELETE /users/{id} endpoint with 404 handling"
+    estimated_minutes: 8
+    depends_on: []
+
+  - id: t001-d
+    role: qa
+    description: "Write pytest tests for all three user endpoints"
+    estimated_minutes: 15
+    depends_on: [t001-a, t001-b, t001-c]

@@ -1,0 +1,140 @@
+# .bernstein/rules.yaml — Organizational Rule Enforcement
+#
+# Define standards all agents must follow before their work can be merged.
+# If this file is absent, rule enforcement is silently skipped.
+#
+# Rule types:
+#   forbidden_pattern  — regex matched against diff additions; violation = match found
+#   required_file      — file must exist in the project root
+#   command            — shell command must exit 0
+#
+# Severity:
+#   error    — hard block: merge cannot proceed until fixed
+#   warning  — soft flag: recorded in metrics, does not block merge
+#
+# --- Schema reference ---
+# version: 1
+# enabled: true           # master switch
+# rules:
+#   - id: string          # unique, kebab-case
+#     type: forbidden_pattern | required_file | command
+#     description: string
+#     severity: error | warning
+#
+#     # forbidden_pattern only:
+#     pattern: regex
+#     files: "*.py"       # glob to restrict which files (optional, default: all)
+#     exclude:            # globs to skip (optional)
+#       - "tests/**"
+#
+#     # required_file only:
+#     path: relative/path/to/file
+#
+#     # command only:
+#     command: shell command string
+#
+#     # all types:
+#     message: "Actionable fix hint shown to the agent on violation"
+
+version: 1
+enabled: true
+
+rules:
+  # ---------------------------------------------------------------------------
+  # Branch hygiene
+  # ---------------------------------------------------------------------------
+  - id: no-master-branch-refs
+    type: forbidden_pattern
+    description: "Never push to or reference 'master' branch"
+    pattern: '\bmaster\b'
+    files: "*.yaml"
+    severity: error
+    message: "Replace 'master' with 'main'. This repo uses 'main' as the default branch."
+
+  # ---------------------------------------------------------------------------
+  # Python code quality
+  # ---------------------------------------------------------------------------
+  - id: no-print-statements
+    type: forbidden_pattern
+    description: "No bare print() in production Python code"
+    pattern: '^\s*print\s*\('
+    files: "*.py"
+    exclude:
+      - "tests/**"
+      - "scripts/**"
+    severity: error
+    message: "Use logging instead of print(). Replace with: logger.info(...) or logger.debug(...)"
+
+  - id: no-bare-except
+    type: forbidden_pattern
+    description: "No bare 'except:' clauses — always catch a specific exception"
+    pattern: '^\s*except\s*:'
+    files: "*.py"
+    exclude:
+      - "tests/**"
+    severity: error
+    message: "Replace 'except:' with 'except Exception:' or a more specific exception type."
+
+  - id: no-type-ignore-without-comment
+    type: forbidden_pattern
+    description: "# type: ignore must include a reason comment"
+    pattern: '#\s*type:\s*ignore\s*$'
+    files: "*.py"
+    severity: warning
+    message: "Add a reason: # type: ignore[assignment]  # explanation why"
+
+  # ---------------------------------------------------------------------------
+  # Security
+  # ---------------------------------------------------------------------------
+  - id: no-hardcoded-secrets
+    type: forbidden_pattern
+    description: "No hardcoded credentials or secrets in source code"
+    pattern: '(?i)(password|passwd|api_key|secret|token)\s*=\s*["\x27][^"'\''\s]{8,}["\x27]'
+    files: "*.py"
+    exclude:
+      - "tests/**"
+    severity: error
+    message: "Move secrets to environment variables or a secrets manager. Never hardcode credentials."
+
+  - id: no-hardcoded-localhost-urls
+    type: forbidden_pattern
+    description: "No hardcoded http://localhost URLs outside of config and tests"
+    pattern: 'http://localhost[:/]'
+    files: "*.py"
+    exclude:
+      - "tests/**"
+      - "src/bernstein/core/bootstrap.py"
+      - "src/bernstein/core/server.py"
+    severity: warning
+    message: "Parameterize the URL via config instead of hardcoding localhost."
+
+  # ---------------------------------------------------------------------------
+  # Required project files
+  # ---------------------------------------------------------------------------
+  - id: changelog-exists
+    type: required_file
+    description: "Project must have a CHANGELOG.md"
+    path: CHANGELOG.md
+    severity: warning
+    message: "Create CHANGELOG.md to track user-facing changes."
+
+  # ---------------------------------------------------------------------------
+  # Custom command checks (examples — uncomment and adapt as needed)
+  # ---------------------------------------------------------------------------
+
+  # Run Ruff on changed Python files (requires ruff in PATH)
+  # - id: ruff-clean
+  #   type: command
+  #   description: "All Python changes must pass Ruff linting"
+  #   command: "ruff check . --quiet"
+  #   severity: error
+  #   message: "Fix lint errors: ruff check . --fix"
+
+  # Ensure no TODO comments were introduced (example of a team convention)
+  # - id: no-new-todos
+  #   type: forbidden_pattern
+  #   description: "Do not introduce new TODO comments — open a ticket instead"
+  #   pattern: '#\s*TODO'
+  #   files: "*.py"
+  #   severity: warning
+  #   message: "Convert TODO to a backlog ticket in .sdd/backlog/open/"

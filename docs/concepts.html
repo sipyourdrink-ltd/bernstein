@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Concepts — Bernstein</title>
+  <meta name="description" content="Architecture overview, task lifecycle, agent roles, self-evolution pipeline, and agent catalogs." />
+  <link rel="stylesheet" href="style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="script.js"></script>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <span id="theme-icon">◑</span>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub ↗
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Page hero ── -->
+<div class="page-hero">
+  <div class="container">
+    <h1>Concepts</h1>
+    <p>The mental model behind Bernstein — how it thinks about agents, tasks, and orchestration.</p>
+  </div>
+</div>
+
+<!-- ── Doc layout ── -->
+<div class="doc-layout">
+
+  <!-- sidebar -->
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#task-lifecycle">Task lifecycle</a></li>
+      <li><a href="#agent-roles">Agent roles</a></li>
+      <li><a href="#model-routing">Model routing</a></li>
+      <li><a href="#completion-signals">Completion signals</a></li>
+      <li><a href="#self-evolution">Self-evolution</a></li>
+      <li><a href="#agent-catalogs">Agent catalogs</a></li>
+      <li><a href="#file-state">File-based state</a></li>
+    </ul>
+  </aside>
+
+  <!-- content -->
+  <main class="doc-content">
+
+    <h2 id="architecture">Architecture</h2>
+    <p>Bernstein has four main components, all running as separate processes:</p>
+
+    <table>
+      <thead>
+        <tr><th>Component</th><th>Role</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Task Server</strong></td><td>FastAPI HTTP server at <code>:8052</code>. The single source of truth for task state. Agents talk to it via REST.</td></tr>
+        <tr><td><strong>Agent Spawner</strong></td><td>Polls the task server, picks up open tasks, routes model/effort, and launches CLI agent sessions.</td></tr>
+        <tr><td><strong>Janitor</strong></td><td>Runs completion signal checks before marking tasks done. Prevents false positives.</td></tr>
+        <tr><td><strong>CLI Adapter</strong></td><td>A thin wrapper per agent CLI (Claude Code, Codex, Gemini). Handles subprocess launch, env setup, and output parsing.</td></tr>
+      </tbody>
+    </table>
+
+    <p>The orchestrator is <strong>deterministic code</strong>, not an LLM. Scheduling, routing, and lifecycle management are pure Python — fast, testable, and auditable.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">bernstein CLI
+    │
+    ▼
+Task Server (FastAPI, :8052)
+    │
+    ├── POST /tasks                     create a task
+    ├── GET  /tasks/next/{role}         claim next open task
+    ├── POST /tasks/{id}/complete       mark done
+    ├── POST /tasks/{id}/fail           mark failed
+    └── GET  /status                    dashboard summary
+    │
+    ▼
+Agent Spawner
+    │
+    ├── Model router      opus / sonnet
+    ├── Effort router     max / high / normal
+    └── CLI adapter       claude / codex / gemini
+    │
+    ▼
+Janitor (completion signal verification)</code></pre>
+    </div>
+
+    <h2 id="task-lifecycle">Task lifecycle</h2>
+    <p>Every task moves through a well-defined state machine:</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">open → claimed → in_progress → done
+                              ↘ failed
+              ↑
+         blocked (dependency not yet met)</code></pre>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>State</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>open</code></td><td>Waiting in the queue. No agent has picked it up yet.</td></tr>
+        <tr><td><code>blocked</code></td><td>Has unsatisfied <code>depends_on</code> entries. Will become <code>open</code> automatically when dependencies complete.</td></tr>
+        <tr><td><code>claimed</code></td><td>An agent has reserved the task but hasn't started yet.</td></tr>
+        <tr><td><code>in_progress</code></td><td>An agent is actively working. Heartbeat timeout triggers respawn if the agent goes silent.</td></tr>
+        <tr><td><code>done</code></td><td>Agent reported completion <em>and</em> janitor verified completion signals.</td></tr>
+        <tr><td><code>failed</code></td><td>Agent reported failure, or janitor found completion signals unmet after max retries.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Task schema</h3>
+    <p>Tasks live as YAML files in <code>.sdd/backlog/open/</code>:</p>
+    <div class="code-block">
+      <pre><code class="language-yaml">id: "TSK-042"
+title: "Implement hybrid retrieval with BM25 fallback"
+role: "backend"
+priority: 1            # 1=critical, 2=normal, 3=nice-to-have
+scope: "medium"        # small / medium / large
+complexity: "high"     # low / medium / high
+estimated_minutes: 30
+depends_on: ["TSK-040"]
+completion_signals:
+  - type: "path_exists"
+    path: "src/retrieval/bm25.py"
+  - type: "test_passes"
+    command: "pytest tests/test_bm25.py"
+files:
+  - "src/retrieval/bm25.py"
+  - "tests/test_bm25.py"</code></pre>
+    </div>
+
+    <h2 id="agent-roles">Agent roles</h2>
+    <p>Roles are defined in <code>templates/roles/{role}/</code>. Each role directory contains:</p>
+    <ul>
+      <li><code>system_prompt.md</code> — Role description, rules, and style guidelines</li>
+      <li><code>task_prompt.md</code> — Per-task prompt template with <code>&#123;&#123;TASK_TITLE&#125;&#125;</code>, <code>&#123;&#123;TASK_DESCRIPTION&#125;&#125;</code>, <code>&#123;&#123;FILES&#125;&#125;</code></li>
+      <li><code>config.yaml</code> — Default model, effort, and max tasks per session</li>
+    </ul>
+
+    <table>
+      <thead>
+        <tr><th>Role</th><th>Purpose</th><th>Default model</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>manager</code></td><td>Goal decomposition, task planning, sprint review</td><td>opus</td></tr>
+        <tr><td><code>backend</code></td><td>API design, business logic, database work</td><td>sonnet</td></tr>
+        <tr><td><code>frontend</code></td><td>UI components, styling, accessibility</td><td>sonnet</td></tr>
+        <tr><td><code>qa</code></td><td>Test writing, coverage analysis, regression testing</td><td>sonnet</td></tr>
+        <tr><td><code>security</code></td><td>Threat modelling, vulnerability review, pen-testing scripts</td><td>opus</td></tr>
+        <tr><td><code>devops</code></td><td>CI/CD, infrastructure, deployment configuration</td><td>sonnet</td></tr>
+        <tr><td><code>docs</code></td><td>Documentation, changelogs, README updates</td><td>sonnet</td></tr>
+      </tbody>
+    </table>
+
+    <p>Add custom roles by creating a new directory in <code>templates/roles/</code>. The spawner picks them up automatically.</p>
+
+    <h2 id="model-routing">Model routing</h2>
+    <p>The spawner's router is deterministic — it inspects task metadata and returns a <code>(model, effort)</code> pair. No LLM involved:</p>
+
+    <table>
+      <thead>
+        <tr><th>Condition</th><th>Model</th><th>Effort</th><th>Reasoning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>role=manager</code></td><td>opus</td><td>max</td><td>Planning requires deep reasoning</td></tr>
+        <tr><td><code>role=security</code></td><td>opus</td><td>max</td><td>Security review needs exhaustive analysis</td></tr>
+        <tr><td><code>scope=large, complexity=high</code></td><td>opus</td><td>high</td><td>Complex architecture tasks</td></tr>
+        <tr><td><code>complexity=medium</code></td><td>sonnet</td><td>high</td><td>Standard feature implementation</td></tr>
+        <tr><td><code>complexity=low</code></td><td>sonnet</td><td>normal</td><td>Quick fixes, docs, formatting</td></tr>
+      </tbody>
+    </table>
+
+    <p>You can override routing per-task with explicit <code>model</code> and <code>effort</code> fields in the task YAML.</p>
+
+    <h2 id="completion-signals">Completion signals</h2>
+    <p>The janitor checks completion signals before a task transitions to <code>done</code>. This prevents agents from self-reporting success without evidence.</p>
+
+    <table>
+      <thead>
+        <tr><th>Signal type</th><th>What it checks</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>path_exists</code></td><td>A file or directory exists at the given path</td></tr>
+        <tr><td><code>test_passes</code></td><td>A shell command exits with code 0</td></tr>
+        <tr><td><code>file_contains</code></td><td>A file contains a specific string</td></tr>
+        <tr><td><code>api_responds</code></td><td>An HTTP endpoint returns the expected status code</td></tr>
+      </tbody>
+    </table>
+
+    <div class="code-block">
+      <pre><code class="language-yaml">completion_signals:
+  - type: "path_exists"
+    path: "src/auth/jwt.py"
+  - type: "test_passes"
+    command: "pytest tests/test_auth.py -x -q"
+  - type: "file_contains"
+    path: "src/auth/jwt.py"
+    contains: "def verify_token"</code></pre>
+    </div>
+
+    <h2 id="self-evolution">Self-evolution</h2>
+    <p>Bernstein's evolve mode runs a continuous improvement loop against its own codebase:</p>
+
+    <div class="flow-steps" style="max-width:100%;">
+      <div class="flow-step">
+        <div class="flow-num">1</div>
+        <div class="flow-content">
+          <h4>Analyse metrics</h4>
+          <p>Reads <code>.sdd/metrics/</code> to identify slow tasks, high-cost models, frequently failing roles, and test flakiness.</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">2</div>
+        <div class="flow-content">
+          <h4>Propose improvements</h4>
+          <p>A manager agent generates concrete proposals (patch + rationale) ranked by risk level (L0–L3).</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">3</div>
+        <div class="flow-content">
+          <h4>Sandbox validation</h4>
+          <p>Low-risk proposals (L0/L1) are applied in an isolated branch and validated with the test suite before merging.</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">4</div>
+        <div class="flow-content">
+          <h4>Apply or defer</h4>
+          <p>Safe proposals are applied automatically. L2+ proposals go to <code>.sdd/evolution/deferred.jsonl</code> for human review.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="agent-catalogs">Agent catalogs</h2>
+    <p>Agent catalogs let you load specialist role definitions from YAML or Markdown files — locally or from a remote marketplace.</p>
+
+    <div class="code-block">
+      <pre><code class="language-bash"># List available agents in loaded catalogs
+bernstein agents list
+
+# Sync from remote catalog sources
+bernstein agents sync
+
+# Validate local agent catalog files
+bernstein agents validate</code></pre>
+    </div>
+
+    <p>A catalog entry looks like this:</p>
+    <div class="code-block">
+      <pre><code class="language-yaml">name: "data-engineer"
+description: "Specialist in ETL pipelines, data modelling, and query optimisation"
+model: sonnet
+effort: high
+max_tasks_per_session: 2
+system_prompt: |
+  You are a data engineering specialist. You write clean, tested,
+  well-documented ETL code. You prefer streaming over batch where
+  possible, and always profile query performance.</code></pre>
+    </div>
+
+    <h2 id="file-state">File-based state</h2>
+    <p>All state lives in <code>.sdd/</code> — structured files that can be committed, diffed, and read by any tool. There is no hidden database.</p>
+
+    <table>
+      <thead>
+        <tr><th>Path</th><th>Contents</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>.sdd/backlog/open/</code></td><td>Open task YAML files, one per task</td></tr>
+        <tr><td><code>.sdd/backlog/closed/</code></td><td>Completed and failed task records</td></tr>
+        <tr><td><code>.sdd/agents/</code></td><td>Per-agent heartbeat and session state files</td></tr>
+        <tr><td><code>.sdd/runtime/</code></td><td>PID files, <code>server.log</code>, <code>spawner.log</code></td></tr>
+        <tr><td><code>.sdd/metrics/</code></td><td>Cost, token, and duration records per model and role</td></tr>
+        <tr><td><code>.sdd/knowledge/</code></td><td>Project context injected into agent prompts</td></tr>
+        <tr><td><code>.sdd/evolution/</code></td><td>Deferred evolution proposals awaiting review</td></tr>
+        <tr><td><code>.sdd/config.yaml</code></td><td>Server port, model defaults, worker limits</td></tr>
+      </tbody>
+    </table>
+
+    <p>Agents communicate with the task server over HTTP — they never write to <code>.sdd/</code> directly (except their own heartbeat file).</p>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein · <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> · Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

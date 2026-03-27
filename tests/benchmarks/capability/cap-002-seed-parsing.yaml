@@ -1,0 +1,10 @@
+id: cap-002
+goal: "Seed YAML can be parsed into structured task plan"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.seed
+  - type: import_succeeds
+    module: bernstein.core.seed
+    attribute: SeedError
+max_cost_usd: 0.0
+max_duration_seconds: 15

@@ -1,0 +1,70 @@
+id: task-010
+name: "Security audit + fixes"
+description: >
+  Audit the codebase for OWASP Top 10 issues: input validation, SQL injection,
+  XSS exposure, and auth token handling. Fix all findings, verify with a QA
+  pass, and publish a security advisory. Audit phases run in parallel;
+  fix phases run in parallel after their respective audits complete.
+category: security
+parallelizable: true
+
+subtasks:
+  - id: t010-a
+    role: security
+    description: "Audit input validation across all request handlers"
+    estimated_minutes: 10
+    depends_on: []
+
+  - id: t010-b
+    role: security
+    description: "Audit for SQL injection risks in ORM queries and raw SQL"
+    estimated_minutes: 8
+    depends_on: []
+
+  - id: t010-c
+    role: security
+    description: "Audit for XSS exposure in response rendering"
+    estimated_minutes: 8
+    depends_on: []
+
+  - id: t010-d
+    role: security
+    description: "Audit auth token handling (expiry, rotation, storage)"
+    estimated_minutes: 10
+    depends_on: []
+
+  - id: t010-e
+    role: backend
+    description: "Fix input validation issues found in audit"
+    estimated_minutes: 12
+    depends_on: [t010-a]
+
+  - id: t010-f
+    role: backend
+    description: "Fix SQL injection risks (parameterised queries, ORM review)"
+    estimated_minutes: 10
+    depends_on: [t010-b]
+
+  - id: t010-g
+    role: backend
+    description: "Fix XSS exposure (output encoding, Content-Security-Policy)"
+    estimated_minutes: 8
+    depends_on: [t010-c]
+
+  - id: t010-h
+    role: backend
+    description: "Fix auth token issues (short expiry, rotation on use)"
+    estimated_minutes: 10
+    depends_on: [t010-d]
+
+  - id: t010-i
+    role: qa
+    description: "Verify all security fixes with regression tests"
+    estimated_minutes: 15
+    depends_on: [t010-e, t010-f, t010-g, t010-h]
+
+  - id: t010-j
+    role: docs
+    description: "Write SECURITY.md advisory with CVE descriptions and mitigations"
+    estimated_minutes: 6
+    depends_on: [t010-i]

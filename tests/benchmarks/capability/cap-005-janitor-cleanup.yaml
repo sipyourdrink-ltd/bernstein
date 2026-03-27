@@ -1,0 +1,7 @@
+id: cap-005
+goal: "Janitor correctly identifies and cleans up stale agent sessions"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein.core.janitor
+max_cost_usd: 0.0
+max_duration_seconds: 15

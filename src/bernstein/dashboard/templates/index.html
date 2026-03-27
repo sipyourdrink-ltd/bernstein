@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bernstein Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg: '#0a0a0b',
+            surface: '#1a1a1d',
+            'surface-2': '#222225',
+            border: '#2a2a2d',
+            text: '#e5e5e5',
+            muted: '#737373',
+            accent: '#4f46e5',
+            'accent-light': '#6366f1',
+          },
+          fontFamily: {
+            mono: ['ui-monospace', 'SFMono-Regular', 'SF Mono', 'Menlo', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background: #0a0a0b; color: #e5e5e5; }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .pulse { animation: pulse-dot 2s ease-in-out infinite; }
+    @keyframes fade-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fade-in 0.15s ease-out; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2a2d; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3a3a3d; }
+    .tabular { font-variant-numeric: tabular-nums; }
+    /* Status dot colors */
+    .dot-done { color: #22c55e; }
+    .dot-working { color: #eab308; }
+    .dot-failed { color: #ef4444; }
+    .dot-open { color: #737373; }
+  </style>
+</head>
+<body class="min-h-screen font-sans antialiased" x-data="dashboard()">
+
+  <!-- Top Bar -->
+  <header class="border-b border-border px-4 py-3 flex items-center justify-between bg-surface">
+    <div class="flex items-center gap-3">
+      <div class="w-7 h-7 rounded bg-accent/20 flex items-center justify-center">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-sm font-semibold text-text">Bernstein</h1>
+        <p class="text-[10px] text-muted">Orchestrator Dashboard</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-4 text-xs">
+      <div class="flex items-center gap-1.5">
+        <span class="inline-block w-1.5 h-1.5 rounded-full"
+              :class="connected ? 'bg-green-500 pulse' : 'bg-red-500'"></span>
+        <span class="text-muted tabular" x-text="connected ? 'SSE Live' : (polling ? 'Polling' : 'Offline')"></span>
+      </div>
+      <span class="text-muted tabular font-mono" x-text="elapsed"></span>
+      <span class="text-muted/50 text-[10px]" x-text="lastUpdate"></span>
+    </div>
+  </header>
+
+  <!-- Stat Cards -->
+  <div class="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <!-- Total Tasks -->
+    <div class="bg-surface border border-border rounded-lg p-3">
+      <div class="text-[10px] text-muted uppercase tracking-wider mb-1">Total Tasks</div>
+      <div class="text-2xl font-mono font-semibold tabular text-text" x-text="stats.total"></div>
+      <div class="flex items-center gap-2 mt-1 text-[10px]">
+        <span class="text-muted" x-text="stats.open + ' open'"></span>
+        <span class="text-muted" x-text="stats.claimed + ' active'"></span>
+      </div>
+    </div>
+    <!-- Active Agents -->
+    <div class="bg-surface border border-border rounded-lg p-3">
+      <div class="text-[10px] text-muted uppercase tracking-wider mb-1">Active Agents</div>
+      <div class="text-2xl font-mono font-semibold tabular text-accent-light" x-text="stats.agents"></div>
+      <div class="flex items-center gap-1 mt-1">
+        <div class="flex-1 h-1 bg-border rounded-full overflow-hidden">
+          <div class="h-full bg-accent rounded-full transition-all duration-500"
+               :style="'width:' + (stats.total > 0 ? Math.round(stats.claimed / stats.total * 100) : 0) + '%'"></div>
+        </div>
+        <span class="text-[10px] text-muted tabular"
+              x-text="(stats.total > 0 ? Math.round(stats.claimed / stats.total * 100) : 0) + '% busy'"></span>
+      </div>
+    </div>
+    <!-- Done / Failed -->
+    <div class="bg-surface border border-border rounded-lg p-3">
+      <div class="text-[10px] text-muted uppercase tracking-wider mb-1">Done / Failed</div>
+      <div class="flex items-baseline gap-1">
+        <span class="text-2xl font-mono font-semibold tabular text-green-400" x-text="stats.done"></span>
+        <span class="text-muted">/</span>
+        <span class="text-lg font-mono font-semibold tabular text-red-400" x-text="stats.failed"></span>
+      </div>
+      <div class="flex items-center gap-1 mt-1">
+        <div class="flex-1 h-1 bg-border rounded-full overflow-hidden flex">
+          <div class="h-full bg-green-500 transition-all duration-500"
+               :style="'width:' + progressPct + '%'"></div>
+          <div class="h-full bg-red-500 transition-all duration-500"
+               :style="'width:' + failPct + '%'"></div>
+        </div>
+        <span class="text-[10px] text-muted tabular" x-text="progressPct + '% done'"></span>
+      </div>
+    </div>
+    <!-- Cost -->
+    <div class="bg-surface border border-border rounded-lg p-3">
+      <div class="text-[10px] text-muted uppercase tracking-wider mb-1">Total Cost</div>
+      <div class="text-2xl font-mono font-semibold tabular text-green-400" x-text="formatCost(totalCost)"></div>
+      <div class="flex items-center gap-2 mt-1 text-[10px]">
+        <span class="text-muted tabular" x-text="burnRate > 0 ? formatCost(burnRate) + '/hr' : '--'"></span>
+        <template x-if="budgetUsd > 0">
+          <span class="text-muted tabular" x-text="formatCost(budgetUsd) + ' budget'"></span>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Area: 2 columns -->
+  <div class="px-4 pb-4 grid grid-cols-1 lg:grid-cols-5 gap-3" style="height: calc(100vh - 195px);">
+
+    <!-- Left: Task Table (60%) -->
+    <div class="lg:col-span-3 bg-surface border border-border rounded-lg flex flex-col overflow-hidden">
+      <!-- Table Header -->
+      <div class="px-3 py-2 border-b border-border flex items-center justify-between">
+        <h2 class="text-xs font-semibold text-text">Tasks</h2>
+        <div class="flex items-center gap-2 text-[10px] text-muted">
+          <span x-text="tasks.length + ' total'"></span>
+          <button @click="taskFilter = taskFilter === 'all' ? 'active' : (taskFilter === 'active' ? 'done' : 'all')"
+                  class="px-1.5 py-0.5 rounded bg-border/50 hover:bg-border text-muted hover:text-text transition-colors"
+                  x-text="'Show: ' + taskFilter"></button>
+        </div>
+      </div>
+      <!-- Table -->
+      <div class="flex-1 overflow-auto">
+        <table class="w-full text-xs">
+          <thead class="sticky top-0 bg-surface z-10">
+            <tr class="border-b border-border">
+              <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider w-8">St</th>
+              <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider cursor-pointer hover:text-text"
+                  @click="sortBy('role')">Role</th>
+              <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider cursor-pointer hover:text-text"
+                  @click="sortBy('title')">Title</th>
+              <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider cursor-pointer hover:text-text"
+                  @click="sortBy('assigned_agent')">Agent</th>
+              <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider">Progress</th>
+              <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider w-16">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-border/50">
+            <template x-for="task in filteredTasks" :key="task.id">
+              <tr class="hover:bg-surface-2/30 transition-colors fade-in">
+                <!-- Status dot -->
+                <td class="px-3 py-1.5 text-center">
+                  <span x-text="statusDot(task.status)"
+                        :class="statusDotClass(task.status)"
+                        class="text-sm"></span>
+                </td>
+                <!-- Role -->
+                <td class="px-3 py-1.5">
+                  <span class="text-accent-light text-[11px]" x-text="task.role"></span>
+                </td>
+                <!-- Title -->
+                <td class="px-3 py-1.5 text-text max-w-[280px] truncate" x-text="task.title"></td>
+                <!-- Agent -->
+                <td class="px-3 py-1.5 font-mono text-[10px] text-muted"
+                    x-text="task.assigned_agent ? task.assigned_agent.slice(0, 10) : '--'"></td>
+                <!-- Progress -->
+                <td class="px-3 py-1.5">
+                  <div class="flex items-center gap-1.5">
+                    <div class="w-14 h-1 bg-border rounded-full overflow-hidden">
+                      <div class="h-full rounded-full transition-all duration-300"
+                           :class="task.status === 'done' ? 'bg-green-500' : task.status === 'failed' ? 'bg-red-500' : 'bg-accent'"
+                           :style="'width:' + task.progress + '%'"></div>
+                    </div>
+                    <span class="text-[10px] text-muted font-mono tabular w-7" x-text="task.progress + '%'"></span>
+                  </div>
+                </td>
+                <!-- Actions -->
+                <td class="px-3 py-1.5">
+                  <div class="flex items-center gap-1">
+                    <button x-show="task.assigned_agent && ['claimed','in_progress'].includes(task.status)"
+                            @click.stop="killAgent(task.assigned_agent)"
+                            class="px-1.5 py-0.5 text-[9px] rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 transition-colors"
+                            title="Kill agent">Kill</button>
+                    <button x-show="task.status === 'open'"
+                            @click.stop="spawnTask(task.id)"
+                            class="px-1.5 py-0.5 text-[9px] rounded bg-accent/20 text-accent-light hover:bg-accent/30 transition-colors"
+                            title="Force spawn">Run</button>
+                    <button x-show="!['done','failed','cancelled'].includes(task.status)"
+                            @click.stop="cancelTask(task.id)"
+                            class="px-1.5 py-0.5 text-[9px] rounded bg-border/50 text-muted hover:text-red-400 transition-colors"
+                            title="Cancel task">X</button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+            <template x-if="filteredTasks.length === 0">
+              <tr><td colspan="6" class="px-3 py-12 text-center text-muted text-xs">No tasks</td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Right: Agents + Activity Log (40%) -->
+    <div class="lg:col-span-2 flex flex-col gap-3 overflow-hidden">
+
+      <!-- Agent Cards -->
+      <div class="bg-surface border border-border rounded-lg flex flex-col overflow-hidden" style="flex: 1 1 55%;">
+        <div class="px-3 py-2 border-b border-border flex items-center justify-between">
+          <h2 class="text-xs font-semibold text-text">Agents</h2>
+          <span class="text-[10px] text-muted tabular" x-text="agents.length + ' active'"></span>
+        </div>
+        <div class="flex-1 overflow-auto p-2 space-y-2">
+          <template x-for="agent in agents" :key="agent.id">
+            <div class="border border-border rounded-lg p-2.5 hover:border-accent/30 transition-colors cursor-pointer fade-in"
+                 :class="selectedAgent === agent.id ? 'border-accent/50 bg-accent/5' : 'bg-bg'"
+                 @click="selectAgent(agent.id)">
+              <div class="flex items-center justify-between mb-1">
+                <div class="flex items-center gap-1.5">
+                  <span class="inline-block w-2 h-2 rounded-full"
+                        :class="agentDotClass(agent.status)"></span>
+                  <span class="font-mono text-[11px] text-text" x-text="agent.id.slice(0, 12)"></span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent-light" x-text="agent.role"></span>
+                  <span class="text-[10px] text-muted font-mono tabular" x-text="agent.model"></span>
+                </div>
+              </div>
+              <div class="flex items-center justify-between text-[10px]">
+                <span class="text-muted" x-text="agentStatusLabel(agent.status)"></span>
+                <span class="font-mono tabular text-muted" x-text="fmtRuntime(agent.runtime_s)"></span>
+              </div>
+              <!-- Agent tasks -->
+              <template x-for="task in agent.tasks" :key="task.id">
+                <div class="mt-1.5">
+                  <div class="flex items-center justify-between text-[10px] mb-0.5">
+                    <span class="text-text truncate max-w-[180px]" x-text="task.title"></span>
+                    <span class="text-muted font-mono tabular" x-text="task.progress + '%'"></span>
+                  </div>
+                  <div class="h-1 bg-border rounded-full overflow-hidden">
+                    <div class="h-full rounded-full transition-all duration-300"
+                         :class="task.status === 'done' ? 'bg-green-500' : task.status === 'failed' ? 'bg-red-500' : 'bg-accent'"
+                         :style="'width:' + task.progress + '%'"></div>
+                  </div>
+                </div>
+              </template>
+              <div class="flex items-center justify-between text-[10px] mt-1.5 pt-1 border-t border-border/40">
+                <span class="text-muted">Cost</span>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono tabular text-green-400" x-text="formatCost(agent.cost_usd)"></span>
+                  <button @click.stop="killAgent(agent.id)"
+                          class="px-1.5 py-0.5 text-[9px] rounded bg-red-900/30 text-red-400 hover:bg-red-900/50 transition-colors">Kill</button>
+                </div>
+              </div>
+            </div>
+          </template>
+          <template x-if="agents.length === 0">
+            <div class="flex flex-col items-center justify-center py-8">
+              <p class="text-xs text-muted">No active agents</p>
+              <p class="text-[10px] text-muted/50 mt-1">Agents appear when tasks are claimed</p>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Activity Log / Agent Output -->
+      <div class="bg-surface border border-border rounded-lg flex flex-col overflow-hidden" style="flex: 1 1 45%;">
+        <div class="px-3 py-2 border-b border-border flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h2 class="text-xs font-semibold text-text" x-text="selectedAgent ? 'Agent Output' : 'Activity Log'"></h2>
+            <template x-if="selectedAgent">
+              <button @click="selectedAgent = ''; logLines = []; closeAgentStream()"
+                      class="text-[10px] text-muted hover:text-text transition-colors">Clear</button>
+            </template>
+          </div>
+          <div class="flex items-center gap-2">
+            <template x-if="selectedAgent">
+              <span class="text-[10px] text-muted font-mono tabular" x-text="selectedAgent.slice(0, 12)"></span>
+            </template>
+            <button @click="logAutoScroll = !logAutoScroll"
+                    class="text-[9px] font-mono px-1.5 py-0.5 rounded transition-colors"
+                    :class="logAutoScroll ? 'bg-accent/20 text-accent-light' : 'bg-border/50 text-muted'"
+                    x-text="logAutoScroll ? 'Follow' : 'Paused'"></button>
+          </div>
+        </div>
+        <div class="flex-1 overflow-auto bg-bg p-2 font-mono text-[11px] leading-relaxed"
+             x-ref="logContainer"
+             @scroll="logAutoScroll = ($el.scrollHeight - $el.scrollTop) <= ($el.clientHeight + 40)">
+          <!-- Agent log lines (when agent selected) -->
+          <template x-if="selectedAgent && logLines.length > 0">
+            <div>
+              <template x-for="(line, i) in logLines" :key="i">
+                <div class="text-text/70 whitespace-pre-wrap break-all py-px" x-text="line"></div>
+              </template>
+            </div>
+          </template>
+          <!-- Activity feed (when no agent selected) -->
+          <template x-if="!selectedAgent && activityLog.length > 0">
+            <div>
+              <template x-for="(entry, i) in activityLog" :key="i">
+                <div class="flex gap-2 py-0.5 fade-in">
+                  <span class="text-muted/50 shrink-0 tabular" x-text="entry.time"></span>
+                  <span x-text="statusDot(entry.type)" :class="statusDotClass(entry.type)"></span>
+                  <span class="text-text/70" x-text="entry.message"></span>
+                </div>
+              </template>
+            </div>
+          </template>
+          <template x-if="selectedAgent && logLines.length === 0">
+            <div class="text-center py-8 text-xs text-muted">Waiting for output...</div>
+          </template>
+          <template x-if="!selectedAgent && activityLog.length === 0">
+            <div class="text-center py-8 text-xs text-muted">No activity yet</div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function dashboard() {
+      return {
+        // Connection state
+        connected: false,
+        polling: false,
+        eventSource: null,
+        pollTimer: null,
+        lastUpdate: '',
+
+        // Timer
+        startTime: Date.now(),
+        elapsed: '00:00:00',
+
+        // Data from /dashboard/data
+        stats: { total: 0, open: 0, claimed: 0, done: 0, failed: 0, agents: 0, cost_usd: 0 },
+        tasks: [],
+        agents: [],
+        costByRole: {},
+        costHistory: [],
+        liveCosts: {},
+        fileLocks: {},
+        mergeQueue: [],
+        alerts: [],
+
+        // UI state
+        selectedAgent: '',
+        logLines: [],
+        logAutoScroll: true,
+        activityLog: [],
+        taskFilter: 'all',
+        sortCol: 'priority',
+        sortAsc: true,
+        _agentEventSource: null,
+        _logPollTimer: null,
+
+        // Computed
+        get totalCost() { return this.stats.cost_usd || 0; },
+        get progressPct() {
+          if (this.stats.total === 0) return 0;
+          return Math.round(this.stats.done / this.stats.total * 100);
+        },
+        get failPct() {
+          if (this.stats.total === 0) return 0;
+          return Math.round(this.stats.failed / this.stats.total * 100);
+        },
+        get budgetUsd() { return this.liveCosts.budget_usd || 0; },
+        get burnRate() {
+          const elapsedS = (Date.now() - this.startTime) / 1000;
+          if (elapsedS <= 0 || this.totalCost <= 0) return 0;
+          return this.totalCost / (elapsedS / 3600);
+        },
+
+        get filteredTasks() {
+          let list = this.tasks;
+          if (this.taskFilter === 'active') {
+            list = list.filter(t => ['open', 'claimed', 'in_progress'].includes(t.status));
+          } else if (this.taskFilter === 'done') {
+            list = list.filter(t => ['done', 'failed'].includes(t.status));
+          }
+          const col = this.sortCol;
+          const dir = this.sortAsc ? 1 : -1;
+          return [...list].sort((a, b) => {
+            const av = (a[col] ?? '').toString().toLowerCase();
+            const bv = (b[col] ?? '').toString().toLowerCase();
+            const an = parseFloat(av), bn = parseFloat(bv);
+            if (!isNaN(an) && !isNaN(bn)) return (an - bn) * dir;
+            return av.localeCompare(bv) * dir;
+          });
+        },
+
+        // ---- Initialization ----
+        init() {
+          this.fetchData();
+          this.connectSSE();
+          this.startTimer();
+        },
+
+        // ---- Data fetching ----
+        async fetchData() {
+          try {
+            const resp = await fetch('/dashboard/data');
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+
+            // Diff for activity log
+            this.diffAndLog(data);
+
+            this.stats = data.stats || this.stats;
+            this.tasks = data.tasks || [];
+            this.agents = data.agents || [];
+            this.costByRole = data.cost_by_role || {};
+            this.costHistory = data.cost_history || [];
+            this.liveCosts = data.live_costs || {};
+            this.fileLocks = data.file_locks || {};
+            this.alerts = data.alerts || [];
+            const mq = data.merge_queue || {};
+            this.mergeQueue = Array.isArray(mq) ? mq : (mq.jobs || []);
+
+            this.lastUpdate = new Date().toLocaleTimeString();
+            if (!this.connected) this.connected = true;
+          } catch (e) {
+            this.connected = false;
+            // If SSE is down and we're not already polling, start polling
+            if (!this.pollTimer) {
+              this.startPolling();
+            }
+          }
+        },
+
+        diffAndLog(newData) {
+          // Generate activity log entries from data changes
+          const newTasks = newData.tasks || [];
+          const oldMap = {};
+          for (const t of this.tasks) oldMap[t.id] = t;
+
+          for (const t of newTasks) {
+            const old = oldMap[t.id];
+            if (!old) {
+              this.addActivity('open', 'New task: ' + t.title);
+            } else if (old.status !== t.status) {
+              if (t.status === 'done') {
+                this.addActivity('done', 'Completed: ' + t.title);
+              } else if (t.status === 'failed') {
+                this.addActivity('failed', 'Failed: ' + t.title);
+              } else if (t.status === 'claimed' || t.status === 'in_progress') {
+                this.addActivity('working', 'Started: ' + t.title);
+              }
+            }
+          }
+        },
+
+        addActivity(type, message) {
+          const now = new Date();
+          const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          this.activityLog = [{ time, type, message }, ...this.activityLog].slice(0, 100);
+        },
+
+        // ---- SSE connection ----
+        connectSSE() {
+          try {
+            this.eventSource = new EventSource('/events');
+
+            this.eventSource.onopen = () => {
+              this.connected = true;
+              this.polling = false;
+              // Stop polling if SSE reconnected
+              if (this.pollTimer) {
+                clearInterval(this.pollTimer);
+                this.pollTimer = null;
+              }
+            };
+
+            this.eventSource.onerror = () => {
+              this.connected = false;
+              // Start polling as fallback
+              this.startPolling();
+              // Retry SSE after 5 seconds
+              setTimeout(() => {
+                if (this.eventSource) {
+                  this.eventSource.close();
+                  this.eventSource = null;
+                }
+                this.connectSSE();
+              }, 5000);
+            };
+
+            // Listen for named events
+            this.eventSource.addEventListener('task_update', (e) => {
+              this.fetchData();
+            });
+            this.eventSource.addEventListener('agent_update', (e) => {
+              this.fetchData();
+            });
+            this.eventSource.addEventListener('heartbeat', () => {
+              this.connected = true;
+            });
+
+            // Generic message handler
+            this.eventSource.onmessage = (e) => {
+              try {
+                const data = JSON.parse(e.data);
+                if (data.type === 'heartbeat') {
+                  this.connected = true;
+                } else {
+                  this.fetchData();
+                }
+              } catch (_) {
+                this.fetchData();
+              }
+            };
+          } catch (e) {
+            this.connected = false;
+            this.startPolling();
+          }
+        },
+
+        startPolling() {
+          if (this.pollTimer) return;
+          this.polling = true;
+          this.pollTimer = setInterval(() => this.fetchData(), 2000);
+        },
+
+        // ---- Agent log streaming ----
+        selectAgent(id) {
+          if (this.selectedAgent === id) {
+            this.selectedAgent = '';
+            this.logLines = [];
+            this.closeAgentStream();
+            return;
+          }
+          this.selectedAgent = id;
+          this.logLines = [];
+          this.connectAgentStream();
+        },
+
+        connectAgentStream() {
+          this.closeAgentStream();
+          if (!this.selectedAgent) return;
+
+          try {
+            const es = new EventSource('/agents/' + this.selectedAgent + '/stream');
+            this._agentEventSource = es;
+
+            es.onmessage = (e) => {
+              try {
+                const payload = JSON.parse(e.data);
+                if (payload.line) {
+                  this.logLines = [...this.logLines, payload.line].slice(-500);
+                  if (this.logAutoScroll) {
+                    this.$nextTick(() => {
+                      const el = this.$refs.logContainer;
+                      if (el) el.scrollTop = el.scrollHeight;
+                    });
+                  }
+                }
+              } catch (_) {}
+            };
+
+            es.onerror = () => {
+              es.close();
+              this._agentEventSource = null;
+              // Fall back to polling agent logs
+              if (this.selectedAgent && !this._logPollTimer) {
+                this._logPollTimer = setInterval(() => this.fetchAgentLogs(), 3000);
+                this.fetchAgentLogs();
+              }
+            };
+          } catch (e) {
+            // EventSource not supported, poll instead
+            this._logPollTimer = setInterval(() => this.fetchAgentLogs(), 2000);
+            this.fetchAgentLogs();
+          }
+        },
+
+        closeAgentStream() {
+          if (this._agentEventSource) {
+            this._agentEventSource.close();
+            this._agentEventSource = null;
+          }
+          if (this._logPollTimer) {
+            clearInterval(this._logPollTimer);
+            this._logPollTimer = null;
+          }
+        },
+
+        async fetchAgentLogs() {
+          if (!this.selectedAgent) return;
+          try {
+            const resp = await fetch('/agents/' + this.selectedAgent + '/logs?tail_bytes=8192');
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (data.content) {
+              const lines = data.content.split('\n').filter(l => l.trim());
+              this.logLines = lines.slice(-200);
+              if (this.logAutoScroll) {
+                this.$nextTick(() => {
+                  const el = this.$refs.logContainer;
+                  if (el) el.scrollTop = el.scrollHeight;
+                });
+              }
+            }
+          } catch (e) { /* agent may not have logs yet */ }
+        },
+
+        // ---- Actions ----
+        async killAgent(agentId) {
+          try {
+            await fetch('/agents/' + agentId + '/kill', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: '{}'
+            });
+            this.addActivity('failed', 'Killed agent ' + agentId.slice(0, 12));
+            await this.fetchData();
+          } catch (e) { /* ignore */ }
+        },
+
+        async spawnTask(taskId) {
+          try {
+            await fetch('/tasks/' + taskId + '/force-claim', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: '{}'
+            });
+            await this.fetchData();
+          } catch (e) { /* ignore */ }
+        },
+
+        async cancelTask(taskId) {
+          try {
+            await fetch('/tasks/' + taskId + '/cancel', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reason: 'cancelled via dashboard' })
+            });
+            await this.fetchData();
+          } catch (e) { /* ignore */ }
+        },
+
+        // ---- Timer ----
+        startTimer() {
+          setInterval(() => {
+            const s = Math.floor((Date.now() - this.startTime) / 1000);
+            const h = String(Math.floor(s / 3600)).padStart(2, '0');
+            const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+            const sec = String(s % 60).padStart(2, '0');
+            this.elapsed = h + ':' + m + ':' + sec;
+          }, 1000);
+        },
+
+        // ---- Sorting ----
+        sortBy(col) {
+          if (this.sortCol === col) { this.sortAsc = !this.sortAsc; }
+          else { this.sortCol = col; this.sortAsc = true; }
+        },
+
+        // ---- Formatting helpers ----
+        formatCost(cost) {
+          if (!cost || cost === 0) return '$0.00';
+          if (cost < 0.01) return '$' + cost.toFixed(4);
+          return '$' + cost.toFixed(2);
+        },
+
+        fmtRuntime(s) {
+          if (!s || s < 0) return '--';
+          if (s < 60) return s + 's';
+          if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+          return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+        },
+
+        statusDot(status) {
+          const map = {
+            done: '\u25CF', open: '\u25CB', working: '\u25CF',
+            claimed: '\u25CF', in_progress: '\u25CF',
+            failed: '\u25CF', cancelled: '\u25CB',
+            blocked: '\u25CF', orphaned: '\u25CF',
+          };
+          return map[status] || '\u25CB';
+        },
+
+        statusDotClass(status) {
+          const map = {
+            done: 'dot-done', open: 'dot-open', working: 'dot-working',
+            claimed: 'dot-working', in_progress: 'dot-working',
+            failed: 'dot-failed', cancelled: 'dot-open',
+            blocked: 'text-purple-400', orphaned: 'text-orange-400',
+          };
+          return map[status] || 'dot-open';
+        },
+
+        agentDotClass(status) {
+          const map = {
+            working: 'bg-green-500 pulse',
+            starting: 'bg-yellow-500 pulse',
+            idle: 'bg-yellow-500',
+            dead: 'bg-gray-500',
+            spawning: 'bg-yellow-500 pulse',
+          };
+          return map[status] || 'bg-gray-500';
+        },
+
+        agentStatusLabel(status) {
+          const map = {
+            working: 'Working', starting: 'Starting',
+            idle: 'Idle', dead: 'Dead', spawning: 'Spawning',
+          };
+          return map[status] || status;
+        },
+      };
+    }
+  </script>
+</body>
+</html>

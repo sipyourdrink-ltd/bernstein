@@ -1,0 +1,45 @@
+id: task-008
+name: "Create OpenAPI spec from code"
+description: >
+  Generate a complete OpenAPI 3.1 spec from the running application.
+  Document all endpoints including auth, users, and posts, add
+  request/response examples, then validate the spec against the live server.
+category: docs
+parallelizable: true
+
+subtasks:
+  - id: t008-a
+    role: backend
+    description: "Generate base OpenAPI spec structure with info, servers, tags"
+    estimated_minutes: 10
+    depends_on: []
+
+  - id: t008-b
+    role: docs
+    description: "Document all /auth/* endpoints with schemas and examples"
+    estimated_minutes: 8
+    depends_on: [t008-a]
+
+  - id: t008-c
+    role: docs
+    description: "Document all /users/* endpoints with schemas and examples"
+    estimated_minutes: 8
+    depends_on: [t008-a]
+
+  - id: t008-d
+    role: docs
+    description: "Document all /posts/* endpoints with schemas and examples"
+    estimated_minutes: 8
+    depends_on: [t008-a]
+
+  - id: t008-e
+    role: docs
+    description: "Add request body and response examples for all operations"
+    estimated_minutes: 12
+    depends_on: [t008-b, t008-c, t008-d]
+
+  - id: t008-f
+    role: qa
+    description: "Validate spec with openapi-spec-validator against live server"
+    estimated_minutes: 8
+    depends_on: [t008-e]

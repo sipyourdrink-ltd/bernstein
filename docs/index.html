@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bernstein — Multi-Agent Orchestration for CLI Coding Agents</title>
+  <meta name="description" content="One command. Multiple AI agents. Bernstein orchestrates Claude Code, Codex, Gemini CLI and more — model-agnostic, self-evolving, file-based state." />
+  <link rel="stylesheet" href="style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="script.js"></script>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <span id="theme-icon">&#9681;</span>
+      </button>
+      <a href="https://alexchernysh.com/bernstein" class="btn-secondary" target="_blank" rel="noopener">
+        Homepage
+      </a>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">&#9776;</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Hero ── -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-inner">
+      <div>
+        <h1>One command. Multiple AI agents. Code ships while you sleep.</h1>
+        <p class="hero-sub">
+          Describe a goal. Bernstein decomposes it, spawns short-lived coding agents in parallel, verifies the output, and commits the results. Works with Claude Code, Codex, Gemini CLI, Qwen — or any future CLI agent.
+        </p>
+        <p class="hero-analogy" style="margin-top:1.25rem;font-size:0.9rem;color:var(--text-muted, #666);line-height:1.6;max-width:36rem;margin-left:auto;margin-right:auto;">
+          <strong>Think of it as what Kubernetes did for containers, but for AI coding agents.</strong>
+          You declare a goal. The control plane decomposes it into tasks. Short-lived agents execute them in isolated worktrees &mdash; like pods. A janitor verifies the output before anything lands.
+        </p>
+        <div class="hero-actions">
+          <a href="getting-started.html" class="btn-primary">Get started &#8594;</a>
+          <a href="https://github.com/chernistry/bernstein" class="btn-secondary" target="_blank" rel="noopener">View source</a>
+        </div>
+      </div>
+      <div>
+        <div class="terminal">
+          <div class="term-bar">
+            <div class="term-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="term-title">bernstein</div>
+          </div>
+          <div class="term-body"><span class="t-prompt">$ </span><span class="t-cmd">bernstein -g "Add JWT auth with refresh tokens, tests, and docs"</span>
+
+<span class="t-head">  BERNSTEIN</span>  <span class="t-dim">Agent Orchestra</span>
+<span class="t-border">  ─────────────────────────────────────────────</span>
+<span class="t-label">  Task server   </span><span class="t-agent">● running</span><span class="t-label">  localhost:8052</span>
+<span class="t-label">  Workers       </span><span class="t-bar">██████░░░░</span><span class="t-label"> 3 / 5</span>
+<span class="t-border">  ─────────────────────────────────────────────</span>
+  <span class="t-agent">● backend   </span><span class="t-task">Implement JWT middleware       </span><span class="t-label">sonnet·high</span>
+  <span class="t-agent">● backend   </span><span class="t-task">Add refresh token rotation     </span><span class="t-label">sonnet·high</span>
+  <span class="t-done">✓ qa        </span><span class="t-task">Write auth integration tests   </span><span class="t-label">done</span>
+  <span class="t-agent">● security  </span><span class="t-task">Audit token storage            </span><span class="t-label">opus·max</span>
+  <span class="t-dim">· docs      </span><span class="t-task">Generate API documentation     </span><span class="t-label">queued</span>
+<span class="t-border">  ─────────────────────────────────────────────</span>
+<span class="t-label">  Elapsed  </span><span class="t-dim">3m 47s</span><span class="t-label">   Cost  </span><span class="t-dim">$0.31</span><span class="t-label">   Done  </span><span class="t-agent">1/5</span>
+<span class="t-cursor"></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Who it's for ── -->
+<section class="section-alt">
+  <div class="container">
+    <div class="section-label">Who it's for</div>
+    <h2 class="section-title">Built for developers who want the work done, not the process managed</h2>
+    <p class="section-sub">Bernstein handles parallelism, model selection, retries, and verification. You write the goal.</p>
+    <div class="card-grid card-grid-2">
+      <div class="card card-quiet">
+        <h3>Solo developers</h3>
+        <p>Queue up a backlog, go to sleep, wake up to passing tests and a clean git history. Bernstein runs until the queue is empty or your budget runs out.</p>
+      </div>
+      <div class="card card-quiet">
+        <h3>Small teams</h3>
+        <p>Multiple agents working in parallel on isolated tasks, each with its own role, model, and verification signal. No manual coordination needed.</p>
+      </div>
+      <div class="card card-quiet">
+        <h3>Platform engineers</h3>
+        <p>Run <code>bernstein --evolve</code> and watch it analyse metrics, generate improvement proposals, validate them in a sandbox, and apply safe ones automatically.</p>
+      </div>
+      <div class="card card-quiet">
+        <h3>Enterprise teams</h3>
+        <p>Use Claude, Codex, Gemini, or Qwen — mix models in the same run. The orchestrator is deterministic Python, not an LLM. Switch providers without rewriting anything.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── How it works ── -->
+<section>
+  <div class="container">
+    <div class="two-col">
+      <div>
+        <div class="section-label">How it works</div>
+        <h2 class="section-title">Short-lived agents, file-based state, deterministic orchestration</h2>
+        <p class="section-desc">
+          Agents aren't long-lived workers. They spawn fresh, do 1-3 tasks, and exit. No idle loops, no context rot. All state lives in <code>.sdd/</code> files — git-native, inspectable, reproducible.
+        </p>
+        <ol class="flow-list">
+          <li>
+            <strong>Describe a goal</strong>
+            <span>Pass a plain-English goal or a <code>bernstein.yaml</code> config. Multi-repo workspaces supported.</span>
+          </li>
+          <li>
+            <strong>Manager decomposes</strong>
+            <span>An Opus manager breaks the goal into typed tasks with roles, scopes, dependencies, and completion signals.</span>
+          </li>
+          <li>
+            <strong>Router selects models</strong>
+            <span>Each task gets the right model and effort level. Opus for architecture, Sonnet for implementation, free-tier for simple fixes. Cost-aware by default.</span>
+          </li>
+          <li>
+            <strong>Agents work in parallel</strong>
+            <span>Fresh CLI agents spawn, work in isolated git worktrees, and exit. Dependency-blocked tasks wait automatically.</span>
+          </li>
+          <li>
+            <strong>Janitor verifies, loop continues</strong>
+            <span>Before marking done, the janitor checks completion signals: file exists, tests pass, API responds. Failed tasks get retried or escalated.</span>
+          </li>
+        </ol>
+      </div>
+      <div>
+        <div class="terminal">
+          <div class="term-bar">
+            <div class="term-dots"><span></span><span></span><span></span></div>
+            <div class="term-title">architecture</div>
+          </div>
+          <div class="term-body"><span class="t-head">  bernstein run</span>
+        <span class="t-border">│</span>
+        <span class="t-border">▼</span>
+<span class="t-agent">  Task Server</span> <span class="t-dim">(FastAPI :8052)</span>
+        <span class="t-border">│</span>
+        <span class="t-border">├──</span> <span class="t-task">POST /tasks</span>       <span class="t-dim">create task</span>
+        <span class="t-border">├──</span> <span class="t-task">POST /tasks/{id}/complete</span>
+        <span class="t-border">├──</span> <span class="t-task">GET  /status</span>      <span class="t-dim">dashboard data</span>
+        <span class="t-border">└──</span> <span class="t-task">POST /bulletin</span>    <span class="t-dim">agent messages</span>
+        <span class="t-border">│</span>
+        <span class="t-border">▼</span>
+<span class="t-agent">  Orchestrator</span> <span class="t-dim">(deterministic Python)</span>
+        <span class="t-border">│</span>
+        <span class="t-border">├──</span> <span class="t-label">Model router</span>  <span class="t-dim">opus / sonnet / haiku</span>
+        <span class="t-border">├──</span> <span class="t-label">CLI adapter</span>   <span class="t-dim">claude / codex / gemini / qwen</span>
+        <span class="t-border">├──</span> <span class="t-label">Multi-cell</span>    <span class="t-dim">parallel agent groups</span>
+        <span class="t-border">└──</span> <span class="t-label">Evolution</span>     <span class="t-dim">self-improvement loop</span>
+        <span class="t-border">│</span>
+        <span class="t-border">▼</span>
+<span class="t-done">  Janitor</span> <span class="t-dim">(verification + metrics)</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Features ── -->
+<section class="section-alt">
+  <div class="container">
+    <div class="section-label">Features</div>
+    <h2 class="section-title">Everything a multi-agent system needs</h2>
+    <p class="section-sub">No hand-waving. Each feature is a concrete, observable behaviour you can inspect in code.</p>
+
+    <div class="feature-groups">
+      <div class="feature-group">
+        <h3 class="feature-group-title">Orchestration</h3>
+        <div class="feature-group-items">
+          <div class="feature-item">
+            <h4>Parallel agents</h4>
+            <p>Multiple agents run simultaneously on independent tasks in isolated git worktrees. Dependencies resolve automatically — no manual coordination.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Smart model routing</h4>
+            <p>Opus for architecture and security. Sonnet for implementation. Free-tier for formatting. The router picks based on task scope, complexity, and role — not a flat config.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Multi-cell orchestration</h4>
+            <p>Organise agents into cells — self-contained teams with a manager and workers. A VP agent coordinates across cells for large-scale projects.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature-group">
+        <h3 class="feature-group-title">Reliability</h3>
+        <div class="feature-group-items">
+          <div class="feature-item">
+            <h4>Built-in verification</h4>
+            <p>Tasks define completion signals (<code>path_exists</code>, <code>test_passes</code>, <code>api_responds</code>). The janitor verifies them — agents can't self-report done.</p>
+          </div>
+          <div class="feature-item">
+            <h4>File-based state</h4>
+            <p>All state lives in <code>.sdd/</code> files. Git-native, inspectable, reproducible. No database required for single-instance. State survives crashes and restarts.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Cost budgeting</h4>
+            <p>Set a dollar cap with <code>--budget 5.00</code>. The tracker warns at 80%, alerts at 95%, and hard-stops agents at 100%. No more runaway API bills.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature-group">
+        <h3 class="feature-group-title">Extensibility</h3>
+        <div class="feature-group-items">
+          <div class="feature-item">
+            <h4>Any CLI agent</h4>
+            <p>Claude Code, Codex, Gemini CLI, Qwen — all supported via thin adapters. The orchestrator is model-agnostic. Mix models in the same run. No vendor lock-in.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Agent catalogs</h4>
+            <p>Load specialist agents from YAML/Markdown catalogs. Sync from remote marketplaces. Each agent brings its own role prompt, model preferences, and capabilities.</p>
+          </div>
+          <div class="feature-item">
+            <h4>MCP tool access</h4>
+            <p>Agents can use MCP servers (stdio/SSE) for external tools — GitHub, filesystem, web search. The orchestrator manages MCP server lifecycle automatically.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature-group">
+        <h3 class="feature-group-title">Operations</h3>
+        <div class="feature-group-items">
+          <div class="feature-item">
+            <h4>Self-evolution</h4>
+            <p>Run <code>--evolve</code> and Bernstein analyses its own metrics, generates improvements via a visionary/analyst pipeline, validates in a sandbox, and applies safe ones automatically.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Live dashboard</h4>
+            <p>Real-time TUI shows agent status, task progress, activity feed, sparkline, and cost tracking. Chat input lets you add tasks mid-run without leaving the terminal.</p>
+          </div>
+          <div class="feature-item">
+            <h4>GitHub Action</h4>
+            <p>Trigger orchestration from CI. Auto-fix failing builds, run coding tasks on push, or schedule maintenance. Ships as a composite action — <code>uses: chernistry/bernstein@v1</code>.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Comparison ── -->
+<section>
+  <div class="container">
+    <div class="section-label">Comparison</div>
+    <h2 class="section-title">How Bernstein differs</h2>
+    <p class="section-sub">Purpose-built for CLI coding agents and file-based codebases — not general LLM pipelines or locked-in SDKs.</p>
+    <div class="comparison-wrap">
+      <table class="comparison-table">
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th>Bernstein</th>
+            <th>CrewAI</th>
+            <th>Ruflo</th>
+            <th>AutoGen</th>
+            <th>LangGraph</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Model-agnostic (any CLI agent)</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>Partial</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>Short-lived agents (no idle loop)</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>File-based state (.sdd/)</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>Self-evolution loop</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>Completion signal verification</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>Deterministic orchestrator (not LLM)</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td><span class="check">&#10003;</span></td>
+          </tr>
+          <tr>
+            <td>REST task server API</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>Agent marketplace / catalog</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>Partial</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>A2A protocol (agent federation)</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>Per-run cost budgeting</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>GitHub Action (CI integration)</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>No vendor lock-in</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td><span class="check">&#10003;</span></td>
+            <td><span class="check">&#10003;</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── Quick start ── -->
+<section class="section-alt">
+  <div class="container">
+    <div class="quick-start-wrap">
+      <div class="section-label">Quick start</div>
+      <h2 class="section-title">Up in two commands</h2>
+      <div class="code-block">
+        <pre><code class="language-bash"># Install (Python 3.12+)
+pipx install bernstein   # or: uv tool install bernstein
+
+# Run with a plain-English goal
+bernstein -g "Add pagination to the users API endpoint"
+
+# Or run in self-evolution mode
+bernstein run --evolve --max-cycles 10</code></pre>
+      </div>
+      <p class="quick-start-note">
+        Requires a CLI agent installed (<a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a>, <a href="https://github.com/openai/codex">Codex</a>, <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a>, or <a href="https://github.com/QwenLM/Qwen-Agent">Qwen</a>). Bernstein auto-detects what's available.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA ── -->
+<section class="cta-section">
+  <div class="container">
+    <div class="cta-clean">
+      <h2>Get started</h2>
+      <p>Open-source, Apache 2.0. Works with the CLI agents you already have.</p>
+      <div class="cta-actions">
+        <a href="getting-started.html" class="btn-primary">Read the docs &#8594;</a>
+        <a href="https://github.com/chernistry/bernstein" class="btn-secondary" target="_blank" rel="noopener">View on GitHub</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; Apache 2.0 &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a></p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

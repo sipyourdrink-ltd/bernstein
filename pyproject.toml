@@ -1,0 +1,126 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bernstein"
+version = "1.0.1"
+description = "Multi-agent orchestration for CLI coding agents"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Alex Chernysh", email = "alex@alexchernysh.com" }]
+keywords = ["ai", "agents", "orchestration", "multi-agent", "coding", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "textual>=1.0",
+    "click>=8.1",
+    "openai>=2.29.0",
+    "pydantic-settings>=2.13.1",
+    "python-dotenv>=1.2.2",
+    "setproctitle>=1.3",
+    "prometheus-client>=0.21",
+    "pluggy>=1.5",
+    "mcp>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "pyright"]
+
+[project.scripts]
+bernstein = "bernstein.cli.main:cli"
+bernstein-worker = "bernstein.core.worker:main"
+
+[project.entry-points."bernstein.plugins"]
+# Example: my_plugin = "my_package:MyPlugin"
+
+[tool.hatch.build]
+exclude = [
+    ".sdd/",
+    "tests/",
+    "scripts/",
+    "docs/",
+    ".github/",
+]
+
+[tool.hatch.build.targets.wheel.force-include]
+"templates/prompts" = "bernstein/_default_templates/prompts"
+"templates/bernstein.yaml" = "bernstein/_default_templates/bernstein.yaml"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# HTML/CSS template strings that cannot be wrapped without breaking structure
+"src/bernstein/evolution/report.py" = ["E501"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+include = ["src"]
+# Agent-created modules pending type annotation cleanup.
+# TODO: remove excludes as each module is cleaned up (#345h hygiene tickets)
+exclude = [
+    "src/bernstein/core/trigger_manager.py",
+    "src/bernstein/core/trigger_sources/",
+    "src/bernstein/core/evolve_mode.py",
+    "src/bernstein/core/circuit_breaker.py",
+    "src/bernstein/core/task_store.py",
+    "src/bernstein/core/store_postgres.py",
+    "src/bernstein/core/server_launch.py",
+    "src/bernstein/core/semantic_graph.py",
+    "src/bernstein/core/repo_index.py",
+    "src/bernstein/core/cascade_router.py",
+    "src/bernstein/core/graduation.py",
+    "src/bernstein/core/auth.py",
+    "src/bernstein/core/plan_approval.py",
+    "src/bernstein/core/planner.py",
+    "src/bernstein/core/task_completion.py",
+    "src/bernstein/core/knowledge_base.py",
+    "src/bernstein/core/api_usage.py",
+    "src/bernstein/core/routes/auth.py",
+    "src/bernstein/core/routes/graduation.py",
+    "src/bernstein/core/routes/slack.py",
+    "src/bernstein/cli/checkpoint_cmd.py",
+    "src/bernstein/evolution/cycle_helpers.py",
+    "src/bernstein/evolution/report_generator.py",
+    "src/bernstein/core/batch_router.py",
+    "src/bernstein/core/bootstrap.py",
+    "src/bernstein/core/bulletin.py",
+    "src/bernstein/core/git_ops.py",
+    "src/bernstein/core/manager_parsing.py",
+    "src/bernstein/core/manager.py",
+    "src/bernstein/core/models.py",
+    "src/bernstein/core/routes/tasks.py",
+    "src/bernstein/core/routes/webhooks.py",
+    "src/bernstein/core/spawn_prompt.py",
+    "src/bernstein/core/spawner.py",
+    "src/bernstein/core/store.py",
+    "src/bernstein/compliance/",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.9",
+    "pyright>=1.1",
+]

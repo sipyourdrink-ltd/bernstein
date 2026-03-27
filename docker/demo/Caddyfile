@@ -1,0 +1,42 @@
+# Caddy reverse proxy for demo.bernstein.dev
+#
+# - Auto-TLS via Let's Encrypt (just point DNS at this server)
+# - Only read-only paths are exposed to the public internet
+# - Write methods (POST/PUT/PATCH/DELETE) are rejected at the proxy layer
+#   before they reach bernstein-server; the server's ReadOnlyMiddleware
+#   provides a second layer of protection
+# - Replace "demo.bernstein.dev" with your actual domain or IP
+
+demo.bernstein.dev {
+    # Block all write methods at the proxy — return a friendly message
+    @write method POST PUT PATCH DELETE
+    handle @write {
+        respond "Read-only demo. Install bernstein to run your own: https://github.com/get-bernstein/bernstein" 405
+    }
+
+    # Proxy read-only paths to the internal bernstein-server
+    @public path /dashboard /dashboard/* /events /health /status /tasks /tasks/* /agents /agents/*
+    handle @public {
+        reverse_proxy bernstein-server:8052 {
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Root redirect → dashboard
+    handle / {
+        redir /dashboard permanent
+    }
+
+    # Anything else → 404 (don't expose internal API endpoints like /a2a, /cluster)
+    handle {
+        respond 404
+    }
+
+    # Compress responses
+    encode gzip
+
+    log {
+        output stderr
+        format console
+    }
+}

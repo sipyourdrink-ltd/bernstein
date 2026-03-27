@@ -1,0 +1,11 @@
+id: smoke-001
+goal: "Bernstein package imports without errors"
+expected_signals:
+  - type: import_succeeds
+    module: bernstein
+  - type: import_succeeds
+    module: bernstein.core.models
+  - type: import_succeeds
+    module: bernstein.core.orchestrator
+max_cost_usd: 0.0
+max_duration_seconds: 10

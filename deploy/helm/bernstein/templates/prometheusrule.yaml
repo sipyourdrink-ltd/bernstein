@@ -1,0 +1,39 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "bernstein.fullname" . }}
+  labels:
+    {{- include "bernstein.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: bernstein.rules
+      interval: 30s
+      rules:
+        - alert: BernsteinHighQueueDepth
+          expr: bernstein_task_queue_depth > 20
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Bernstein task queue depth is high ($${value} open tasks)"
+            description: "Task queue has $${value} unclaimed tasks, indicating potential scale issues or slow task completion."
+
+        - alert: BernsteinTaskFailureRate
+          expr: rate(bernstein_tasks_total{status="failed"}[5m]) > 0.1
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Bernstein task failure rate is elevated ($${value | humanizePercentage})"
+            description: "More than 10% of tasks are failing. Investigate agent logs for root cause."
+
+        - alert: BernsteinServerDown
+          expr: up{job="bernstein"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Bernstein task server is down"
+            description: "The task server has been unreachable for 1 minute."
+{{- end }}

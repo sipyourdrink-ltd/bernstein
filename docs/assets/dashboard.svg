@@ -1,0 +1,378 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 535" width="800" height="535">
+  <defs>
+    <style>
+      @media (prefers-color-scheme: light) {
+        .terminal-bg { fill: #ffffff; }
+        .titlebar-bg { fill: #e8e8e8; }
+        .titlebar-text { fill: #555555; }
+        .terminal-border { stroke: #d1d5da; }
+        .text-primary { fill: #1f2328; }
+        .text-dim { fill: #888e96; }
+        .text-accent { fill: #1a7f37; }
+        .text-yellow { fill: #9a6700; }
+        .text-red { fill: #cf222e; }
+        .text-cyan { fill: #0550ae; }
+        .divider-line { stroke: #d1d5da; }
+        .surface-bg { fill: #f6f8fa; }
+        .zebra-row { fill: #edf0f2; }
+        .hdr-bg { fill: #1a7f37; }
+        .footer-bg { fill: #f6f8fa; }
+        .footer-key-bg { fill: #1a7f37; }
+        .footer-key-text { fill: #ffffff; }
+        .footer-text { fill: #555555; }
+        .shadow-outer { fill: #000000; fill-opacity: 0.08; }
+        .dot-close { fill: #ff5f57; }
+        .dot-minimize { fill: #febc2e; }
+        .dot-maximize { fill: #28c840; }
+      }
+      @media (prefers-color-scheme: dark) {
+        .terminal-bg { fill: #0d1117; }
+        .titlebar-bg { fill: #161b22; }
+        .titlebar-text { fill: #8b949e; }
+        .terminal-border { stroke: #30363d; }
+        .text-primary { fill: #e6edf3; }
+        .text-dim { fill: #6e7681; }
+        .text-accent { fill: #3fb950; }
+        .text-yellow { fill: #d29922; }
+        .text-red { fill: #f85149; }
+        .text-cyan { fill: #58a6ff; }
+        .divider-line { stroke: #30363d; }
+        .surface-bg { fill: #161b22; }
+        .zebra-row { fill: #0d1117; }
+        .hdr-bg { fill: #0d1f0d; }
+        .footer-bg { fill: #161b22; }
+        .footer-key-bg { fill: #1a4d1a; }
+        .footer-key-text { fill: #3fb950; }
+        .footer-text { fill: #6e7681; }
+        .shadow-outer { fill: #000000; fill-opacity: 0.3; }
+        .dot-close { fill: #ff5f57; }
+        .dot-minimize { fill: #febc2e; }
+        .dot-maximize { fill: #28c840; }
+      }
+    </style>
+  </defs>
+
+  <!-- Drop shadow -->
+  <rect x="6" y="6" width="790" height="527" rx="10" ry="10" class="shadow-outer"/>
+
+  <!-- Window frame -->
+  <rect x="0" y="0" width="800" height="535" rx="10" ry="10" class="terminal-bg"/>
+  <rect x="0" y="0" width="800" height="535" rx="10" ry="10" fill="none" stroke-width="1" class="terminal-border"/>
+
+  <!-- macOS title bar -->
+  <rect x="1" y="1" width="798" height="36" rx="9" ry="9" class="titlebar-bg"/>
+  <rect x="1" y="28" width="798" height="9" class="titlebar-bg"/>
+  <line x1="1" y1="37" x2="799" y2="37" stroke-width="1" class="terminal-border"/>
+  <circle cx="20" cy="19" r="6" class="dot-close"/>
+  <circle cx="40" cy="19" r="6" class="dot-minimize"/>
+  <circle cx="60" cy="19" r="6" class="dot-maximize"/>
+  <text x="400" y="24" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" class="titlebar-text">bernstein</text>
+
+  <!-- Textual Header bar -->
+  <rect x="1" y="37" width="798" height="27" class="hdr-bg"/>
+  <text x="16" y="55"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" font-weight="bold" class="text-accent">BERNSTEIN</text>
+  <text x="122" y="55"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="11" class="text-dim">Agent Orchestra</text>
+  <text x="782" y="55" text-anchor="end"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="11" class="text-dim">12:34:56</text>
+
+  <!-- Column headers row -->
+  <rect x="1" y="64" width="798" height="19" class="surface-bg"/>
+  <text x="200" y="77" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="11" font-weight="bold" letter-spacing="2" class="text-dim">AGENTS</text>
+  <text x="600" y="77" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="11" font-weight="bold" letter-spacing="2" class="text-dim">TASKS</text>
+
+  <!-- Vertical divider between columns -->
+  <line x1="400" y1="64" x2="400" y2="327" stroke-width="2" class="divider-line"/>
+
+  <!-- ── AGENTS (left column) ─────────────────────────────── -->
+
+  <!-- Agent 1: BACKEND (working ◉) -->
+  <text x="16" y="101"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" font-weight="bold" fill="#3fb950"> ◉ </text>
+  <text x="50" y="101"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" font-weight="bold" class="text-accent">BACKEND</text>
+  <text x="120" y="101"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" font-weight="bold" class="text-dim">  SONNET</text>
+  <text x="195" y="101"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" class="text-dim">  2:34</text>
+  <text x="38" y="116"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">&#x2192; Implementing task server endpoints</text>
+  <text x="38" y="130"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">Writing POST /tasks route handler</text>
+  <text x="38" y="143"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">Added validation for task payload</text>
+  <text x="38" y="156"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">Running: uv run pytest tests/ -x -q</text>
+
+  <line x1="16" y1="163" x2="386" y2="163" stroke-width="0.5" class="divider-line" opacity="0.5"/>
+
+  <!-- Agent 2: QA (working ◉) -->
+  <text x="16" y="180"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" font-weight="bold" fill="#3fb950"> ◉ </text>
+  <text x="50" y="180"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" font-weight="bold" class="text-accent">QA</text>
+  <text x="70" y="180"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" font-weight="bold" class="text-dim">  SONNET</text>
+  <text x="145" y="180"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" class="text-dim">  1:48</text>
+  <text x="38" y="195"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">&#x2192; Write CLI integration tests</text>
+  <text x="38" y="209"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">Creating tests/test_cli.py</text>
+  <text x="38" y="222"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">test_init_command ... ok</text>
+  <text x="38" y="235"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">test_run_command ... ok</text>
+
+  <line x1="16" y1="242" x2="386" y2="242" stroke-width="0.5" class="divider-line" opacity="0.5"/>
+
+  <!-- Agent 3: SECURITY (starting ◎) -->
+  <text x="16" y="259"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" font-weight="bold" fill="#d29922"> ◎ </text>
+  <text x="50" y="259"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" font-weight="bold" class="text-yellow">SECURITY</text>
+  <text x="126" y="259"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" font-weight="bold" class="text-dim">  OPUS</text>
+  <text x="176" y="259"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="12" class="text-dim">  0:52</text>
+  <text x="38" y="274"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">&#x2192; Audit sandbox permissions</text>
+  <text x="38" y="288"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">Reading src/adapters/claude.py</text>
+  <text x="38" y="301"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">waiting for output...</text>
+
+  <!-- ── TASKS TABLE (right column) ─────────────────────────── -->
+
+  <!-- Table header -->
+  <rect x="401" y="83" width="398" height="17" class="surface-bg"/>
+  <text x="418" y="95"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="text-dim">    ROLE      TASK</text>
+
+  <!-- Row 1: done (zebra) -->
+  <rect x="401" y="100" width="398" height="16" class="zebra-row"/>
+  <text x="416" y="112" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950"> &#x2713;</text>
+  <text x="432" y="112" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950">BACKEND  </text>
+  <text x="520" y="112" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950">Parse goal into task graph</text>
+
+  <!-- Row 2: done -->
+  <text x="416" y="128" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950"> &#x2713;</text>
+  <text x="432" y="128" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950">INFRA    </text>
+  <text x="520" y="128" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950">Set up .sdd/ state directory</text>
+
+  <!-- Row 3: done (zebra) -->
+  <rect x="401" y="132" width="398" height="16" class="zebra-row"/>
+  <text x="416" y="144" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950"> &#x2713;</text>
+  <text x="432" y="144" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950">BACKEND  </text>
+  <text x="520" y="144" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950">Scaffold adapter interface</text>
+
+  <!-- Row 4: done -->
+  <text x="416" y="160" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950"> &#x2713;</text>
+  <text x="432" y="160" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950">BACKEND  </text>
+  <text x="520" y="160" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#3fb950">Implement task server routes</text>
+
+  <!-- Row 5: claimed ⚡ (zebra) -->
+  <rect x="401" y="164" width="398" height="16" class="zebra-row"/>
+  <text x="416" y="176" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#d29922"> &#x26A1;</text>
+  <text x="432" y="176" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#d29922">QA       </text>
+  <text x="520" y="176" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#d29922">Write CLI integration tests</text>
+
+  <!-- Row 6: claimed ⚡ -->
+  <text x="416" y="192" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#d29922"> &#x26A1;</text>
+  <text x="432" y="192" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#d29922">SECURITY </text>
+  <text x="520" y="192" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" fill="#d29922">Audit sandbox permissions</text>
+
+  <!-- Row 7: open · (zebra) -->
+  <rect x="401" y="196" width="398" height="16" class="zebra-row"/>
+  <text x="416" y="208" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" class="text-dim"> &#xB7;</text>
+  <text x="432" y="208" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" class="text-dim">BACKEND  </text>
+  <text x="520" y="208" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" class="text-dim">Add metrics collection</text>
+
+  <!-- Row 8: open · -->
+  <text x="416" y="224" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" class="text-dim"> &#xB7;</text>
+  <text x="432" y="224" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" class="text-dim">MANAGER  </text>
+  <text x="520" y="224" font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace" font-size="11" class="text-dim">Generate final report</text>
+
+  <!-- ── Horizontal border: top-panels / activity-bar ───────── -->
+  <line x1="1" y1="327" x2="799" y2="327" stroke-width="2" class="divider-line"/>
+
+  <!-- ── ACTIVITY BAR ─────────────────────────────────────────── -->
+  <rect x="1" y="328" width="798" height="19" class="surface-bg"/>
+  <text x="400" y="341" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="11" font-weight="bold" letter-spacing="2" class="text-dim">ACTIVITY</text>
+
+  <!-- Activity log (RichLog) -->
+  <text x="16" y="361"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="text-accent">BACKEND</text>
+  <text x="74" y="361"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-primary">  Writing POST /tasks route handler</text>
+
+  <text x="16" y="375"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="text-accent">QA</text>
+  <text x="28" y="375"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-primary">       Creating tests/test_cli.py — test_init_command ... ok</text>
+
+  <text x="16" y="389"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="text-yellow">SECURITY</text>
+  <text x="64" y="389"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-primary">  Reading src/adapters/claude.py for sandbox audit</text>
+
+  <text x="16" y="403"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="text-accent">BACKEND</text>
+  <text x="74" y="403"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="text-dim">  Added validation for task payload fields</text>
+
+  <!-- ── Horizontal border: activity-bar / bottom-bar ─────────── -->
+  <line x1="1" y1="414" x2="799" y2="414" stroke-width="2" class="divider-line"/>
+
+  <!-- ── BOTTOM BAR ───────────────────────────────────────────── -->
+  <rect x="1" y="415" width="798" height="82" class="surface-bg"/>
+
+  <!-- BigStats: ∞  4/6  ▐████████▓▒░░░░░░░░░░░░░░░░░░░░░░░▌ 67%  3 agents  4m12s -->
+  <!-- evolve marker -->
+  <rect x="16" y="422" width="18" height="14" rx="2" fill="#1a4d4d"/>
+  <text x="25" y="433" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" fill="#00d7d7">&#x221e;</text>
+  <!-- done/total -->
+  <text x="40" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" font-weight="bold" class="text-accent"> 4</text>
+  <text x="63" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" font-weight="bold" class="text-primary">/6</text>
+  <!-- progress bar border chars + fill -->
+  <text x="86" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" class="text-dim">&#x2590;</text>
+  <text x="96" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" fill="#f85149">&#x2588;&#x2588;&#x2588;</text>
+  <text x="118" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" fill="#d29922">&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;</text>
+  <text x="158" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" fill="#3fb950">&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;&#x2588;</text>
+  <text x="246" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" class="text-dim">&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;&#x2591;</text>
+  <text x="378" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" class="text-dim">&#x258c;</text>
+  <text x="389" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" font-weight="bold" class="text-primary"> 67%</text>
+  <text x="436" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" font-weight="bold" class="text-cyan">  3 agents</text>
+  <text x="548" y="435"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" class="text-dim">  4m12s</text>
+
+  <!-- Sparkline (Sparkline widget, height:2) -->
+  <text x="16" y="456"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="13" class="text-accent">&#x2581;&#x2581;&#x2582;&#x2582;&#x2583;&#x2583;&#x2584;&#x2585;&#x2585;&#x2586;&#x2587;&#x2587;&#x2588;&#x2588;</text>
+
+  <!-- Chat input (ChatInput widget) -->
+  <rect x="8" y="461" width="784" height="28" rx="2"
+        fill="none" stroke-width="1" class="divider-line"/>
+  <text x="18" y="479"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="11" class="text-dim">Type a task and press Enter... (Esc to exit)</text>
+
+  <!-- ── Footer (Textual Footer widget) ────────────────────────── -->
+  <rect x="1" y="497" width="798" height="37" rx="0" class="footer-bg"/>
+  <rect x="1" y="532" width="798" height="3" rx="2" class="footer-bg"/>
+  <line x1="1" y1="497" x2="799" y2="497" stroke-width="1" class="divider-line"/>
+
+  <!-- Key bindings: q Quit  r Refresh  s Stop  l Activity  c Chat -->
+  <!-- q -->
+  <rect x="16" y="508" width="14" height="14" rx="2" class="footer-key-bg"/>
+  <text x="23" y="519" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="footer-key-text">q</text>
+  <text x="33" y="519"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="footer-text"> Quit</text>
+
+  <!-- r -->
+  <rect x="88" y="508" width="14" height="14" rx="2" class="footer-key-bg"/>
+  <text x="95" y="519" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="footer-key-text">r</text>
+  <text x="105" y="519"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="footer-text"> Refresh</text>
+
+  <!-- s -->
+  <rect x="176" y="508" width="14" height="14" rx="2" class="footer-key-bg"/>
+  <text x="183" y="519" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="footer-key-text">s</text>
+  <text x="193" y="519"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="footer-text"> Stop</text>
+
+  <!-- l -->
+  <rect x="252" y="508" width="14" height="14" rx="2" class="footer-key-bg"/>
+  <text x="259" y="519" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="footer-key-text">l</text>
+  <text x="269" y="519"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="footer-text"> Activity</text>
+
+  <!-- c -->
+  <rect x="344" y="508" width="14" height="14" rx="2" class="footer-key-bg"/>
+  <text x="351" y="519" text-anchor="middle"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" font-weight="bold" class="footer-key-text">c</text>
+  <text x="361" y="519"
+        font-family="'SF Mono','Cascadia Code','Fira Code',Consolas,monospace"
+        font-size="10" class="footer-text"> Chat</text>
+</svg>

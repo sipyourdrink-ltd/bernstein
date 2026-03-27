@@ -1,0 +1,49 @@
+name: New CLI Adapter
+description: Add support for a new CLI coding agent
+labels: ["enhancement", "good first issue", "adapter"]
+body:
+  - type: input
+    id: cli-name
+    attributes:
+      label: CLI tool name
+      description: What CLI coding agent do you want to add?
+      placeholder: "e.g. Cursor, OpenCode, Goose, Cline"
+    validations:
+      required: true
+  - type: input
+    id: install-link
+    attributes:
+      label: Installation docs
+      description: Link to the official installation instructions
+      placeholder: "https://..."
+    validations:
+      required: false
+  - type: textarea
+    id: non-interactive-flag
+    attributes:
+      label: Non-interactive / headless flag
+      description: How do you run this CLI without user interaction? What flag passes the prompt?
+      placeholder: |
+        `cursor --headless --message "..."` or
+        `opencode run --prompt "..."`
+    validations:
+      required: true
+  - type: textarea
+    id: model-flag
+    attributes:
+      label: Model selection flag
+      description: How do you select a model (if supported)?
+      placeholder: "`--model claude-opus-4-6` or `--model gpt-4o`"
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Implementation checklist
+      description: Start from `templates/adapters/TEMPLATE.py` — it walks you through each step.
+      options:
+        - label: "Created `src/bernstein/adapters/<name>.py` from the template"
+        - label: "Mapped Bernstein model names to CLI-specific model IDs"
+        - label: "Registered the adapter in `src/bernstein/adapters/registry.py`"
+        - label: "Tested with `bernstein run --adapter <name>`"
+        - label: "All checks pass: `uv run ruff check src/ && uv run pyright src/ && uv run python scripts/run_tests.py -x`"

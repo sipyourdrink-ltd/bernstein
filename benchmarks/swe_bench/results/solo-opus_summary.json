@@ -1,0 +1,14 @@
+{
+  "scenario_name": "solo-opus",
+  "total_instances": 300,
+  "resolved": 111,
+  "failed": 189,
+  "errors": 0,
+  "skipped": 0,
+  "resolve_rate": 0.37,
+  "mean_wall_time_s": 111.14553232225825,
+  "median_wall_time_s": 110.6577309918965,
+  "total_cost_usd": 361.4681718438849,
+  "mean_cost_per_instance_usd": 1.204893906146283,
+  "mean_tokens_per_instance": 16075.753333333334
+}

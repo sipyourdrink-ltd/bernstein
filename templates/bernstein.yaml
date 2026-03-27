@@ -1,0 +1,107 @@
+## bernstein.yaml — project seed file
+## Copy to your project root and edit before running `bernstein run`.
+
+# Required: high-level objective for this run.
+goal: >
+  Describe your project goal here.
+
+# CLI agent backend.  One of: auto, claude, codex, gemini, qwen.
+# "auto" detects installed agents and picks the best available.
+cli: auto
+
+# Maximum number of agents running concurrently.
+max_agents: 4
+
+# Optional model override (e.g. opus, sonnet, gpt-4.1).
+# model: opus
+
+# Role team.  "auto" lets the manager choose; or list explicit roles.
+# team: auto
+# team:
+#   - backend
+#   - qa
+
+# Spending cap.  Accepts "$20", 20, or 20.0.
+# budget: "$20"
+
+# Constraints passed verbatim to every agent.
+# constraints:
+#   - "Python 3.12+ only"
+#   - "No external dependencies without approval"
+
+# Extra files appended to the manager's context.
+# context_files:
+#   - docs/DESIGN.md
+#   - CLAUDE.md
+
+# ---------------------------------------------------------------------------
+# Agent catalogs
+# ---------------------------------------------------------------------------
+# Bernstein can load agent role definitions from external catalogs.
+# Each entry specifies a source and how to map its fields to Bernstein's
+# schema.  Higher priority values are checked first.
+#
+# Default (no catalogs section): Agency remote catalog only, priority 100.
+catalogs:
+  # Agency catalog — pulls role definitions from a GitHub repo.
+  - name: agency
+    type: agency
+    enabled: true
+    source: https://github.com/msitarzewski/agency-agents
+    priority: 100
+
+  # Generic local catalog — YAML files with a custom field mapping.
+  # - name: internal-agents
+  #   type: generic
+  #   enabled: true
+  #   path: ./custom-agents/
+  #   format: yaml
+  #   glob: "**/*.yaml"
+  #   field_map:
+  #     id: agent_id
+  #     name: display_name
+  #     role: category
+  #     system_prompt: prompt
+  #   priority: 50
+
+# ---------------------------------------------------------------------------
+# MCP servers (passed to every spawned agent)
+# ---------------------------------------------------------------------------
+# mcp_servers:
+#   filesystem:
+#     command: npx
+#     args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+# ---------------------------------------------------------------------------
+# Worktree environment setup (applied after each git worktree is created)
+# ---------------------------------------------------------------------------
+# When set, each agent gets its own git worktree.  The options below run
+# immediately after `git worktree add` so the agent finds a provisioned tree.
+#
+# worktree_setup:
+#   # Symlink large shared directories into each worktree (fast, shared I/O).
+#   # Use for build artefacts like node_modules or .venv that are expensive
+#   # to recreate.  All agents share the same directory on disk.
+#   symlink_dirs:
+#     - node_modules
+#     - .venv
+#
+#   # Copy files from the repo root into each worktree (independent copies).
+#   # Use for .env files so each agent can write its own port / secret overrides
+#   # without affecting other agents.
+#   copy_files:
+#     - .env
+#     - .env.local
+#
+#   # Optional shell command to run inside the worktree after symlinking and
+#   # copying.  Useful when symlinks are not enough (e.g. "uv sync" to install
+#   # any worktree-local dependencies, or "npm run build:deps").
+#   # setup_command: "uv sync"
+
+# ---------------------------------------------------------------------------
+# Webhook notifications
+# ---------------------------------------------------------------------------
+# notify:
+#   webhook: https://hooks.example.com/bernstein
+#   on_complete: true
+#   on_failure: true

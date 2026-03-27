@@ -1,0 +1,61 @@
+# bernstein.yaml — full example with all fields documented.
+#
+# Drop this file in your project root and run `bernstein` (or `bernstein run`).
+# Bernstein reads it, creates the workspace, starts the server, and begins work.
+
+# ---------------------------------------------------------------------------
+# Required
+# ---------------------------------------------------------------------------
+
+# The high-level project objective. This becomes the manager agent's initial
+# task. Be specific — the manager will decompose this into concrete subtasks.
+goal: "Build a REST API for user management with registration, login, profile CRUD, and role-based access control"
+
+# ---------------------------------------------------------------------------
+# Optional — agent configuration
+# ---------------------------------------------------------------------------
+
+# Which CLI agent backend to use. One of: auto, claude, codex, gemini, qwen.
+# "auto" detects installed agents and picks the best available.
+cli: auto
+
+# Model override for the CLI backend. Leave unset to use the default.
+# model: opus
+
+# Team composition. "auto" lets the manager decide which roles to create.
+# Or specify an explicit list of role names.
+team: auto
+# team: [backend, frontend, qa, devops]
+
+# Maximum number of concurrent agent processes. Higher = faster but more
+# expensive. The orchestrator will not exceed this limit.
+max_agents: 6
+
+# Spending cap in USD. Agents will be stopped when this is reached.
+# Accepts "$N", "$N.NN", or plain numbers.
+budget: "$20"
+
+# ---------------------------------------------------------------------------
+# Optional — project constraints
+# ---------------------------------------------------------------------------
+
+# Constraints are passed to the manager agent and enforced during planning.
+# Use these to specify technology choices, style rules, or hard requirements.
+constraints:
+  - "Python 3.12+ with FastAPI"
+  - "PostgreSQL for persistence"
+  - "Alembic for migrations"
+  - "pytest for all tests"
+  - "No ORM — use raw SQL with asyncpg"
+
+# ---------------------------------------------------------------------------
+# Optional — context files
+# ---------------------------------------------------------------------------
+
+# Additional files to include in the manager's context. Paths are relative
+# to the project root. Use this for existing specs, schemas, or docs that
+# the agents need to understand before planning.
+context_files:
+  - "docs/api-spec.md"
+  - "docs/database-schema.sql"
+  - "pyproject.toml"
