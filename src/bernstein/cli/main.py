@@ -151,14 +151,19 @@ def _find_seed_file() -> Path | None:
 @click.group(invoke_without_command=True)
 @click.version_option(package_name="bernstein")
 @click.option("--goal", "-g", default=None, help="Inline goal (no seed file needed).")
+@click.option("--evolve", "-e", is_flag=True, default=False, help="Continuous self-improvement mode.")
+@click.option("--max-cycles", default=0, help="Stop after N evolve cycles (0=unlimited).")
+@click.option("--budget", default=0.0, help="Stop after $N spent (0=unlimited).")
+@click.option("--interval", default=300, help="Seconds between evolve cycles (default 5min).")
 @click.pass_context
-def cli(ctx: click.Context, goal: str | None) -> None:
+def cli(ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int, budget: float, interval: int) -> None:
     """Bernstein — multi-agent orchestration for CLI coding agents.
 
     \b
     Usage:
       bernstein                             Start from seed file or backlog
       bernstein -g "Build auth with JWT"    Start with inline goal
+      bernstein --evolve                    Continuous self-improvement
       bernstein stop                        Stop everything
 
     HTTP API on port 8052 for programmatic access.
@@ -218,6 +223,25 @@ def cli(ctx: click.Context, goal: str | None) -> None:
                 return
     else:
         console.print("[dim]Already running.[/dim]")
+
+    # Write evolve config so the orchestrator can read it
+    if evolve:
+        import json as _json
+        evolve_config = {
+            "enabled": True,
+            "max_cycles": max_cycles,
+            "budget_usd": budget,
+            "interval_s": interval,
+        }
+        evolve_path = workdir / ".sdd" / "runtime" / "evolve.json"
+        evolve_path.parent.mkdir(parents=True, exist_ok=True)
+        evolve_path.write_text(_json.dumps(evolve_config))
+        console.print(
+            f"[bold cyan]Evolve mode ON[/bold cyan] "
+            f"(interval={interval}s"
+            f"{f', max_cycles={max_cycles}' if max_cycles else ''}"
+            f"{f', budget=${budget:.2f}' if budget else ''})"
+        )
 
     # Show live dashboard (blocks until Ctrl+C / q)
     from bernstein.cli.dashboard import run_dashboard

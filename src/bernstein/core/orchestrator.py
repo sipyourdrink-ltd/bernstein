@@ -353,7 +353,10 @@ class Orchestrator:
         if self._evolution is not None and self._tick_count % self._config.evolution_tick_interval == 0:
             self._run_evolution_cycle(result)
 
-        # 7. Log summary
+        # 7. Check evolve mode: if all tasks done and no agents alive, trigger new cycle
+        self._check_evolve(result)
+
+        # 8. Log summary
         self._log_summary(result)
 
         return result
@@ -397,6 +400,160 @@ class Orchestrator:
     def stop(self) -> None:
         """Signal the run loop to exit after the current tick."""
         self._running = False
+
+    # -- Evolve mode ---------------------------------------------------------
+
+    def _check_evolve(self, result: TickResult) -> None:
+        """If evolve mode is on and all tasks are done, trigger a new cycle.
+
+        Steps:
+        1. Check if evolve.json exists (written by CLI --evolve flag)
+        2. If all tasks done and no agents alive → idle
+        3. Auto-commit any changes from the last cycle
+        4. Spawn a manager agent to plan new improvement tasks
+        """
+        evolve_path = self._workdir / ".sdd" / "runtime" / "evolve.json"
+        if not evolve_path.exists():
+            return
+
+        try:
+            evolve_cfg = json.loads(evolve_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+
+        if not evolve_cfg.get("enabled"):
+            return
+
+        # Only trigger when idle: no open/claimed tasks, no alive agents
+        base = self._config.server_url
+        try:
+            open_tasks = _fetch_tasks(self._client, base, "open")
+            claimed_tasks = _fetch_tasks(self._client, base, "claimed")
+        except httpx.HTTPError:
+            return
+
+        alive = sum(1 for a in self._agents.values() if a.status != "dead")
+        if open_tasks or claimed_tasks or alive > 0:
+            return  # Still working
+
+        # Check cycle limits
+        cycle_count = evolve_cfg.get("_cycle_count", 0)
+        max_cycles = evolve_cfg.get("max_cycles", 0)
+        if max_cycles > 0 and cycle_count >= max_cycles:
+            logger.info("Evolve: max cycles (%d) reached, stopping", max_cycles)
+            return
+
+        # Check cooldown (don't re-trigger immediately)
+        last_cycle_ts = evolve_cfg.get("_last_cycle_ts", 0)
+        interval = evolve_cfg.get("interval_s", 300)
+        if time.time() - last_cycle_ts < interval:
+            return
+
+        logger.info("Evolve: all tasks done, triggering cycle %d", cycle_count + 1)
+
+        # Step 1: Auto-commit any changes
+        self._evolve_auto_commit()
+
+        # Step 2: Spawn a manager to plan new tasks
+        self._evolve_spawn_manager()
+
+        # Update cycle count
+        evolve_cfg["_cycle_count"] = cycle_count + 1
+        evolve_cfg["_last_cycle_ts"] = time.time()
+        try:
+            evolve_path.write_text(json.dumps(evolve_cfg))
+        except OSError:
+            pass
+
+    def _evolve_auto_commit(self) -> None:
+        """Auto-commit and push any uncommitted changes from the last cycle."""
+        import subprocess
+
+        try:
+            # Check for changes
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True, text=True, cwd=self._workdir, timeout=10,
+            )
+            if not status.stdout.strip():
+                return  # Nothing to commit
+
+            # Stage all changes (except .sdd/runtime/)
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=self._workdir, timeout=10,
+            )
+            # Unstage runtime artifacts
+            subprocess.run(
+                ["git", "reset", "HEAD", "--", ".sdd/runtime/", ".sdd/metrics/"],
+                capture_output=True, cwd=self._workdir, timeout=10,
+            )
+
+            # Run tests before committing
+            test_result = subprocess.run(
+                ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+                capture_output=True, text=True, cwd=self._workdir, timeout=300,
+            )
+            if test_result.returncode != 0:
+                logger.warning("Evolve: tests failed, rolling back changes")
+                subprocess.run(
+                    ["git", "checkout", "--", "."],
+                    cwd=self._workdir, timeout=10,
+                )
+                return
+
+            # Commit
+            subprocess.run(
+                ["git", "commit", "-m", "Auto-evolve: improvements from self-development cycle"],
+                cwd=self._workdir, timeout=10,
+            )
+
+            # Push
+            subprocess.run(
+                ["git", "push", "origin", "HEAD"],
+                capture_output=True, cwd=self._workdir, timeout=30,
+            )
+            logger.info("Evolve: auto-committed and pushed changes")
+
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("Evolve: auto-commit failed: %s", exc)
+
+    def _evolve_spawn_manager(self) -> None:
+        """Spawn a manager agent to analyze the codebase and create new tasks."""
+        base = self._config.server_url
+
+        # Create a manager task that will analyze and create new tasks
+        task_body = {
+            "title": "Evolve: analyze codebase and plan next improvements",
+            "description": (
+                "You are in evolve mode. Analyze the codebase, run tests, "
+                "check coverage, review architecture, and create new improvement "
+                "tasks via the task server API.\n\n"
+                "Focus on:\n"
+                "1. Code that could be cleaner or more robust\n"
+                "2. Missing or weak test coverage\n"
+                "3. Performance improvements\n"
+                "4. Features that would make the project more useful\n"
+                "5. Documentation gaps\n\n"
+                "Create 3-5 focused tasks. Each task should be completable "
+                "by a single agent in under 30 minutes.\n\n"
+                "Task server API:\n"
+                f"  POST {base}/tasks with JSON: "
+                '{"title": "...", "description": "...", "role": "backend", "priority": 2}'
+            ),
+            "role": "manager",
+            "priority": 1,
+            "scope": "medium",
+            "complexity": "medium",
+        }
+
+        try:
+            resp = self._client.post(f"{base}/tasks", json=task_body)
+            resp.raise_for_status()
+            task_id = resp.json().get("id", "?")
+            logger.info("Evolve: created manager task %s", task_id)
+        except httpx.HTTPError as exc:
+            logger.error("Evolve: failed to create manager task: %s", exc)
 
     # -- Evolution integration -----------------------------------------------
 
