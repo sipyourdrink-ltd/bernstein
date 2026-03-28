@@ -30,7 +30,6 @@ bernstein = "bernstein.cli.main:cli"
 bernstein-worker = "bernstein.core.worker:main"
 
 [tool.hatch.build.targets.wheel.force-include]
-"templates/roles" = "bernstein/_default_templates/roles"
 "templates/prompts" = "bernstein/_default_templates/prompts"
 "templates/bernstein.yaml" = "bernstein/_default_templates/bernstein.yaml"
 

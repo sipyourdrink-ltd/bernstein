@@ -39,7 +39,7 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
-      - run: uv run pytest tests/ -x -q
+      - run: uv run python scripts/run_tests.py -x
 
   # Self-healing: open a GitHub Issue on master when CI fails so the evolve
   # agent can pick it up as a priority-1 ci-fix task.
