@@ -43,8 +43,8 @@ docker compose up --scale bernstein-worker=4 -d
 | `bernstein-server` | Task server — shared state coordinator | 8052 |
 | `bernstein-orchestrator` | Reads backlog, decomposes goals into tasks | — |
 | `bernstein-worker` | Claims and executes tasks via CLI agents | — |
-| `postgres` | Persistent relational store (future use) | 5432 |
-| `redis` | Distributed locks + bulletin board (future use) | 6379 |
+| `postgres` | Persistent task store (set `BERNSTEIN_STORAGE_BACKEND=postgres`) | 5432 |
+| `redis` | Distributed locks for multi-node task claiming | 6379 |
 
 ### Environment variables
 
@@ -53,6 +53,9 @@ Create `.env` from the table below:
 | Variable | Required | Description |
 |---|---|---|
 | `BERNSTEIN_AUTH_TOKEN` | Yes | Shared secret for inter-node auth (pick any random string) |
+| `BERNSTEIN_STORAGE_BACKEND` | No | `memory` (default), `postgres`, or `redis` |
+| `BERNSTEIN_DATABASE_URL` | If postgres/redis | PostgreSQL DSN (e.g. `postgresql://user:pass@postgres:5432/bernstein`) |
+| `BERNSTEIN_REDIS_URL` | If redis | Redis URL (e.g. `redis://redis:6379/0`) |
 | `ANTHROPIC_API_KEY` | If using Claude | Claude API key |
 | `OPENAI_API_KEY` | If using Codex | OpenAI API key |
 | `GOOGLE_API_KEY` | If using Gemini | Google AI API key |

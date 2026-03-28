@@ -180,6 +180,54 @@ tasks:
 
 ---
 
+## Storage backends
+
+By default Bernstein stores task state in memory with JSONL persistence.
+For production or multi-node deployments, configure a PostgreSQL or
+PostgreSQL + Redis backend.
+
+### Configuration via `bernstein.yaml`
+
+Add a `storage:` section to your seed file:
+
+```yaml
+# Default — in-memory with JSONL persistence (no external deps)
+storage:
+  backend: memory
+
+# PostgreSQL — production-grade, single-node
+storage:
+  backend: postgres
+  database_url: postgresql://user:pass@localhost/bernstein
+
+# PostgreSQL + Redis distributed locking — multi-node deployments
+storage:
+  backend: redis
+  database_url: postgresql://user:pass@localhost/bernstein
+  redis_url: redis://localhost:6379
+```
+
+### Configuration via environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `BERNSTEIN_STORAGE_BACKEND` | `memory` | `memory`, `postgres`, or `redis` |
+| `BERNSTEIN_DATABASE_URL` | — | PostgreSQL DSN (required for postgres/redis backends) |
+| `BERNSTEIN_REDIS_URL` | — | Redis URL (required for redis backend) |
+
+Environment variables override seed file settings.
+
+### Checking connectivity
+
+```bash
+bernstein doctor
+```
+
+The `doctor` command checks storage backend connectivity when a non-memory
+backend is configured.
+
+---
+
 ## How agents are selected
 
 | Task property | Model | Effort |

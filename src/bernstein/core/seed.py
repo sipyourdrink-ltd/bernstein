@@ -14,7 +14,6 @@ import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
-from bernstein.core.workspace import Workspace
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,23 +25,15 @@ class SeedError(Exception):
 
 @dataclass(frozen=True)
 class StorageConfig:
-    """Optional storage backend configuration.
-
-    When present in ``bernstein.yaml`` under the ``storage:`` key, Bernstein
-    will use the specified backend instead of the default in-memory store.
+    """Storage backend configuration.
 
     Attributes:
-        backend: One of ``"memory"`` (default), ``"postgres"``, or ``"redis"``.
-        database_url: PostgreSQL DSN.  Required for ``"postgres"`` and
-            ``"redis"`` backends.  Falls back to the
-            ``BERNSTEIN_DATABASE_URL`` environment variable when absent.
-        redis_url: Redis URL.  Required for the ``"redis"`` backend;
-            optional for ``"postgres"`` (enables distributed locking).
-            Falls back to the ``BERNSTEIN_REDIS_URL`` environment variable
-            when absent.
+        backend: Storage backend type (``memory``, ``postgres``, ``redis``).
+        database_url: PostgreSQL DSN, required for postgres/redis backends.
+        redis_url: Redis URL, required for redis backend.
     """
 
-    backend: str = "memory"
+    backend: Literal["memory", "postgres", "redis"] = "memory"
     database_url: str | None = None
     redis_url: str | None = None
 
@@ -81,9 +72,6 @@ class SeedConfig:
         mcp_servers: MCP server definitions to pass to spawned agents.
         notify: Optional webhook notification configuration.
         cells: Number of parallel orchestration cells (1 = single-cell).
-        storage: Optional storage backend configuration.  When ``None``, the
-            in-memory backend is used (or overridden by the
-            ``BERNSTEIN_STORAGE_BACKEND`` environment variable).
     """
 
     goal: str
@@ -98,10 +86,9 @@ class SeedConfig:
     catalogs: CatalogRegistry | None = None
     mcp_servers: dict[str, dict[str, Any]] | None = None
     notify: NotifyConfig | None = None
+    storage: StorageConfig | None = None
     cells: int = 1
     cluster: ClusterConfig | None = None
-    storage: StorageConfig | None = None
-    workspace: Workspace | None = None
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -278,6 +265,29 @@ def parse_seed(path: Path) -> SeedConfig:
             on_failure=on_failure,
         )
 
+    storage_raw: object = data.get("storage")
+    storage: StorageConfig | None = None
+    if storage_raw is not None:
+        if not isinstance(storage_raw, dict):
+            raise SeedError(f"storage must be a mapping, got: {type(storage_raw).__name__}")
+        storage_dict: dict[str, object] = cast("dict[str, object]", storage_raw)
+        storage_backend_raw: object = storage_dict.get("backend", "memory")
+        _valid_storage_backends = ("memory", "postgres", "redis")
+        if storage_backend_raw not in _valid_storage_backends:
+            raise SeedError(
+                f"storage.backend must be one of {list(_valid_storage_backends)}, got: {storage_backend_raw!r}"
+            )
+        storage_backend: Literal["memory", "postgres", "redis"] = storage_backend_raw  # narrowed by membership check
+        storage_db_url_raw: object = storage_dict.get("database_url")
+        storage_db_url: str | None = str(storage_db_url_raw) if storage_db_url_raw is not None else None
+        storage_redis_url_raw: object = storage_dict.get("redis_url")
+        storage_redis_url: str | None = str(storage_redis_url_raw) if storage_redis_url_raw is not None else None
+        storage = StorageConfig(
+            backend=storage_backend,
+            database_url=storage_db_url,
+            redis_url=storage_redis_url,
+        )
+
     cells_raw: object = data.get("cells", 1)
     if not isinstance(cells_raw, int) or cells_raw < 1:
         raise SeedError(f"cells must be a positive integer, got: {cells_raw!r}")
@@ -308,38 +318,6 @@ def parse_seed(path: Path) -> SeedConfig:
             bind_host=str(cluster_dict.get("bind_host", "127.0.0.1")),
         )
 
-    # --- storage (optional) ---
-    from bernstein.core.store_factory import VALID_BACKENDS
-
-    storage_raw: object = data.get("storage")
-    storage: StorageConfig | None = None
-    if storage_raw is not None:
-        if not isinstance(storage_raw, dict):
-            raise SeedError(f"storage must be a mapping, got: {type(storage_raw).__name__}")
-        storage_dict: dict[str, object] = cast("dict[str, object]", storage_raw)
-        storage_backend_raw: object = storage_dict.get("backend", "memory")
-        if not isinstance(storage_backend_raw, str):
-            raise SeedError(f"storage.backend must be a string, got: {type(storage_backend_raw).__name__}")
-        storage_backend = storage_backend_raw.strip().lower()
-        if storage_backend not in VALID_BACKENDS:
-            raise SeedError(f"storage.backend must be one of {sorted(VALID_BACKENDS)}, got: {storage_backend!r}")
-        db_url_raw: object = storage_dict.get("database_url")
-        db_url: str | None = str(db_url_raw) if db_url_raw is not None else None
-        r_url_raw: object = storage_dict.get("redis_url")
-        r_url: str | None = str(r_url_raw) if r_url_raw is not None else None
-        storage = StorageConfig(backend=storage_backend, database_url=db_url, redis_url=r_url)
-
-    workspace_raw: object = data.get("workspace")
-    workspace: Workspace | None = None
-    if workspace_raw is not None:
-        if not isinstance(workspace_raw, dict):
-            raise SeedError(f"workspace must be a mapping, got: {type(workspace_raw).__name__}")
-        workspace_dict: dict[str, Any] = cast("dict[str, Any]", workspace_raw)
-        try:
-            workspace = Workspace.from_config(workspace_dict, root=path.parent)
-        except ValueError as exc:
-            raise SeedError(f"Invalid workspace configuration: {exc}") from exc
-
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -353,10 +331,9 @@ def parse_seed(path: Path) -> SeedConfig:
         catalogs=catalogs,
         mcp_servers=cast("dict[str, dict[str, Any]] | None", mcp_servers_raw),
         notify=notify,
+        storage=storage,
         cells=cells_raw,
         cluster=cluster,
-        storage=storage,
-        workspace=workspace,
     )
 
 

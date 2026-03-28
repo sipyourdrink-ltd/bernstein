@@ -381,14 +381,20 @@ def _start_server(
         raise RuntimeError(f"Server already running (PID {existing}). Run `bernstein stop` first.")
 
     # Build env for the server subprocess — inherit parent env and overlay
-    # cluster-specific vars so the server's module-level app factory picks
-    # them up.
+    # cluster-specific and storage vars so the server's module-level app
+    # factory picks them up.
     env = dict(os.environ)
     if cluster_enabled:
         env["BERNSTEIN_CLUSTER_ENABLED"] = "1"
     env["BERNSTEIN_BIND_HOST"] = bind_host
     if auth_token:
         env["BERNSTEIN_AUTH_TOKEN"] = auth_token
+
+    # Propagate storage backend config if set in the current process env.
+    # The server reads these at import time via the store_factory module.
+    for _storage_var in ("BERNSTEIN_STORAGE_BACKEND", "BERNSTEIN_DATABASE_URL", "BERNSTEIN_REDIS_URL"):
+        if _storage_var in os.environ and _storage_var not in env:
+            env[_storage_var] = os.environ[_storage_var]
 
     log_path = workdir / ".sdd" / "runtime" / "server.log"
     # Keep the log file open — child inherits the fd via fork().
@@ -643,6 +649,16 @@ def bootstrap_from_seed(
         console.print("[green]→[/green] Created .sdd/ workspace")
     else:
         console.print("[green]→[/green] Workspace ready")
+
+    # Export storage backend config from seed to env so the server picks it up.
+    if seed.storage is not None:
+        os.environ.setdefault("BERNSTEIN_STORAGE_BACKEND", seed.storage.backend)
+        if seed.storage.database_url:
+            os.environ.setdefault("BERNSTEIN_DATABASE_URL", seed.storage.database_url)
+        if seed.storage.redis_url:
+            os.environ.setdefault("BERNSTEIN_REDIS_URL", seed.storage.redis_url)
+        if seed.storage.backend != "memory":
+            console.print(f"  [bold]Storage:[/bold] {seed.storage.backend}")
 
     # Determine if cluster mode should be enabled (seed config or env var)
     cluster_enabled = (seed.cluster is not None and seed.cluster.enabled) or os.environ.get(

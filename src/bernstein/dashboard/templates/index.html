@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bernstein — Agent Orchestra</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            surface: '#1a1a2e',
+            panel: '#16213e',
+            border: '#0f3460',
+            accent: '#00d4ff',
+          },
+          fontFamily: {
+            mono: ['JetBrains Mono', 'Fira Code', 'Consolas', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace; }
+    .badge { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+    .badge-done     { background: #14532d; color: #4ade80; border: 1px solid #16a34a; }
+    .badge-open     { background: #1e3a5f; color: #93c5fd; border: 1px solid #3b82f6; }
+    .badge-in_progress { background: #713f12; color: #fde68a; border: 1px solid #d97706; }
+    .badge-claimed  { background: #164e63; color: #67e8f9; border: 1px solid #06b6d4; }
+    .badge-failed   { background: #450a0a; color: #fca5a5; border: 1px solid #dc2626; }
+    .badge-cancelled { background: #1f2937; color: #9ca3af; border: 1px solid #6b7280; }
+    .badge-blocked  { background: #4a1d96; color: #c4b5fd; border: 1px solid #7c3aed; }
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator { display: inline; }
+    @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+    .live-dot { animation: pulse-dot 2s ease-in-out infinite; }
+    tr.task-row:hover { background: #0f3460 !important; transition: background 0.1s; }
+  </style>
+</head>
+<body class="dark bg-[#0d1117] text-gray-100 min-h-screen">
+
+  <!-- Header -->
+  <header class="border-b border-[#0f3460] bg-[#0d1117] sticky top-0 z-10 px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-[#00d4ff] font-bold text-lg tracking-wider">BERNSTEIN</span>
+      <span class="text-gray-500 text-sm">Agent Orchestra</span>
+    </div>
+    <div class="flex items-center gap-4 text-xs text-gray-500">
+      <span class="live-dot text-green-400">&#x25cf;</span>
+      <span id="last-update">&ndash;</span>
+      <span class="htmx-indicator text-yellow-400">&#x27F3; updating&hellip;</span>
+    </div>
+  </header>
+
+  <!-- Main content — polled every 5 seconds -->
+  <main
+    id="dashboard-root"
+    hx-get="/dashboard/data"
+    hx-trigger="load, every 5s"
+    hx-target="#dashboard-root"
+    hx-swap="innerHTML"
+    hx-indicator=".htmx-indicator"
+    class="p-4 space-y-6"
+  >
+    <!-- Initial loading state -->
+    <div class="flex items-center justify-center h-32 text-gray-500 text-sm">
+      <span class="live-dot mr-2 text-[#00d4ff]">&#x25cf;</span> Connecting to task server&hellip;
+    </div>
+  </main>
+
+  <script>
+    // Update "last updated" timestamp after each HTMX poll
+    document.body.addEventListener('htmx:afterSettle', function() {
+      var el = document.getElementById('last-update');
+      if (el) el.textContent = new Date().toLocaleTimeString();
+    });
+  </script>
+</body>
+</html>
