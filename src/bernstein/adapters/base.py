@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import signal
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,46 @@ class SpawnResult:
     pid: int
     log_path: Path
     proc: object | None = None  # subprocess.Popen, kept for poll()-based alive check
+
+
+def build_worker_cmd(
+    cmd: list[str],
+    *,
+    role: str,
+    session_id: str,
+    pid_dir: Path,
+    model: str = "",
+) -> list[str]:
+    """Wrap a CLI command with bernstein-worker for process visibility.
+
+    The worker sets the process title to "bernstein: <role> [<session>]"
+    and writes a PID metadata file for ``bernstein ps``.
+
+    Args:
+        cmd: The original CLI command to wrap.
+        role: Agent role (qa, backend, etc.).
+        session_id: Unique session identifier.
+        pid_dir: Directory for PID metadata JSON files.
+        model: Model name for metadata display.
+
+    Returns:
+        Wrapped command list.
+    """
+    return [
+        sys.executable,
+        "-m",
+        "bernstein.core.worker",
+        "--role",
+        role,
+        "--session",
+        session_id,
+        "--pid-dir",
+        str(pid_dir),
+        "--model",
+        model,
+        "--",
+        *cmd,
+    ]
 
 
 class CLIAdapter(ABC):

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,12 @@ def _make_popen_mock(pid: int) -> MagicMock:
     m = MagicMock(spec=subprocess.Popen)
     m.pid = pid
     return m
+
+
+def _inner_cmd(full_cmd: list[str]) -> list[str]:
+    """Extract the actual CLI command after the '--' worker separator."""
+    sep = full_cmd.index("--")
+    return full_cmd[sep + 1 :]
 
 
 def _spawn_codex(tmp_path: Path, model: str = "gpt-4o") -> tuple[list[str], MagicMock]:
@@ -70,7 +77,7 @@ def _spawn_gemini(tmp_path: Path, model: str = "gemini-pro") -> tuple[list[str],
 class TestCodexAdapterSpawn:
     """CodexAdapter.spawn() builds correct command."""
 
-    def test_command_starts_with_codex(self, tmp_path: Path) -> None:
+    def test_wrapped_with_worker(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
         proc_mock = _make_popen_mock(pid=101)
         with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
@@ -81,7 +88,10 @@ class TestCodexAdapterSpawn:
                 session_id="s1",
             )
         cmd = popen.call_args.args[0]
-        assert cmd[0] == "codex"
+        assert cmd[0] == sys.executable
+        assert cmd[1:3] == ["-m", "bernstein.core.worker"]
+        inner = _inner_cmd(cmd)
+        assert inner[0] == "codex"
 
     def test_model_flag(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -93,9 +103,9 @@ class TestCodexAdapterSpawn:
                 model_config=ModelConfig(model="gpt-4.1", effort="high"),
                 session_id="s2",
             )
-        cmd = popen.call_args.args[0]
-        assert "--model" in cmd
-        assert cmd[cmd.index("--model") + 1] == "gpt-4.1"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--model" in inner
+        assert inner[inner.index("--model") + 1] == "gpt-4.1"
 
     def test_approval_mode_full_auto(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -107,9 +117,9 @@ class TestCodexAdapterSpawn:
                 model_config=ModelConfig(model="gpt-4o", effort="high"),
                 session_id="s3",
             )
-        cmd = popen.call_args.args[0]
-        assert "--approval-mode" in cmd
-        assert cmd[cmd.index("--approval-mode") + 1] == "full-auto"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--approval-mode" in inner
+        assert inner[inner.index("--approval-mode") + 1] == "full-auto"
 
     def test_quiet_flag(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -121,8 +131,8 @@ class TestCodexAdapterSpawn:
                 model_config=ModelConfig(model="gpt-4o", effort="high"),
                 session_id="s4",
             )
-        cmd = popen.call_args.args[0]
-        assert "--quiet" in cmd
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--quiet" in inner
 
     def test_prompt_appended_last(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -182,7 +192,7 @@ class TestCodexAdapterSpawn:
 class TestGeminiAdapterSpawn:
     """GeminiAdapter.spawn() builds correct command."""
 
-    def test_command_starts_with_gemini(self, tmp_path: Path) -> None:
+    def test_wrapped_with_worker(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
         proc_mock = _make_popen_mock(pid=201)
         with patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock) as popen:
@@ -193,7 +203,8 @@ class TestGeminiAdapterSpawn:
                 session_id="g1",
             )
         cmd = popen.call_args.args[0]
-        assert cmd[0] == "gemini"
+        inner = _inner_cmd(cmd)
+        assert inner[0] == "gemini"
 
     def test_model_flag(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
@@ -205,9 +216,9 @@ class TestGeminiAdapterSpawn:
                 model_config=ModelConfig(model="gemini-pro", effort="high"),
                 session_id="g2",
             )
-        cmd = popen.call_args.args[0]
-        assert "--model" in cmd
-        assert cmd[cmd.index("--model") + 1] == "gemini-pro"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--model" in inner
+        assert inner[inner.index("--model") + 1] == "gemini-pro"
 
     def test_sandbox_none_flag(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
@@ -219,9 +230,9 @@ class TestGeminiAdapterSpawn:
                 model_config=ModelConfig(model="gemini-pro", effort="high"),
                 session_id="g3",
             )
-        cmd = popen.call_args.args[0]
-        assert "--sandbox" in cmd
-        assert cmd[cmd.index("--sandbox") + 1] == "none"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--sandbox" in inner
+        assert inner[inner.index("--sandbox") + 1] == "none"
 
     def test_prompt_flag(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
@@ -233,9 +244,9 @@ class TestGeminiAdapterSpawn:
                 model_config=ModelConfig(model="gemini-pro", effort="high"),
                 session_id="g4",
             )
-        cmd = popen.call_args.args[0]
-        assert "--prompt" in cmd
-        assert cmd[cmd.index("--prompt") + 1] == "do-something"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--prompt" in inner
+        assert inner[inner.index("--prompt") + 1] == "do-something"
 
     def test_creates_log_dir(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
@@ -305,8 +316,8 @@ class TestQwenAdapterSpawn:
                 model_config=ModelConfig(model="sonnet", effort="high"),
                 session_id="q1",
             )
-        cmd = popen.call_args.args[0]
-        assert cmd[0] == "qwen"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[0] == "qwen"
 
     def test_yolo_flag_always_present(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
@@ -322,8 +333,8 @@ class TestQwenAdapterSpawn:
                 model_config=ModelConfig(model="sonnet", effort="high"),
                 session_id="q2",
             )
-        cmd = popen.call_args.args[0]
-        assert "-y" in cmd
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "-y" in inner
 
     def test_default_provider_maps_sonnet_to_coder_model(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
@@ -339,9 +350,9 @@ class TestQwenAdapterSpawn:
                 model_config=ModelConfig(model="sonnet", effort="high"),
                 session_id="q3",
             )
-        cmd = popen.call_args.args[0]
-        assert "--model" in cmd
-        assert cmd[cmd.index("--model") + 1] == "coder-model"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--model" in inner
+        assert inner[inner.index("--model") + 1] == "coder-model"
 
     def test_default_provider_maps_opus_to_qwen_max(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
@@ -357,14 +368,13 @@ class TestQwenAdapterSpawn:
                 model_config=ModelConfig(model="opus", effort="high"),
                 session_id="q4",
             )
-        cmd = popen.call_args.args[0]
-        assert cmd[cmd.index("--model") + 1] == "qwen-max"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[inner.index("--model") + 1] == "qwen-max"
 
     def test_openrouter_provider_sets_auth_type(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=305)
         settings_mock = _make_llm_settings(openrouter_api_key_paid="or-key-123")
-        # ModelConfig is frozen; use a duck-typed object to pass provider
         model_config = MagicMock(spec=ModelConfig)
         model_config.model = "qwen/qwen-turbo"
         model_config.effort = "high"
@@ -379,9 +389,9 @@ class TestQwenAdapterSpawn:
                 model_config=model_config,
                 session_id="q5",
             )
-        cmd = popen.call_args.args[0]
-        assert "--auth-type" in cmd
-        assert cmd[cmd.index("--auth-type") + 1] == "openai"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--auth-type" in inner
+        assert inner[inner.index("--auth-type") + 1] == "openai"
 
     def test_openrouter_provider_sets_env_vars(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
@@ -420,10 +430,10 @@ class TestQwenAdapterSpawn:
                 model_config=ModelConfig(model="sonnet", effort="high"),
                 session_id="q7",
             )
-        cmd = popen.call_args.args[0]
-        assert "--tavily-api-key" in cmd
-        assert cmd[cmd.index("--tavily-api-key") + 1] == "tv-key-xyz"
-        assert "--web-search-default" in cmd
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--tavily-api-key" in inner
+        assert inner[inner.index("--tavily-api-key") + 1] == "tv-key-xyz"
+        assert "--web-search-default" in inner
 
     def test_spawn_result_pid(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
@@ -476,8 +486,8 @@ class TestGenericAdapterSpawn:
                 model_config=ModelConfig(model="gpt-4o", effort="high"),
                 session_id="gen1",
             )
-        cmd = popen.call_args.args[0]
-        assert cmd[0] == "aider"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert inner[0] == "aider"
 
     def test_model_flag_included(self, tmp_path: Path) -> None:
         adapter = GenericAdapter(cli_command="aider", model_flag="--model")
@@ -489,9 +499,9 @@ class TestGenericAdapterSpawn:
                 model_config=ModelConfig(model="gpt-4o", effort="high"),
                 session_id="gen2",
             )
-        cmd = popen.call_args.args[0]
-        assert "--model" in cmd
-        assert cmd[cmd.index("--model") + 1] == "gpt-4o"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--model" in inner
+        assert inner[inner.index("--model") + 1] == "gpt-4o"
 
     def test_model_flag_omitted_when_none(self, tmp_path: Path) -> None:
         adapter = GenericAdapter(cli_command="mytool", model_flag=None)
@@ -503,8 +513,9 @@ class TestGenericAdapterSpawn:
                 model_config=ModelConfig(model="gpt-4o", effort="high"),
                 session_id="gen3",
             )
-        cmd = popen.call_args.args[0]
-        assert "--model" not in cmd
+        inner = _inner_cmd(popen.call_args.args[0])
+        # Worker has its own --model flag; only check the inner command
+        assert "--model" not in inner
 
     def test_custom_prompt_flag(self, tmp_path: Path) -> None:
         adapter = GenericAdapter(cli_command="cursor", prompt_flag="--message")
@@ -516,9 +527,9 @@ class TestGenericAdapterSpawn:
                 model_config=ModelConfig(model="gpt-4o", effort="high"),
                 session_id="gen4",
             )
-        cmd = popen.call_args.args[0]
-        assert "--message" in cmd
-        assert cmd[cmd.index("--message") + 1] == "do-this"
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--message" in inner
+        assert inner[inner.index("--message") + 1] == "do-this"
 
     def test_extra_args_included(self, tmp_path: Path) -> None:
         adapter = GenericAdapter(cli_command="mytool", extra_args=["--yes", "--verbose"])
@@ -530,9 +541,9 @@ class TestGenericAdapterSpawn:
                 model_config=ModelConfig(model="gpt-4o", effort="high"),
                 session_id="gen5",
             )
-        cmd = popen.call_args.args[0]
-        assert "--yes" in cmd
-        assert "--verbose" in cmd
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--yes" in inner
+        assert "--verbose" in inner
 
     def test_spawn_result_pid(self, tmp_path: Path) -> None:
         adapter = GenericAdapter(cli_command="mytool")

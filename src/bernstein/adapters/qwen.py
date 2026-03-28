@@ -6,7 +6,7 @@ import os
 import subprocess
 from typing import TYPE_CHECKING, Any
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.core.llm import LLMSettings
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
@@ -116,10 +116,20 @@ class QwenAdapter(CLIAdapter):
         cmd = self._build_command(model_config.model, provider, settings)
         cmd.append(prompt)
 
+        # Wrap with bernstein-worker for process visibility
+        pid_dir = workdir / ".sdd" / "runtime" / "pids"
+        wrapped_cmd = build_worker_cmd(
+            cmd,
+            role=session_id.rsplit("-", 1)[0],
+            session_id=session_id,
+            pid_dir=pid_dir,
+            model=model_config.model,
+        )
+
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
-                    cmd,
+                    wrapped_cmd,
                     cwd=workdir,
                     env=env,
                     stdin=subprocess.DEVNULL,

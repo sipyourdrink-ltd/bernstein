@@ -1,6 +1,7 @@
 """Shared pytest fixtures for the bernstein test suite."""
 from __future__ import annotations
 
+import gc
 import platform
 import resource
 import sys
@@ -11,13 +12,10 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Memory guard: prevent any single pytest run from eating >4 GB RAM.
-# This protects against runaway tests or recursive subprocess bombs.
-# On macOS resource.RLIMIT_RSS is not enforced by the kernel, so we also
-# install a periodic check via a pytest hook below.
+# Memory guard: prevent any single pytest run from eating >2 GB RAM.
 # ---------------------------------------------------------------------------
 
-_MAX_RSS_BYTES = 4 * 1024 * 1024 * 1024  # 4 GB
+_MAX_RSS_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
 if platform.system() != "Windows":
     try:
@@ -29,10 +27,11 @@ if platform.system() != "Windows":
 
 @pytest.fixture(autouse=True)
 def _memory_guard():
-    """Abort test if process RSS exceeds 4 GB (safety net)."""
+    """Force GC before and after every test; abort if RSS exceeds limit."""
     yield
+    # Aggressive garbage collection to prevent accumulation
+    gc.collect()
     if platform.system() == "Darwin":
-        # macOS: use resource.getrusage for RSS
         usage = resource.getrusage(resource.RUSAGE_SELF)
         rss_bytes = usage.ru_maxrss  # macOS reports bytes
         if rss_bytes > _MAX_RSS_BYTES:
@@ -41,7 +40,18 @@ def _memory_guard():
                 f"(actual: {rss_bytes / (1024**3):.1f} GB). Aborting.\n",
                 file=sys.stderr,
             )
-            sys.exit(137)  # OOM-kill exit code
+            sys.exit(137)
+
+
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
+    """Aggressively clear references that pytest holds onto after each test."""
+    # Clear funcargs/fixtures that may hold large mock objects or tmp_path data
+    if hasattr(item, "funcargs"):
+        item.funcargs.clear()
+    # Clear report sections (captured stdout/stderr per test)
+    if hasattr(item, "_report_sections"):
+        item._report_sections.clear()
+    gc.collect()
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import (

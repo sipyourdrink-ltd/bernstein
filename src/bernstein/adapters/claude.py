@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any, ClassVar
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
 # Map short model names to Claude Code CLI model IDs
@@ -207,10 +207,22 @@ class ClaudeCodeAdapter(CLIAdapter):
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
         cmd = self._build_command(model_config, mcp_config, prompt)
-        wrapper = self._wrapper_script()
-        claude_proc, wrapper_proc = self._launch_process(cmd, wrapper, workdir, log_path)
 
-        # Track the claude process (not the wrapper) for is_alive/kill
+        # Wrap with bernstein-worker for process visibility
+        pid_dir = workdir / ".sdd" / "runtime" / "pids"
+        model_id = _MODEL_MAP.get(model_config.model, model_config.model)
+        wrapped_cmd = build_worker_cmd(
+            cmd,
+            role=session_id.rsplit("-", 1)[0],  # e.g. "qa" from "qa-abc12345"
+            session_id=session_id,
+            pid_dir=pid_dir,
+            model=model_id,
+        )
+
+        wrapper = self._wrapper_script()
+        claude_proc, wrapper_proc = self._launch_process(wrapped_cmd, wrapper, workdir, log_path)
+
+        # Track the worker process (wraps claude) for is_alive/kill
         self._procs[claude_proc.pid] = claude_proc
         # Also track wrapper so we can kill both
         self._wrapper_pids[claude_proc.pid] = wrapper_proc.pid

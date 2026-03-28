@@ -506,6 +506,14 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
     """
     _print_banner()
 
+    # Set process title so orchestrator is visible in Activity Monitor / ps
+    try:
+        import setproctitle
+
+        setproctitle.setproctitle("bernstein: orchestrator")
+    except ImportError:
+        pass
+
     from bernstein.core.bootstrap import bootstrap_from_goal, bootstrap_from_seed
     from bernstein.core.seed import SeedError
 
@@ -569,6 +577,13 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
 def start(goal: str | None, seed_file: str, port: int) -> None:
     """Start server and spawn manager (legacy, use 'conduct')."""
     _print_banner()
+
+    try:
+        import setproctitle
+
+        setproctitle.setproctitle("bernstein: orchestrator")
+    except ImportError:
+        pass
 
     from bernstein.core.bootstrap import bootstrap_from_goal, bootstrap_from_seed
     from bernstein.core.seed import SeedError
@@ -912,6 +927,105 @@ def stop(timeout: int) -> None:
     _kill_pid(SDD_PID_SERVER, "Task server")
 
     console.print("\n[green]Bernstein stopped.[/green]")
+
+
+# ---------------------------------------------------------------------------
+# ps — process visibility
+# ---------------------------------------------------------------------------
+
+
+def _is_process_alive(pid: int) -> bool:
+    """Check if a process with the given PID is alive."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+@cli.command("ps")
+@click.option("--json-output", "as_json", is_flag=True, help="Output as JSON instead of table.")
+@click.option("--pid-dir", default=".sdd/runtime/pids", help="PID metadata directory.")
+def ps_cmd(as_json: bool, pid_dir: str) -> None:
+    """Show running Bernstein agent processes."""
+    from rich.table import Table
+
+    pid_path = Path(pid_dir)
+    if not pid_path.exists():
+        if as_json:
+            console.print("[]")
+        else:
+            console.print("[dim]No agent processes found.[/dim]")
+        return
+
+    agents: list[dict[str, Any]] = []
+    stale_files: list[Path] = []
+
+    for pid_file in sorted(pid_path.glob("*.json")):
+        try:
+            info = json.loads(pid_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        worker_pid = info.get("worker_pid", 0)
+        child_pid = info.get("child_pid")
+        alive = _is_process_alive(worker_pid) if worker_pid else False
+
+        if not alive:
+            stale_files.append(pid_file)
+            continue
+
+        started_at = info.get("started_at", 0)
+        runtime_s = time.time() - started_at if started_at else 0
+        minutes, secs = divmod(int(runtime_s), 60)
+        hours, minutes = divmod(minutes, 60)
+        runtime_str = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m {secs:02d}s"
+
+        agents.append({
+            "session": info.get("session", "?"),
+            "role": info.get("role", "?"),
+            "command": info.get("command", "?"),
+            "model": info.get("model", "?"),
+            "worker_pid": worker_pid,
+            "child_pid": child_pid,
+            "runtime": runtime_str,
+            "started_at": started_at,
+        })
+
+    # Clean up stale PID files
+    for f in stale_files:
+        f.unlink(missing_ok=True)
+
+    if as_json:
+        console.print(json.dumps(agents, indent=2))
+        return
+
+    if not agents:
+        console.print("[dim]No running agents.[/dim]")
+        return
+
+    table = Table(title="Bernstein Agents", show_lines=False, header_style="bold cyan")
+    table.add_column("Session", style="dim", min_width=18)
+    table.add_column("Role", min_width=10)
+    table.add_column("CLI", min_width=8)
+    table.add_column("Model", min_width=16)
+    table.add_column("Worker PID", justify="right")
+    table.add_column("Agent PID", justify="right")
+    table.add_column("Runtime", justify="right")
+
+    for a in agents:
+        table.add_row(
+            a["session"],
+            f"[bold]{a['role']}[/bold]",
+            a["command"],
+            a["model"],
+            str(a["worker_pid"]),
+            str(a["child_pid"] or "—"),
+            a["runtime"],
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]{len(agents)} agent(s) running[/dim]")
 
 
 # ---------------------------------------------------------------------------

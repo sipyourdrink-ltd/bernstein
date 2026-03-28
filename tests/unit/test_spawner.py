@@ -264,10 +264,11 @@ class TestSelectBatchConfig:
         assert config.effort == "max"
 
     def test_single_task_returns_its_config(self, make_task) -> None:
+        # LOW+SMALL tasks hit the L1 fast-path → cheapest model (haiku/low)
         task = make_task(complexity=Complexity.LOW, scope=Scope.SMALL)
         config = _select_batch_config([task])
-        assert config.model == "sonnet"
-        assert config.effort == "normal"
+        assert config.model == "haiku"
+        assert config.effort == "low"
 
 
 # --- TierAwareRouter integration ---

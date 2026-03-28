@@ -19,7 +19,10 @@ import subprocess
 import textwrap
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class CIFailureKind(Enum):
@@ -276,7 +279,10 @@ uv run ruff format --check src/ || { echo "[bernstein] FAIL: format issues. Run:
 
 # 3. Tests (unit only — fast)
 echo "[bernstein] pytest unit tests..."
-uv run pytest tests/unit/ -x -q --tb=short || { echo "[bernstein] FAIL: tests failed. Run: uv run pytest tests/unit/ -x -q --tb=short"; exit 1; }
+uv run pytest tests/unit/ -x -q --tb=short || {
+    echo "[bernstein] FAIL: tests failed. Run: uv run pytest tests/unit/ -x -q --tb=short"
+    exit 1
+}
 
 echo "[bernstein] All pre-push checks passed."
 """

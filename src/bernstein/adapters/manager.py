@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from bernstein.core.models import ModelConfig
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
 
 
 class ManagerAdapter(CLIAdapter):
@@ -49,9 +49,19 @@ class ManagerAdapter(CLIAdapter):
             task_id,
         ]
 
+        # Wrap with bernstein-worker for process visibility
+        pid_dir = workdir / ".sdd" / "runtime" / "pids"
+        wrapped_cmd = build_worker_cmd(
+            cmd,
+            role="manager",
+            session_id=session_id,
+            pid_dir=pid_dir,
+            model=model_config.model,
+        )
+
         with log_path.open("w") as log_file:
             proc = subprocess.Popen(
-                cmd,
+                wrapped_cmd,
                 cwd=workdir,
                 env=env,
                 stdout=log_file,

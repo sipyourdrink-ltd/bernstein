@@ -36,4 +36,6 @@ agents that read the codebase, plan improvements, and execute them.
 - Google-style docstrings
 - No dict soup — use dataclasses/TypedDict
 - Async where IO-bound, sync where CPU-bound
-- Run tests: `uv run pytest tests/ -x -q`
+- Run tests: `uv run python scripts/run_tests.py -x` (isolated per-file, prevents memory leaks)
+- Run single file: `uv run pytest tests/unit/test_foo.py -x -q`
+- NEVER run `uv run pytest tests/ -x -q` — leaks 100+ GB RAM across 2000+ tests

@@ -45,34 +45,43 @@ class TestSpawn:
 
         return popen, result  # type: ignore[return-value]
 
-    def test_cmd_uses_sys_executable(self, tmp_path: Path) -> None:
+    @staticmethod
+    def _inner_cmd(full_cmd: list[str]) -> list[str]:
+        """Extract the inner command after the '--' worker separator."""
+        sep = full_cmd.index("--")
+        return full_cmd[sep + 1 :]
+
+    def test_cmd_wrapped_with_worker(self, tmp_path: Path) -> None:
         popen, _ = self._spawn(tmp_path)
         cmd = popen.call_args.args[0]
         assert cmd[0] == sys.executable
+        assert cmd[1:3] == ["-m", "bernstein.core.worker"]
+        assert "--role" in cmd
+        assert "--session" in cmd
 
-    def test_cmd_uses_module_flag(self, tmp_path: Path) -> None:
+    def test_inner_cmd_uses_manager_module(self, tmp_path: Path) -> None:
         popen, _ = self._spawn(tmp_path)
-        cmd = popen.call_args.args[0]
-        assert cmd[1] == "-m"
-        assert cmd[2] == "bernstein.core.manager"
+        inner = self._inner_cmd(popen.call_args.args[0])
+        assert inner[0] == sys.executable
+        assert inner[1:3] == ["-m", "bernstein.core.manager"]
 
     def test_cmd_includes_port_8052(self, tmp_path: Path) -> None:
         popen, _ = self._spawn(tmp_path)
-        cmd = popen.call_args.args[0]
-        assert "--port" in cmd
-        assert cmd[cmd.index("--port") + 1] == "8052"
+        inner = self._inner_cmd(popen.call_args.args[0])
+        assert "--port" in inner
+        assert inner[inner.index("--port") + 1] == "8052"
 
     def test_cmd_extracts_task_id_from_prompt(self, tmp_path: Path) -> None:
         popen, _ = self._spawn(tmp_path, prompt="Fix bug (id=task-xyz-789)")
-        cmd = popen.call_args.args[0]
-        assert "--task-id" in cmd
-        assert cmd[cmd.index("--task-id") + 1] == "task-xyz-789"
+        inner = self._inner_cmd(popen.call_args.args[0])
+        assert "--task-id" in inner
+        assert inner[inner.index("--task-id") + 1] == "task-xyz-789"
 
     def test_cmd_fallback_task_id_when_no_match(self, tmp_path: Path) -> None:
         popen, _ = self._spawn(tmp_path, prompt="No task id here")
-        cmd = popen.call_args.args[0]
-        assert "--task-id" in cmd
-        assert cmd[cmd.index("--task-id") + 1] == "task-000"
+        inner = self._inner_cmd(popen.call_args.args[0])
+        assert "--task-id" in inner
+        assert inner[inner.index("--task-id") + 1] == "task-000"
 
     def test_start_new_session_true(self, tmp_path: Path) -> None:
         popen, _ = self._spawn(tmp_path)

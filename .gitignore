@@ -12,10 +12,11 @@ build/
 .env.local
 .env.*
 
-# IDE
+# IDE / AI tooling
 .DS_Store
 .idea/
 .vscode/
+.claude/
 *.swp
 
 # Bernstein runtime state (regenerated on each run)
