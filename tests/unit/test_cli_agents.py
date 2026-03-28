@@ -257,3 +257,103 @@ def test_agents_validate_mixed_definitions(tmp_path: Path) -> None:
     assert "good-agent.yaml" in result.output
     assert "bad-agent.yaml" in result.output
     assert "1 issue" in result.output
+
+
+# ---------------------------------------------------------------------------
+# agents agents (auto-detected)
+# ---------------------------------------------------------------------------
+
+
+def test_agents_agents_no_detected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """agents agents shows helpful message when no agents detected."""
+    monkeypatch.chdir(tmp_path)
+    # Mock discover_agents to return no agents
+    from unittest.mock import patch
+
+    with patch("bernstein.core.agent_discovery.discover_agents") as mock_discover:
+        from bernstein.core.agent_discovery import DiscoveryResult
+
+        mock_discover.return_value = DiscoveryResult(agents=[], warnings=[], scan_time_ms=10.0)
+        runner = CliRunner()
+        result = runner.invoke(cli, ["agents", "agents"])
+
+    assert result.exit_code == 0
+    assert "No CLI agents detected" in result.output
+
+
+def test_agents_agents_shows_detected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """agents agents displays detected agents with their info."""
+    monkeypatch.chdir(tmp_path)
+    from unittest.mock import patch
+
+    from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult
+
+    with patch("bernstein.core.agent_discovery.discover_agents") as mock_discover:
+        mock_discover.return_value = DiscoveryResult(
+            agents=[
+                AgentCapabilities(
+                    name="claude",
+                    binary="/usr/bin/claude",
+                    version="2.1.0",
+                    logged_in=True,
+                    login_method="API key",
+                    available_models=["claude-opus-4-6"],
+                    default_model="claude-opus-4-6",
+                    supports_headless=True,
+                    supports_sandbox=False,
+                    supports_mcp=True,
+                    max_context_tokens=200_000,
+                    reasoning_strength="very_high",
+                    best_for=["architecture"],
+                    cost_tier="moderate",
+                ),
+            ],
+            warnings=[],
+            scan_time_ms=15.0,
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli, ["agents", "agents"])
+
+    assert result.exit_code == 0
+    assert "claude" in result.output
+    assert "2.1.0" in result.output
+    assert "logged in" in result.output.lower()
+
+
+def test_agents_agents_shows_warnings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """agents agents shows warnings for detected agents that aren't logged in."""
+    monkeypatch.chdir(tmp_path)
+    from unittest.mock import patch
+
+    from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult
+
+    with patch("bernstein.core.agent_discovery.discover_agents") as mock_discover:
+        mock_discover.return_value = DiscoveryResult(
+            agents=[
+                AgentCapabilities(
+                    name="aider",
+                    binary="/usr/bin/aider",
+                    version="0.40.0",
+                    logged_in=False,
+                    login_method="",
+                    available_models=["sonnet"],
+                    default_model="sonnet",
+                    supports_headless=True,
+                    supports_sandbox=False,
+                    supports_mcp=True,
+                    max_context_tokens=200_000,
+                    reasoning_strength="high",
+                    best_for=["code-editing"],
+                    cost_tier="moderate",
+                ),
+            ],
+            warnings=["aider found but not logged in — set OPENAI_API_KEY or ANTHROPIC_API_KEY"],
+            scan_time_ms=10.0,
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli, ["agents", "agents"])
+
+    assert result.exit_code == 0
+    assert "aider" in result.output
+    assert "not logged in" in result.output.lower()
+    assert "Warnings" in result.output

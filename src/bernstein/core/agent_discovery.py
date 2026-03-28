@@ -294,6 +294,52 @@ def _detect_qwen() -> tuple[AgentCapabilities | None, list[str]]:
     ), warnings
 
 
+def _detect_aider() -> tuple[AgentCapabilities | None, list[str]]:
+    """Detect Aider CLI."""
+    warnings: list[str] = []
+    binary = shutil.which("aider")
+    if binary is None:
+        return None, []
+
+    # Version
+    version = _extract_version(_run_probe(["aider", "--version"]))
+
+    # Login check: any supported API keys
+    logged_in = False
+    login_method = ""
+    key_vars = [
+        ("OPENAI_API_KEY", "OpenAI"),
+        ("ANTHROPIC_API_KEY", "Anthropic"),
+        ("GOOGLE_API_KEY", "Google"),
+        ("OPENROUTER_API_KEY", "OpenRouter"),
+    ]
+    for var, method in key_vars:
+        if os.environ.get(var):
+            logged_in = True
+            login_method = method
+            break
+
+    if binary and not logged_in:
+        warnings.append("aider found but no API key set — set OPENAI_API_KEY or ANTHROPIC_API_KEY")
+
+    return AgentCapabilities(
+        name="aider",
+        binary=binary,
+        version=version,
+        logged_in=logged_in,
+        login_method=login_method,
+        available_models=["opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1"],
+        default_model="sonnet",
+        supports_headless=True,
+        supports_sandbox=False,
+        supports_mcp=True,
+        max_context_tokens=200_000,
+        reasoning_strength="high",
+        best_for=["code-editing", "auto-commit", "fast-fixes"],
+        cost_tier="moderate",
+    ), warnings
+
+
 # ---------------------------------------------------------------------------
 # Main discovery entry point
 # ---------------------------------------------------------------------------
@@ -316,7 +362,7 @@ def discover_agents() -> DiscoveryResult:
     agents: list[AgentCapabilities] = []
     warnings: list[str] = []
 
-    for detector in (_detect_claude, _detect_codex, _detect_gemini, _detect_qwen):
+    for detector in (_detect_claude, _detect_codex, _detect_gemini, _detect_qwen, _detect_aider):
         try:
             agent, agent_warnings = detector()
             if agent is not None:

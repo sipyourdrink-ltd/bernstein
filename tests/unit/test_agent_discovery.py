@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from bernstein.core.agent_discovery import (
     AgentCapabilities,
     DiscoveryResult,
+    _detect_aider,
     _detect_claude,
     _detect_codex,
     _detect_gemini,
@@ -267,6 +268,61 @@ class TestDetectQwen:
         assert agent.name == "qwen"
         assert agent.logged_in is True
         assert agent.login_method == "OpenRouter"
+
+
+# ---------------------------------------------------------------------------
+# _detect_aider
+# ---------------------------------------------------------------------------
+
+
+class TestDetectAider:
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    def test_not_found(self, _which: Any) -> None:
+        agent, warnings = _detect_aider()
+        assert agent is None
+        assert warnings == []
+
+    @patch("bernstein.core.agent_discovery._run_probe")
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
+    def test_logged_in_via_openai(self, _which: Any, mock_probe: MagicMock) -> None:
+        version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="aider v0.40.0\n", stderr="")
+        mock_probe.return_value = version_result
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test123"}, clear=True):
+            agent, _warnings = _detect_aider()
+
+        assert agent is not None
+        assert agent.name == "aider"
+        assert agent.logged_in is True
+        assert agent.login_method == "OpenAI"
+        assert agent.available_models == ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4.1"]
+
+    @patch("bernstein.core.agent_discovery._run_probe")
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
+    def test_logged_in_via_anthropic(self, _which: Any, mock_probe: MagicMock) -> None:
+        version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="aider v0.40.0\n", stderr="")
+        mock_probe.return_value = version_result
+
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-test"}, clear=True):
+            agent, _warnings = _detect_aider()
+
+        assert agent is not None
+        assert agent.logged_in is True
+        assert agent.login_method == "Anthropic"
+
+    @patch("bernstein.core.agent_discovery._run_probe")
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
+    def test_not_logged_in(self, _which: Any, mock_probe: MagicMock) -> None:
+        version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="aider v0.40.0\n", stderr="")
+        mock_probe.return_value = version_result
+
+        with patch.dict("os.environ", {}, clear=True):
+            agent, warnings = _detect_aider()
+
+        assert agent is not None
+        assert agent.logged_in is False
+        assert len(warnings) == 1
+        assert "not logged in" in warnings[0]
 
 
 # ---------------------------------------------------------------------------

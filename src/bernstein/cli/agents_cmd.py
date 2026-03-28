@@ -474,3 +474,93 @@ def agents_discover(include_network: bool) -> None:
 
     console.print(f"\n[green]Done.[/green] Registry: [dim]{discovery.registry_path}[/dim]")
     console.print(f"[dim]Total agents tracked: {discovery.total_agents}[/dim]")
+
+
+@agents_group.command("agents")
+def agents_detected() -> None:
+    """Show auto-detected CLI agents installed on this system.
+
+    \b
+    Scans the system PATH for known CLI coding agents (aider, claude, codex,
+    gemini, qwen), checks login/authentication status, and displays their
+    capabilities including version, available models, and cost tier.
+
+    \b
+      bernstein agents agents              # show detected agents
+      bernstein agents agents --verbose   # show full details
+    """
+    from rich.table import Table
+
+    from bernstein.core.agent_discovery import discover_agents
+
+    result = discover_agents()
+
+    if not result.agents:
+        console.print("[yellow]No CLI agents detected on this system.[/yellow]")
+        console.print("[dim]Install one or more: claude, codex, gemini, qwen, aider[/dim]")
+        return
+
+    table = Table(
+        title="Auto-Detected Agents",
+        show_lines=False,
+        header_style="bold cyan",
+    )
+    table.add_column("AGENT", style="bold", min_width=12)
+    table.add_column("VERSION", min_width=10)
+    table.add_column("STATUS", min_width=12)
+    table.add_column("LOGIN METHOD", min_width=14)
+    table.add_column("DEFAULT MODEL", min_width=20)
+    table.add_column("COST", min_width=10)
+
+    for agent in result.agents:
+        status = "[green]✓ logged in[/green]" if agent.logged_in else "[yellow]✗ not logged in[/yellow]"
+        table.add_row(
+            agent.name,
+            agent.version,
+            status,
+            agent.login_method or "—",
+            agent.default_model,
+            agent.cost_tier,
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]{len(result.agents)} agent(s) detected · scan time: {result.scan_time_ms:.1f}ms[/dim]")
+
+    if result.warnings:
+        console.print("\n[bold yellow]Warnings:[/bold yellow]")
+        for warning in result.warnings:
+            console.print(f"  [yellow]•[/yellow] {warning}")
+    """Scan known sources for agent directories and update the registry.
+
+    \b
+    Scans:
+      ~/.bernstein/agents/     user-level definitions
+      .sdd/agents/local/       project-level definitions
+      GitHub (--net)           repos tagged bernstein-agents
+      npm (--net)              packages with bernstein-agent keyword
+    """
+    from bernstein.agents.discovery import AgentDiscovery
+
+    discovery = AgentDiscovery.load()
+
+    console.print("[bold]Discovering agent directories…[/bold]\n")
+    results = discovery.full_sync(include_network=include_network)
+
+    for source, count in results.items():
+        icon = "[green]✓[/green]" if count >= 0 else "[yellow]![/yellow]"
+        console.print(f"  {icon} [cyan]{source}[/cyan]  {count} agent(s)")
+
+    if include_network:
+        gh_entries = [d for d in discovery.directories if d.source_type == "github"]
+        npm_entries = [d for d in discovery.directories if d.source_type == "npm"]
+        if gh_entries:
+            console.print(f"\n  [magenta]GitHub[/magenta] ({len(gh_entries)} repos)")
+            for e in gh_entries[:5]:
+                console.print(f"    [dim]{e.name}[/dim]  {e.url}")
+        if npm_entries:
+            console.print(f"\n  [magenta]npm[/magenta] ({len(npm_entries)} packages)")
+            for e in npm_entries[:5]:
+                console.print(f"    [dim]{e.name}[/dim]  {e.url}")
+
+    console.print(f"\n[green]Done.[/green] Registry: [dim]{discovery.registry_path}[/dim]")
+    console.print(f"[dim]Total agents tracked: {discovery.total_agents}[/dim]")
