@@ -965,30 +965,30 @@ class Orchestrator:
                     error_type = "complete_failed"
             else:
                 try:
-                    _fail_task(
-                        self._client, base, task_id,
+                    self._retry_or_fail_task(
+                        task_id,
                         f"Agent {session.id} died; janitor failed: {failed_signals}",
                     )
                     logger.info(
-                        "Orphaned task %s failed (janitor failed: %s) after agent %s died",
+                        "Orphaned task %s retry/failed (janitor failed: %s) after agent %s died",
                         task_id, failed_signals, session.id,
                     )
                 except httpx.HTTPError as exc:
-                    logger.error("Failed to fail orphaned task %s: %s", task_id, exc)
+                    logger.error("Failed to retry/fail orphaned task %s: %s", task_id, exc)
                 error_type = "janitor_failed"
         else:
-            # No completion signals -- fail the task
+            # No completion signals -- retry or fail the task
             try:
-                _fail_task(
-                    self._client, base, task_id,
+                self._retry_or_fail_task(
+                    task_id,
                     f"Agent {session.id} died; no completion signals to verify",
                 )
                 logger.info(
-                    "Orphaned task %s failed (no signals) after agent %s died",
+                    "Orphaned task %s retry/failed (no signals) after agent %s died",
                     task_id, session.id,
                 )
             except httpx.HTTPError as exc:
-                logger.error("Failed to fail orphaned task %s: %s", task_id, exc)
+                logger.error("Failed to retry/fail orphaned task %s: %s", task_id, exc)
             error_type = "no_signals"
 
         self._emit_orphan_metrics(
@@ -1159,6 +1159,69 @@ class Orchestrator:
             if cost_usd > 0 or tokens > 0:
                 self._router.record_provider_cost(session.provider, tokens, cost_usd)
 
+    def _retry_or_fail_task(self, task_id: str, reason: str) -> None:
+        """Re-queue a task for retry, or fail it permanently if max retries reached.
+
+        Reads the current retry count from a ``[retry:N]`` marker in the task
+        description.  If the count is below ``max_task_retries`` a new open task
+        is created (clone of the original with the marker bumped) and the old
+        task is failed silently.  Once the limit is hit the task is failed with
+        a "Max retries exceeded" reason.
+
+        Args:
+            task_id: ID of the task to retry or fail.
+            reason: Human-readable reason for the failure / retry.
+        """
+        base = self._config.server_url
+        max_retries = self._config.max_task_retries
+
+        try:
+            resp = self._client.get(f"{base}/tasks/{task_id}")
+            resp.raise_for_status()
+            task = _task_from_dict(resp.json())
+        except httpx.HTTPError as exc:
+            logger.error("_retry_or_fail_task: could not fetch task %s: %s", task_id, exc)
+            return
+
+        # Extract current retry count from description marker
+        marker_re = re.compile(r"^\[retry:(\d+)\]\s*")
+        m = marker_re.match(task.description)
+        retry_count = int(m.group(1)) if m else 0
+        base_description = marker_re.sub("", task.description)
+
+        if retry_count < max_retries:
+            new_description = f"[retry:{retry_count + 1}] {base_description}"
+            task_body = {
+                "title": task.title,
+                "description": new_description,
+                "role": task.role,
+                "priority": task.priority,
+                "scope": task.scope.value,
+                "complexity": task.complexity.value,
+                "estimated_minutes": task.estimated_minutes,
+                "depends_on": task.depends_on,
+                "owned_files": task.owned_files,
+                "task_type": task.task_type.value,
+            }
+            try:
+                self._client.post(f"{base}/tasks", json=task_body).raise_for_status()
+                logger.info(
+                    "Retrying task %s (attempt %d/%d): %s",
+                    task_id, retry_count + 1, max_retries, reason,
+                )
+            except httpx.HTTPError as exc:
+                logger.error("Failed to re-create task %s for retry: %s", task_id, exc)
+                # Fall through to permanent fail
+                _fail_task(self._client, base, task_id, f"Max retries exceeded: {reason}")
+                return
+            # Fail the old task silently (it has been replaced)
+            try:
+                _fail_task(self._client, base, task_id, f"Retried: {reason}")
+            except httpx.HTTPError:
+                pass
+        else:
+            _fail_task(self._client, base, task_id, f"Max retries exceeded: {reason}")
+
     def _reap_stale(self, result: TickResult) -> None:
         """Kill agents that exceeded heartbeat or wall-clock timeout.
 
@@ -1203,17 +1266,15 @@ class Orchestrator:
                 collector.end_agent(session.id)
                 # Record provider health failure for reaped agent
                 self._record_provider_health(session, success=False)
-                # Fail their tasks
+                # Retry or fail their tasks
                 for task_id in session.task_ids:
                     try:
-                        _fail_task(
-                            self._client,
-                            self._config.server_url,
+                        self._retry_or_fail_task(
                             task_id,
                             f"Agent {session.id} reaped (heartbeat timeout)",
                         )
                     except httpx.HTTPError as exc:
-                        logger.error("Failed to fail task %s: %s", task_id, exc)
+                        logger.error("Failed to retry/fail task %s: %s", task_id, exc)
 
     def _sync_backlog_file(self, task: Task) -> None:
         """Move the matching .md file from backlog/open/ to backlog/closed/.

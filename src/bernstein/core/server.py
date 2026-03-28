@@ -90,6 +90,12 @@ class TaskFailRequest(BaseModel):
     reason: str = ""
 
 
+class TaskCancelRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/cancel."""
+
+    reason: str = ""
+
+
 class RoleCounts(BaseModel):
     """Per-role open task counts."""
 
@@ -448,6 +454,37 @@ class TaskStore:
                 raise KeyError(task_id)
             self._index_remove(task)
             task.status = TaskStatus.FAILED
+            task.result_summary = reason
+            self._index_add(task)
+            completed_at = time.time()
+            await self._append_jsonl(self._task_to_record(task))
+            await self._append_archive(task, completed_at)
+            return task
+
+    async def cancel(self, task_id: str, reason: str) -> Task:
+        """Cancel a task that has not yet finished.
+
+        Args:
+            task_id: Task identifier.
+            reason: Why it was cancelled.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+            ValueError: If the task is in a terminal state (done, failed, cancelled).
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            if task.status not in (TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
+                raise ValueError(
+                    f"Task '{task_id}' cannot be cancelled from status '{task.status.value}'"
+                )
+            self._index_remove(task)
+            task.status = TaskStatus.CANCELLED
             task.result_summary = reason
             self._index_add(task)
             completed_at = time.time()
@@ -816,6 +853,17 @@ def create_app(
             task = await store.fail(task_id, body.reason)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        return _task_to_response(task)
+
+    @application.post("/tasks/{task_id}/cancel", response_model=TaskResponse)
+    async def cancel_task(task_id: str, body: TaskCancelRequest) -> TaskResponse:
+        """Cancel a task that has not yet finished."""
+        try:
+            task = await store.cancel(task_id, body.reason)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         return _task_to_response(task)
 
     @application.get("/tasks", response_model=list[TaskResponse])

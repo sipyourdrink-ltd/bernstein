@@ -74,6 +74,7 @@ class TaskStatus(Enum):
     DONE = "done"
     FAILED = "failed"
     BLOCKED = "blocked"
+    CANCELLED = "cancelled"
 
 
 class TaskType(Enum):
@@ -236,6 +237,7 @@ class OrchestratorConfig:
         server_url: Base URL of the Bernstein task server.
         evolution_enabled: Whether the self-evolution feedback loop is active.
         evolution_tick_interval: Run evolution analysis every N ticks (~1.5 min at 3s poll).
+        max_task_retries: Max times a task is re-queued after agent crash (0 = no retry).
     """
     max_agents: int = 6
     poll_interval_s: int = 3
@@ -245,3 +247,4 @@ class OrchestratorConfig:
     server_url: str = "http://localhost:8052"
     evolution_enabled: bool = True
     evolution_tick_interval: int = 30
+    max_task_retries: int = 2
