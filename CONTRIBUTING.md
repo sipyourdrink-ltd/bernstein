@@ -81,6 +81,144 @@ class CLIAdapter(ABC):
 
 4. Open a PR — include a short note on how you tested it (e.g., ran a real task with `bernstein run --adapter mycli`).
 
+## Writing a Custom Role
+
+Role templates let you define new specialist agent types (e.g., `data-engineer`, `ml-ops`, `dba`). Each role lives in its own directory under `templates/roles/` and consists of three files.
+
+### Directory structure
+
+```
+templates/roles/<role-name>/
+├── system_prompt.md   # Agent persona and standing instructions
+├── task_prompt.md     # Per-task instructions template
+└── config.yaml        # Model and effort defaults
+```
+
+### system_prompt.md
+
+This file defines the agent's identity, specialization, and work style. It is rendered once per agent session by the spawner and supports the following template variables:
+
+| Variable | Value |
+|---|---|
+| `{{GOAL}}` | Title of the first task in the batch |
+| `{{TASK_DESCRIPTION}}` | Formatted block listing all tasks in the batch |
+| `{{PROJECT_STATE}}` | Contents of `.sdd/project.md` (empty string if absent) |
+| `{{AVAILABLE_ROLES}}` | Comma-separated list of all role directories |
+| `{{INSTRUCTIONS}}` | Completion curl commands for all tasks |
+| `{{SPECIALISTS}}` | Agency specialist agent list (non-empty for `manager` role only) |
+
+Conditional blocks are supported:
+
+```
+{{#IF PROJECT_STATE}}
+## Project context
+{{PROJECT_STATE}}
+{{/IF}}
+
+{{#IF_NOT PROJECT_STATE}}
+No project context available.
+{{/IF_NOT}}
+```
+
+Unknown placeholders are left as-is; nested conditionals are not supported.
+
+### task_prompt.md
+
+This file contains per-task instructions. It uses a separate set of variables that are substituted per task:
+
+| Variable | Value |
+|---|---|
+| `{{TASK_TITLE}}` | Task title |
+| `{{TASK_DESCRIPTION}}` | Task description text |
+| `{{TASK_ID}}` | Task ID (used in the completion curl command) |
+| `{{FILES}}` | Newline-separated list of owned files (empty if none) |
+| `{{CONTEXT}}` | Additional task context (empty if none) |
+
+Use `{{#IF FILES}}` and `{{#IF CONTEXT}}` to make sections optional:
+
+```markdown
+{{#IF FILES}}
+## Files to work with
+{{FILES}}
+{{/IF}}
+
+{{#IF CONTEXT}}
+## Context
+{{CONTEXT}}
+{{/IF}}
+```
+
+### config.yaml
+
+Controls the default model and effort for this role:
+
+```yaml
+default_model: sonnet      # "opus" or "sonnet"
+default_effort: high       # "max", "high", "normal", or "low"
+max_tasks_per_session: 3   # integer; how many tasks this agent handles per spawn
+```
+
+The spawner reads `config.yaml` first; if present, it overrides the heuristic routing logic. `max_tasks_per_session` is read by the orchestrator to cap batch size per session.
+
+### Minimal working example
+
+Copy an existing role and customize it:
+
+```bash
+cp -r templates/roles/backend templates/roles/data-engineer
+```
+
+Then edit the three files:
+
+**system_prompt.md** — change the persona:
+```markdown
+# You are a Data Engineer
+
+You design and implement data pipelines, ETL jobs, and warehouse schemas.
+
+## Your specialization
+- Python (dbt, Airflow, Spark, Pandas)
+- SQL (BigQuery, Snowflake, Postgres)
+- Data modeling and schema design
+
+## Current task
+{{TASK_DESCRIPTION}}
+```
+
+**task_prompt.md** — keep the structure, adjust instructions:
+```markdown
+# Task: {{TASK_TITLE}}
+
+## Description
+{{TASK_DESCRIPTION}}
+
+{{#IF FILES}}
+## Files to work with
+{{FILES}}
+{{/IF}}
+
+## Instructions
+1. Read all listed files before writing any code
+2. Prefer incremental models and idempotent transforms
+3. Run pipeline tests before marking complete
+
+## Done signal
+```bash
+curl -s -X POST http://127.0.0.1:8052/tasks/{{TASK_ID}}/complete \
+  -H "Content-Type: application/json" \
+  -d '{"result_summary": "{{TASK_TITLE}}: <what was implemented>"}'
+```
+```
+
+**config.yaml**:
+```yaml
+default_model: sonnet
+default_effort: high
+max_tasks_per_session: 2
+```
+
+The new role is available immediately — no code changes required. Assign tasks to it with `"role": "data-engineer"` and Bernstein will use your template.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
