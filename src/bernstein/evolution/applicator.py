@@ -1,4 +1,5 @@
 """Change applicator — execute upgrades via file modification."""
+
 from __future__ import annotations
 
 import json
@@ -100,14 +101,19 @@ class FileUpgradeExecutor:
         """Append an upgrade record to history.jsonl."""
         history_file = self.upgrades_dir / "history.jsonl"
         with history_file.open("a") as f:
-            f.write(json.dumps({
-                "proposal_id": proposal.id,
-                "title": proposal.title,
-                "category": proposal.category.value,
-                "change": proposal.proposed_change,
-                "applied_at": time.time(),
-                "status": status,
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "proposal_id": proposal.id,
+                        "title": proposal.title,
+                        "category": proposal.category.value,
+                        "change": proposal.proposed_change,
+                        "applied_at": time.time(),
+                        "status": status,
+                    }
+                )
+                + "\n"
+            )
 
     def _backup_file(self, filename: str) -> None:
         """Create a backup copy of a config file before modifying it."""
@@ -130,13 +136,15 @@ class FileUpgradeExecutor:
 
         # Append a proposed-upgrade entry so the orchestrator can act on it
         pending: list[dict[str, Any]] = data.get("pending_upgrades", [])
-        pending.append({
-            "id": proposal.id,
-            "title": proposal.title,
-            "change": proposal.proposed_change,
-            "confidence": proposal.confidence,
-            "applied_at": time.time(),
-        })
+        pending.append(
+            {
+                "id": proposal.id,
+                "title": proposal.title,
+                "change": proposal.proposed_change,
+                "confidence": proposal.confidence,
+                "applied_at": time.time(),
+            }
+        )
         data["pending_upgrades"] = pending
 
         self._atomic_write(config_file, data)
@@ -151,13 +159,15 @@ class FileUpgradeExecutor:
         data = self._read_yaml(config_file)
 
         pending: list[dict[str, Any]] = data.get("pending_upgrades", [])
-        pending.append({
-            "id": proposal.id,
-            "title": proposal.title,
-            "change": proposal.proposed_change,
-            "confidence": proposal.confidence,
-            "applied_at": time.time(),
-        })
+        pending.append(
+            {
+                "id": proposal.id,
+                "title": proposal.title,
+                "change": proposal.proposed_change,
+                "confidence": proposal.confidence,
+                "applied_at": time.time(),
+            }
+        )
         data["pending_upgrades"] = pending
 
         self._atomic_write(config_file, data)
@@ -176,13 +186,15 @@ class FileUpgradeExecutor:
         data = self._read_yaml(config_file)
 
         pending: list[dict[str, Any]] = data.get("pending_upgrades", [])
-        pending.append({
-            "id": proposal.id,
-            "title": proposal.title,
-            "change": proposal.proposed_change,
-            "confidence": proposal.confidence,
-            "applied_at": time.time(),
-        })
+        pending.append(
+            {
+                "id": proposal.id,
+                "title": proposal.title,
+                "change": proposal.proposed_change,
+                "confidence": proposal.confidence,
+                "applied_at": time.time(),
+            }
+        )
         data["pending_upgrades"] = pending
 
         self._atomic_write(config_file, data)
@@ -196,13 +208,18 @@ class FileUpgradeExecutor:
 
         proposals_file = templates_dir / "PROPOSED_UPGRADES.jsonl"
         with proposals_file.open("a") as f:
-            f.write(json.dumps({
-                "id": proposal.id,
-                "title": proposal.title,
-                "change": proposal.proposed_change,
-                "confidence": proposal.confidence,
-                "applied_at": time.time(),
-            }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "id": proposal.id,
+                        "title": proposal.title,
+                        "change": proposal.proposed_change,
+                        "confidence": proposal.confidence,
+                        "applied_at": time.time(),
+                    }
+                )
+                + "\n"
+            )
 
         self._record_history(proposal, "applied")
         return True

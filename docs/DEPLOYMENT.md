@@ -201,6 +201,80 @@ kubectl exec -n bernstein deploy/bernstein-server -- \
 
 ---
 
+## TLS termination via reverse proxy
+
+Bernstein's task server speaks plain HTTP. For remote/cluster access over the internet,
+terminate TLS at a reverse proxy. Two options are shown below.
+
+### Nginx
+
+```nginx
+# /etc/nginx/sites-available/bernstein
+server {
+    listen 80;
+    server_name bernstein.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name bernstein.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/bernstein.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/bernstein.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    location / {
+        proxy_pass         http://127.0.0.1:8052;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+}
+```
+
+Enable and restart:
+```bash
+ln -s /etc/nginx/sites-available/bernstein /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
+certbot --nginx -d bernstein.example.com  # get cert via Let's Encrypt
+```
+
+### Caddy (automatic HTTPS)
+
+```caddyfile
+# /etc/caddy/Caddyfile
+bernstein.example.com {
+    reverse_proxy 127.0.0.1:8052
+}
+```
+
+Caddy automatically obtains and renews a Let's Encrypt certificate. Start:
+```bash
+systemctl start caddy
+```
+
+### Worker nodes connecting over TLS
+
+Once TLS is in place, workers use `https://` in `BERNSTEIN_SERVER_URL`:
+
+```bash
+# Central server (bind on all interfaces, auth required)
+BERNSTEIN_BIND_HOST=0.0.0.0 BERNSTEIN_AUTH_TOKEN=<secret> bernstein run
+
+# Worker on another machine
+BERNSTEIN_SERVER_URL=https://bernstein.example.com \
+  BERNSTEIN_AUTH_TOKEN=<secret> \
+  bernstein run
+```
+
+The bearer token in `BERNSTEIN_AUTH_TOKEN` is validated on every request; always
+pair it with TLS so the token is not transmitted in the clear.
+
+---
+
 ## CI/CD integration
 
 To build and push the image in CI:

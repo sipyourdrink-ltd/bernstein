@@ -5,6 +5,7 @@ All user-facing errors follow the what/why/fix pattern:
     Reason: <why it happened>
     Fix: <how to resolve it>
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -61,10 +62,7 @@ def no_seed_or_goal() -> BernsteinError:
     return BernsteinError(
         what="No goal or seed file found",
         why="Bernstein needs a goal to work from",
-        fix=(
-            "Run 'bernstein -g \"Your goal\"' for a quick start, "
-            "or create bernstein.yaml"
-        ),
+        fix=("Run 'bernstein -g \"Your goal\"' for a quick start, or create bernstein.yaml"),
     )
 
 

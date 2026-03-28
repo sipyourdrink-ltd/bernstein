@@ -9,6 +9,7 @@ Validation strategy by risk level:
   L2 (Logic)     — git worktree + full test suite + golden dataset
   L3 (Structural)— never sandboxed, human-only
 """
+
 from __future__ import annotations
 
 import logging
@@ -255,14 +256,8 @@ class SandboxValidator:
                 self._apply_diff(sandbox_dir, proposal.diff)
 
             # Step 3 — run tests
-            test_cmd = (
-                self.test_command
-                if full_tests
-                else "uv run pytest tests/unit/ -x -q --tb=no"
-            )
-            passed_count, failed_count, total, output = self._run_tests(
-                sandbox_dir, cmd=test_cmd
-            )
+            test_cmd = self.test_command if full_tests else "uv run pytest tests/unit/ -x -q --tb=no"
+            passed_count, failed_count, total, output = self._run_tests(sandbox_dir, cmd=test_cmd)
 
             # Write log
             Path(log_path).write_text(output, encoding="utf-8")

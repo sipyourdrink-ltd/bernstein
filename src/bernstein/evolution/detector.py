@@ -1,4 +1,5 @@
 """Opportunity detection from aggregated metrics."""
+
 from __future__ import annotations
 
 import contextlib
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 class UpgradeCategory(Enum):
     """Category of upgrade."""
+
     POLICY_UPDATE = "policy_update"  # Low risk policy tweaks
     ROUTING_RULES = "routing_rules"  # Model routing adjustments
     MODEL_ROUTING = "model_routing"  # Model selection changes
@@ -30,6 +32,7 @@ class UpgradeCategory(Enum):
 @dataclass
 class ImprovementOpportunity:
     """Identified improvement opportunity."""
+
     category: UpgradeCategory
     title: str
     description: str
@@ -106,13 +109,15 @@ class FailureAnalyzer:
                     continue
                 try:
                     data = json.loads(line)
-                    self._failures.append(FailureRecord(
-                        timestamp=data["timestamp"],
-                        task_id=data["task_id"],
-                        role=data["role"],
-                        model=data.get("model"),
-                        error_type=data["error_type"],
-                    ))
+                    self._failures.append(
+                        FailureRecord(
+                            timestamp=data["timestamp"],
+                            task_id=data["task_id"],
+                            role=data["role"],
+                            model=data.get("model"),
+                            error_type=data["error_type"],
+                        )
+                    )
                 except (json.JSONDecodeError, KeyError):
                     continue
 
@@ -162,15 +167,17 @@ class FailureAnalyzer:
                 continue
             models = list({r.model for r in records if r.model is not None})
             task_ids = [r.task_id for r in records[:5]]
-            patterns.append(FailurePattern(
-                task_type=role,
-                error_pattern=error_type,
-                occurrence_count=len(records),
-                affected_models=models,
-                first_seen=records[0].timestamp,
-                last_seen=records[-1].timestamp,
-                sample_task_ids=task_ids,
-            ))
+            patterns.append(
+                FailurePattern(
+                    task_type=role,
+                    error_pattern=error_type,
+                    occurrence_count=len(records),
+                    affected_models=models,
+                    first_seen=records[0].timestamp,
+                    last_seen=records[-1].timestamp,
+                    sample_task_ids=task_ids,
+                )
+            )
         return patterns
 
     def get_failure_rate_by_role(self, hours: int = 24) -> dict[str, float]:
@@ -246,30 +253,34 @@ class OpportunityDetector:
         if paid_providers:
             total_paid_cost = sum(m.cost_usd for m in paid_providers)
             if total_paid_cost > 1.0:  # More than $1 spent
-                opportunities.append(ImprovementOpportunity(
-                    category=UpgradeCategory.ROUTING_RULES,
-                    title="Optimize free tier utilization",
-                    description="Consider routing more tasks to free tier providers",
-                    expected_improvement=f"Potential savings of ${total_paid_cost * 0.3:.2f}/day",
-                    confidence=0.7,
-                    risk_level="low",
-                    estimated_cost_impact_usd=-total_paid_cost * 0.3,
-                ))
+                opportunities.append(
+                    ImprovementOpportunity(
+                        category=UpgradeCategory.ROUTING_RULES,
+                        title="Optimize free tier utilization",
+                        description="Consider routing more tasks to free tier providers",
+                        expected_improvement=f"Potential savings of ${total_paid_cost * 0.3:.2f}/day",
+                        confidence=0.7,
+                        risk_level="low",
+                        estimated_cost_impact_usd=-total_paid_cost * 0.3,
+                    )
+                )
 
         # Check for success rate improvements
         task_metrics = self.collector.get_recent_task_metrics(hours=24)
         if task_metrics:
             pass_rate = sum(1 for m in task_metrics if m.janitor_passed) / len(task_metrics)
             if pass_rate < 0.8:
-                opportunities.append(ImprovementOpportunity(
-                    category=UpgradeCategory.MODEL_ROUTING,
-                    title="Improve task success rate",
-                    description=f"Current success rate is {pass_rate:.1%}, target is 80%",
-                    expected_improvement="Higher quality output, fewer fix tasks",
-                    confidence=0.8,
-                    risk_level="medium",
-                    affected_components=["model_routing", "task_verification"],
-                ))
+                opportunities.append(
+                    ImprovementOpportunity(
+                        category=UpgradeCategory.MODEL_ROUTING,
+                        title="Improve task success rate",
+                        description=f"Current success rate is {pass_rate:.1%}, target is 80%",
+                        expected_improvement="Higher quality output, fewer fix tasks",
+                        confidence=0.8,
+                        risk_level="medium",
+                        affected_components=["model_routing", "task_verification"],
+                    )
+                )
 
         # Check for failure-driven opportunities
         opportunities.extend(self.identify_failure_opportunities())
@@ -319,18 +330,20 @@ class OpportunityDetector:
             if len(pattern.affected_models) == 1:
                 # Failures concentrated on a single model — route away from it
                 model = pattern.affected_models[0]
-                opportunities.append(ImprovementOpportunity(
-                    category=UpgradeCategory.MODEL_ROUTING,
-                    title=f"Route {pattern.task_type} tasks away from {model}",
-                    description=(
-                        f"'{pattern.error_pattern}' occurred {pattern.occurrence_count} "
-                        f"times on {model} for role {pattern.task_type}"
-                    ),
-                    expected_improvement=f"Reduce {pattern.task_type} failures by routing to alternative models",
-                    confidence=min(0.9, 0.5 + pattern.occurrence_count * 0.05),
-                    risk_level="medium",
-                    affected_components=["model_routing"],
-                ))
+                opportunities.append(
+                    ImprovementOpportunity(
+                        category=UpgradeCategory.MODEL_ROUTING,
+                        title=f"Route {pattern.task_type} tasks away from {model}",
+                        description=(
+                            f"'{pattern.error_pattern}' occurred {pattern.occurrence_count} "
+                            f"times on {model} for role {pattern.task_type}"
+                        ),
+                        expected_improvement=f"Reduce {pattern.task_type} failures by routing to alternative models",
+                        confidence=min(0.9, 0.5 + pattern.occurrence_count * 0.05),
+                        risk_level="medium",
+                        affected_components=["model_routing"],
+                    )
+                )
             elif pattern.task_type and len(pattern.affected_models) != 1:
                 # Failures spread across models but tied to a role — fix the template
                 if len(pattern.affected_models) <= 1:
@@ -338,33 +351,37 @@ class OpportunityDetector:
                     category = UpgradeCategory.POLICY_UPDATE
                 else:
                     category = UpgradeCategory.ROLE_TEMPLATES
-                opportunities.append(ImprovementOpportunity(
-                    category=category,
-                    title=f"Update template for {pattern.task_type} role",
-                    description=(
-                        f"'{pattern.error_pattern}' occurred {pattern.occurrence_count} "
-                        f"times across models {', '.join(pattern.affected_models)} "
-                        f"for role {pattern.task_type}"
-                    ),
-                    expected_improvement=f"Reduce recurring '{pattern.error_pattern}' failures",
-                    confidence=min(0.9, 0.5 + pattern.occurrence_count * 0.05),
-                    risk_level="medium",
-                    affected_components=["role_templates", pattern.task_type],
-                ))
+                opportunities.append(
+                    ImprovementOpportunity(
+                        category=category,
+                        title=f"Update template for {pattern.task_type} role",
+                        description=(
+                            f"'{pattern.error_pattern}' occurred {pattern.occurrence_count} "
+                            f"times across models {', '.join(pattern.affected_models)} "
+                            f"for role {pattern.task_type}"
+                        ),
+                        expected_improvement=f"Reduce recurring '{pattern.error_pattern}' failures",
+                        confidence=min(0.9, 0.5 + pattern.occurrence_count * 0.05),
+                        risk_level="medium",
+                        affected_components=["role_templates", pattern.task_type],
+                    )
+                )
             else:
                 # Broad pattern — suggest policy review
-                opportunities.append(ImprovementOpportunity(
-                    category=UpgradeCategory.POLICY_UPDATE,
-                    title=f"Review policy for '{pattern.error_pattern}' failures",
-                    description=(
-                        f"'{pattern.error_pattern}' occurred {pattern.occurrence_count} "
-                        f"times across multiple roles and models"
-                    ),
-                    expected_improvement="Reduce systemic failure rate",
-                    confidence=min(0.85, 0.4 + pattern.occurrence_count * 0.05),
-                    risk_level="high",
-                    affected_components=["policy"],
-                ))
+                opportunities.append(
+                    ImprovementOpportunity(
+                        category=UpgradeCategory.POLICY_UPDATE,
+                        title=f"Review policy for '{pattern.error_pattern}' failures",
+                        description=(
+                            f"'{pattern.error_pattern}' occurred {pattern.occurrence_count} "
+                            f"times across multiple roles and models"
+                        ),
+                        expected_improvement="Reduce systemic failure rate",
+                        confidence=min(0.85, 0.4 + pattern.occurrence_count * 0.05),
+                        risk_level="high",
+                        affected_components=["policy"],
+                    )
+                )
 
         return opportunities
 
@@ -381,10 +398,26 @@ _CACHE_KEYWORDS: tuple[str, ...] = ("lru_cache", "functools.cache", "cache")
 _RATE_KEYWORDS: tuple[str, ...] = ("ratelimit", "rate_limit", "throttle", "limits")
 
 # Stop words excluded from keyword-overlap deduplication.
-_STOP_WORDS: frozenset[str] = frozenset({
-    "add", "the", "a", "an", "for", "to", "in", "of", "and", "or", "with",
-    "use", "using", "improve", "implement", "create",
-})
+_STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "add",
+        "the",
+        "a",
+        "an",
+        "for",
+        "to",
+        "in",
+        "of",
+        "and",
+        "or",
+        "with",
+        "use",
+        "using",
+        "improve",
+        "implement",
+        "create",
+    }
+)
 
 
 @dataclass
@@ -505,14 +538,13 @@ class FeatureDiscovery:
                 if not text:
                     continue
                 title = text[0].upper() + text[1:]
-                tickets.append(FeatureTicket(
-                    title=title,
-                    description=(
-                        f"Found in {py_file.relative_to(self._repo_root)}: "
-                        f"# {m.group(0).strip()}"
-                    ),
-                    source="todo_fixme",
-                ))
+                tickets.append(
+                    FeatureTicket(
+                        title=title,
+                        description=(f"Found in {py_file.relative_to(self._repo_root)}: # {m.group(0).strip()}"),
+                        source="todo_fixme",
+                    )
+                )
         return tickets
 
     def _detect_missing_patterns(self, src_dir: Path) -> list[FeatureTicket]:
@@ -525,34 +557,36 @@ class FeatureDiscovery:
         tickets: list[FeatureTicket] = []
 
         if not any(kw in all_content for kw in _RETRY_KEYWORDS):
-            tickets.append(FeatureTicket(
-                title="Add retry logic for transient failures",
-                description=(
-                    "No retry logic detected in src/. "
-                    "Add tenacity (or equivalent) to harden API calls."
-                ),
-                source="missing_pattern",
-            ))
+            tickets.append(
+                FeatureTicket(
+                    title="Add retry logic for transient failures",
+                    description=("No retry logic detected in src/. Add tenacity (or equivalent) to harden API calls."),
+                    source="missing_pattern",
+                )
+            )
 
         if not any(kw in all_content for kw in _CACHE_KEYWORDS):
-            tickets.append(FeatureTicket(
-                title="Add caching for expensive operations",
-                description=(
-                    "No caching pattern detected in src/. "
-                    "Use functools.lru_cache or similar to avoid redundant work."
-                ),
-                source="missing_pattern",
-            ))
+            tickets.append(
+                FeatureTicket(
+                    title="Add caching for expensive operations",
+                    description=(
+                        "No caching pattern detected in src/. "
+                        "Use functools.lru_cache or similar to avoid redundant work."
+                    ),
+                    source="missing_pattern",
+                )
+            )
 
         if not any(kw in all_content for kw in _RATE_KEYWORDS):
-            tickets.append(FeatureTicket(
-                title="Add rate limiting for external API calls",
-                description=(
-                    "No rate-limiting pattern detected in src/. "
-                    "Add rate limiting to prevent quota exhaustion."
-                ),
-                source="missing_pattern",
-            ))
+            tickets.append(
+                FeatureTicket(
+                    title="Add rate limiting for external API calls",
+                    description=(
+                        "No rate-limiting pattern detected in src/. Add rate limiting to prevent quota exhaustion."
+                    ),
+                    source="missing_pattern",
+                )
+            )
 
         return tickets
 

@@ -1,4 +1,5 @@
 """Core data models for tasks, agents, and cells."""
+
 from __future__ import annotations
 
 import logging
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class ProviderType(Enum):
     """Supported API provider types."""
+
     CLAUDE = "claude"
     GEMINI = "gemini"
     CODEX = "codex"
@@ -21,6 +23,7 @@ class ProviderType(Enum):
 
 class ApiTier(Enum):
     """API subscription tiers."""
+
     FREE = "free"
     PLUS = "plus"
     PRO = "pro"
@@ -31,6 +34,7 @@ class ApiTier(Enum):
 @dataclass(frozen=True)
 class RateLimit:
     """Rate limit configuration for an API tier."""
+
     requests_per_minute: int | None = None
     requests_per_day: int | None = None
     tokens_per_minute: int | None = None
@@ -40,6 +44,7 @@ class RateLimit:
 @dataclass(frozen=True)
 class CostStructure:
     """Cost structure for an API tier."""
+
     input_cost_per_1k_tokens: float = 0.0
     output_cost_per_1k_tokens: float = 0.0
     monthly_subscription: float = 0.0
@@ -49,6 +54,7 @@ class CostStructure:
 @dataclass(frozen=True)
 class ApiTierInfo:
     """Information about an API tier and remaining quota."""
+
     provider: ProviderType
     tier: ApiTier
     rate_limit: RateLimit | None = None
@@ -60,15 +66,15 @@ class ApiTierInfo:
 
 
 class Scope(Enum):
-    SMALL = "small"      # <30 min, single file
-    MEDIUM = "medium"    # 30-120 min, few files
-    LARGE = "large"      # 2-8 hours, subsystem
+    SMALL = "small"  # <30 min, single file
+    MEDIUM = "medium"  # 30-120 min, few files
+    LARGE = "large"  # 2-8 hours, subsystem
 
 
 class Complexity(Enum):
-    LOW = "low"          # Docs, formatting, simple fixes
-    MEDIUM = "medium"    # Feature implementation, tests
-    HIGH = "high"        # Architecture, complex reasoning, security
+    LOW = "low"  # Docs, formatting, simple fixes
+    MEDIUM = "medium"  # Feature implementation, tests
+    HIGH = "high"  # Architecture, complex reasoning, security
 
 
 class TaskStatus(Enum):
@@ -83,10 +89,11 @@ class TaskStatus(Enum):
 
 class TaskType(Enum):
     """Type of task for categorization and prioritization."""
-    STANDARD = "standard"              # Regular implementation task
+
+    STANDARD = "standard"  # Regular implementation task
     UPGRADE_PROPOSAL = "upgrade_proposal"  # Self-evolution upgrade suggestion
-    FIX = "fix"                        # Bug fix or janitor-created fix
-    RESEARCH = "research"              # Research/exploration task
+    FIX = "fix"  # Bug fix or janitor-created fix
+    RESEARCH = "research"  # Research/exploration task
 
 
 @dataclass(frozen=True)
@@ -99,6 +106,7 @@ class RiskAssessment:
         affected_components: List of components that may be affected.
         mitigation: Suggested mitigation strategies.
     """
+
     level: Literal["low", "medium", "high", "critical"] = "medium"
     breaking_changes: bool = False
     affected_components: list[str] = field(default_factory=list)
@@ -115,6 +123,7 @@ class RollbackPlan:
         data_migration: Any data migration rollback steps.
         estimated_rollback_minutes: Time estimate for rollback.
     """
+
     steps: list[str] = field(default_factory=list)
     revert_commit: str | None = None
     data_migration: str = ""
@@ -134,6 +143,7 @@ class UpgradeProposalDetails:
         cost_estimate_usd: Estimated cost impact in USD.
         performance_impact: Expected performance impact description.
     """
+
     current_state: str = ""
     proposed_change: str = ""
     benefits: list[str] = field(default_factory=list)
@@ -146,6 +156,7 @@ class UpgradeProposalDetails:
 @dataclass(frozen=True)
 class CompletionSignal:
     """Janitor signal for automatic task verification."""
+
     type: Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"]
     value: str  # path, glob pattern, test command, search string, or review instruction
 
@@ -153,11 +164,12 @@ class CompletionSignal:
 @dataclass
 class Task:
     """A unit of work for an agent."""
+
     id: str
     title: str
     description: str
-    role: str                              # Which specialist role
-    priority: int = 2                      # 1=critical, 2=normal, 3=nice-to-have
+    role: str  # Which specialist role
+    priority: int = 2  # 1=critical, 2=normal, 3=nice-to-have
     scope: Scope = Scope.MEDIUM
     complexity: Complexity = Complexity.MEDIUM
     estimated_minutes: int = 30
@@ -169,10 +181,10 @@ class Task:
     owned_files: list[str] = field(default_factory=list)
     assigned_agent: str | None = None
     result_summary: str | None = None
-    cell_id: str | None = None             # Which cell this task belongs to
+    cell_id: str | None = None  # Which cell this task belongs to
     # Manager-specified routing hints (override auto-routing when set)
-    model: str | None = None               # "opus", "sonnet", "haiku"
-    effort: str | None = None              # "max", "high", "medium", "low"
+    model: str | None = None  # "opus", "sonnet", "haiku"
+    effort: str | None = None  # "max", "high", "medium", "low"
     created_at: float = field(default_factory=time.time)
     progress_log: list[dict] = field(default_factory=list)  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
@@ -245,6 +257,7 @@ class Task:
 @dataclass(frozen=True)
 class JudgeVerdict:
     """Result of an LLM judge evaluation of task completion."""
+
     verdict: Literal["accept", "retry"]
     confidence: float  # 0.0 to 1.0
     feedback: str
@@ -254,6 +267,7 @@ class JudgeVerdict:
 @dataclass
 class JanitorResult:
     """Result of a janitor run for a single task."""
+
     task_id: str
     passed: bool
     signal_results: list[tuple[str, bool, str]]  # (signal_desc, passed, detail)
@@ -264,14 +278,16 @@ class JanitorResult:
 @dataclass(frozen=True)
 class ModelConfig:
     """Which model and effort to use for a task."""
-    model: str           # e.g. "opus", "sonnet", "gpt-4.1"
-    effort: str          # e.g. "max", "high", "normal"
+
+    model: str  # e.g. "opus", "sonnet", "gpt-4.1"
+    effort: str  # e.g. "max", "high", "normal"
     max_tokens: int = 200_000
 
 
 @dataclass
 class AgentSession:
     """A running agent instance."""
+
     id: str
     role: str
     pid: int | None = None
@@ -280,15 +296,16 @@ class AgentSession:
     heartbeat_ts: float = 0.0
     spawn_ts: float = field(default_factory=time.time)
     status: Literal["starting", "working", "idle", "dead"] = "starting"
-    cell_id: str | None = None             # Which cell this agent belongs to
-    provider: str | None = None            # Provider selected by TierAwareRouter
-    agent_source: str = "built-in"         # "catalog", "agency", or "built-in"
-    timeout_s: int | None = None           # Per-agent wall-clock timeout; None = use OrchestratorConfig default
+    cell_id: str | None = None  # Which cell this agent belongs to
+    provider: str | None = None  # Provider selected by TierAwareRouter
+    agent_source: str = "built-in"  # "catalog", "agency", or "built-in"
+    timeout_s: int | None = None  # Per-agent wall-clock timeout; None = use OrchestratorConfig default
 
 
 @dataclass
 class Cell:
     """A self-contained team unit: 1 manager + N workers."""
+
     id: str
     name: str
     manager: AgentSession | None = None
@@ -311,6 +328,7 @@ class OrchestratorConfig:
         evolution_tick_interval: Run evolution analysis every N ticks (~1.5 min at 3s poll).
         max_task_retries: Max times a task is re-queued after agent crash (0 = no retry).
     """
+
     max_agents: int = 6
     poll_interval_s: int = 3
     heartbeat_timeout_s: int = 900  # effectively disabled — agents can't heartbeat
@@ -333,6 +351,7 @@ class OrchestratorConfig:
 
 class NodeStatus(Enum):
     """Status of a cluster node."""
+
     ONLINE = "online"
     DEGRADED = "degraded"  # Responding but over capacity / errors
     OFFLINE = "offline"
@@ -340,14 +359,16 @@ class NodeStatus(Enum):
 
 class ClusterTopology(Enum):
     """Cluster topology mode."""
-    STAR = "star"          # One central server, N worker nodes (default)
-    MESH = "mesh"          # Any node can serve tasks, gossip sync
+
+    STAR = "star"  # One central server, N worker nodes (default)
+    MESH = "mesh"  # Any node can serve tasks, gossip sync
     HIERARCHICAL = "hierarchical"  # VP -> cell-leaders -> workers
 
 
 @dataclass
 class NodeCapacity:
     """Advertised capacity of a cluster node."""
+
     max_agents: int = 6
     available_slots: int = 6
     active_agents: int = 0
@@ -358,6 +379,7 @@ class NodeCapacity:
 @dataclass
 class NodeInfo:
     """A registered node in the Bernstein cluster."""
+
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     name: str = ""
     url: str = ""  # Base URL of this node's orchestrator (for callbacks)
@@ -386,6 +408,7 @@ class ClusterConfig:
         server_url: URL of the central task server (for worker nodes).
         bind_host: Host to bind the server to (0.0.0.0 for remote access).
     """
+
     enabled: bool = False
     topology: ClusterTopology = ClusterTopology.STAR
     auth_token: str | None = None

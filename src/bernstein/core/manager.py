@@ -4,6 +4,7 @@ The Manager is the only LLM-powered component in the orchestrator.
 It takes a goal, gathers project context, calls Claude to decompose
 the goal into tasks, and posts them to the task server.
 """
+
 from __future__ import annotations
 
 import json
@@ -67,6 +68,7 @@ class ReviewResult:
 # ---------------------------------------------------------------------------
 # Prompt rendering
 # ---------------------------------------------------------------------------
+
 
 def _load_template(templates_dir: Path, name: str) -> str:
     """Load a prompt template from templates/prompts/.
@@ -140,8 +142,7 @@ def render_plan_prompt(
     """
     template = _load_template(templates_dir, "plan.md")
     return (
-        template
-        .replace("{{GOAL}}", goal)
+        template.replace("{{GOAL}}", goal)
         .replace("{{CONTEXT}}", context)
         .replace("{{AVAILABLE_ROLES}}", _format_roles(roles))
         .replace("{{EXISTING_TASKS}}", _format_existing_tasks(existing_tasks))
@@ -167,13 +168,10 @@ def render_review_prompt(
 
     signals_str = "(none)"
     if task.completion_signals:
-        signals_str = "\n".join(
-            f"- {s.type}: `{s.value}`" for s in task.completion_signals
-        )
+        signals_str = "\n".join(f"- {s.type}: `{s.value}`" for s in task.completion_signals)
 
     return (
-        template
-        .replace("{{TASK_TITLE}}", task.title)
+        template.replace("{{TASK_TITLE}}", task.title)
         .replace("{{TASK_ROLE}}", task.role)
         .replace("{{TASK_DESCRIPTION}}", task.description)
         .replace("{{COMPLETION_SIGNALS}}", signals_str)
@@ -185,6 +183,7 @@ def render_review_prompt(
 # ---------------------------------------------------------------------------
 # LLM response parsing
 # ---------------------------------------------------------------------------
+
 
 def _extract_json(raw: str) -> str:
     """Extract JSON from LLM output, stripping markdown fences if present.
@@ -442,11 +441,10 @@ def parse_review_response(raw: str) -> dict[str, Any]:
     return cast("dict[str, Any]", parsed)
 
 
-
-
 # ---------------------------------------------------------------------------
 # Server communication
 # ---------------------------------------------------------------------------
+
 
 async def _post_task_to_server(
     client: httpx.AsyncClient,
@@ -528,29 +526,32 @@ async def _fetch_existing_tasks(
             except (ValueError, KeyError) as exc:
                 logger.warning("Failed to parse upgrade_details from server: %s", exc)
 
-        tasks.append(Task(
-            id=raw["id"],
-            title=raw["title"],
-            description=raw.get("description", ""),
-            role=raw.get("role", ""),
-            priority=raw.get("priority", 2),
-            scope=Scope(raw.get("scope", "medium")),
-            complexity=Complexity(raw.get("complexity", "medium")),
-            estimated_minutes=raw.get("estimated_minutes", 30),
-            status=TaskStatus(raw.get("status", "open")),
-            task_type=task_type,
-            upgrade_details=upgrade_details,
-            depends_on=raw.get("depends_on", []),
-            owned_files=raw.get("owned_files", []),
-            assigned_agent=raw.get("assigned_agent"),
-            result_summary=raw.get("result_summary"),
-        ))
+        tasks.append(
+            Task(
+                id=raw["id"],
+                title=raw["title"],
+                description=raw.get("description", ""),
+                role=raw.get("role", ""),
+                priority=raw.get("priority", 2),
+                scope=Scope(raw.get("scope", "medium")),
+                complexity=Complexity(raw.get("complexity", "medium")),
+                estimated_minutes=raw.get("estimated_minutes", 30),
+                status=TaskStatus(raw.get("status", "open")),
+                task_type=task_type,
+                upgrade_details=upgrade_details,
+                depends_on=raw.get("depends_on", []),
+                owned_files=raw.get("owned_files", []),
+                assigned_agent=raw.get("assigned_agent"),
+                result_summary=raw.get("result_summary"),
+            )
+        )
     return tasks
 
 
 # ---------------------------------------------------------------------------
 # ManagerAgent
 # ---------------------------------------------------------------------------
+
 
 class ManagerAgent:
     """LLM-powered task decomposition and team planning.
@@ -632,6 +633,7 @@ class ManagerAgent:
 
             if query and query.upper() != "NONE" and not query.startswith("```"):
                 from bernstein.core.llm import tavily_search
+
                 logger.info("Manager requested web research for: %r", query)
                 search_results = await tavily_search(query)
                 if search_results:
@@ -863,21 +865,23 @@ Be precise and complete. Include all necessary imports, tests, and documentation
             # Extract JSON from response
             text = response.strip()
             if text.startswith("```"):
-                text = text[text.index("\n") + 1:]
+                text = text[text.index("\n") + 1 :]
             if text.endswith("```"):
-                text = text[:text.rfind("```")]
+                text = text[: text.rfind("```")]
             text = text.strip()
 
             changes_data = json.loads(text)
             changes = []
 
             for item in changes_data:
-                changes.append(FileChange(
-                    path=item.get("path", ""),
-                    operation=item.get("operation", "modify"),
-                    new_content=item.get("new_content"),
-                    old_content=item.get("old_content"),
-                ))
+                changes.append(
+                    FileChange(
+                        path=item.get("path", ""),
+                        operation=item.get("operation", "modify"),
+                        new_content=item.get("new_content"),
+                        old_content=item.get("old_content"),
+                    )
+                )
 
             return changes
 
@@ -931,19 +935,16 @@ Be precise and complete. Include all necessary imports, tests, and documentation
         progress = (
             f"Original goal: {goal}\n\n"
             f"Progress:\n"
-            f"- Completed ({len(completed)}): "
-            + ", ".join(t.title for t in completed[:10])
-            + "\n"
+            f"- Completed ({len(completed)}): " + ", ".join(t.title for t in completed[:10]) + "\n"
             f"- Failed ({len(failed)}): "
             + ", ".join(f"{t.title}: {t.result_summary or 'unknown'}" for t in failed[:5])
             + "\n"
-            f"- Remaining ({len(remaining)}): "
-            + ", ".join(t.title for t in remaining[:10])
-            + "\n\n"
+            f"- Remaining ({len(remaining)}): " + ", ".join(t.title for t in remaining[:10]) + "\n\n"
             "Create only the NEW tasks needed to get back on track. "
             "Do not duplicate remaining tasks."
         )
         return await self.plan(progress)
+
 
 if __name__ == "__main__":
     import argparse
@@ -972,7 +973,7 @@ if __name__ == "__main__":
                 seed = parse_seed(seed_path)
                 if seed.model:
                     model_name = seed.model
-                    provider_name = "openrouter" # Assume paid if custom model
+                    provider_name = "openrouter"  # Assume paid if custom model
             except Exception as exc:
                 logger.warning("Failed to parse seed for model config: %s", exc)
 
@@ -981,7 +982,7 @@ if __name__ == "__main__":
             workdir=workdir,
             templates_dir=get_templates_dir(workdir),
             model=model_name,
-            provider=provider_name
+            provider=provider_name,
         )
 
         async with httpx.AsyncClient() as client:
@@ -998,8 +999,7 @@ if __name__ == "__main__":
                 await agent.plan(goal)
                 # Complete the manager task
                 await client.post(
-                    f"{server_url}/tasks/{args.task_id}/complete",
-                    json={"result_summary": "Planning completed."}
+                    f"{server_url}/tasks/{args.task_id}/complete", json={"result_summary": "Planning completed."}
                 )
             except Exception as e:
                 logger.exception("Manager Agent failed during plan generation")

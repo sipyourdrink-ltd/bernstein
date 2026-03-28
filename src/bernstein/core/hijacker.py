@@ -1,4 +1,5 @@
 """Automatic tier hijacking — detects and routes to free tier opportunities."""
+
 from __future__ import annotations
 
 import logging
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 class FreeTierSource(Enum):
     """Sources of free tier access."""
+
     NEW_PROVIDER_TRIAL = "new_provider_trial"  # New provider with free trial credits
     UNUSED_QUOTA = "unused_quota"  # Existing provider with unused free quota
     PROMOTIONAL_CREDITS = "promotional_credits"  # Promotional/free credits
@@ -27,6 +29,7 @@ class FreeTierSource(Enum):
 @dataclass
 class HijackOpportunity:
     """Represents a detected free tier opportunity."""
+
     source: FreeTierSource
     provider_name: str
     provider_type: ProviderType
@@ -40,6 +43,7 @@ class HijackOpportunity:
 @dataclass
 class HijackResult:
     """Result of a hijack attempt."""
+
     success: bool
     opportunity: HijackOpportunity
     provider_config: ProviderConfig | None = None
@@ -57,6 +61,7 @@ class TierDetector(Protocol):
 @dataclass
 class EnvVarConfig:
     """Configuration for environment variable based detection."""
+
     env_var: str
     provider_type: ProviderType
     tier: ApiTier
@@ -204,14 +209,18 @@ class TierHijacker:
                 # Check if this quota was already tracked
                 old_quota = self.quota_tracker.get_quota(provider_name)
                 if old_quota is None or provider.quota_remaining > old_quota:
-                    opportunities.append(HijackOpportunity(
-                        source=FreeTierSource.UNUSED_QUOTA,
-                        provider_name=provider_name,
-                        provider_type=ProviderType.CLAUDE,  # Default, detectors should specify
-                        description=f"Provider {provider_name} has {provider.quota_remaining} free requests remaining",
-                        estimated_free_tokens=provider.quota_remaining * 1000,  # Rough estimate
-                        confidence=0.95,
-                    ))
+                    opportunities.append(
+                        HijackOpportunity(
+                            source=FreeTierSource.UNUSED_QUOTA,
+                            provider_name=provider_name,
+                            provider_type=ProviderType.CLAUDE,  # Default, detectors should specify
+                            description=(
+                                f"Provider {provider_name} has {provider.quota_remaining} free requests remaining"
+                            ),
+                            estimated_free_tokens=provider.quota_remaining * 1000,  # Rough estimate
+                            confidence=0.95,
+                        )
+                    )
 
         return opportunities
 
@@ -221,33 +230,38 @@ class TierHijacker:
 
         # Check for Ollama
         if os.environ.get("OLLAMA_HOST") or self._check_ollama_available():
-            opportunities.append(HijackOpportunity(
-                source=FreeTierSource.OPEN_SOURCE_ALTERNATIVE,
-                provider_name="ollama-local",
-                provider_type=ProviderType.QWEN,  # Generic
-                description="Local Ollama instance available for free inference",
-                estimated_free_tokens=10_000_000,  # Effectively unlimited
-                confidence=0.85,
-                constraints=["Local models may be slower", "Limited model selection"],
-            ))
+            opportunities.append(
+                HijackOpportunity(
+                    source=FreeTierSource.OPEN_SOURCE_ALTERNATIVE,
+                    provider_name="ollama-local",
+                    provider_type=ProviderType.QWEN,  # Generic
+                    description="Local Ollama instance available for free inference",
+                    estimated_free_tokens=10_000_000,  # Effectively unlimited
+                    confidence=0.85,
+                    constraints=["Local models may be slower", "Limited model selection"],
+                )
+            )
 
         # Check for LM Studio
         if os.environ.get("LM_STUDIO_HOST") or self._check_lm_studio_available():
-            opportunities.append(HijackOpportunity(
-                source=FreeTierSource.OPEN_SOURCE_ALTERNATIVE,
-                provider_name="lm-studio-local",
-                provider_type=ProviderType.QWEN,
-                description="Local LM Studio instance available for free inference",
-                estimated_free_tokens=10_000_000,
-                confidence=0.85,
-                constraints=["Requires local model downloads"],
-            ))
+            opportunities.append(
+                HijackOpportunity(
+                    source=FreeTierSource.OPEN_SOURCE_ALTERNATIVE,
+                    provider_name="lm-studio-local",
+                    provider_type=ProviderType.QWEN,
+                    description="Local LM Studio instance available for free inference",
+                    estimated_free_tokens=10_000_000,
+                    confidence=0.85,
+                    constraints=["Requires local model downloads"],
+                )
+            )
 
         return opportunities
 
     def _check_ollama_available(self) -> bool:
         """Check if Ollama is running locally."""
         import socket
+
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1)
@@ -261,6 +275,7 @@ class TierHijacker:
     def _check_lm_studio_available(self) -> bool:
         """Check if LM Studio is running locally."""
         import socket
+
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1)
@@ -421,10 +436,7 @@ class TierHijacker:
         """Get currently active opportunities."""
         # Filter out expired opportunities
         now = time.time()
-        return [
-            opp for opp in self._opportunities
-            if opp.expiry_timestamp is None or opp.expiry_timestamp > now
-        ]
+        return [opp for opp in self._opportunities if opp.expiry_timestamp is None or opp.expiry_timestamp > now]
 
     def clear_opportunities(self) -> None:
         """Clear all detected opportunities."""
@@ -497,39 +509,52 @@ class QuotaSafetyCheck(SafetyCheck):
 
 # Default detector configurations
 
+
 def create_default_detectors() -> list[TierDetector]:
     """Create default tier detectors for common providers."""
     detectors = []
 
     # Anthropic environment detection
-    detectors.append(EnvVarTierDetector([
-        EnvVarConfig(
-            env_var="ANTHROPIC_API_KEY",
-            provider_type=ProviderType.CLAUDE,
-            tier=ApiTier.FREE,
-            description="Anthropic API key detected",
-        ),
-    ]))
+    detectors.append(
+        EnvVarTierDetector(
+            [
+                EnvVarConfig(
+                    env_var="ANTHROPIC_API_KEY",
+                    provider_type=ProviderType.CLAUDE,
+                    tier=ApiTier.FREE,
+                    description="Anthropic API key detected",
+                ),
+            ]
+        )
+    )
 
     # OpenAI environment detection
-    detectors.append(EnvVarTierDetector([
-        EnvVarConfig(
-            env_var="OPENAI_API_KEY",
-            provider_type=ProviderType.CODEX,
-            tier=ApiTier.FREE,
-            description="OpenAI API key detected",
-        ),
-    ]))
+    detectors.append(
+        EnvVarTierDetector(
+            [
+                EnvVarConfig(
+                    env_var="OPENAI_API_KEY",
+                    provider_type=ProviderType.CODEX,
+                    tier=ApiTier.FREE,
+                    description="OpenAI API key detected",
+                ),
+            ]
+        )
+    )
 
     # Gemini environment detection
-    detectors.append(EnvVarTierDetector([
-        EnvVarConfig(
-            env_var="GEMINI_API_KEY",
-            provider_type=ProviderType.GEMINI,
-            tier=ApiTier.FREE,
-            description="Gemini API key detected",
-        ),
-    ]))
+    detectors.append(
+        EnvVarTierDetector(
+            [
+                EnvVarConfig(
+                    env_var="GEMINI_API_KEY",
+                    provider_type=ProviderType.GEMINI,
+                    tier=ApiTier.FREE,
+                    description="Gemini API key detected",
+                ),
+            ]
+        )
+    )
 
     return detectors
 

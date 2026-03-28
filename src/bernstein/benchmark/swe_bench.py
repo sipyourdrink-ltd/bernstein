@@ -11,6 +11,7 @@ Usage::
     report = compute_report(results)
     save_results(report, Path(".sdd"))
 """
+
 from __future__ import annotations
 
 import json
@@ -390,9 +391,7 @@ class SWEBenchRunner:
     # Internal: spawn Bernstein
     # ------------------------------------------------------------------
 
-    def _spawn_bernstein(
-        self, instance: SWEInstance
-    ) -> tuple[str, float, float, int]:
+    def _spawn_bernstein(self, instance: SWEInstance) -> tuple[str, float, float, int]:
         """Run Bernstein on a single instance and return raw outputs.
 
         This method is intended to be mocked in tests.  In production it
@@ -425,9 +424,7 @@ class SWEBenchRunner:
         duration = time.monotonic() - t0
 
         if proc.returncode != 0:
-            raise RuntimeError(
-                f"Bernstein exited {proc.returncode}: {proc.stderr[:200]}"
-            )
+            raise RuntimeError(f"Bernstein exited {proc.returncode}: {proc.stderr[:200]}")
 
         # Read patch produced by agents (written to .sdd/benchmark/patch.diff)
         patch_path = self.workdir / ".sdd" / "benchmark" / "patch.diff"
@@ -477,9 +474,7 @@ class SWEBenchRunner:
             :class:`InstanceResult` with outcome metrics.
         """
         try:
-            patch_text, cost_usd, duration_seconds, agent_count = self._spawn_bernstein(
-                instance
-            )
+            patch_text, cost_usd, duration_seconds, agent_count = self._spawn_bernstein(instance)
         except Exception as exc:
             return InstanceResult(
                 instance_id=instance.instance_id,

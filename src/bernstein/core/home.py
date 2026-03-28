@@ -4,6 +4,7 @@ Provides cross-project config storage, catalog cache, and cost tracking.
 Config precedence (highest to lowest):
   project .sdd/config.yaml > ~/.bernstein/config.yaml > built-in defaults
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -138,6 +139,7 @@ class BernsteinHome:
 # ---------------------------------------------------------------------------
 # Config resolution with precedence
 # ---------------------------------------------------------------------------
+
 
 def resolve_config(
     key: str,

@@ -5,6 +5,7 @@ detects which servers a task needs based on description keywords and file
 patterns, checks that required environment variables are available, and
 builds a per-agent MCP config dict ready for --mcp-config injection.
 """
+
 from __future__ import annotations
 
 import logging

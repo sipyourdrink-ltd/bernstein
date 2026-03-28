@@ -8,6 +8,7 @@ Usage:
     indexer.build()               # full or incremental
     results = indexer.search("auth middleware", limit=5)
 """
+
 from __future__ import annotations
 
 import ast
@@ -21,28 +22,47 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # File extensions to index.
-INDEXABLE_EXTENSIONS: frozenset[str] = frozenset({
-    ".py", ".md", ".yaml", ".yml", ".toml", ".json", ".txt",
-    ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java",
-    ".sh", ".bash", ".cfg", ".ini",
-})
+INDEXABLE_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".py",
+        ".md",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".json",
+        ".txt",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".go",
+        ".rs",
+        ".java",
+        ".sh",
+        ".bash",
+        ".cfg",
+        ".ini",
+    }
+)
 
 # Directories to always skip (relative path parts).
-SKIP_DIRS: frozenset[str] = frozenset({
-    ".sdd/runtime",
-    "__pycache__",
-    ".git",
-    "node_modules",
-    ".venv",
-    "venv",
-    ".tox",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".pytest_cache",
-    "dist",
-    "build",
-    ".eggs",
-})
+SKIP_DIRS: frozenset[str] = frozenset(
+    {
+        ".sdd/runtime",
+        "__pycache__",
+        ".git",
+        "node_modules",
+        ".venv",
+        "venv",
+        ".tox",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+        "dist",
+        "build",
+        ".eggs",
+    }
+)
 
 # Maximum file size to index (512 KB).
 _MAX_FILE_SIZE = 512 * 1024
@@ -60,6 +80,7 @@ class SearchResult:
         snippet: Text content of the matching chunk.
         rank: BM25 relevance score (lower = more relevant).
     """
+
     file_path: str
     line_start: int
     line_end: int
@@ -113,13 +134,15 @@ def _extract_python_chunks(source: str, rel_path: str) -> list[dict[str, object]
     if first_line > 1:
         preamble = "".join(lines[: first_line - 1]).strip()
         if preamble:
-            chunks.append({
-                "file_path": rel_path,
-                "line_start": 1,
-                "line_end": first_line - 1,
-                "symbols": "<module>",
-                "content": preamble,
-            })
+            chunks.append(
+                {
+                    "file_path": rel_path,
+                    "line_start": 1,
+                    "line_end": first_line - 1,
+                    "symbols": "<module>",
+                    "content": preamble,
+                }
+            )
 
     for node in nodes:
         start = node.lineno  # type: ignore[attr-defined]
@@ -128,13 +151,15 @@ def _extract_python_chunks(source: str, rel_path: str) -> list[dict[str, object]
         name = getattr(node, "name", "")
         content = "".join(lines[start - 1 : end]).strip()
         if content:
-            chunks.append({
-                "file_path": rel_path,
-                "line_start": start,
-                "line_end": end,
-                "symbols": name,
-                "content": content,
-            })
+            chunks.append(
+                {
+                    "file_path": rel_path,
+                    "line_start": start,
+                    "line_end": end,
+                    "symbols": name,
+                    "content": content,
+                }
+            )
 
     return chunks
 
@@ -160,13 +185,15 @@ def _line_chunks(
         end = min(start + chunk_size, total)
         content = "".join(lines[start:end]).strip()
         if content:
-            chunks.append({
-                "file_path": rel_path,
-                "line_start": start + 1,
-                "line_end": end,
-                "symbols": "",
-                "content": content,
-            })
+            chunks.append(
+                {
+                    "file_path": rel_path,
+                    "line_start": start + 1,
+                    "line_end": end,
+                    "symbols": "",
+                    "content": content,
+                }
+            )
         start += chunk_size - overlap
     return chunks
 
@@ -225,10 +252,7 @@ class CodebaseIndexer:
             rel_dir = dp.relative_to(self._root)
 
             # Prune skipped directories in-place.
-            dirnames[:] = [
-                d for d in dirnames
-                if not _should_skip_path(rel_dir / d)
-            ]
+            dirnames[:] = [d for d in dirnames if not _should_skip_path(rel_dir / d)]
 
             for fname in filenames:
                 fpath = dp / fname
@@ -286,9 +310,7 @@ class CodebaseIndexer:
 
         # Remove stale entries.
         for rel in list(deleted) + to_index:
-            conn.execute(
-                "DELETE FROM chunks WHERE file_path = ?", (rel,)
-            )
+            conn.execute("DELETE FROM chunks WHERE file_path = ?", (rel,))
             conn.execute("DELETE FROM file_meta WHERE path = ?", (rel,))
 
         # Index new/modified files.
@@ -305,8 +327,7 @@ class CodebaseIndexer:
 
             for chunk in chunks:
                 conn.execute(
-                    "INSERT INTO chunks (file_path, line_start, line_end, symbols, content) "
-                    "VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO chunks (file_path, line_start, line_end, symbols, content) VALUES (?, ?, ?, ?, ?)",
                     (
                         chunk["file_path"],
                         chunk["line_start"],
@@ -344,7 +365,10 @@ class CodebaseIndexer:
             conn.close()
 
     def _search_inner(
-        self, conn: sqlite3.Connection, query: str, limit: int,
+        self,
+        conn: sqlite3.Connection,
+        query: str,
+        limit: int,
     ) -> list[SearchResult]:
         """Execute the FTS5 search query."""
         # Escape special FTS5 characters to prevent query syntax errors.
@@ -370,9 +394,7 @@ class CodebaseIndexer:
             terms = query.split()
             if not terms:
                 return []
-            fallback_q = " OR ".join(
-                f'"{t}"' for t in terms if t.strip()
-            )
+            fallback_q = " OR ".join(f'"{t}"' for t in terms if t.strip())
             if not fallback_q:
                 return []
             try:
@@ -447,9 +469,7 @@ class CodebaseIndexer:
 
         conn = self._connect()
         try:
-            row = conn.execute(
-                "SELECT mtime FROM file_meta WHERE path = ?", (file_path,)
-            ).fetchone()
+            row = conn.execute("SELECT mtime FROM file_meta WHERE path = ?", (file_path,)).fetchone()
             if row is None:
                 return True
             return current_mtime > row[0]
@@ -475,6 +495,8 @@ def build_or_update_index(project_root: Path) -> CodebaseIndexer:
     total = indexer.file_count()
     logger.info(
         "Codebase index: %d file(s) updated, %d total (%.1fs)",
-        count, total, elapsed,
+        count,
+        total,
+        elapsed,
     )
     return indexer

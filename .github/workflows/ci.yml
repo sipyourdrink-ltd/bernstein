@@ -10,8 +10,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - run: uv run ruff check src/
@@ -21,8 +21,8 @@ jobs:
     name: Type check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - run: uv run pyright
@@ -34,9 +34,57 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
       - run: uv run pytest tests/ -x -q
+
+  # Self-healing: open a GitHub Issue on master when CI fails so the evolve
+  # agent can pick it up as a priority-1 ci-fix task.
+  self-heal:
+    name: Self-heal (create fix issue on failure)
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: >
+      failure() &&
+      github.ref == 'refs/heads/master' &&
+      github.event_name == 'push'
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create ci-fix issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="[ci-fix] CI failing on master — run ${{ github.run_id }}"
+          BODY="## CI failure detected
+
+          **Commit:** \`${{ github.sha }}\`
+          **Run:** $RUN_URL
+
+          ### Failing jobs
+          Check the run above for details. Common fixes:
+          - Lint: \`uv run ruff check --fix src/ && uv run ruff format src/\`
+          - Tests: \`uv run pytest tests/ -x -q --tb=short\`
+
+          ### Instructions for the fix agent
+          1. Check the CI run linked above.
+          2. Run the failing checks locally and fix the root cause.
+          3. Verify with: \`uv run ruff check src/ && uv run pytest tests/ -x -q\`
+          4. Push the fix.
+
+          /label ci-fix priority-1"
+
+          # Only open if no open ci-fix issue already exists
+          OPEN=$(gh issue list --label ci-fix --state open --json number --jq length 2>/dev/null || echo 0)
+          if [ "$OPEN" = "0" ]; then
+            gh issue create \
+              --title "$TITLE" \
+              --body "$BODY" \
+              --label "bug" \
+              || true  # Don't fail the workflow if label doesn't exist
+          fi

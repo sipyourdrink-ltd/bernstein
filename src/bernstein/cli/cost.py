@@ -1,4 +1,5 @@
 """Bernstein cost — spend visibility across all recorded metrics."""
+
 from __future__ import annotations
 
 import contextlib
@@ -192,6 +193,7 @@ def cost_cmd(metrics_dir: str, as_json: bool) -> None:
         compute_savings_vs_opus,
         project_monthly_cost,
     )
+
     savings_vs_opus = compute_savings_vs_opus(task_records)
     daily_costs = compute_daily_cost(task_records, days=7)
     projected_monthly = project_monthly_cost(task_records, window_days=7)
@@ -206,9 +208,7 @@ def cost_cmd(metrics_dir: str, as_json: bool) -> None:
                     "tokens_out": v["tokens_out"],
                     "cost_usd": round(v["cost_usd"], 6),
                     "avg_duration_s": (
-                        round(v["duration_total"] / v["duration_count"], 1)
-                        if v["duration_count"] > 0
-                        else None
+                        round(v["duration_total"] / v["duration_count"], 1) if v["duration_count"] > 0 else None
                     ),
                 }
                 for model, v in sorted_models
@@ -233,11 +233,7 @@ def cost_cmd(metrics_dir: str, as_json: bool) -> None:
     table.add_column("Avg Duration", justify="right", min_width=12)
 
     for model, v in sorted_models:
-        avg_dur = (
-            f"{v['duration_total'] / v['duration_count']:.1f}s"
-            if v["duration_count"] > 0
-            else "—"
-        )
+        avg_dur = f"{v['duration_total'] / v['duration_count']:.1f}s" if v["duration_count"] > 0 else "—"
         cost_str = f"${v['cost_usd']:.4f}" if v["cost_usd"] > 0 else "$0.0000"
         table.add_row(
             model,
@@ -249,9 +245,7 @@ def cost_cmd(metrics_dir: str, as_json: bool) -> None:
         )
 
     # Totals row
-    avg_total = (
-        f"{total_dur / total_dur_count:.1f}s" if total_dur_count > 0 else "—"
-    )
+    avg_total = f"{total_dur / total_dur_count:.1f}s" if total_dur_count > 0 else "—"
     table.add_section()
     table.add_row(
         "[bold]TOTAL[/bold]",
@@ -276,12 +270,8 @@ def cost_cmd(metrics_dir: str, as_json: bool) -> None:
         )
 
     # Savings vs all-Opus baseline
-    console.print(
-        f"[bold green]Savings vs Opus baseline:[/bold green] ~${savings_vs_opus:.4f}"
-    )
+    console.print(f"[bold green]Savings vs Opus baseline:[/bold green] ~${savings_vs_opus:.4f}")
 
     # Projected monthly cost
     if projected_monthly > 0:
-        console.print(
-            f"[dim]Projected monthly cost (30d):[/dim] ${projected_monthly:.2f}"
-        )
+        console.print(f"[dim]Projected monthly cost (30d):[/dim] ${projected_monthly:.2f}")

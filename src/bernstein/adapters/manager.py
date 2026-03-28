@@ -35,6 +35,7 @@ class ManagerAdapter(CLIAdapter):
         # Extract the task ID. The ManagerAgent __main__ expects --task-id
         # We know tasks are passed in the prompt, let's grab the first task id.
         import re
+
         task_match = re.search(r"\(id=([^\)]+)\)", prompt)
         task_id = task_match.group(1) if task_match else "task-000"
 
@@ -42,8 +43,10 @@ class ManagerAdapter(CLIAdapter):
             sys.executable,
             "-m",
             "bernstein.core.manager",
-            "--port", "8052",
-            "--task-id", task_id,
+            "--port",
+            "8052",
+            "--task-id",
+            task_id,
         ]
 
         with log_path.open("w") as log_file:

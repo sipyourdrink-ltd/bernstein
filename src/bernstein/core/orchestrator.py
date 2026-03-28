@@ -3,6 +3,7 @@
 The orchestrator is DETERMINISTIC CODE, not an LLM. It matches tasks to agents
 via the spawner and verifies completion via the janitor. See ADR-001.
 """
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -23,7 +24,14 @@ from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.cluster import NodeHeartbeatClient
 from bernstein.core.context import append_decision, refresh_knowledge_base
 from bernstein.core.evolution import EvolutionCoordinator, UpgradeStatus
-from bernstein.core.fast_path import FastPathStats, TaskLevel, classify_task, get_l1_model_config, load_fast_path_config, try_fast_path_batch
+from bernstein.core.fast_path import (
+    FastPathStats,
+    TaskLevel,
+    classify_task,
+    get_l1_model_config,
+    load_fast_path_config,
+    try_fast_path_batch,
+)
 from bernstein.core.graph import TaskGraph
 from bernstein.core.janitor import verify_task
 from bernstein.core.metrics import get_collector
@@ -353,11 +361,11 @@ class Orchestrator:
         client: httpx client for server communication (injectable for testing).
     """
 
-    _SPAWN_BACKOFF_BASE_S: float = 30.0   # base backoff; actual = base * 2^failures
+    _SPAWN_BACKOFF_BASE_S: float = 30.0  # base backoff; actual = base * 2^failures
     _SPAWN_BACKOFF_MAX_S: float = 300.0  # ceiling for exponential backoff
-    _MAX_SPAWN_FAILURES: int = 3         # consecutive failures before marking tasks failed
-    _MAX_DEAD_AGENTS_KEPT: int = 20      # purge oldest dead agents beyond this
-    _MAX_PROCESSED_DONE: int = 500       # cap _processed_done_tasks set size
+    _MAX_SPAWN_FAILURES: int = 3  # consecutive failures before marking tasks failed
+    _MAX_DEAD_AGENTS_KEPT: int = 20  # purge oldest dead agents beyond this
+    _MAX_PROCESSED_DONE: int = 500  # cap _processed_done_tasks set size
 
     def __init__(
         self,
@@ -475,11 +483,14 @@ class Orchestrator:
         from typing import cast as _cast
 
         from bernstein.core.bulletin import MessageType
-        self._bulletin.post(BulletinMessage(
-            agent_id="orchestrator",
-            type=_cast("MessageType", msg_type),
-            content=content,
-        ))
+
+        self._bulletin.post(
+            BulletinMessage(
+                agent_id="orchestrator",
+                type=_cast("MessageType", msg_type),
+                content=content,
+            )
+        )
 
     # -- Core tick -----------------------------------------------------------
 
@@ -530,10 +541,7 @@ class Orchestrator:
         # dependency filter here for "open" tasks.
         done_tasks = tasks_by_status["done"]
         done_ids = {t.id for t in done_tasks}
-        open_tasks = [
-            t for t in tasks_by_status["open"]
-            if all(dep in done_ids for dep in t.depends_on)
-        ]
+        open_tasks = [t for t in tasks_by_status["open"] if all(dep in done_ids for dep in t.depends_on)]
         result.open_tasks = len(open_tasks)
 
         # 1b. Hold back tasks blocked by unresolved high-severity pivots
@@ -558,18 +566,13 @@ class Orchestrator:
             logger.warning("Failed to read pivot signals: %s", exc)
 
         # 1c. Build task graph and compute optimal parallelism
-        all_tasks = [
-            t
-            for status_tasks in tasks_by_status.values()
-            for t in status_tasks
-        ]
+        all_tasks = [t for status_tasks in tasks_by_status.values() for t in status_tasks]
         task_graph = TaskGraph(all_tasks)
         analysis = task_graph.analyse()
 
         if analysis.parallel_width < self._config.max_agents and analysis.parallel_width > 0:
             logger.debug(
-                "Graph parallel width (%d) < max_agents (%d) — "
-                "dependency filter already limits concurrency",
+                "Graph parallel width (%d) < max_agents (%d) — dependency filter already limits concurrency",
                 analysis.parallel_width,
                 self._config.max_agents,
             )
@@ -834,7 +837,7 @@ class Orchestrator:
         # Diminishing returns backoff: if N consecutive cycles produced zero
         # successful changes, increase the interval exponentially (max 8x)
         consecutive_empty = evolve_cfg.get("_consecutive_empty", 0)
-        backoff_factor = min(2 ** consecutive_empty, 8) if consecutive_empty >= 3 else 1
+        backoff_factor = min(2**consecutive_empty, 8) if consecutive_empty >= 3 else 1
 
         last_cycle_ts = evolve_cfg.get("_last_cycle_ts", 0)
         base_interval = evolve_cfg.get("interval_s", 300)
@@ -846,7 +849,9 @@ class Orchestrator:
         cycle_start = time.time()
         logger.info(
             "Evolve: triggering cycle %d (backoff=%dx, interval=%ds)",
-            cycle_number, backoff_factor, effective_interval,
+            cycle_number,
+            backoff_factor,
+            effective_interval,
         )
 
         # Step 1: ANALYZE — count results from last cycle (use cached snapshot)
@@ -882,22 +887,25 @@ class Orchestrator:
             evolve_path.write_text(json.dumps(evolve_cfg))
 
         # Log cycle metrics
-        self._log_evolve_cycle(cycle_number, now, {
-            "focus_area": focus,
-            "tasks_completed": tasks_completed,
-            "tasks_failed": tasks_failed,
-            "tests_passed": test_info.get("passed", 0),
-            "tests_failed": test_info.get("failed", 0),
-            "commits_made": 1 if committed else 0,
-            "backoff_factor": backoff_factor,
-            "consecutive_empty": evolve_cfg.get("_consecutive_empty", 0),
-            "duration_s": round(now - cycle_start, 2),
-        })
+        self._log_evolve_cycle(
+            cycle_number,
+            now,
+            {
+                "focus_area": focus,
+                "tasks_completed": tasks_completed,
+                "tasks_failed": tasks_failed,
+                "tests_passed": test_info.get("passed", 0),
+                "tests_failed": test_info.get("failed", 0),
+                "commits_made": 1 if committed else 0,
+                "backoff_factor": backoff_factor,
+                "consecutive_empty": evolve_cfg.get("_consecutive_empty", 0),
+                "duration_s": round(now - cycle_start, 2),
+            },
+        )
 
         self._post_bulletin(
             "status",
-            f"evolve cycle {cycle_number} complete: focus={focus}, "
-            f"completed={tasks_completed}, committed={committed}",
+            f"evolve cycle {cycle_number} complete: focus={focus}, completed={tasks_completed}, committed={committed}",
         )
 
     _REPLENISH_COOLDOWN_S: float = 60.0
@@ -1167,7 +1175,10 @@ class Orchestrator:
             # Run tests before committing
             test_result = subprocess.run(
                 ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
-                capture_output=True, text=True, cwd=self._workdir, timeout=300,
+                capture_output=True,
+                text=True,
+                cwd=self._workdir,
+                timeout=300,
             )
             if test_result.returncode != 0:
                 logger.warning("Evolve: tests failed, rolling back changes")
@@ -1273,12 +1284,12 @@ class Orchestrator:
             "3. Identify 3-5 high-impact improvements\n"
             "4. Create tasks via HTTP. YOU decide model and effort per task:\n"
             f"   curl -X POST {base}/tasks -H 'Content-Type: application/json' \\\n"
-            "   -d '{\"title\": \"...\", \"description\": \"...\", "
-            "\"role\": \"backend\", \"priority\": 2, "
-            "\"model\": \"sonnet\", \"effort\": \"high\"}'\n\n"
+            '   -d \'{"title": "...", "description": "...", '
+            '"role": "backend", "priority": 2, '
+            '"model": "sonnet", "effort": "high"}\'\n\n'
             "## Model/effort selection (you decide per task)\n"
-            "- model: \"opus\" (deep reasoning, slow) or \"sonnet\" (fast, default)\n"
-            "- effort: \"max\" (100 turns), \"high\" (50), \"medium\" (30), \"low\" (15)\n"
+            '- model: "opus" (deep reasoning, slow) or "sonnet" (fast, default)\n'
+            '- effort: "max" (100 turns), "high" (50), "medium" (30), "low" (15)\n'
             "- Use sonnet/high for most implementation tasks (fast)\n"
             "- Use opus/max ONLY for complex architecture or security reviews\n"
             "- Use sonnet/low for simple fixes, typos, config changes\n\n"
@@ -1371,7 +1382,9 @@ class Orchestrator:
             for proposal in executed:
                 logger.info(
                     "Applied upgrade %s: %s (status=%s)",
-                    proposal.id, proposal.title, proposal.status.value,
+                    proposal.id,
+                    proposal.title,
+                    proposal.status.value,
                 )
 
             if not proposals:
@@ -1399,12 +1412,14 @@ class Orchestrator:
                     resp.raise_for_status()
                     logger.info(
                         "Created upgrade task for proposal %s: %s",
-                        proposal.id, proposal.title,
+                        proposal.id,
+                        proposal.title,
                     )
                 except httpx.HTTPError as exc:
                     logger.warning(
                         "Failed to create upgrade task for proposal %s: %s",
-                        proposal.id, exc,
+                        proposal.id,
+                        exc,
                     )
                     result.errors.append(f"evolution_task: {exc}")
         except (OSError, ValueError, RuntimeError) as exc:
@@ -1463,10 +1478,7 @@ class Orchestrator:
 
         # Purge expired spawn backoff entries
         now = time.time()
-        expired = [
-            k for k, (_, ts) in self._spawn_failures.items()
-            if now - ts > self._SPAWN_BACKOFF_MAX_S
-        ]
+        expired = [k for k, (_, ts) in self._spawn_failures.items() if now - ts > self._SPAWN_BACKOFF_MAX_S]
         for k in expired:
             del self._spawn_failures[k]
 
@@ -1479,10 +1491,7 @@ class Orchestrator:
 
     def _purge_dead_agents(self) -> None:
         """Remove oldest dead agent sessions to bound memory usage."""
-        dead = [
-            (sid, s) for sid, s in self._agents.items()
-            if s.status == "dead"
-        ]
+        dead = [(sid, s) for sid, s in self._agents.items() if s.status == "dead"]
         if len(dead) <= self._MAX_DEAD_AGENTS_KEPT:
             return
         # Sort by heartbeat_ts (oldest first), remove excess
@@ -1538,7 +1547,11 @@ class Orchestrator:
                 logger.error("Failed to fetch orphaned task %s: %s", task_id, exc)
                 error_type = "fetch_failed"
                 self._emit_orphan_metrics(
-                    task_id, session, start_ts, success=False, error_type=error_type,
+                    task_id,
+                    session,
+                    start_ts,
+                    success=False,
+                    error_type=error_type,
                 )
                 return
 
@@ -1546,7 +1559,8 @@ class Orchestrator:
         if status not in (TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
             logger.info(
                 "Orphaned task %s already resolved (status=%s), skipping",
-                task_id, status.value,
+                task_id,
+                status.value,
             )
             return
 
@@ -1568,7 +1582,8 @@ class Orchestrator:
                     success = True
                     logger.info(
                         "Orphaned task %s auto-completed (janitor passed) after agent %s died",
-                        task_id, session.id,
+                        task_id,
+                        session.id,
                     )
                 except httpx.HTTPError as exc:
                     logger.error("Failed to complete orphaned task %s: %s", task_id, exc)
@@ -1581,7 +1596,9 @@ class Orchestrator:
                     )
                     logger.info(
                         "Orphaned task %s retry/failed (janitor failed: %s) after agent %s died",
-                        task_id, failed_signals, session.id,
+                        task_id,
+                        failed_signals,
+                        session.id,
                     )
                 except httpx.HTTPError as exc:
                     logger.error("Failed to retry/fail orphaned task %s: %s", task_id, exc)
@@ -1594,13 +1611,17 @@ class Orchestrator:
                 # Agent did work but task had no signals — auto-complete
                 try:
                     _complete_task(
-                        self._client, base, task_id,
+                        self._client,
+                        base,
+                        task_id,
                         f"Auto-completed: agent {session.id} modified {files_changed} files (no signals to verify)",
                     )
                     success = True
                     logger.info(
                         "Orphaned task %s auto-completed (%d files modified, no signals) after agent %s died",
-                        task_id, files_changed, session.id,
+                        task_id,
+                        files_changed,
+                        session.id,
                     )
                 except httpx.HTTPError as exc:
                     logger.error("Failed to complete orphaned task %s: %s", task_id, exc)
@@ -1613,14 +1634,19 @@ class Orchestrator:
                     )
                     logger.info(
                         "Orphaned task %s retry/failed (no signals, no output) after agent %s died",
-                        task_id, session.id,
+                        task_id,
+                        session.id,
                     )
                 except httpx.HTTPError as exc:
                     logger.error("Failed to retry/fail orphaned task %s: %s", task_id, exc)
                 error_type = "no_signals"
 
         self._emit_orphan_metrics(
-            task_id, session, start_ts, success=success, error_type=error_type,
+            task_id,
+            session,
+            start_ts,
+            success=success,
+            error_type=error_type,
         )
         self._record_provider_health(session, success=success)
 
@@ -1641,7 +1667,8 @@ class Orchestrator:
             except Exception as exc:
                 logger.warning(
                     "Evolution record_task_completion for orphan %s failed: %s",
-                    task_id, exc,
+                    task_id,
+                    exc,
                 )
 
     def _emit_orphan_metrics(
@@ -1744,7 +1771,8 @@ class Orchestrator:
                     if owner_session and owner_session.status != "dead":
                         logger.debug(
                             "File %s owned by active agent %s, skipping batch",
-                            fpath, owner,
+                            fpath,
+                            owner,
                         )
                         return True
         return False
@@ -1844,15 +1872,17 @@ class Orchestrator:
         }
 
         try:
-            resp = self._client.post(
-                f"{self._config.server_url}/tasks", json=payload
-            )
+            resp = self._client.post(f"{self._config.server_url}/tasks", json=payload)
             resp.raise_for_status()
             new_task_id = resp.json().get("id", "?")
             self._retried_task_ids.add(task.id)
             logger.info(
                 "Retry %d queued for failed task %s → %s (model=%s effort=%s)",
-                next_retry, task.id, new_task_id, new_model, new_effort,
+                next_retry,
+                task.id,
+                new_task_id,
+                new_model,
+                new_effort,
             )
             return True
         except Exception as exc:
@@ -1975,15 +2005,15 @@ class Orchestrator:
             }
             # Preserve completion signals on retry
             if task.completion_signals:
-                task_body["completion_signals"] = [
-                    {"type": s.type, "value": s.value}
-                    for s in task.completion_signals
-                ]
+                task_body["completion_signals"] = [{"type": s.type, "value": s.value} for s in task.completion_signals]
             try:
                 self._client.post(f"{base}/tasks", json=task_body).raise_for_status()
                 logger.info(
                     "Retrying task %s (attempt %d/%d): %s",
-                    task_id, retry_count + 1, max_retries, reason,
+                    task_id,
+                    retry_count + 1,
+                    max_retries,
+                    reason,
                 )
             except httpx.HTTPError as exc:
                 logger.error("Failed to re-create task %s for retry: %s", task_id, exc)
@@ -2034,10 +2064,14 @@ class Orchestrator:
             batch_key = frozenset(t.id for t in batch)
             fail_count, last_fail_ts = self._spawn_failures.get(batch_key, (0, 0.0))
             # Exponential backoff: base * 2^(failures-1), capped at max
-            backoff_s = min(
-                self._SPAWN_BACKOFF_BASE_S * (2 ** max(fail_count - 1, 0)),
-                self._SPAWN_BACKOFF_MAX_S,
-            ) if fail_count > 0 else 0.0
+            backoff_s = (
+                min(
+                    self._SPAWN_BACKOFF_BASE_S * (2 ** max(fail_count - 1, 0)),
+                    self._SPAWN_BACKOFF_MAX_S,
+                )
+                if fail_count > 0
+                else 0.0
+            )
             if fail_count > 0 and (time.time() - last_fail_ts) < backoff_s:
                 logger.warning(
                     "Skipping batch %s: in backoff after %d consecutive spawn failure(s)",
@@ -2063,9 +2097,7 @@ class Orchestrator:
                             task.id,
                             task.version,
                         )
-                        result.errors.append(
-                            f"claim:{task.id}: CAS conflict (version {task.version})"
-                        )
+                        result.errors.append(f"claim:{task.id}: CAS conflict (version {task.version})")
                         claim_failed = True
                         break
                     if resp.status_code >= 500:
@@ -2074,9 +2106,7 @@ class Orchestrator:
                             resp.status_code,
                             task.id,
                         )
-                        result.errors.append(
-                            f"claim:{task.id}: server error {resp.status_code}"
-                        )
+                        result.errors.append(f"claim:{task.id}: server error {resp.status_code}")
                         claim_failed = True
                         break
                 except httpx.TransportError as exc:
@@ -2094,7 +2124,11 @@ class Orchestrator:
             # Fast-path: try deterministic execution for trivial (L0) tasks.
             # Runs inline, marks task complete on server, skips spawner entirely.
             if try_fast_path_batch(
-                batch, self._workdir, self._client, base, self._fast_path_stats,
+                batch,
+                self._workdir,
+                self._client,
+                base,
+                self._fast_path_stats,
             ):
                 assigned_task_ids.update(t.id for t in batch)
                 result.spawned.append(f"fast-path:{batch[0].id}")
@@ -2109,7 +2143,10 @@ class Orchestrator:
                     batch[0].effort = l1_cfg.effort
                     logger.info(
                         "L1 downgrade for task %s → %s/%s (%s)",
-                        batch[0].id, l1_cfg.model, l1_cfg.effort, l1_check.reason,
+                        batch[0].id,
+                        l1_cfg.model,
+                        l1_cfg.effort,
+                        l1_check.reason,
                     )
 
             # Adaptive timeout: scale by task complexity/role
@@ -2117,17 +2154,11 @@ class Orchestrator:
             _SCOPE_MULTIPLIER = {"small": 1.0, "medium": 1.5, "large": 2.5}
             _ROLE_MULTIPLIER = {"architect": 3.0, "security": 2.5, "manager": 2.0}
             max_estimated_s = max((t.estimated_minutes for t in batch), default=30) * 60
-            scope_mult = max(
-                _SCOPE_MULTIPLIER.get(t.scope.value, 1.0) for t in batch
-            )
-            role_mult = max(
-                _ROLE_MULTIPLIER.get(t.role, 1.0) for t in batch
-            )
+            scope_mult = max(_SCOPE_MULTIPLIER.get(t.scope.value, 1.0) for t in batch)
+            role_mult = max(_ROLE_MULTIPLIER.get(t.role, 1.0) for t in batch)
             complexity_mult = max(scope_mult, role_mult)
             max_runtime = self._config.max_agent_runtime_s * complexity_mult
-            batch_timeout_s = int(
-                max(120, min(int(max_estimated_s * complexity_mult), max_runtime))
-            )
+            batch_timeout_s = int(max(120, min(int(max_estimated_s * complexity_mult), max_runtime)))
 
             try:
                 session = self._spawner.spawn_for_tasks(batch)
@@ -2172,9 +2203,7 @@ class Orchestrator:
                 logger.error("Spawn failed for batch %s: %s", [t.id for t in batch], exc)
                 result.errors.append(f"spawn: {exc}")
                 collector = get_collector(self._workdir / ".sdd" / "metrics")
-                collector.record_error(
-                    "agent_spawn_failed", "default", role=batch[0].role if batch else None
-                )
+                collector.record_error("agent_spawn_failed", "default", role=batch[0].role if batch else None)
                 new_count = fail_count + 1
                 self._spawn_failures[batch_key] = (new_count, time.time())
                 if new_count >= self._MAX_SPAWN_FAILURES:
@@ -2187,9 +2216,7 @@ class Orchestrator:
                                 f"Spawn failed {new_count} consecutive times: {exc}",
                             )
                         except Exception as fail_exc:
-                            logger.warning(
-                                "Could not mark task %s as failed: %s", task.id, fail_exc
-                            )
+                            logger.warning("Could not mark task %s as failed: %s", task.id, fail_exc)
                     self._spawn_failures.pop(batch_key, None)
 
     def _process_completed_tasks(self, done_tasks: list[Task], result: TickResult) -> None:
@@ -2242,9 +2269,7 @@ class Orchestrator:
                 self._record_provider_health(session, success=janitor_passed)
                 self._spawner.reap_completed_agent(session)
                 session.status = "dead"
-                logger.info(
-                    "Agent %s finished task %s, process reaped", session.id, task.id
-                )
+                logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
 
             # Record task completion in the operational metrics collector so
             # run summaries and evolution analysis see real duration/success data.
@@ -2263,8 +2288,7 @@ class Orchestrator:
                     try:
                         _agent_m = _collector._agent_metrics.get(session.id)
                         _lifetime = round(
-                            (time.time() - session.spawn_ts)
-                            if session.spawn_ts > 0 else 0.0,
+                            (time.time() - session.spawn_ts) if session.spawn_ts > 0 else 0.0,
                             2,
                         )
                         _tasks_done = _agent_m.tasks_completed if _agent_m else 0
@@ -2276,9 +2300,7 @@ class Orchestrator:
                             model=session.model_config.model,
                         )
                     except Exception as exc:
-                        logger.warning(
-                            "Evolution record_agent_lifetime failed: %s", exc
-                        )
+                        logger.warning("Evolution record_agent_lifetime failed: %s", exc)
 
             # Post bulletin: task completed or failed (with janitor result)
             if janitor_passed:
@@ -2297,7 +2319,10 @@ class Orchestrator:
             if task.result_summary:
                 try:
                     append_decision(
-                        self._workdir, task.id, task.title, task.result_summary,
+                        self._workdir,
+                        task.id,
+                        task.title,
+                        task.result_summary,
                     )
                 except Exception as exc:
                     logger.warning("append_decision failed for task %s: %s", task.id, exc)
@@ -2343,7 +2368,9 @@ class Orchestrator:
             if runtime > timeout_s:
                 logger.warning(
                     "Reaping agent %s (exceeded timeout %.0fs, runtime %.0fs)",
-                    session.id, timeout_s, runtime,
+                    session.id,
+                    timeout_s,
+                    runtime,
                 )
                 self._spawner.kill(session)
                 result.reaped.append(session.id)
@@ -2476,9 +2503,7 @@ class Orchestrator:
             payload = _parse_backlog_file(md_file.name, content)
 
             try:
-                resp = self._client.post(
-                    f"{self._config.server_url}/tasks", json=payload
-                )
+                resp = self._client.post(f"{self._config.server_url}/tasks", json=payload)
                 resp.raise_for_status()
             except httpx.HTTPError as exc:
                 logger.warning("ingest_backlog: POST /tasks failed for %s: %s", md_file.name, exc)
@@ -2535,10 +2560,7 @@ class Orchestrator:
         # Collect files-modified count and cost from metrics
         collector = get_collector(self._workdir / ".sdd" / "metrics")
         total_cost = collector.get_total_cost()
-        files_modified: int = sum(
-            getattr(m, "files_modified", 0)
-            for m in collector._task_metrics.values()
-        )
+        files_modified: int = sum(getattr(m, "files_modified", 0) for m in collector._task_metrics.values())
 
         # Build task list section
         task_lines: list[str] = []
@@ -2652,6 +2674,7 @@ class TickResult:
         # Populated when dry_run=True: (role, title, model, effort) tuples
         self.dry_run_planned: list[tuple[str, str, str | None, str | None]] = []
 
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -2710,6 +2733,7 @@ if __name__ == "__main__":
         mcp_config = None
         if adapter_name == "claude":
             from bernstein.adapters.claude import load_mcp_config
+
             project_mcp = None
             if seed_path.exists():
                 try:
@@ -2756,28 +2780,20 @@ if __name__ == "__main__":
                 pass
 
         # Resolve cluster-aware settings from env vars + seed config
-        server_url = os.environ.get(
-            "BERNSTEIN_SERVER_URL", f"http://127.0.0.1:{args.port}"
-        )
+        server_url = os.environ.get("BERNSTEIN_SERVER_URL", f"http://127.0.0.1:{args.port}")
         auth_token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
 
         # Build cluster config: env vars take precedence over seed file
         cluster_cfg: ClusterConfig | None = seed.cluster if seed else None
-        cluster_enabled = os.environ.get(
-            "BERNSTEIN_CLUSTER_ENABLED", ""
-        ).lower() in ("1", "true", "yes")
+        cluster_enabled = os.environ.get("BERNSTEIN_CLUSTER_ENABLED", "").lower() in ("1", "true", "yes")
         if cluster_enabled:
             cluster_cfg = ClusterConfig(
                 enabled=True,
                 topology=(cluster_cfg.topology if cluster_cfg else ClusterTopology.STAR),
                 auth_token=auth_token or (cluster_cfg.auth_token if cluster_cfg else None),
-                node_heartbeat_interval_s=(
-                    cluster_cfg.node_heartbeat_interval_s if cluster_cfg else 15
-                ),
+                node_heartbeat_interval_s=(cluster_cfg.node_heartbeat_interval_s if cluster_cfg else 15),
                 node_timeout_s=(cluster_cfg.node_timeout_s if cluster_cfg else 60),
-                server_url=os.environ.get("BERNSTEIN_SERVER_URL") or (
-                    cluster_cfg.server_url if cluster_cfg else None
-                ),
+                server_url=os.environ.get("BERNSTEIN_SERVER_URL") or (cluster_cfg.server_url if cluster_cfg else None),
                 bind_host=os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1"),
             )
 

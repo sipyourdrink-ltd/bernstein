@@ -1,4 +1,5 @@
 """OpenAI Codex CLI adapter."""
+
 from __future__ import annotations
 
 import os
@@ -29,8 +30,10 @@ class CodexAdapter(CLIAdapter):
 
         cmd = [
             "codex",
-            "--model", model_config.model,
-            "--approval-mode", "full-auto",
+            "--model",
+            model_config.model,
+            "--approval-mode",
+            "full-auto",
             "--quiet",
             prompt,
         ]

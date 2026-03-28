@@ -1,4 +1,5 @@
 """Adapter registry — look up CLI adapters by name."""
+
 from __future__ import annotations
 
 from bernstein.adapters.base import CLIAdapter
@@ -37,9 +38,7 @@ def get_adapter(cli_name: str) -> CLIAdapter:
     adapter_cls = _ADAPTERS.get(cli_name)
     if adapter_cls is None:
         available = ", ".join(sorted([*_ADAPTERS.keys(), "generic"]))
-        raise ValueError(
-            f"Unknown adapter '{cli_name}'. Available: {available}"
-        )
+        raise ValueError(f"Unknown adapter '{cli_name}'. Available: {available}")
 
     if isinstance(adapter_cls, CLIAdapter):
         return adapter_cls

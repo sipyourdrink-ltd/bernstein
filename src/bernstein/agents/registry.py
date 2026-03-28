@@ -1,4 +1,5 @@
 """Dynamic agent registry with YAML-based definitions and hot-reload support."""
+
 from __future__ import annotations
 
 import hashlib
@@ -32,6 +33,7 @@ class AgentDefinition:
         metadata: Additional arbitrary configuration.
         schema_version: Schema version for validation.
     """
+
     name: str
     role: str
     model_config: ModelConfig
@@ -46,6 +48,7 @@ class AgentDefinition:
 @dataclass
 class AgentInstance:
     """Runtime instance of a registered agent type."""
+
     id: str
     definition: AgentDefinition
     created_at: float = field(default_factory=time.time)
@@ -353,17 +356,13 @@ class AgentRegistry:
             if not isinstance(data["model"], str):
                 errors.append("Field 'model' must be a string")
             elif data["model"] not in self.VALID_MODEL_VALUES:
-                errors.append(
-                    f"Invalid model '{data['model']}'. Valid values: {', '.join(self.VALID_MODEL_VALUES)}"
-                )
+                errors.append(f"Invalid model '{data['model']}'. Valid values: {', '.join(self.VALID_MODEL_VALUES)}")
 
         if "effort" in data:
             if not isinstance(data["effort"], str):
                 errors.append("Field 'effort' must be a string")
             elif data["effort"] not in self.VALID_EFFORT_VALUES:
-                errors.append(
-                    f"Invalid effort '{data['effort']}'. Valid values: {', '.join(self.VALID_EFFORT_VALUES)}"
-                )
+                errors.append(f"Invalid effort '{data['effort']}'. Valid values: {', '.join(self.VALID_EFFORT_VALUES)}")
 
         if "max_tokens" in data and not isinstance(data["max_tokens"], int):
             errors.append("Field 'max_tokens' must be an integer")

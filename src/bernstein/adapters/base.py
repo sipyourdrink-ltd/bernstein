@@ -1,4 +1,5 @@
 """Base adapter for CLI coding agents."""
+
 from __future__ import annotations
 
 import contextlib
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 @dataclass
 class SpawnResult:
     """Result of spawning an agent process."""
+
     pid: int
     log_path: Path
     proc: object | None = None  # subprocess.Popen, kept for poll()-based alive check

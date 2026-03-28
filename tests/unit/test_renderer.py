@@ -7,6 +7,7 @@ import pytest
 
 from bernstein.templates.renderer import (
     TemplateError,
+    _DEFAULT_TEMPLATES_DIR,
     render_role_prompt,
     render_template,
 )
@@ -162,6 +163,10 @@ class TestRenderRolePrompt:
         with pytest.raises(FileNotFoundError):
             render_role_prompt("nonexistent_role", {}, templates_dir=templates_dir)
 
+    @pytest.mark.skipif(
+        not (_DEFAULT_TEMPLATES_DIR / "manager" / "system_prompt.md").exists(),
+        reason="templates/roles/ is gitignored; skip in CI unless bundled",
+    )
     def test_uses_real_templates_dir(self) -> None:
         """Smoke test: render the actual manager template without blowing up."""
         result = render_role_prompt(

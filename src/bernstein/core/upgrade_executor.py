@@ -10,6 +10,7 @@ Features:
 - Git integration for version control
 - Reviewer agent validation before execution
 """
+
 from __future__ import annotations
 
 import json
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 class UpgradeStatus(Enum):
     """Status of an upgrade execution."""
+
     PENDING_REVIEW = "pending_review"
     REVIEW_APPROVED = "review_approved"
     REVIEW_REJECTED = "review_rejected"
@@ -54,6 +56,7 @@ class UpgradeStatus(Enum):
 
 class UpgradeType(Enum):
     """Types of system upgrades."""
+
     CODE_MODIFICATION = "code_modification"
     TEMPLATE_UPDATE = "template_update"
     NEW_AGENT_ROLE = "new_agent_role"
@@ -65,6 +68,7 @@ class UpgradeType(Enum):
 @dataclass
 class FileChange:
     """A single file change in an upgrade."""
+
     path: str
     operation: str  # "create", "modify", "delete"
     old_content: str | None = None
@@ -75,6 +79,7 @@ class FileChange:
 @dataclass
 class UpgradeTransaction:
     """Represents a transactional upgrade with rollback capability."""
+
     id: str
     upgrade_type: UpgradeType
     title: str
@@ -150,16 +155,11 @@ class UpgradeReviewer:
 
     def _build_review_prompt(self, transaction: UpgradeTransaction) -> str:
         """Build the review prompt for an upgrade."""
-        changes_desc = "\n".join(
-            f"- {change.operation.upper()} {change.path}"
-            for change in transaction.file_changes
-        )
+        changes_desc = "\n".join(f"- {change.operation.upper()} {change.path}" for change in transaction.file_changes)
 
         rollback_desc = ""
         if transaction.rollback_plan:
-            rollback_desc = "\n".join(
-                f"  {i+1}. {step}" for i, step in enumerate(transaction.rollback_plan.steps)
-            )
+            rollback_desc = "\n".join(f"  {i + 1}. {step}" for i, step in enumerate(transaction.rollback_plan.steps))
 
         return f"""You are a senior software engineer reviewing a proposed system upgrade.
 
@@ -199,9 +199,9 @@ Review the upgrade carefully and provide your assessment."""
         # Extract JSON from response
         text = response.strip()
         if text.startswith("```"):
-            text = text[text.index("\n") + 1:]
+            text = text[text.index("\n") + 1 :]
         if text.endswith("```"):
-            text = text[:text.rfind("```")]
+            text = text[: text.rfind("```")]
         text = text.strip()
 
         try:
@@ -235,6 +235,7 @@ Review the upgrade carefully and provide your assessment."""
 @dataclass
 class ReviewResult:
     """Result of an upgrade review."""
+
     verdict: str  # "approve", "request_changes", "reject"
     reasoning: str
     feedback: str

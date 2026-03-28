@@ -6,6 +6,7 @@ API usage patterns, error rates, and cost efficiency. Stores metrics in
 
 Metrics are organized by type and date (e.g., task_completion_time_2026-03-22.jsonl).
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 class MetricType(Enum):
     """Types of metrics collected."""
+
     AGENT_SUCCESS = "agent_success"
     TASK_COMPLETION_TIME = "task_completion_time"
     API_USAGE = "api_usage"
@@ -36,6 +38,7 @@ class MetricType(Enum):
 
 class ProviderStatus(Enum):
     """Health status for API providers."""
+
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
@@ -45,6 +48,7 @@ class ProviderStatus(Enum):
 @dataclass
 class MetricPoint:
     """A single metric data point."""
+
     timestamp: float
     value: float
     labels: dict[str, str] = field(default_factory=dict)  # e.g., {role: "backend", model: "sonnet"}
@@ -53,6 +57,7 @@ class MetricPoint:
 @dataclass
 class TaskMetrics:
     """Metrics for a single task execution."""
+
     task_id: str
     role: str
     model: str
@@ -75,6 +80,7 @@ class TaskMetrics:
 @dataclass
 class AgentMetrics:
     """Metrics for a single agent session."""
+
     agent_id: str
     role: str
     model: str
@@ -91,6 +97,7 @@ class AgentMetrics:
 @dataclass
 class ProviderHealth:
     """Health tracking for an API provider."""
+
     provider: str
     status: ProviderStatus = ProviderStatus.HEALTHY
     last_check: float = 0.0
@@ -104,6 +111,7 @@ class ProviderHealth:
 @dataclass
 class UsageQuota:
     """Free tier usage quota tracking."""
+
     provider: str
     model: str
     limit_type: str  # "requests_per_day", "tokens_per_month", "requests_per_minute"
@@ -654,8 +662,7 @@ class MetricsCollector:
         with self._lock:
             self._buffer.append((filepath, json.dumps(point)))
             should_flush = (
-                len(self._buffer) >= self._buffer_limit
-                or (time.time() - self._last_flush) >= self._flush_interval
+                len(self._buffer) >= self._buffer_limit or (time.time() - self._last_flush) >= self._flush_interval
             )
         if should_flush:
             self._flush_buffer()
@@ -767,10 +774,7 @@ class MetricsCollector:
         Returns:
             Average time in seconds.
         """
-        tasks = [
-            t for t in self._task_metrics.values()
-            if t.end_time is not None and (role is None or t.role == role)
-        ]
+        tasks = [t for t in self._task_metrics.values() if t.end_time is not None and (role is None or t.role == role)]
 
         if not tasks:
             return 0.0
@@ -808,8 +812,7 @@ class MetricsCollector:
         provider_stats = {}
         for provider, health in self._provider_health.items():
             provider_tasks = [
-                t for t in self._task_metrics.values()
-                if t.provider == provider and t.end_time is not None
+                t for t in self._task_metrics.values() if t.provider == provider and t.end_time is not None
             ]
             provider_cost = sum(t.cost_usd for t in provider_tasks)
             provider_tokens = sum(t.tokens_used for t in provider_tasks)
@@ -833,9 +836,7 @@ class MetricsCollector:
             "total_cost_usd": self.get_total_cost(),
             "avg_completion_time_seconds": self.get_avg_completion_time(),
             "provider_stats": provider_stats,
-            "provider_health": {
-                p: h.status.value for p, h in self._provider_health.items()
-            },
+            "provider_health": {p: h.status.value for p, h in self._provider_health.items()},
             "quota_status": {
                 k: {"used": q.used, "limit": q.limit, "percentage": q.percentage_used}
                 for k, q in self._usage_quotas.items()

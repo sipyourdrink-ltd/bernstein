@@ -4,6 +4,7 @@ This is the single entry point for the "drop bernstein.yaml, run one command"
 UX. Called by `bernstein run` and by the bare `bernstein` invocation when a
 seed file is detected.
 """
+
 from __future__ import annotations
 
 import logging
@@ -88,10 +89,13 @@ def _check_binary(cli: str) -> None:
 def _claude_has_oauth_session() -> bool:
     """Check if Claude Code has an active OAuth session (no API key needed)."""
     import subprocess
+
     try:
         result = subprocess.run(
             ["claude", "--version"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         # If claude --version works, the binary is functional.
         # Claude Code with OAuth doesn't need ANTHROPIC_API_KEY.
@@ -114,29 +118,19 @@ def _check_api_key(cli: str) -> None:
     """
     if cli == "qwen":
         if not any(os.environ.get(v) for v in _QWEN_API_KEY_VARS):
-            console.print(
-                "[bold red]Error:[/bold red] No API key configured for qwen."
-            )
-            console.print(
-                "Set one of: " + ", ".join(_QWEN_API_KEY_VARS)
-            )
+            console.print("[bold red]Error:[/bold red] No API key configured for qwen.")
+            console.print("Set one of: " + ", ".join(_QWEN_API_KEY_VARS))
             raise SystemExit(1)
     elif cli == "claude":
         # Claude Code supports OAuth — API key not required if OAuth session active
         if not os.environ.get("ANTHROPIC_API_KEY") and not _claude_has_oauth_session():
-            console.print(
-                "[bold red]Error:[/bold red] No Claude authentication found."
-            )
-            console.print(
-                "Either set ANTHROPIC_API_KEY or log in via: claude login"
-            )
+            console.print("[bold red]Error:[/bold red] No Claude authentication found.")
+            console.print("Either set ANTHROPIC_API_KEY or log in via: claude login")
             raise SystemExit(1)
     else:
         env_var = _CLI_API_KEY_ENV.get(cli)
         if env_var and not os.environ.get(env_var):
-            console.print(
-                f"[bold red]Error:[/bold red] {env_var} is not set."
-            )
+            console.print(f"[bold red]Error:[/bold red] {env_var} is not set.")
             console.print(f"Export it: export {env_var}=<your-api-key>")
             raise SystemExit(1)
 
@@ -155,12 +149,9 @@ def _check_port_free(port: int) -> None:
         try:
             sock.bind(("127.0.0.1", port))
         except OSError:
+            console.print(f"[bold red]Error:[/bold red] Port {port} is already in use.")
             console.print(
-                f"[bold red]Error:[/bold red] Port {port} is already in use."
-            )
-            console.print(
-                "Run [bold]bernstein stop[/bold] to free it, "
-                "or pass [bold]--port <n>[/bold] to use a different port."
+                "Run [bold]bernstein stop[/bold] to free it, or pass [bold]--port <n>[/bold] to use a different port."
             )
             raise SystemExit(1) from None
 
@@ -321,9 +312,7 @@ def _discover_catalog(workdir: Path) -> None:
         registry = CatalogRegistry.default()
         registry._cache_path = cache_path
         registry.discover()
-        console.print(
-            f"[dim]Catalog: {len(registry._cached_roles)} role(s) ready[/dim]"
-        )
+        console.print(f"[dim]Catalog: {len(registry._cached_roles)} role(s) ready[/dim]")
     except Exception:
         logger.warning("Catalog auto-discovery failed (non-fatal)", exc_info=True)
 
@@ -342,9 +331,7 @@ def _build_codebase_index(workdir: Path) -> None:
 
     try:
         indexer = build_or_update_index(workdir)
-        console.print(
-            f"[dim]Codebase index: {indexer.file_count()} file(s) indexed[/dim]"
-        )
+        console.print(f"[dim]Codebase index: {indexer.file_count()} file(s) indexed[/dim]")
     except Exception:
         logger.warning("Codebase index build failed (non-fatal)", exc_info=True)
 
@@ -391,10 +378,7 @@ def _start_server(
     pid_path = workdir / ".sdd" / "runtime" / "server.pid"
     existing = _read_pid(pid_path)
     if existing is not None and _is_alive(existing):
-        raise RuntimeError(
-            f"Server already running (PID {existing}). "
-            "Run `bernstein stop` first."
-        )
+        raise RuntimeError(f"Server already running (PID {existing}). Run `bernstein stop` first.")
 
     # Build env for the server subprocess — inherit parent env and overlay
     # cluster-specific vars so the server's module-level app factory picks
@@ -648,6 +632,7 @@ def bootstrap_from_seed(
         _discover_catalog(workdir)
         _build_codebase_index(workdir)
         from bernstein.evolution.invariants import verify_invariants, write_lockfile
+
         ok, violations = verify_invariants(workdir)
         if not ok:
             console.print(f"[bold red]SAFETY: {len(violations)} locked file(s) modified[/bold red]")
@@ -660,17 +645,17 @@ def bootstrap_from_seed(
         console.print("[green]→[/green] Workspace ready")
 
     # Determine if cluster mode should be enabled (seed config or env var)
-    cluster_enabled = (
-        (seed.cluster is not None and seed.cluster.enabled)
-        or os.environ.get("BERNSTEIN_CLUSTER_ENABLED", "").lower() in ("1", "true", "yes")
-    )
+    cluster_enabled = (seed.cluster is not None and seed.cluster.enabled) or os.environ.get(
+        "BERNSTEIN_CLUSTER_ENABLED", ""
+    ).lower() in ("1", "true", "yes")
     if cluster_enabled:
         console.print("  [bold]Cluster:[/bold] enabled")
 
     # 3. Start server
     with Status(f"[bold]Starting task server on {bind_host}:{port}...[/bold]", console=console):
         server_pid = _start_server(
-            workdir, port,
+            workdir,
+            port,
             bind_host=bind_host,
             cluster_enabled=cluster_enabled,
             auth_token=auth_token,
@@ -703,7 +688,9 @@ def bootstrap_from_seed(
         # No backlog — use the manager agent to plan from scratch
         with Status("[bold]Creating planning task...[/bold]", console=console):
             manager_task_id = _inject_manager_task(
-                seed, workdir, port,
+                seed,
+                workdir,
+                port,
                 server_url=server_url,
                 auth_token=auth_token,
             )
@@ -713,7 +700,8 @@ def bootstrap_from_seed(
     cell_label = f"{effective_cells} cells" if effective_cells > 1 else "single cell"
     with Status(f"[bold]Spawning agents ({cell_label})...[/bold]", console=console):
         spawner_pid = _start_spawner(
-            workdir, port,
+            workdir,
+            port,
             cells=effective_cells,
             server_url=server_url,
             auth_token=auth_token,
@@ -870,6 +858,7 @@ def bootstrap_from_goal(
         _discover_catalog(workdir)
         _build_codebase_index(workdir)
         from bernstein.evolution.invariants import verify_invariants, write_lockfile
+
         ok, violations = verify_invariants(workdir)
         if not ok:
             console.print(f"[bold red]SAFETY: {len(violations)} locked file(s) modified[/bold red]")
@@ -914,7 +903,9 @@ def bootstrap_from_goal(
     else:
         with Status("[bold]Creating planning task...[/bold]", console=console):
             manager_task_id = _inject_manager_task(
-                seed, workdir, port,
+                seed,
+                workdir,
+                port,
                 server_url=server_url,
                 auth_token=auth_token,
             )

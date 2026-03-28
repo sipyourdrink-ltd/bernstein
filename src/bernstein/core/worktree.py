@@ -11,6 +11,7 @@ Usage::
     # ... spawn agent in worktree_path ...
     mgr.cleanup("session-abc123")
 """
+
 from __future__ import annotations
 
 import logging
@@ -70,8 +71,7 @@ class WorktreeManager:
 
         if worktree_path.exists():
             raise WorktreeError(
-                f"Worktree path already exists: {worktree_path}. "
-                "Call cleanup() first or use a unique session_id."
+                f"Worktree path already exists: {worktree_path}. Call cleanup() first or use a unique session_id."
             )
 
         self._base_dir.mkdir(parents=True, exist_ok=True)
@@ -82,12 +82,9 @@ class WorktreeManager:
             stderr = result.stderr.strip()
             if "already exists" in stderr:
                 raise WorktreeError(
-                    f"Branch '{branch_name}' already exists. "
-                    f"Delete it manually or call cleanup() first. Git: {stderr}"
+                    f"Branch '{branch_name}' already exists. Delete it manually or call cleanup() first. Git: {stderr}"
                 )
-            raise WorktreeError(
-                f"git worktree add failed for session '{session_id}': {stderr}"
-            )
+            raise WorktreeError(f"git worktree add failed for session '{session_id}': {stderr}")
 
         logger.info("Created worktree %s (branch %s)", worktree_path, branch_name)
         return worktree_path
@@ -152,7 +149,7 @@ class WorktreeManager:
         for line in output.splitlines():
             if not line.startswith("worktree "):
                 continue
-            wt_path = line[len("worktree "):].strip()
+            wt_path = line[len("worktree ") :].strip()
             if wt_path.startswith(base_str):
                 session_id = Path(wt_path).name
                 session_ids.append(session_id)

@@ -4,6 +4,7 @@ The janitor validates completed work against defined completion signals.
 For upgrade tasks, it performs additional verification of the upgrade execution.
 Supports LLM Judge for ambiguous task verification via Claude Sonnet.
 """
+
 from __future__ import annotations
 
 import glob as globmod
@@ -17,6 +18,7 @@ from typing import Literal, cast
 
 import httpx
 
+from bernstein import _BUNDLED_TEMPLATES_DIR
 from bernstein.core.llm import call_llm
 from bernstein.core.models import (
     CompletionSignal,
@@ -37,9 +39,7 @@ JUDGE_MAX_DIFF_CHARS = 10_000  # Truncate diff to control cost
 JUDGE_MAX_TOKENS = 1024  # Response token limit (~$0.015 output at Sonnet rates)
 JUDGE_CONFIDENCE_THRESHOLD = 0.7  # Below this, flag for human review
 _JUDGE_RETRY_RE = re.compile(r"\[judge_retry:(\d+)\]")
-_JUDGE_TEMPLATE_PATH = (
-    Path(__file__).resolve().parents[3] / "templates" / "prompts" / "judge.md"
-)
+_JUDGE_TEMPLATE_PATH = _BUNDLED_TEMPLATES_DIR / "prompts" / "judge.md"
 
 
 def evaluate_signal(signal: CompletionSignal, workdir: Path) -> tuple[bool, str]:
@@ -95,7 +95,8 @@ def verify_task(task: Task, workdir: Path) -> tuple[bool, list[str]]:
 
 
 def _collect_signal_results(
-    task: Task, workdir: Path,
+    task: Task,
+    workdir: Path,
 ) -> list[tuple[str, bool, str]]:
     """Evaluate all signals and return structured results.
 
@@ -157,9 +158,7 @@ async def run_janitor(
 
             # Handle llm_judge signals (async, evaluated separately)
             judge_verdict: JudgeVerdict | None = None
-            judge_signals = [
-                s for s in task.completion_signals if s.type == "llm_judge"
-            ]
+            judge_signals = [s for s in task.completion_signals if s.type == "llm_judge"]
             if judge_signals:
                 # Only run judge if all non-judge signals pass
                 non_judge_ok = all(ok for _, ok, _ in signal_results)
@@ -189,23 +188,29 @@ async def run_janitor(
                 retry_count = _get_judge_retry_count(task)
                 if retry_count < MAX_JUDGE_RETRIES:
                     fix_task_ids = await _create_judge_fix_task(
-                        task, judge_verdict, retry_count, server_url,
+                        task,
+                        judge_verdict,
+                        retry_count,
+                        server_url,
                     )
                 else:
                     logger.warning(
                         "Task %s exceeded max judge retries (%d), not creating fix task",
-                        task.id, MAX_JUDGE_RETRIES,
+                        task.id,
+                        MAX_JUDGE_RETRIES,
                     )
             else:
                 fix_task_ids = await create_fix_tasks(task, failed_descs, server_url)
 
-        results.append(JanitorResult(
-            task_id=task.id,
-            passed=all_passed,
-            signal_results=signal_results,
-            fix_tasks_created=fix_task_ids,
-            judge_verdict=judge_verdict,
-        ))
+        results.append(
+            JanitorResult(
+                task_id=task.id,
+                passed=all_passed,
+                signal_results=signal_results,
+                fix_tasks_created=fix_task_ids,
+                judge_verdict=judge_verdict,
+            )
+        )
     return results
 
 
@@ -443,7 +448,10 @@ async def judge_task(task: Task, workdir: Path, criteria: str) -> JudgeVerdict:
     verdict = _parse_judge_response(raw_response)
     logger.info(
         "Judge verdict for task %s: %s (confidence=%.2f, flagged=%s)",
-        task.id, verdict.verdict, verdict.confidence, verdict.flagged_for_review,
+        task.id,
+        verdict.verdict,
+        verdict.confidence,
+        verdict.flagged_for_review,
     )
     return verdict
 
@@ -499,7 +507,9 @@ async def _create_judge_fix_task(
             created_ids.append(created_id)
             logger.info(
                 "Created judge fix task %s (retry %d) for task %s",
-                created_id, next_retry, task.id,
+                created_id,
+                next_retry,
+                task.id,
             )
     except (httpx.HTTPError, KeyError) as exc:
         logger.warning("Failed to create judge fix task for %s: %s", task.id, exc)

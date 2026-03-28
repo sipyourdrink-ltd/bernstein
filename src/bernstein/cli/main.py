@@ -1,4 +1,5 @@
 """CLI entry point for Bernstein -- multi-agent orchestration."""
+
 from __future__ import annotations
 
 import json
@@ -226,14 +227,24 @@ def _find_seed_file() -> Path | None:
 @click.option("--max-cycles", default=0, hidden=True, help="Stop after N evolve cycles (0=unlimited).")
 @click.option("--budget", default=0.0, hidden=True, help="Stop after $N spent (0=unlimited).")
 @click.option("--interval", default=300, hidden=True, help="Seconds between evolve cycles (default 5min).")
-@click.option("--github", "github_sync", is_flag=True, default=False, hidden=True, help="Sync evolve proposals as GitHub Issues.")  # noqa: E501
+@click.option(
+    "--github", "github_sync", is_flag=True, default=False, hidden=True, help="Sync evolve proposals as GitHub Issues."
+)
 @click.option("--headless", is_flag=True, default=False, hidden=True, help="Run without dashboard (for overnight/CI).")
 @click.option("--dry-run", is_flag=True, default=False, help="Preview task plan without spawning agents.")
 @click.option("--yes", "-y", is_flag=True, default=False, hidden=True, help="Skip cost confirmation prompt.")
 @click.pass_context
 def cli(
-    ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int,
-    budget: float, interval: int, github_sync: bool, headless: bool, dry_run: bool, yes: bool,
+    ctx: click.Context,
+    goal: str | None,
+    evolve: bool,
+    max_cycles: int,
+    budget: float,
+    interval: int,
+    github_sync: bool,
+    headless: bool,
+    dry_run: bool,
+    yes: bool,
 ) -> None:
     """Bernstein — multi-agent orchestration for CLI coding agents.
 
@@ -279,11 +290,10 @@ def cli(
         # Write run_config.json so the orchestrator subprocess can read budget_usd
         if budget > 0:
             import json as _json
+
             runtime_dir = workdir / ".sdd" / "runtime"
             runtime_dir.mkdir(parents=True, exist_ok=True)
-            (runtime_dir / "run_config.json").write_text(
-                _json.dumps({"budget_usd": budget})
-            )
+            (runtime_dir / "run_config.json").write_text(_json.dumps({"budget_usd": budget}))
 
         if goal is not None:
             # Inline goal — no config files needed
@@ -298,6 +308,7 @@ def cli(
                     console.print("\n[yellow]Aborted.[/yellow]")
                     raise SystemExit(0) from None
             from bernstein.core.bootstrap import bootstrap_from_goal
+
             try:
                 bootstrap_from_goal(goal, workdir=workdir, port=port)
             except RuntimeError as exc:
@@ -307,6 +318,7 @@ def cli(
             console.print(f"Using: [bold]{seed_path.name}[/bold]")
             from bernstein.core.bootstrap import bootstrap_from_seed
             from bernstein.core.seed import SeedError
+
             try:
                 bootstrap_from_seed(seed_path, workdir=workdir, port=port)
             except (SeedError, RuntimeError) as exc:
@@ -320,6 +332,7 @@ def cli(
                 task_count = sum(1 for _ in backlog_dir.glob("*.md"))
                 console.print(f"[dim]No seed file — loading {task_count} tasks from backlog[/dim]")
                 from bernstein.core.bootstrap import bootstrap_from_goal
+
                 try:
                     bootstrap_from_goal("Execute backlog tasks", workdir=workdir, port=port)
                 except RuntimeError as exc:
@@ -327,10 +340,10 @@ def cli(
                     raise SystemExit(1) from exc
             else:
                 console.print(
-                    'No bernstein.yaml or backlog tasks found.\n\n'
-                    '[bold]Quick start:[/bold]\n'
+                    "No bernstein.yaml or backlog tasks found.\n\n"
+                    "[bold]Quick start:[/bold]\n"
                     '  bernstein -g "Build a REST API with auth"\n\n'
-                    'Or create a bernstein.yaml / add .md tasks to .sdd/backlog/open/\n'
+                    "Or create a bernstein.yaml / add .md tasks to .sdd/backlog/open/\n"
                 )
                 return
     else:
@@ -339,6 +352,7 @@ def cli(
     # Write evolve config so the orchestrator can read it
     if evolve:
         import json as _json
+
         evolve_config = {
             "enabled": True,
             "max_cycles": max_cycles,
@@ -363,6 +377,7 @@ def cli(
 
     # Show live dashboard (blocks until Ctrl+C / q)
     from bernstein.cli.dashboard import run_dashboard
+
     run_dashboard()
 
 
@@ -411,7 +426,7 @@ def init(target_dir: str) -> None:
     if not yaml_path.exists():
         yaml_path.write_text(
             "# Bernstein orchestration config\n"
-            "# goal: \"Describe your goal here\"\n"
+            '# goal: "Describe your goal here"\n'
             "# cli: claude  # or codex, gemini, qwen\n"
         )
         console.print(f"[green]Created[/green] {yaml_path.relative_to(root)}")
@@ -422,6 +437,7 @@ def init(target_dir: str) -> None:
         import shutil
 
         from bernstein import _BUNDLED_TEMPLATES_DIR
+
         if _BUNDLED_TEMPLATES_DIR.is_dir():
             shutil.copytree(_BUNDLED_TEMPLATES_DIR, templates_dst)
             console.print("[green]Created[/green] templates/ (default roles & prompts)")
@@ -439,8 +455,7 @@ def init(target_dir: str) -> None:
         console.print(f"[green]Created[/green] .gitignore (added {gitignore_entry})")
 
     console.print(
-        "[green]✓[/green] Workspace ready. "
-        "Created bernstein.yaml — edit the goal and run [bold]bernstein[/bold]"
+        "[green]✓[/green] Workspace ready. Created bernstein.yaml — edit the goal and run [bold]bernstein[/bold]"
     )
 
 
@@ -570,8 +585,7 @@ def start(goal: str | None, seed_file: str, port: int) -> None:
         path = Path(seed_file)
         if not path.exists():
             console.print(
-                "[yellow]No GOAL argument and no seed file found.[/yellow] "
-                f"Pass a goal or create {seed_file}."
+                f"[yellow]No GOAL argument and no seed file found.[/yellow] Pass a goal or create {seed_file}."
             )
             raise SystemExit(1)
         try:
@@ -596,10 +610,7 @@ def status() -> None:
 
     data = _server_get("/status")
     if data is None:
-        console.print(
-            "[red]Cannot reach task server.[/red] "
-            "Is Bernstein running? Run [bold]bernstein[/bold] to start."
-        )
+        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
         raise SystemExit(1)
 
     # ---- Task table ----
@@ -778,16 +789,12 @@ def add_task(
 
     result = _server_post("/task", payload)
     if result is None:
-        console.print(
-            "[red]Cannot reach task server.[/red] "
-            "Is Bernstein running? Run [bold]bernstein[/bold] to start."
-        )
+        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
         raise SystemExit(1)
 
     task_id = result.get("id", "?")
     console.print(
-        f"[green]Task added:[/green] [bold]{task_id}[/bold] — {title} "
-        f"([dim]role={role}, priority={priority}[/dim])"
+        f"[green]Task added:[/green] [bold]{task_id}[/bold] — {title} ([dim]role={role}, priority={priority}[/dim])"
     )
 
 
@@ -823,18 +830,12 @@ def sync(port: int, workdir: str) -> None:
     result = sync_backlog_to_server(root, server_url=f"http://127.0.0.1:{port}")
 
     if result.created:
-        console.print(
-            f"[green]Created {len(result.created)} task(s):[/green] "
-            + ", ".join(result.created)
-        )
+        console.print(f"[green]Created {len(result.created)} task(s):[/green] " + ", ".join(result.created))
     if result.skipped:
-        console.print(
-            f"[dim]Skipped {len(result.skipped)} file(s) already on server[/dim]"
-        )
+        console.print(f"[dim]Skipped {len(result.skipped)} file(s) already on server[/dim]")
     if result.moved:
         console.print(
-            f"[green]Moved {len(result.moved)} completed file(s) to backlog/done/:[/green] "
-            + ", ".join(result.moved)
+            f"[green]Moved {len(result.moved)} completed file(s) to backlog/done/:[/green] " + ", ".join(result.moved)
         )
     for err in result.errors:
         console.print(f"[red]Error:[/red] {err}")
@@ -878,11 +879,7 @@ def stop(timeout: int) -> None:
             status_data = _server_get("/status")
             if status_data is None:
                 break
-            active = [
-                a
-                for a in status_data.get("agents", [])
-                if a.get("status") in {"working", "starting"}
-            ]
+            active = [a for a in status_data.get("agents", []) if a.get("status") in {"working", "starting"}]
             if not active:
                 break
             time.sleep(1)
@@ -898,6 +895,7 @@ def stop(timeout: int) -> None:
     if agents_json.exists():
         try:
             import json as _json
+
             agent_data = _json.loads(agents_json.read_text())
             for agent in agent_data.get("agents", []):
                 pid = agent.get("pid")
@@ -1067,6 +1065,7 @@ def _stop_demo_processes(project_dir: Path) -> None:
         if _is_alive(pid):
             try:
                 import signal as _signal
+
                 os.kill(pid, _signal.SIGTERM)
             except OSError:
                 pass
@@ -1107,10 +1106,7 @@ def _print_demo_summary(project_dir: Path, server_url: str) -> None:
         table.add_row("Tasks failed", f"[red]{failed}[/red]")
 
     # Count Python files in the project dir (excluding .sdd/)
-    py_files = [
-        p for p in project_dir.glob("**/*.py")
-        if ".sdd" not in p.parts
-    ]
+    py_files = [p for p in project_dir.glob("**/*.py") if ".sdd" not in p.parts]
     table.add_row("Python files in project", str(len(py_files)))
     table.add_row("API cost", f"${total_cost:.4f}")
     console.print(table)
@@ -1134,8 +1130,7 @@ def _print_demo_summary(project_dir: Path, server_url: str) -> None:
     "--adapter",
     default=None,
     metavar="NAME",
-    help="CLI adapter to use (auto-detected by default).  "
-    "Choices: claude, codex, gemini, qwen.",
+    help="CLI adapter to use (auto-detected by default).  Choices: claude, codex, gemini, qwen.",
 )
 @click.option(
     "--timeout",
@@ -1200,9 +1195,7 @@ def demo(dry_run: bool, adapter: str | None, timeout: int) -> None:
             plan_table.add_row(str(i), f"Run {role} agent", title)
         plan_table.add_row(str(len(_DEMO_TASKS) + 3), "Print summary", "tasks done, cost, files changed")
         console.print(plan_table)
-        console.print(
-            "\n[dim]No agents were spawned. Run [bold]bernstein demo[/bold] to execute.[/dim]"
-        )
+        console.print("\n[dim]No agents were spawned. Run [bold]bernstein demo[/bold] to execute.[/dim]")
         return
 
     # Create temp project dir
@@ -1332,10 +1325,7 @@ def plan(export_file: str | None, status_filter: str | None) -> None:
 
     raw = _server_get(path)
     if raw is None:
-        console.print(
-            "[red]Cannot reach task server.[/red] "
-            "Is Bernstein running? Run [bold]bernstein[/bold] to start."
-        )
+        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
         raise SystemExit(1)
 
     tasks: list[dict[str, Any]] = raw if isinstance(raw, list) else []
@@ -1498,10 +1488,7 @@ def list_tasks(status_filter: str | None, role: str | None, as_json: bool) -> No
     """List tasks with optional filters."""
     data = _server_get("/status")
     if data is None:
-        console.print(
-            "[red]Cannot reach task server.[/red] "
-            "Is Bernstein running? Run [bold]bernstein[/bold] to start."
-        )
+        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
         raise SystemExit(1)
 
     tasks: list[dict[str, Any]] = data.get("tasks", [])
@@ -1665,6 +1652,7 @@ def live(interval: float) -> None:
         if agents_json.exists():
             try:
                 import json as _json
+
                 data = _json.loads(agents_json.read_text())
                 agents = [a for a in data.get("agents", []) if a.get("status") != "dead"]
             except (OSError, ValueError):
@@ -1946,8 +1934,7 @@ def config_get(key: str, project_dir: str) -> None:
     result = resolve_config(key, home=home, project_dir=Path(project_dir))
     source_style = {"project": "cyan", "global": "yellow", "default": "dim"}.get(result["source"], "white")
     console.print(
-        f"[bold]{key}[/bold] = {result['value']!r}  "
-        f"[{source_style}](source: {result['source']})[/{source_style}]"
+        f"[bold]{key}[/bold] = {result['value']!r}  [{source_style}](source: {result['source']})[/{source_style}]"
     )
 
 
@@ -2283,6 +2270,7 @@ def agents_sync(definitions_dir: str) -> None:
         console.print(f"  [dim]Directory not found — skipping (place Agency YAML files in {agency_dir})[/dim]")
     else:
         from bernstein.core.agency_loader import load_agency_catalog
+
         catalog = load_agency_catalog(agency_dir)
         console.print(f"  [green]✓[/green] Loaded {len(catalog)} agency agent(s)")
         for name in list(catalog)[:5]:
@@ -2329,6 +2317,7 @@ def agents_list(source: str, definitions_dir: str) -> None:
         agency_dir = Path(".sdd/agents/agency")
         if agency_dir.exists():
             from bernstein.core.agency_loader import load_agency_catalog
+
             catalog = load_agency_catalog(agency_dir)
             for name, agent in catalog.items():
                 rows.append((name, agent.name, agent.role, "agency"))
@@ -2395,6 +2384,7 @@ def agents_validate(definitions_dir: str) -> None:
                 if not isinstance(data, dict):
                     raise ValueError("YAML must be a mapping")
                 from bernstein.agents.registry import AgentRegistry
+
                 registry = AgentRegistry(definitions_dir=definitions_path)
                 registry._validate_schema(data, yaml_file)
                 console.print(f"  [green]✓[/green] {yaml_file.name}")
@@ -2412,10 +2402,8 @@ def agents_validate(definitions_dir: str) -> None:
         console.print("  [dim]Not configured — skipping[/dim]")
     else:
         from bernstein.core.agency_loader import parse_agency_agent
-        agency_files = [
-            p for p in sorted(agency_dir.iterdir())
-            if p.suffix in (".yaml", ".yml")
-        ]
+
+        agency_files = [p for p in sorted(agency_dir.iterdir()) if p.suffix in (".yaml", ".yml")]
         if not agency_files:
             console.print("  [dim]No YAML files found — catalog is empty[/dim]")
         for p in agency_files:
@@ -2468,6 +2456,7 @@ def agents_showcase(definitions_dir: str) -> None:
     definitions_path = Path(definitions_dir)
     if definitions_path.exists():
         from bernstein.agents.registry import AgentRegistry
+
         registry = AgentRegistry(definitions_dir=definitions_path)
         registry.load_definitions()
         for defn in registry.definitions.values():
@@ -2480,6 +2469,7 @@ def agents_showcase(definitions_dir: str) -> None:
     agency_dir = Path(".sdd/agents/agency")
     if agency_dir.exists():
         from bernstein.core.agency_loader import load_agency_catalog
+
         catalog = load_agency_catalog(agency_dir)
         for name, agent in catalog.items():
             m = metrics.get("agency")
@@ -2489,20 +2479,23 @@ def agents_showcase(definitions_dir: str) -> None:
 
     # Built-in roles (fallback)
     from bernstein.agents.catalog import _BUILTIN_AGENT_ENTRIES
+
     builtin_names = {r[0] for r in rows}
     for entry in _BUILTIN_AGENT_ENTRIES:
         if entry["role"] not in builtin_names:
             m = metrics.get("builtin")
             rate = f"{m.success_rate * 100:.0f}%" if m and m.tasks_assigned else "—"
             assigned = str(m.tasks_assigned) if m else "0"
-            rows.append((
-                entry["role"],
-                entry["role"],
-                entry.get("description", ""),
-                "builtin",
-                assigned,
-                rate,
-            ))
+            rows.append(
+                (
+                    entry["role"],
+                    entry["role"],
+                    entry.get("description", ""),
+                    "builtin",
+                    assigned,
+                    rate,
+                )
+            )
 
     if not rows:
         console.print("[dim]No agents found. Run [bold]bernstein agents sync[/bold] first.[/dim]")
@@ -2574,6 +2567,7 @@ def agents_match(role: str, task_description: str) -> None:
     agency_dir = Path(".sdd/agents/agency")
     if agency_dir.exists():
         from bernstein.core.agency_loader import load_agency_catalog
+
         catalog = load_agency_catalog(agency_dir)
         registry.load_from_agency(catalog)
 
@@ -2794,8 +2788,7 @@ def evolve_run(
 
     if not state_dir.is_dir():
         console.print(
-            "[red].sdd directory not found.[/red] "
-            "Run [bold]bernstein[/bold] first to initialise the workspace."
+            "[red].sdd directory not found.[/red] Run [bold]bernstein[/bold] first to initialise the workspace."
         )
         raise SystemExit(1)
 
@@ -2806,6 +2799,7 @@ def evolve_run(
         if _seed_path.exists():
             try:
                 import yaml as _yaml
+
                 _seed_raw = _yaml.safe_load(_seed_path.read_text(encoding="utf-8"))
                 if isinstance(_seed_raw, dict):
                     _evolve_cfg = _seed_raw.get("evolve", {})
@@ -2827,6 +2821,7 @@ def evolve_run(
     # Check GitHub availability early so we can warn before the loop starts.
     if github_sync:
         from bernstein.core.github import GitHubClient
+
         _gh_check = GitHubClient(repo=github_repo)
         if not _gh_check.available:
             console.print(
@@ -2856,6 +2851,7 @@ def evolve_run(
     if github_sync and github_repo:
         # Pass the explicit repo slug to the lazily-created GitHubClient.
         from bernstein.core.github import GitHubClient
+
         loop._github = GitHubClient(repo=github_repo)
 
     try:
@@ -2970,9 +2966,7 @@ def evolve_review(workdir: str) -> None:
         )
 
     console.print(review_table)
-    console.print(
-        "\n[dim]Approve with:[/dim] [bold]bernstein evolve approve <id>[/bold]"
-    )
+    console.print("\n[dim]Approve with:[/dim] [bold]bernstein evolve approve <id>[/bold]")
 
 
 @evolve.command("approve")
@@ -3006,10 +3000,7 @@ def evolve_approve(proposal_id: str, reviewer: str, workdir: str) -> None:
         )
         raise SystemExit(1)
 
-    console.print(
-        f"[green]Approved:[/green] [bold]{proposal_id}[/bold] "
-        f"(reviewer={reviewer})"
-    )
+    console.print(f"[green]Approved:[/green] [bold]{proposal_id}[/bold] (reviewer={reviewer})")
 
 
 @evolve.command("status")
@@ -3037,8 +3028,7 @@ def evolve_status(workdir: str) -> None:
 
     if not state_dir.is_dir():
         console.print(
-            "[red].sdd directory not found.[/red] "
-            "Run [bold]bernstein[/bold] first to initialise the workspace."
+            "[red].sdd directory not found.[/red] Run [bold]bernstein[/bold] first to initialise the workspace."
         )
         raise SystemExit(1)
 
@@ -3082,8 +3072,7 @@ def evolve_export(output: str, fmt: str, workdir: str) -> None:
 
     if not state_dir.is_dir():
         console.print(
-            "[red].sdd directory not found.[/red] "
-            "Run [bold]bernstein[/bold] first to initialise the workspace."
+            "[red].sdd directory not found.[/red] Run [bold]bernstein[/bold] first to initialise the workspace."
         )
         raise SystemExit(1)
 
@@ -3179,8 +3168,7 @@ def ideate(
 
     if not state_dir.is_dir():
         console.print(
-            "[red].sdd directory not found.[/red] "
-            "Run [bold]bernstein[/bold] first to initialise the workspace."
+            "[red].sdd directory not found.[/red] Run [bold]bernstein[/bold] first to initialise the workspace."
         )
         raise SystemExit(1)
 
@@ -3325,6 +3313,7 @@ def doctor(as_json: bool) -> None:
         if var == "ANTHROPIC_API_KEY" and not set_val:
             # Check for OAuth session
             from bernstein.core.bootstrap import _claude_has_oauth_session
+
             if _claude_has_oauth_session():
                 status = "not set (OAuth active — OK)"
                 any_key = True
@@ -3382,7 +3371,19 @@ def doctor(as_json: bool) -> None:
         "Run 'bernstein stop' to clean up" if stale_pids else "",
     )
 
-    # 7. Overall readiness
+    # 7. CI tool dependencies (ruff, pytest, pyright)
+    from bernstein.core.ci_fix import check_test_dependencies
+
+    ci_dep_results = check_test_dependencies()
+    for dep in ci_dep_results:
+        _check(
+            f"CI tool: {dep['name']}",
+            dep["ok"] == "True",
+            dep["detail"],
+            dep["fix"],
+        )
+
+    # 8. Overall readiness
     any_adapter_key = any_adapter and any_key
     _check(
         "Ready to run",
@@ -3393,6 +3394,7 @@ def doctor(as_json: bool) -> None:
 
     if as_json:
         import json as _json
+
         click.echo(_json.dumps({"checks": checks}, indent=2))
         failed = [c for c in checks if not c["ok"]]
         if failed:
@@ -3424,6 +3426,33 @@ def doctor(as_json: bool) -> None:
         raise SystemExit(1)
     else:
         console.print("\n[green]All checks passed.[/green]")
+
+
+# ---------------------------------------------------------------------------
+# install-hooks — git pre-push hook installer
+# ---------------------------------------------------------------------------
+
+
+@cli.command("install-hooks")
+@click.option("--force", is_flag=True, default=False, help="Overwrite existing hook.")
+def install_hooks(force: bool) -> None:
+    """Install a pre-push git hook that runs lint and unit tests before pushing.
+
+    \b
+      bernstein install-hooks          # install hook (skip if already present)
+      bernstein install-hooks --force  # overwrite existing hook
+    """
+    from bernstein.core.ci_fix import install_pre_push_hook
+
+    repo_root = Path.cwd()
+    installed = install_pre_push_hook(repo_root, force=force)
+    hook_path = repo_root / ".git" / "hooks" / "pre-push"
+    if installed:
+        console.print(f"[green]Pre-push hook installed:[/green] {hook_path}")
+        console.print("  Runs: ruff check + ruff format --check + pytest tests/unit/")
+    else:
+        console.print(f"[yellow]Hook already exists:[/yellow] {hook_path}")
+        console.print("  Use --force to overwrite.")
 
 
 # ---------------------------------------------------------------------------
@@ -3504,14 +3533,10 @@ def recap(archive: str, as_json: bool) -> None:
 
     # Time range
     timestamps = [
-        r.get("created_at") or r.get("completed_at")
-        for r in records
-        if r.get("created_at") or r.get("completed_at")
+        r.get("created_at") or r.get("completed_at") for r in records if r.get("created_at") or r.get("completed_at")
     ]
     start_ts: float | None = min(timestamps) if timestamps else None
-    end_ts: float | None = max(
-        r.get("completed_at") for r in records if r.get("completed_at")
-    ) if records else None
+    end_ts: float | None = max(r.get("completed_at") for r in records if r.get("completed_at")) if records else None
 
     duration_s: float | None = None
     if start_ts is not None and end_ts is not None:
@@ -3621,11 +3646,7 @@ def trace_cmd(task_id: str, as_json: bool, traces_dir: str) -> None:
             "unknown": "[yellow]unknown[/yellow]",
         }.get(trace.outcome, trace.outcome)
 
-        header = (
-            f"[bold]{trace.agent_role}[/bold] agent "
-            f"[dim]{trace.model}/{trace.effort}[/dim]"
-            f"{dur} • {outcome_style}"
-        )
+        header = f"[bold]{trace.agent_role}[/bold] agent [dim]{trace.model}/{trace.effort}[/dim]{dur} • {outcome_style}"
         tree = Tree(header)
         tree.add(f"[dim]trace_id:[/dim] {trace.trace_id}")
         tree.add(f"[dim]session:[/dim]  {trace.session_id}")
@@ -3634,13 +3655,13 @@ def trace_cmd(task_id: str, as_json: bool, traces_dir: str) -> None:
         steps_node = tree.add(f"[bold cyan]steps ({len(trace.steps)})[/bold cyan]")
 
         STEP_STYLES: dict[str, str] = {
-            "spawn":    "dim",
-            "orient":   "blue",
-            "plan":     "yellow",
-            "edit":     "magenta",
-            "verify":   "cyan",
+            "spawn": "dim",
+            "orient": "blue",
+            "plan": "yellow",
+            "edit": "magenta",
+            "verify": "cyan",
             "complete": "green",
-            "fail":     "red",
+            "fail": "red",
         }
 
         for step in trace.steps:

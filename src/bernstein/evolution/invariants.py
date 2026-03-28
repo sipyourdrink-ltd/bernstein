@@ -6,6 +6,7 @@ modify, or reason about these constraints. This is by design.
 Research finding (Feb 2026): "constraints in the system prompt are data
 the agent can reason about and circumvent." Safety must be structural.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -104,10 +105,7 @@ def verify_invariants(repo_root: Path) -> tuple[bool, list[str]]:
         if actual_hash is None:
             violations.append(f"MISSING: {rel_path}")
         elif actual_hash != expected_hash:
-            violations.append(
-                f"MODIFIED: {rel_path} "
-                f"(expected {expected_hash[:12]}..., got {actual_hash[:12]}...)"
-            )
+            violations.append(f"MODIFIED: {rel_path} (expected {expected_hash[:12]}..., got {actual_hash[:12]}...)")
 
     if violations:
         logger.error(
@@ -132,7 +130,5 @@ def check_proposal_targets(
     """
     violations = [f for f in target_files if f in LOCKED_FILES]
     if violations:
-        logger.error(
-            "Proposal targets %d locked file(s): %s", len(violations), violations
-        )
+        logger.error("Proposal targets %d locked file(s): %s", len(violations), violations)
     return len(violations) == 0, violations

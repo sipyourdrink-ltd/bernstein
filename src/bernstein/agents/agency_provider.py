@@ -4,6 +4,7 @@ Agency repos use one Markdown file per agent, organised into division
 subdirectories. Each file has YAML frontmatter (name, description, …)
 followed by the system-prompt body.
 """
+
 from __future__ import annotations
 
 import logging
@@ -95,7 +96,7 @@ class AgencyProvider:
         if end == -1:
             return None
         fm_text = rest[:end]
-        body_raw = rest[end + 4:]  # skip "\n---"
+        body_raw = rest[end + 4 :]  # skip "\n---"
         body = body_raw.lstrip("\n")
         try:
             fm: Any = yaml.safe_load(fm_text)

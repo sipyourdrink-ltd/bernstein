@@ -9,6 +9,7 @@ Rate limits (token bucket):
   L2 code proposals: max 1/week
   Evolution API budget: configurable cap
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_RATE_LIMITS: dict[RiskLevel, int] = {
     RiskLevel.L0_CONFIG: 5,
     RiskLevel.L1_TEMPLATE: 3,
-    RiskLevel.L2_LOGIC: 1,   # 1 per week, enforced as 1/day + cooldown
+    RiskLevel.L2_LOGIC: 1,  # 1 per week, enforced as 1/day + cooldown
     RiskLevel.L3_STRUCTURAL: 0,  # Never auto-apply
 }
 
@@ -47,10 +48,9 @@ class CircuitBreaker:
         state_dir: Path to .sdd/evolution/ directory.
         rate_limits: Override default rate limits per risk level.
     """
+
     state_dir: Path
-    rate_limits: dict[RiskLevel, int] = field(
-        default_factory=lambda: dict(DEFAULT_RATE_LIMITS)
-    )
+    rate_limits: dict[RiskLevel, int] = field(default_factory=lambda: dict(DEFAULT_RATE_LIMITS))
     state: CircuitState = CircuitState.CLOSED
     opened_at: float = 0.0
     recent_changes: list[dict] = field(default_factory=list)
@@ -115,25 +115,23 @@ class CircuitBreaker:
         now = time.time()
         cutoff = now - 86400  # 24h window
         recent_for_level = [
-            c for c in self.recent_changes
-            if c.get("risk_level") == risk_level.value and c.get("ts", 0) > cutoff
+            c for c in self.recent_changes if c.get("risk_level") == risk_level.value and c.get("ts", 0) > cutoff
         ]
         limit = self.rate_limits.get(risk_level, 0)
         if len(recent_for_level) >= limit:
-            return False, (
-                f"Rate limit reached for {risk_level.value}: "
-                f"{len(recent_for_level)}/{limit} in last 24h"
-            )
+            return False, (f"Rate limit reached for {risk_level.value}: {len(recent_for_level)}/{limit} in last 24h")
 
         return True, "ok"
 
     def record_change(self, risk_level: RiskLevel, proposal_id: str) -> None:
         """Record a successfully applied change."""
-        self.recent_changes.append({
-            "risk_level": risk_level.value,
-            "proposal_id": proposal_id,
-            "ts": time.time(),
-        })
+        self.recent_changes.append(
+            {
+                "risk_level": risk_level.value,
+                "proposal_id": proposal_id,
+                "ts": time.time(),
+            }
+        )
         # If in half-open and change succeeded, transition to closed
         if self.state == CircuitState.HALF_OPEN:
             self.state = CircuitState.CLOSED
@@ -159,15 +157,14 @@ class CircuitBreaker:
     def record_sandbox_failure(self, proposal_id: str) -> None:
         """Record a sandbox test failure. 3 consecutive failures trips breaker."""
         # Count recent consecutive failures (simplified)
-        self.recent_changes.append({
-            "risk_level": "sandbox_failure",
-            "proposal_id": proposal_id,
-            "ts": time.time(),
-        })
-        recent_failures = [
-            c for c in self.recent_changes[-5:]
-            if c.get("risk_level") == "sandbox_failure"
-        ]
+        self.recent_changes.append(
+            {
+                "risk_level": "sandbox_failure",
+                "proposal_id": proposal_id,
+                "ts": time.time(),
+            }
+        )
+        recent_failures = [c for c in self.recent_changes[-5:] if c.get("risk_level") == "sandbox_failure"]
         if len(recent_failures) >= 3:
             self._trip("3 consecutive sandbox failures")
         self._save_state()
@@ -184,13 +181,9 @@ class CircuitBreaker:
             cost_per_task_delta: Week-over-week change (positive = more expensive).
         """
         if janitor_pass_rate_delta < -0.15:
-            self._trip(
-                f"Janitor pass rate dropped {janitor_pass_rate_delta:.1%} WoW"
-            )
+            self._trip(f"Janitor pass rate dropped {janitor_pass_rate_delta:.1%} WoW")
         if cost_per_task_delta > 0.25:
-            self._trip(
-                f"Cost per task increased {cost_per_task_delta:.1%} WoW"
-            )
+            self._trip(f"Cost per task increased {cost_per_task_delta:.1%} WoW")
 
     def _trip(self, reason: str) -> None:
         """Trip the circuit breaker to OPEN state."""

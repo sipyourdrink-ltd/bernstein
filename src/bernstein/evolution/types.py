@@ -1,4 +1,5 @@
 """Shared types for the evolution system."""
+
 from __future__ import annotations
 
 import time
@@ -8,14 +9,16 @@ from enum import Enum
 
 class RiskLevel(Enum):
     """Risk classification for evolution proposals."""
-    L0_CONFIG = "config"          # YAML configs, routing rules, batch sizes
-    L1_TEMPLATE = "template"      # Prompts, role definitions, markdown
-    L2_LOGIC = "logic"            # Task routing, orchestrator params
+
+    L0_CONFIG = "config"  # YAML configs, routing rules, batch sizes
+    L1_TEMPLATE = "template"  # Prompts, role definitions, markdown
+    L2_LOGIC = "logic"  # Task routing, orchestrator params
     L3_STRUCTURAL = "structural"  # Python code, data models, core logic
 
 
 class ProposalStatus(Enum):
     """Lifecycle state of an upgrade proposal."""
+
     PENDING = "pending"
     EVALUATING = "evaluating"
     APPROVED = "approved"
@@ -26,8 +29,9 @@ class ProposalStatus(Enum):
 
 class CircuitState(Enum):
     """Tri-state circuit breaker."""
-    CLOSED = "closed"      # Normal operation, evolution allowed
-    OPEN = "open"          # Evolution halted, cooling off
+
+    CLOSED = "closed"  # Normal operation, evolution allowed
+    OPEN = "open"  # Evolution halted, cooling off
     HALF_OPEN = "half_open"  # Testing single low-risk change
 
 
@@ -38,22 +42,23 @@ class MetricsRecord:
     Every agent invocation MUST produce one of these records,
     appended to .sdd/metrics/YYYY-MM-DD.jsonl.
     """
-    timestamp: str                        # ISO 8601
+
+    timestamp: str  # ISO 8601
     task_id: str
     agent_id: str
     role: str
     model_used: str
     duration_seconds: float
-    token_count: int                      # prompt + completion
-    cost_usd: float                       # estimated
-    success: bool                         # janitor pass
-    error_type: str | None                # null if success
+    token_count: int  # prompt + completion
+    cost_usd: float  # estimated
+    success: bool  # janitor pass
+    error_type: str | None  # null if success
     files_modified: int
-    test_pass_rate: float                 # 0.0 - 1.0
+    test_pass_rate: float  # 0.0 - 1.0
     retry_count: int
-    step_count: int                       # tool invocations
+    step_count: int  # tool invocations
     schema_version: int = 1
-    config_id: str = "default"            # tracks which config was active
+    config_id: str = "default"  # tracks which config was active
 
     def to_dict(self) -> dict:
         """Serialize to dict for JSONL output."""
@@ -80,26 +85,28 @@ class MetricsRecord:
 @dataclass
 class UpgradeProposal:
     """A proposed self-modification with risk assessment."""
+
     id: str
     title: str
     description: str
     risk_level: RiskLevel
     target_files: list[str]
-    diff: str                             # unified diff
-    rationale: str                        # why this change
-    expected_impact: str                  # predicted improvement
-    confidence: float                     # 0.0 - 1.0
+    diff: str  # unified diff
+    rationale: str  # why this change
+    expected_impact: str  # predicted improvement
+    confidence: float  # 0.0 - 1.0
     status: ProposalStatus = ProposalStatus.PENDING
     created_at: float = field(default_factory=time.time)
     evaluated_at: float | None = None
     applied_at: float | None = None
-    sandbox_result: dict | None = None    # metrics from sandbox run
-    reviewer: str | None = None           # human reviewer if applicable
+    sandbox_result: dict | None = None  # metrics from sandbox run
+    reviewer: str | None = None  # human reviewer if applicable
 
 
 @dataclass
 class SandboxResult:
     """Result of running a proposal in an isolated sandbox."""
+
     proposal_id: str
     passed: bool
     tests_passed: int
@@ -107,7 +114,7 @@ class SandboxResult:
     tests_total: int
     baseline_score: float
     candidate_score: float
-    delta: float                          # candidate - baseline
+    delta: float  # candidate - baseline
     duration_seconds: float
     log_path: str
     error: str | None = None

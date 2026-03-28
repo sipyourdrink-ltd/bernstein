@@ -10,6 +10,7 @@ Classifies tasks into complexity levels:
 
 L0 tasks bypass the spawner entirely, saving LLM cost and executing in <1s.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 class TaskLevel(Enum):
     """Task complexity level for fast-path routing."""
+
     L0 = "L0"  # Trivial: deterministic execution, no LLM
     L1 = "L1"  # Simple: cheapest model (Haiku)
     L2 = "L2"  # Complex: full LLM agent
@@ -42,6 +44,7 @@ class TaskLevel(Enum):
 
 class FastPathAction(Enum):
     """What deterministic action to run for an L0 task."""
+
     RUFF_FORMAT = "ruff_format"
     RUFF_FIX = "ruff_fix"
     SORT_IMPORTS = "sort_imports"
@@ -51,6 +54,7 @@ class FastPathAction(Enum):
 @dataclass
 class ClassificationResult:
     """Result of classifying a task's complexity level."""
+
     level: TaskLevel
     action: FastPathAction | None = None  # Set for L0 tasks
     confidence: float = 1.0
@@ -61,6 +65,7 @@ class ClassificationResult:
 @dataclass
 class FastPathResult:
     """Result of executing a task via fast-path."""
+
     success: bool
     action: FastPathAction
     duration_s: float = 0.0
@@ -72,6 +77,7 @@ class FastPathResult:
 @dataclass
 class FastPathStats:
     """Cumulative stats for fast-path execution in a session."""
+
     tasks_bypassed: int = 0
     total_time_saved_s: float = 0.0
     estimated_cost_saved_usd: float = 0.0
@@ -94,8 +100,16 @@ class FastPathStats:
 _L0_PATTERNS: list[tuple[re.Pattern[str], FastPathAction, str]] = [
     (re.compile(r"\b(format|formatting|auto-?format|black|prettier)\b"), FastPathAction.RUFF_FORMAT, "formatting"),
     (re.compile(r"\b(lint|linting|ruff fix|fix lint|autofix)\b"), FastPathAction.RUFF_FIX, "lint-fix"),
-    (re.compile(r"\b(sort imports?|isort|import order|organiz\w+ imports?)\b"), FastPathAction.SORT_IMPORTS, "import-sort"),  # noqa: E501
-    (re.compile(r"\brename\s+['\"]?\w+['\"]?\s+(?:to|->|=>)\s+['\"]?\w+['\"]?"), FastPathAction.RENAME_SYMBOL, "rename"),  # noqa: E501
+    (
+        re.compile(r"\b(sort imports?|isort|import order|organiz\w+ imports?)\b"),
+        FastPathAction.SORT_IMPORTS,
+        "import-sort",
+    ),
+    (
+        re.compile(r"\brename\s+['\"]?\w+['\"]?\s+(?:to|->|=>)\s+['\"]?\w+['\"]?"),
+        FastPathAction.RENAME_SYMBOL,
+        "rename",
+    ),
 ]
 
 # Regex patterns for L1 (simple) tasks — route to cheapest model
@@ -177,6 +191,7 @@ def classify_task(task: Task) -> ClassificationResult:
 # ---------------------------------------------------------------------------
 # L0 executors — deterministic, no LLM
 # ---------------------------------------------------------------------------
+
 
 def _run_ruff_format(workdir: Path, owned_files: list[str]) -> FastPathResult:
     """Run ruff format on owned files or entire project."""
@@ -412,7 +427,7 @@ def get_l1_model_config() -> ModelConfig:
 _ACTION_MAP: dict[str, FastPathAction] = {a.value: a for a in FastPathAction}
 
 
-def load_fast_path_config(routing_yaml: "Path") -> bool:
+def load_fast_path_config(routing_yaml: Path) -> bool:
     """Load fast-path patterns from routing.yaml and update module-level rules.
 
     Reads the ``fast_path`` section of ``.sdd/config/routing.yaml`` and
@@ -426,7 +441,7 @@ def load_fast_path_config(routing_yaml: "Path") -> bool:
     Returns:
         True if config was loaded successfully, False otherwise.
     """
-    global _L0_PATTERNS, _L1_PATTERNS, L1_MODEL_CONFIG  # noqa: PLW0603
+    global _L0_PATTERNS, _L1_PATTERNS, L1_MODEL_CONFIG
 
     try:
         import yaml  # lazy import — only needed if routing.yaml is present

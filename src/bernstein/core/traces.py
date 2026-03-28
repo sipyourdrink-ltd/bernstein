@@ -3,6 +3,7 @@
 Each agent execution produces a structured trace stored in .sdd/traces/.
 Traces capture decision points: files read, edits made, tests run, and outcome.
 """
+
 from __future__ import annotations
 
 import json
@@ -164,12 +165,14 @@ def parse_log_to_steps(log_path: Path) -> list[TraceStep]:
     current_ts: float = estimated_start
 
     def _flush(step_type: str, ts: float, files: list[str]) -> None:
-        steps.append(TraceStep(
-            type=step_type,  # type: ignore[arg-type]
-            timestamp=ts,
-            detail=f"{step_type.capitalize()}: {', '.join(files[:3])}{'...' if len(files) > 3 else ''}",
-            files=files[:],
-        ))
+        steps.append(
+            TraceStep(
+                type=step_type,  # type: ignore[arg-type]
+                timestamp=ts,
+                detail=f"{step_type.capitalize()}: {', '.join(files[:3])}{'...' if len(files) > 3 else ''}",
+                files=files[:],
+            )
+        )
 
     for i, line in enumerate(lines):
         ts = estimated_start + (i / total) * time_span
@@ -237,7 +240,7 @@ def _extract_file_hint(args: str) -> str:
             pass
 
     # Plain path: starts with / or ./ or src/
-    stripped = args.strip().strip('"\'')
+    stripped = args.strip().strip("\"'")
     if stripped.startswith(("/", "./", "src/", "tests/", "templates/")):
         return stripped.split()[0]
 
@@ -426,11 +429,13 @@ def new_trace(
         log_path=log_path,
         task_snapshots=task_snapshots or [],
     )
-    trace.steps.append(TraceStep(
-        type="spawn",
-        timestamp=trace.spawn_ts,
-        detail=f"Spawned {role} agent ({model}/{effort}) for tasks: {', '.join(task_ids)}",
-    ))
+    trace.steps.append(
+        TraceStep(
+            type="spawn",
+            timestamp=trace.spawn_ts,
+            detail=f"Spawned {role} agent ({model}/{effort}) for tasks: {', '.join(task_ids)}",
+        )
+    )
     return trace
 
 
@@ -462,10 +467,12 @@ def finalize_trace(
         # Insert parsed steps between the spawn step and the outcome step
         trace.steps[1:1] = parsed
 
-    trace.steps.append(TraceStep(
-        type="complete" if outcome == "success" else "fail",
-        timestamp=trace.end_ts,
-        detail=f"Agent exited with outcome: {outcome}",
-        duration_ms=int((trace.end_ts - trace.spawn_ts) * 1000),
-    ))
+    trace.steps.append(
+        TraceStep(
+            type="complete" if outcome == "success" else "fail",
+            timestamp=trace.end_ts,
+            detail=f"Agent exited with outcome: {outcome}",
+            duration_ms=int((trace.end_ts - trace.spawn_ts) * 1000),
+        )
+    )
     return trace

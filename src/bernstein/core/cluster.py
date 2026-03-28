@@ -8,6 +8,7 @@ Also provides NodeHeartbeatClient: a thread-safe client that a worker node
 uses to auto-register itself and send periodic heartbeats to the central
 server.
 """
+
 from __future__ import annotations
 
 import logging
@@ -110,8 +111,7 @@ class NodeRegistry:
             if node.status == NodeStatus.ONLINE and not node.is_alive(timeout):
                 node.status = NodeStatus.OFFLINE
                 stale.append(node)
-                logger.warning("Node %s (%s) marked offline — no heartbeat for %ds",
-                               node.id, node.name, timeout)
+                logger.warning("Node %s (%s) marked offline — no heartbeat for %ds", node.id, node.name, timeout)
         return stale
 
     def online_count(self) -> int:
@@ -120,11 +120,7 @@ class NodeRegistry:
 
     def total_capacity(self) -> int:
         """Total available agent slots across all online nodes."""
-        return sum(
-            n.capacity.available_slots
-            for n in self._nodes.values()
-            if n.status == NodeStatus.ONLINE
-        )
+        return sum(n.capacity.available_slots for n in self._nodes.values() if n.status == NodeStatus.ONLINE)
 
     def best_node_for_task(
         self,
@@ -142,17 +138,13 @@ class NodeRegistry:
         5. Among remaining, pick the one with most available slots
         """
         candidates = [
-            n for n in self._nodes.values()
-            if n.status == NodeStatus.ONLINE and n.capacity.available_slots > 0
+            n for n in self._nodes.values() if n.status == NodeStatus.ONLINE and n.capacity.available_slots > 0
         ]
         if not candidates:
             return None
 
         if required_model:
-            candidates = [
-                n for n in candidates
-                if required_model in n.capacity.supported_models
-            ]
+            candidates = [n for n in candidates if required_model in n.capacity.supported_models]
         if require_gpu:
             candidates = [n for n in candidates if n.capacity.gpu_available]
         if not candidates:
@@ -162,10 +154,7 @@ class NodeRegistry:
         def score(node: NodeInfo) -> tuple[int, int]:
             affinity = 0
             if preferred_labels:
-                affinity = sum(
-                    1 for k, v in preferred_labels.items()
-                    if node.labels.get(k) == v
-                )
+                affinity = sum(1 for k, v in preferred_labels.items() if node.labels.get(k) == v)
             return (affinity, node.capacity.available_slots)
 
         candidates.sort(key=score, reverse=True)
@@ -305,8 +294,7 @@ class NodeHeartbeatClient:
                 data = resp.json()
                 self._node_id = data.get("id")
                 self._registered.set()
-                logger.info("Registered as node %s with central server %s",
-                            self._node_id, self._server_url)
+                logger.info("Registered as node %s with central server %s", self._node_id, self._server_url)
                 return True
             logger.warning("Node registration failed: %d %s", resp.status_code, resp.text[:200])
         except httpx.HTTPError as exc:
@@ -371,8 +359,7 @@ class NodeHeartbeatClient:
             daemon=True,
         )
         self._thread.start()
-        logger.info("Node heartbeat client started (interval=%ds, server=%s)",
-                     self._interval_s, self._server_url)
+        logger.info("Node heartbeat client started (interval=%ds, server=%s)", self._interval_s, self._server_url)
 
     def stop(self, timeout_s: float = 5.0) -> None:
         """Stop the heartbeat daemon and unregister from the central server."""

@@ -1,4 +1,5 @@
 """Upgrade proposal generation."""
+
 from __future__ import annotations
 
 import time
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 class AnalysisTrigger(Enum):
     """Triggers for running analysis."""
+
     SCHEDULED = "scheduled"  # Periodic scheduled run
     THRESHOLD = "threshold"  # Metric threshold exceeded
     MANUAL = "manual"  # Manual trigger
@@ -31,6 +33,7 @@ class AnalysisTrigger(Enum):
 
 class UpgradeStatus(Enum):
     """Status of an upgrade."""
+
     PENDING = "pending"
     APPROVED = "approved"
     IN_PROGRESS = "in_progress"
@@ -41,6 +44,7 @@ class UpgradeStatus(Enum):
 
 class ApprovalMode(Enum):
     """Approval mode for upgrades."""
+
     AUTO = "auto"  # Apply immediately
     HUMAN = "human"  # Require human approval
     HYBRID = "hybrid"  # Auto if confidence > 90%
@@ -49,6 +53,7 @@ class ApprovalMode(Enum):
 @dataclass
 class UpgradeProposal:
     """Proposal for a system upgrade."""
+
     id: str
     title: str
     category: UpgradeCategory

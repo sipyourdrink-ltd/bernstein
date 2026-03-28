@@ -1,4 +1,5 @@
 """Async native LLM client for Bernstein manager and external models."""
+
 from __future__ import annotations
 
 import logging

@@ -7,6 +7,7 @@ Redis node variant — sufficient for most deployments).
 When Redis is not available the :class:`PostgresTaskStore` falls back to
 PostgreSQL advisory locks, which are slower but fully correct.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,11 +22,11 @@ logger = logging.getLogger(__name__)
 # zero extra packages.
 try:
     import redis.asyncio as aioredis  # type: ignore[import-untyped]
+
     _REDIS_AVAILABLE = True
 except ModuleNotFoundError:
     _REDIS_AVAILABLE = False
     aioredis = None  # type: ignore[assignment]
-
 
 
 _RELEASE_SCRIPT = """
@@ -53,8 +54,7 @@ class RedisCoordinator:
     def __init__(self, redis_url: str, lock_ttl_ms: int = 30_000) -> None:
         if not _REDIS_AVAILABLE:
             raise RuntimeError(
-                "redis package is required for cluster mode. "
-                "Install it with: pip install bernstein[cluster]"
+                "redis package is required for cluster mode. Install it with: pip install bernstein[cluster]"
             )
         self._url = redis_url
         self._ttl_ms = lock_ttl_ms

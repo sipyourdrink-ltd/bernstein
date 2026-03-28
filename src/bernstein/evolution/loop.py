@@ -12,6 +12,7 @@ Only L0 and L1 changes run in the automated loop.
 L2+ proposals are saved for human review.
 All results logged to .sdd/evolution/experiments.jsonl.
 """
+
 from __future__ import annotations
 
 import json
@@ -60,10 +61,12 @@ logger = logging.getLogger(__name__)
 _COST_PER_PROPOSAL_USD = 0.05
 
 # Risk levels eligible for the automated loop.
-_AUTO_RISK_LEVELS: frozenset[str] = frozenset({
-    RiskLevel.L0_CONFIG.value,
-    RiskLevel.L1_TEMPLATE.value,
-})
+_AUTO_RISK_LEVELS: frozenset[str] = frozenset(
+    {
+        RiskLevel.L0_CONFIG.value,
+        RiskLevel.L1_TEMPLATE.value,
+    }
+)
 
 # Focus area rotation — creative_vision runs every 4th cycle.
 # Agents write proposals to .sdd/evolution/creative/pending_proposals.jsonl;
@@ -234,11 +237,11 @@ class EvolutionLoop:
             return None
         if self._github is None:
             from bernstein.core.github import GitHubClient
+
             self._github = GitHubClient()
             if not self._github.available:
                 logger.warning(
-                    "GitHub sync requested but gh CLI is unavailable or "
-                    "unauthenticated — running without GitHub sync"
+                    "GitHub sync requested but gh CLI is unavailable or unauthenticated — running without GitHub sync"
                 )
         return self._github
 
@@ -277,17 +280,12 @@ class EvolutionLoop:
             if gh and gh.available:
                 if self._community_mode:
                     logger.info(
-                        "Community mode enabled — scanning GitHub for "
-                        "evolve-candidate and feature-request issues"
+                        "Community mode enabled — scanning GitHub for evolve-candidate and feature-request issues"
                     )
                 else:
                     logger.info("GitHub sync enabled — proposals will be synced as Issues")
 
-        while (
-            self._within_window(effective_window)
-            and self._proposals_generated < effective_max
-            and self._running
-        ):
+        while self._within_window(effective_window) and self._proposals_generated < effective_max and self._running:
             cycle_start = time.time()
 
             try:
@@ -333,9 +331,7 @@ class EvolutionLoop:
         cycle_start = time.time()
 
         # Determine focus area from rotation.
-        rotation = (
-            _FOCUS_ROTATION_COMMUNITY if self._community_mode else _FOCUS_ROTATION
-        )
+        rotation = _FOCUS_ROTATION_COMMUNITY if self._community_mode else _FOCUS_ROTATION
         focus = rotation[self._cycle_count % len(rotation)]
         self._cycle_count += 1
 
@@ -401,7 +397,9 @@ class EvolutionLoop:
         can_evolve, breaker_reason = self._breaker.can_evolve(risk_level)
         if not can_evolve:
             logger.warning(
-                "Circuit breaker blocked %s: %s", proposal.id, breaker_reason,
+                "Circuit breaker blocked %s: %s",
+                proposal.id,
+                breaker_reason,
             )
             result = ExperimentResult(
                 proposal_id=proposal.id,
@@ -522,13 +520,10 @@ class EvolutionLoop:
             "proposals_accepted": self._proposals_accepted,
             "acceptance_rate": self.acceptance_rate,
             "elapsed_seconds": round(elapsed, 1),
-            "experiments_per_hour": (
-                round(len(self._experiments) / (elapsed / 3600), 1)
-                if elapsed > 0
-                else 0.0
-            ),
+            "experiments_per_hour": (round(len(self._experiments) / (elapsed / 3600), 1) if elapsed > 0 else 0.0),
             "total_cost_usd": round(
-                sum(e.cost_usd for e in self._experiments), 4,
+                sum(e.cost_usd for e in self._experiments),
+                4,
             ),
             "running": self._running,
         }
@@ -598,7 +593,8 @@ class EvolutionLoop:
         )
 
         pipeline_result: PipelineResult = self._creative_pipeline.run(
-            proposals, verdicts,
+            proposals,
+            verdicts,
         )
 
         approved_count = len(pipeline_result.approved)
@@ -619,10 +615,7 @@ class EvolutionLoop:
             candidate_score=1.0 + (0.01 * approved_count),
             delta=0.01 * approved_count,
             accepted=accepted,
-            reason=(
-                f"{approved_count}/{len(verdicts)} approved, "
-                f"{tasks_count} backlog task(s) created"
-            ),
+            reason=(f"{approved_count}/{len(verdicts)} approved, {tasks_count} backlog task(s) created"),
             cost_usd=_COST_PER_PROPOSAL_USD * max(1, len(proposals)),
             duration_seconds=time.time() - cycle_start,
         )
@@ -708,7 +701,8 @@ class EvolutionLoop:
         )
 
         pipeline_result: PipelineResult = self._creative_pipeline.run(
-            [proposal], [analyst_verdict],
+            [proposal],
+            [analyst_verdict],
         )
 
         tasks_created = len(pipeline_result.tasks_created)
@@ -740,11 +734,7 @@ class EvolutionLoop:
             candidate_score=1.0 + (0.01 * tasks_created),
             delta=0.01 * tasks_created,
             accepted=accepted,
-            reason=(
-                f"{tasks_created} backlog task(s) created"
-                if accepted
-                else "Pipeline produced no tasks"
-            ),
+            reason=(f"{tasks_created} backlog task(s) created" if accepted else "Pipeline produced no tasks"),
             cost_usd=_COST_PER_PROPOSAL_USD,
             duration_seconds=time.time() - cycle_start,
         )
@@ -799,10 +789,7 @@ class EvolutionLoop:
         # Filter to low-risk opportunities suitable for the automated loop.
         # In the detector, risk_level is a string literal ("low", "medium", "high").
         # "low" maps to L0_CONFIG, "medium" to L1_TEMPLATE in the automated loop.
-        eligible = [
-            opp for opp in opportunities
-            if opp.risk_level in ("low", "medium")
-        ]
+        eligible = [opp for opp in opportunities if opp.risk_level in ("low", "medium")]
 
         if not eligible:
             return None
@@ -812,7 +799,8 @@ class EvolutionLoop:
         best = eligible[0]
 
         return self._proposal_generator.create_proposal(
-            best, AnalysisTrigger.SCHEDULED,
+            best,
+            AnalysisTrigger.SCHEDULED,
         )
 
     def _apply_proposal(

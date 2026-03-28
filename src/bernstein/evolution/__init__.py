@@ -9,6 +9,7 @@ Risk-stratified architecture:
 Safety-critical modules (janitor, server, orchestrator, invariants, circuit)
 are hash-locked and cannot be modified by the evolution system.
 """
+
 from __future__ import annotations
 
 import time
@@ -248,7 +249,8 @@ class EvolutionCoordinator:
         return self._proposal_generator.create_emergency_proposal(anomaly)
 
     def run_analysis_cycle(
-        self, trigger: AnalysisTrigger = AnalysisTrigger.SCHEDULED,
+        self,
+        trigger: AnalysisTrigger = AnalysisTrigger.SCHEDULED,
     ) -> list[UpgradeProposal]:
         """Run a complete analysis cycle and generate upgrade proposals.
 
@@ -319,8 +321,10 @@ class EvolutionCoordinator:
 
         # Remove resolved proposals from pending
         self._pending_upgrades = [
-            p for p in self._pending_upgrades
-            if p.status not in [
+            p
+            for p in self._pending_upgrades
+            if p.status
+            not in [
                 UpgradeStatus.APPLIED,
                 UpgradeStatus.REJECTED,
                 UpgradeStatus.ROLLED_BACK,

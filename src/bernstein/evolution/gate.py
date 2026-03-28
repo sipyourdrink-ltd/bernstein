@@ -12,6 +12,7 @@ Confidence thresholds for L0/L1:
   70-85%: human review within 4h
   <70%: immediate human review
 """
+
 from __future__ import annotations
 
 import json
@@ -27,16 +28,16 @@ from bernstein.evolution.types import RiskLevel, UpgradeProposal
 logger = logging.getLogger(__name__)
 
 # Confidence thresholds for routing decisions
-CONFIDENCE_AUTO = 0.95        # >= this → auto-approve
+CONFIDENCE_AUTO = 0.95  # >= this → auto-approve
 CONFIDENCE_AUTO_AUDIT = 0.85  # >= this → auto-approve with async audit
-CONFIDENCE_HUMAN_4H = 0.70    # >= this → human review within 4h
-                               # <  0.70  → immediate human review
+CONFIDENCE_HUMAN_4H = 0.70  # >= this → human review within 4h
+# <  0.70  → immediate human review
 
 # Minimum confidence thresholds per risk level for auto-approval (legacy)
 AUTO_APPROVE_THRESHOLDS: dict[RiskLevel, float] = {
     RiskLevel.L0_CONFIG: 0.7,
     RiskLevel.L1_TEMPLATE: 0.85,
-    RiskLevel.L2_LOGIC: 1.1,       # Effectively never auto-approved
+    RiskLevel.L2_LOGIC: 1.1,  # Effectively never auto-approved
     RiskLevel.L3_STRUCTURAL: 1.1,  # Never auto-approved
 }
 
@@ -229,9 +230,7 @@ class ApprovalGate:
                 logger.info("L1 proposal → sandbox required")
                 return "sandbox_required"
             if sandbox_passed and confidence >= threshold:
-                logger.info(
-                    "L1 proposal → auto-approve (sandbox passed, confidence %.2f)", confidence
-                )
+                logger.info("L1 proposal → auto-approve (sandbox passed, confidence %.2f)", confidence)
                 return "auto_approve"
             logger.info(
                 "L1 proposal → human review (sandbox=%s, confidence=%.2f)",
@@ -242,14 +241,10 @@ class ApprovalGate:
 
         # L0 config
         if confidence >= threshold:
-            logger.info(
-                "L0 proposal → auto-approve (confidence %.2f >= %.2f)", confidence, threshold
-            )
+            logger.info("L0 proposal → auto-approve (confidence %.2f >= %.2f)", confidence, threshold)
             return "auto_approve"
 
-        logger.info(
-            "L0 proposal → human review (confidence %.2f < %.2f)", confidence, threshold
-        )
+        logger.info("L0 proposal → human review (confidence %.2f < %.2f)", confidence, threshold)
         return "human_review"
 
     # ------------------------------------------------------------------
@@ -424,16 +419,18 @@ class ApprovalGate:
                 continue
             try:
                 data = json.loads(line)
-                decisions.append(ApprovalDecision(
-                    proposal_id=data["proposal_id"],
-                    risk_level=RiskLevel(data["risk_level"]),
-                    confidence=data["confidence"],
-                    outcome=ApprovalOutcome(data["outcome"]),
-                    reason=data["reason"],
-                    requires_human=data["requires_human"],
-                    decided_at=data.get("decided_at", 0.0),
-                    reviewer=data.get("reviewer"),
-                ))
+                decisions.append(
+                    ApprovalDecision(
+                        proposal_id=data["proposal_id"],
+                        risk_level=RiskLevel(data["risk_level"]),
+                        confidence=data["confidence"],
+                        outcome=ApprovalOutcome(data["outcome"]),
+                        reason=data["reason"],
+                        requires_human=data["requires_human"],
+                        decided_at=data.get("decided_at", 0.0),
+                        reviewer=data.get("reviewer"),
+                    )
+                )
             except (KeyError, ValueError) as exc:
                 logger.warning("Skipping malformed decision record: %s", exc)
 

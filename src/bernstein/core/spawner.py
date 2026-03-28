@@ -1,4 +1,5 @@
 """Spawn short-lived CLI agents for task batches."""
+
 from __future__ import annotations
 
 import logging
@@ -75,6 +76,7 @@ def _list_subdirs_cached(path: Path) -> list[str]:
     _DIR_CACHE[key] = (mtime, names)
     return names
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -126,7 +128,7 @@ def _render_prompt(
 
     # Completion instructions with concrete curl commands
     completion_cmds = "\n".join(
-        f'curl -s -X POST http://127.0.0.1:8052/tasks/{t.id}/complete '
+        f"curl -s -X POST http://127.0.0.1:8052/tasks/{t.id}/complete "
         f'-H "Content-Type: application/json" '
         f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
         for t in tasks
@@ -152,8 +154,7 @@ def _render_prompt(
             specialist_block = (
                 "\n\n## Available specialist agents (from Agency catalog)\n"
                 "When creating tasks, prefer assigning to a specialist role if one matches.\n"
-                "Fall back to generic roles (backend, qa, etc.) if no specialist fits.\n\n"
-                + "\n".join(specialists)
+                "Fall back to generic roles (backend, qa, etc.) if no specialist fits.\n\n" + "\n".join(specialists)
             )
 
     # Build rich task context via TaskContextBuilder
@@ -391,6 +392,7 @@ class AgentSpawner:
         # Create and persist the initial trace
         # Serialize task fields to JSON-safe types (convert Enums to their values)
         import dataclasses
+
         def _task_to_dict(t: Task) -> dict:
             d = {}
             for f in dataclasses.fields(t):
@@ -401,6 +403,7 @@ class AgentSpawner:
                     val = [v.value if hasattr(v, "value") else v for v in val]
                 d[f.name] = val
             return d
+
         task_snapshots = [_task_to_dict(t) for t in tasks]
         trace = new_trace(
             session_id=session_id,

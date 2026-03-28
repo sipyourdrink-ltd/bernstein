@@ -6,6 +6,7 @@ and {{#IF_NOT VAR}}...{{/IF_NOT}} conditional blocks.
 
 Nested conditionals are NOT supported in v1.
 """
+
 from __future__ import annotations
 
 import re

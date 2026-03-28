@@ -4,6 +4,7 @@ All classes and functions have been moved to risk-stratified modules under
 bernstein/evolution/. This file re-exports them so existing imports continue
 to work.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -4,6 +4,7 @@ Design: Bloomberg terminal meets early macOS. Dark, clean, information-dense.
 Three columns: Agents (live logs) | Tasks (status board) | Activity feed.
 Bottom: sparkline + stats + chat input.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -103,9 +104,9 @@ class AgentWidget(Static):
         m, s = divmod(runtime, 60)
         aid = a.get("id", "")
 
-        color = {
-            "working": "bright_green", "starting": "bright_yellow", "dead": "bright_red"
-        }.get(status, "bright_green")
+        color = {"working": "bright_green", "starting": "bright_yellow", "dead": "bright_red"}.get(
+            status, "bright_green"
+        )
         dot = {"working": "\u25c9", "starting": "\u25ce", "dead": "\u25cc"}.get(status, "\u25cf")
 
         agent_source = a.get("agent_source", "built-in")
@@ -204,7 +205,6 @@ class ChatInput(Input):
 
 
 class BernsteinApp(App):
-
     TITLE = "BERNSTEIN"
     SUB_TITLE = "Agent Orchestra"
 
@@ -549,6 +549,7 @@ class BernsteinApp(App):
 
         self._stop_pending = False
         import signal
+
         for name in ("watchdog", "spawner", "server"):
             pp = Path(f".sdd/runtime/{name}.pid")
             if pp.exists():
@@ -572,13 +573,27 @@ class BernsteinApp(App):
         """Build keyword→action map for system commands handled by dashboard, not agents."""
         if not cls._SYSTEM_COMMANDS:
             stop_words = (
-                "stop", "halt", "shut", "kill", "exit", "quit",
-                "остано", "выключ", "заверш", "убей", "стоп",
-                "засып", "выход",
+                "stop",
+                "halt",
+                "shut",
+                "kill",
+                "exit",
+                "quit",
+                "остано",
+                "выключ",
+                "заверш",
+                "убей",
+                "стоп",
+                "засып",
+                "выход",
             )
             save_words = (
-                "save", "commit", "push",
-                "сохран", "коммит", "запуш",
+                "save",
+                "commit",
+                "push",
+                "сохран",
+                "коммит",
+                "запуш",
             )
             for w in stop_words:
                 cls._SYSTEM_COMMANDS[w] = "stop"
@@ -603,23 +618,31 @@ class BernsteinApp(App):
         """Execute a system command from chat input."""
         lower = text.lower()
         # Detect combo: save + stop
-        wants_stop = any(k in lower for k in ("stop", "halt", "shut", "kill", "exit", "quit",
-                                                "остано", "выключ", "заверш", "стоп", "засып"))
+        wants_stop = any(
+            k in lower
+            for k in ("stop", "halt", "shut", "kill", "exit", "quit", "остано", "выключ", "заверш", "стоп", "засып")
+        )
 
         if action == "save":
             self.notify("Saving work (committing changes)...", severity="information")
             import subprocess
+
             result = subprocess.run(
                 ["git", "status", "--porcelain"],
-                capture_output=True, text=True, cwd=".",
+                capture_output=True,
+                text=True,
+                cwd=".",
             )
             if result.stdout.strip():
                 subprocess.run(
-                    ["git", "add", "-A"], capture_output=True, cwd=".",
+                    ["git", "add", "-A"],
+                    capture_output=True,
+                    cwd=".",
                 )
                 subprocess.run(
                     ["git", "commit", "-m", f"Dashboard save: {text[:50]}"],
-                    capture_output=True, cwd=".",
+                    capture_output=True,
+                    cwd=".",
                 )
                 self.notify("Changes committed.", severity="information")
             else:

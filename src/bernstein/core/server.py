@@ -87,6 +87,7 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
             )
         return await call_next(request)
 
+
 # ---------------------------------------------------------------------------
 # TypedDicts for file-based state records
 # ---------------------------------------------------------------------------
@@ -165,8 +166,8 @@ class TaskCreate(BaseModel):
     cell_id: str | None = None
     task_type: str = "standard"
     upgrade_details: dict[str, Any] | None = None
-    model: str | None = None       # Manager hint: "opus", "sonnet", "haiku"
-    effort: str | None = None      # Manager hint: "max", "high", "medium", "low"
+    model: str | None = None  # Manager hint: "opus", "sonnet", "haiku"
+    effort: str | None = None  # Manager hint: "max", "high", "medium", "low"
     completion_signals: list[CompletionSignalSchema] = Field(default_factory=list)
 
 
@@ -652,10 +653,7 @@ class TaskStore:
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),
             model=req.model,
             effort=req.effort,
-            completion_signals=[
-                CompletionSignal(type=s.type, value=s.value)
-                for s in req.completion_signals
-            ],
+            completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
         )
         async with self._lock:
             if task.depends_on:
@@ -733,8 +731,7 @@ class TaskStore:
                 raise KeyError(task_id)
             if expected_version is not None and task.version != expected_version:
                 raise ValueError(
-                    f"Version conflict: task {task_id} is at version {task.version}, "
-                    f"expected {expected_version}"
+                    f"Version conflict: task {task_id} is at version {task.version}, expected {expected_version}"
                 )
             if task.status == TaskStatus.OPEN:
                 self._index_remove(task)
@@ -868,9 +865,7 @@ class TaskStore:
             if task is None:
                 raise KeyError(task_id)
             if task.status not in (TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
-                raise ValueError(
-                    f"Task '{task_id}' cannot be cancelled from status '{task.status.value}'"
-                )
+                raise ValueError(f"Task '{task_id}' cannot be cancelled from status '{task.status.value}'")
             self._index_remove(task)
             task.status = TaskStatus.CANCELLED
             task.result_summary = reason
@@ -910,10 +905,7 @@ class TaskStore:
             tasks = [t for t in tasks if t.cell_id == cell_id]
         if status == "open":
             done_ids = {t.id for t in self._by_status[TaskStatus.DONE].values()}
-            tasks = [
-                t for t in tasks
-                if all(dep in done_ids for dep in t.depends_on)
-            ]
+            tasks = [t for t in tasks if all(dep in done_ids for dep in t.depends_on)]
         return tasks
 
     def get_task(self, task_id: str) -> Task | None:
@@ -1025,8 +1017,7 @@ class TaskStore:
         cost_by_role = self._read_cost_by_role()
         total_cost_usd = sum(cost_by_role.values())
         per_role = [
-            RoleCounts(role=r, cost_usd=cost_by_role.get(r, 0.0), **counts)
-            for r, counts in sorted(roles.items())
+            RoleCounts(role=r, cost_usd=cost_by_role.get(r, 0.0), **counts) for r, counts in sorted(roles.items())
         ]
 
         return StatusResponse(
@@ -1497,9 +1488,7 @@ def create_app(
                 content_type=body.content_type,
             )
         except KeyError:
-            raise HTTPException(
-                status_code=404, detail=f"A2A task '{a2a_task_id}' not found"
-            ) from None
+            raise HTTPException(status_code=404, detail=f"A2A task '{a2a_task_id}' not found") from None
         return A2AArtifactResponse(
             name=artifact.name,
             content_type=artifact.content_type,
@@ -1592,11 +1581,15 @@ def create_app(
 # Default app instance for `uvicorn bernstein.core.server:app`
 # Auth token and cluster config are read from environment at import time.
 _default_cluster_enabled = os.environ.get("BERNSTEIN_CLUSTER_ENABLED", "").lower() in ("1", "true", "yes")
-_default_cluster_config = ClusterConfig(
-    enabled=_default_cluster_enabled,
-    auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
-    bind_host=os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1"),
-) if _default_cluster_enabled else None
+_default_cluster_config = (
+    ClusterConfig(
+        enabled=_default_cluster_enabled,
+        auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
+        bind_host=os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1"),
+    )
+    if _default_cluster_enabled
+    else None
+)
 
 app: FastAPI = create_app(
     auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),

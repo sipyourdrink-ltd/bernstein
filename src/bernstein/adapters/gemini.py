@@ -1,4 +1,5 @@
 """Google Gemini CLI adapter."""
+
 from __future__ import annotations
 
 import os
@@ -29,9 +30,12 @@ class GeminiAdapter(CLIAdapter):
 
         cmd = [
             "gemini",
-            "--model", model_config.model,
-            "--sandbox", "none",
-            "--prompt", prompt,
+            "--model",
+            model_config.model,
+            "--sandbox",
+            "none",
+            "--prompt",
+            prompt,
         ]
 
         with log_path.open("w") as log_file:

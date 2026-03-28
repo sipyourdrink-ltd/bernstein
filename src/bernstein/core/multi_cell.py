@@ -4,6 +4,7 @@ The VP cell sits above all other cells and handles cross-cell coordination:
 decomposing goals into subsystem objectives, resolving inter-cell blockers,
 and rebalancing work when cells are overloaded or stuck.
 """
+
 from __future__ import annotations
 
 import logging
@@ -125,11 +126,7 @@ def cell_status(cell: Cell) -> CellStatus:
     Returns:
         CellStatus with task and agent counts.
     """
-    alive = sum(
-        1
-        for w in cell.workers
-        if w.status not in ("dead",)
-    )
+    alive = sum(1 for w in cell.workers if w.status not in ("dead",))
     if cell.manager and cell.manager.status != "dead":
         alive += 1
 
@@ -280,7 +277,10 @@ class MultiCellOrchestrator:
         # Fetch open tasks for this cell
         try:
             open_tasks = _fetch_tasks_for_cell(
-                self._client, base, "open", cell.id,
+                self._client,
+                base,
+                "open",
+                cell.id,
             )
         except httpx.HTTPError as exc:
             logger.error("Failed to fetch tasks for cell %s: %s", cell.id, exc)
@@ -293,11 +293,7 @@ class MultiCellOrchestrator:
         batches = group_by_role(open_tasks, self._config.max_tasks_per_agent)
 
         # Count alive agents in this cell
-        alive_count = sum(
-            1
-            for w in cell.workers
-            if w.status not in ("dead",)
-        )
+        alive_count = sum(1 for w in cell.workers if w.status not in ("dead",))
         if cell.manager and cell.manager.status != "dead":
             alive_count += 1
         result.active_agents = alive_count
@@ -351,10 +347,7 @@ class MultiCellOrchestrator:
                 logger.info("Reaped dead worker %s from cell %s", worker.id, cell.id)
                 continue
             # Check heartbeat timeout
-            if (
-                worker.heartbeat_ts > 0
-                and now - worker.heartbeat_ts > self._config.heartbeat_timeout_s
-            ):
+            if worker.heartbeat_ts > 0 and now - worker.heartbeat_ts > self._config.heartbeat_timeout_s:
                 self._spawner.kill(worker)
                 result.reaped.append(worker.id)
                 logger.warning(
@@ -368,9 +361,7 @@ class MultiCellOrchestrator:
 
         cell.workers = alive_workers
 
-    def _check_rebalance(
-        self, statuses: dict[str, CellStatus]
-    ) -> list[str]:
+    def _check_rebalance(self, statuses: dict[str, CellStatus]) -> list[str]:
         """Check if any cells need rebalancing and return VP actions taken.
 
         Current heuristic: flag cells with >15 open tasks or >3 blockers.
@@ -385,10 +376,7 @@ class MultiCellOrchestrator:
 
         for cell_id, status in statuses.items():
             if status.open_tasks > 15:
-                msg = (
-                    f"Cell {cell_id} overloaded ({status.open_tasks} open tasks). "
-                    f"Consider splitting into a new cell."
-                )
+                msg = f"Cell {cell_id} overloaded ({status.open_tasks} open tasks). Consider splitting into a new cell."
                 actions.append(msg)
                 self._bulletin.post(
                     BulletinMessage(
@@ -401,10 +389,7 @@ class MultiCellOrchestrator:
                 logger.warning(msg)
 
             if status.blocked_tasks > 3:
-                msg = (
-                    f"Cell {cell_id} has {status.blocked_tasks} blocked tasks. "
-                    f"VP escalation needed."
-                )
+                msg = f"Cell {cell_id} has {status.blocked_tasks} blocked tasks. VP escalation needed."
                 actions.append(msg)
                 self._bulletin.post(
                     BulletinMessage(
@@ -429,12 +414,8 @@ class MultiCellOrchestrator:
         log_path = log_dir / "multi_cell.log"
 
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        total_spawned = sum(
-            len(cr.spawned) for cr in result.cell_results.values()
-        )
-        total_open = sum(
-            cr.open_tasks for cr in result.cell_results.values()
-        )
+        total_spawned = sum(len(cr.spawned) for cr in result.cell_results.values())
+        total_open = sum(cr.open_tasks for cr in result.cell_results.values())
         line = (
             f"[{ts}] cells={len(self._cells)} open={total_open} "
             f"spawned={total_spawned} blockers={result.blockers_found} "

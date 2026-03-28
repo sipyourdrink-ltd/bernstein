@@ -1,4 +1,5 @@
 """Bernstein — Multi-agent orchestration for CLI coding agents."""
+
 from __future__ import annotations
 
 from pathlib import Path

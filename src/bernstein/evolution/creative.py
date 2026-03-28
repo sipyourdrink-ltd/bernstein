@@ -12,6 +12,7 @@ Community evolve extension:
     ``GitHubClient``) into a ``VisionaryProposal`` so it can enter the
     same analyst/gate pipeline as internally-generated ideas.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,6 +36,7 @@ _APPROVAL_THRESHOLD = 7.0
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class VisionaryProposal:
@@ -166,6 +168,7 @@ class AnalystVerdict:
 # Community issue conversion
 # ---------------------------------------------------------------------------
 
+
 def issue_to_proposal(issue: GitHubIssue) -> VisionaryProposal:
     """Convert a community GitHub issue into a VisionaryProposal.
 
@@ -230,6 +233,7 @@ def issue_to_proposal(issue: GitHubIssue) -> VisionaryProposal:
 # Pipeline result
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PipelineResult:
     """Outcome of a full creative pipeline run.
@@ -262,6 +266,7 @@ class PipelineResult:
 # ---------------------------------------------------------------------------
 # CreativePipeline
 # ---------------------------------------------------------------------------
+
 
 class CreativePipeline:
     """Three-stage creative evolution pipeline.
@@ -416,11 +421,7 @@ class CreativePipeline:
         Returns:
             List of approved verdicts.
         """
-        return [
-            v for v in verdicts
-            if v.verdict == "APPROVE"
-            and v.composite_score >= self._approval_threshold
-        ]
+        return [v for v in verdicts if v.verdict == "APPROVE" and v.composite_score >= self._approval_threshold]
 
     def _create_backlog_tasks(
         self,
@@ -444,9 +445,7 @@ class CreativePipeline:
         open_dir.mkdir(parents=True, exist_ok=True)
 
         # Build title → proposal lookup.
-        proposal_map: dict[str, VisionaryProposal] = {
-            p.title: p for p in proposals
-        }
+        proposal_map: dict[str, VisionaryProposal] = {p.title: p for p in proposals}
 
         next_id = self._next_ticket_id()
         created: list[Path] = []
@@ -486,10 +485,7 @@ class CreativePipeline:
                     path = self._write_task(
                         ticket_id=str(next_id),
                         title=task_desc,
-                        description=(
-                            f"Part of: **{verdict.proposal_title}**\n\n"
-                            f"{context_block}"
-                        ),
+                        description=(f"Part of: **{verdict.proposal_title}**\n\n{context_block}"),
                         role="backend",
                         priority=2,
                         scope="medium",

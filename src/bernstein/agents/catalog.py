@@ -6,6 +6,7 @@ Supports two catalog types:
 
 Also provides role-based agent matching via ``CatalogRegistry.match()``.
 """
+
 from __future__ import annotations
 
 import json
@@ -24,8 +25,8 @@ CatalogType = Literal["agency", "generic"]
 
 _DEFAULT_AGENCY_SOURCE = "https://github.com/msitarzewski/agency-agents"
 _CACHE_FILE = Path(".sdd/agents/catalog.json")
-_REMOTE_TTL = 3600   # 1 hour — default TTL for remote provider entries
-_LOCAL_TTL = 300     # 5 minutes — default TTL for local provider entries
+_REMOTE_TTL = 3600  # 1 hour — default TTL for remote provider entries
+_LOCAL_TTL = 300  # 5 minutes — default TTL for local provider entries
 
 # Hardcoded fallback roles used when providers and cache both fail.
 _BUILTIN_AGENT_ENTRIES: list[dict[str, Any]] = [
@@ -376,8 +377,7 @@ class CatalogRegistry:
                         source=entry.name,
                         fetched_at=now,
                         ttl_seconds=ttl,
-                        metadata={k: v for k, v in meta.items()
-                                  if k not in ("role", "description", "model", "effort")},
+                        metadata={k: v for k, v in meta.items() if k not in ("role", "description", "model", "effort")},
                     )
                     fetched_any = True
 
@@ -396,11 +396,11 @@ class CatalogRegistry:
             from pathlib import Path as _Path
 
             from bernstein.core.agency_loader import load_agency_catalog
+
             catalog_dir = _Path(entry.path)
             agents = load_agency_catalog(catalog_dir)
             return {
-                a.role: {"description": a.description, "model": "sonnet", "effort": "normal"}
-                for a in agents.values()
+                a.role: {"description": a.description, "model": "sonnet", "effort": "normal"} for a in agents.values()
             }
 
         if entry.type == "generic" and entry.path:
@@ -523,9 +523,7 @@ def _parse_catalog_entry(raw: dict[str, Any]) -> CatalogEntry:
 
     catalog_type = raw.get("type")
     if catalog_type not in ("agency", "generic"):
-        raise ValueError(
-            f"catalog '{name}': type must be 'agency' or 'generic', got {catalog_type!r}"
-        )
+        raise ValueError(f"catalog '{name}': type must be 'agency' or 'generic', got {catalog_type!r}")
 
     enabled = raw.get("enabled", True)
     if not isinstance(enabled, bool):

@@ -4,6 +4,7 @@ Single source of truth for all git mutations — commit, push, merge, revert,
 worktree lifecycle, and staging.  Every other module delegates here instead of
 calling ``subprocess.run(["git", ...])`` directly.
 """
+
 from __future__ import annotations
 
 import logging
@@ -16,13 +17,15 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Paths that must NEVER be staged, even via explicit add.
-_NEVER_STAGE: frozenset[str] = frozenset({
-    ".sdd/runtime/",
-    ".sdd/metrics/",
-    ".env",
-    "*.pid",
-    "*.log",
-})
+_NEVER_STAGE: frozenset[str] = frozenset(
+    {
+        ".sdd/runtime/",
+        ".sdd/metrics/",
+        ".env",
+        "*.pid",
+        "*.log",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -202,10 +205,7 @@ def stage_task_files(cwd: Path, owned_files: list[str]) -> list[str]:
                 extra.append(fpath)
 
     all_files = list(dict.fromkeys(owned_files + extra))  # dedupe, preserve order
-    safe = [
-        p for p in all_files
-        if not any(pat.rstrip("*") in p for pat in _NEVER_STAGE)
-    ]
+    safe = [p for p in all_files if not any(pat.rstrip("*") in p for pat in _NEVER_STAGE)]
     if safe:
         run_git(["add", "--", *safe], cwd)
     return safe
@@ -332,9 +332,7 @@ def safe_push(cwd: Path, branch: str, remote: str = "origin") -> GitResult:
         logger.warning("git fetch failed: %s", fetch_result.stderr)
 
     # 2. Check divergence
-    behind_r = run_git(
-        ["rev-list", "--count", f"HEAD..{remote}/{branch}"], cwd
-    )
+    behind_r = run_git(["rev-list", "--count", f"HEAD..{remote}/{branch}"], cwd)
     behind = int(behind_r.stdout.strip()) if behind_r.ok and behind_r.stdout.strip().isdigit() else 0
 
     if behind > 0:
@@ -622,16 +620,12 @@ def _classify_change(staged_files: list[str], diff: str) -> str:
     if all_tests:
         return "test"
 
-    all_docs = all(
-        f.endswith((".md", ".rst", ".txt")) or "docs/" in f
-        for f in staged_files
-    )
+    all_docs = all(f.endswith((".md", ".rst", ".txt")) or "docs/" in f for f in staged_files)
     if all_docs:
         return "docs"
 
     all_config = all(
-        f.endswith((".toml", ".yaml", ".yml", ".json", ".cfg", ".ini"))
-        or f in {"Makefile", "Dockerfile", ".gitignore"}
+        f.endswith((".toml", ".yaml", ".yml", ".json", ".cfg", ".ini")) or f in {"Makefile", "Dockerfile", ".gitignore"}
         for f in staged_files
     )
     if all_config:

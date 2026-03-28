@@ -1,4 +1,5 @@
 """Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses."""
+
 from __future__ import annotations
 
 import contextlib
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MetricRecord:
     """Base class for metric records."""
+
     timestamp: float
     task_id: str | None = None
     role: str | None = None
@@ -38,6 +40,7 @@ class MetricRecord:
 @dataclass
 class TaskMetrics(MetricRecord):
     """Metrics for a completed task."""
+
     model: str | None = None
     provider: str | None = None
     duration_seconds: float = 0.0
@@ -51,24 +54,27 @@ class TaskMetrics(MetricRecord):
 
     def to_dict(self) -> dict[str, Any]:
         base = super().to_dict()
-        base.update({
-            "model": self.model,
-            "provider": self.provider,
-            "duration_seconds": self.duration_seconds,
-            "tokens_prompt": self.tokens_prompt,
-            "tokens_completion": self.tokens_completion,
-            "cost_usd": self.cost_usd,
-            "janitor_passed": self.janitor_passed,
-            "files_modified": self.files_modified,
-            "lines_added": self.lines_added,
-            "lines_deleted": self.lines_deleted,
-        })
+        base.update(
+            {
+                "model": self.model,
+                "provider": self.provider,
+                "duration_seconds": self.duration_seconds,
+                "tokens_prompt": self.tokens_prompt,
+                "tokens_completion": self.tokens_completion,
+                "cost_usd": self.cost_usd,
+                "janitor_passed": self.janitor_passed,
+                "files_modified": self.files_modified,
+                "lines_added": self.lines_added,
+                "lines_deleted": self.lines_deleted,
+            }
+        )
         return base
 
 
 @dataclass
 class AgentMetrics(MetricRecord):
     """Metrics for an agent session."""
+
     agent_id: str | None = None
     lifetime_seconds: float = 0.0
     tasks_completed: int = 0
@@ -78,20 +84,23 @@ class AgentMetrics(MetricRecord):
 
     def to_dict(self) -> dict[str, Any]:
         base = super().to_dict()
-        base.update({
-            "agent_id": self.agent_id,
-            "lifetime_seconds": self.lifetime_seconds,
-            "tasks_completed": self.tasks_completed,
-            "heartbeat_failures": self.heartbeat_failures,
-            "sleep_incidents": self.sleep_incidents,
-            "context_tokens": self.context_tokens,
-        })
+        base.update(
+            {
+                "agent_id": self.agent_id,
+                "lifetime_seconds": self.lifetime_seconds,
+                "tasks_completed": self.tasks_completed,
+                "heartbeat_failures": self.heartbeat_failures,
+                "sleep_incidents": self.sleep_incidents,
+                "context_tokens": self.context_tokens,
+            }
+        )
         return base
 
 
 @dataclass
 class CostMetrics(MetricRecord):
     """Cost metrics for a provider."""
+
     provider: str | None = None
     model: str | None = None
     tier: str | None = None
@@ -103,22 +112,25 @@ class CostMetrics(MetricRecord):
 
     def to_dict(self) -> dict[str, Any]:
         base = super().to_dict()
-        base.update({
-            "provider": self.provider,
-            "model": self.model,
-            "tier": self.tier,
-            "tokens_in": self.tokens_in,
-            "tokens_out": self.tokens_out,
-            "cost_usd": self.cost_usd,
-            "rate_limit_remaining": self.rate_limit_remaining,
-            "free_tier_remaining": self.free_tier_remaining,
-        })
+        base.update(
+            {
+                "provider": self.provider,
+                "model": self.model,
+                "tier": self.tier,
+                "tokens_in": self.tokens_in,
+                "tokens_out": self.tokens_out,
+                "cost_usd": self.cost_usd,
+                "rate_limit_remaining": self.rate_limit_remaining,
+                "free_tier_remaining": self.free_tier_remaining,
+            }
+        )
         return base
 
 
 @dataclass
 class QualityMetrics(MetricRecord):
     """Quality metrics."""
+
     janitor_pass_rate: float = 0.0
     human_approval_rate: float = 0.0
     rollback_rate: float = 0.0
@@ -127,13 +139,15 @@ class QualityMetrics(MetricRecord):
 
     def to_dict(self) -> dict[str, Any]:
         base = super().to_dict()
-        base.update({
-            "janitor_pass_rate": self.janitor_pass_rate,
-            "human_approval_rate": self.human_approval_rate,
-            "rollback_rate": self.rollback_rate,
-            "test_pass_rate": self.test_pass_rate,
-            "rework_rate": self.rework_rate,
-        })
+        base.update(
+            {
+                "janitor_pass_rate": self.janitor_pass_rate,
+                "human_approval_rate": self.human_approval_rate,
+                "rollback_rate": self.rollback_rate,
+                "test_pass_rate": self.test_pass_rate,
+                "rework_rate": self.rework_rate,
+            }
+        )
         return base
 
 
@@ -145,6 +159,7 @@ class QualityMetrics(MetricRecord):
 @dataclass
 class TrendAnalysis:
     """Results of trend analysis."""
+
     metric_name: str
     direction: Literal["increasing", "decreasing", "stable"]
     change_percent: float
@@ -158,6 +173,7 @@ class TrendAnalysis:
 @dataclass
 class AnomalyDetection:
     """Detected anomaly in metrics."""
+
     metric_name: str
     anomaly_type: Literal["spike", "drop", "outlier"]
     severity: Literal["low", "medium", "high", "critical"]
@@ -171,6 +187,7 @@ class AnomalyDetection:
 @dataclass
 class EWMAState:
     """State for Exponential Weighted Moving Average tracking."""
+
     metric_name: str
     lambda_: float
     current_value: float = 0.0
@@ -184,6 +201,7 @@ class EWMAState:
 @dataclass
 class CUSUMState:
     """State for CUSUM (Cumulative Sum) shift detection."""
+
     metric_name: str
     target: float = 0.0
     k: float = 0.5
@@ -198,6 +216,7 @@ class CUSUMState:
 @dataclass
 class Changepoint:
     """Detected changepoint from BOCPD."""
+
     index: int
     probability: float
     run_length: int
@@ -206,6 +225,7 @@ class Changepoint:
 @dataclass
 class BetaBinomialPosterior:
     """Rolling Beta-Binomial posterior for pass/fail metrics."""
+
     metric_name: str
     alpha: float = 1.0
     beta: float = 1.0
@@ -223,13 +243,14 @@ class BetaBinomialPosterior:
     @property
     def ci_95(self) -> tuple[float, float]:
         """Approximate 95% credible interval."""
-        std = self.variance ** 0.5
+        std = self.variance**0.5
         return (max(0.0, self.mean - 1.96 * std), min(1.0, self.mean + 1.96 * std))
 
 
 @dataclass
 class NormalInverseGammaPosterior:
     """Rolling Normal-Inverse-Gamma posterior for continuous metrics."""
+
     metric_name: str
     mu: float = 0.0
     kappa: float = 1.0
@@ -251,6 +272,7 @@ class NormalInverseGammaPosterior:
 @dataclass
 class CompositeScore:
     """Multi-metric composite score (Goodhart defense)."""
+
     score: float
     components: dict[str, float]
     divergence_flags: list[str] = field(default_factory=list)
@@ -475,10 +497,7 @@ def _bocpd_offline(
         for r in range(min(t + 1, max_run - 1)):
             new_run_probs[r + 1] = run_length_probs[r] * pred_probs[r] * (1 - hazard_rate)
 
-        cp_mass = sum(
-            run_length_probs[r] * pred_probs[r] * hazard_rate
-            for r in range(min(t + 1, max_run))
-        )
+        cp_mass = sum(run_length_probs[r] * pred_probs[r] * hazard_rate for r in range(min(t + 1, max_run)))
         new_run_probs[0] = cp_mass
 
         total = sum(new_run_probs)
@@ -487,11 +506,13 @@ def _bocpd_offline(
                 new_run_probs[r] /= total
 
         if t > 0 and new_run_probs[0] > 0.5:
-            changepoints.append(Changepoint(
-                index=t,
-                probability=new_run_probs[0],
-                run_length=0,
-            ))
+            changepoints.append(
+                Changepoint(
+                    index=t,
+                    probability=new_run_probs[0],
+                    run_length=0,
+                )
+            )
 
         new_mu = [mu0] * max_run
         new_kappa = [kappa0] * max_run
@@ -649,7 +670,11 @@ class MetricsAggregator:
         if state is None:
             t = target if target is not None else value
             state = CUSUMState(
-                metric_name=metric_name, target=t, k=k, h=h, n_observations=1,
+                metric_name=metric_name,
+                target=t,
+                k=k,
+                h=h,
+                n_observations=1,
             )
             self._cusum_states[metric_name] = state
             return state
@@ -659,7 +684,11 @@ class MetricsAggregator:
 
         state.n_observations += 1
         state.s_high, state.s_low = _cusum_update(
-            value, state.target, state.k, state.s_high, state.s_low,
+            value,
+            state.target,
+            state.k,
+            state.s_high,
+            state.s_low,
         )
 
         if state.s_high > state.h:
@@ -789,22 +818,16 @@ class MetricsAggregator:
                     d1 = v1 - avg1_prev
                     d2 = v2 - avg2_prev
                     if d1 > 0.05 and d2 < -0.05:
-                        divergence_flags.append(
-                            f"{m1} improving (+{d1:.2f}) while {m2} declining ({d2:.2f})"
-                        )
+                        divergence_flags.append(f"{m1} improving (+{d1:.2f}) while {m2} declining ({d2:.2f})")
                     elif d2 > 0.05 and d1 < -0.05:
-                        divergence_flags.append(
-                            f"{m2} improving (+{d2:.2f}) while {m1} declining ({d1:.2f})"
-                        )
+                        divergence_flags.append(f"{m2} improving (+{d2:.2f}) while {m1} declining ({d1:.2f})")
 
         trip_wire_flags: list[str] = []
         success_rate = metrics.get("success_rate", 0.0)
         if success_rate >= 1.0 and len(self._metric_history.get("success_rate", [])) >= 5:
             recent = self._metric_history["success_rate"][-5:]
             if all(v >= 1.0 for v in recent):
-                trip_wire_flags.append(
-                    "success_rate has been 100% for 5+ consecutive windows — possible test gaming"
-                )
+                trip_wire_flags.append("success_rate has been 100% for 5+ consecutive windows — possible test gaming")
 
         for name, value in metrics.items():
             if name not in self._metric_history:
@@ -935,16 +958,18 @@ class MetricsAggregator:
                 else:
                     severity = "low"
 
-                anomalies.append(AnomalyDetection(
-                    metric_name="cost_per_task",
-                    anomaly_type="spike" if z_score > 0 else "drop",
-                    severity=severity,
-                    z_score=z_score,
-                    expected_value=mean_cost,
-                    actual_value=cost,
-                    timestamp=task_metrics[i].timestamp,
-                    description=f"Cost anomaly detected: ${cost:.4f} vs expected ${mean_cost:.4f}",
-                ))
+                anomalies.append(
+                    AnomalyDetection(
+                        metric_name="cost_per_task",
+                        anomaly_type="spike" if z_score > 0 else "drop",
+                        severity=severity,
+                        z_score=z_score,
+                        expected_value=mean_cost,
+                        actual_value=cost,
+                        timestamp=task_metrics[i].timestamp,
+                        description=f"Cost anomaly detected: ${cost:.4f} vs expected ${mean_cost:.4f}",
+                    )
+                )
 
         return anomalies
 
@@ -997,13 +1022,15 @@ class MetricsAggregator:
             pass_count = sum(1 for m in task_metrics if m.janitor_passed)
             avg_cost = sum(m.cost_usd for m in task_metrics) / n
             avg_dur = sum(m.duration_seconds for m in task_metrics) / n
-            result["composite"] = self.compute_composite_score({
-                "success_rate": pass_count / n,
-                "cost_efficiency": max(0, 1.0 - avg_cost),
-                "duration_efficiency": max(0, 1.0 - avg_dur / 600),
-                "code_quality": pass_count / n,
-                "retry_rate_inv": 1.0,
-            })
+            result["composite"] = self.compute_composite_score(
+                {
+                    "success_rate": pass_count / n,
+                    "cost_efficiency": max(0, 1.0 - avg_cost),
+                    "duration_efficiency": max(0, 1.0 - avg_dur / 600),
+                    "code_quality": pass_count / n,
+                    "retry_rate_inv": 1.0,
+                }
+            )
 
         if self._analysis_dir is not None:
             self._write_analysis_outputs(result)
@@ -1092,13 +1119,15 @@ class MetricsAggregator:
             models = list({m.model for m in failed if m.model is not None})
             avg_cost = sum(m.cost_usd for m in failed) / len(failed)
 
-            results.append({
-                "role": role,
-                "failure_count": len(failed),
-                "total_count": total,
-                "failure_rate": len(failed) / total if total > 0 else 0.0,
-                "models_involved": models,
-                "avg_cost_of_failures": avg_cost,
-            })
+            results.append(
+                {
+                    "role": role,
+                    "failure_count": len(failed),
+                    "total_count": total,
+                    "failure_rate": len(failed) / total if total > 0 else 0.0,
+                    "models_involved": models,
+                    "avg_cost_of_failures": avg_cost,
+                }
+            )
 
         return results

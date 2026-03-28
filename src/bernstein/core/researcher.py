@@ -4,6 +4,7 @@ Uses Tavily search API (via bernstein.core.llm) to gather market
 intelligence that informs the manager agent when planning improvements.
 Results are cached to avoid redundant API calls.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -125,11 +126,13 @@ class ResearchCache:
         path = self._key_path(result.query)
         try:
             path.write_text(
-                json.dumps({
-                    "query": result.query,
-                    "content": result.content,
-                    "timestamp": result.timestamp,
-                }),
+                json.dumps(
+                    {
+                        "query": result.query,
+                        "content": result.content,
+                        "timestamp": result.timestamp,
+                    }
+                ),
                 encoding="utf-8",
             )
         except OSError as exc:

@@ -7,6 +7,7 @@ Also provides ``TaskContextBuilder`` for enriching task prompts with
 file summaries, dependency graphs, related changes, and subsystem
 context — so spawned agents skip the "orientation" phase.
 """
+
 from __future__ import annotations
 
 import ast
@@ -40,11 +41,23 @@ logger = logging.getLogger(__name__)
 
 _file_tree_cache: dict[str, tuple[float, str]] = {}
 
-_IGNORED_DIRS = frozenset({
-    ".git", "__pycache__", "node_modules", ".mypy_cache",
-    ".pytest_cache", ".ruff_cache", ".venv", "venv", "dist",
-    "build", ".egg-info", ".tox", ".sdd/runtime",
-})
+_IGNORED_DIRS = frozenset(
+    {
+        ".git",
+        "__pycache__",
+        "node_modules",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "venv",
+        "dist",
+        "build",
+        ".egg-info",
+        ".tox",
+        ".sdd/runtime",
+    }
+)
 
 _IGNORED_SUFFIXES = frozenset({".pyc", ".pyo", ".egg-info"})
 
@@ -204,6 +217,7 @@ class FileSummary:
         functions: Top-level function names.
         imports: Module names imported by this file.
     """
+
     path: str
     docstring: str
     classes: list[tuple[str, list[str]]]  # (class_name, [method_names])
@@ -228,10 +242,12 @@ def _parse_python_file(filepath: Path) -> FileSummary | None:
 
     # Module docstring
     docstring = ""
-    if (tree.body
+    if (
+        tree.body
         and isinstance(tree.body[0], ast.Expr)
         and isinstance(tree.body[0].value, ast.Constant)
-        and isinstance(tree.body[0].value.value, str)):
+        and isinstance(tree.body[0].value.value, str)
+    ):
         raw = tree.body[0].value.value.strip()
         # First line only, truncated
         docstring = raw.split("\n")[0][:120]
@@ -243,9 +259,9 @@ def _parse_python_file(filepath: Path) -> FileSummary | None:
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.ClassDef):
             methods = [
-                n.name for n in node.body
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and not n.name.startswith("_")
+                n.name
+                for n in node.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not n.name.startswith("_")
             ]
             classes.append((node.name, methods))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -516,6 +532,7 @@ class FileIndexEntry:
         imports: List of imported module names.
         last_modified: ISO timestamp of last modification.
     """
+
     path: str
     summary: str
     exports: list[str]
@@ -695,6 +712,7 @@ def append_decision(workdir: Path, task_id: str, title: str, summary: str) -> No
 # API Usage Tracking
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ApiCallRecord:
     """Record of a single API call.
@@ -712,6 +730,7 @@ class ApiCallRecord:
         success: Whether the call succeeded.
         error: Error message if failed.
     """
+
     timestamp: float
     provider: str
     model: str
@@ -739,6 +758,7 @@ class ProviderUsageSummary:
         avg_latency_ms: Average latency across calls.
         models_used: Set of model names used.
     """
+
     provider: str
     total_calls: int = 0
     total_tokens: int = 0
@@ -762,6 +782,7 @@ class AgentSessionUsage:
         start_time: First call timestamp.
         last_activity: Last call timestamp.
     """
+
     agent_session_id: str
     total_calls: int = 0
     total_tokens: int = 0
@@ -784,6 +805,7 @@ class TierConsumption:
         requests_limit: Tier request limit (if applicable).
         percentage_used: Percentage of tier quota used.
     """
+
     provider: str
     tier: ApiTier
     tokens_used: int = 0
@@ -874,9 +896,7 @@ class ApiUsageTracker:
         """
         # Update provider summary
         if record.provider not in self._provider_summaries:
-            self._provider_summaries[record.provider] = ProviderUsageSummary(
-                provider=record.provider
-            )
+            self._provider_summaries[record.provider] = ProviderUsageSummary(provider=record.provider)
         prov = self._provider_summaries[record.provider]
         prov.total_calls += 1
         prov.total_tokens += record.tokens_total
@@ -891,8 +911,7 @@ class ApiUsageTracker:
         alpha = 0.3
         if record.provider in self._provider_latency_ema:
             self._provider_latency_ema[record.provider] = (
-                alpha * record.latency_ms +
-                (1 - alpha) * self._provider_latency_ema[record.provider]
+                alpha * record.latency_ms + (1 - alpha) * self._provider_latency_ema[record.provider]
             )
         else:
             self._provider_latency_ema[record.provider] = record.latency_ms
@@ -900,9 +919,7 @@ class ApiUsageTracker:
 
         # Update agent session summary
         if record.agent_session_id not in self._agent_summaries:
-            self._agent_summaries[record.agent_session_id] = AgentSessionUsage(
-                agent_session_id=record.agent_session_id
-            )
+            self._agent_summaries[record.agent_session_id] = AgentSessionUsage(agent_session_id=record.agent_session_id)
         agent = self._agent_summaries[record.agent_session_id]
         agent.total_calls += 1
         agent.total_tokens += record.tokens_total
@@ -1022,10 +1039,7 @@ class ApiUsageTracker:
         Returns:
             List of TierConsumption for all tiers.
         """
-        return [
-            tc for key, tc in self._tier_consumption.items()
-            if tc.provider == provider
-        ]
+        return [tc for key, tc in self._tier_consumption.items() if tc.provider == provider]
 
     def get_global_summary(self) -> dict[str, str]:
         """Get a global summary of all API usage.

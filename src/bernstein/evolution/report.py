@@ -4,6 +4,7 @@ Data sources:
   .sdd/metrics/evolve_cycles.jsonl   — per-cycle summary records
   .sdd/evolution/experiments.jsonl   — per-experiment results (optional)
 """
+
 from __future__ import annotations
 
 import json
@@ -252,7 +253,8 @@ class EvolutionReport:
             f"[bold]Tasks completed:[/bold] {self.total_tasks_completed}  "
             f"[bold]Commits:[/bold] {self.total_commits}",
             f"[bold]Tests:[/bold] {self.first_tests_passed} → {self.last_tests_passed} "
-            f"([green]+{self.test_delta}[/green])" if self.test_delta >= 0
+            f"([green]+{self.test_delta}[/green])"
+            if self.test_delta >= 0
             else f"[bold]Tests:[/bold] {self.first_tests_passed} → {self.last_tests_passed} "
             f"([red]{self.test_delta}[/red])",
             f"[bold]Test trajectory:[/bold] {self._tests_sparkline()}",
@@ -287,14 +289,10 @@ class EvolutionReport:
             time_str = dt.strftime("%m-%d %H:%M")
 
             task_str = f"[green]{c.tasks_completed}[/green]/[red]{c.tasks_failed}[/red]"
-            test_str = (
-                str(c.tests_passed) if c.tests_passed > 0 else "[dim]—[/dim]"
-            )
+            test_str = str(c.tests_passed) if c.tests_passed > 0 else "[dim]—[/dim]"
             success_pct = f"{c.success_rate:.0%}"
             dur = f"{c.duration_s:.0f}s"
-            commits_str = (
-                f"[green]{c.commits_made}[/green]" if c.commits_made > 0 else "[dim]0[/dim]"
-            )
+            commits_str = f"[green]{c.commits_made}[/green]" if c.commits_made > 0 else "[dim]0[/dim]"
 
             # Highlight row if tests improved vs previous cycle
             row_style = ""

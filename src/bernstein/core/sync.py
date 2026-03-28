@@ -5,6 +5,7 @@ and the dynamic task server (tasks.jsonl). This module bridges them:
 - On demand or at startup, create server tasks for new backlog files.
 - When a task is done on the server, move its backlog file to backlog/done/.
 """
+
 from __future__ import annotations
 
 import logging
@@ -111,7 +112,7 @@ def _parse_yaml_frontmatter(text: str, filename: str) -> BacklogTask | None:
     title: str = str(raw.get("title", "")).strip()
     if not title:
         # Try first heading in the body
-        body = text[end + 4:]
+        body = text[end + 4 :]
         title = _extract_heading(body)
 
     if not title:
@@ -437,14 +438,11 @@ def sync_backlog_to_server(
                 existing_slugs.add(normalise_title(task.title))
                 logger.info("Created task %s from %s", task_id, md_file.name)
             except httpx.HTTPError as exc:
-                result.errors.append(
-                    f"Failed to create task from {md_file.name}: {exc}"
-                )
+                result.errors.append(f"Failed to create task from {md_file.name}: {exc}")
 
         # --- Step 2: move files for completed tasks ---
         done_slugs: set[str] = {
-            normalise_title(t.get("title", ""))
-            for t in _get_tasks_by_status(_client, server_url, "done")
+            normalise_title(t.get("title", "")) for t in _get_tasks_by_status(_client, server_url, "done")
         }
 
         for md_file in sorted(backlog_open.glob("*.md")):

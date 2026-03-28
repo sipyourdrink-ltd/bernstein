@@ -33,6 +33,7 @@ Labels:
 
 All operations degrade gracefully when ``gh`` is unavailable or unauthenticated.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -191,11 +192,17 @@ class GitHubClient:
             return []
 
         args = [
-            "gh", "issue", "list",
-            "--label", _LABEL_EVOLVE,
-            "--state", "open",
-            "--json", "number,title,url,labels,state",
-            "--limit", "100",
+            "gh",
+            "issue",
+            "list",
+            "--label",
+            _LABEL_EVOLVE,
+            "--state",
+            "open",
+            "--json",
+            "number,title,url,labels,state",
+            "--limit",
+            "100",
         ]
         if self._repo:
             args += ["--repo", self._repo]
@@ -261,10 +268,15 @@ class GitHubClient:
         self._ensure_labels([_LABEL_EVOLVE, _LABEL_AUTO, hash_label])
 
         args = [
-            "gh", "issue", "create",
-            "--title", title,
-            "--body", body,
-            "--label", label_str,
+            "gh",
+            "issue",
+            "create",
+            "--title",
+            title,
+            "--body",
+            body,
+            "--label",
+            label_str,
         ]
         if self._repo:
             args += ["--repo", self._repo]
@@ -304,8 +316,12 @@ class GitHubClient:
 
         self._ensure_labels([_LABEL_CLAIMED])
         args = [
-            "gh", "issue", "edit", str(issue_number),
-            "--add-label", _LABEL_CLAIMED,
+            "gh",
+            "issue",
+            "edit",
+            str(issue_number),
+            "--add-label",
+            _LABEL_CLAIMED,
         ]
         if self._repo:
             args += ["--repo", self._repo]
@@ -328,8 +344,12 @@ class GitHubClient:
             return False
 
         args = [
-            "gh", "issue", "edit", str(issue_number),
-            "--remove-label", _LABEL_CLAIMED,
+            "gh",
+            "issue",
+            "edit",
+            str(issue_number),
+            "--remove-label",
+            _LABEL_CLAIMED,
         ]
         if self._repo:
             args += ["--repo", self._repo]
@@ -356,11 +376,17 @@ class GitHubClient:
         seen: dict[int, GitHubIssue] = {}
         for label in _COMMUNITY_LABELS:
             args = [
-                "gh", "issue", "list",
-                "--label", label,
-                "--state", "open",
-                "--json", "number,title,url,labels,state,body,author,reactions",
-                "--limit", "50",
+                "gh",
+                "issue",
+                "list",
+                "--label",
+                label,
+                "--state",
+                "open",
+                "--json",
+                "number,title,url,labels,state,body,author,reactions",
+                "--limit",
+                "50",
             ]
             if self._repo:
                 args += ["--repo", self._repo]
@@ -423,8 +449,12 @@ class GitHubClient:
 
         self._ensure_labels([_LABEL_IN_PROGRESS])
         args = [
-            "gh", "issue", "edit", str(issue_number),
-            "--add-label", _LABEL_IN_PROGRESS,
+            "gh",
+            "issue",
+            "edit",
+            str(issue_number),
+            "--add-label",
+            _LABEL_IN_PROGRESS,
         ]
         if self._repo:
             args += ["--repo", self._repo]
@@ -455,8 +485,12 @@ class GitHubClient:
             return False
 
         args = [
-            "gh", "issue", "edit", str(issue_number),
-            "--remove-label", _LABEL_IN_PROGRESS,
+            "gh",
+            "issue",
+            "edit",
+            str(issue_number),
+            "--remove-label",
+            _LABEL_IN_PROGRESS,
         ]
         if self._repo:
             args += ["--repo", self._repo]
@@ -486,11 +520,17 @@ class GitHubClient:
             return None
 
         args = [
-            "gh", "pr", "create",
-            "--title", title,
-            "--body", body,
-            "--head", head,
-            "--base", base,
+            "gh",
+            "pr",
+            "create",
+            "--title",
+            title,
+            "--body",
+            body,
+            "--head",
+            head,
+            "--base",
+            base,
         ]
         if draft:
             args.append("--draft")
@@ -520,8 +560,12 @@ class GitHubClient:
 
         if comment:
             comment_args = [
-                "gh", "issue", "comment", str(issue_number),
-                "--body", comment,
+                "gh",
+                "issue",
+                "comment",
+                str(issue_number),
+                "--body",
+                comment,
             ]
             if self._repo:
                 comment_args += ["--repo", self._repo]
@@ -595,8 +639,12 @@ class GitHubClient:
             ``True`` if the comment was posted successfully.
         """
         args = [
-            "gh", "issue", "comment", str(issue_number),
-            "--body", body,
+            "gh",
+            "issue",
+            "comment",
+            str(issue_number),
+            "--body",
+            body,
         ]
         if self._repo:
             args += ["--repo", self._repo]
@@ -614,8 +662,12 @@ class GitHubClient:
         for name in names:
             color = _label_color(name)
             args = [
-                "gh", "label", "create", name,
-                "--color", color,
+                "gh",
+                "label",
+                "create",
+                name,
+                "--color",
+                color,
                 "--force",
             ]
             if self._repo:
@@ -633,13 +685,13 @@ def _label_color(name: str) -> str:
         6-character hex color string (without ``#``).
     """
     _colors: dict[str, str] = {
-        _LABEL_EVOLVE: "0075ca",              # blue — evolution
-        _LABEL_CLAIMED: "e4e669",             # yellow — claimed
-        _LABEL_AUTO: "cfd3d7",                # grey — machine-generated
-        _LABEL_EVOLVE_CANDIDATE: "a2eeef",    # cyan — community request
-        _LABEL_FEATURE_REQUEST: "a2eeef",     # cyan — community request
-        _LABEL_IN_PROGRESS: "fbca04",         # orange — in progress
-        _LABEL_MAINTAINER_APPROVED: "0e8a16", # green — trusted
+        _LABEL_EVOLVE: "0075ca",  # blue — evolution
+        _LABEL_CLAIMED: "e4e669",  # yellow — claimed
+        _LABEL_AUTO: "cfd3d7",  # grey — machine-generated
+        _LABEL_EVOLVE_CANDIDATE: "a2eeef",  # cyan — community request
+        _LABEL_FEATURE_REQUEST: "a2eeef",  # cyan — community request
+        _LABEL_IN_PROGRESS: "fbca04",  # orange — in progress
+        _LABEL_MAINTAINER_APPROVED: "0e8a16",  # green — trusted
     }
     if name in _colors:
         return _colors[name]

@@ -1,4 +1,5 @@
 """Generic CLI adapter for arbitrary coding agent CLIs."""
+
 from __future__ import annotations
 
 import subprocess

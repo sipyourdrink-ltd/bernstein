@@ -10,6 +10,7 @@ Supported sources:
   ``.bernstein-catalog.yaml`` (requires network access).
 - **npm**: Packages with ``bernstein-agent`` keyword (requires network access).
 """
+
 from __future__ import annotations
 
 import json
@@ -217,10 +218,7 @@ class AgentDiscovery:
         try:
             import urllib.request
 
-            url = (
-                "https://api.github.com/search/repositories"
-                "?q=topic:bernstein-agents&sort=stars&per_page=10"
-            )
+            url = "https://api.github.com/search/repositories?q=topic:bernstein-agents&sort=stars&per_page=10"
             req = urllib.request.Request(
                 url,
                 headers={
@@ -395,11 +393,7 @@ class AgentDiscovery:
         """
         count = 0
         if path.exists() and path.is_dir():
-            count = sum(
-                1
-                for p in path.iterdir()
-                if p.suffix in (".yaml", ".yml", ".md") and p.is_file()
-            )
+            count = sum(1 for p in path.iterdir() if p.suffix in (".yaml", ".yml", ".md") and p.is_file())
 
         ts = _now_iso()
         # Update existing entry or append new one
@@ -430,10 +424,7 @@ class AgentDiscovery:
 
     def _from_raw(self, raw: dict[str, Any]) -> None:
         self.directories = [DirectoryEntry.from_dict(d) for d in raw.get("directories", [])]
-        self.metrics = {
-            k: AgentMetrics.from_dict(v)
-            for k, v in raw.get("metrics", {}).items()
-        }
+        self.metrics = {k: AgentMetrics.from_dict(v) for k, v in raw.get("metrics", {}).items()}
         self.total_agents = raw.get("total_agents", 0)
         self.last_full_sync = raw.get("last_full_sync")
 

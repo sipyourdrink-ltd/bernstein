@@ -4,6 +4,7 @@ The bulletin board is the shared communication channel between cells.
 Agents post messages (alerts, blockers, findings, status updates, dependency
 declarations) and read messages posted since their last check.
 """
+
 from __future__ import annotations
 
 import json

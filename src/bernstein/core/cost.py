@@ -15,6 +15,7 @@ Cascade order (cheapest → most expensive):
 State is persisted to ``.sdd/metrics/bandit_state.json`` so it survives
 orchestrator restarts.
 """
+
 from __future__ import annotations
 
 import json
@@ -35,20 +36,20 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-EPSILON: float = 0.1               # 10% explore, 90% exploit
-MIN_OBSERVATIONS: int = 5          # arms trusted only after this many samples
-QUALITY_THRESHOLD: float = 0.80    # minimum success_rate to consider an arm
+EPSILON: float = 0.1  # 10% explore, 90% exploit
+MIN_OBSERVATIONS: int = 5  # arms trusted only after this many samples
+QUALITY_THRESHOLD: float = 0.80  # minimum success_rate to consider an arm
 
 # Approximate cost per 1k tokens (input+output combined), USD.
 # Used only as a tiebreaker when multiple arms meet the quality threshold.
 _MODEL_COST_USD_PER_1K: dict[str, float] = {
-    "haiku":  0.0004,
+    "haiku": 0.0004,
     "sonnet": 0.003,
-    "opus":   0.015,
+    "opus": 0.015,
     # fallback for unknown models
-    "gemini-pro":   0.0005,
+    "gemini-pro": 0.0005,
     "gemini-ultra": 0.005,
-    "gpt-4.1":      0.004,
+    "gpt-4.1": 0.004,
 }
 
 # Cascade order — index 0 is cheapest
@@ -225,9 +226,7 @@ class EpsilonGreedyBandit:
             # All arms are under-performing — fall back to cheapest model to
             # keep trying (cascade will escalate on actual failures)
             fallback = min(models, key=_model_cost)
-            logger.debug(
-                "Bandit[%s]: all arms under-threshold, fallback → %s", role, fallback
-            )
+            logger.debug("Bandit[%s]: all arms under-threshold, fallback → %s", role, fallback)
             return fallback
 
         # Among qualifying arms, pick the cheapest
@@ -257,9 +256,11 @@ class EpsilonGreedyBandit:
             self._arms[key] = BanditArm(role=role, model=model)
         self._arms[key].record(success=success, cost_usd=cost_usd, latency_s=latency_s)
         logger.debug(
-            "Bandit[%s/%s]: recorded success=%s, cost=%.5f — "
-            "arm now: obs=%d, success_rate=%.2f",
-            role, model, success, cost_usd,
+            "Bandit[%s/%s]: recorded success=%s, cost=%.5f — arm now: obs=%d, success_rate=%.2f",
+            role,
+            model,
+            success,
+            cost_usd,
             self._arms[key].observations,
             self._arms[key].success_rate,
         )
@@ -268,16 +269,18 @@ class EpsilonGreedyBandit:
         """Return a summary of all arm statistics, sorted by role then cost."""
         rows = []
         for arm in sorted(self._arms.values(), key=lambda a: (a.role, _model_cost(a.model))):
-            rows.append({
-                "role": arm.role,
-                "model": arm.model,
-                "observations": arm.observations,
-                "success_rate": round(arm.success_rate, 3),
-                "avg_cost_usd": round(arm.avg_cost_usd, 6),
-                "avg_latency_s": round(arm.avg_latency_s, 1),
-                "trusted": arm.observations >= self.min_observations,
-                "meets_quality": arm.success_rate >= self.quality_threshold,
-            })
+            rows.append(
+                {
+                    "role": arm.role,
+                    "model": arm.model,
+                    "observations": arm.observations,
+                    "success_rate": round(arm.success_rate, 3),
+                    "avg_cost_usd": round(arm.avg_cost_usd, 6),
+                    "avg_latency_s": round(arm.avg_latency_s, 1),
+                    "trusted": arm.observations >= self.min_observations,
+                    "meets_quality": arm.success_rate >= self.quality_threshold,
+                }
+            )
         return rows
 
 

@@ -3,6 +3,7 @@
 Agents file pivot signals when they discover something that changes strategic
 direction. Small pivots are handled inline; large pivots route to VP for review.
 """
+
 from __future__ import annotations
 
 import json

@@ -10,6 +10,7 @@ edges, then computes:
 * **Bottleneck detection** — surfaces tasks that block the most
   downstream work.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,9 +32,11 @@ logger = logging.getLogger(__name__)
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Edge:
     """A directed edge in the task graph."""
+
     source: str  # dependency (must finish first)
     target: str  # dependent task
     edge_type: str  # "depends_on" or "file_overlap"
@@ -42,6 +45,7 @@ class Edge:
 @dataclass
 class GraphAnalysis:
     """Results of analysing the task DAG."""
+
     critical_path: list[str] = field(default_factory=list)
     critical_path_minutes: int = 0
     parallel_width: int = 0
@@ -51,6 +55,7 @@ class GraphAnalysis:
 # ---------------------------------------------------------------------------
 # TaskGraph
 # ---------------------------------------------------------------------------
+
 
 class TaskGraph:
     """DAG built from task dependencies and file-ownership overlaps.
@@ -134,9 +139,7 @@ class TaskGraph:
                 if dep in in_degree:
                     in_degree[dep] += 1
 
-        queue: deque[str] = deque(
-            tid for tid, deg in in_degree.items() if deg == 0
-        )
+        queue: deque[str] = deque(tid for tid, deg in in_degree.items() if deg == 0)
         order: list[str] = []
         while queue:
             node = queue.popleft()
@@ -165,9 +168,7 @@ class TaskGraph:
             return []
 
         # dist[node] = (longest distance to reach this node, predecessor)
-        dist: dict[str, tuple[int, str | None]] = {
-            tid: (0, None) for tid in topo
-        }
+        dist: dict[str, tuple[int, str | None]] = {tid: (0, None) for tid in topo}
 
         # Initialise root nodes with their own weight
         for tid in topo:
@@ -202,9 +203,7 @@ class TaskGraph:
 
     def critical_path_minutes(self) -> int:
         """Total estimated minutes along the critical path."""
-        return sum(
-            self._tasks[tid].estimated_minutes for tid in self.critical_path()
-        )
+        return sum(self._tasks[tid].estimated_minutes for tid in self.critical_path())
 
     # -- Parallel width -----------------------------------------------------
 
@@ -226,9 +225,7 @@ class TaskGraph:
             if not parents:
                 level[node] = 0
             else:
-                level[node] = 1 + max(
-                    (level[p] for p in parents if p in level), default=0
-                )
+                level[node] = 1 + max((level[p] for p in parents if p in level), default=0)
 
         # Count tasks per level
         level_counts: dict[int, int] = defaultdict(int)
@@ -248,10 +245,7 @@ class TaskGraph:
         Returns task IDs sorted by downstream count (descending).
         """
         blocking_statuses = {TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS}
-        candidates = [
-            tid for tid, t in self._tasks.items()
-            if t.status in blocking_statuses
-        ]
+        candidates = [tid for tid, t in self._tasks.items() if t.status in blocking_statuses]
 
         downstream_counts: dict[str, int] = {}
         for tid in candidates:
@@ -265,10 +259,7 @@ class TaskGraph:
                 queue.extend(self._forward.get(node, []))
             downstream_counts[tid] = len(visited)
 
-        result = [
-            tid for tid, count in downstream_counts.items()
-            if count >= threshold
-        ]
+        result = [tid for tid, count in downstream_counts.items() if count >= threshold]
         result.sort(key=lambda tid: downstream_counts[tid], reverse=True)
         return result
 
@@ -276,12 +267,10 @@ class TaskGraph:
 
     def ready_tasks(self) -> list[str]:
         """Task IDs whose dependencies are all DONE (or have no deps)."""
-        done_ids = {
-            tid for tid, t in self._tasks.items()
-            if t.status == TaskStatus.DONE
-        }
+        done_ids = {tid for tid, t in self._tasks.items() if t.status == TaskStatus.DONE}
         return [
-            tid for tid, t in self._tasks.items()
+            tid
+            for tid, t in self._tasks.items()
             if t.status == TaskStatus.OPEN
             and all(dep in done_ids for dep in self._reverse.get(tid, []))
             and all(dep in done_ids for dep in t.depends_on)
@@ -294,9 +283,7 @@ class TaskGraph:
         cp = self.critical_path()
         return GraphAnalysis(
             critical_path=cp,
-            critical_path_minutes=sum(
-                self._tasks[tid].estimated_minutes for tid in cp
-            ),
+            critical_path_minutes=sum(self._tasks[tid].estimated_minutes for tid in cp),
             parallel_width=self.parallel_width(),
             bottlenecks=self.bottlenecks(),
         )

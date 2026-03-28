@@ -4,6 +4,7 @@ Provides functions to extract intelligence from git history — blame summaries,
 hot file detection, co-change graphs, and recent change context.  Injected into
 agent prompts as warm context before they start working.
 """
+
 from __future__ import annotations
 
 import logging
@@ -199,8 +200,13 @@ def cochange_files(
     """
     out = _run_git(
         [
-            "log", "--pretty=format:%H", "--name-only",
-            "--follow", f"-{depth}", "--", file_path,
+            "log",
+            "--pretty=format:%H",
+            "--name-only",
+            "--follow",
+            f"-{depth}",
+            "--",
+            file_path,
         ],
         cwd,
     )
@@ -241,9 +247,12 @@ def recent_changes(
     """
     out = _run_git(
         [
-            "log", "--follow", f"-{n}",
+            "log",
+            "--follow",
+            f"-{n}",
             "--pretty=format:%h|%s|%ar",
-            "--", file_path,
+            "--",
+            file_path,
         ],
         cwd,
     )
@@ -254,17 +263,21 @@ def recent_changes(
     for line in out.splitlines():
         parts = line.split("|", 2)
         if len(parts) >= 3:
-            result.append({
-                "hash": parts[0],
-                "subject": parts[1],
-                "relative_date": parts[2],
-            })
+            result.append(
+                {
+                    "hash": parts[0],
+                    "subject": parts[1],
+                    "relative_date": parts[2],
+                }
+            )
         elif len(parts) == 2:
-            result.append({
-                "hash": parts[0],
-                "subject": parts[1],
-                "relative_date": "",
-            })
+            result.append(
+                {
+                    "hash": parts[0],
+                    "subject": parts[1],
+                    "relative_date": "",
+                }
+            )
     return result
 
 
@@ -354,6 +367,7 @@ def _epoch_to_relative(epoch_str: str) -> str:
     """Convert a Unix epoch string to a rough relative time."""
     try:
         import time
+
         now = time.time()
         epoch = int(epoch_str)
         delta = now - epoch

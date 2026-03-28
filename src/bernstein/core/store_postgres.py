@@ -18,6 +18,7 @@ Environment variables::
     BERNSTEIN_DATABASE_URL   — PostgreSQL DSN (enables postgres backend)
     BERNSTEIN_REDIS_URL      — Redis URL for distributed locking (optional)
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 # ``asyncpg`` is an optional dependency — only required for postgres mode.
 try:
     import asyncpg  # type: ignore[import-untyped]
+
     _ASYNCPG_AVAILABLE = True
 except ModuleNotFoundError:
     asyncpg = None  # type: ignore[assignment]
@@ -157,12 +159,13 @@ RETURNING *
 # Row → Task conversion
 # ---------------------------------------------------------------------------
 
+
 def _row_to_task(row: Any) -> Task:
     """Convert an asyncpg ``Record`` to a domain :class:`Task`."""
     raw: dict[str, Any] = dict(row)
 
     signals: list[CompletionSignal] = []
-    for sig in (raw.get("completion_signals") or []):
+    for sig in raw.get("completion_signals") or []:
         with contextlib.suppress(KeyError, TypeError):
             signals.append(CompletionSignal(type=sig["type"], value=sig["value"]))
 
@@ -224,8 +227,7 @@ class PostgresTaskStore(BaseTaskStore):
         super().__init__()
         if not _ASYNCPG_AVAILABLE:
             raise RuntimeError(
-                "asyncpg package is required for postgres mode. "
-                "Install it with: pip install bernstein[postgres]"
+                "asyncpg package is required for postgres mode. Install it with: pip install bernstein[postgres]"
             )
         self._dsn = dsn
         self._redis = redis_coordinator
@@ -326,10 +328,7 @@ class PostgresTaskStore(BaseTaskStore):
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),
             model=req.model,
             effort=req.effort,
-            completion_signals=[
-                CompletionSignal(type=s.type, value=s.value)
-                for s in req.completion_signals
-            ],
+            completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
         )
 
         assert self._pool is not None
@@ -414,9 +413,7 @@ class PostgresTaskStore(BaseTaskStore):
             if self._redis is not None and expected_version is not None:
                 lock_token = await self._redis.acquire(task_id)
                 if lock_token is None:
-                    raise ValueError(
-                        f"Could not acquire distributed lock for task {task_id}"
-                    )
+                    raise ValueError(f"Could not acquire distributed lock for task {task_id}")
 
             assert self._pool is not None
             async with self._pool.acquire() as conn:
@@ -424,24 +421,17 @@ class PostgresTaskStore(BaseTaskStore):
                     row = await conn.fetchrow(_CLAIM_BY_ID_CAS_SQL, task_id, expected_version)
                     if row is None:
                         # Check whether the task exists at all
-                        exists = await conn.fetchval(
-                            "SELECT 1 FROM tasks WHERE id=$1", task_id
-                        )
+                        exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
                         if not exists:
                             raise KeyError(task_id)
-                        ver = await conn.fetchval(
-                            "SELECT version FROM tasks WHERE id=$1", task_id
-                        )
+                        ver = await conn.fetchval("SELECT version FROM tasks WHERE id=$1", task_id)
                         raise ValueError(
-                            f"Version conflict: task {task_id} is at version {ver}, "
-                            f"expected {expected_version}"
+                            f"Version conflict: task {task_id} is at version {ver}, expected {expected_version}"
                         )
                 else:
                     row = await conn.fetchrow(_CLAIM_BY_ID_SQL, task_id)
                     if row is None:
-                        exists = await conn.fetchval(
-                            "SELECT 1 FROM tasks WHERE id=$1", task_id
-                        )
+                        exists = await conn.fetchval("SELECT 1 FROM tasks WHERE id=$1", task_id)
                         if not exists:
                             raise KeyError(task_id)
                         # Task exists but not open — return as-is
@@ -586,9 +576,7 @@ class PostgresTaskStore(BaseTaskStore):
             if current is None:
                 raise KeyError(task_id)
             if current["status"] in ("done", "failed", "cancelled"):
-                raise ValueError(
-                    f"Task '{task_id}' cannot be cancelled from status '{current['status']}'"
-                )
+                raise ValueError(f"Task '{task_id}' cannot be cancelled from status '{current['status']}'")
             row = await conn.fetchrow(
                 """
                 UPDATE tasks
@@ -612,10 +600,15 @@ class PostgresTaskStore(BaseTaskStore):
                      duration_seconds, result_summary, cost_usd)
                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
                 """,
-                task.id, task.title, task.role, task.status.value,
-                task.created_at, completed_at,
+                task.id,
+                task.title,
+                task.role,
+                task.status.value,
+                task.created_at,
+                completed_at,
                 round(completed_at - task.created_at, 3),
-                reason, None,
+                reason,
+                None,
             )
         return task
 
@@ -651,14 +644,9 @@ class PostgresTaskStore(BaseTaskStore):
             tasks = [_row_to_task(r) for r in rows]
 
             if status == "open":
-                done_row = await conn.fetch(
-                    "SELECT id FROM tasks WHERE status='done'"
-                )
+                done_row = await conn.fetch("SELECT id FROM tasks WHERE status='done'")
                 done_ids = {r["id"] for r in done_row}
-                tasks = [
-                    t for t in tasks
-                    if all(dep in done_ids for dep in t.depends_on)
-                ]
+                tasks = [t for t in tasks if all(dep in done_ids for dep in t.depends_on)]
         return tasks
 
     async def get_task(self, task_id: str) -> Task | None:
@@ -672,9 +660,7 @@ class PostgresTaskStore(BaseTaskStore):
         """Return aggregated task counts via SQL GROUP BY."""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT status, role, COUNT(*) AS cnt FROM tasks GROUP BY status, role"
-            )
+            rows = await conn.fetch("SELECT status, role, COUNT(*) AS cnt FROM tasks GROUP BY status, role")
         counts: dict[str, dict[str, int]] = {}
         status_totals: dict[str, int] = {}
         for row in rows:
@@ -705,6 +691,7 @@ class PostgresTaskStore(BaseTaskStore):
     async def read_archive(self, limit: int = 50) -> list[ArchiveRecord]:
         """Return the last *limit* archive records, oldest-first."""
         from bernstein.core.server import ArchiveRecord as AR
+
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
@@ -754,7 +741,11 @@ class PostgresTaskStore(BaseTaskStore):
                     SET heartbeat_ts = EXCLUDED.heartbeat_ts,
                         status       = EXCLUDED.status
                 """,
-                agent_id, role, now, now, status,
+                agent_id,
+                role,
+                now,
+                now,
+                status,
             )
             self._agent_count = await conn.fetchval("SELECT COUNT(*) FROM agents") or 0
         return now

@@ -3,6 +3,7 @@
 Analyses completed and failed tasks alongside in-memory metrics to produce a
 post-run retrospective document written to .sdd/runtime/retrospective.md.
 """
+
 from __future__ import annotations
 
 import logging
@@ -174,9 +175,7 @@ def generate_retrospective(
         _section("")
 
     # Average duration by complexity — join task model data via task id
-    task_id_to_complexity: dict[str, str] = {
-        t.id: t.complexity.value for t in all_tasks
-    }
+    task_id_to_complexity: dict[str, str] = {t.id: t.complexity.value for t in all_tasks}
     cx_durations: dict[str, list[float]] = defaultdict(list)
     for tm in task_metrics.values():
         if tm.end_time is not None:
@@ -238,9 +237,7 @@ def generate_retrospective(
     total_prompt_tokens = sum(tm.tokens_prompt for tm in task_metrics.values())
     total_completion_tokens = sum(tm.tokens_completion for tm in task_metrics.values())
     if total_prompt_tokens > 0 or total_completion_tokens > 0:
-        model_token_data: dict[str, dict[str, int | float]] = defaultdict(
-            lambda: {"prompt": 0, "completion": 0}
-        )
+        model_token_data: dict[str, dict[str, int | float]] = defaultdict(lambda: {"prompt": 0, "completion": 0})
         for tm in task_metrics.values():
             m = tm.model or "unknown"
             model_token_data[m]["prompt"] = int(model_token_data[m]["prompt"]) + tm.tokens_prompt
@@ -250,6 +247,7 @@ def generate_retrospective(
         _section("")
         _section("| Model | Prompt tokens | Completion tokens | Total tokens |")
         _section("|-------|--------------|------------------|-------------|")
+
         def _total_tokens(k: str) -> int:
             return model_token_data[k]["prompt"] + model_token_data[k]["completion"]
 
@@ -416,9 +414,6 @@ def _build_recommendations(
 
     # Duration warnings (> 2 hours)
     if wall_clock_s > 7200:
-        recs.append(
-            "Run exceeded 2 hours — consider parallelising independent tasks or "
-            "increasing max_agents."
-        )
+        recs.append("Run exceeded 2 hours — consider parallelising independent tasks or increasing max_agents.")
 
     return recs

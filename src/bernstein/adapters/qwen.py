@@ -1,4 +1,5 @@
 """Qwen CLI adapter for OpenAI compatible models."""
+
 from __future__ import annotations
 
 import os
@@ -45,9 +46,7 @@ class QwenAdapter(CLIAdapter):
             return "g4f"
         return "default"
 
-    def _resolve_provider_config(
-        self, provider: str, settings: LLMSettings
-    ) -> tuple[str, str]:
+    def _resolve_provider_config(self, provider: str, settings: LLMSettings) -> tuple[str, str]:
         """Return (api_key, base_url) for the given provider."""
         if provider == "openrouter":
             return settings.openrouter_api_key_paid or "", "https://openrouter.ai/api/v1"
@@ -63,9 +62,7 @@ class QwenAdapter(CLIAdapter):
         # default / openai
         return settings.openai_api_key or "", settings.openai_base_url or ""
 
-    def _build_command(
-        self, model_name: str, provider: str, settings: LLMSettings
-    ) -> list[str]:
+    def _build_command(self, model_name: str, provider: str, settings: LLMSettings) -> list[str]:
         """Build the qwen CLI command list (without the final prompt argument)."""
         cmd: list[str] = ["qwen", "-y"]
 
@@ -82,10 +79,14 @@ class QwenAdapter(CLIAdapter):
             cmd.extend(["--auth-type", "openai"])
 
         if settings.tavily_api_key:
-            cmd.extend([
-                "--tavily-api-key", settings.tavily_api_key,
-                "--web-search-default", "tavily",
-            ])
+            cmd.extend(
+                [
+                    "--tavily-api-key",
+                    settings.tavily_api_key,
+                    "--web-search-default",
+                    "tavily",
+                ]
+            )
 
         return cmd
 
@@ -127,9 +128,7 @@ class QwenAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError(
-                    "qwen not found in PATH. Install it with: npm install -g qwen-code"
-                ) from exc
+                raise RuntimeError("qwen not found in PATH. Install it with: npm install -g qwen-code") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing qwen: {exc}") from exc
 

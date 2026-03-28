@@ -1,4 +1,5 @@
 """Claude Code CLI adapter."""
+
 from __future__ import annotations
 
 import contextlib
@@ -97,11 +98,15 @@ class ClaudeCodeAdapter(CLIAdapter):
 
         cmd = [
             "claude",
-            "--model", model_id,
-            "--effort", claude_effort,
+            "--model",
+            model_id,
+            "--effort",
+            claude_effort,
             "--dangerously-skip-permissions",
-            "--max-turns", str(max_turns),
-            "--output-format", "stream-json",
+            "--max-turns",
+            str(max_turns),
+            "--output-format",
+            "stream-json",
             "--verbose",
         ]
         if mcp_config:
@@ -164,9 +169,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError(
-                    "claude not found in PATH. Install Claude Code: https://claude.ai/code"
-                ) from exc
+                raise RuntimeError("claude not found in PATH. Install Claude Code: https://claude.ai/code") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing claude: {exc}") from exc
 

@@ -3,6 +3,7 @@
 Reads the project seed configuration, validates it, and produces the
 initial manager Task that kicks off orchestration.
 """
+
 from __future__ import annotations
 
 import re

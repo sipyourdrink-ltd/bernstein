@@ -5,6 +5,7 @@ specialized agent personas organised by division.  This module parses
 those persona files and exposes them as a catalog that the Spawner can
 query when a task's role is not covered by templates/roles/.
 """
+
 from __future__ import annotations
 
 import logging

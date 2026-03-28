@@ -9,6 +9,7 @@ Each benchmark is a YAML file.  Results are written to
 .sdd/benchmarks/YYYY-MM-DD.jsonl so the evolution loop can track
 progress over time without ever reading the golden benchmark files.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -303,8 +304,7 @@ def _result_to_dict(result: BenchmarkResult) -> dict[str, Any]:
         "duration_seconds": result.duration_seconds,
         "error": result.error,
         "signal_results": [
-            {"type": s.signal_type, "passed": s.passed, "message": s.message}
-            for s in result.signal_results
+            {"type": s.signal_type, "passed": s.passed, "message": s.message} for s in result.signal_results
         ],
     }
 

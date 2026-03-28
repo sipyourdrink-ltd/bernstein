@@ -6,6 +6,7 @@ Implements provider-aware intelligent routing with:
 - Free tier awareness with usage quotas
 - Task complexity matching to provider capabilities
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,13 +25,15 @@ logger = logging.getLogger(__name__)
 
 class Tier(Enum):
     """API pricing tier for model access."""
-    FREE = "free"        # Free tier, trials, unused quotas
+
+    FREE = "free"  # Free tier, trials, unused quotas
     STANDARD = "standard"  # Standard paid tier
-    PREMIUM = "premium"    # Premium/high-rate tier
+    PREMIUM = "premium"  # Premium/high-rate tier
 
 
 class ProviderHealthStatus(Enum):
     """Health status for a provider."""
+
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
@@ -41,6 +44,7 @@ class ProviderHealthStatus(Enum):
 @dataclass
 class ProviderHealth:
     """Health metrics for a provider."""
+
     status: ProviderHealthStatus = ProviderHealthStatus.HEALTHY
     consecutive_failures: int = 0
     consecutive_successes: int = 0
@@ -90,6 +94,7 @@ class ProviderHealth:
 @dataclass
 class CostTracker:
     """Tracks costs for a provider."""
+
     total_cost_usd: float = 0.0
     total_tokens: int = 0
     total_requests: int = 0
@@ -111,6 +116,7 @@ class CostTracker:
 @dataclass
 class ProviderConfig:
     """Configuration for a model provider with health and cost tracking."""
+
     name: str
     models: dict[str, ModelConfig]  # model_id -> ModelConfig
     tier: Tier
@@ -154,6 +160,7 @@ class ProviderConfig:
 @dataclass
 class RoutingDecision:
     """Result of routing a task with provider selection."""
+
     provider: str
     model_config: ModelConfig
     tier: Tier
@@ -167,6 +174,7 @@ class RoutingDecision:
 @dataclass
 class RouterState:
     """Current state of available providers and tiers."""
+
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     preferred_tier: Tier = Tier.FREE
     fallback_enabled: bool = True
@@ -261,16 +269,15 @@ class TierAwareRouter:
         Returns:
             List of providers sorted by score (best first).
         """
-        providers = [
-            p for p in self.state.providers.values()
-            if p.available and (tier is None or p.tier == tier)
-        ]
+        providers = [p for p in self.state.providers.values() if p.available and (tier is None or p.tier == tier)]
 
         # Filter by health if required
         if require_healthy:
             providers = [
-                p for p in providers
-                if p.health.status not in (
+                p
+                for p in providers
+                if p.health.status
+                not in (
                     ProviderHealthStatus.UNHEALTHY,
                     ProviderHealthStatus.OFFLINE,
                 )
@@ -300,21 +307,14 @@ class TierAwareRouter:
         cost_score = 1.0 - min(effective_cost / max_cost, 1.0)
 
         # Free tier score (0 or 1)
-        free_tier_score = 1.0 if (
-            provider.tier == Tier.FREE and not provider.is_free_tier_exhausted()
-        ) else 0.0
+        free_tier_score = 1.0 if (provider.tier == Tier.FREE and not provider.is_free_tier_exhausted()) else 0.0
 
         # Latency score (0-1, lower latency = higher score)
         max_latency = self.state.max_latency_ms
         latency_score = 1.0 - min(provider.health.avg_latency_ms / max_latency, 1.0)
 
         # Weighted sum
-        return (
-            health_score * 0.4 +
-            cost_score * 0.3 +
-            free_tier_score * 0.2 +
-            latency_score * 0.1
-        )
+        return health_score * 0.4 + cost_score * 0.3 + free_tier_score * 0.2 + latency_score * 0.1
 
     def select_provider_for_task(
         self,
@@ -354,7 +354,8 @@ class TierAwareRouter:
 
         # Filter by capabilities and model support
         matching_preferred = [
-            p for p in preferred_providers
+            p
+            for p in preferred_providers
             if self._provider_supports_model(p, base_config.model)
             and self._provider_meets_requirements(p, requires_vision, requires_large_context)
         ]
@@ -371,7 +372,8 @@ class TierAwareRouter:
 
                 tier_providers = self.get_available_providers(tier, require_healthy=True)
                 matching = [
-                    p for p in tier_providers
+                    p
+                    for p in tier_providers
                     if self._provider_supports_model(p, base_config.model)
                     and self._provider_meets_requirements(p, requires_vision, requires_large_context)
                 ]
@@ -381,18 +383,14 @@ class TierAwareRouter:
 
         # Last resort: try any available provider (even degraded)
         all_providers = self.get_available_providers(require_healthy=False)
-        any_matching = [
-            p for p in all_providers
-            if self._provider_supports_model(p, base_config.model)
-        ]
+        any_matching = [p for p in all_providers if self._provider_supports_model(p, base_config.model)]
         if any_matching:
             provider = any_matching[0]
             return self._create_decision(provider, base_config, "last_resort", fallback=True)
 
         # No suitable provider found
         raise RouterError(
-            f"No available provider for model '{base_config.model}' "
-            f"(preferred tier: {self.state.preferred_tier.value})"
+            f"No available provider for model '{base_config.model}' (preferred tier: {self.state.preferred_tier.value})"
         )
 
     def _task_requires_vision(self, task: Task) -> bool:
@@ -405,11 +403,7 @@ class TierAwareRouter:
     def _task_requires_large_context(self, task: Task) -> bool:
         """Check if task requires large context window."""
         # Large scope or high complexity tasks may need more context
-        return (
-            task.scope == Scope.LARGE or
-            task.complexity == Complexity.HIGH or
-            task.role == "manager"
-        )
+        return task.scope == Scope.LARGE or task.complexity == Complexity.HIGH or task.role == "manager"
 
     def _provider_meets_requirements(
         self,
@@ -518,6 +512,7 @@ class TierAwareRouter:
 
 class RouterError(Exception):
     """Error during routing operation."""
+
     pass
 
 
@@ -555,12 +550,17 @@ def route_task(task: Task, bandit_metrics_dir: Path | None = None) -> ModelConfi
 
     # L1 fast-path: route simple tasks to the cheapest model
     from bernstein.core.fast_path import TaskLevel, classify_task, get_l1_model_config
+
     classification = classify_task(task)
     if classification.level == TaskLevel.L1:
         l1_cfg = get_l1_model_config()
         logger.debug(
             "L1 fast-path routed task %s (role=%s) → %s/%s (%s)",
-            task.id, task.role, l1_cfg.model, l1_cfg.effort, classification.reason,
+            task.id,
+            task.role,
+            l1_cfg.model,
+            l1_cfg.effort,
+            classification.reason,
         )
         return l1_cfg
 
@@ -568,6 +568,7 @@ def route_task(task: Task, bandit_metrics_dir: Path | None = None) -> ModelConfi
     if bandit_metrics_dir is not None:
         try:
             from bernstein.core.cost import CASCADE, EpsilonGreedyBandit
+
             bandit = EpsilonGreedyBandit.load(bandit_metrics_dir)
             # For high-complexity tasks, restrict candidates to sonnet/opus
             candidates = ["sonnet", "opus"] if task.complexity == Complexity.HIGH else list(CASCADE)
@@ -575,7 +576,10 @@ def route_task(task: Task, bandit_metrics_dir: Path | None = None) -> ModelConfi
             effort = "max" if selected == "opus" else "high"
             logger.debug(
                 "Bandit routed task %s (role=%s) → %s/%s",
-                task.id, task.role, selected, effort,
+                task.id,
+                task.role,
+                selected,
+                effort,
             )
             return ModelConfig(model=selected, effort=effort)
         except Exception as exc:
@@ -659,54 +663,62 @@ def get_default_router() -> TierAwareRouter:
         _default_router = TierAwareRouter()
 
         # Free tier provider (e.g., OpenRouter free models)
-        _default_router.register_provider(ProviderConfig(
-            name="openrouter_free",
-            models={
-                "sonnet": ModelConfig("sonnet", "high"),
-                "gemini-pro": ModelConfig("gemini-pro", "high"),
-            },
-            tier=Tier.FREE,
-            cost_per_1k_tokens=0.0,
-            free_tier_limit=100,  # 100 requests per day
-            free_tier_used=0,
-            free_tier_reset=time.time() + 86400,  # Reset in 24h
-            max_context_tokens=128_000,
-        ))
+        _default_router.register_provider(
+            ProviderConfig(
+                name="openrouter_free",
+                models={
+                    "sonnet": ModelConfig("sonnet", "high"),
+                    "gemini-pro": ModelConfig("gemini-pro", "high"),
+                },
+                tier=Tier.FREE,
+                cost_per_1k_tokens=0.0,
+                free_tier_limit=100,  # 100 requests per day
+                free_tier_used=0,
+                free_tier_reset=time.time() + 86400,  # Reset in 24h
+                max_context_tokens=128_000,
+            )
+        )
 
         # Standard tier provider
-        _default_router.register_provider(ProviderConfig(
-            name="anthropic_standard",
-            models={
-                "sonnet": ModelConfig("sonnet", "high"),
-                "opus": ModelConfig("opus", "max"),
-            },
-            tier=Tier.STANDARD,
-            cost_per_1k_tokens=0.003,  # Sonnet rate
-            max_context_tokens=200_000,
-        ))
+        _default_router.register_provider(
+            ProviderConfig(
+                name="anthropic_standard",
+                models={
+                    "sonnet": ModelConfig("sonnet", "high"),
+                    "opus": ModelConfig("opus", "max"),
+                },
+                tier=Tier.STANDARD,
+                cost_per_1k_tokens=0.003,  # Sonnet rate
+                max_context_tokens=200_000,
+            )
+        )
 
         # Premium tier provider (Opus for complex tasks)
-        _default_router.register_provider(ProviderConfig(
-            name="anthropic_premium",
-            models={
-                "opus": ModelConfig("opus", "max"),
-            },
-            tier=Tier.PREMIUM,
-            cost_per_1k_tokens=0.015,  # Opus rate
-            max_context_tokens=200_000,
-        ))
+        _default_router.register_provider(
+            ProviderConfig(
+                name="anthropic_premium",
+                models={
+                    "opus": ModelConfig("opus", "max"),
+                },
+                tier=Tier.PREMIUM,
+                cost_per_1k_tokens=0.015,  # Opus rate
+                max_context_tokens=200_000,
+            )
+        )
 
         # Alternative provider for redundancy
-        _default_router.register_provider(ProviderConfig(
-            name="google_ai",
-            models={
-                "gemini-pro": ModelConfig("gemini-pro", "high"),
-                "gemini-ultra": ModelConfig("gemini-ultra", "max"),
-            },
-            tier=Tier.STANDARD,
-            cost_per_1k_tokens=0.002,
-            max_context_tokens=128_000,
-            supports_vision=True,
-        ))
+        _default_router.register_provider(
+            ProviderConfig(
+                name="google_ai",
+                models={
+                    "gemini-pro": ModelConfig("gemini-pro", "high"),
+                    "gemini-ultra": ModelConfig("gemini-ultra", "max"),
+                },
+                tier=Tier.STANDARD,
+                cost_per_1k_tokens=0.002,
+                max_context_tokens=128_000,
+                supports_vision=True,
+            )
+        )
 
     return _default_router
