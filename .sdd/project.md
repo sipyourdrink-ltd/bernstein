@@ -9,7 +9,8 @@ Users describe a goal, Bernstein hires a team and ships the code.
 - File-based state (.sdd/ directory)
 
 ## Current state
-Phase 1 — core implementation needed.
+Phase 3 complete — self-evolution, multi-cell, A2A, eval harness all wired.
+Next: distributed cluster mode, community adoption, competitive benchmarking.
 
 ## Key files
 - src/bernstein/core/models.py — data models (Task, Cell, AgentSession)

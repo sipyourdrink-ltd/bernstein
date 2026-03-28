@@ -27,6 +27,11 @@ dev = ["pytest", "ruff", "pyright"]
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"
 
+[tool.hatch.build.targets.wheel.force-include]
+"templates/roles" = "bernstein/_default_templates/roles"
+"templates/prompts" = "bernstein/_default_templates/prompts"
+"templates/bernstein.yaml" = "bernstein/_default_templates/bernstein.yaml"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 120

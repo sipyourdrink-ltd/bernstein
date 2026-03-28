@@ -15,6 +15,7 @@ from typing import Any, Literal, cast
 
 import httpx
 
+from bernstein import get_templates_dir
 from bernstein.core.context import available_roles, gather_project_context
 from bernstein.core.llm import call_llm
 from bernstein.core.metrics import get_collector
@@ -978,7 +979,7 @@ if __name__ == "__main__":
         agent = ManagerAgent(
             server_url=server_url,
             workdir=workdir,
-            templates_dir=workdir / "templates",
+            templates_dir=get_templates_dir(workdir),
             model=model_name,
             provider=provider_name
         )

@@ -2502,9 +2502,11 @@ if __name__ == "__main__":
             if agency_catalog:
                 logger.info("Loaded %d agency agents from %s", len(agency_catalog), catalog_path)
 
+        from bernstein import get_templates_dir
+
         spawner = AgentSpawner(
             adapter=adapter_inst,
-            templates_dir=workdir / "templates",
+            templates_dir=get_templates_dir(workdir),
             workdir=workdir,
             router=router,
             mcp_config=mcp_config,

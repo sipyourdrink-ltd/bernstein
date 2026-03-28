@@ -401,6 +401,15 @@ def init(target_dir: str) -> None:
         )
         console.print(f"[green]Created[/green] {yaml_path.relative_to(root)}")
 
+    # Copy bundled default templates if the project doesn't have its own
+    templates_dst = root / "templates"
+    if not templates_dst.exists():
+        import shutil
+        from bernstein import _BUNDLED_TEMPLATES_DIR
+        if _BUNDLED_TEMPLATES_DIR.is_dir():
+            shutil.copytree(_BUNDLED_TEMPLATES_DIR, templates_dst)
+            console.print(f"[green]Created[/green] templates/ (default roles & prompts)")
+
     # Append .sdd/runtime/ to root .gitignore if not already present
     root_gi_path = root / ".gitignore"
     gitignore_entry = ".sdd/runtime/"

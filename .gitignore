@@ -44,6 +44,12 @@ docs/plans/
 .ruff_cache/
 .mypy_cache/
 
+# Coverage
+.coverage
+
+# Failed/ephemeral research artifacts
+.sdd/research/auto/*.json
+
 # Other
 node_modules/
 *.pid
