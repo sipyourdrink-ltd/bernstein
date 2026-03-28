@@ -27,3 +27,9 @@ Create Bernstein adapters for Cline and Roo Code as worker backends. Research ho
 - Bernstein can spawn and manage Cline as a worker agent
 - Bernstein can spawn and manage Roo Code as a worker agent
 - Adapter docs explain setup requirements
+
+
+---
+**completed**: 2026-03-29 00:43:30
+**task_id**: 27cb4038a5a6
+**result**: Completed: 340b — VS Code / Cursor Extension. TypeScript extension with agent/task tree views, status bar, SSE real-time updates, @bernstein chat participant, webview dashboard sidebar. 23/23 tests pass. bernstein-0.1.0.vsix packages clean. CI/CD for VS Code Marketplace + Open VSX.
