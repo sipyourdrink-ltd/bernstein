@@ -6,11 +6,15 @@ import os
 import signal
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import click
 import httpx
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from rich.table import Table
+    from rich.text import Text
 
 from bernstein.cli.cost import cost_cmd
 
@@ -947,7 +951,7 @@ def _build_stats_bar(summary: dict[str, Any]) -> Text:
 # ---------------------------------------------------------------------------
 
 
-@cli.command("live", hidden=True)
+@cli.command("live")
 @click.option(
     "--interval",
     default=2.0,
@@ -1343,7 +1347,7 @@ def agents_validate(definitions_dir: str) -> None:
 # ---------------------------------------------------------------------------
 
 # Hidden backward-compat aliases — old names still work
-cli.add_command(click.Command("init", callback=init, hidden=True), "init")
+cli.add_command(click.Command("init", callback=init), "init")
 cli.add_command(click.Command("run", callback=run, hidden=True), "run")
 cli.add_command(click.Command("start", callback=start, hidden=True), "start")
 cli.add_command(click.Command("status", callback=status, hidden=True), "status")

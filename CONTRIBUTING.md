@@ -31,6 +31,34 @@ uv run pytest
 4. Commit with a clear message
 5. Open a PR against `master`
 
+## Testing Your Changes
+
+After making changes, verify them end-to-end before opening a PR.
+
+1. **Start the system** with a test goal:
+   ```bash
+   uv run bernstein -g "Add a hello-world utility function" --headless
+   ```
+   Or start just the task server: `uv run bernstein serve`
+
+2. **Submit a test task** via curl:
+   ```bash
+   curl -s -X POST http://127.0.0.1:8052/tasks \
+     -H "Content-Type: application/json" \
+     -d '{"title": "smoke test", "description": "Print hello world", "role": "backend"}'
+   ```
+
+3. **Check logs** to confirm agents spawned and completed work:
+   ```bash
+   ls .sdd/runtime/logs/
+   tail -f .sdd/runtime/logs/<session-id>.log
+   ```
+
+4. **Stop the system** when done:
+   ```bash
+   uv run bernstein stop
+   ```
+
 ## Code Style
 
 - Python 3.12+, type hints everywhere
