@@ -59,6 +59,23 @@ def _write_agency_agent(directory: Path, name: str = "agency-dev") -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _isolate_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent agent list tests from seeing the real Agency catalog."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "bernstein.agents.agency_provider.AgencyProvider.default_cache_path",
+        staticmethod(lambda: tmp_path / "nonexistent_cache"),
+    )
+    # Ensure Rich tables have enough width to render all columns fully
+    monkeypatch.setenv("COLUMNS", "200")
+
+
+# ---------------------------------------------------------------------------
 # agents sync
 # ---------------------------------------------------------------------------
 
@@ -109,6 +126,7 @@ def test_agents_sync_complete_message(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("_isolate_catalog")
 def test_agents_list_no_agents(tmp_path: Path) -> None:
     """list with no definitions shows helpful message."""
     defs = tmp_path / "definitions"
@@ -119,6 +137,7 @@ def test_agents_list_no_agents(tmp_path: Path) -> None:
     assert "No agents found" in result.output
 
 
+@pytest.mark.usefixtures("_isolate_catalog")
 def test_agents_list_shows_local_agents(tmp_path: Path) -> None:
     """list shows agents loaded from the local definitions directory."""
     defs = tmp_path / "definitions"
@@ -134,6 +153,7 @@ def test_agents_list_shows_local_agents(tmp_path: Path) -> None:
     assert "local" in result.output
 
 
+@pytest.mark.usefixtures("_isolate_catalog")
 def test_agents_list_filter_by_source_local(tmp_path: Path) -> None:
     """list --source local only shows local agents."""
     defs = tmp_path / "definitions"
@@ -148,25 +168,20 @@ def test_agents_list_filter_by_source_local(tmp_path: Path) -> None:
     assert "local-only" in result.output
 
 
+@pytest.mark.usefixtures("_isolate_catalog")
 def test_agents_list_filter_by_source_agency_no_dir(tmp_path: Path) -> None:
     """list --source agency with no agency dir shows no agents."""
     defs = tmp_path / "definitions"
     defs.mkdir()
     runner = CliRunner()
-    # Run from tmp_path so .sdd/agents/agency won't exist
-    import os
-    old_cwd = os.getcwd()
-    try:
-        os.chdir(tmp_path)
-        result = runner.invoke(
-            cli, ["agents", "list", "--source", "agency", "--dir", str(defs)]
-        )
-    finally:
-        os.chdir(old_cwd)
+    result = runner.invoke(
+        cli, ["agents", "list", "--source", "agency", "--dir", str(defs)]
+    )
     assert result.exit_code == 0
     assert "No agents found" in result.output
 
 
+@pytest.mark.usefixtures("_isolate_catalog")
 def test_agents_list_count_footer(tmp_path: Path) -> None:
     """list shows a total count in the footer."""
     defs = tmp_path / "definitions"

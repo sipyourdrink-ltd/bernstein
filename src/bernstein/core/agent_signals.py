@@ -18,9 +18,12 @@ import contextlib
 import json
 import logging
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.models import AgentHeartbeat
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

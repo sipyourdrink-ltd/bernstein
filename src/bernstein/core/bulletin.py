@@ -173,10 +173,7 @@ class BulletinBoard:
         Returns:
             The stored BulletinMessage.
         """
-        if classes:
-            content = f"created {file_path} with classes: {', '.join(classes)}"
-        else:
-            content = f"created {file_path}"
+        content = f"created {file_path} with classes: {', '.join(classes)}" if classes else f"created {file_path}"
         return self.post(BulletinMessage(agent_id=agent_id, type="status", content=content))
 
     def post_api_endpoint(
@@ -197,10 +194,7 @@ class BulletinBoard:
         Returns:
             The stored BulletinMessage.
         """
-        if response:
-            content = f"added {method} {route} returning {response}"
-        else:
-            content = f"added {method} {route}"
+        content = f"added {method} {route} returning {response}" if response else f"added {method} {route}"
         return self.post(BulletinMessage(agent_id=agent_id, type="finding", content=content))
 
     def load_from_disk(self, path: Path) -> int:

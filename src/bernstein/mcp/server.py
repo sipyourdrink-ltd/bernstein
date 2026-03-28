@@ -49,7 +49,7 @@ def create_mcp_server(
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    async def bernstein_run(
+    async def bernstein_run(  # pyright: ignore[reportUnusedFunction]
         goal: str,
         role: str = "backend",
         priority: int = 2,
@@ -80,9 +80,7 @@ def create_mcp_server(
             "estimated_minutes": estimated_minutes,
         }
         async with httpx.AsyncClient() as client:
-            resp = client.post(f"{server_url}/tasks", json=payload)
-            if hasattr(resp, "__await__"):
-                resp = await resp  # type: ignore[misc]
+            resp = await client.post(f"{server_url}/tasks", json=payload)
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
         return json.dumps(
@@ -95,7 +93,8 @@ def create_mcp_server(
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    async def bernstein_status() -> str:
+    async def bernstein_status(  # pyright: ignore[reportUnusedFunction]
+    ) -> str:
         """Return a summary of all task counts from the Bernstein server.
 
         Returns:
@@ -103,11 +102,9 @@ def create_mcp_server(
             a per-role breakdown.
         """
         async with httpx.AsyncClient() as client:
-            resp = client.get(f"{server_url}/status")
-            if hasattr(resp, "__await__"):
-                resp = await resp  # type: ignore[misc]
+            resp = await client.get(f"{server_url}/status")
             resp.raise_for_status()
-            data = resp.json()
+            data: dict[str, Any] = resp.json()
         return json.dumps(data, indent=2)
 
     # ------------------------------------------------------------------
@@ -115,7 +112,9 @@ def create_mcp_server(
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    async def bernstein_tasks(status: str | None = None) -> str:
+    async def bernstein_tasks(  # pyright: ignore[reportUnusedFunction]
+        status: str | None = None,
+    ) -> str:
         """List tasks from the Bernstein server.
 
         Args:
@@ -129,11 +128,9 @@ def create_mcp_server(
         if status:
             params["status"] = status
         async with httpx.AsyncClient() as client:
-            resp = client.get(f"{server_url}/tasks", params=params)
-            if hasattr(resp, "__await__"):
-                resp = await resp  # type: ignore[misc]
+            resp = await client.get(f"{server_url}/tasks", params=params)
             resp.raise_for_status()
-            data = resp.json()
+            data: list[dict[str, Any]] = resp.json()
         return json.dumps(data, indent=2)
 
     # ------------------------------------------------------------------
@@ -141,21 +138,21 @@ def create_mcp_server(
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    async def bernstein_cost() -> str:
+    async def bernstein_cost(  # pyright: ignore[reportUnusedFunction]
+    ) -> str:
         """Return cost summary (total USD spent and per-role breakdown).
 
         Returns:
             JSON with total_cost_usd and per-role cost breakdown.
         """
         async with httpx.AsyncClient() as client:
-            resp = client.get(f"{server_url}/status")
-            if hasattr(resp, "__await__"):
-                resp = await resp  # type: ignore[misc]
+            resp = await client.get(f"{server_url}/status")
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
+        per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
         cost_summary: dict[str, Any] = {
             "total_cost_usd": data.get("total_cost_usd", 0.0),
-            "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in data.get("per_role", [])],
+            "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
         }
         return json.dumps(cost_summary, indent=2)
 
@@ -164,7 +161,9 @@ def create_mcp_server(
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    async def bernstein_stop(workdir: str = ".") -> str:
+    async def bernstein_stop(  # pyright: ignore[reportUnusedFunction]
+        workdir: str = ".",
+    ) -> str:
         """Request a graceful Bernstein shutdown by writing a SHUTDOWN signal.
 
         Writes ``.sdd/runtime/signals/SHUTDOWN`` in the project directory,
@@ -187,7 +186,10 @@ def create_mcp_server(
     # ------------------------------------------------------------------
 
     @mcp.tool()
-    async def bernstein_approve(task_id: str, note: str = "Approved via MCP") -> str:
+    async def bernstein_approve(  # pyright: ignore[reportUnusedFunction]
+        task_id: str,
+        note: str = "Approved via MCP",
+    ) -> str:
         """Approve a pending or blocked task, marking it complete.
 
         This is used for approval gates — when a task is awaiting human
@@ -202,9 +204,7 @@ def create_mcp_server(
         """
         payload: dict[str, Any] = {"result_summary": note}
         async with httpx.AsyncClient() as client:
-            resp = client.post(f"{server_url}/tasks/{task_id}/complete", json=payload)
-            if hasattr(resp, "__await__"):
-                resp = await resp  # type: ignore[misc]
+            resp = await client.post(f"{server_url}/tasks/{task_id}/complete", json=payload)
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
         return json.dumps(

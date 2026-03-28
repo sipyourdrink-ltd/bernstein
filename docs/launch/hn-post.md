@@ -1,7 +1,7 @@
 # Show HN: Bernstein – one command, multiple AI coding agents in parallel
 
 **Date:** 2026-03-28
-**Status:** Draft — pending pre-launch checklist completion
+**Status:** Reviewed — ready to submit once pre-launch gates #700 and #701 pass
 **Channel:** news.ycombinator.com/submit (Show HN)
 
 ---

@@ -50,7 +50,7 @@ class DiscoveryResult:
     """Result of scanning for available agents."""
 
     agents: list[AgentCapabilities]
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list[str])
     scan_time_ms: float = 0.0
 
 

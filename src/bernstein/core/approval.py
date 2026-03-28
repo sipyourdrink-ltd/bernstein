@@ -140,7 +140,7 @@ class ApprovalGate:
         _push_branch_fn: _PushBranchFn | None = None,
         _create_pr_fn: _CreatePrFn | None = None,
     ) -> None:
-        self._mode = ApprovalMode(mode) if isinstance(mode, str) else mode
+        self._mode = mode if isinstance(mode, ApprovalMode) else ApprovalMode(mode)
         self._workdir = workdir
         self._auto_merge = auto_merge
         self._pr_labels: list[str] = pr_labels if pr_labels is not None else ["bernstein", "auto-generated"]
@@ -215,7 +215,7 @@ class ApprovalGate:
         pr_branch = f"bernstein/task-{task.id}"
         agent_branch = f"agent/{session_id}"
 
-        push_fn = self._push_branch_fn or (lambda cwd, branch: push_branch(cwd, branch))
+        push_fn: _PushBranchFn = self._push_branch_fn or push_branch
         create_fn = self._create_pr_fn or create_github_pr
 
         # Push the agent branch under the PR branch name from the worktree

@@ -14,8 +14,10 @@ import json
 import logging
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

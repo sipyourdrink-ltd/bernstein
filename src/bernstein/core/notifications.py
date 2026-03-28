@@ -80,7 +80,7 @@ class NotificationTarget:
 
     type: Literal["slack", "discord", "telegram", "webhook"]
     url: str
-    events: list[str] = field(default_factory=list)
+    events: list[str] = field(default_factory=list[str])
     token: str | None = None
     chat_id: str | None = None
 
@@ -99,7 +99,7 @@ class NotificationPayload:
     event: str
     title: str
     body: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 # ---------------------------------------------------------------------------

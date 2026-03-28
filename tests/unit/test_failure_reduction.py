@@ -507,3 +507,69 @@ class TestMaybeRetryProgressiveTimeout:
         assert len(posted) == 1
         assert posted[0]["model"] == "opus"
         assert posted[0]["effort"] == "max"
+
+    def test_maybe_retry_high_complexity_uses_opus_max(self, tmp_path: Path) -> None:
+        """High-complexity tasks get opus/max on any retry via _maybe_retry_task."""
+        task = _make_task(
+            id="T-mr-4",
+            complexity="high",
+            scope="medium",
+            role="backend",
+            status="failed",
+        )
+        orch, posted = self._build_orch_for_maybe_retry(tmp_path, task)
+
+        orch._maybe_retry_task(task)
+
+        assert len(posted) == 1
+        assert posted[0]["model"] == "opus"
+        assert posted[0]["effort"] == "max"
+
+
+# ---------------------------------------------------------------------------
+# Fix F: route_task legacy function — LARGE and architect/security → opus/max
+# ---------------------------------------------------------------------------
+
+
+class TestRouteTaskLegacyFunction:
+    """The legacy route_task() function should use opus/max for high-stakes routing."""
+
+    def test_large_scope_routes_to_opus_max(self) -> None:
+        from bernstein.core.router import route_task
+
+        task = _make_task(scope="large")
+        cfg = route_task(task)
+        assert cfg.model == "opus"
+        assert cfg.effort == "max"
+
+    def test_architect_role_routes_to_opus_max(self) -> None:
+        from bernstein.core.router import route_task
+
+        task = _make_task(role="architect")
+        cfg = route_task(task)
+        assert cfg.model == "opus"
+        assert cfg.effort == "max"
+
+    def test_security_role_routes_to_opus_max(self) -> None:
+        from bernstein.core.router import route_task
+
+        task = _make_task(role="security")
+        cfg = route_task(task)
+        assert cfg.model == "opus"
+        assert cfg.effort == "max"
+
+    def test_manager_role_routes_to_opus_max(self) -> None:
+        from bernstein.core.router import route_task
+
+        task = _make_task(role="manager")
+        cfg = route_task(task)
+        assert cfg.model == "opus"
+        assert cfg.effort == "max"
+
+    def test_medium_scope_backend_uses_sonnet(self) -> None:
+        from bernstein.core.router import route_task
+
+        task = _make_task(role="backend", scope="medium", complexity="medium")
+        cfg = route_task(task)
+        # Should not escalate to opus for ordinary tasks
+        assert cfg.model in ("sonnet", "haiku")

@@ -34,6 +34,7 @@ from bernstein.core.models import (
     NodeCapacity,
     NodeInfo,
     NodeStatus,
+    ProgressSnapshot,
     RiskAssessment,
     RollbackPlan,
     Task,

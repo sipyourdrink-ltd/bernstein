@@ -300,25 +300,52 @@ def _return_claimed_to_open() -> int:
 def _save_session_on_stop(workdir: Path) -> None:
     """Persist session state to disk so the next run can resume quickly.
 
-    Writes a ``session_state.json`` snapshot into ``.sdd/runtime/`` with
-    the current timestamp and the counts of open/claimed/done tasks based
-    on backlog directory contents.
+    Queries the running task server for current task statuses and writes a
+    proper ``session.json`` snapshot via the session module.  Falls back to
+    a lightweight ``session_state.json`` diagnostic file if the server is
+    unreachable.
 
     Args:
         workdir: Project root directory containing ``.sdd/``.
     """
-    runtime_dir = workdir / ".sdd" / "runtime"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    state: dict[str, Any] = {
-        "stopped_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "open_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "open").glob("*.md"))
-        if (workdir / ".sdd" / "backlog" / "open").exists()
-        else 0,
-        "claimed_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "claimed").glob("*.md"))
-        if (workdir / ".sdd" / "backlog" / "claimed").exists()
-        else 0,
-    }
-    (runtime_dir / "session_state.json").write_text(json.dumps(state, indent=2))
+    import contextlib as _cl
+
+    # Try to save a rich session.json (used by bootstrap for fast resume)
+    saved_proper = False
+    with _cl.suppress(Exception):
+        import httpx as _httpx
+
+        from bernstein.core.session import SessionState, save_session
+
+        resp = _httpx.get(f"{SERVER_URL}/tasks", timeout=3.0, headers=_auth_headers())
+        resp.raise_for_status()
+        task_list: list[dict[str, Any]] = resp.json() if isinstance(resp.json(), list) else []
+        done_ids = [t["id"] for t in task_list if t.get("status") == "done"]
+        pending_ids = [t["id"] for t in task_list if t.get("status") in ("claimed", "in_progress")]
+        state = SessionState(
+            saved_at=time.time(),
+            goal="",
+            completed_task_ids=done_ids,
+            pending_task_ids=pending_ids,
+            cost_spent=0.0,
+        )
+        save_session(workdir, state)
+        saved_proper = True
+
+    if not saved_proper:
+        # Fallback: lightweight diagnostic snapshot (not used by resume logic)
+        runtime_dir = workdir / ".sdd" / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        fallback: dict[str, Any] = {
+            "stopped_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "open_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "open").glob("*.md"))
+            if (workdir / ".sdd" / "backlog" / "open").exists()
+            else 0,
+            "claimed_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "claimed").glob("*.md"))
+            if (workdir / ".sdd" / "backlog" / "claimed").exists()
+            else 0,
+        }
+        (runtime_dir / "session_state.json").write_text(json.dumps(fallback, indent=2))
 
 
 def _recover_orphaned_claims() -> int:
@@ -368,6 +395,7 @@ def _find_seed_file() -> Path | None:
 @click.option("--headless", is_flag=True, default=False, hidden=True, help="Run without dashboard (for overnight/CI).")
 @click.option("--dry-run", is_flag=True, default=False, help="Preview task plan without spawning agents.")
 @click.option("--yes", "-y", is_flag=True, default=False, hidden=True, help="Skip cost confirmation prompt.")
+@click.option("--fresh", "force_fresh", is_flag=True, default=False, help="Ignore saved session; start from scratch.")
 @click.option(
     "--approval",
     type=click.Choice(["auto", "review", "pr"]),
@@ -395,6 +423,7 @@ def cli(
     headless: bool,
     dry_run: bool,
     yes: bool,
+    force_fresh: bool,
     approval: str,
     merge_strategy: str,
 ) -> None:
@@ -474,7 +503,7 @@ def cli(
             from bernstein.core.bootstrap import bootstrap_from_goal
 
             try:
-                bootstrap_from_goal(goal, workdir=workdir, port=port)
+                bootstrap_from_goal(goal, workdir=workdir, port=port, force_fresh=force_fresh)
             except RuntimeError as exc:
                 console.print(f"[red]Error:[/red] {exc}")
                 raise SystemExit(1) from exc
@@ -484,7 +513,7 @@ def cli(
             from bernstein.core.seed import SeedError
 
             try:
-                bootstrap_from_seed(seed_path, workdir=workdir, port=port)
+                bootstrap_from_seed(seed_path, workdir=workdir, port=port, force_fresh=force_fresh)
             except (SeedError, RuntimeError) as exc:
                 console.print(f"[red]Error:[/red] {exc}")
                 raise SystemExit(1) from exc
@@ -498,7 +527,7 @@ def cli(
                 from bernstein.core.bootstrap import bootstrap_from_goal
 
                 try:
-                    bootstrap_from_goal("Execute backlog tasks", workdir=workdir, port=port)
+                    bootstrap_from_goal("Execute backlog tasks", workdir=workdir, port=port, force_fresh=force_fresh)
                 except RuntimeError as exc:
                     console.print(f"[red]Error:[/red] {exc}")
                     raise SystemExit(1) from exc
@@ -889,14 +918,27 @@ def start(goal: str | None, seed_file: str, port: int) -> None:
 
 
 @cli.command("score", hidden=True)
-def status() -> None:
-    """Task summary, active agents, cost estimate."""
-    _print_banner()
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+def status(as_json: bool) -> None:
+    """Task summary, active agents, cost estimate.
 
+    \b
+      bernstein status          # Rich table output
+      bernstein status --json   # machine-readable JSON
+    """
     data = _server_get("/status")
     if data is None:
-        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
+        if as_json:
+            click.echo(json.dumps({"error": "Cannot reach task server"}))
+        else:
+            console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
         raise SystemExit(1)
+
+    if as_json:
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    _print_banner()
 
     # ---- Task table ----
     from rich.table import Table
@@ -2498,6 +2540,195 @@ def benchmark_run(tier: str, benchmarks_dir: str, save: bool) -> None:
 
     if summary.failed > 0:
         raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
+# eval — multiplicative scoring harness
+# ---------------------------------------------------------------------------
+
+
+@cli.group("eval")
+def eval_group() -> None:
+    """Evaluation harness with multiplicative scoring."""
+
+
+@eval_group.command("run")
+@click.option(
+    "--tier",
+    type=click.Choice(["smoke", "standard", "stretch", "adversarial"]),
+    default=None,
+    help="Run only tasks from this tier.",
+)
+@click.option("--compare", "compare_prev", is_flag=True, default=False, help="Compare vs previous run.")
+@click.option("--save/--no-save", default=True, show_default=True, help="Persist results to disk.")
+def eval_run(tier: str | None, compare_prev: bool, save: bool) -> None:
+    """Run the golden benchmark suite with multiplicative scoring.
+
+    \b
+      bernstein eval run                    # run full golden suite
+      bernstein eval run --tier smoke       # smoke tier only
+      bernstein eval run --compare          # compare vs previous run
+    """
+    from rich.table import Table
+
+    from bernstein.eval.golden import Tier
+    from bernstein.eval.harness import EvalHarness, TaskEvalResult
+
+    workdir = Path(".")
+    state_dir = workdir / ".sdd"
+    harness = EvalHarness(state_dir=state_dir, repo_root=workdir)
+
+    tier_filter: Tier | None = tier  # type: ignore[assignment]
+    tasks = harness.load_golden_tasks(tier_filter=tier_filter)
+
+    if not tasks:
+        console.print("[yellow]No golden tasks found.[/yellow]")
+        console.print(f"[dim]Expected at: {state_dir / 'eval' / 'golden'}/<tier>/*.md[/dim]")
+        raise SystemExit(1)
+
+    console.print(f"[bold]Eval harness[/bold] — {len(tasks)} golden task(s)")
+
+    # Evaluate each task (with empty telemetry for now — real runs
+    # would collect telemetry from actual agent execution)
+    task_results: list[TaskEvalResult] = []
+    for task in tasks:
+        result = harness.evaluate_task(task)
+        task_results.append(result)
+
+    run_result = harness.compute_multiplicative_score(task_results)
+
+    # Display results
+    table = Table(title="Eval Results", header_style="bold cyan", show_lines=False)
+    table.add_column("Component", min_width=15)
+    table.add_column("Score", justify="right", min_width=10)
+
+    mc = run_result.multiplicative_components
+    if mc:
+        table.add_row("Task Success", f"{mc.task_success:.2%}")
+        table.add_row("Code Quality", f"{mc.code_quality:.2%}")
+        table.add_row("Efficiency", f"{mc.efficiency:.2%}")
+        table.add_row("Reliability", f"{mc.reliability:.2%}")
+        table.add_row("Safety", f"{mc.safety:.2%}")
+        table.add_row("", "")
+        table.add_row("[bold]Final Score[/bold]", f"[bold]{mc.final_score:.4f}[/bold]")
+
+    console.print(table)
+
+    # Per-tier breakdown
+    pt = run_result.per_tier
+    if pt:
+        tier_table = Table(title="Per-Tier Scores", header_style="bold cyan")
+        tier_table.add_column("Tier", min_width=15)
+        tier_table.add_column("Score", justify="right", min_width=10)
+        tier_table.add_row("Smoke", f"{pt.smoke:.2%}")
+        tier_table.add_row("Standard", f"{pt.standard:.2%}")
+        tier_table.add_row("Stretch", f"{pt.stretch:.2%}")
+        tier_table.add_row("Adversarial", f"{pt.adversarial:.2%}")
+        console.print(tier_table)
+
+    # Compare with previous run
+    if compare_prev:
+        prev = harness.load_previous_run()
+        if prev:
+            delta = run_result.score - prev.score
+            color = "green" if delta >= 0 else "red"
+            console.print(f"\n[bold]vs previous:[/bold] [{color}]{delta:+.4f}[/{color}]")
+            console.print(f"[dim]Previous score: {prev.score:.4f}[/dim]")
+        else:
+            console.print("[dim]No previous run found for comparison.[/dim]")
+
+    # Save results
+    if save:
+        path = harness.save_run(run_result)
+        console.print(f"[dim]Results saved → {path}[/dim]")
+
+
+@eval_group.command("report")
+def eval_report() -> None:
+    """Generate a markdown report from the most recent eval run."""
+    from bernstein.eval.harness import EvalHarness
+
+    workdir = Path(".")
+    state_dir = workdir / ".sdd"
+    harness = EvalHarness(state_dir=state_dir, repo_root=workdir)
+
+    prev = harness.load_previous_run()
+    if not prev:
+        console.print("[yellow]No eval runs found.[/yellow]")
+        raise SystemExit(1)
+
+    console.print(f"[bold]Eval Report[/bold] — score: {prev.score:.4f}")
+
+    mc = prev.multiplicative_components
+    if mc:
+        console.print(f"  Task Success:  {mc.task_success:.2%}")
+        console.print(f"  Code Quality:  {mc.code_quality:.2%}")
+        console.print(f"  Efficiency:    {mc.efficiency:.2%}")
+        console.print(f"  Reliability:   {mc.reliability:.2%}")
+        console.print(f"  Safety:        {mc.safety:.2%}")
+
+    pt = prev.per_tier
+    if pt:
+        console.print(f"\n  Smoke:       {pt.smoke:.2%}")
+        console.print(f"  Standard:    {pt.standard:.2%}")
+        console.print(f"  Stretch:     {pt.stretch:.2%}")
+        console.print(f"  Adversarial: {pt.adversarial:.2%}")
+
+    if prev.cost_total > 0:
+        console.print(f"\n  Total cost: ${prev.cost_total:.2f}")
+
+    console.print(f"  Tasks evaluated: {prev.tasks_evaluated}")
+
+
+@eval_group.command("failures")
+def eval_failures() -> None:
+    """Show failure taxonomy breakdown from the most recent eval run."""
+    import json as json_mod
+
+    from rich.table import Table
+
+    workdir = Path(".")
+    runs_dir = workdir / ".sdd" / "eval" / "runs"
+
+    if not runs_dir.is_dir():
+        console.print("[yellow]No eval runs found.[/yellow]")
+        raise SystemExit(1)
+
+    run_files = sorted(runs_dir.glob("eval_run_*.json"), reverse=True)
+    if not run_files:
+        console.print("[yellow]No eval runs found.[/yellow]")
+        raise SystemExit(1)
+
+    data = json_mod.loads(run_files[0].read_text(encoding="utf-8"))
+    failures = data.get("failures", [])
+
+    if not failures:
+        console.print("[green]No failures in the most recent run.[/green]")
+        return
+
+    table = Table(title="Failure Taxonomy", header_style="bold red", show_lines=True)
+    table.add_column("Task", min_width=20)
+    table.add_column("Category", min_width=18)
+    table.add_column("Details", min_width=40)
+
+    for f in failures:
+        table.add_row(
+            str(f.get("task", "")),
+            str(f.get("taxonomy", "")),
+            str(f.get("details", "")),
+        )
+
+    console.print(table)
+
+    # Category counts
+    counts: dict[str, int] = {}
+    for f in failures:
+        cat = str(f.get("taxonomy", "unknown"))
+        counts[cat] = counts.get(cat, 0) + 1
+
+    console.print(f"\n[bold]Total failures:[/bold] {len(failures)}")
+    for cat, count in sorted(counts.items(), key=lambda x: -x[1]):
+        console.print(f"  {cat}: {count}")
 
 
 # ---------------------------------------------------------------------------
@@ -4891,7 +5122,7 @@ def github_test_webhook(event: str, server_url: str | None) -> None:
             raise SystemExit(1)
     except httpx.ConnectError:
         console.print(f"[red]Cannot connect to {url}[/red]")
-        console.print("[dim]Is the Bernstein server running? Try 'bernstein start' first.[/dim]")
+        console.print("[dim]Is the Bernstein server running? Run 'bernstein' first.[/dim]")
         raise SystemExit(1) from None
 
 
@@ -4946,3 +5177,28 @@ def mcp_server(transport: str, host: str, port: int, server_url: str) -> None:
         run_sse(server_url=server_url, host=host, port=port)
     else:
         run_stdio(server_url=server_url)
+
+
+# ---------------------------------------------------------------------------
+# completions — shell completion scripts
+# ---------------------------------------------------------------------------
+
+
+@cli.command("completions")
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
+def completions(shell: str) -> None:
+    """Generate shell completion script for bash, zsh, or fish.
+
+    \b
+      eval "$(bernstein completions bash)"
+      eval "$(bernstein completions zsh)"
+      bernstein completions fish | source
+    """
+    # Click 8+ ships built-in shell completion via _<PROG>_COMPLETE env vars.
+    # We generate the activation snippet the user can eval.
+    shell_map = {
+        "bash": f'eval "$(_BERNSTEIN_COMPLETE=bash_source bernstein)"',
+        "zsh": f'eval "$(_BERNSTEIN_COMPLETE=zsh_source bernstein)"',
+        "fish": "_BERNSTEIN_COMPLETE=fish_source bernstein | source",
+    }
+    click.echo(shell_map[shell])

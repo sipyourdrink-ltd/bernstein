@@ -31,8 +31,8 @@ class SessionState:
 
     saved_at: float
     goal: str = ""
-    completed_task_ids: list[str] = field(default_factory=list)
-    pending_task_ids: list[str] = field(default_factory=list)
+    completed_task_ids: list[str] = field(default_factory=list[str])
+    pending_task_ids: list[str] = field(default_factory=list[str])
     cost_spent: float = 0.0
 
     def is_stale(self, stale_minutes: int = DEFAULT_STALE_MINUTES) -> bool:

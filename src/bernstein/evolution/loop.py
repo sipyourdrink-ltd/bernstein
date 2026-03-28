@@ -40,7 +40,7 @@ from bernstein.evolution.detector import (
     ImprovementOpportunity,
     OpportunityDetector,
 )
-from bernstein.evolution.gate import ApprovalGate, ApprovalOutcome
+from bernstein.evolution.gate import ApprovalGate, ApprovalOutcome, EvalGate
 from bernstein.evolution.proposals import (
     AnalysisTrigger,
     ProposalGenerator,
@@ -196,6 +196,15 @@ class EvolutionLoop:
         self._gate = ApprovalGate(decisions_dir=self._evolution_dir)
         self._breaker = CircuitBreaker(state_dir=self._evolution_dir)
         self._executor = FileUpgradeExecutor(state_dir)
+
+        # --- Eval gate (eval-gated evolution #516) ---
+        from bernstein.eval.harness import EvalHarness
+
+        self._eval_harness = EvalHarness(state_dir=state_dir, repo_root=self._repo_root)
+        self._eval_gate = EvalGate(
+            eval_harness=self._eval_harness,
+            state_dir=state_dir,
+        )
 
         # --- State directory setup ---
         self._evolution_dir.mkdir(parents=True, exist_ok=True)
@@ -465,6 +474,28 @@ class EvolutionLoop:
                 delta=sandbox_result.delta,
                 accepted=False,
                 reason=f"Sandbox failed: {sandbox_result.error or 'tests did not pass'}",
+                cost_usd=_COST_PER_PROPOSAL_USD,
+                duration_seconds=time.time() - cycle_start,
+            )
+            self._log_experiment(result)
+            return result
+
+        # Step 7b — Eval gate (eval-gated evolution #516).
+        # After sandbox passes, run the eval harness and compare against baseline.
+        eval_result = self._eval_gate.evaluate(
+            proposal=_to_types_proposal(proposal, risk_level),
+            risk_level=risk_level,
+        )
+        if not eval_result.skipped and not eval_result.accepted:
+            result = ExperimentResult(
+                proposal_id=proposal.id,
+                title=proposal.title,
+                risk_level=risk_level.value,
+                baseline_score=eval_result.baseline_score,
+                candidate_score=eval_result.score,
+                delta=eval_result.delta,
+                accepted=False,
+                reason=f"Eval gate rejected: {eval_result.reason}",
                 cost_usd=_COST_PER_PROPOSAL_USD,
                 duration_seconds=time.time() - cycle_start,
             )

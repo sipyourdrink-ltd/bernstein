@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.models import ModelConfig
+
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
-from bernstein.core.models import ModelConfig
 
 # Map Bernstein short model names to aider model identifiers.
 # Aider accepts provider-prefixed names (e.g. "openai/gpt-4o", "anthropic/claude-3-5-sonnet").

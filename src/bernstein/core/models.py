@@ -313,6 +313,40 @@ class ModelConfig:
 
 
 @dataclass
+class ProgressSnapshot:
+    """A point-in-time progress snapshot reported by an agent.
+
+    Agents POST this to the task server every 60 seconds.  The orchestrator
+    compares consecutive snapshots to detect stalled agents.
+
+    Attributes:
+        timestamp: Unix timestamp when the snapshot was written.
+        files_changed: Number of files modified since the agent started.
+        tests_passing: Number of tests currently passing (−1 = unknown).
+        errors: Number of active errors / compilation failures.
+        last_file: Last file the agent was editing (empty string if unknown).
+    """
+
+    timestamp: float
+    files_changed: int = 0
+    tests_passing: int = -1
+    errors: int = 0
+    last_file: str = ""
+
+    def is_same_progress(self, other: "ProgressSnapshot") -> bool:
+        """Return True if *other* shows the same progress as self.
+
+        Compares the meaningful counters; ignores timestamp and last_file
+        (a new file open without other changes does not count as progress).
+        """
+        return (
+            self.files_changed == other.files_changed
+            and self.tests_passing == other.tests_passing
+            and self.errors == other.errors
+        )
+
+
+@dataclass
 class AgentHeartbeat:
     """Heartbeat written by an agent to signal it is still making progress.
 

@@ -31,6 +31,7 @@ services:
       - "8052"
     environment:
       BERNSTEIN_AUTH_TOKEN: ${BERNSTEIN_AUTH_TOKEN}
+      BERNSTEIN_READONLY: "true"
     volumes:
       - sdd-data:/workspace/.sdd
     healthcheck:

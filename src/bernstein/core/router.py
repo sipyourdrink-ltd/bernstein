@@ -543,9 +543,12 @@ def route_task(task: Task, bandit_metrics_dir: Path | None = None) -> ModelConfi
         return ModelConfig(model="opus", effort="max")
 
     if task.role in ("architect", "security"):
-        return ModelConfig(model="opus", effort="high")
+        return ModelConfig(model="opus", effort="max")
 
-    if task.priority == 1 or task.scope == Scope.LARGE:
+    if task.scope == Scope.LARGE:
+        return ModelConfig(model="opus", effort="max")
+
+    if task.priority == 1:
         return ModelConfig(model="sonnet", effort="max")
 
     # L1 fast-path: route simple tasks to the cheapest model

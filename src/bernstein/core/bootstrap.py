@@ -697,7 +697,13 @@ def bootstrap_from_seed(
     from bernstein.core.session import check_resume_session
     from bernstein.core.sync import sync_backlog_to_server
 
-    prior_session = check_resume_session(workdir, force_fresh=force_fresh)
+    _resume = seed.session.resume
+    _stale_minutes = seed.session.stale_after_minutes
+    prior_session = check_resume_session(
+        workdir,
+        force_fresh=force_fresh or not _resume,
+        stale_minutes=_stale_minutes,
+    )
 
     with Status("[bold]Loading tasks...[/bold]", console=console):
         sync_result = sync_backlog_to_server(workdir, server_url=server_url)

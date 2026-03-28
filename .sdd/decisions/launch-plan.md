@@ -1,7 +1,7 @@
 # Decision: HN Show Launch Plan
 
 **Date:** 2026-03-28
-**Status:** In progress
+**Status:** Ready — pending pre-launch gates #700 and #701
 **Ticket:** #710
 
 ---

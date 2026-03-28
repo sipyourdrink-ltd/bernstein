@@ -7,7 +7,7 @@ initial manager Task that kicks off orchestration.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import yaml
@@ -37,6 +37,20 @@ class StorageConfig:
     backend: Literal["memory", "postgres", "redis"] = "memory"
     database_url: str | None = None
     redis_url: str | None = None
+
+
+@dataclass(frozen=True)
+class SessionConfig:
+    """Session resume configuration.
+
+    Attributes:
+        resume: Whether to resume from a prior session when available.
+        stale_after_minutes: Sessions older than this are discarded and a fresh
+            start is forced (default: 30).
+    """
+
+    resume: bool = True
+    stale_after_minutes: int = 30
 
 
 @dataclass(frozen=True)
@@ -91,6 +105,7 @@ class SeedConfig:
     cells: int = 1
     cluster: ClusterConfig | None = None
     workspace: Workspace | None = None
+    session: SessionConfig = field(default_factory=SessionConfig)
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -320,6 +335,20 @@ def parse_seed(path: Path) -> SeedConfig:
             bind_host=str(cluster_dict.get("bind_host", "127.0.0.1")),
         )
 
+    session_raw: object = data.get("session")
+    session_cfg = SessionConfig()
+    if session_raw is not None:
+        if not isinstance(session_raw, dict):
+            raise SeedError(f"session must be a mapping, got: {type(session_raw).__name__}")
+        session_dict: dict[str, object] = cast("dict[str, object]", session_raw)
+        resume_raw: object = session_dict.get("resume", True)
+        if not isinstance(resume_raw, bool):
+            raise SeedError(f"session.resume must be a bool, got: {type(resume_raw).__name__}")
+        stale_raw: object = session_dict.get("stale_after_minutes", 30)
+        if not isinstance(stale_raw, int) or stale_raw < 1:
+            raise SeedError(f"session.stale_after_minutes must be a positive integer, got: {stale_raw!r}")
+        session_cfg = SessionConfig(resume=resume_raw, stale_after_minutes=stale_raw)
+
     workspace_raw: object = data.get("workspace")
     workspace: Workspace | None = None
     if workspace_raw is not None:
@@ -348,6 +377,7 @@ def parse_seed(path: Path) -> SeedConfig:
         cells=cells_raw,
         cluster=cluster,
         workspace=workspace,
+        session=session_cfg,
     )
 
 
