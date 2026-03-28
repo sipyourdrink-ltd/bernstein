@@ -2006,6 +2006,146 @@ cli.add_command(cost_cmd, "cost")
 
 
 # ---------------------------------------------------------------------------
+# workspace — multi-repo workspace management
+# ---------------------------------------------------------------------------
+
+
+@cli.group("workspace", invoke_without_command=True)
+@click.pass_context
+def workspace_group(ctx: click.Context) -> None:
+    """Multi-repo workspace management.
+
+    Without a subcommand, shows repo status table.
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    from rich.table import Table
+
+    data = _server_get("/workspace")
+    if data is None:
+        # No server running — try to parse workspace from seed file
+        seed_path = _find_seed_file()
+        if seed_path is None:
+            console.print("[dim]No workspace configured (no bernstein.yaml found).[/dim]")
+            return
+
+        from bernstein.core.seed import SeedError, parse_seed
+
+        try:
+            cfg = parse_seed(seed_path)
+        except SeedError as exc:
+            console.print(f"[red]Error parsing seed file:[/red] {exc}")
+            return
+
+        if cfg.workspace is None:
+            console.print("[dim]No workspace section in bernstein.yaml.[/dim]")
+            return
+
+        ws = cfg.workspace
+        repo_statuses = ws.status()
+
+        table = Table(title="Workspace repos", show_header=True, header_style="bold magenta")
+        table.add_column("Repo", style="cyan")
+        table.add_column("Path")
+        table.add_column("Branch", justify="center")
+        table.add_column("Clean", justify="center")
+        table.add_column("Ahead", justify="right")
+        table.add_column("Behind", justify="right")
+
+        for repo in ws.repos:
+            rs = repo_statuses.get(repo.name)
+            if rs:
+                clean_icon = "[green]yes[/green]" if rs.clean else "[red]no[/red]"
+                table.add_row(repo.name, str(repo.path), rs.branch, clean_icon, str(rs.ahead), str(rs.behind))
+            else:
+                table.add_row(repo.name, str(repo.path), "[dim]n/a[/dim]", "[dim]n/a[/dim]", "-", "-")
+
+        console.print(table)
+        return
+
+    # Server is running — render from API response
+    from rich.table import Table as RichTable
+
+    table = RichTable(title="Workspace repos", show_header=True, header_style="bold magenta")
+    table.add_column("Repo", style="cyan")
+    table.add_column("Path")
+    table.add_column("Branch", justify="center")
+    table.add_column("Clean", justify="center")
+    table.add_column("Ahead", justify="right")
+    table.add_column("Behind", justify="right")
+
+    for repo in data.get("repos", []):
+        clean_icon = "[green]yes[/green]" if repo.get("clean") else "[red]no[/red]"
+        table.add_row(
+            repo["name"],
+            repo["path"],
+            repo.get("branch", "unknown"),
+            clean_icon,
+            str(repo.get("ahead", 0)),
+            str(repo.get("behind", 0)),
+        )
+
+    console.print(table)
+
+
+@workspace_group.command("clone")
+def workspace_clone() -> None:
+    """Clone all missing repos defined in the workspace."""
+    seed_path = _find_seed_file()
+    if seed_path is None:
+        console.print("[red]No bernstein.yaml found.[/red]")
+        return
+
+    from bernstein.core.seed import SeedError, parse_seed
+
+    try:
+        cfg = parse_seed(seed_path)
+    except SeedError as exc:
+        console.print(f"[red]Error parsing seed file:[/red] {exc}")
+        return
+
+    if cfg.workspace is None:
+        console.print("[dim]No workspace section in bernstein.yaml.[/dim]")
+        return
+
+    cloned = cfg.workspace.clone_missing()
+    if cloned:
+        for name in cloned:
+            console.print(f"[green]Cloned[/green] {name}")
+    else:
+        console.print("[dim]All repos already present (or no clone URLs configured).[/dim]")
+
+
+@workspace_group.command("validate")
+def workspace_validate() -> None:
+    """Check workspace health — all repos exist and are valid git repos."""
+    seed_path = _find_seed_file()
+    if seed_path is None:
+        console.print("[red]No bernstein.yaml found.[/red]")
+        return
+
+    from bernstein.core.seed import SeedError, parse_seed
+
+    try:
+        cfg = parse_seed(seed_path)
+    except SeedError as exc:
+        console.print(f"[red]Error parsing seed file:[/red] {exc}")
+        return
+
+    if cfg.workspace is None:
+        console.print("[dim]No workspace section in bernstein.yaml.[/dim]")
+        return
+
+    issues = cfg.workspace.validate()
+    if issues:
+        for issue in issues:
+            console.print(f"[red]Issue:[/red] {issue}")
+    else:
+        console.print(f"[green]All {len(cfg.workspace.repos)} repos are healthy.[/green]")
+
+
+# ---------------------------------------------------------------------------
 # config — global ~/.bernstein config management
 # ---------------------------------------------------------------------------
 

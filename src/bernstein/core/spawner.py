@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
     from bernstein.core.agency_loader import AgencyAgent
     from bernstein.core.mcp_registry import MCPRegistry
+    from bernstein.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------
 # Module-level file cache (mtime-keyed, automatically invalidates on change)
@@ -257,6 +258,7 @@ class AgentSpawner:
         mcp_registry: MCPRegistry | None = None,
         catalog: CatalogRegistry | None = None,
         use_worktrees: bool = False,
+        workspace: Workspace | None = None,
     ) -> None:
         self._adapter = adapter
         self._templates_dir = templates_dir
@@ -270,6 +272,7 @@ class AgentSpawner:
         self._mcp_config = mcp_config
         self._mcp_registry = mcp_registry
         self._catalog = catalog
+        self._workspace = workspace
         self._context_builder = TaskContextBuilder(workdir)
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
         self._use_worktrees = use_worktrees
@@ -358,8 +361,22 @@ class AgentSpawner:
         # in its role template and uses curl to POST tasks to the server.
         target_adapter = self._adapter
 
-        # Determine working directory: isolated worktree if enabled, else shared workdir
+        # Determine working directory: repo-specific > worktree > shared workdir
         spawn_cwd = self._workdir
+
+        # If the task targets a specific repo in a multi-repo workspace,
+        # use that repo's path as the working directory.
+        task_repo = tasks[0].repo
+        if task_repo is not None and self._workspace is not None:
+            try:
+                spawn_cwd = self._workspace.resolve_repo(task_repo)
+                logger.info("Task targets repo '%s', spawn cwd: %s", task_repo, spawn_cwd)
+            except KeyError:
+                logger.warning(
+                    "Task repo '%s' not found in workspace, falling back to workdir",
+                    task_repo,
+                )
+
         if self._use_worktrees and self._worktree_mgr is not None:
             try:
                 spawn_cwd = self._worktree_mgr.create(session_id)

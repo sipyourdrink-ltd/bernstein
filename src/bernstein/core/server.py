@@ -122,6 +122,7 @@ class TaskRecord(TypedDict):
     assigned_agent: str | None
     result_summary: str | None
     cell_id: str | None
+    repo: str | None
     version: int
 
 
@@ -174,6 +175,7 @@ class TaskCreate(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     owned_files: list[str] = Field(default_factory=list)
     cell_id: str | None = None
+    repo: str | None = None  # Target repo in a multi-repo workspace
     task_type: str = "standard"
     upgrade_details: dict[str, Any] | None = None
     model: str | None = None  # Manager hint: "opus", "sonnet", "haiku"
@@ -198,6 +200,7 @@ class TaskResponse(BaseModel):
     assigned_agent: str | None
     result_summary: str | None
     cell_id: str | None
+    repo: str | None
     task_type: str
     upgrade_details: dict[str, Any] | None
     model: str | None
@@ -357,6 +360,24 @@ class ClusterStatusResponse(BaseModel):
     available_slots: int
     active_agents: int
     nodes: list[NodeResponse]
+
+
+class WorkspaceRepoStatusResponse(BaseModel):
+    """Status of a single repo in the workspace."""
+
+    name: str
+    path: str
+    branch: str
+    clean: bool
+    ahead: int
+    behind: int
+
+
+class WorkspaceStatusResponse(BaseModel):
+    """Response for GET /workspace."""
+
+    root: str
+    repos: list[WorkspaceRepoStatusResponse]
 
 
 class BulletinMessageResponse(BaseModel):
@@ -592,6 +613,7 @@ class TaskStore:
             "assigned_agent": task.assigned_agent,
             "result_summary": task.result_summary,
             "cell_id": task.cell_id,
+            "repo": task.repo,
             "version": task.version,
         }
 
@@ -659,6 +681,7 @@ class TaskStore:
             depends_on=req.depends_on,
             owned_files=req.owned_files,
             cell_id=req.cell_id,
+            repo=req.repo,
             task_type=TaskType(req.task_type),
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),
             model=req.model,
@@ -1189,6 +1212,7 @@ def _task_to_response(task: Task) -> TaskResponse:
         assigned_agent=task.assigned_agent,
         result_summary=task.result_summary,
         cell_id=task.cell_id,
+        repo=task.repo,
         task_type=task.task_type.value,
         upgrade_details=asdict(task.upgrade_details) if task.upgrade_details else None,
         model=task.model,
@@ -1231,6 +1255,7 @@ def create_app(
     metrics_jsonl_path: Path | None = None,
     auth_token: str | None = None,
     cluster_config: ClusterConfig | None = None,
+    workspace: Any | None = None,
 ) -> FastAPI:
     """Build and return the FastAPI application.
 
@@ -1242,6 +1267,7 @@ def create_app(
             ``Authorization: Bearer <token>`` header.
         cluster_config: Cluster mode configuration. If provided and
             enabled, node registration and cluster endpoints are active.
+        workspace: Optional Workspace instance for multi-repo orchestration.
 
     Returns:
         Configured FastAPI app with all routes registered.
@@ -1414,6 +1440,31 @@ def create_app(
             content=payload.decode("utf-8"),
             media_type="text/plain; version=0.0.4; charset=utf-8",
         )
+
+    # -- workspace route -------------------------------------------------------
+
+    @application.get("/workspace", response_model=WorkspaceStatusResponse)
+    async def workspace_status() -> WorkspaceStatusResponse:  # type: ignore[reportUnusedFunction]
+        """Return workspace status with per-repo git info."""
+        if workspace is None:
+            raise HTTPException(status_code=404, detail="No workspace configured")
+
+        ws = workspace
+        repo_statuses: dict[str, Any] = ws.status()
+        repos: list[WorkspaceRepoStatusResponse] = []
+        for repo_cfg in ws.repos:
+            rs = repo_statuses.get(repo_cfg.name)
+            repos.append(
+                WorkspaceRepoStatusResponse(
+                    name=repo_cfg.name,
+                    path=str(repo_cfg.path),
+                    branch=rs.branch if rs else "unknown",
+                    clean=rs.clean if rs else False,
+                    ahead=rs.ahead if rs else 0,
+                    behind=rs.behind if rs else 0,
+                )
+            )
+        return WorkspaceStatusResponse(root=str(ws.root), repos=repos)
 
     # -- bulletin board routes -------------------------------------------------
 

@@ -182,6 +182,7 @@ class Task:
     assigned_agent: str | None = None
     result_summary: str | None = None
     cell_id: str | None = None  # Which cell this task belongs to
+    repo: str | None = None  # Target repo in a multi-repo workspace
     # Manager-specified routing hints (override auto-routing when set)
     model: str | None = None  # "opus", "sonnet", "haiku"
     effort: str | None = None  # "max", "high", "medium", "low"
@@ -246,6 +247,7 @@ class Task:
             assigned_agent=raw.get("assigned_agent"),
             result_summary=raw.get("result_summary"),
             cell_id=raw.get("cell_id"),
+            repo=raw.get("repo"),
             model=raw.get("model"),
             effort=raw.get("effort"),
             created_at=raw.get("created_at", time.time()),

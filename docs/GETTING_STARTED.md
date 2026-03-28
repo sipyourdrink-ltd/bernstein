@@ -167,6 +167,79 @@ tasks:
 
 ---
 
+## Multi-repo workspaces
+
+Bernstein can orchestrate work across multiple git repositories as a single
+workspace.  Add a `workspace:` section to `bernstein.yaml`:
+
+```yaml
+goal: "Build the microservices platform"
+
+workspace:
+  repos:
+    - name: backend
+      path: ./services/backend
+      url: git@github.com:org/backend.git
+      branch: main
+    - name: frontend
+      path: ./services/frontend
+      url: git@github.com:org/frontend.git
+    - name: shared
+      path: ./libs/shared-types
+      url: git@github.com:org/shared-types.git
+```
+
+Each repo entry supports:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `name` | yes | -- | Short identifier used in task routing |
+| `path` | yes | -- | Relative or absolute path to the repo |
+| `url` | no | `null` | Git clone URL (used by `workspace clone`) |
+| `branch` | no | `main` | Default branch |
+
+When a task includes `"repo": "backend"`, the spawner automatically sets the
+agent's working directory to the backend repo path.
+
+### Workspace CLI
+
+```bash
+# Show status of all repos (branch, clean/dirty, ahead/behind)
+bernstein workspace
+
+# Clone any repos that don't exist locally
+bernstein workspace clone
+
+# Validate that all repos exist and are valid git repos
+bernstein workspace validate
+```
+
+### Workspace API
+
+```bash
+# Get workspace status via the task server
+curl http://127.0.0.1:8052/workspace
+```
+
+### Task routing to repos
+
+When creating a task, set the `repo` field to target a specific repository:
+
+```bash
+curl -s -X POST http://127.0.0.1:8052/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Fix API endpoint",
+    "role": "backend",
+    "description": "Fix the /users endpoint.",
+    "repo": "backend"
+  }'
+```
+
+The agent will be spawned with its working directory set to the backend repo.
+
+---
+
 ## Configuration
 
 `.sdd/config.yaml` (created by `bernstein init`):
@@ -452,6 +525,7 @@ The task server runs on `http://127.0.0.1:8052`.  All request and response bodie
 | `depends_on` | `list[string]` | `[]` | Task IDs that must be `done` before this task becomes claimable |
 | `owned_files` | `list[string]` | `[]` | File paths the agent is expected to own / modify |
 | `cell_id` | `string \| null` | `null` | Optional cell grouping identifier |
+| `repo` | `string \| null` | `null` | Target repo in a multi-repo workspace (spawns agent in that repo's directory) |
 | `task_type` | `string` | `"standard"` | One of `"standard"`, `"upgrade"` |
 | `model` | `string \| null` | `null` | Override model selection: `"opus"`, `"sonnet"`, `"haiku"` |
 | `effort` | `string \| null` | `null` | Override effort selection: `"max"`, `"high"`, `"medium"`, `"low"` |

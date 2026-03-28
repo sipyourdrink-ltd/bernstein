@@ -14,6 +14,7 @@ import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
+from bernstein.core.workspace import Workspace
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -73,6 +74,7 @@ class SeedConfig:
     notify: NotifyConfig | None = None
     cells: int = 1
     cluster: ClusterConfig | None = None
+    workspace: Workspace | None = None
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -279,6 +281,17 @@ def parse_seed(path: Path) -> SeedConfig:
             bind_host=str(cluster_dict.get("bind_host", "127.0.0.1")),
         )
 
+    workspace_raw: object = data.get("workspace")
+    workspace: Workspace | None = None
+    if workspace_raw is not None:
+        if not isinstance(workspace_raw, dict):
+            raise SeedError(f"workspace must be a mapping, got: {type(workspace_raw).__name__}")
+        workspace_dict: dict[str, Any] = cast("dict[str, Any]", workspace_raw)
+        try:
+            workspace = Workspace.from_config(workspace_dict, root=path.parent)
+        except ValueError as exc:
+            raise SeedError(f"Invalid workspace configuration: {exc}") from exc
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -294,6 +307,7 @@ def parse_seed(path: Path) -> SeedConfig:
         notify=notify,
         cells=cells_raw,
         cluster=cluster,
+        workspace=workspace,
     )
 
 
