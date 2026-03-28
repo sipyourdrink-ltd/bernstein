@@ -45,17 +45,22 @@ This creates `.sdd/` — a lightweight file-based state directory:
 
 ### 2. Start orchestration
 
-Pass a plain-English goal:
+Pass a plain-English goal inline:
 
 ```bash
-bernstein start "Build a legal RAG system with hybrid retrieval and typed answers"
+bernstein -g "Build a legal RAG system with hybrid retrieval and typed answers"
 ```
 
-Or point at a YAML seed file:
+Or point at a YAML seed file (Bernstein looks for `bernstein.yaml` automatically):
 
 ```bash
-# bernstein.yaml in the current directory
-bernstein start --seed-file bernstein.yaml
+bernstein
+```
+
+Or point at a specific seed file:
+
+```bash
+bernstein --seed-file path/to/bernstein.yaml
 ```
 
 Bernstein will:
@@ -66,66 +71,45 @@ Bernstein will:
 
 ### 3. Monitor progress
 
+There is no `bernstein status` command.  Query the task server directly:
+
 ```bash
-bernstein status
-```
+# Dashboard summary
+curl http://127.0.0.1:8052/status
 
-Example output:
-
-```
-Tasks
-──────────────────────────────────────────────────────────
- ID          Title                          Role    Status
-──────────────────────────────────────────────────────────
- TSK-001     Plan and decompose goal        manager done
- TSK-002     Implement hybrid retrieval     backend in_progress
- TSK-003     Write unit tests               qa      open
-──────────────────────────────────────────────────────────
-
-Active Agents
-───────────────────────────────────────────
- ID          Role     Status   Model  Tasks
-───────────────────────────────────────────
- AGT-a1b2    backend  working  opus   1
-───────────────────────────────────────────
-
-Tasks: 3 total  1 done  1 in progress  0 failed
+# All tasks (optionally filter by status)
+curl http://127.0.0.1:8052/tasks
+curl "http://127.0.0.1:8052/tasks?status=open"
+curl "http://127.0.0.1:8052/tasks?status=in_progress"
 ```
 
 ### 4. Add a task manually
 
-Inject a task at any time while the server is running:
+Inject a task while the server is running via the HTTP API:
 
 ```bash
-bernstein add-task "Add BM25 fallback to retriever" \
-  --role backend \
-  --description "Implement a BM25 sparse index alongside the dense vector index." \
-  --priority 1 \
-  --scope medium \
-  --complexity medium
+curl -s -X POST http://127.0.0.1:8052/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Add BM25 fallback to retriever",
+    "role": "backend",
+    "description": "Implement a BM25 sparse index alongside the dense vector index.",
+    "priority": 1,
+    "scope": "medium",
+    "complexity": "medium"
+  }'
 ```
 
-### 5. Filter tasks
+### 5. Check logs
+
+Log files are written to `.sdd/runtime/`:
 
 ```bash
-# Show only open tasks
-bernstein list-tasks --status-filter open
-
-# Show only backend tasks
-bernstein list-tasks --role backend
-
-# Dump raw JSON (useful for scripting)
-bernstein list-tasks --json
+tail -f .sdd/runtime/server.log
+tail -f .sdd/runtime/spawner.log
 ```
 
-### 6. Check logs
-
-```bash
-bernstein logs --component server --lines 50
-bernstein logs --component spawner --lines 30
-```
-
-### 7. Stop everything
+### 6. Stop everything
 
 ```bash
 bernstein stop
@@ -215,16 +199,11 @@ When a task moves to `done`, the janitor checks completion signals
 Run without the live dashboard — useful for overnight runs or CI pipelines:
 
 ```bash
-bernstein --headless
-```
-
-Output is written to `.sdd/runtime/` logs instead of the terminal.  Combine
-with a goal or seed file as normal:
-
-```bash
 bernstein --headless -g "Refactor the auth module"
 bernstein --headless --seed-file bernstein.yaml
 ```
+
+Output is written to `.sdd/runtime/` logs instead of the terminal.
 
 ---
 
@@ -282,31 +261,23 @@ bernstein evolve review
 
 ```bash
 bernstein evolve approve <PROPOSAL_ID>
-
-# Attribute the approval to a specific reviewer
-bernstein evolve approve <PROPOSAL_ID> --reviewer alice
 ```
 
 ### Run the autoresearch loop manually
 
 ```bash
-# Default: 2-hour window, up to 24 proposals
 bernstein evolve run
-
-# Short exploratory session
-bernstein evolve run --window 30m
-
-# Longer session with more experiments
-bernstein evolve run --window 4h --max-proposals 48
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--window` | `2h` | Duration (e.g. `30m`, `1h30m`, `4h`) |
-| `--max-proposals N` | `24` | Max proposals evaluated per session |
-| `--cycle N` | `300` | Seconds per experiment cycle |
+---
 
-Results are logged to `.sdd/evolution/experiments.jsonl`.
+## Agent spend
+
+```bash
+bernstein cost
+```
+
+Shows cost, tokens, and duration per model from `.sdd/metrics/`.
 
 ---
 
@@ -323,13 +294,9 @@ bernstein benchmark run --tier smoke
 
 # Run only stretch benchmarks
 bernstein benchmark run --tier stretch
-
-# Run without saving results
-bernstein benchmark run --no-save
 ```
 
-Results are saved to `.sdd/benchmarks/YYYY-MM-DD.jsonl` by default.  The
-suite is organised into three tiers:
+Results are saved to `.sdd/benchmarks/YYYY-MM-DD.jsonl` by default.
 
 | Tier | Purpose |
 |------|---------|
@@ -343,5 +310,4 @@ suite is organised into three tiers:
 
 - See `docs/DESIGN.md` for the full architecture
 - Add role templates in `templates/roles/` to customise agent prompts
-- Use `bernstein add-task` to inject hotfix tasks mid-sprint
 - Review `.sdd/runtime/server.log` if anything behaves unexpectedly

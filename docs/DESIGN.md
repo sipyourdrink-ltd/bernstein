@@ -27,11 +27,19 @@ bernstein CLI
     ▼
 Task Server (FastAPI, localhost:8052)
     │
-    ├── GET  /next/{role}        → returns next task for role
-    ├── POST /complete/{task_id} → marks done, triggers janitor
-    ├── POST /task               → add new task (from manager or human)
-    ├── GET  /status             → dashboard data
-    └── POST /spawn              → request new agent (server spawns via CLI)
+    ├── POST /tasks                      → create a new task
+    ├── GET  /tasks                      → list tasks (optional ?status=, ?cell_id=)
+    ├── GET  /tasks/next/{role}          → claim next open task for role
+    ├── POST /tasks/{task_id}/claim      → claim a specific task by ID
+    ├── POST /tasks/{task_id}/complete   → mark task done with result summary
+    ├── POST /tasks/{task_id}/fail       → mark task failed with reason
+    ├── GET  /tasks/{task_id}            → get a single task by ID
+    ├── GET  /tasks/archive              → recent completed/failed task records
+    ├── GET  /status                     → dashboard summary (counts per role)
+    ├── POST /agents/{agent_id}/heartbeat → register agent liveness
+    ├── GET  /health                     → server liveness check
+    ├── POST /bulletin                   → post a message to the bulletin board
+    └── GET  /bulletin                   → read bulletin messages since timestamp
     │
     ▼
 Agent Spawner

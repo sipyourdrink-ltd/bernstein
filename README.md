@@ -5,7 +5,7 @@
 ### Agent orchestration for code that writes itself
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-1214+-2ea44f)]()
+[![Tests](https://img.shields.io/badge/tests-1305+-2ea44f)]()
 [![License](https://img.shields.io/badge/license-PolyForm_NC-f89820)](LICENSE)
 
 </div>
@@ -59,17 +59,9 @@ Option C — put `.md` task files in `.sdd/backlog/open/` with YAML frontmatter.
 ```
 bernstein             Start from seed file, inline goal, or backlog
 bernstein stop        Gracefully stop all agents and the task server
-bernstein live        Live dashboard: agents, tasks, and stats (Ctrl+C to exit)
-bernstein status      Task summary, active agents, and cost estimate
-bernstein compose     Add a task to the running server
-bernstein add-task    Alias for compose
-bernstein sync        Sync .sdd/backlog/open/*.md files with the task server
-bernstein notes       Tail server or spawner logs
-bernstein parts       List tasks with optional status/role filters
-bernstein list-tasks  Alias for parts
-bernstein rest        Alias for stop
 bernstein benchmark   Run the tiered golden benchmark suite
 bernstein evolve      Manage self-evolution proposals
+bernstein cost        Show agent spend: cost, tokens, and duration per model
 ```
 
 ### `bernstein evolve` subcommands
