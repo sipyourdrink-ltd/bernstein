@@ -45,17 +45,17 @@ QUALITY_THRESHOLD: float = 0.80  # minimum success_rate to consider an arm
 # Used only as a tiebreaker when multiple arms meet the quality threshold.
 _MODEL_COST_USD_PER_1K: dict[str, float] = {
     # Claude (Anthropic) — per 1M tokens: Opus $5/$25, Sonnet $3/$15, Haiku $1/$5
-    "haiku": 0.003,          # ($1 + $5) / 2 / 1000
-    "sonnet": 0.009,         # ($3 + $15) / 2 / 1000
-    "opus": 0.015,           # ($5 + $25) / 2 / 1000
+    "haiku": 0.003,  # ($1 + $5) / 2 / 1000
+    "sonnet": 0.009,  # ($3 + $15) / 2 / 1000
+    "opus": 0.015,  # ($5 + $25) / 2 / 1000
     # Codex (OpenAI) — per 1M tokens: o3 $2/$8, o4-mini $1.10/$4.40
-    "o3": 0.005,             # ($2 + $8) / 2 / 1000
-    "o4-mini": 0.00275,      # ($1.10 + $4.40) / 2 / 1000
-    "codex-mini": 0.00375,   # ($1.50 + $6) / 2 / 1000
+    "o3": 0.005,  # ($2 + $8) / 2 / 1000
+    "o4-mini": 0.00275,  # ($1.10 + $4.40) / 2 / 1000
+    "codex-mini": 0.00375,  # ($1.50 + $6) / 2 / 1000
     # Gemini (Google) — per 1M tokens: 2.5-pro $1.25/$10, 2.5-flash $0.30/$2.50
-    "gemini-2.5-pro": 0.005625,   # ($1.25 + $10) / 2 / 1000
-    "gemini-2.5-flash": 0.0014,   # ($0.30 + $2.50) / 2 / 1000
-    "gemini-2.0-flash": 0.0005,   # near-free tier
+    "gemini-2.5-pro": 0.005625,  # ($1.25 + $10) / 2 / 1000
+    "gemini-2.5-flash": 0.0014,  # ($0.30 + $2.50) / 2 / 1000
+    "gemini-2.0-flash": 0.0005,  # near-free tier
     # Qwen (OpenRouter free)
     "qwen-max": 0.001,
     "qwen-plus": 0.0005,

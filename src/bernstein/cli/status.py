@@ -94,12 +94,7 @@ def _build_cost_table(per_role: list[dict[str, Any]]) -> Table | None:
     table.add_column("Cost", justify="right")
 
     for r in sorted(roles_with_cost, key=lambda x: float(x.get("cost_usd", 0.0)), reverse=True):
-        role_tasks = (
-            int(r.get("done", 0))
-            + int(r.get("failed", 0))
-            + int(r.get("claimed", 0))
-            + int(r.get("open", 0))
-        )
+        role_tasks = int(r.get("done", 0)) + int(r.get("failed", 0)) + int(r.get("claimed", 0)) + int(r.get("open", 0))
         table.add_row(
             str(r.get("role", "\u2014")),
             str(role_tasks),

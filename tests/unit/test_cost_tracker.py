@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 class TestEstimateCost:
     def test_known_model_sonnet(self) -> None:
         cost = estimate_cost("sonnet", input_tokens=1000, output_tokens=1000)
-        # sonnet = 0.003 per 1k, 2k tokens total => 0.006
-        assert cost == pytest.approx(0.006, abs=1e-6)
+        # sonnet = 0.009 per 1k, 2k tokens total => 0.018
+        assert cost == pytest.approx(0.018, abs=1e-6)
 
     def test_known_model_opus(self) -> None:
         cost = estimate_cost("opus", input_tokens=500, output_tokens=500)
@@ -36,8 +36,8 @@ class TestEstimateCost:
 
     def test_known_model_haiku(self) -> None:
         cost = estimate_cost("haiku", input_tokens=10000, output_tokens=0)
-        # haiku = 0.0004 per 1k, 10k tokens => 0.004
-        assert cost == pytest.approx(0.004, abs=1e-6)
+        # haiku = 0.003 per 1k, 10k tokens => 0.03
+        assert cost == pytest.approx(0.03, abs=1e-6)
 
     def test_unknown_model_uses_fallback(self) -> None:
         cost = estimate_cost("unknown-model-xyz", input_tokens=1000, output_tokens=0)
@@ -50,7 +50,7 @@ class TestEstimateCost:
 
     def test_case_insensitive(self) -> None:
         cost = estimate_cost("Claude-Sonnet-3.5", input_tokens=1000, output_tokens=0)
-        assert cost == pytest.approx(0.003, abs=1e-6)
+        assert cost == pytest.approx(0.009, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ class TestCostTrackerRecording:
             input_tokens=1000,
             output_tokens=1000,
         )
-        assert tracker.spent_usd == pytest.approx(0.006, abs=1e-6)
+        assert tracker.spent_usd == pytest.approx(0.018, abs=1e-6)
 
     def test_record_with_explicit_cost(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
