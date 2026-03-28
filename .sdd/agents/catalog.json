@@ -1,0 +1,102 @@
+[
+  {
+    "role": "manager",
+    "description": "Plans and decomposes goals into tasks.",
+    "model": "opus",
+    "effort": "max",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  },
+  {
+    "role": "backend",
+    "description": "Backend engineer.",
+    "model": "sonnet",
+    "effort": "high",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  },
+  {
+    "role": "frontend",
+    "description": "Frontend engineer.",
+    "model": "sonnet",
+    "effort": "high",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  },
+  {
+    "role": "qa",
+    "description": "Quality assurance and test engineer.",
+    "model": "sonnet",
+    "effort": "normal",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  },
+  {
+    "role": "security",
+    "description": "Security engineer.",
+    "model": "sonnet",
+    "effort": "high",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  },
+  {
+    "role": "devops",
+    "description": "DevOps / infrastructure engineer.",
+    "model": "sonnet",
+    "effort": "normal",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  },
+  {
+    "role": "architect",
+    "description": "System architect.",
+    "model": "opus",
+    "effort": "high",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  },
+  {
+    "role": "reviewer",
+    "description": "Code reviewer.",
+    "model": "sonnet",
+    "effort": "normal",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  },
+  {
+    "role": "docs",
+    "description": "Documentation writer.",
+    "model": "sonnet",
+    "effort": "normal",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  },
+  {
+    "role": "ml-engineer",
+    "description": "Machine-learning engineer.",
+    "model": "sonnet",
+    "effort": "high",
+    "source": "builtin",
+    "fetched_at": 1774663411.2710242,
+    "ttl_seconds": 300,
+    "metadata": {}
+  }
+]

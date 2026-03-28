@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Getting Started — Bernstein</title>
+  <meta name="description" content="Install Bernstein, run your first orchestration session, and understand the core configuration." />
+  <link rel="stylesheet" href="style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="script.js"></script>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <span id="theme-icon">◑</span>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub ↗
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Page hero ── -->
+<div class="page-hero">
+  <div class="container">
+    <h1>Getting Started</h1>
+    <p>Install Bernstein, run your first orchestration, and understand the configuration options.</p>
+  </div>
+</div>
+
+<!-- ── Doc layout ── -->
+<div class="doc-layout">
+
+  <!-- sidebar -->
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#install">Installation</a></li>
+      <li><a href="#first-run">First run</a></li>
+      <li><a href="#init">Init &amp; workspace</a></li>
+      <li><a href="#seed-file">Seed file</a></li>
+      <li><a href="#configuration">Configuration</a></li>
+      <li><a href="#monitoring">Monitoring</a></li>
+      <li><a href="#stopping">Stopping</a></li>
+      <li><a href="#headless">Headless mode</a></li>
+      <li><a href="#evolve">Evolve mode</a></li>
+    </ul>
+  </aside>
+
+  <!-- content -->
+  <main class="doc-content">
+
+    <h2 id="install">Installation</h2>
+    <p>Requires Python 3.12+ and at least one CLI coding agent (Claude Code, Codex, or Gemini CLI).</p>
+    <div class="code-block">
+      <pre><code class="language-bash"># From PyPI
+pip install bernstein
+
+# Or from source (editable install)
+git clone https://github.com/chernistry/bernstein.git
+cd bernstein
+pip install -e ".[dev]"
+
+# Verify
+bernstein --version</code></pre>
+    </div>
+    <div class="callout callout-info">
+      <span>ℹ️</span>
+      <p>Bernstein itself is pure Python. The CLI agents it spawns (Claude Code, Codex, etc.) must be installed and authenticated separately.</p>
+    </div>
+
+    <h2 id="first-run">First run</h2>
+    <p>The fastest path — pass a goal inline:</p>
+    <div class="code-block">
+      <pre><code class="language-bash">cd my-project
+bernstein init
+bernstein -g "Add pagination to the users API endpoint"</code></pre>
+    </div>
+    <p>Bernstein will:</p>
+    <ol>
+      <li>Start a task server on <code>localhost:8052</code></li>
+      <li>Inject an initial manager task with your goal</li>
+      <li>Spawn a manager agent (Claude Code, Opus, max effort)</li>
+      <li>The manager decomposes the goal and queues specialist tasks</li>
+      <li>The spawner picks up each task, routes model/effort, and launches agents</li>
+      <li>Agents work, commit, report results, and exit</li>
+      <li>The system exits when the queue is empty</li>
+    </ol>
+
+    <h2 id="init">Init &amp; workspace</h2>
+    <p>Run <code>bernstein init</code> once per project. It creates <code>.sdd/</code> — the file-based state directory:</p>
+    <div class="code-block">
+      <pre><code class="language-bash">.sdd/
+  backlog/
+    open/       # task files waiting to be claimed
+    closed/     # completed and failed task records
+  agents/       # per-agent heartbeat and state files
+  runtime/      # PID files, server.log, spawner.log
+  knowledge/    # project notes injected as context
+  decisions/    # architecture decision records
+  config.yaml   # port, model defaults, worker limits</code></pre>
+    </div>
+    <p>Nothing leaves your project directory. <code>.sdd/</code> is designed to be committed — it's your team's shared memory.</p>
+
+    <h2 id="seed-file">Seed file</h2>
+    <p>For repeatable orchestration sessions, use a <code>bernstein.yaml</code> seed file. Bernstein picks it up automatically if it exists in the project root.</p>
+    <div class="code-block">
+      <pre><code class="language-yaml">goal: "Build a legal RAG system with hybrid retrieval and typed answers"
+
+tasks:
+  - title: "Implement vector store"
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+
+  - title: "Add BM25 sparse index"
+    role: backend
+    priority: 2
+    scope: small
+    complexity: low
+    depends_on: ["TSK-001"]
+
+  - title: "Write integration tests"
+    role: qa
+    priority: 2
+    scope: medium
+    complexity: medium
+    depends_on: ["TSK-001", "TSK-002"]</code></pre>
+    </div>
+    <div class="code-block">
+      <pre><code class="language-bash"># Auto-detects bernstein.yaml
+bernstein
+
+# Or point to a specific file
+bernstein --seed-file path/to/bernstein.yaml</code></pre>
+    </div>
+
+    <h2 id="configuration">Configuration</h2>
+    <p><code>.sdd/config.yaml</code> is created by <code>bernstein init</code> with sensible defaults:</p>
+
+    <table>
+      <thead>
+        <tr><th>Key</th><th>Default</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>server_port</code></td><td><code>8052</code></td><td>Task server port</td></tr>
+        <tr><td><code>max_workers</code></td><td><code>6</code></td><td>Max simultaneous worker agents</td></tr>
+        <tr><td><code>default_model</code></td><td><code>sonnet</code></td><td>Default model for workers</td></tr>
+        <tr><td><code>default_effort</code></td><td><code>high</code></td><td>Default effort level</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Model routing</h3>
+    <p>The spawner selects model and effort automatically based on task metadata — you don't usually need to touch this:</p>
+
+    <table>
+      <thead>
+        <tr><th>Task property</th><th>Model</th><th>Effort</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>role=manager</code></td><td>opus</td><td>max</td></tr>
+        <tr><td><code>role=security</code></td><td>opus</td><td>max</td></tr>
+        <tr><td><code>scope=large, complexity=high</code></td><td>opus</td><td>high</td></tr>
+        <tr><td><code>complexity=medium</code></td><td>sonnet</td><td>high</td></tr>
+        <tr><td><code>complexity=low</code></td><td>sonnet</td><td>normal</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="monitoring">Monitoring</h2>
+    <p>Bernstein starts with a live terminal dashboard by default. You can also query the task server directly:</p>
+    <div class="code-block">
+      <pre><code class="language-bash"># Dashboard summary
+curl http://127.0.0.1:8052/status
+
+# All tasks
+curl http://127.0.0.1:8052/tasks
+
+# Filter by status
+curl "http://127.0.0.1:8052/tasks?status=open"
+curl "http://127.0.0.1:8052/tasks?status=in_progress"
+
+# Tail logs
+tail -f .sdd/runtime/server.log
+tail -f .sdd/runtime/spawner.log</code></pre>
+    </div>
+
+    <h3>Inject tasks at runtime</h3>
+    <p>The task server accepts new tasks while it's running:</p>
+    <div class="code-block">
+      <pre><code class="language-bash">curl -s -X POST http://127.0.0.1:8052/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Add rate limiting to the auth endpoint",
+    "role": "backend",
+    "description": "Implement token-bucket rate limiting, 100 req/min per IP.",
+    "priority": 1,
+    "scope": "small",
+    "complexity": "low"
+  }'</code></pre>
+    </div>
+
+    <h2 id="stopping">Stopping</h2>
+    <div class="code-block">
+      <pre><code class="language-bash"># Graceful stop (waits up to 10s for in-flight agents)
+bernstein stop
+
+# Shorter timeout
+bernstein stop --timeout 3</code></pre>
+    </div>
+    <p>Bernstein sends a shutdown signal to the task server, waits for in-flight agents to finish, then cleans up PID files and exits.</p>
+
+    <h2 id="headless">Headless mode</h2>
+    <p>Useful for overnight runs, CI pipelines, or remote servers:</p>
+    <div class="code-block">
+      <pre><code class="language-bash">bernstein --headless -g "Refactor the auth module"
+bernstein --headless --seed-file bernstein.yaml</code></pre>
+    </div>
+    <p>Output goes to <code>.sdd/runtime/</code> logs instead of the terminal.</p>
+
+    <h2 id="evolve">Evolve mode</h2>
+    <p>Run Bernstein against itself for continuous self-improvement:</p>
+    <div class="code-block">
+      <pre><code class="language-bash"># Run indefinitely
+bernstein --evolve
+
+# Stop after 10 cycles or $5 spent
+bernstein --evolve --max-cycles 10 --budget 5
+
+# Unattended overnight run
+bernstein --evolve --headless --max-cycles 20 --budget 10</code></pre>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>--evolve</code></td><td>—</td><td>Enable continuous self-improvement mode</td></tr>
+        <tr><td><code>--max-cycles N</code></td><td><code>0</code> (unlimited)</td><td>Stop after N evolve cycles</td></tr>
+        <tr><td><code>--budget N</code></td><td><code>0</code> (unlimited)</td><td>Stop after $N spent</td></tr>
+        <tr><td><code>--interval N</code></td><td><code>300</code></td><td>Seconds between cycles</td></tr>
+      </tbody>
+    </table>
+
+    <p>Low-risk proposals (L0/L1) are applied automatically. Higher-risk proposals are saved to <code>.sdd/evolution/deferred.jsonl</code> for review:</p>
+    <div class="code-block">
+      <pre><code class="language-bash"># Review pending proposals
+bernstein evolve review
+
+# Approve a specific proposal
+bernstein evolve approve &lt;PROPOSAL_ID&gt;</code></pre>
+    </div>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein · <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> · MIT License</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

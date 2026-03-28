@@ -87,6 +87,69 @@ def _task_from_dict(raw: dict[str, Any]) -> Task:
     )
 
 
+def _parse_backlog_file(filename: str, content: str) -> dict[str, Any]:
+    """Parse a backlog markdown file into a task creation payload.
+
+    Extracts title, role, priority, and description from the markdown.
+    Falls back to safe defaults for any missing fields.
+
+    Args:
+        filename: The filename (e.g. "100-fix-the-bug.md"), used to derive a
+            slug for the title when no H1 heading is found.
+        content: Full markdown text of the backlog file.
+
+    Returns:
+        Dict suitable for POST /tasks.
+    """
+    lines = content.splitlines()
+
+    # Title: first H1 line, strip leading "# " and numeric prefix like "100 -- "
+    title = filename.replace(".md", "").replace("-", " ")
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            raw = stripped[2:].strip()
+            raw = re.sub(r"^\d+\s*--\s*", "", raw)
+            title = raw
+            break
+
+    # Role: **Role:** backend
+    role = "backend"
+    role_match = re.search(r"\*\*Role:\*\*\s*(\S+)", content)
+    if role_match:
+        role = role_match.group(1).strip()
+
+    # Priority: **Priority:** 2
+    priority = 2
+    priority_match = re.search(r"\*\*Priority:\*\*\s*(\d+)", content)
+    if priority_match:
+        priority = int(priority_match.group(1))
+
+    # Description: everything after the header/front-matter lines
+    desc_lines: list[str] = []
+    past_header = False
+    for line in lines:
+        stripped = line.strip()
+        if not past_header:
+            if stripped.startswith("# ") or re.match(r"\*\*\w+:\*\*", stripped):
+                past_header = True
+                continue
+            continue
+        if re.match(r"\*\*\w+:\*\*", stripped):
+            continue
+        desc_lines.append(line)
+    description = "\n".join(desc_lines).strip() or content.strip()
+
+    return {
+        "title": title,
+        "description": description,
+        "role": role,
+        "priority": priority,
+        "scope": "medium",
+        "complexity": "medium",
+    }
+
+
 def _fetch_tasks(client: httpx.Client, base_url: str, status: str) -> list[Task]:
     """GET /tasks?status=<status> and parse into Task objects.
 
@@ -236,6 +299,12 @@ class Orchestrator:
         result = TickResult()
         self._tick_count += 1
         base = self._config.server_url
+
+        # 0. Ingest any new backlog files before fetching tasks
+        try:
+            self.ingest_backlog()
+        except Exception as exc:
+            logger.warning("ingest_backlog failed: %s", exc)
 
         # 1. Fetch open tasks
         try:
@@ -1539,6 +1608,57 @@ class Orchestrator:
                     except httpx.HTTPError as exc:
                         logger.error("Failed to retry/fail task %s: %s", task_id, exc)
 
+    def ingest_backlog(self) -> int:
+        """Scan backlog/open/ and POST any uningested files to the task server.
+
+        Files already present in backlog/claimed/ (by filename) are skipped.
+        Successfully POSTed files are moved to backlog/claimed/.
+
+        Returns:
+            Number of files ingested this call.
+        """
+        from bernstein.core.sync import parse_backlog_file
+
+        open_dir = self._workdir / ".sdd" / "backlog" / "open"
+        if not open_dir.exists():
+            return 0
+
+        claimed_dir = self._workdir / ".sdd" / "backlog" / "claimed"
+        claimed_names = {f.name for f in claimed_dir.glob("*.md")} if claimed_dir.exists() else set()
+
+        count = 0
+        for md_file in sorted(open_dir.glob("*.md")):
+            if md_file.name in claimed_names:
+                continue
+
+            task = parse_backlog_file(md_file)
+            if task is None:
+                logger.warning("Could not parse backlog file %s, skipping", md_file.name)
+                continue
+
+            payload = {
+                "title": task.title,
+                "description": task.description,
+                "role": task.role,
+                "priority": task.priority,
+                "scope": task.scope,
+                "complexity": task.complexity,
+            }
+            try:
+                resp = self._client.post(f"{self._config.server_url}/tasks", json=payload)
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                logger.error("Failed to ingest backlog file %s: %s", md_file.name, exc)
+                continue
+
+            claimed_dir.mkdir(parents=True, exist_ok=True)
+            md_file.rename(claimed_dir / md_file.name)
+            claimed_names.add(md_file.name)
+            count += 1
+            logger.info("Ingested backlog file: %s", md_file.name)
+
+        return count
+
     def _sync_backlog_file(self, task: Task) -> None:
         """Move the matching .md file from backlog/open/ to backlog/closed/.
 
@@ -1585,6 +1705,47 @@ class Orchestrator:
         dst.write_text(content, encoding="utf-8")
         src.unlink()
         logger.info("Synced backlog: %s → closed/", best_match)
+
+    def ingest_backlog(self) -> int:
+        """Scan .sdd/backlog/open/ and POST any new files to the task server.
+
+        Each .md file in backlog/open/ that has not already been claimed is
+        parsed and submitted to POST /tasks, then moved to backlog/claimed/ to
+        prevent re-ingestion on subsequent ticks.
+
+        Returns:
+            Number of files ingested this call.
+        """
+        open_dir = self._workdir / ".sdd" / "backlog" / "open"
+        if not open_dir.exists():
+            return 0
+
+        claimed_dir = self._workdir / ".sdd" / "backlog" / "claimed"
+
+        count = 0
+        for md_file in sorted(open_dir.glob("*.md")):
+            # Skip if already present in claimed/ (e.g. from a prior run)
+            if (claimed_dir / md_file.name).exists():
+                continue
+
+            content = md_file.read_text(encoding="utf-8")
+            payload = _parse_backlog_file(md_file.name, content)
+
+            try:
+                resp = self._client.post(
+                    f"{self._config.server_url}/tasks", json=payload
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                logger.warning("ingest_backlog: POST /tasks failed for %s: %s", md_file.name, exc)
+                continue
+
+            claimed_dir.mkdir(parents=True, exist_ok=True)
+            md_file.rename(claimed_dir / md_file.name)
+            count += 1
+            logger.info("Ingested backlog file: %s", md_file.name)
+
+        return count
 
     @staticmethod
     def _backlog_words_from_title(title: str) -> set[str]:

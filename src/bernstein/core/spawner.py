@@ -212,6 +212,7 @@ class AgentSpawner:
         self._mcp_config = mcp_config
         self._catalog = catalog
         self._context_builder = TaskContextBuilder(workdir)
+        self._procs: dict[str, object] = {}  # session_id → subprocess.Popen
 
     def spawn_for_tasks(self, tasks: list[Task]) -> AgentSession:
         """Route, render prompt, and spawn an agent for a task batch.
@@ -298,6 +299,8 @@ class AgentSpawner:
         )
         session.pid = result.pid
         session.status = "working"
+        if result.proc is not None:
+            self._procs[session_id] = result.proc
 
         return session
 
@@ -323,6 +326,29 @@ class AgentSpawner:
         if session.pid is not None:
             self._adapter.kill(session.pid)
         session.status = "dead"
+
+    def reap_completed_agent(self, session: AgentSession) -> None:
+        """Terminate and wait on the subprocess for a completed agent.
+
+        Calls proc.terminate() then proc.wait(timeout=5) to reap the OS
+        process. Safe to call when no proc is stored (pid-only spawns or
+        unknown sessions). Idempotent: a second call is a no-op.
+
+        Args:
+            session: The AgentSession whose underlying process should be reaped.
+        """
+        proc = self._procs.pop(session.id, None)
+        if proc is None:
+            return
+        try:
+            proc.terminate()  # type: ignore[union-attr]
+        except Exception as exc:
+            logger.warning("reap_completed_agent: terminate failed for %s: %s", session.id, exc)
+        try:
+            proc.wait(timeout=5)  # type: ignore[union-attr]
+        except Exception as exc:
+            logger.warning("reap_completed_agent: wait failed for %s: %s", session.id, exc)
+        logger.info("Agent %s process reaped", session.id)
 
 
 def _load_role_config(role: str, templates_dir: Path) -> ModelConfig | None:

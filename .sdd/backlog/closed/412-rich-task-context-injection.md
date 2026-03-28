@@ -86,3 +86,9 @@ Modify `_render_prompt()` in `spawner.py`:
 
 ## Research reference
 - .sdd/research/auto/context-sharing-best-practices-2026.md
+
+
+---
+**completed**: 2026-03-28 05:01:51
+**task_id**: a572449b736f
+**result**: Completed: 412 -- Rich task context injection. Added TaskContextBuilder with AST parsing, dependency graphs, git co-change analysis, subsystem context. Knowledge base at .sdd/knowledge/ with file_index.json, architecture.md, recent_decisions.md. Spawner injects rich context into agent prompts. Orchestrator refreshes KB periodically and captures decisions from done tasks. Manager template updated with context_hints guidance. 29 new tests, 1580 total passing.

@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>API Reference — Bernstein</title>
+  <meta name="description" content="Task server REST endpoints, CLI commands, and configuration schema for Bernstein." />
+  <link rel="stylesheet" href="style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="script.js"></script>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <span id="theme-icon">◑</span>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub ↗
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">☰</button>
+    </div>
+  </div>
+</nav>
+
+<!-- Page hero -->
+<section class="page-hero">
+  <div class="container">
+    <h1>API Reference</h1>
+    <p>Task server REST endpoints, CLI commands, and configuration schema.</p>
+  </div>
+</section>
+
+<!-- Main content -->
+<div class="doc-layout">
+  <!-- Sidebar nav -->
+  <nav class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#task-server">Task Server</a></li>
+      <li><a href="#tasks">Tasks</a></li>
+      <li><a href="#agents">Agents</a></li>
+      <li><a href="#bulletin">Bulletin Board</a></li>
+      <li><a href="#health">Health</a></li>
+      <li><a href="#cli">CLI Commands</a></li>
+      <li><a href="#config-schema">Config Schema</a></li>
+      <li><a href="#task-schema">Task Schema</a></li>
+      <li><a href="#completion-signals">Completion Signals</a></li>
+    </ul>
+  </nav>
+
+  <!-- Content -->
+  <main class="doc-content">
+
+    <h2 id="task-server">Task Server</h2>
+    <p>The task server is a FastAPI application running at <code>http://127.0.0.1:8052</code> (port configurable). It is the single source of truth for all task state.</p>
+
+    <div class="callout callout-info">
+      <span>ℹ️</span>
+      <p>The server is started automatically by <code>bernstein run</code>. You can also start it standalone with <code>bernstein server start</code> for scripting use cases.</p>
+    </div>
+
+    <h2 id="tasks">Tasks</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/tasks</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Create a new task.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -s -X POST http://127.0.0.1:8052/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Add pagination to users API",
+    "role": "backend",
+    "description": "Implement cursor-based pagination on GET /users.",
+    "priority": 1,
+    "scope": "small",
+    "complexity": "low"
+  }'</code></pre>
+        </div>
+        <p><strong>Body fields:</strong></p>
+        <table>
+          <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>title</code></td><td>string</td><td>✓</td><td>Short task name</td></tr>
+            <tr><td><code>role</code></td><td>string</td><td>✓</td><td>Agent role: <code>manager</code>, <code>backend</code>, <code>qa</code>, <code>security</code>, <code>frontend</code>, <code>devops</code></td></tr>
+            <tr><td><code>description</code></td><td>string</td><td></td><td>Full task description injected into the agent prompt</td></tr>
+            <tr><td><code>priority</code></td><td>int</td><td></td><td>1 = critical, 2 = normal, 3 = nice-to-have. Default: 2</td></tr>
+            <tr><td><code>scope</code></td><td>string</td><td></td><td><code>small</code> / <code>medium</code> / <code>large</code>. Affects model selection.</td></tr>
+            <tr><td><code>complexity</code></td><td>string</td><td></td><td><code>low</code> / <code>medium</code> / <code>high</code>. Affects effort level.</td></tr>
+            <tr><td><code>depends_on</code></td><td>string[]</td><td></td><td>Task IDs that must complete before this task is claimable</td></tr>
+            <tr><td><code>completion_signals</code></td><td>object[]</td><td></td><td>Janitor checks these before marking done (see <a href="#completion-signals">Completion Signals</a>)</td></tr>
+            <tr><td><code>files</code></td><td>string[]</td><td></td><td>File paths this task owns (prevents parallel conflicts)</td></tr>
+            <tr><td><code>estimated_minutes</code></td><td>int</td><td></td><td>Time budget hint for the spawner</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/tasks</span>
+      </div>
+      <div class="endpoint-body">
+        <p>List tasks. Optionally filter by status or role.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/tasks
+curl "http://127.0.0.1:8052/tasks?status=open"
+curl "http://127.0.0.1:8052/tasks?status=in_progress"
+curl "http://127.0.0.1:8052/tasks?role=backend"</code></pre>
+        </div>
+        <p><strong>Query params:</strong> <code>status</code> (<code>open</code> | <code>in_progress</code> | <code>done</code> | <code>failed</code> | <code>blocked</code>), <code>role</code></p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/tasks/{task_id}</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Get a single task by ID.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/tasks/abc123</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/tasks/next/{role}</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Claim the next open task for a given role. Used by agent adapters to pick up work.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/tasks/next/backend</code></pre>
+        </div>
+        <p>Returns <code>404</code> if no tasks are available for that role.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/tasks/{task_id}/claim</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Claim a specific task by ID.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/tasks/abc123/claim \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "agent-42"}'</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/tasks/{task_id}/complete</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Mark a task as done. The janitor will verify completion signals before finalising.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/tasks/abc123/complete \
+  -H "Content-Type: application/json" \
+  -d '{"result_summary": "Added cursor pagination to GET /users"}'</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/tasks/{task_id}/fail</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Mark a task as failed.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/tasks/abc123/fail \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "Cannot resolve import — missing dependency"}'</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/tasks/archive</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Recent completed and failed task records.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/tasks/archive</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/status</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Dashboard summary — task counts per status and agent summary.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/status</code></pre>
+        </div>
+        <p>Example response:</p>
+        <div class="code-block">
+          <pre><code class="language-json">{
+  "tasks": { "open": 4, "in_progress": 3, "done": 7, "failed": 0 },
+  "agents": { "active": 3, "idle": 0 },
+  "uptime_seconds": 312
+}</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="agents">Agents</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/agents/{agent_id}/heartbeat</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Register agent liveness. Agents must heartbeat every <code>heartbeat_timeout</code> seconds or the spawner will kill and respawn them.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/agents/agent-42/heartbeat</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="bulletin">Bulletin Board</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/bulletin</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Post a message to the bulletin board. Agents use this to share findings or warnings with each other.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/bulletin \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Found deprecated auth API — all agents should avoid /auth/v1"}'</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/bulletin</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Read bulletin messages, optionally since a timestamp.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl "http://127.0.0.1:8052/bulletin?since=1711574400"</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="health">Health</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/health</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Server liveness check. Returns <code>200 {"status": "ok"}</code> when healthy.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/health</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <h2 id="cli">CLI Commands</h2>
+
+    <h3>Core</h3>
+    <table>
+      <thead><tr><th>Command</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>bernstein init</code></td><td>Initialise a <code>.sdd/</code> workspace in the current directory</td></tr>
+        <tr><td><code>bernstein -g "&lt;goal&gt;"</code></td><td>Run with a plain-English goal</td></tr>
+        <tr><td><code>bernstein --seed-file &lt;path&gt;</code></td><td>Run with a YAML seed file</td></tr>
+        <tr><td><code>bernstein stop</code></td><td>Graceful shutdown</td></tr>
+        <tr><td><code>bernstein stop --timeout N</code></td><td>Shutdown with custom timeout (seconds)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Flags</h3>
+    <table>
+      <thead><tr><th>Flag</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>--headless</code></td><td>Suppress live dashboard, write to logs only</td></tr>
+        <tr><td><code>--evolve / -e</code></td><td>Enable continuous self-improvement mode</td></tr>
+        <tr><td><code>--max-cycles N</code></td><td>Stop after N evolve cycles</td></tr>
+        <tr><td><code>--budget N</code></td><td>Stop after $N spent</td></tr>
+        <tr><td><code>--interval N</code></td><td>Seconds between evolve cycles (default: 300)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Evolution subcommands</h3>
+    <table>
+      <thead><tr><th>Command</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>bernstein evolve review</code></td><td>List proposals awaiting human review</td></tr>
+        <tr><td><code>bernstein evolve approve &lt;id&gt;</code></td><td>Approve a deferred proposal</td></tr>
+        <tr><td><code>bernstein evolve run</code></td><td>Run one autoresearch cycle manually</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Observability</h3>
+    <table>
+      <thead><tr><th>Command</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>bernstein cost</code></td><td>Show cost, tokens, and duration per model</td></tr>
+        <tr><td><code>bernstein benchmark run</code></td><td>Run the golden benchmark suite</td></tr>
+        <tr><td><code>bernstein benchmark run --tier smoke</code></td><td>Fast sanity check only</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Agent catalog</h3>
+    <table>
+      <thead><tr><th>Command</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>bernstein catalog list</code></td><td>List available agents</td></tr>
+        <tr><td><code>bernstein catalog sync</code></td><td>Sync from remote marketplace</td></tr>
+        <tr><td><code>bernstein catalog validate</code></td><td>Validate local agent definitions</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="config-schema">Config Schema</h2>
+    <p><code>.sdd/config.yaml</code> — created by <code>bernstein init</code>, edit to customise:</p>
+    <div class="code-block">
+      <pre><code class="language-yaml"># Task server
+server_port: 8052
+
+# Agent concurrency
+max_workers: 6
+
+# Default model and effort for workers (overridden per task by the router)
+default_model: sonnet      # sonnet | opus
+default_effort: high       # normal | high | max
+
+# CLI adapter
+adapter: claude            # claude | codex | gemini | qwen
+
+# Heartbeat: kill agent if silent for this many seconds
+heartbeat_timeout: 120
+
+# Cost budget for a single run ($0 = unlimited)
+budget: 0</code></pre>
+    </div>
+
+    <h2 id="task-schema">Task Schema</h2>
+    <p>Full task metadata structure (YAML or JSON):</p>
+    <div class="code-block">
+      <pre><code class="language-yaml">id: "TSK-042"                    # auto-assigned, or set manually
+title: "Implement BM25 index"    # required
+role: "backend"                  # required: manager | backend | qa | security | frontend | devops
+
+# Routing (optional — defaults applied if omitted)
+priority: 1                      # 1=critical, 2=normal, 3=nice-to-have
+scope: "medium"                  # small | medium | large
+complexity: "high"               # low | medium | high
+estimated_minutes: 30
+
+# Dependencies
+depends_on: ["TSK-040"]          # task IDs that must complete first
+
+# Verification
+completion_signals:
+  - type: path_exists
+    path: "src/retrieval/bm25.py"
+  - type: test_passes
+    command: "pytest tests/test_bm25.py"
+
+# Ownership (prevents parallel file conflicts)
+files:
+  - "src/retrieval/bm25.py"
+  - "tests/test_bm25.py"
+
+# Full prompt injected into the agent session
+description: |
+  Implement a BM25 sparse index alongside the dense vector index in
+  src/retrieval/. Expose it via the same Retriever interface.</code></pre>
+    </div>
+
+    <h2 id="completion-signals">Completion Signals</h2>
+    <p>The janitor checks these before marking a task <code>done</code>. Define them in the task's <code>completion_signals</code> field.</p>
+    <table>
+      <thead><tr><th>Type</th><th>Fields</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>path_exists</code></td>
+          <td><code>path</code></td>
+          <td>File or directory must exist at the given path</td>
+        </tr>
+        <tr>
+          <td><code>test_passes</code></td>
+          <td><code>command</code></td>
+          <td>Shell command must exit with code 0</td>
+        </tr>
+        <tr>
+          <td><code>file_contains</code></td>
+          <td><code>path</code>, <code>text</code></td>
+          <td>File at <code>path</code> must contain <code>text</code> as a substring</td>
+        </tr>
+        <tr>
+          <td><code>api_responds</code></td>
+          <td><code>url</code>, <code>status</code></td>
+          <td>HTTP GET to <code>url</code> must return the expected <code>status</code> code</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>Example:</p>
+    <div class="code-block">
+      <pre><code class="language-yaml">completion_signals:
+  - type: path_exists
+    path: "src/auth/jwt.py"
+  - type: test_passes
+    command: "pytest tests/test_auth.py -x -q"
+  - type: file_contains
+    path: "src/auth/jwt.py"
+    text: "def verify_token"</code></pre>
+    </div>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein · <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> · MIT License</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>
