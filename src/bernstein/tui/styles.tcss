@@ -49,7 +49,7 @@ Screen {
 #agent-log {
     height: 8;
     min-height: 4;
-    border-top: thin $surface-lighten-2;
+    border-top: thin #333;
     padding: 0 1;
     scrollbar-size: 1 1;
 }
