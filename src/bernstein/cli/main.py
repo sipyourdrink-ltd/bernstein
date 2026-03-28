@@ -386,6 +386,73 @@ def cli(
 # ---------------------------------------------------------------------------
 
 
+def _detect_project_type(root: Path) -> str:
+    """Auto-detect project type by checking for common config files.
+
+    Args:
+        root: Project root directory.
+
+    Returns:
+        Detected project type string (e.g. "python", "node", "go", "generic").
+    """
+    if (root / "pyproject.toml").exists() or (root / "setup.py").exists():
+        return "python"
+    if (root / "package.json").exists():
+        return "node"
+    if (root / "go.mod").exists():
+        return "go"
+    if (root / "Cargo.toml").exists():
+        return "rust"
+    return "generic"
+
+
+def _default_constraints_for(project_type: str) -> list[str]:
+    """Return sensible default constraints for a detected project type.
+
+    Args:
+        project_type: One of the types returned by ``_detect_project_type``.
+
+    Returns:
+        List of constraint strings.
+    """
+    mapping: dict[str, list[str]] = {
+        "python": ["Python 3.12+", "pytest for tests", "ruff for linting"],
+        "node": ["Node.js", "TypeScript preferred", "vitest or jest for tests"],
+        "go": ["Go modules", "go test for tests"],
+        "rust": ["Cargo for builds", "cargo test for tests"],
+    }
+    return mapping.get(project_type, [])
+
+
+def _generate_default_yaml(project_type: str) -> str:
+    """Generate a default bernstein.yaml with project-aware defaults.
+
+    Args:
+        project_type: Detected project type.
+
+    Returns:
+        YAML content string.
+    """
+    lines = [
+        "# Bernstein orchestration config",
+        '# Uncomment and edit the goal, then run: bernstein',
+        "",
+        '# goal: "Describe what you want the agents to build or improve"',
+        "",
+        "cli: claude  # or codex, gemini, qwen",
+        "team: auto",
+        'budget: "$10"',
+    ]
+    constraints = _default_constraints_for(project_type)
+    if constraints:
+        lines.append("")
+        lines.append("constraints:")
+        for c in constraints:
+            lines.append(f'  - "{c}"')
+    lines.append("")
+    return "\n".join(lines)
+
+
 @cli.command("overture", hidden=True)
 @click.option(
     "--dir",
@@ -399,6 +466,11 @@ def init(target_dir: str) -> None:
     _print_banner()
     root = Path(target_dir).resolve()
     console.print(f"Initialising Bernstein workspace in [bold]{root}[/bold]")
+
+    # Auto-detect project type
+    project_type = _detect_project_type(root)
+    if project_type != "generic":
+        console.print(f"[cyan]Detected[/cyan] {project_type} project")
 
     for d in SDD_DIRS:
         p = root / d
@@ -424,11 +496,7 @@ def init(target_dir: str) -> None:
     # Create bernstein.yaml in project root if not present
     yaml_path = root / "bernstein.yaml"
     if not yaml_path.exists():
-        yaml_path.write_text(
-            "# Bernstein orchestration config\n"
-            '# goal: "Describe your goal here"\n'
-            "# cli: claude  # or codex, gemini, qwen\n"
-        )
+        yaml_path.write_text(_generate_default_yaml(project_type))
         console.print(f"[green]Created[/green] {yaml_path.relative_to(root)}")
 
     # Copy bundled default templates if the project doesn't have its own
@@ -454,8 +522,15 @@ def init(target_dir: str) -> None:
         root_gi_path.write_text(f"{gitignore_entry}\n")
         console.print(f"[green]Created[/green] .gitignore (added {gitignore_entry})")
 
+    # Print clear next steps
+    console.print("")
+    console.print("[green]Done.[/green] Next steps:")
+    console.print("  1. Edit [bold]bernstein.yaml[/bold] — set a goal")
+    console.print("  2. Run [bold]bernstein[/bold] to start the orchestra")
+    console.print("")
     console.print(
-        "[green]✓[/green] Workspace ready. Created bernstein.yaml — edit the goal and run [bold]bernstein[/bold]"
+        "  See [link=https://chernistry.github.io/bernstein/]docs[/link] "
+        "or [bold]examples/quickstart/[/bold] for a working example."
     )
 
 
