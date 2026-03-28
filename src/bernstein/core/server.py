@@ -1917,7 +1917,7 @@ def create_app(
     # Attach store, bulletin, and cluster registry for testing access.
     # FastAPI's `state` is a plain object with no predefined attributes;
     # type: ignore[attr-defined] is the standard pattern here.
-    application.state.store = store  # type: ignore[attr-defined]
+    application.state.store = effective_store  # type: ignore[attr-defined]
     application.state.bulletin = bulletin  # type: ignore[attr-defined]
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
     application.state.node_registry = node_registry  # type: ignore[attr-defined]

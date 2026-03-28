@@ -3501,7 +3501,92 @@ def doctor(as_json: bool) -> None:
             dep["fix"],
         )
 
-    # 8. Overall readiness
+    # 8. Storage backend connectivity (non-memory backends only)
+    from bernstein.core.store_factory import ENV_BACKEND, ENV_DATABASE_URL, ENV_REDIS_URL
+
+    storage_backend = os.environ.get(ENV_BACKEND, "memory").strip().lower()
+    if storage_backend == "memory":
+        _check("Storage backend", True, "memory (no connectivity check needed)", "")
+    elif storage_backend == "postgres":
+        db_url = os.environ.get(ENV_DATABASE_URL, "")
+        if not db_url:
+            _check(
+                "Storage backend",
+                False,
+                f"postgres — {ENV_DATABASE_URL} not set",
+                f"export {ENV_DATABASE_URL}=postgresql://user:pass@host/db",
+            )
+        else:
+            try:
+                import asyncio as _asyncio
+
+                import asyncpg  # type: ignore[import-untyped]
+
+                async def _pg_ping() -> str:
+                    conn = await asyncpg.connect(db_url, timeout=5)
+                    ver: str = await conn.fetchval("SELECT version()")
+                    await conn.close()
+                    return ver
+
+                pg_ver = _asyncio.run(_pg_ping())
+                _check("Storage backend", True, f"postgres OK — {pg_ver[:40]}", "")
+            except Exception as exc:
+                _check(
+                    "Storage backend",
+                    False,
+                    f"postgres — cannot connect: {exc}",
+                    f"Check {ENV_DATABASE_URL} and that PostgreSQL is reachable",
+                )
+    elif storage_backend == "redis":
+        redis_url = os.environ.get(ENV_REDIS_URL, "")
+        db_url = os.environ.get(ENV_DATABASE_URL, "")
+        storage_ok = True
+        if not redis_url:
+            _check(
+                "Storage backend (Redis URL)",
+                False,
+                f"redis — {ENV_REDIS_URL} not set",
+                f"export {ENV_REDIS_URL}=redis://localhost:6379/0",
+            )
+            storage_ok = False
+        if not db_url:
+            _check(
+                "Storage backend (Database URL)",
+                False,
+                f"redis — {ENV_DATABASE_URL} not set (required for task persistence)",
+                f"export {ENV_DATABASE_URL}=postgresql://user:pass@host/db",
+            )
+            storage_ok = False
+        if storage_ok:
+            try:
+                import asyncio as _asyncio
+
+                import redis.asyncio as _aioredis  # type: ignore[import-untyped]
+
+                async def _redis_ping() -> str:
+                    client = _aioredis.from_url(redis_url, socket_connect_timeout=5)
+                    pong: object = await client.ping()
+                    await client.aclose()
+                    return str(pong)
+
+                _asyncio.run(_redis_ping())
+                _check("Storage backend", True, "redis (distributed lock) OK", "")
+            except Exception as exc:
+                _check(
+                    "Storage backend",
+                    False,
+                    f"redis — cannot connect: {exc}",
+                    f"Check {ENV_REDIS_URL} and that Redis is reachable",
+                )
+    else:
+        _check(
+            "Storage backend",
+            False,
+            f"unknown backend {storage_backend!r}",
+            f"Set {ENV_BACKEND} to one of: memory, postgres, redis",
+        )
+
+    # 9. Overall readiness
     any_adapter_key = any_adapter and any_key
     _check(
         "Ready to run",
@@ -3993,3 +4078,168 @@ def replay_cmd(
 
     if errors and not submitted:
         raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
+# web-dashboard
+# ---------------------------------------------------------------------------
+
+
+@cli.command("web-dashboard")
+@click.option(
+    "--port",
+    default=8052,
+    show_default=True,
+    help="Task server port.",
+)
+@click.option(
+    "--no-browser",
+    is_flag=True,
+    default=False,
+    help="Print the URL but do not open a browser window.",
+)
+def web_dashboard(port: int, no_browser: bool) -> None:
+    """Open the real-time web dashboard in a browser.
+
+    \b
+    Connects to the running task server and opens the dashboard at
+    http://localhost:<port>/dashboard.  The server must already be running
+    (start it with ``bernstein run``).
+    """
+    import webbrowser
+
+    url = f"http://localhost:{port}/dashboard"
+    console.print(f"[bold cyan]Dashboard:[/bold cyan] {url}")
+
+    # Verify server is reachable
+    try:
+        resp = httpx.get(f"http://localhost:{port}/health", timeout=3.0)
+        if resp.status_code != 200:
+            console.print(f"[yellow]Warning:[/yellow] server returned HTTP {resp.status_code}")
+    except Exception:
+        console.print(
+            "[yellow]Warning:[/yellow] cannot reach task server at "
+            f"http://localhost:{port}. Start it with [bold]bernstein run[/bold]."
+        )
+
+    if not no_browser:
+        webbrowser.open(url)
+        console.print("[dim]Browser opened.[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# workspace — multi-repo workspace management
+# ---------------------------------------------------------------------------
+
+
+@cli.group("workspace")
+@click.option(
+    "--workdir",
+    default=".",
+    show_default=True,
+    help="Project root containing bernstein.yaml.",
+)
+@click.pass_context
+def workspace_group(ctx: click.Context, workdir: str) -> None:
+    """Manage multi-repo workspace configuration.
+
+    Shows the table of configured repos and their git status.
+
+    \b
+      bernstein workspace              # show repo status table
+      bernstein workspace clone        # clone any missing repos
+    """
+    ctx.ensure_object(dict)
+    ctx.obj["workdir"] = Path(workdir).resolve()
+
+    # If invoked without a subcommand, print repo status table.
+    if ctx.invoked_subcommand is None:
+        _workspace_status_table(ctx.obj["workdir"])
+
+
+@workspace_group.command("clone")
+@click.pass_context
+def workspace_clone(ctx: click.Context) -> None:
+    """Clone any repos configured in bernstein.yaml that don't exist locally."""
+    from bernstein.core.seed import SeedError, parse_seed
+
+    workdir: Path = ctx.obj["workdir"]
+    seed_path = workdir / "bernstein.yaml"
+    if not seed_path.exists():
+        console.print(f"[red]No bernstein.yaml found in {workdir}[/red]")
+        raise SystemExit(1)
+    try:
+        seed = parse_seed(seed_path)
+    except SeedError as exc:
+        console.print(f"[red]Seed error:[/red] {exc}")
+        raise SystemExit(1)
+
+    if seed.workspace is None:
+        console.print("[dim]No workspace: section in bernstein.yaml — nothing to clone.[/dim]")
+        return
+
+    try:
+        cloned = seed.workspace.clone_missing()
+    except RuntimeError as exc:
+        console.print(f"[red]Clone failed:[/red] {exc}")
+        raise SystemExit(1)
+
+    if cloned:
+        for name in cloned:
+            console.print(f"[green]Cloned[/green] {name}")
+    else:
+        console.print("[dim]All repos already present — nothing cloned.[/dim]")
+
+
+def _workspace_status_table(workdir: Path) -> None:
+    """Print a Rich table of workspace repo git status.
+
+    Args:
+        workdir: Project root containing bernstein.yaml.
+    """
+    from rich.table import Table
+
+    from bernstein.core.seed import SeedError, parse_seed
+
+    seed_path = workdir / "bernstein.yaml"
+    if not seed_path.exists():
+        console.print(f"[red]No bernstein.yaml found in {workdir}[/red]")
+        raise SystemExit(1)
+    try:
+        seed = parse_seed(seed_path)
+    except SeedError as exc:
+        console.print(f"[red]Seed error:[/red] {exc}")
+        raise SystemExit(1)
+
+    if seed.workspace is None:
+        console.print("[dim]No workspace: section in bernstein.yaml.[/dim]")
+        return
+
+    statuses = seed.workspace.status()
+
+    table = Table(title="Workspace repos", show_header=True, header_style="bold magenta")
+    table.add_column("Name", style="cyan", no_wrap=True)
+    table.add_column("Path", style="dim")
+    table.add_column("Branch", style="yellow")
+    table.add_column("State", style="green")
+    table.add_column("Ahead", justify="right")
+    table.add_column("Behind", justify="right")
+
+    for repo in seed.workspace.repos:
+        info = statuses.get(repo.name, {})
+        error = info.get("error")
+        if error:
+            table.add_row(repo.name, str(repo.path), "[red]—[/red]", f"[red]{error}[/red]", "—", "—")
+        else:
+            state = info.get("state", "?")
+            state_fmt = f"[green]{state}[/green]" if state == "clean" else f"[yellow]{state}[/yellow]"
+            table.add_row(
+                repo.name,
+                str(repo.path),
+                info.get("branch", "?"),
+                state_fmt,
+                info.get("ahead", "?"),
+                info.get("behind", "?"),
+            )
+
+    console.print(table)
