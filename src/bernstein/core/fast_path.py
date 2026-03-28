@@ -19,9 +19,10 @@ import logging
 import re
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import httpx
 
@@ -81,7 +82,7 @@ class FastPathStats:
     tasks_bypassed: int = 0
     total_time_saved_s: float = 0.0
     estimated_cost_saved_usd: float = 0.0
-    actions: dict[str, int] = field(default_factory=dict)
+    actions: dict[str, int] = field(default_factory=lambda: dict[str, int]())
 
     def record(self, result: FastPathResult, estimated_llm_cost: float = 0.15) -> None:
         """Record a completed fast-path execution."""
@@ -97,7 +98,8 @@ class FastPathStats:
 # ---------------------------------------------------------------------------
 
 # Regex patterns for L0 (trivial) tasks — matched against lowercased title+description
-_L0_PATTERNS: list[tuple[re.Pattern[str], FastPathAction, str]] = [
+# These are lowercase because they are reassigned by load_fast_path_config().
+_l0_patterns: list[tuple[re.Pattern[str], FastPathAction, str]] = [
     (re.compile(r"\b(format|formatting|auto-?format|black|prettier)\b"), FastPathAction.RUFF_FORMAT, "formatting"),
     (re.compile(r"\b(lint|linting|ruff fix|fix lint|autofix)\b"), FastPathAction.RUFF_FIX, "lint-fix"),
     (
@@ -113,7 +115,8 @@ _L0_PATTERNS: list[tuple[re.Pattern[str], FastPathAction, str]] = [
 ]
 
 # Regex patterns for L1 (simple) tasks — route to cheapest model
-_L1_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+# These are lowercase because they are reassigned by load_fast_path_config().
+_l1_patterns: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(add docstring|update docstring|missing docstring)\b"), "docstring"),
     (re.compile(r"\b(add type hint|type annotation|add typing)\b"), "type-hint"),
     (re.compile(r"\b(fix typo|spelling|typo)\b"), "typo-fix"),
@@ -153,7 +156,7 @@ def classify_task(task: Task) -> ClassificationResult:
     text = f"{task.title} {task.description}".lower()
 
     # Check L0 patterns
-    for pattern, action, rule_name in _L0_PATTERNS:
+    for pattern, action, rule_name in _l0_patterns:
         if pattern.search(text):
             return ClassificationResult(
                 level=TaskLevel.L0,
@@ -164,7 +167,7 @@ def classify_task(task: Task) -> ClassificationResult:
             )
 
     # Check L1 patterns
-    for pattern, rule_name in _L1_PATTERNS:
+    for pattern, rule_name in _l1_patterns:
         if pattern.search(text):
             return ClassificationResult(
                 level=TaskLevel.L1,
@@ -370,8 +373,12 @@ def _run_rename(workdir: Path, owned_files: list[str], task: Task | None = None)
     )
 
 
+# Type alias for fast-path executor functions.
+# All executors take (workdir, owned_files) and optionally task=.
+_ExecutorFn = Callable[..., FastPathResult]
+
 # Map actions to executor functions
-_EXECUTORS: dict[FastPathAction, object] = {
+_EXECUTORS: dict[FastPathAction, _ExecutorFn] = {
     FastPathAction.RUFF_FORMAT: _run_ruff_format,
     FastPathAction.RUFF_FIX: _run_ruff_fix,
     FastPathAction.SORT_IMPORTS: _run_sort_imports,
@@ -396,7 +403,7 @@ def execute_fast_path(
     Returns:
         FastPathResult with execution outcome.
     """
-    executor = _EXECUTORS.get(action)
+    executor: _ExecutorFn | None = _EXECUTORS.get(action)
     if executor is None:
         return FastPathResult(
             success=False,
@@ -404,20 +411,20 @@ def execute_fast_path(
             error=f"No executor for action: {action.value}",
         )
     if action == FastPathAction.RENAME_SYMBOL:
-        return executor(workdir, owned_files, task=task)  # type: ignore[operator]
-    return executor(workdir, owned_files)  # type: ignore[operator]
+        return executor(workdir, owned_files, task=task)
+    return executor(workdir, owned_files)
 
 
 # ---------------------------------------------------------------------------
 # L1 model override — cheapest model for simple tasks
 # ---------------------------------------------------------------------------
 
-L1_MODEL_CONFIG = ModelConfig(model="haiku", effort="low", max_tokens=50_000)
+_l1_model_config = ModelConfig(model="haiku", effort="low", max_tokens=50_000)
 
 
 def get_l1_model_config() -> ModelConfig:
     """Return the cheapest model config for L1 (simple) tasks."""
-    return L1_MODEL_CONFIG
+    return _l1_model_config
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +438,7 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
     """Load fast-path patterns from routing.yaml and update module-level rules.
 
     Reads the ``fast_path`` section of ``.sdd/config/routing.yaml`` and
-    replaces the module-level ``_L0_PATTERNS`` / ``_L1_PATTERNS`` with the
+    replaces the module-level ``_l0_patterns`` / ``_l1_patterns`` with the
     patterns defined there.  Falls back silently when the file is missing or
     malformed so that the defaults stay active.
 
@@ -441,7 +448,7 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
     Returns:
         True if config was loaded successfully, False otherwise.
     """
-    global _L0_PATTERNS, _L1_PATTERNS, L1_MODEL_CONFIG
+    global _l0_patterns, _l1_patterns, _l1_model_config
 
     try:
         import yaml  # lazy import — only needed if routing.yaml is present
@@ -458,27 +465,32 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
     if not isinstance(data, dict):
         return False
 
-    fp_cfg: object = data.get("fast_path")
-    if not isinstance(fp_cfg, dict):
+    data_dict: dict[str, object] = cast("dict[str, object]", data)
+    fp_cfg_raw: object = data_dict.get("fast_path")
+    if not isinstance(fp_cfg_raw, dict):
         return False
+
+    fp_cfg: dict[str, object] = cast("dict[str, object]", fp_cfg_raw)
 
     if not fp_cfg.get("enabled", True):
         logger.info("Fast-path disabled via routing.yaml")
-        _L0_PATTERNS = []
-        _L1_PATTERNS = []
+        _l0_patterns = []
+        _l1_patterns = []
         return True
 
     # Load L0 patterns
     raw_l0: object = fp_cfg.get("l0_patterns", [])
     if isinstance(raw_l0, list):
+        l0_items: list[object] = cast("list[object]", raw_l0)
         new_l0: list[tuple[re.Pattern[str], FastPathAction, str]] = []
-        for entry in raw_l0:
-            if not isinstance(entry, dict):
+        for entry_obj in l0_items:
+            if not isinstance(entry_obj, dict):
                 continue
-            pat_str = entry.get("pattern", "")
-            action_str = entry.get("action", "")
-            label = entry.get("label", action_str)
-            action = _ACTION_MAP.get(action_str)
+            entry: dict[str, object] = cast("dict[str, object]", entry_obj)
+            pat_str: str = str(entry.get("pattern", ""))
+            action_str: str = str(entry.get("action", ""))
+            label: str = str(entry.get("label", action_str))
+            action: FastPathAction | None = _ACTION_MAP.get(action_str)
             if not pat_str or action is None:
                 logger.debug("Skipping invalid l0 pattern entry: %s", entry)
                 continue
@@ -487,38 +499,40 @@ def load_fast_path_config(routing_yaml: Path) -> bool:
             except re.error as exc:
                 logger.warning("Bad regex in routing.yaml l0_patterns (%r): %s", pat_str, exc)
         if new_l0:
-            _L0_PATTERNS = new_l0
+            _l0_patterns = new_l0
             logger.debug("Loaded %d L0 patterns from %s", len(new_l0), routing_yaml)
 
     # Load L1 patterns
     raw_l1: object = fp_cfg.get("l1_patterns", [])
     if isinstance(raw_l1, list):
+        l1_items: list[object] = cast("list[object]", raw_l1)
         new_l1: list[tuple[re.Pattern[str], str]] = []
-        for entry in raw_l1:
-            if not isinstance(entry, dict):
+        for entry_obj in l1_items:
+            if not isinstance(entry_obj, dict):
                 continue
-            pat_str = entry.get("pattern", "")
-            label = entry.get("label", "")
-            if not pat_str:
+            entry_l1: dict[str, object] = cast("dict[str, object]", entry_obj)
+            pat_str_l1: str = str(entry_l1.get("pattern", ""))
+            label_l1: str = str(entry_l1.get("label", ""))
+            if not pat_str_l1:
                 continue
             try:
-                new_l1.append((re.compile(pat_str), label))
+                new_l1.append((re.compile(pat_str_l1), label_l1))
             except re.error as exc:
-                logger.warning("Bad regex in routing.yaml l1_patterns (%r): %s", pat_str, exc)
+                logger.warning("Bad regex in routing.yaml l1_patterns (%r): %s", pat_str_l1, exc)
         if new_l1:
-            _L1_PATTERNS = new_l1
+            _l1_patterns = new_l1
             logger.debug("Loaded %d L1 patterns from %s", len(new_l1), routing_yaml)
 
     # Load L1 model override
-    l1_model = fp_cfg.get("l1_model")
-    l1_effort = fp_cfg.get("l1_effort")
+    l1_model: object = fp_cfg.get("l1_model")
+    l1_effort: object = fp_cfg.get("l1_effort")
     if l1_model or l1_effort:
-        L1_MODEL_CONFIG = ModelConfig(
+        _l1_model_config = ModelConfig(
             model=str(l1_model) if l1_model else "haiku",
             effort=str(l1_effort) if l1_effort else "low",
             max_tokens=50_000,
         )
-        logger.debug("L1 model config from routing.yaml: %s/%s", L1_MODEL_CONFIG.model, L1_MODEL_CONFIG.effort)
+        logger.debug("L1 model config from routing.yaml: %s/%s", _l1_model_config.model, _l1_model_config.effort)
 
     return True
 

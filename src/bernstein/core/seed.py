@@ -95,17 +95,16 @@ def _parse_budget(raw: str | int | float | None) -> float | None:
         return None
     if isinstance(raw, (int, float)):
         return float(raw)
-    if isinstance(raw, str):
-        m = _BUDGET_RE.match(raw.strip())
-        if m:
-            return float(m.group(1))
-        # Try bare numeric string.
-        try:
-            return float(raw.strip())
-        except ValueError:
-            pass
-        raise SeedError(f"Invalid budget format: {raw!r}. Expected '$N' or a number.")
-    raise SeedError(f"Invalid budget type: {type(raw).__name__}")
+    # At this point raw must be str (the only remaining type).
+    m = _BUDGET_RE.match(raw.strip())
+    if m:
+        return float(m.group(1))
+    # Try bare numeric string.
+    try:
+        return float(raw.strip())
+    except ValueError:
+        pass
+    raise SeedError(f"Invalid budget format: {raw!r}. Expected '$N' or a number.")
 
 
 def _parse_team(raw: object) -> Literal["auto"] | list[str]:
@@ -123,10 +122,11 @@ def _parse_team(raw: object) -> Literal["auto"] | list[str]:
     if raw is None or raw == "auto":
         return "auto"
     if isinstance(raw, list):
-        if len(raw) == 0:
+        items: list[object] = cast("list[object]", raw)
+        if len(items) == 0:
             return "auto"
-        if all(isinstance(r, str) for r in raw):
-            return [str(r) for r in raw]
+        if all(isinstance(r, str) for r in items):
+            return [str(r) for r in items]
         raise SeedError(f"team list must contain only strings, got: {raw!r}")
     raise SeedError(f"team must be 'auto' or a list of role names, got: {raw!r}")
 
@@ -147,8 +147,9 @@ def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
     if raw is None:
         return ()
     if isinstance(raw, list):
-        if all(isinstance(s, str) for s in raw):
-            return tuple(str(s) for s in raw)
+        items: list[object] = cast("list[object]", raw)
+        if all(isinstance(s, str) for s in items):
+            return tuple(str(s) for s in items)
         raise SeedError(f"{field_name} must be a list of strings, got: {raw!r}")
     raise SeedError(f"{field_name} must be a list of strings, got: {type(raw).__name__}")
 
@@ -174,66 +175,70 @@ def parse_seed(path: Path) -> SeedConfig:
         raise SeedError(f"Cannot read seed file {path}: {exc}") from exc
 
     try:
-        data: Any = yaml.safe_load(raw_text)
+        data_raw: object = yaml.safe_load(raw_text)
     except yaml.YAMLError as exc:
         raise SeedError(f"Invalid YAML in {path}: {exc}") from exc
 
-    if not isinstance(data, dict):
-        raise SeedError(f"Seed file must be a YAML mapping, got {type(data).__name__}")
+    if not isinstance(data_raw, dict):
+        raise SeedError(f"Seed file must be a YAML mapping, got {type(data_raw).__name__}")
+
+    data: dict[str, object] = cast("dict[str, object]", data_raw)
 
     # --- Required fields ---
-    goal = data.get("goal")
+    goal: object = data.get("goal")
     if not goal or not isinstance(goal, str):
         raise SeedError("Seed file must contain a non-empty 'goal' string.")
 
     # --- Optional fields ---
-    budget_usd = _parse_budget(data.get("budget"))
+    budget_usd = _parse_budget(cast("str | int | float | None", data.get("budget")))
     team = _parse_team(data.get("team"))
 
-    cli_raw = data.get("cli", "claude")
+    cli_raw: object = data.get("cli", "claude")
     if cli_raw not in _VALID_CLIS:
         raise SeedError(f"cli must be one of {sorted(_VALID_CLIS)}, got: {cli_raw!r}")
     cli = cast("Literal['claude', 'codex', 'gemini', 'qwen']", cli_raw)
 
-    max_agents_raw = data.get("max_agents", 6)
+    max_agents_raw: object = data.get("max_agents", 6)
     if not isinstance(max_agents_raw, int) or max_agents_raw < 1:
         raise SeedError(f"max_agents must be a positive integer, got: {max_agents_raw!r}")
 
-    model_raw = data.get("model")
+    model_raw: object = data.get("model")
     if model_raw is not None and not isinstance(model_raw, str):
         raise SeedError(f"model must be a string, got: {type(model_raw).__name__}")
 
     constraints = _parse_string_list(data.get("constraints"), "constraints")
     context_files = _parse_string_list(data.get("context_files"), "context_files")
 
-    agent_catalog_raw = data.get("agent_catalog")
+    agent_catalog_raw: object = data.get("agent_catalog")
     if agent_catalog_raw is not None and not isinstance(agent_catalog_raw, str):
         raise SeedError(f"agent_catalog must be a string path, got: {type(agent_catalog_raw).__name__}")
 
-    mcp_servers_raw = data.get("mcp_servers")
+    mcp_servers_raw: object = data.get("mcp_servers")
     if mcp_servers_raw is not None and not isinstance(mcp_servers_raw, dict):
         raise SeedError(f"mcp_servers must be a mapping, got: {type(mcp_servers_raw).__name__}")
 
-    catalogs_raw = data.get("catalogs")
+    catalogs_raw: object = data.get("catalogs")
     catalogs: CatalogRegistry | None = None
     if catalogs_raw is not None:
         if not isinstance(catalogs_raw, list):
             raise SeedError(f"catalogs must be a list, got: {type(catalogs_raw).__name__}")
+        catalogs_list: list[dict[str, Any]] = cast("list[dict[str, Any]]", catalogs_raw)
         try:
-            catalogs = CatalogRegistry.from_config(catalogs_raw)
+            catalogs = CatalogRegistry.from_config(catalogs_list)
         except ValueError as exc:
             raise SeedError(f"Invalid catalogs configuration: {exc}") from exc
 
-    notify_raw = data.get("notify")
+    notify_raw: object = data.get("notify")
     notify: NotifyConfig | None = None
     if notify_raw is not None:
         if not isinstance(notify_raw, dict):
             raise SeedError(f"notify must be a mapping, got: {type(notify_raw).__name__}")
-        webhook_url = notify_raw.get("webhook")
+        notify_dict: dict[str, object] = cast("dict[str, object]", notify_raw)
+        webhook_url: object = notify_dict.get("webhook")
         if webhook_url is not None and not isinstance(webhook_url, str):
             raise SeedError(f"notify.webhook must be a string, got: {type(webhook_url).__name__}")
-        on_complete = notify_raw.get("on_complete", True)
-        on_failure = notify_raw.get("on_failure", True)
+        on_complete: object = notify_dict.get("on_complete", True)
+        on_failure: object = notify_dict.get("on_failure", True)
         if not isinstance(on_complete, bool):
             raise SeedError(f"notify.on_complete must be a bool, got: {type(on_complete).__name__}")
         if not isinstance(on_failure, bool):
@@ -244,29 +249,34 @@ def parse_seed(path: Path) -> SeedConfig:
             on_failure=on_failure,
         )
 
-    cells_raw = data.get("cells", 1)
+    cells_raw: object = data.get("cells", 1)
     if not isinstance(cells_raw, int) or cells_raw < 1:
         raise SeedError(f"cells must be a positive integer, got: {cells_raw!r}")
 
-    cluster_raw = data.get("cluster")
+    cluster_raw: object = data.get("cluster")
     cluster: ClusterConfig | None = None
     if cluster_raw is not None:
         if not isinstance(cluster_raw, dict):
             raise SeedError(f"cluster must be a mapping, got: {type(cluster_raw).__name__}")
-        topology_str = cluster_raw.get("topology", "star")
+        cluster_dict: dict[str, object] = cast("dict[str, object]", cluster_raw)
+        topology_str: object = cluster_dict.get("topology", "star")
         try:
             topology = ClusterTopology(topology_str)
         except ValueError:
             valid = [t.value for t in ClusterTopology]
             raise SeedError(f"cluster.topology must be one of {valid}, got: {topology_str!r}") from None
+        auth_token_raw: object = cluster_dict.get("auth_token")
+        auth_token: str | None = str(auth_token_raw) if auth_token_raw is not None else None
+        server_url_raw: object = cluster_dict.get("server_url")
+        server_url: str | None = str(server_url_raw) if server_url_raw is not None else None
         cluster = ClusterConfig(
-            enabled=bool(cluster_raw.get("enabled", False)),
+            enabled=bool(cluster_dict.get("enabled", False)),
             topology=topology,
-            auth_token=cluster_raw.get("auth_token"),
-            node_heartbeat_interval_s=int(cluster_raw.get("node_heartbeat_interval_s", 15)),
-            node_timeout_s=int(cluster_raw.get("node_timeout_s", 60)),
-            server_url=cluster_raw.get("server_url"),
-            bind_host=str(cluster_raw.get("bind_host", "127.0.0.1")),
+            auth_token=auth_token,
+            node_heartbeat_interval_s=int(cast("int", cluster_dict.get("node_heartbeat_interval_s", 15))),
+            node_timeout_s=int(cast("int", cluster_dict.get("node_timeout_s", 60))),
+            server_url=server_url,
+            bind_host=str(cluster_dict.get("bind_host", "127.0.0.1")),
         )
 
     return SeedConfig(
@@ -280,7 +290,7 @@ def parse_seed(path: Path) -> SeedConfig:
         context_files=context_files,
         agent_catalog=agent_catalog_raw,
         catalogs=catalogs,
-        mcp_servers=mcp_servers_raw,
+        mcp_servers=cast("dict[str, dict[str, Any]] | None", mcp_servers_raw),
         notify=notify,
         cells=cells_raw,
         cluster=cluster,
