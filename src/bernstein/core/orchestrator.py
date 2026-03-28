@@ -2772,6 +2772,21 @@ if __name__ == "__main__":
             if mcp_config:
                 logger.info("Loaded MCP config with %d server(s)", len(mcp_config.get("mcpServers", {})))
 
+        # Initialize MCPManager from seed mcp_servers config
+        from bernstein.core.mcp_manager import MCPManager, parse_server_configs
+
+        mcp_manager: MCPManager | None = None
+        if seed and seed.mcp_servers:
+            mcp_server_configs = parse_server_configs(seed.mcp_servers)
+            if mcp_server_configs:
+                mcp_manager = MCPManager(mcp_server_configs)
+                mcp_manager.start_all()
+                logger.info(
+                    "MCPManager started %d server(s): %s",
+                    len(mcp_server_configs),
+                    ", ".join(mcp_manager.server_names),
+                )
+
         # Load agency catalog from seed config
         from bernstein.core.agency_loader import load_agency_catalog
 
@@ -2792,6 +2807,7 @@ if __name__ == "__main__":
             workdir=workdir,
             router=router,
             mcp_config=mcp_config,
+            mcp_manager=mcp_manager,
             agency_catalog=agency_catalog,
             catalog=seed.catalogs if seed else None,
         )
@@ -2854,7 +2870,11 @@ if __name__ == "__main__":
                 "Starting MultiCellOrchestrator with %d cells (VP on cell-1)",
                 args.cells,
             )
-            multi_orchestrator.run()
+            try:
+                multi_orchestrator.run()
+            finally:
+                if mcp_manager is not None:
+                    mcp_manager.stop_all()
         else:
             orchestrator = Orchestrator(
                 config=config,
@@ -2863,7 +2883,11 @@ if __name__ == "__main__":
                 router=router,
                 cluster_config=cluster_cfg,
             )
-            orchestrator.run()
+            try:
+                orchestrator.run()
+            finally:
+                if mcp_manager is not None:
+                    mcp_manager.stop_all()
     except Exception:
         logger.exception("Orchestrator crashed")
         sys.exit(1)

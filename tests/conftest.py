@@ -82,6 +82,7 @@ def make_task():
         task_type: TaskType = TaskType.STANDARD,
         priority: int = 2,
         owned_files: list[str] | None = None,
+        mcp_servers: list[str] | None = None,
     ) -> Task:
         return Task(
             id=id,
@@ -94,6 +95,7 @@ def make_task():
             task_type=task_type,
             priority=priority,
             owned_files=owned_files or [],
+            mcp_servers=mcp_servers or [],
         )
 
     return _factory

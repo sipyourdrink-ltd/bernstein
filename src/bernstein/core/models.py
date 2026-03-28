@@ -186,6 +186,7 @@ class Task:
     # Manager-specified routing hints (override auto-routing when set)
     model: str | None = None  # "opus", "sonnet", "haiku"
     effort: str | None = None  # "max", "high", "medium", "low"
+    mcp_servers: list[str] = field(default_factory=list[str])  # MCP server names for this task
     created_at: float = field(default_factory=time.time)
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
@@ -250,6 +251,7 @@ class Task:
             repo=raw.get("repo"),
             model=raw.get("model"),
             effort=raw.get("effort"),
+            mcp_servers=list(raw.get("mcp_servers", [])),
             created_at=raw.get("created_at", time.time()),
             progress_log=list(raw.get("progress_log", [])),
             version=raw.get("version", 1),

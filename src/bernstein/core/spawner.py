@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from bernstein.adapters.base import CLIAdapter
     from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
     from bernstein.core.agency_loader import AgencyAgent
+    from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.workspace import Workspace
 
@@ -256,6 +257,7 @@ class AgentSpawner:
         router: TierAwareRouter | None = None,
         mcp_config: dict[str, Any] | None = None,
         mcp_registry: MCPRegistry | None = None,
+        mcp_manager: MCPManager | None = None,
         catalog: CatalogRegistry | None = None,
         use_worktrees: bool = False,
         workspace: Workspace | None = None,
@@ -271,6 +273,7 @@ class AgentSpawner:
         self._router = router
         self._mcp_config = mcp_config
         self._mcp_registry = mcp_registry
+        self._mcp_manager = mcp_manager
         self._catalog = catalog
         self._workspace = workspace
         self._context_builder = TaskContextBuilder(workdir)
@@ -392,6 +395,26 @@ class AgentSpawner:
         effective_mcp = self._mcp_config
         if self._mcp_registry is not None:
             effective_mcp = self._mcp_registry.resolve_for_tasks(tasks, base_config=self._mcp_config)
+
+        # Layer MCPManager servers on top (task-requested MCP servers)
+        if self._mcp_manager is not None:
+            # Collect MCP server names requested by tasks in this batch
+            task_server_names: list[str] = []
+            for t in tasks:
+                task_server_names.extend(t.mcp_servers)
+            # Deduplicate while preserving order
+            seen: set[str] = set()
+            unique_names: list[str] = []
+            for n in task_server_names:
+                if n not in seen:
+                    seen.add(n)
+                    unique_names.append(n)
+            # Pass None to get all servers when no specific ones requested
+            requested = unique_names if unique_names else None
+            effective_mcp = self._mcp_manager.build_mcp_config_for_task(
+                task_mcp_servers=requested,
+                base_config=effective_mcp,
+            )
 
         # Spawn via adapter
         result = target_adapter.spawn(
