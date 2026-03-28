@@ -366,12 +366,13 @@ def create_router(workdir: Path) -> TierAwareRouter | None:
     return router
 
 
-def _start_server(workdir: Path, port: int) -> int:
+def _start_server(workdir: Path, port: int, bind_host: str = "127.0.0.1") -> int:
     """Launch the task server as a background process.
 
     Args:
         workdir: Project root (server runs from here).
         port: TCP port for the uvicorn server.
+        bind_host: Host to bind to. Use "0.0.0.0" for remote access.
 
     Returns:
         PID of the server process.
@@ -398,7 +399,7 @@ def _start_server(workdir: Path, port: int) -> int:
             "uvicorn",
             "bernstein.core.server:app",
             "--host",
-            "127.0.0.1",
+            bind_host,
             "--port",
             str(port),
         ],
@@ -413,17 +414,19 @@ def _start_server(workdir: Path, port: int) -> int:
     return proc.pid
 
 
-def _wait_for_server(port: int) -> bool:
+def _wait_for_server(port: int, server_url: str | None = None) -> bool:
     """Block until the server responds to /health, or timeout.
 
     Args:
-        port: Server port.
+        port: Server port (used to build URL if server_url is None).
+        server_url: Explicit base URL to check (overrides port).
 
     Returns:
         True if the server is reachable, False on timeout.
     """
     deadline = time.monotonic() + _SERVER_READY_TIMEOUT_S
-    url = f"http://127.0.0.1:{port}/health"
+    base = server_url or f"http://127.0.0.1:{port}"
+    url = f"{base}/health"
     while time.monotonic() < deadline:
         try:
             resp = httpx.get(url, timeout=2.0)
@@ -439,13 +442,17 @@ def _inject_manager_task(
     seed: SeedConfig,
     workdir: Path,
     port: int,
+    server_url: str | None = None,
+    auth_token: str | None = None,
 ) -> str:
     """Create the initial manager task on the running server.
 
     Args:
         seed: Parsed seed configuration.
         workdir: Project root for resolving context files.
-        port: Server port.
+        port: Server port (used if server_url is None).
+        server_url: Explicit base URL of the task server.
+        auth_token: Bearer token for authenticated requests.
 
     Returns:
         The task ID assigned by the server.
@@ -464,9 +471,15 @@ def _inject_manager_task(
         "complexity": "high",
     }
 
+    base = server_url or f"http://127.0.0.1:{port}"
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+
     resp = httpx.post(
-        f"http://127.0.0.1:{port}/tasks",
+        f"{base}/tasks",
         json=payload,
+        headers=headers,
         timeout=5.0,
     )
     if resp.status_code != 201:
@@ -511,11 +524,33 @@ def _start_spawner(workdir: Path, port: int, cells: int = 1) -> int:
     return proc.pid
 
 
+def _resolve_server_url(port: int) -> str:
+    """Build the effective server URL from env var or port.
+
+    Priority: BERNSTEIN_SERVER_URL env var > constructed from port.
+    """
+    return os.environ.get("BERNSTEIN_SERVER_URL", f"http://127.0.0.1:{port}")
+
+
+def _resolve_bind_host() -> str:
+    """Determine server bind host from env var.
+
+    Priority: BERNSTEIN_BIND_HOST env var > default "127.0.0.1".
+    """
+    return os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1")
+
+
+def _resolve_auth_token() -> str | None:
+    """Read auth token from env var."""
+    return os.environ.get("BERNSTEIN_AUTH_TOKEN")
+
+
 def bootstrap_from_seed(
     seed_path: Path,
     workdir: Path,
     port: int = 8052,
     cells: int | None = None,
+    remote: bool = False,
 ) -> BootstrapResult:
     """Full bootstrap: parse seed -> init .sdd -> start server -> plan -> orchestrate.
 
@@ -532,6 +567,7 @@ def bootstrap_from_seed(
         workdir: Project root directory.
         port: TCP port for the task server.
         cells: Number of parallel cells. If None, reads from seed config.
+        remote: If True, bind to 0.0.0.0 for remote access.
 
     Returns:
         BootstrapResult with PIDs and task ID.
@@ -541,6 +577,11 @@ def bootstrap_from_seed(
         RuntimeError: If the server fails to start or respond.
     """
     from rich.status import Status
+
+    # Resolve cluster-aware settings
+    bind_host = "0.0.0.0" if remote else _resolve_bind_host()
+    auth_token = _resolve_auth_token()
+    server_url = _resolve_server_url(port)
 
     # 1. Parse seed
     with Status("[bold]Parsing seed file...[/bold]", console=console):
@@ -555,6 +596,10 @@ def bootstrap_from_seed(
         console.print(f"  [bold]Team:[/bold] {', '.join(seed.team)}")
     if seed.constraints:
         console.print(f"  [bold]Constraints:[/bold] {len(seed.constraints)} rules")
+    if remote:
+        console.print(f"  [bold]Mode:[/bold] remote (binding to {bind_host}:{port})")
+    if auth_token:
+        console.print("  [bold]Auth:[/bold] bearer token enabled")
 
     # 2. Init workspace + clean stale state
     with Status("[bold]Initialising workspace...[/bold]", console=console):
@@ -575,9 +620,9 @@ def bootstrap_from_seed(
         console.print("[green]→[/green] Workspace ready")
 
     # 3. Start server
-    with Status(f"[bold]Starting task server on :{port}...[/bold]", console=console):
-        server_pid = _start_server(workdir, port)
-        if not _wait_for_server(port):
+    with Status(f"[bold]Starting task server on {bind_host}:{port}...[/bold]", console=console):
+        server_pid = _start_server(workdir, port, bind_host=bind_host)
+        if not _wait_for_server(port, server_url=server_url):
             console.print(
                 f"[bold red]Error:[/bold red] Task server on port {port} did not respond within "
                 f"{_SERVER_READY_TIMEOUT_S:.0f}s.\n"
@@ -585,12 +630,11 @@ def bootstrap_from_seed(
                 f"  [green]Fix:[/green] Check [dim].sdd/runtime/server.log[/dim] for details"
             )
             raise SystemExit(1)
-    console.print(f"[green]→[/green] Task server ready (PID {server_pid}, :{port})")
+    console.print(f"[green]→[/green] Task server ready (PID {server_pid}, {bind_host}:{port})")
 
     # 4. Sync backlog / create manager task
     from bernstein.core.sync import sync_backlog_to_server
 
-    server_url = f"http://127.0.0.1:{port}"
     with Status("[bold]Loading tasks...[/bold]", console=console):
         sync_result = sync_backlog_to_server(workdir, server_url=server_url)
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
@@ -605,7 +649,11 @@ def bootstrap_from_seed(
     else:
         # No backlog — use the manager agent to plan from scratch
         with Status("[bold]Creating planning task...[/bold]", console=console):
-            manager_task_id = _inject_manager_task(seed, workdir, port)
+            manager_task_id = _inject_manager_task(
+                seed, workdir, port,
+                server_url=server_url,
+                auth_token=auth_token,
+            )
         console.print("[green]→[/green] Planning tasks (manager agent will decompose goal)")
 
     # 5. Start spawner + watchdog
@@ -774,9 +822,13 @@ def bootstrap_from_goal(
     else:
         console.print("[green]→[/green] Workspace ready")
 
-    with Status(f"[bold]Starting task server on :{port}...[/bold]", console=console):
-        server_pid = _start_server(workdir, port)
-        if not _wait_for_server(port):
+    bind_host = _resolve_bind_host()
+    auth_token = _resolve_auth_token()
+    server_url = _resolve_server_url(port)
+
+    with Status(f"[bold]Starting task server on {bind_host}:{port}...[/bold]", console=console):
+        server_pid = _start_server(workdir, port, bind_host=bind_host)
+        if not _wait_for_server(port, server_url=server_url):
             console.print(
                 f"[bold red]Error:[/bold red] Task server on port {port} did not respond within "
                 f"{_SERVER_READY_TIMEOUT_S:.0f}s.\n"
@@ -784,12 +836,11 @@ def bootstrap_from_goal(
                 f"  [green]Fix:[/green] Check [dim].sdd/runtime/server.log[/dim] for details"
             )
             raise SystemExit(1)
-    console.print(f"[green]→[/green] Task server ready (PID {server_pid}, :{port})")
+    console.print(f"[green]→[/green] Task server ready (PID {server_pid}, {bind_host}:{port})")
 
     # Sync backlog first; only use manager if backlog is empty
     from bernstein.core.sync import sync_backlog_to_server
 
-    server_url = f"http://127.0.0.1:{port}"
     with Status("[bold]Loading tasks...[/bold]", console=console):
         sync_result = sync_backlog_to_server(workdir, server_url=server_url)
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
@@ -803,7 +854,11 @@ def bootstrap_from_goal(
         )
     else:
         with Status("[bold]Creating planning task...[/bold]", console=console):
-            manager_task_id = _inject_manager_task(seed, workdir, port)
+            manager_task_id = _inject_manager_task(
+                seed, workdir, port,
+                server_url=server_url,
+                auth_token=auth_token,
+            )
         console.print("[green]→[/green] Planning tasks (manager agent will decompose goal)")
 
     cell_label = f"{cells} cells" if cells > 1 else "single cell"

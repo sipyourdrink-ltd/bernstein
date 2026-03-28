@@ -17,6 +17,9 @@ from bernstein.core.bootstrap import (
     _ensure_sdd,
     _is_alive,
     _read_pid,
+    _resolve_auth_token,
+    _resolve_bind_host,
+    _resolve_server_url,
     _send_webhook,
     _start_server,
     _start_spawner,
@@ -375,7 +378,8 @@ class TestCheckApiKey:
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
             _check_api_key("claude")  # must not raise
 
-    def test_exits_when_claude_key_missing(self) -> None:
+    @patch("bernstein.core.bootstrap._claude_has_oauth_session", return_value=False)
+    def test_exits_when_claude_key_missing(self, _mock_oauth: MagicMock) -> None:
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
         with patch.dict(os.environ, env, clear=True):
             with pytest.raises(SystemExit):
@@ -473,7 +477,8 @@ class TestPreflightChecks:
             with pytest.raises(SystemExit):
                 preflight_checks("claude", 8052)
 
-    def test_fails_on_missing_api_key(self) -> None:
+    @patch("bernstein.core.bootstrap._claude_has_oauth_session", return_value=False)
+    def test_fails_on_missing_api_key(self, _mock_oauth: MagicMock) -> None:
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
         with patch("shutil.which", return_value="/usr/bin/claude"):
             with patch.dict(os.environ, env, clear=True):
@@ -491,3 +496,40 @@ class TestPreflightChecks:
                 with patch("socket.socket", return_value=mock_sock):
                     with pytest.raises(SystemExit):
                         preflight_checks("claude", 8052)
+
+
+# ---------------------------------------------------------------------------
+# Cluster env var helpers
+# ---------------------------------------------------------------------------
+
+
+class TestResolveServerUrl:
+    def test_default_uses_port(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            result = _resolve_server_url(9999)
+        assert result == "http://127.0.0.1:9999"
+
+    def test_env_var_overrides_port(self) -> None:
+        with patch.dict(os.environ, {"BERNSTEIN_SERVER_URL": "http://remote.example.com:8052"}):
+            result = _resolve_server_url(8052)
+        assert result == "http://remote.example.com:8052"
+
+
+class TestResolveBindHost:
+    def test_default_is_localhost(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            assert _resolve_bind_host() == "127.0.0.1"
+
+    def test_env_var_overrides_default(self) -> None:
+        with patch.dict(os.environ, {"BERNSTEIN_BIND_HOST": "0.0.0.0"}):
+            assert _resolve_bind_host() == "0.0.0.0"
+
+
+class TestResolveAuthToken:
+    def test_returns_none_when_not_set(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            assert _resolve_auth_token() is None
+
+    def test_returns_token_when_set(self) -> None:
+        with patch.dict(os.environ, {"BERNSTEIN_AUTH_TOKEN": "my-secret"}):
+            assert _resolve_auth_token() == "my-secret"

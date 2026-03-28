@@ -1707,3 +1707,212 @@ async def test_jsonl_write_buffering(tmp_path: Path) -> None:
     # All 20 records must be on disk after the flush
     lines = [ln for ln in jsonl.read_text().splitlines() if ln.strip()]
     assert len(lines) == 20
+
+
+# ---------------------------------------------------------------------------
+# Cluster API endpoint tests
+# ---------------------------------------------------------------------------
+
+from bernstein.core.models import ClusterConfig, ClusterTopology  # noqa: E402
+
+
+@pytest.fixture()
+def cluster_app(tmp_path: Path):
+    """FastAPI app with cluster mode enabled."""
+    return create_app(
+        jsonl_path=tmp_path / "tasks.jsonl",
+        cluster_config=ClusterConfig(enabled=True),
+    )
+
+
+@pytest.fixture()
+async def cluster_client(cluster_app) -> AsyncClient:  # type: ignore[no-untyped-def]
+    transport = ASGITransport(app=cluster_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+NODE_PAYLOAD = {
+    "name": "worker-1",
+    "url": "http://worker1:8052",
+    "capacity": {
+        "max_agents": 4,
+        "available_slots": 4,
+        "active_agents": 0,
+        "gpu_available": False,
+        "supported_models": ["sonnet", "opus"],
+    },
+    "labels": {"region": "us-east"},
+    "cell_ids": [],
+}
+
+
+@pytest.mark.anyio
+async def test_register_node(cluster_client: AsyncClient) -> None:
+    """POST /cluster/nodes registers a node and returns 201."""
+    resp = await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "worker-1"
+    assert data["status"] == "online"
+    assert data["id"]
+
+
+@pytest.mark.anyio
+async def test_list_nodes_empty(cluster_client: AsyncClient) -> None:
+    """GET /cluster/nodes returns [] when no nodes registered."""
+    resp = await cluster_client.get("/cluster/nodes")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.anyio
+async def test_list_nodes_after_register(cluster_client: AsyncClient) -> None:
+    """GET /cluster/nodes returns registered nodes."""
+    await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    await cluster_client.post("/cluster/nodes", json={**NODE_PAYLOAD, "name": "worker-2", "url": "http://w2:8052"})
+    resp = await cluster_client.get("/cluster/nodes")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+@pytest.mark.anyio
+async def test_node_heartbeat(cluster_client: AsyncClient) -> None:
+    """POST /cluster/nodes/{id}/heartbeat updates capacity."""
+    reg = await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    node_id = reg.json()["id"]
+
+    hb_payload = {"capacity": {**NODE_PAYLOAD["capacity"], "available_slots": 2, "active_agents": 2}}
+    resp = await cluster_client.post(f"/cluster/nodes/{node_id}/heartbeat", json=hb_payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["capacity"]["available_slots"] == 2
+    assert data["capacity"]["active_agents"] == 2
+
+
+@pytest.mark.anyio
+async def test_node_heartbeat_unknown(cluster_client: AsyncClient) -> None:
+    """POST heartbeat for unknown node returns 404."""
+    resp = await cluster_client.post("/cluster/nodes/no-such-node/heartbeat", json={})
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_unregister_node(cluster_client: AsyncClient) -> None:
+    """DELETE /cluster/nodes/{id} removes the node."""
+    reg = await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    node_id = reg.json()["id"]
+
+    del_resp = await cluster_client.delete(f"/cluster/nodes/{node_id}")
+    assert del_resp.status_code == 204
+
+    list_resp = await cluster_client.get("/cluster/nodes")
+    assert list_resp.json() == []
+
+
+@pytest.mark.anyio
+async def test_unregister_unknown_node(cluster_client: AsyncClient) -> None:
+    """DELETE unknown node returns 404."""
+    resp = await cluster_client.delete("/cluster/nodes/ghost")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_cluster_status(cluster_client: AsyncClient) -> None:
+    """GET /cluster/status returns topology summary."""
+    await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    resp = await cluster_client.get("/cluster/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["topology"] == "star"
+    assert data["total_nodes"] == 1
+    assert data["online_nodes"] == 1
+    assert data["offline_nodes"] == 0
+    assert data["available_slots"] == 4
+    assert len(data["nodes"]) == 1
+
+
+@pytest.mark.anyio
+async def test_cluster_status_empty(cluster_client: AsyncClient) -> None:
+    """GET /cluster/status with no nodes returns all-zero summary."""
+    resp = await cluster_client.get("/cluster/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_nodes"] == 0
+    assert data["online_nodes"] == 0
+
+
+@pytest.mark.anyio
+async def test_list_nodes_filter_by_status(cluster_client: AsyncClient) -> None:
+    """GET /cluster/nodes?status=online filters correctly."""
+    await cluster_client.post("/cluster/nodes", json=NODE_PAYLOAD)
+    resp = await cluster_client.get("/cluster/nodes?status=online")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+    resp2 = await cluster_client.get("/cluster/nodes?status=offline")
+    assert resp2.status_code == 200
+    assert resp2.json() == []
+
+
+@pytest.mark.anyio
+async def test_list_nodes_invalid_status(cluster_client: AsyncClient) -> None:
+    """GET /cluster/nodes?status=bogus returns 400."""
+    resp = await cluster_client.get("/cluster/nodes?status=bogus")
+    assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Bearer auth middleware tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def auth_app(tmp_path: Path):
+    """App with bearer token auth enabled."""
+    return create_app(
+        jsonl_path=tmp_path / "tasks.jsonl",
+        auth_token="secret-token-123",
+    )
+
+
+@pytest.fixture()
+async def auth_client(auth_app) -> AsyncClient:  # type: ignore[no-untyped-def]
+    transport = ASGITransport(app=auth_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+@pytest.mark.anyio
+async def test_auth_missing_header_returns_401(auth_client: AsyncClient) -> None:
+    """Requests without Authorization header are rejected with 401."""
+    resp = await auth_client.get("/status")
+    assert resp.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_auth_wrong_token_returns_403(auth_client: AsyncClient) -> None:
+    """Requests with wrong token get 403."""
+    resp = await auth_client.get("/status", headers={"Authorization": "Bearer wrong"})
+    assert resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_auth_correct_token_succeeds(auth_client: AsyncClient) -> None:
+    """Requests with the correct token are allowed through."""
+    resp = await auth_client.get("/status", headers={"Authorization": "Bearer secret-token-123"})
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_auth_public_paths_bypass_auth(auth_client: AsyncClient) -> None:
+    """/health is accessible without auth."""
+    resp = await auth_client.get("/health")
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_auth_agent_json_bypass(auth_client: AsyncClient) -> None:
+    """/.well-known/agent.json bypasses auth."""
+    resp = await auth_client.get("/.well-known/agent.json")
+    assert resp.status_code == 200

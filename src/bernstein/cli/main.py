@@ -26,7 +26,7 @@ from bernstein.cli.cost import cost_cmd
 # Constants
 # ---------------------------------------------------------------------------
 
-SERVER_URL = "http://localhost:8052"
+SERVER_URL = os.environ.get("BERNSTEIN_SERVER_URL", "http://localhost:8052")
 SDD_DIRS = [
     ".sdd",
     ".sdd/backlog",
@@ -122,10 +122,18 @@ def _print_dry_run_table(workdir: Path) -> None:
     console.print(f"\n[dim]Total: {len(tasks)} task(s) — no agents were spawned.[/dim]")
 
 
+def _auth_headers() -> dict[str, str]:
+    """Return Authorization header dict if BERNSTEIN_AUTH_TOKEN is set."""
+    token = os.environ.get("BERNSTEIN_AUTH_TOKEN")
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return {}
+
+
 def _server_get(path: str) -> dict[str, Any] | None:
     """GET from the task server.  Returns None if server is unreachable."""
     try:
-        resp = httpx.get(f"{SERVER_URL}{path}", timeout=5.0)
+        resp = httpx.get(f"{SERVER_URL}{path}", timeout=5.0, headers=_auth_headers())
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
     except httpx.ConnectError:
@@ -138,7 +146,7 @@ def _server_get(path: str) -> dict[str, Any] | None:
 def _server_post(path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     """POST to the task server.  Returns None if server is unreachable."""
     try:
-        resp = httpx.post(f"{SERVER_URL}{path}", json=payload, timeout=5.0)
+        resp = httpx.post(f"{SERVER_URL}{path}", json=payload, timeout=5.0, headers=_auth_headers())
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
     except httpx.ConnectError:
@@ -214,13 +222,14 @@ def _find_seed_file() -> Path | None:
 @click.option("--max-cycles", default=0, hidden=True, help="Stop after N evolve cycles (0=unlimited).")
 @click.option("--budget", default=0.0, hidden=True, help="Stop after $N spent (0=unlimited).")
 @click.option("--interval", default=300, hidden=True, help="Seconds between evolve cycles (default 5min).")
+@click.option("--github", "github_sync", is_flag=True, default=False, hidden=True, help="Sync evolve proposals as GitHub Issues.")
 @click.option("--headless", is_flag=True, default=False, hidden=True, help="Run without dashboard (for overnight/CI).")
 @click.option("--dry-run", is_flag=True, default=False, help="Preview task plan without spawning agents.")
 @click.option("--yes", "-y", is_flag=True, default=False, hidden=True, help="Skip cost confirmation prompt.")
 @click.pass_context
 def cli(
     ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int,
-    budget: float, interval: int, headless: bool, dry_run: bool, yes: bool,
+    budget: float, interval: int, github_sync: bool, headless: bool, dry_run: bool, yes: bool,
 ) -> None:
     """Bernstein — multi-agent orchestration for CLI coding agents.
 
@@ -331,6 +340,7 @@ def cli(
             "max_cycles": max_cycles,
             "budget_usd": budget,
             "interval_s": interval,
+            "github_sync": github_sync,
         }
         evolve_path = workdir / ".sdd" / "runtime" / "evolve.json"
         evolve_path.parent.mkdir(parents=True, exist_ok=True)
@@ -339,7 +349,8 @@ def cli(
             f"[bold cyan]Evolve mode ON[/bold cyan] "
             f"(interval={interval}s"
             f"{f', max_cycles={max_cycles}' if max_cycles else ''}"
-            f"{f', budget=${budget:.2f}' if budget else ''})"
+            f"{f', budget=${budget:.2f}' if budget else ''}"
+            f"{', github-sync=on' if github_sync else ''})"
         )
 
     if headless:
@@ -457,7 +468,13 @@ def init(target_dir: str) -> None:
     show_default=True,
     help="Number of parallel orchestration cells (1 = single-cell, >1 = MultiCellOrchestrator).",
 )
-def run(goal: str | None, seed_file: str | None, port: int, cells: int) -> None:
+@click.option(
+    "--remote",
+    is_flag=True,
+    default=False,
+    help="Bind server to 0.0.0.0 for remote/cluster access (default: 127.0.0.1).",
+)
+def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: bool) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
     \b
@@ -465,6 +482,7 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int) -> None:
       bernstein conduct --goal "Build X"    # inline goal
       bernstein conduct --seed custom.yaml  # custom seed file
       bernstein conduct --cells 3           # 3 parallel cells (multi-cell mode)
+      bernstein conduct --remote            # bind to 0.0.0.0 for cluster access
     """
     _print_banner()
 
@@ -500,7 +518,7 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int) -> None:
     try:
         # CLI --cells overrides seed file value when explicitly set (cells > 1)
         cli_cells: int | None = cells if cells > 1 else None
-        bootstrap_from_seed(seed_path=path, workdir=workdir, port=port, cells=cli_cells)
+        bootstrap_from_seed(seed_path=path, workdir=workdir, port=port, cells=cli_cells, remote=remote)
     except SeedError as exc:
         console.print(f"[red]Seed error:[/red] {exc}")
         raise SystemExit(1) from exc
@@ -667,6 +685,38 @@ def status() -> None:
                     f"${r.get('cost_usd', 0.0):.4f}",
                 )
             console.print(cost_table)
+
+    # ---- Cluster section (only shown when nodes are registered) ----
+    cluster = _server_get("/cluster/status")
+    if cluster and cluster.get("total_nodes", 0) > 0:
+        node_table = Table(title="Cluster Nodes", show_lines=False, header_style="bold cyan")
+        node_table.add_column("ID", style="dim", min_width=12)
+        node_table.add_column("Name", min_width=12)
+        node_table.add_column("Status", min_width=10)
+        node_table.add_column("Slots", justify="right")
+        node_table.add_column("Active", justify="right")
+        node_table.add_column("URL", min_width=20)
+
+        for n in cluster.get("nodes", []):
+            raw_nstatus = n.get("status", "offline")
+            ncolor = "green" if raw_nstatus == "online" else ("yellow" if raw_nstatus == "degraded" else "red")
+            cap = n.get("capacity", {})
+            node_table.add_row(
+                n.get("id", "—")[:12],
+                n.get("name", "—"),
+                f"[{ncolor}]{raw_nstatus}[/{ncolor}]",
+                str(cap.get("available_slots", "—")),
+                str(cap.get("active_agents", "—")),
+                n.get("url", "—") or "[dim]—[/dim]",
+            )
+
+        console.print(node_table)
+        console.print(
+            f"[bold]Cluster:[/bold] {cluster.get('topology', '?')}  "
+            f"[green]{cluster.get('online_nodes', 0)} online[/green]  "
+            f"{cluster.get('offline_nodes', 0)} offline  "
+            f"[bold]{cluster.get('available_slots', 0)} slots available[/bold]"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2607,6 +2657,7 @@ def help_all(ctx: click.Context) -> None:
       --max-cycles N            Stop after N evolve cycles (default: unlimited)
       --budget N                Stop after $N spent (default: unlimited)
       --interval N              Seconds between evolve cycles (default: 300)
+      --github                  Sync evolve proposals as GitHub Issues
       --headless                Run without TUI dashboard (for CI/overnight)
       --yes / -y                Skip cost confirmation prompt
 
@@ -2689,7 +2740,26 @@ def evolve() -> None:
     show_default=True,
     help="Project root directory (parent of .sdd/).",
 )
-def evolve_run(window: str, max_proposals: int, cycle: int, workdir: str) -> None:
+@click.option(
+    "--github",
+    "github_sync",
+    is_flag=True,
+    default=False,
+    help="Sync proposals as GitHub Issues for distributed coordination.",
+)
+@click.option(
+    "--github-repo",
+    default=None,
+    help="GitHub repo slug (owner/repo). Inferred from git remote if omitted.",
+)
+def evolve_run(
+    window: str,
+    max_proposals: int,
+    cycle: int,
+    workdir: str,
+    github_sync: bool,
+    github_repo: str | None,
+) -> None:
     """Run the autoresearch evolution loop.
 
     \b
@@ -2702,10 +2772,16 @@ def evolve_run(window: str, max_proposals: int, cycle: int, workdir: str) -> Non
 
     L2+ proposals are saved to .sdd/evolution/deferred.jsonl for human review.
 
+    When --github is set, each proposal is published as a GitHub Issue with
+    label ``bernstein-evolve``.  Multiple instances running concurrently will
+    claim different issues, preventing duplicate work.
+
     \b
       bernstein evolve run                         # default: 2h window, 24 proposals
       bernstein evolve run --window 30m            # short session
       bernstein evolve run --max-proposals 48      # more experiments
+      bernstein evolve run --github                # sync proposals to GitHub Issues
+      bernstein evolve run --github --github-repo owner/myrepo
     """
     from bernstein.evolution.loop import EvolutionLoop
 
@@ -2719,11 +2795,42 @@ def evolve_run(window: str, max_proposals: int, cycle: int, workdir: str) -> Non
         )
         raise SystemExit(1)
 
+    # Read evolve.github_sync / evolve.github_repo from bernstein.yaml if present
+    # and the flags were not set on the CLI.
+    for _seed_name in ("bernstein.yaml", "bernstein.yml"):
+        _seed_path = root / _seed_name
+        if _seed_path.exists():
+            try:
+                import yaml as _yaml
+                _seed_raw = _yaml.safe_load(_seed_path.read_text(encoding="utf-8"))
+                if isinstance(_seed_raw, dict):
+                    _evolve_cfg = _seed_raw.get("evolve", {})
+                    if isinstance(_evolve_cfg, dict):
+                        if not github_sync and _evolve_cfg.get("github_sync"):
+                            github_sync = True
+                        if github_repo is None and _evolve_cfg.get("github_repo"):
+                            github_repo = str(_evolve_cfg["github_repo"])
+            except Exception:
+                pass  # YAML parse errors are non-fatal here
+            break
+
     # Parse window duration string (e.g. "2h", "30m", "1h30m").
     window_seconds = _parse_duration(window)
     if window_seconds <= 0:
         console.print(f"[red]Invalid window duration:[/red] {window}")
         raise SystemExit(1)
+
+    # Check GitHub availability early so we can warn before the loop starts.
+    if github_sync:
+        from bernstein.core.github import GitHubClient
+        _gh_check = GitHubClient(repo=github_repo)
+        if not _gh_check.available:
+            console.print(
+                "[yellow]Warning:[/yellow] --github requested but [bold]gh[/bold] CLI "
+                "is not available or not authenticated.\n"
+                "GitHub sync will be skipped. Run [bold]gh auth login[/bold] to enable it."
+            )
+            github_sync = False
 
     console.print(
         f"[bold]Evolution loop starting[/bold]\n"
@@ -2731,6 +2838,7 @@ def evolve_run(window: str, max_proposals: int, cycle: int, workdir: str) -> Non
         f"  Max props:  {max_proposals}\n"
         f"  Cycle:      {cycle}s\n"
         f"  State dir:  {state_dir}\n"
+        + (f"  GitHub:     {'enabled' if github_sync else 'disabled'}\n" if github_sync else "")
     )
 
     loop = EvolutionLoop(
@@ -2739,7 +2847,12 @@ def evolve_run(window: str, max_proposals: int, cycle: int, workdir: str) -> Non
         cycle_seconds=cycle,
         max_proposals=max_proposals,
         window_seconds=window_seconds,
+        github_sync=github_sync,
     )
+    if github_sync and github_repo:
+        # Pass the explicit repo slug to the lazily-created GitHubClient.
+        from bernstein.core.github import GitHubClient
+        loop._github = GitHubClient(repo=github_repo)
 
     try:
         results = loop.run(

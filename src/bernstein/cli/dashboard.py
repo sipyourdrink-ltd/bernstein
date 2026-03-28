@@ -104,7 +104,7 @@ class AgentWidget(Static):
         aid = a.get("id", "")
 
         color = {
-            "working": "bright_yellow", "starting": "bright_cyan", "dead": "bright_red"
+            "working": "bright_green", "starting": "bright_yellow", "dead": "bright_red"
         }.get(status, "bright_green")
         dot = {"working": "\u25c9", "starting": "\u25ce", "dead": "\u25cc"}.get(status, "\u25cf")
 
@@ -126,7 +126,7 @@ class AgentWidget(Static):
             title = self._tasks.get(tid, tid[:12])
             t.append(f"\n   \u2192 {title[:60]}", style="italic dim")
 
-        lines = _tail_log(aid, 3)
+        lines = _tail_log(aid, 5)
         for line in lines:
             clean = line[:90] + "\u2026" if len(line) > 90 else line
             t.append(f"\n   {clean}", style="dim")
@@ -154,7 +154,7 @@ class BigStats(Static):
         t = Text()
 
         if self.evolve:
-            t.append(" \u221e ", style="bold white on dark_cyan")
+            t.append(" \u221e ", style="bold bright_cyan on rgb(26,77,77)")
             t.append(" ", style="")
 
         t.append(f" {self.done}", style="bold bright_green")
@@ -214,12 +214,13 @@ class BernsteinApp(App):
     }
 
     Header {
+        background: $accent 15%;
         color: $accent;
         text-style: bold;
     }
 
     #top-panels {
-        height: 2fr;
+        height: 3fr;
     }
 
     #col-agents {
@@ -236,6 +237,7 @@ class BernsteinApp(App):
 
     #activity-bar {
         height: 1fr;
+        max-height: 8;
         border-top: heavy $border;
         padding: 0 1;
     }
@@ -251,9 +253,10 @@ class BernsteinApp(App):
 
     AgentWidget {
         height: auto;
-        max-height: 12;
-        margin: 0 0 1 0;
-        padding: 0;
+        max-height: 14;
+        margin: 0 0 0 0;
+        padding: 0 0 1 0;
+        border-bottom: solid $border;
     }
 
     DataTable {
@@ -296,11 +299,20 @@ class BernsteinApp(App):
         background: $surface;
         color: $accent;
         height: 3;
-        border: tall $surface;
+        border: tall $border;
     }
 
     ChatInput:focus {
         border: tall $accent;
+    }
+
+    Footer {
+        background: $surface;
+    }
+
+    Footer > .footer--key {
+        background: $accent 30%;
+        color: $accent;
     }
 
     #no-agents {
@@ -454,7 +466,7 @@ class BernsteinApp(App):
             color = {"done": "green", "failed": "red", "claimed": "yellow", "open": "dim"}.get(st, "white")
             table.add_row(
                 Text(f" {icon}", style=f"bold {color}"),
-                Text(t.get("role", "-").upper(), style=color),
+                Text(t.get("role", "-").upper().ljust(9), style=color),
                 Text(t.get("title", "-"), style=color if st != "open" else ""),
             )
 
@@ -476,6 +488,17 @@ class BernsteinApp(App):
         spark = self.query_one("#spark", Sparkline)
         spark.data = list(self._history) if self._history else [0.0]
 
+    ROLE_COLORS: ClassVar[dict[str, str]] = {
+        "backend": "bright_green",
+        "frontend": "bright_cyan",
+        "qa": "bright_green",
+        "security": "bright_yellow",
+        "devops": "bright_cyan",
+        "architect": "bright_magenta",
+        "manager": "bright_white",
+        "docs": "bright_blue",
+    }
+
     # -- Activity --
 
     def _update_activity(self, agents: list[dict[str, Any]]) -> None:
@@ -487,10 +510,11 @@ class BernsteinApp(App):
                 continue
             aid = a.get("id", "")
             role = a.get("role", "?")
+            role_color = self.ROLE_COLORS.get(role.lower(), "bright_white")
             lines = _tail_log(aid, 2)
             for line in lines:
                 clean = line[:100] + "\u2026" if len(line) > 100 else line
-                new_lines.append(f"[bold]{role}[/] {clean}")
+                new_lines.append(f"[bold {role_color}]{role.upper()}[/] {clean}")
 
         for line in new_lines:
             if line not in self._last_activity:

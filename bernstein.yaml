@@ -20,3 +20,31 @@ context_files:
   - docs/decisions/003-self-evolution.md
 agency:
   path: /Users/sasha/IdeaProjects/cloned/agency-agents
+
+evolve:
+  # Set to true to sync evolution proposals as GitHub Issues.
+  # Requires the gh CLI to be installed and authenticated (gh auth login).
+  # When enabled, multiple `bernstein run --evolve --github` instances on the
+  # same repo coordinate via issue labels to avoid duplicate work.
+  github_sync: false
+  # Optional: specify the GitHub repo slug (owner/repo). If omitted, inferred
+  # from the current git remote.
+  github_repo: ~
+
+# Distributed cluster mode (Phase 1-3 support).
+# Env vars override all settings here:
+#   BERNSTEIN_SERVER_URL   — connect to a remote task server
+#   BERNSTEIN_BIND_HOST    — bind address (0.0.0.0 for remote, 127.0.0.1 for local)
+#   BERNSTEIN_AUTH_TOKEN   — shared bearer token for inter-node auth
+#   BERNSTEIN_CLUSTER_ENABLED — set to "1" or "true" to enable cluster mode
+#
+# Quick-start (star topology, two machines):
+#   Central:  BERNSTEIN_BIND_HOST=0.0.0.0 BERNSTEIN_AUTH_TOKEN=secret bernstein run
+#   Worker:   BERNSTEIN_SERVER_URL=http://<central>:8052 BERNSTEIN_AUTH_TOKEN=secret bernstein run
+#
+# cluster:
+#   enabled: false
+#   topology: star          # star | mesh | hierarchical
+#   bind_host: 127.0.0.1    # override with 0.0.0.0 for remote access, or use --remote flag
+#   node_heartbeat_interval_s: 15
+#   node_timeout_s: 60

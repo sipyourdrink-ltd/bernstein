@@ -86,6 +86,7 @@ Submit if score ≥ 3.0. Scores 2.5-3.0: submit with extra care. Below 2.5: skip
 | F12 | **PR template ignored** | Repo has specific PR template we didn't fill | Phase 2, Check #9 | MEDIUM |
 | F13 | **Generic PR title** | "Update README.md" → fast path to rejection (kyrolabs pattern) | Always use "Add ProjectName — short description" | MEDIUM |
 | F14 | **Category stretch** | ShopSavvy MCP Server in "Automation" of an agents list | Phase 2, Check #8 — only exact fits | MEDIUM |
+| F15 | **API PR creation blocked** | hesreallyhim/awesome-claude-code blocks non-collaborator PR creation via API (GraphQL + REST both fail 404/403) | Must create PR via browser for these repos | LOW |
 
 ### ⚠️ Critical Risk: Social Proof Gap
 

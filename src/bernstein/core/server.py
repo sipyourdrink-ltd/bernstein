@@ -10,6 +10,7 @@ import asyncio
 import contextlib
 import heapq
 import json
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -17,14 +18,21 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from bernstein.core.a2a import A2AHandler, A2ATaskStatus
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, MessageType
+from bernstein.core.cluster import NodeRegistry, node_from_dict
 from bernstein.core.models import (
     AgentSession,
+    ClusterConfig,
     CompletionSignal,
+    NodeCapacity,
+    NodeInfo,
+    NodeStatus,
     RiskAssessment,
     RollbackPlan,
     Task,
@@ -34,7 +42,50 @@ from bernstein.core.models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Callable
+
+
+# ---------------------------------------------------------------------------
+# Auth middleware — bearer token validation
+# ---------------------------------------------------------------------------
+
+# Paths that are always accessible without auth (health checks, agent card)
+_PUBLIC_PATHS = frozenset({"/health", "/.well-known/agent.json", "/docs", "/openapi.json"})
+
+
+class BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Validate Bearer token on all requests when auth is configured.
+
+    When ``auth_token`` is set, every request must include a matching
+    ``Authorization: Bearer <token>`` header. Health and discovery
+    endpoints are exempt.
+    """
+
+    def __init__(self, app: Any, auth_token: str | None = None) -> None:
+        super().__init__(app)
+        self._token = auth_token
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Any:  # type: ignore[type-arg]
+        if self._token is None:
+            return await call_next(request)
+
+        path = request.url.path
+        if path in _PUBLIC_PATHS:
+            return await call_next(request)
+
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid Authorization header"},
+            )
+        token = auth_header[7:]  # Strip "Bearer "
+        if token != self._token:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Invalid auth token"},
+            )
+        return await call_next(request)
 
 # ---------------------------------------------------------------------------
 # TypedDicts for file-based state records
@@ -60,6 +111,7 @@ class TaskRecord(TypedDict):
     assigned_agent: str | None
     result_summary: str | None
     cell_id: str | None
+    version: int
 
 
 class ArchiveRecord(TypedDict):
@@ -142,6 +194,7 @@ class TaskResponse(BaseModel):
     completion_signals: list[dict[str, str]] = Field(default_factory=list)
     created_at: float
     progress_log: list[ProgressEntry] = Field(default_factory=list)
+    version: int = 1
 
 
 class TaskCompleteRequest(BaseModel):
@@ -237,6 +290,62 @@ class BulletinPostRequest(BaseModel):
     type: MessageType = "status"
     content: str
     cell_id: str | None = None
+
+
+# -- Cluster schemas -------------------------------------------------------
+
+
+class NodeCapacitySchema(BaseModel):
+    """Advertised capacity of a cluster node."""
+
+    max_agents: int = 6
+    available_slots: int = 6
+    active_agents: int = 0
+    gpu_available: bool = False
+    supported_models: list[str] = Field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+
+
+class NodeRegisterRequest(BaseModel):
+    """Body for POST /cluster/nodes."""
+
+    name: str = ""
+    url: str = ""
+    capacity: NodeCapacitySchema = Field(default_factory=NodeCapacitySchema)
+    labels: dict[str, str] = Field(default_factory=dict)
+    cell_ids: list[str] = Field(default_factory=list)
+
+
+class NodeHeartbeatRequest(BaseModel):
+    """Body for POST /cluster/nodes/{node_id}/heartbeat."""
+
+    capacity: NodeCapacitySchema | None = None
+
+
+class NodeResponse(BaseModel):
+    """Serialised node in API responses."""
+
+    id: str
+    name: str
+    url: str
+    status: str
+    capacity: NodeCapacitySchema
+    last_heartbeat: float
+    registered_at: float
+    labels: dict[str, str]
+    cell_ids: list[str]
+
+
+class ClusterStatusResponse(BaseModel):
+    """Response for GET /cluster/status."""
+
+    topology: str
+    total_nodes: int
+    online_nodes: int
+    offline_nodes: int
+    total_capacity: int
+    available_slots: int
+    active_agents: int
+    nodes: list[NodeResponse]
 
 
 class BulletinMessageResponse(BaseModel):
@@ -472,6 +581,7 @@ class TaskStore:
             "assigned_agent": task.assigned_agent,
             "result_summary": task.result_summary,
             "cell_id": task.cell_id,
+            "version": task.version,
         }
 
     # -- public API ---------------------------------------------------------
@@ -593,29 +703,43 @@ class TaskStore:
                 return None
             self._index_remove(task)
             task.status = TaskStatus.CLAIMED
+            task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
             return task
 
-    async def claim_by_id(self, task_id: str) -> Task:
-        """Claim a specific task by ID.
+    async def claim_by_id(self, task_id: str, expected_version: int | None = None) -> Task:
+        """Claim a specific task by ID with optional optimistic locking.
+
+        When ``expected_version`` is provided, the claim only succeeds if
+        the task's current version matches (compare-and-swap). This
+        prevents two nodes from claiming the same task in a distributed
+        cluster.
 
         Args:
             task_id: Task identifier.
+            expected_version: If set, CAS — reject if task.version != this.
 
         Returns:
             The claimed Task.
 
         Raises:
             KeyError: If task_id does not exist.
+            ValueError: If expected_version doesn't match (CAS conflict).
         """
         async with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
+            if expected_version is not None and task.version != expected_version:
+                raise ValueError(
+                    f"Version conflict: task {task_id} is at version {task.version}, "
+                    f"expected {expected_version}"
+                )
             if task.status == TaskStatus.OPEN:
                 self._index_remove(task)
                 task.status = TaskStatus.CLAIMED
+                task.version += 1
                 self._index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
             return task
@@ -643,6 +767,7 @@ class TaskStore:
                 self._index_remove(task)
                 task.status = TaskStatus.CLAIMED
                 task.assigned_agent = agent_id
+                task.version += 1
                 self._index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
                 claimed.append(task_id)
@@ -668,6 +793,7 @@ class TaskStore:
             self._index_remove(task)
             task.status = TaskStatus.DONE
             task.result_summary = result_summary
+            task.version += 1
             self._index_add(task)
             completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
@@ -694,6 +820,7 @@ class TaskStore:
             self._index_remove(task)
             task.status = TaskStatus.FAILED
             task.result_summary = reason
+            task.version += 1
             self._index_add(task)
             completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
@@ -747,6 +874,7 @@ class TaskStore:
             self._index_remove(task)
             task.status = TaskStatus.CANCELLED
             task.result_summary = reason
+            task.version += 1
             self._index_add(task)
             completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
@@ -1021,6 +1149,27 @@ def _a2a_task_to_response(task: Any) -> A2ATaskResponse:
     )
 
 
+def _node_to_response(node: NodeInfo) -> NodeResponse:
+    """Convert a NodeInfo to a Pydantic response model."""
+    return NodeResponse(
+        id=node.id,
+        name=node.name,
+        url=node.url,
+        status=node.status.value,
+        capacity=NodeCapacitySchema(
+            max_agents=node.capacity.max_agents,
+            available_slots=node.capacity.available_slots,
+            active_agents=node.capacity.active_agents,
+            gpu_available=node.capacity.gpu_available,
+            supported_models=node.capacity.supported_models,
+        ),
+        last_heartbeat=node.last_heartbeat,
+        registered_at=node.registered_at,
+        labels=node.labels,
+        cell_ids=node.cell_ids,
+    )
+
+
 def _task_to_response(task: Task) -> TaskResponse:
     """Convert a domain Task to a Pydantic response model."""
     return TaskResponse(
@@ -1045,6 +1194,7 @@ def _task_to_response(task: Task) -> TaskResponse:
         completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
         created_at=task.created_at,
         progress_log=list(task.progress_log),
+        version=task.version,
     )
 
 
@@ -1060,6 +1210,13 @@ async def _reaper_loop(store: TaskStore, interval_s: float = 30.0) -> None:
         store.mark_stale_dead()
 
 
+async def _node_reaper_loop(registry: NodeRegistry, interval_s: float = 15.0) -> None:
+    """Periodically mark stale cluster nodes as offline."""
+    while True:
+        await asyncio.sleep(interval_s)
+        registry.mark_stale()
+
+
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
@@ -1070,6 +1227,8 @@ DEFAULT_JSONL_PATH = Path(".sdd/runtime/tasks.jsonl")
 def create_app(
     jsonl_path: Path = DEFAULT_JSONL_PATH,
     metrics_jsonl_path: Path | None = None,
+    auth_token: str | None = None,
+    cluster_config: ClusterConfig | None = None,
 ) -> FastAPI:
     """Build and return the FastAPI application.
 
@@ -1077,10 +1236,20 @@ def create_app(
         jsonl_path: Where to persist the JSONL task log.
         metrics_jsonl_path: Path to the metrics JSONL for cost reporting.
             Defaults to <jsonl_path.parent.parent>/metrics/tasks.jsonl.
+        auth_token: If set, all API requests must include a matching
+            ``Authorization: Bearer <token>`` header.
+        cluster_config: Cluster mode configuration. If provided and
+            enabled, node registration and cluster endpoints are active.
 
     Returns:
         Configured FastAPI app with all routes registered.
     """
+    # Resolve auth token: explicit arg > env var > None
+    effective_token = auth_token or os.environ.get("BERNSTEIN_AUTH_TOKEN")
+
+    # Cluster setup
+    effective_cluster = cluster_config or ClusterConfig()
+    node_registry = NodeRegistry(effective_cluster)
 
     store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
 
@@ -1090,14 +1259,27 @@ def create_app(
         store.replay_jsonl()
         # Launch the stale-agent reaper
         reaper = asyncio.create_task(_reaper_loop(store))
+        # Launch node-stale reaper if cluster mode is on
+        node_reaper: asyncio.Task[None] | None = None
+        if effective_cluster.enabled:
+            node_reaper = asyncio.create_task(
+                _node_reaper_loop(node_registry, interval_s=effective_cluster.node_heartbeat_interval_s)
+            )
         yield
         # Shutdown
         reaper.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await reaper
+        if node_reaper is not None:
+            node_reaper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await node_reaper
         await store.flush_buffer()
 
     application = FastAPI(title="Bernstein Task Server", version="0.1.0", lifespan=lifespan)
+
+    # Auth middleware — only enforced when a token is configured
+    application.add_middleware(BearerAuthMiddleware, auth_token=effective_token)
 
     # -- routes -------------------------------------------------------------
 
@@ -1122,12 +1304,18 @@ def create_app(
         return BatchClaimResponse(claimed=claimed, failed=failed)
 
     @application.post("/tasks/{task_id}/claim", response_model=TaskResponse)
-    async def claim_task(task_id: str) -> TaskResponse:
-        """Claim a specific task by ID."""
+    async def claim_task(task_id: str, expected_version: int | None = None) -> TaskResponse:
+        """Claim a specific task by ID.
+
+        Pass ``expected_version`` as a query param for optimistic locking
+        (CAS). If the task's version doesn't match, returns 409 Conflict.
+        """
         try:
-            task = await store.claim_by_id(task_id)
+            task = await store.claim_by_id(task_id, expected_version=expected_version)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
         return _task_to_response(task)
 
     @application.post("/tasks/{task_id}/complete", response_model=TaskResponse)
@@ -1319,15 +1507,98 @@ def create_app(
             created_at=artifact.created_at,
         )
 
-    # Attach store and bulletin for testing access.
+    # -- Cluster routes --------------------------------------------------------
+
+    @application.post("/cluster/nodes", response_model=NodeResponse, status_code=201)
+    async def register_node(body: NodeRegisterRequest) -> NodeResponse:
+        """Register a new node in the cluster."""
+        capacity = NodeCapacity(
+            max_agents=body.capacity.max_agents,
+            available_slots=body.capacity.available_slots,
+            active_agents=body.capacity.active_agents,
+            gpu_available=body.capacity.gpu_available,
+            supported_models=body.capacity.supported_models,
+        )
+        node = NodeInfo(
+            name=body.name,
+            url=body.url,
+            capacity=capacity,
+            labels=body.labels,
+            cell_ids=body.cell_ids,
+        )
+        registered = node_registry.register(node)
+        return _node_to_response(registered)
+
+    @application.post("/cluster/nodes/{node_id}/heartbeat", response_model=NodeResponse)
+    async def node_heartbeat(node_id: str, body: NodeHeartbeatRequest) -> NodeResponse:
+        """Record a heartbeat from a cluster node."""
+        capacity: NodeCapacity | None = None
+        if body.capacity is not None:
+            capacity = NodeCapacity(
+                max_agents=body.capacity.max_agents,
+                available_slots=body.capacity.available_slots,
+                active_agents=body.capacity.active_agents,
+                gpu_available=body.capacity.gpu_available,
+                supported_models=body.capacity.supported_models,
+            )
+        node = node_registry.heartbeat(node_id, capacity)
+        if node is None:
+            raise HTTPException(status_code=404, detail=f"Node '{node_id}' not registered")
+        return _node_to_response(node)
+
+    @application.delete("/cluster/nodes/{node_id}", status_code=204)
+    async def unregister_node(node_id: str) -> None:
+        """Remove a node from the cluster."""
+        if not node_registry.unregister(node_id):
+            raise HTTPException(status_code=404, detail=f"Node '{node_id}' not found")
+
+    @application.get("/cluster/nodes", response_model=list[NodeResponse])
+    async def list_nodes(status: str | None = None) -> list[NodeResponse]:
+        """List all cluster nodes, optionally filtered by status."""
+        node_status: NodeStatus | None = None
+        if status is not None:
+            try:
+                node_status = NodeStatus(status)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid node status: {status}") from None
+        return [_node_to_response(n) for n in node_registry.list_nodes(node_status)]
+
+    @application.get("/cluster/status", response_model=ClusterStatusResponse)
+    async def cluster_status() -> ClusterStatusResponse:
+        """Get cluster status summary."""
+        summary = node_registry.cluster_summary()
+        return ClusterStatusResponse(
+            topology=summary["topology"],
+            total_nodes=summary["total_nodes"],
+            online_nodes=summary["online_nodes"],
+            offline_nodes=summary["offline_nodes"],
+            total_capacity=summary["total_capacity"],
+            available_slots=summary["available_slots"],
+            active_agents=summary["active_agents"],
+            nodes=[NodeResponse(**n) for n in summary["nodes"]],
+        )
+
+    # Attach store, bulletin, and cluster registry for testing access.
     # FastAPI's `state` is a plain object with no predefined attributes;
     # type: ignore[attr-defined] is the standard pattern here.
     application.state.store = store  # type: ignore[attr-defined]
     application.state.bulletin = bulletin  # type: ignore[attr-defined]
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
+    application.state.node_registry = node_registry  # type: ignore[attr-defined]
 
     return application
 
 
 # Default app instance for `uvicorn bernstein.core.server:app`
-app: FastAPI = create_app()
+# Auth token and cluster config are read from environment at import time.
+_default_cluster_enabled = os.environ.get("BERNSTEIN_CLUSTER_ENABLED", "").lower() in ("1", "true", "yes")
+_default_cluster_config = ClusterConfig(
+    enabled=_default_cluster_enabled,
+    auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
+    bind_host=os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1"),
+) if _default_cluster_enabled else None
+
+app: FastAPI = create_app(
+    auth_token=os.environ.get("BERNSTEIN_AUTH_TOKEN"),
+    cluster_config=_default_cluster_config,
+)

@@ -2,21 +2,6 @@
 
 No decisions recorded yet.
 
-## [2026-03-28 09:47] [RETRY 1] Add reverse index for task-to-session lookup in orchestrator (1fa8d0e133ee)
-Completed: [RETRY 1] Add reverse index for task-to-session lookup in orchestrator
-
-## [2026-03-28 09:47] Evolve cycle 18: documentation (7567f4269e87)
-Completed: Evolve cycle 18 documentation — created 3 tasks: (1) README.md update (test count 1777→2056, missing CLI commands, missing roles), (2) GETTING_STARTED.md add demo/ideate/retro docs, (3) CONTRIBUTING.md role docs verification
-
-## [2026-03-28 09:48] Add demo, ideate, retro commands to GETTING_STARTED.md (215901314484)
-Completed: Add demo, ideate, retro commands to GETTING_STARTED.md
-
-## [2026-03-28 09:48] Add analyst, resolver, visionary role descriptions to CONTRIBUTING.md (02bc554a3ca8)
-Completed: Add analyst, resolver, visionary role descriptions to CONTRIBUTING.md
-
-## [2026-03-28 09:48] 502 — CI/CD pipeline: GitHub Actions, PyPI publishing, Dependabot (1634fc1769a3)
-Completed: 502 — CI/CD pipeline: GitHub Actions, PyPI publishing, Dependabot
-
 ## [2026-03-28 09:48] Update README.md: test count, missing CLI commands, missing roles (74ab3d71c2f6)
 Completed: Update README.md: test count, missing CLI commands, missing roles
 
@@ -46,3 +31,18 @@ Completed: [RETRY 1] 503 — Apple-like UX overhaul: zero-friction first run, pr
 
 ## [2026-03-28 10:03] 511 — A2A (Agent-to-Agent) protocol support (4288a75cd56f)
 Completed: 511 — A2A (Agent-to-Agent) protocol support
+
+## [2026-03-28 11:32] 538 — Dashboard TUI: make real interface match SVG mockup exactly (60698839a53d)
+Completed: 538 — Dashboard TUI: make real interface match SVG mockup exactly
+
+## [2026-03-28 11:33] [RETRY 1] 520 — GitHub Issues as evolve coordination layer (b11f63e9c807)
+Completed: [RETRY 1] 520 — GitHub Issues as evolve coordination layer
+
+## [2026-03-28 11:33] [RETRY 1] 520 — GitHub Issues as evolve coordination layer (29bf4acb9744)
+Completed: [RETRY 1] 520 — GitHub Issues as evolve coordination layer
+
+## [2026-03-28 11:36] [RETRY 1] 520 — GitHub Issues as evolve coordination layer (214860dfe96b)
+Completed: [RETRY 1] 520 — GitHub Issues as evolve coordination layer
+
+## [2026-03-28 11:38] [RETRY 1] 520 — GitHub Issues as evolve coordination layer (d7a3682d6ada)
+Completed: [RETRY 1] 520 — GitHub Issues as evolve coordination layer

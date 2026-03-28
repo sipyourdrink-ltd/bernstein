@@ -23,6 +23,28 @@ from bernstein.core.orchestrator import Orchestrator, TickResult
 from bernstein.core.spawner import AgentSpawner
 
 
+@pytest.fixture(autouse=True)
+def _no_subprocess_in_evolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent evolve methods from spawning real subprocesses (pytest, git, research).
+
+    Without this, tests that trigger an evolve cycle run the full test suite
+    recursively, eating 50+ GB of RAM.
+    """
+    monkeypatch.setattr(
+        Orchestrator, "_evolve_run_tests",
+        lambda self: {"passed": 0, "failed": 0, "summary": "mocked"},
+    )
+    monkeypatch.setattr(
+        Orchestrator, "_evolve_auto_commit",
+        lambda self: False,
+    )
+    # Prevent Tavily API calls from _evolve_spawn_manager
+    monkeypatch.setattr(
+        "bernstein.core.researcher.run_research_sync",
+        lambda workdir: None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -367,10 +389,7 @@ class TestEvolveCycleLogging:
         client = _mock_client_idle()
         orch = Orchestrator(config, spawner, tmp_path, client=client)
 
-        # Patch test/commit to avoid subprocess calls
-        with patch.object(orch, "_evolve_run_tests", return_value={"passed": 10, "failed": 0, "summary": "10 passed"}), \
-             patch.object(orch, "_evolve_auto_commit", return_value=False):
-            orch.tick()
+        orch.tick()
 
         log_path = tmp_path / ".sdd" / "metrics" / "evolve_cycles.jsonl"
         assert log_path.exists()
@@ -390,9 +409,7 @@ class TestEvolveCycleLogging:
         client = _mock_client_idle()
         orch = Orchestrator(config, spawner, tmp_path, client=client)
 
-        with patch.object(orch, "_evolve_run_tests", return_value={"passed": 5, "failed": 0, "summary": ""}), \
-             patch.object(orch, "_evolve_auto_commit", return_value=False):
-            orch.tick()
+        orch.tick()
 
         updated = json.loads(evolve_path.read_text())
         assert updated["_cycle_count"] == 4
@@ -414,25 +431,26 @@ class TestEvolveStateUpdates:
         orch = Orchestrator(config, spawner, tmp_path, client=client)
 
         before = time.time()
-        with patch.object(orch, "_evolve_run_tests", return_value={"passed": 0, "failed": 0, "summary": ""}), \
-             patch.object(orch, "_evolve_auto_commit", return_value=False):
-            orch.tick()
+        orch.tick()
         after = time.time()
 
         updated = json.loads(evolve_path.read_text())
         assert updated["_last_cycle_ts"] >= before
         assert updated["_last_cycle_ts"] <= after
 
-    def test_resets_consecutive_empty_on_success(self, tmp_path: Path) -> None:
+    def test_resets_consecutive_empty_on_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         evolve_path = _write_evolve_json(tmp_path, _consecutive_empty=5)
         spawner = _make_spawner(tmp_path)
         config = _make_config()
 
-        # Return done tasks to simulate successful cycle
+        # Override autouse: _evolve_auto_commit returns True (committed)
+        monkeypatch.setattr(Orchestrator, "_evolve_auto_commit", lambda self: True)
+
+        # Bulk GET /tasks returns done tasks so tasks_completed > 0
         def _get(url: str, **kwargs: object) -> MagicMock:
             resp = MagicMock()
             resp.status_code = 200
-            if "status=done" in url or ("params" in kwargs and kwargs.get("params", {}).get("status") == "done"):
+            if url.endswith("/tasks"):
                 resp.json.return_value = [{"id": "t1", "title": "Done", "description": "d", "role": "backend", "status": "done"}]
             else:
                 resp.json.return_value = []
@@ -445,9 +463,7 @@ class TestEvolveStateUpdates:
 
         orch = Orchestrator(config, spawner, tmp_path, client=client)
 
-        with patch.object(orch, "_evolve_run_tests", return_value={"passed": 1, "failed": 0, "summary": ""}), \
-             patch.object(orch, "_evolve_auto_commit", return_value=True):
-            orch.tick()
+        orch.tick()
 
         updated = json.loads(evolve_path.read_text())
         assert updated["_consecutive_empty"] == 0
@@ -459,9 +475,7 @@ class TestEvolveStateUpdates:
         client = _mock_client_idle()
         orch = Orchestrator(config, spawner, tmp_path, client=client)
 
-        with patch.object(orch, "_evolve_run_tests", return_value={"passed": 0, "failed": 0, "summary": ""}), \
-             patch.object(orch, "_evolve_auto_commit", return_value=False):
-            orch.tick()
+        orch.tick()
 
         updated = json.loads(evolve_path.read_text())
         assert updated["_consecutive_empty"] == 3

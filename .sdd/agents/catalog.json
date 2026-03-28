@@ -5,7 +5,7 @@
     "model": "opus",
     "effort": "max",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   },
@@ -15,7 +15,7 @@
     "model": "sonnet",
     "effort": "high",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   },
@@ -25,7 +25,7 @@
     "model": "sonnet",
     "effort": "high",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   },
@@ -35,7 +35,7 @@
     "model": "sonnet",
     "effort": "normal",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   },
@@ -45,7 +45,7 @@
     "model": "sonnet",
     "effort": "high",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   },
@@ -55,7 +55,7 @@
     "model": "sonnet",
     "effort": "normal",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   },
@@ -65,7 +65,7 @@
     "model": "opus",
     "effort": "high",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   },
@@ -75,7 +75,7 @@
     "model": "sonnet",
     "effort": "normal",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   },
@@ -85,7 +85,7 @@
     "model": "sonnet",
     "effort": "normal",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   },
@@ -95,7 +95,7 @@
     "model": "sonnet",
     "effort": "high",
     "source": "builtin",
-    "fetched_at": 1774682112.292999,
+    "fetched_at": 1774686143.705583,
     "ttl_seconds": 300,
     "metadata": {}
   }

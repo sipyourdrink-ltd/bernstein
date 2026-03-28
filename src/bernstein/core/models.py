@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
@@ -174,6 +175,7 @@ class Task:
     effort: str | None = None              # "max", "high", "medium", "low"
     created_at: float = field(default_factory=time.time)
     progress_log: list[dict] = field(default_factory=list)  # [{timestamp, message, percent}]
+    version: int = 1  # Optimistic locking: incremented on every status change
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Task:
@@ -236,6 +238,7 @@ class Task:
             effort=raw.get("effort"),
             created_at=raw.get("created_at", time.time()),
             progress_log=list(raw.get("progress_log", [])),
+            version=raw.get("version", 1),
         )
 
 
@@ -320,3 +323,73 @@ class OrchestratorConfig:
     evolve_mode: bool = False
     budget_usd: float = 0.0  # Stop spawning when cumulative cost reaches this (0 = unlimited)
     dry_run: bool = False  # Preview planned spawns without actually spawning agents
+    auth_token: str | None = None  # Bearer token for authenticated API calls
+
+
+# ---------------------------------------------------------------------------
+# Cluster / distributed coordination models
+# ---------------------------------------------------------------------------
+
+
+class NodeStatus(Enum):
+    """Status of a cluster node."""
+    ONLINE = "online"
+    DEGRADED = "degraded"  # Responding but over capacity / errors
+    OFFLINE = "offline"
+
+
+class ClusterTopology(Enum):
+    """Cluster topology mode."""
+    STAR = "star"          # One central server, N worker nodes (default)
+    MESH = "mesh"          # Any node can serve tasks, gossip sync
+    HIERARCHICAL = "hierarchical"  # VP -> cell-leaders -> workers
+
+
+@dataclass
+class NodeCapacity:
+    """Advertised capacity of a cluster node."""
+    max_agents: int = 6
+    available_slots: int = 6
+    active_agents: int = 0
+    gpu_available: bool = False
+    supported_models: list[str] = field(default_factory=lambda: ["sonnet", "opus", "haiku"])
+
+
+@dataclass
+class NodeInfo:
+    """A registered node in the Bernstein cluster."""
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    name: str = ""
+    url: str = ""  # Base URL of this node's orchestrator (for callbacks)
+    capacity: NodeCapacity = field(default_factory=NodeCapacity)
+    status: NodeStatus = NodeStatus.ONLINE
+    last_heartbeat: float = field(default_factory=time.time)
+    registered_at: float = field(default_factory=time.time)
+    labels: dict[str, str] = field(default_factory=dict)  # e.g. {"gpu": "true", "region": "us-east"}
+    cell_ids: list[str] = field(default_factory=list)  # Cells running on this node
+
+    def is_alive(self, timeout_s: float = 60.0) -> bool:
+        """Check if the node has sent a heartbeat within timeout."""
+        return time.time() - self.last_heartbeat < timeout_s
+
+
+@dataclass(frozen=True)
+class ClusterConfig:
+    """Configuration for distributed cluster mode.
+
+    Attributes:
+        enabled: Whether cluster mode is active.
+        topology: Cluster topology mode.
+        auth_token: Shared bearer token for inter-node auth.
+        node_heartbeat_interval_s: Seconds between node heartbeats.
+        node_timeout_s: Seconds before a node is considered offline.
+        server_url: URL of the central task server (for worker nodes).
+        bind_host: Host to bind the server to (0.0.0.0 for remote access).
+    """
+    enabled: bool = False
+    topology: ClusterTopology = ClusterTopology.STAR
+    auth_token: str | None = None
+    node_heartbeat_interval_s: int = 15
+    node_timeout_s: int = 60
+    server_url: str | None = None  # Central server URL (worker nodes connect here)
+    bind_host: str = "127.0.0.1"  # Default: localhost only

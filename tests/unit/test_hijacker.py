@@ -289,7 +289,9 @@ class TestTierHijacker:
         assert result.provider_config is not None
         assert result.provider_config.tier == Tier.FREE
 
-    def test_hijack_for_task_below_confidence_threshold(self) -> None:
+    @patch.object(TierHijacker, "_check_ollama_available", return_value=False)
+    @patch.object(TierHijacker, "_check_lm_studio_available", return_value=False)
+    def test_hijack_for_task_below_confidence_threshold(self, _lm: MagicMock, _ol: MagicMock) -> None:
         router = _make_router()
         hijacker = TierHijacker(router)
 
@@ -302,7 +304,9 @@ class TestTierHijacker:
 
         assert result is None
 
-    def test_hijack_for_task_expired_opportunity(self) -> None:
+    @patch.object(TierHijacker, "_check_ollama_available", return_value=False)
+    @patch.object(TierHijacker, "_check_lm_studio_available", return_value=False)
+    def test_hijack_for_task_expired_opportunity(self, _lm: MagicMock, _ol: MagicMock) -> None:
         router = _make_router()
         hijacker = TierHijacker(router)
 

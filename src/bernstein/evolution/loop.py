@@ -50,6 +50,7 @@ from bernstein.evolution.types import UpgradeProposal as TypesUpgradeProposal
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from bernstein.core.github import GitHubClient, GitHubIssue
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +138,9 @@ class EvolutionLoop:
         cycle_seconds: Duration of each experiment cycle (default 300 = 5 min).
         max_proposals: Maximum proposals to evaluate per session (default 24).
         window_seconds: Total session duration in seconds (default 7200 = 2h).
+        github_sync: If True, sync proposals with GitHub Issues for distributed
+            coordination.  Requires the ``gh`` CLI to be installed and
+            authenticated.  Disabled by default.
     """
 
     def __init__(
@@ -146,12 +150,15 @@ class EvolutionLoop:
         cycle_seconds: int = 300,
         max_proposals: int = 24,
         window_seconds: int = 7200,
+        github_sync: bool = False,
     ) -> None:
         self._state_dir = state_dir
         self._repo_root = repo_root or state_dir.parent
         self._cycle_seconds = cycle_seconds
         self._max_proposals = max_proposals
         self._window_seconds = window_seconds
+        self._github_sync = github_sync
+        self._github: GitHubClient | None = None
 
         # --- Component wiring ---
         self._analysis_dir = state_dir / "analysis"
@@ -179,6 +186,7 @@ class EvolutionLoop:
         self._creative_pipeline = CreativePipeline(
             state_dir=state_dir,
             repo_root=self._repo_root,
+            github_sync=github_sync,
         )
 
         # --- Session counters ---
@@ -189,9 +197,33 @@ class EvolutionLoop:
         self._running: bool = False
         self._cycle_count: int = 0
 
+        # --- GitHub sync state ---
+        # Tracks the GitHub issue number for the proposal currently in flight
+        # so we can close it when the proposal is accepted.
+        self._current_issue_number: int | None = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def _gh(self) -> GitHubClient | None:
+        """Return the lazily-initialised GitHubClient, or None if sync disabled.
+
+        Deferred import keeps the ``gh`` CLI optional — the evolution loop
+        works without it.
+        """
+        if not self._github_sync:
+            return None
+        if self._github is None:
+            from bernstein.core.github import GitHubClient  # noqa: PLC0415
+            self._github = GitHubClient()
+            if not self._github.available:
+                logger.warning(
+                    "GitHub sync requested but gh CLI is unavailable or "
+                    "unauthenticated — running without GitHub sync"
+                )
+        return self._github
 
     def run(
         self,
@@ -223,6 +255,10 @@ class EvolutionLoop:
             effective_max,
             self._cycle_seconds,
         )
+        if self._github_sync:
+            gh = self._gh
+            if gh and gh.available:
+                logger.info("GitHub sync enabled — proposals will be synced as Issues")
 
         while (
             self._within_window(effective_window)
@@ -296,10 +332,24 @@ class EvolutionLoop:
         # Step 2 — Run baseline benchmark.
         baseline_score = self._run_baseline()
 
-        # Step 3 — Generate a proposal.
+        # Step 3 — GitHub coordination: check for unclaimed issues before generating.
+        # If GitHub sync is enabled, check whether another instance is already
+        # working on something similar.  We still generate locally (the proposal
+        # generator drives from detected metrics), but we skip publishing a new
+        # issue if an equivalent one is already open and unclaimed.
+        self._current_issue_number = None
+        github_hint: str | None = None
+        if self._github_sync:
+            github_hint = self._github_check_unclaimed()
+
+        # Step 4 — Generate a proposal.
         proposal = self._generate_proposal(opportunities)
         if proposal is None:
             logger.debug("No actionable opportunities found this cycle")
+            if github_hint is not None:
+                # We may have claimed an issue but generated nothing locally.
+                # Unclaim so another instance can pick it up.
+                self._github_unclaim_current()
             return None
 
         self._proposals_generated += 1
@@ -311,7 +361,11 @@ class EvolutionLoop:
             proposal.confidence,
         )
 
-        # Step 4 — Circuit breaker check.
+        # Publish or claim a GitHub issue for this proposal.
+        if self._github_sync:
+            self._github_sync_proposal(proposal.title, proposal.description)
+
+        # Step 5 — Circuit breaker check.
         # Map the proposal risk assessment to a RiskLevel for the breaker.
         risk_level = self._infer_risk_level(proposal)
         can_evolve, breaker_reason = self._breaker.can_evolve(risk_level)
@@ -334,7 +388,7 @@ class EvolutionLoop:
             self._log_experiment(result)
             return result
 
-        # Step 5 — Approval gate routing.
+        # Step 6 — Approval gate routing.
         decision = self._gate.route(
             _to_types_proposal(proposal, risk_level),
         )
@@ -347,6 +401,9 @@ class EvolutionLoop:
         if not is_auto:
             # L2+ or low-confidence: defer to human.
             self._log_deferred(proposal, decision.reason)
+            # Unclaim the GitHub issue so a human (or another instance) can
+            # pick it up via the normal review flow.
+            self._github_unclaim_current()
             result = ExperimentResult(
                 proposal_id=proposal.id,
                 title=proposal.title,
@@ -362,7 +419,7 @@ class EvolutionLoop:
             self._log_experiment(result)
             return result
 
-        # Step 6 — Sandbox validation.
+        # Step 7 — Sandbox validation.
         sandbox_result = self._sandbox.validate(
             proposal_id=proposal.id,
             diff=proposal.proposed_change,
@@ -386,13 +443,21 @@ class EvolutionLoop:
             self._log_experiment(result)
             return result
 
-        # Step 7 — Apply the proposal.
+        # Step 8 — Apply the proposal.
         applied = self._apply_proposal(proposal, sandbox_result)
         candidate_score = sandbox_result.candidate_score if applied else baseline_score
         delta = sandbox_result.delta if applied else 0.0
 
         if applied:
             self._proposals_accepted += 1
+            # Close the GitHub issue to signal completion.
+            self._github_close_current(
+                comment=(
+                    f"Proposal **{proposal.title}** applied automatically.\n\n"
+                    f"- Risk: `{risk_level.value}`\n"
+                    f"- Score delta: `{delta:+.4f}`"
+                ),
+            )
 
         result = ExperimentResult(
             proposal_id=proposal.id,
@@ -653,6 +718,123 @@ class EvolutionLoop:
             logger.info("Proposal %s deferred for human review", proposal.id)
         except OSError:
             logger.exception("Failed to write deferred proposal log")
+
+    # ------------------------------------------------------------------
+    # GitHub sync helpers
+    # ------------------------------------------------------------------
+
+    def _github_check_unclaimed(self) -> str | None:
+        """Check GitHub for unclaimed evolution issues before generating.
+
+        If an unclaimed issue exists, claim it and track its number so we
+        can close it on success.  Returns the issue title as a hint (for
+        logging purposes only — the proposal generator still runs normally).
+
+        Returns:
+            Title of the claimed issue, or None if none available or GitHub
+            sync is disabled / unavailable.
+        """
+        gh = self._gh
+        if gh is None or not gh.available:
+            return None
+
+        unclaimed = gh.find_unclaimed()
+        if not unclaimed:
+            return None
+
+        issue = unclaimed[0]
+        logger.info(
+            "GitHub sync: claiming existing issue #%d '%s'",
+            issue.number,
+            issue.title,
+        )
+        claimed = gh.claim_issue(issue.number)
+        if claimed:
+            self._current_issue_number = issue.number
+        return issue.title
+
+    def _github_sync_proposal(self, title: str, description: str) -> None:
+        """Publish a new proposal as a GitHub issue, or claim an existing one.
+
+        If an issue with the same title hash already exists (from another
+        instance), claim that issue rather than creating a duplicate.
+
+        Args:
+            title: Proposal title.
+            description: Proposal description for the issue body.
+        """
+        gh = self._gh
+        if gh is None or not gh.available:
+            return
+
+        # If we already claimed an issue in _github_check_unclaimed, skip.
+        if self._current_issue_number is not None:
+            return
+
+        # Check for a duplicate by title hash.
+        existing = gh.find_by_hash(title)
+        if existing is not None:
+            logger.info(
+                "GitHub sync: duplicate detected — claiming existing issue #%d",
+                existing.number,
+            )
+            if gh.claim_issue(existing.number):
+                self._current_issue_number = existing.number
+            return
+
+        # No duplicate — create a new issue.
+        body = (
+            f"## Auto-generated evolution proposal\n\n"
+            f"{description}\n\n"
+            f"---\n"
+            f"*Generated by `bernstein evolve run --github`*"
+        )
+        issue = gh.create_issue(title=title, body=body)
+        if issue is not None:
+            logger.info(
+                "GitHub sync: created issue #%d for proposal '%s'",
+                issue.number,
+                title,
+            )
+            if gh.claim_issue(issue.number):
+                self._current_issue_number = issue.number
+
+    def _github_close_current(self, comment: str | None = None) -> None:
+        """Close the currently tracked GitHub issue.
+
+        Args:
+            comment: Optional closing comment.
+        """
+        gh = self._gh
+        if gh is None or self._current_issue_number is None:
+            return
+        closed = gh.close_issue(self._current_issue_number, comment=comment)
+        if closed:
+            logger.info(
+                "GitHub sync: closed issue #%d",
+                self._current_issue_number,
+            )
+        self._current_issue_number = None
+
+    def _github_unclaim_current(self) -> None:
+        """Unclaim the currently tracked GitHub issue.
+
+        Called when the proposal is deferred or blocked so another instance
+        can pick it up.
+        """
+        gh = self._gh
+        if gh is None or self._current_issue_number is None:
+            return
+        gh.unclaim_issue(self._current_issue_number)
+        logger.info(
+            "GitHub sync: unclaimed issue #%d",
+            self._current_issue_number,
+        )
+        self._current_issue_number = None
+
+    # ------------------------------------------------------------------
+    # Cycle helpers
+    # ------------------------------------------------------------------
 
     def _within_window(self, window_seconds: int) -> bool:
         """Check if the loop is still within the evolution window.
