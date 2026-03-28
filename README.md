@@ -206,6 +206,17 @@ class SlackNotifier:
 
 Install via entry points (`pip install bernstein-plugin-slack`) or local config in `bernstein.yaml`.
 
+## GitHub App integration
+
+Install a GitHub App on your repository to automatically convert GitHub events into Bernstein tasks. Issues become backlog items, PR review comments become fix tasks, and pushes trigger QA verification.
+
+```bash
+bernstein github setup       # print setup instructions
+bernstein github test-webhook  # verify configuration
+```
+
+Set `GITHUB_WEBHOOK_SECRET` and point webhooks at `POST /webhooks/github`. See [`deploy/github-app/README.md`](deploy/github-app/README.md) for step-by-step setup.
+
 ## Origin
 
 Built during a 47-hour sprint: 12 AI agents on a single laptop, 737 tickets closed (15.7/hour), 826 commits. [Full write-up](docs/rag-challenge-swarm-architecture.md). Every design decision here is a direct response to those findings.

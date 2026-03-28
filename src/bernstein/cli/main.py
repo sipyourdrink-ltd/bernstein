@@ -3993,3 +3993,129 @@ def replay_cmd(
 
     if errors and not submitted:
         raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
+# github — GitHub App integration commands
+# ---------------------------------------------------------------------------
+
+
+@cli.group("github")
+def github_group() -> None:
+    """GitHub App integration.
+
+    \b
+      bernstein github setup          # print setup instructions
+      bernstein github test-webhook   # send a test webhook
+    """
+
+
+@github_group.command("setup")
+def github_setup() -> None:
+    """Print instructions for setting up the GitHub App."""
+    console.print("\n[bold cyan]GitHub App Setup Instructions[/bold cyan]\n")
+    console.print(
+        "1. Go to https://github.com/settings/apps/new\n"
+        "2. Fill in the App name (e.g. 'bernstein-orchestrator')\n"
+        "3. Set the Webhook URL to your server's /webhooks/github endpoint\n"
+        "   e.g. https://your-server.example.com/webhooks/github\n"
+        "4. Generate a webhook secret and save it\n"
+        "5. Under Permissions, grant:\n"
+        "   - Issues: Read & Write\n"
+        "   - Pull requests: Read & Write\n"
+        "   - Contents: Read\n"
+        "6. Subscribe to events:\n"
+        "   - Issues\n"
+        "   - Pull request\n"
+        "   - Pull request review comment\n"
+        "   - Push\n"
+        "7. Create the App and note the App ID\n"
+        "8. Generate a private key (PEM file)\n"
+        "9. Install the App on your repository\n\n"
+        "[bold]Set these environment variables:[/bold]\n\n"
+        "  export GITHUB_APP_ID=<your-app-id>\n"
+        "  export GITHUB_APP_PRIVATE_KEY=<path-to-pem-or-pem-string>\n"
+        "  export GITHUB_WEBHOOK_SECRET=<your-webhook-secret>\n\n"
+        "[dim]See deploy/github-app/README.md for detailed instructions.[/dim]"
+    )
+
+
+@github_group.command("test-webhook")
+@click.option("--event", default="issues", show_default=True, help="GitHub event type to simulate.")
+@click.option(
+    "--server-url",
+    default=None,
+    help="Task server URL (default: $BERNSTEIN_SERVER_URL or http://localhost:8052).",
+)
+def github_test_webhook(event: str, server_url: str | None) -> None:
+    """Send a test webhook to verify GitHub App configuration.
+
+    Sends a synthetic webhook event to the server's /webhooks/github
+    endpoint to verify that event parsing and task creation work.
+    """
+    import hashlib
+    import hmac as hmac_mod
+
+    url = server_url or SERVER_URL
+    secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "test-secret")
+
+    # Build a synthetic payload based on event type
+    payloads: dict[str, dict[str, Any]] = {
+        "issues": {
+            "action": "opened",
+            "issue": {
+                "number": 9999,
+                "title": "Test issue from bernstein github test-webhook",
+                "body": "This is a synthetic test issue to verify webhook integration.",
+                "labels": [{"name": "enhancement"}],
+            },
+            "repository": {"full_name": "test-owner/test-repo"},
+            "sender": {"login": "bernstein-test"},
+        },
+        "push": {
+            "ref": "refs/heads/main",
+            "commits": [
+                {
+                    "id": "abc12345deadbeef",
+                    "message": "test: synthetic push event",
+                }
+            ],
+            "repository": {"full_name": "test-owner/test-repo"},
+            "sender": {"login": "bernstein-test"},
+        },
+    }
+
+    payload = payloads.get(event)
+    if payload is None:
+        console.print(f"[red]Unsupported test event type:[/red] {event}")
+        console.print(f"[dim]Supported: {', '.join(payloads.keys())}[/dim]")
+        raise SystemExit(1)
+
+    body = json.dumps(payload).encode("utf-8")
+    sig = "sha256=" + hmac_mod.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+    console.print(f"[dim]Sending test {event} webhook to {url}/webhooks/github ...[/dim]")
+
+    try:
+        resp = httpx.post(
+            f"{url}/webhooks/github",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-GitHub-Event": event,
+                "X-Hub-Signature-256": sig,
+            },
+            timeout=10.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            console.print(f"[green]Success![/green] Tasks created: {data.get('tasks_created', 0)}")
+            for tid in data.get("task_ids", []):
+                console.print(f"  [cyan]{tid}[/cyan]")
+        else:
+            console.print(f"[red]Failed:[/red] HTTP {resp.status_code} — {resp.text}")
+            raise SystemExit(1)
+    except httpx.ConnectError:
+        console.print(f"[red]Cannot connect to {url}[/red]")
+        console.print("[dim]Is the Bernstein server running? Try 'bernstein start' first.[/dim]")
+        raise SystemExit(1) from None
