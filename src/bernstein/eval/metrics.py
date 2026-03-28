@@ -6,10 +6,11 @@ Metrics feed into the multiplicative scoring formula:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from bernstein.eval.telemetry import AgentTelemetry
-
+if TYPE_CHECKING:
+    from bernstein.eval.telemetry import AgentTelemetry
 
 # ---------------------------------------------------------------------------
 # Individual metric classes

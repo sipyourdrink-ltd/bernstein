@@ -182,6 +182,7 @@ class BernsteinApp(App[None]):
         self._start_ts = time.time()
         self._action_bar_visible = False
         self._current_rows: list[TaskRow] = []
+        self._log_offsets: dict[str, int] = {}  # session_id → last-read byte offset
 
     # -- layout ---------------------------------------------------------------
 
@@ -340,6 +341,9 @@ class BernsteinApp(App[None]):
         # Append recent task completions / failures to the log.
         self._update_log(log_widget, tasks)
 
+        # Tail live agent log files for near-real-time output.
+        self._tail_agent_logs(log_widget)
+
     @staticmethod
     def _count_active_agents() -> int:
         """Read agent count from the orchestrator's agents.json file.
@@ -376,3 +380,48 @@ class BernsteinApp(App[None]):
             status = task.get("status", "open")
             if msg:
                 log_widget.append_line(f"[{status}] {task_id}: {msg}")
+
+    def _tail_agent_logs(self, log_widget: AgentLogWidget) -> None:
+        """Tail log files for active agents and stream new output to the log widget.
+
+        Reads from the last known byte offset in each agent's ``.sdd/runtime/{id}.log``
+        file, appending any new lines since the previous poll. Called on every poll
+        tick for near-real-time agent output in the TUI.
+
+        Args:
+            log_widget: The widget to append log lines to.
+        """
+        agents_json = Path(".sdd/runtime/agents.json")
+        if not agents_json.exists():
+            return
+        try:
+            data = json.loads(agents_json.read_text())
+        except (OSError, ValueError):
+            return
+
+        for agent in data.get("agents", []):
+            if agent.get("status") == "dead":
+                continue
+            session_id = agent.get("id", "")
+            if not session_id:
+                continue
+            log_path = Path(f".sdd/runtime/{session_id}.log")
+            if not log_path.exists():
+                continue
+            try:
+                size = log_path.stat().st_size
+                offset = self._log_offsets.get(session_id, 0)
+                if size <= offset:
+                    continue
+                with log_path.open("rb") as f:
+                    f.seek(offset)
+                    new_bytes = f.read()
+                self._log_offsets[session_id] = size
+                role = agent.get("role", "?")
+                text = new_bytes.decode("utf-8", errors="replace")
+                for line in text.splitlines():
+                    stripped = line.strip()
+                    if stripped:
+                        log_widget.append_line(f"[cyan]{role}[/cyan][dim]/{session_id[:8]}[/dim] {stripped}")
+            except OSError:
+                pass

@@ -322,7 +322,7 @@ class ProgressSnapshot:
     Attributes:
         timestamp: Unix timestamp when the snapshot was written.
         files_changed: Number of files modified since the agent started.
-        tests_passing: Number of tests currently passing (−1 = unknown).
+        tests_passing: Number of tests currently passing (-1 = unknown).
         errors: Number of active errors / compilation failures.
         last_file: Last file the agent was editing (empty string if unknown).
     """
@@ -333,7 +333,7 @@ class ProgressSnapshot:
     errors: int = 0
     last_file: str = ""
 
-    def is_same_progress(self, other: "ProgressSnapshot") -> bool:
+    def is_same_progress(self, other: ProgressSnapshot) -> bool:
         """Return True if *other* shows the same progress as self.
 
         Compares the meaningful counters; ignores timestamp and last_file

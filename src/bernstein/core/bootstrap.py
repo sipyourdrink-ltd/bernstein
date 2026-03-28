@@ -78,11 +78,16 @@ def _check_binary(cli: str) -> None:
     Raises:
         SystemExit: If the binary is not found.
     """
+    from bernstein.cli.errors import BernsteinError
+
     binary = cli  # binary name matches adapter name for all supported adapters
     if shutil.which(binary) is None:
         hint = _CLI_INSTALL_HINT.get(cli, f"See documentation for {binary!r}")
-        console.print(f"[bold red]Error:[/bold red] {binary!r} not found in PATH.")
-        console.print(f"Install: {hint}")
+        BernsteinError(
+            what=f"{binary!r} not found in PATH",
+            why=f"The {cli} CLI adapter is required but not installed",
+            fix=f"Install: {hint}",
+        ).print()
         raise SystemExit(1)
 
 
@@ -116,22 +121,33 @@ def _check_api_key(cli: str) -> None:
     Raises:
         SystemExit: If the required API key env var is missing.
     """
+    from bernstein.cli.errors import BernsteinError
+
     if cli == "qwen":
         if not any(os.environ.get(v) for v in _QWEN_API_KEY_VARS):
-            console.print("[bold red]Error:[/bold red] No API key configured for qwen.")
-            console.print("Set one of: " + ", ".join(_QWEN_API_KEY_VARS))
+            BernsteinError(
+                what="No API key configured for qwen",
+                why="Qwen requires one of: " + ", ".join(_QWEN_API_KEY_VARS),
+                fix="export OPENROUTER_API_KEY_PAID=your-key (or any supported key var)",
+            ).print()
             raise SystemExit(1)
     elif cli == "claude":
         # Claude Code supports OAuth — API key not required if OAuth session active
         if not os.environ.get("ANTHROPIC_API_KEY") and not _claude_has_oauth_session():
-            console.print("[bold red]Error:[/bold red] No Claude authentication found.")
-            console.print("Either set ANTHROPIC_API_KEY or log in via: claude login")
+            BernsteinError(
+                what="No Claude authentication found",
+                why="Neither ANTHROPIC_API_KEY nor an active OAuth session was detected",
+                fix="export ANTHROPIC_API_KEY=your-key, or log in via: claude login",
+            ).print()
             raise SystemExit(1)
     else:
         env_var = _CLI_API_KEY_ENV.get(cli)
         if env_var and not os.environ.get(env_var):
-            console.print(f"[bold red]Error:[/bold red] {env_var} is not set.")
-            console.print(f"Export it: export {env_var}=<your-api-key>")
+            BernsteinError(
+                what=f"{cli} adapter requires an API key",
+                why=f"Environment variable {env_var} is not set",
+                fix=f"export {env_var}=your-api-key",
+            ).print()
             raise SystemExit(1)
 
 
@@ -144,15 +160,14 @@ def _check_port_free(port: int) -> None:
     Raises:
         SystemExit: If the port is occupied.
     """
+    from bernstein.cli.errors import port_in_use
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", port))
         except OSError:
-            console.print(f"[bold red]Error:[/bold red] Port {port} is already in use.")
-            console.print(
-                "Run [bold]bernstein stop[/bold] to free it, or pass [bold]--port <n>[/bold] to use a different port."
-            )
+            port_in_use(port).print()
             raise SystemExit(1) from None
 
 
@@ -629,8 +644,11 @@ def bootstrap_from_seed(
     console.print(f"[green]→[/green] Parsed seed: [bold]{seed.goal[:80]}[/bold]")
     if seed.budget_usd is not None:
         console.print(f"  [bold]Budget:[/bold] ${seed.budget_usd:.2f}")
+    else:
+        console.print('  [bold]Budget:[/bold] none set (use budget: "$N" in seed to cap spend)')
     if seed.team != "auto":
         console.print(f"  [bold]Team:[/bold] {', '.join(seed.team)}")
+    console.print(f"  [bold]CLI:[/bold] {seed.cli}  [bold]Cells:[/bold] {effective_cells}")
     if seed.constraints:
         console.print(f"  [bold]Constraints:[/bold] {len(seed.constraints)} rules")
     if remote:
@@ -684,12 +702,13 @@ def bootstrap_from_seed(
             auth_token=auth_token,
         )
         if not _wait_for_server(port, server_url=server_url):
-            console.print(
-                f"[bold red]Error:[/bold red] Task server on port {port} did not respond within "
-                f"{_SERVER_READY_TIMEOUT_S:.0f}s.\n"
-                f"  [yellow]Reason:[/yellow] Server process may have crashed\n"
-                f"  [green]Fix:[/green] Check [dim].sdd/runtime/server.log[/dim] for details"
-            )
+            from bernstein.cli.errors import BernsteinError
+
+            BernsteinError(
+                what=f"Task server on port {port} did not respond within {_SERVER_READY_TIMEOUT_S:.0f}s",
+                why="Server process may have crashed during startup",
+                fix="Check .sdd/runtime/server.log for details",
+            ).print()
             raise SystemExit(1)
     console.print(f"[green]→[/green] Task server ready (PID {server_pid}, {bind_host}:{port})")
 
@@ -917,12 +936,13 @@ def bootstrap_from_goal(
     with Status(f"[bold]Starting task server on {bind_host}:{port}...[/bold]", console=console):
         server_pid = _start_server(workdir, port, bind_host=bind_host)
         if not _wait_for_server(port, server_url=server_url):
-            console.print(
-                f"[bold red]Error:[/bold red] Task server on port {port} did not respond within "
-                f"{_SERVER_READY_TIMEOUT_S:.0f}s.\n"
-                f"  [yellow]Reason:[/yellow] Server process may have crashed\n"
-                f"  [green]Fix:[/green] Check [dim].sdd/runtime/server.log[/dim] for details"
-            )
+            from bernstein.cli.errors import BernsteinError
+
+            BernsteinError(
+                what=f"Task server on port {port} did not respond within {_SERVER_READY_TIMEOUT_S:.0f}s",
+                why="Server process may have crashed during startup",
+                fix="Check .sdd/runtime/server.log for details",
+            ).print()
             raise SystemExit(1)
     console.print(f"[green]→[/green] Task server ready (PID {server_pid}, {bind_host}:{port})")
 

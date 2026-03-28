@@ -34,7 +34,6 @@ from bernstein.core.models import (
     NodeCapacity,
     NodeInfo,
     NodeStatus,
-    ProgressSnapshot,
     RiskAssessment,
     RollbackPlan,
     Task,
@@ -262,6 +261,12 @@ class TaskFailRequest(BaseModel):
 
 class TaskCancelRequest(BaseModel):
     """Body for POST /tasks/{task_id}/cancel."""
+
+    reason: str = ""
+
+
+class TaskBlockRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/block."""
 
     reason: str = ""
 
@@ -872,6 +877,31 @@ class TaskStore:
             completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
+            return task
+
+    async def block(self, task_id: str, reason: str) -> Task:
+        """Mark a task as blocked (requires human intervention).
+
+        Args:
+            task_id: Task identifier.
+            reason: Why the task is blocked.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            self._index_remove(task)
+            task.status = TaskStatus.BLOCKED
+            task.result_summary = reason
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
             return task
 
     async def add_progress(self, task_id: str, message: str, percent: int) -> Task:
@@ -1494,6 +1524,16 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        return _task_to_response(task)
+
+    @application.post("/tasks/{task_id}/block", response_model=TaskResponse)
+    async def block_task(task_id: str, body: TaskBlockRequest) -> TaskResponse:
+        """Mark a task as blocked — requires human intervention to unblock."""
+        try:
+            task = await store.block(task_id, body.reason)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "blocked"}))
         return _task_to_response(task)
 
     @application.post("/tasks/{task_id}/progress", response_model=TaskResponse)

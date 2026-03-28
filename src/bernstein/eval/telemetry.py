@@ -32,8 +32,8 @@ class AgentTelemetry:
     task_id: str
     duration_s: float = 0.0
     turns_used: int = 0
-    files_read: list[str] = field(default_factory=list)
-    files_modified: list[str] = field(default_factory=list)
+    files_read: list[str] = field(default_factory=list[str])
+    files_modified: list[str] = field(default_factory=list[str])
     tokens_input: int = 0
     tokens_output: int = 0
     cost_usd: float = 0.0
@@ -44,19 +44,21 @@ class AgentTelemetry:
     completion_signals_passed: int = 0
 
 
-_REQUIRED_FIELDS: frozenset[str] = frozenset({
-    "task_id",
-    "duration_s",
-    "turns_used",
-    "tokens_input",
-    "tokens_output",
-    "cost_usd",
-    "tests_run",
-    "tests_passed",
-    "tests_failed",
-    "completion_signals_checked",
-    "completion_signals_passed",
-})
+_REQUIRED_FIELDS: frozenset[str] = frozenset(
+    {
+        "task_id",
+        "duration_s",
+        "turns_used",
+        "tokens_input",
+        "tokens_output",
+        "cost_usd",
+        "tests_run",
+        "tests_passed",
+        "tests_failed",
+        "completion_signals_checked",
+        "completion_signals_passed",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -64,8 +66,8 @@ class TelemetryValidation:
     """Result of validating a telemetry payload."""
 
     valid: bool
-    missing_fields: list[str] = field(default_factory=list)
-    invalid_fields: list[str] = field(default_factory=list)
+    missing_fields: list[str] = field(default_factory=list[str])
+    invalid_fields: list[str] = field(default_factory=list[str])
     penalty: float = 1.0  # Multiplicative penalty (1.0 = no penalty, 0.5 = schema violation)
 
 
@@ -114,6 +116,7 @@ def parse_telemetry(raw: dict[str, object]) -> AgentTelemetry:
     Returns:
         AgentTelemetry dataclass with parsed values.
     """
+
     def _float(key: str, default: float = 0.0) -> float:
         v = raw.get(key, default)
         return float(v) if isinstance(v, int | float) else default

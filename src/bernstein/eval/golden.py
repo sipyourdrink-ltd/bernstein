@@ -44,12 +44,12 @@ class GoldenTask:
     title: str
     description: str
     role: str = "backend"
-    expected_files_modified: list[str] = field(default_factory=list)
-    expected_test_outcomes: dict[str, bool] = field(default_factory=dict)
-    completion_signals: list[dict[str, str]] = field(default_factory=list)
+    expected_files_modified: list[str] = field(default_factory=list[str])
+    expected_test_outcomes: dict[str, bool] = field(default_factory=dict[str, bool])
+    completion_signals: list[str] = field(default_factory=list[str])
     max_cost_usd: float = 1.0
     max_duration_s: int = 300
-    owned_files: list[str] = field(default_factory=list)
+    owned_files: list[str] = field(default_factory=list[str])
 
 
 def _parse_golden_file(path: Path, tier: Tier) -> GoldenTask | None:
@@ -92,20 +92,20 @@ def _parse_golden_file(path: Path, tier: Tier) -> GoldenTask | None:
         return None
 
     body = parts[2].strip()
-    task_id = meta.get("id", path.stem)
+    task_id: str = str(meta.get("id", path.stem))
 
     return GoldenTask(
-        id=str(task_id),
+        id=task_id,
         tier=tier,
         title=str(meta.get("title", path.stem)),
         description=body or str(meta.get("description", "")),
         role=str(meta.get("role", "backend")),
-        expected_files_modified=meta.get("expected_files_modified", []),
-        expected_test_outcomes=meta.get("expected_test_outcomes", {}),
-        completion_signals=meta.get("completion_signals", []),
+        expected_files_modified=list(meta.get("expected_files_modified", [])),
+        expected_test_outcomes=dict(meta.get("expected_test_outcomes", {})),
+        completion_signals=list(meta.get("completion_signals", [])),
         max_cost_usd=float(meta.get("max_cost_usd", 1.0)),
         max_duration_s=int(meta.get("max_duration_s", 300)),
-        owned_files=meta.get("owned_files", []),
+        owned_files=list(meta.get("owned_files", [])),
     )
 
 

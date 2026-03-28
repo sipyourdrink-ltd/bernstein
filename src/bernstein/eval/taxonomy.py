@@ -39,7 +39,7 @@ class FailureRecord:
     task_id: str
     category: FailureCategory
     details: str = ""
-    files_involved: list[str] = field(default_factory=list)
+    files_involved: list[str] = field(default_factory=list[str])
     severity: Literal["low", "medium", "high", "critical"] = "medium"
 
 
@@ -51,7 +51,7 @@ class FailureTaxonomy:
         failures: All failure records from the run.
     """
 
-    failures: list[FailureRecord] = field(default_factory=list)
+    failures: list[FailureRecord] = field(default_factory=list[str])
 
     def add(self, record: FailureRecord) -> None:
         """Add a failure record."""

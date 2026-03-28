@@ -2,15 +2,6 @@
 
 No decisions recorded yet.
 
-## [2026-03-28 19:11] 716 — Technical Content Strategy (1d5f0e32fede)
-Completed: 716 — Technical Content Strategy
-
-## [2026-03-28 19:12] 717 — Benchmark vs GitHub Agent HQ (e687dc7f90d1)
-Completed: 717 — Benchmark vs GitHub Agent HQ
-
-## [2026-03-28 19:13] 718 — SWE-Bench Evaluation with Scaffolding Thesis (9095334321fc)
-Completed: 718 — SWE-Bench Evaluation with Scaffolding Thesis
-
 ## [2026-03-28 19:14] 414 — Modern git integration: branches, PRs, smart commits, context from history (65b7f8518913)
 Completed: 414 — Modern git integration. All completion signals verified: git_ops.py has conventional_commit (L246), safe_push (L318), bisect_regression (L665); git_context.py has blame_summary (L81), hot_files (L151); orchestrator.py has zero subprocess.run git calls; 76 tests pass in test_git_ops.py; 28 tests pass in test_git_context.py.
 
@@ -46,3 +37,12 @@ Completed: 707 — Bernstein as MCP Server
 
 ## [2026-03-28 19:22] 711 — Public Web Dashboard Demo Instance (be04c3e84db7)
 Completed: 711 — Public Web Dashboard Demo Instance
+
+## [2026-03-28 19:23] 718 — SWE-Bench Evaluation with Scaffolding Thesis (4cbc37c8ffb9)
+Completed: 718 — SWE-Bench Evaluation with Scaffolding Thesis
+
+## [2026-03-28 19:24] 730 — Output Guardrails: Secret Detection + Scope Enforcement (3d383ef2c67b)
+Completed: 730 — Output Guardrails: Secret Detection + Scope Enforcement
+
+## [2026-03-28 19:25] 725 — Fast Session Resume (Skip Re-Planning) (e2e617d0e110)
+Completed: 725 — Fast Session Resume (Skip Re-Planning). All components already implemented: session.py with SessionState/save_session/load_session/check_resume_session, orchestrator._save_session_state() called on cleanup, bootstrap_from_seed/bootstrap_from_goal both detect prior sessions and skip manager re-planning, --fresh CLI flag, SessionConfig in seed.yaml, comprehensive tests in test_session_resume.py (19 tests all passing).

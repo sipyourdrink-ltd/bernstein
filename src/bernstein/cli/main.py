@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from rich.table import Table
     from rich.text import Text
 
+    from bernstein.eval.golden import Tier
+
 from bernstein.cli.cost import cost_cmd
 
 # ---------------------------------------------------------------------------
@@ -460,12 +462,29 @@ def cli(
 
     # Evolve mode safety: require --budget or --max-cycles
     if evolve and budget <= 0 and max_cycles <= 0:
-        console.print(
-            "[bold red]Error:[/bold red] Evolve mode requires a safety limit\n"
-            "  [yellow]Reason:[/yellow] Evolve mode will autonomously modify code indefinitely\n"
-            "  [green]Fix:[/green] Add [bold]--budget 5.00[/bold] or [bold]--max-cycles 10[/bold]"
-        )
+        from bernstein.cli.errors import BernsteinError
+
+        BernsteinError(
+            what="Evolve mode requires a safety limit",
+            why="Evolve mode will autonomously modify code indefinitely",
+            fix="Add --budget 5.00 or --max-cycles 10",
+        ).print()
         raise SystemExit(1)
+
+    # Evolve mode confirmation: show budget/cycles and require explicit approval
+    if evolve and not yes:
+        budget_str = f"${budget:.2f}" if budget > 0 else "unlimited"
+        cycles_str = str(max_cycles) if max_cycles > 0 else "unlimited"
+        console.print(
+            f"[bold yellow]Evolve mode[/bold yellow] will autonomously modify code.\n"
+            f"  Budget: [bold]{budget_str}[/bold], max cycles: [bold]{cycles_str}[/bold].\n"
+            f"  Press [bold]Enter[/bold] to continue or Ctrl+C to cancel."
+        )
+        try:
+            input()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Aborted.[/yellow]")
+            raise SystemExit(0) from None
 
     # Check if already running
     server_pid_path = Path(SDD_PID_SERVER)
@@ -931,7 +950,9 @@ def status(as_json: bool) -> None:
         if as_json:
             click.echo(json.dumps({"error": "Cannot reach task server"}))
         else:
-            console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
+            console.print(
+                "[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start."
+            )
         raise SystemExit(1)
 
     if as_json:
@@ -2571,7 +2592,6 @@ def eval_run(tier: str | None, compare_prev: bool, save: bool) -> None:
     """
     from rich.table import Table
 
-    from bernstein.eval.golden import Tier
     from bernstein.eval.harness import EvalHarness, TaskEvalResult
 
     workdir = Path(".")
@@ -5197,8 +5217,8 @@ def completions(shell: str) -> None:
     # Click 8+ ships built-in shell completion via _<PROG>_COMPLETE env vars.
     # We generate the activation snippet the user can eval.
     shell_map = {
-        "bash": f'eval "$(_BERNSTEIN_COMPLETE=bash_source bernstein)"',
-        "zsh": f'eval "$(_BERNSTEIN_COMPLETE=zsh_source bernstein)"',
+        "bash": 'eval "$(_BERNSTEIN_COMPLETE=bash_source bernstein)"',
+        "zsh": 'eval "$(_BERNSTEIN_COMPLETE=zsh_source bernstein)"',
         "fish": "_BERNSTEIN_COMPLETE=fish_source bernstein | source",
     }
     click.echo(shell_map[shell])

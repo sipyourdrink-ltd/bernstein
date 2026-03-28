@@ -19,14 +19,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.eval.golden import GoldenTask, Tier, load_golden_tasks
-from bernstein.eval.judge import JudgeVerdict
 from bernstein.eval.metrics import (
     EvalScoreComponents,
-    TaskCompletionRate,
     TierScores,
     compute_efficiency,
     compute_reliability,
@@ -37,13 +34,18 @@ from bernstein.eval.taxonomy import (
     FailureTaxonomy,
     classify_failure,
 )
-from bernstein.eval.telemetry import AgentTelemetry, parse_telemetry, validate_telemetry
+from bernstein.eval.telemetry import AgentTelemetry, parse_telemetry
 from bernstein.evolution.benchmark import (
     RunSummary,
     load_benchmarks,
     run_benchmark,
     save_results,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.eval.judge import JudgeVerdict
 
 logger = logging.getLogger(__name__)
 
@@ -133,18 +135,18 @@ class EvalResult:
     """
 
     score: float
-    components: dict[str, float] = field(default_factory=dict)
+    components: dict[str, float] = field(default_factory=dict[str, Any])
     tier: str = "smoke"
     tasks_evaluated: int = 0
     duration_seconds: float = 0.0
     timestamp: float = field(default_factory=time.time)
-    details: list[dict[str, Any]] = field(default_factory=list)
+    details: list[dict[str, Any]] = field(default_factory=list[str])
 
     # New multiplicative scoring fields
     multiplicative_components: EvalScoreComponents | None = None
     per_tier: TierScores | None = None
-    failures: list[FailureRecord] = field(default_factory=list)
-    task_results: list[TaskEvalResult] = field(default_factory=list)
+    failures: list[FailureRecord] = field(default_factory=list[str])
+    task_results: list[TaskEvalResult] = field(default_factory=list[str])
     cost_total: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
@@ -249,9 +251,7 @@ class EvalHarness:
         eval_tier = EvalTier(tier)
         benchmark_tiers = _TIER_TO_BENCHMARK_TIERS[eval_tier]
 
-        benchmarks_dir = (
-            (sandbox_dir / "tests" / "benchmarks") if sandbox_dir else self._benchmarks_dir
-        )
+        benchmarks_dir = (sandbox_dir / "tests" / "benchmarks") if sandbox_dir else self._benchmarks_dir
 
         if not benchmarks_dir.is_dir():
             logger.debug("No benchmarks directory at %s — returning score 1.0", benchmarks_dir)
@@ -278,12 +278,14 @@ class EvalHarness:
                 result = run_benchmark(spec)
                 if result.passed:
                     tier_passed += 1
-                all_details.append({
-                    "benchmark_id": result.benchmark_id,
-                    "tier": result.tier,
-                    "passed": result.passed,
-                    "duration_seconds": result.duration_seconds,
-                })
+                all_details.append(
+                    {
+                        "benchmark_id": result.benchmark_id,
+                        "tier": result.tier,
+                        "passed": result.passed,
+                        "duration_seconds": result.duration_seconds,
+                    }
+                )
 
             tier_total = len(specs)
             total_passed += tier_passed
@@ -380,23 +382,15 @@ class EvalHarness:
 
         # Classify failure if not passed
         if not result.passed:
-            timed_out = (
-                telemetry.duration_s > task.max_duration_s
-                if task.max_duration_s > 0
-                else False
-            )
+            timed_out = telemetry.duration_s > task.max_duration_s if task.max_duration_s > 0 else False
             tests_regressed = telemetry.tests_failed > 0
 
             scope_violated = False
             if task.owned_files and telemetry.files_modified:
-                scope_violated = any(
-                    f not in task.owned_files for f in telemetry.files_modified
-                )
+                scope_violated = any(f not in task.owned_files for f in telemetry.files_modified)
 
             total_file_ops = len(telemetry.files_read) + len(telemetry.files_modified)
-            orientation_ratio = (
-                len(telemetry.files_read) / total_file_ops if total_file_ops > 0 else 0.0
-            )
+            orientation_ratio = len(telemetry.files_read) / total_file_ops if total_file_ops > 0 else 0.0
 
             failure = classify_failure(
                 task_id=task.id,
@@ -442,9 +436,7 @@ class EvalHarness:
 
         # Code quality from judge verdicts
         verdicts = [r.judge_verdict for r in task_results if r.judge_verdict is not None]
-        code_quality = (
-            sum(v.average_score for v in verdicts) / len(verdicts) if verdicts else 0.0
-        )
+        code_quality = sum(v.average_score for v in verdicts) / len(verdicts) if verdicts else 0.0
 
         # Efficiency from telemetry
         telemetry_list = [r.telemetry for r in task_results if r.telemetry is not None]

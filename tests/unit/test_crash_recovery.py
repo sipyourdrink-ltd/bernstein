@@ -223,7 +223,7 @@ def _make_orchestrator(
             return httpx.Response(404, json={"detail": "not found"})
         if request.method == "POST" and request.url.path == "/tasks":
             body = json.loads(request.content)
-            new_task = {**body, "id": f"retry-{len(task_store)}", "completion_signals": [], "progress_log": [], "version": 1, "mcp_servers": []}
+            new_task = {**body, "id": f"retry-{len(task_store)}", "status": "open", "completion_signals": [], "progress_log": [], "version": 1, "mcp_servers": []}
             task_store.append(new_task)
             return httpx.Response(201, json=new_task)
         if request.method == "POST" and "/fail" in request.url.path:
@@ -237,6 +237,12 @@ def _make_orchestrator(
             for t in task_store:
                 if t["id"] == tid:
                     t["status"] = "done"
+            return httpx.Response(200, json={"ok": True})
+        if request.method == "POST" and "/block" in request.url.path:
+            tid = request.url.path.split("/tasks/")[1].replace("/block", "")
+            for t in task_store:
+                if t["id"] == tid:
+                    t["status"] = "blocked"
             return httpx.Response(200, json={"ok": True})
         return httpx.Response(404, json={"detail": "unhandled"})
 
@@ -386,3 +392,127 @@ def test_orchestrator_does_not_preserve_worktree_on_restart(tmp_path: Path):
     orch._refresh_agent_states({"claimed": [task], "open": [], "done": [], "failed": []})
 
     assert "T-restart" not in orch._preserved_worktrees
+
+
+# ---------------------------------------------------------------------------
+# 8. escalate strategy — marks task BLOCKED after max_crash_retries exceeded
+# ---------------------------------------------------------------------------
+
+
+def test_escalate_strategy_blocks_task_when_crash_limit_exceeded(tmp_path: Path):
+    """With recovery='escalate', a task that crashes >= max_crash_retries times
+    should be marked BLOCKED (not failed or retried)."""
+    task = _make_task(id="T-escalate", status="claimed")
+    task_dict = _task_as_dict(task)
+    orch, task_store = _make_orchestrator(
+        tmp_path,
+        recovery="escalate",
+        max_crash_retries=2,
+        tasks=[task_dict],
+    )
+
+    session = AgentSession(id="s-escalate", role="backend", pid=111, task_ids=["T-escalate"])
+    session.status = "working"
+    orch._agents["s-escalate"] = session
+    orch._task_to_session["T-escalate"] = "s-escalate"
+    # Pre-set crash count at max so next crash triggers escalation
+    orch._crash_counts["T-escalate"] = 2
+
+    orch._spawner.check_alive = MagicMock(return_value=False)  # type: ignore[assignment]
+
+    orch._refresh_agent_states(
+        {"claimed": [Task.from_dict(task_dict)], "open": [], "done": [], "failed": []}
+    )
+
+    # Task should be BLOCKED, not failed
+    statuses = {t["id"]: t["status"] for t in task_store}
+    assert statuses.get("T-escalate") == "blocked"
+
+
+def test_escalate_strategy_does_not_retry_when_limit_exceeded(tmp_path: Path):
+    """With recovery='escalate' at limit, no new retry task should be created."""
+    task = _make_task(id="T-esc-no-retry", status="claimed")
+    task_dict = _task_as_dict(task)
+    orch, task_store = _make_orchestrator(
+        tmp_path,
+        recovery="escalate",
+        max_crash_retries=1,
+        tasks=[task_dict],
+    )
+
+    session = AgentSession(id="s-esc-nr", role="backend", pid=222, task_ids=["T-esc-no-retry"])
+    session.status = "working"
+    orch._agents["s-esc-nr"] = session
+    orch._task_to_session["T-esc-no-retry"] = "s-esc-nr"
+    orch._crash_counts["T-esc-no-retry"] = 1  # at limit
+
+    orch._spawner.check_alive = MagicMock(return_value=False)  # type: ignore[assignment]
+
+    initial_count = len(task_store)
+    orch._refresh_agent_states(
+        {"claimed": [Task.from_dict(task_dict)], "open": [], "done": [], "failed": []}
+    )
+
+    # No new retry task should have been created
+    assert len(task_store) == initial_count
+
+
+# ---------------------------------------------------------------------------
+# 9. orphan worktree recovery on startup
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_restores_preserved_worktree_from_metadata(tmp_path: Path):
+    """On startup, if a worktree has task metadata and the task is open/claimed,
+    the orchestrator should populate _preserved_worktrees so resume can proceed."""
+    task = _make_task(id="T-orphan-meta", status="open")
+    orch, _ = _make_orchestrator(tmp_path, tasks=[_task_as_dict(task)])
+
+    # Simulate a worktree left by a crashed agent with task metadata
+    wt_path = tmp_path / ".sdd" / "worktrees" / "orphaned-session"
+    wt_path.mkdir(parents=True)
+    meta_file = wt_path / ".bernstein_task_ids.json"
+    meta_file.write_text(json.dumps(["T-orphan-meta"]))
+
+    # Call the startup scan method
+    orch._restore_orphaned_worktrees()
+
+    assert orch._preserved_worktrees.get("T-orphan-meta") == wt_path
+
+
+def test_orchestrator_skips_worktrees_without_metadata(tmp_path: Path):
+    """Worktrees without task metadata files should not be added to preserved_worktrees."""
+    orch, _ = _make_orchestrator(tmp_path)
+
+    wt_path = tmp_path / ".sdd" / "worktrees" / "no-meta-session"
+    wt_path.mkdir(parents=True)
+    # No .bernstein_task_ids.json file
+
+    orch._restore_orphaned_worktrees()
+
+    assert len(orch._preserved_worktrees) == 0
+
+
+def test_spawn_for_tasks_writes_task_metadata_to_worktree(tmp_path: Path):
+    """After spawning with worktrees enabled, a .bernstein_task_ids.json file
+    should exist in the created worktree so crash recovery can restore it."""
+    from unittest.mock import patch
+
+    adapter = _mock_adapter()
+    spawner = _make_spawner(tmp_path, adapter)
+    spawner._use_worktrees = True
+
+    wt_path = tmp_path / ".sdd" / "worktrees" / "test-session"
+
+    task = _make_task(id="T-meta-write")
+
+    with patch.object(spawner, "_worktree_mgr") as mock_wt_mgr:
+        mock_wt_mgr.create.return_value = wt_path
+        wt_path.mkdir(parents=True)
+
+        spawner.spawn_for_tasks([task])
+
+    meta_file = wt_path / ".bernstein_task_ids.json"
+    assert meta_file.exists()
+    task_ids = json.loads(meta_file.read_text())
+    assert "T-meta-write" in task_ids

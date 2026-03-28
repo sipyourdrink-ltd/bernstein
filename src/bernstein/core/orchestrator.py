@@ -210,6 +210,19 @@ def _fail_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -
     resp.raise_for_status()
 
 
+def _block_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -> None:
+    """POST /tasks/{task_id}/block to mark a task as blocked (requires human intervention).
+
+    Args:
+        client: httpx client.
+        base_url: Server base URL.
+        task_id: ID of the task to block.
+        reason: Why the task is blocked.
+    """
+    resp = client.post(f"{base_url}/tasks/{task_id}/block", json={"reason": reason})
+    resp.raise_for_status()
+
+
 def _complete_task(client: httpx.Client, base_url: str, task_id: str, result_summary: str) -> None:
     """POST /tasks/{task_id}/complete to mark a task as done.
 
@@ -1856,6 +1869,24 @@ class Orchestrator:
                 task_id,
                 status.value,
             )
+            return
+
+        # Escalate strategy: block task when crash limit exceeded
+        if self._config.recovery == "escalate" and self._crash_counts.get(task_id, 0) >= self._config.max_crash_retries:
+            reason = (
+                f"Agent {session.id} died; escalating after "
+                f"{self._crash_counts[task_id]} crash(es) — requires human intervention"
+            )
+            try:
+                _block_task(self._client, base, task_id, reason)
+                logger.warning(
+                    "Escalated task %s to BLOCKED after %d crash(es)",
+                    task_id,
+                    self._crash_counts[task_id],
+                )
+            except httpx.HTTPError as exc:
+                logger.error("Failed to block escalated task %s: %s", task_id, exc)
+            self._emit_orphan_metrics(task_id, session, start_ts, success=False, error_type="escalated")
             return
 
         # Collect structured completion data from agent log
