@@ -402,3 +402,53 @@ class TestCatalogRegistryIntegration:
         match = registry.match("backend", "review code")
         assert match is not None
         assert match.tools == ["ruff", "mypy", "pytest"]
+
+
+# ---------------------------------------------------------------------------
+# model_preferences field handling
+# ---------------------------------------------------------------------------
+
+
+MODEL_PREFS_AGENT_MD = textwrap.dedent("""\
+    ---
+    name: Smart Planner
+    description: Plans tasks with model preferences.
+    capabilities: [planning, decomposition]
+    tools: [git]
+    model_preferences:
+      preferred: claude-3-opus
+      fallback: claude-3-sonnet
+    ---
+
+    # Smart Planner
+
+    You are Smart Planner, an expert task decomposer.
+""")
+
+
+class TestModelPreferencesField:
+    """model_preferences frontmatter field is gracefully ignored — not required by Bernstein."""
+
+    def test_model_preferences_field_does_not_cause_error(self, tmp_path: Path) -> None:
+        """Agents with model_preferences in frontmatter are parsed without error."""
+        f = tmp_path / "smart-planner.md"
+        f.write_text(MODEL_PREFS_AGENT_MD)
+        agents = AgencyProvider._parse_file(f, division="engineering")
+        assert len(agents) == 1
+        assert agents[0].name == "Smart Planner"
+
+    def test_capabilities_and_tools_extracted_alongside_model_preferences(self, tmp_path: Path) -> None:
+        """Other fields are still parsed correctly when model_preferences is present."""
+        f = tmp_path / "smart-planner.md"
+        f.write_text(MODEL_PREFS_AGENT_MD)
+        agents = AgencyProvider._parse_file(f, division="engineering")
+        assert agents[0].capabilities == ["planning", "decomposition"]
+        assert agents[0].tools == ["git"]
+
+    def test_system_prompt_populated_when_model_preferences_present(self, tmp_path: Path) -> None:
+        """System prompt body is extracted correctly even with model_preferences in frontmatter."""
+        f = tmp_path / "smart-planner.md"
+        f.write_text(MODEL_PREFS_AGENT_MD)
+        agents = AgencyProvider._parse_file(f, division="engineering")
+        assert "Smart Planner" in agents[0].system_prompt
+        assert "expert task decomposer" in agents[0].system_prompt

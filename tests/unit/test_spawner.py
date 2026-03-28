@@ -661,3 +661,191 @@ class TestWorktreeIntegration:
         with patch.object(spawner, "_merge_worktree_branch") as mock_merge:
             spawner.reap_completed_agent(session)
             mock_merge.assert_not_called()
+
+
+# --- _render_prompt with catalog_system_prompt ---
+
+
+class TestRenderPromptWithCatalogSystemPrompt:
+    """_render_prompt uses catalog_system_prompt in place of the role template."""
+
+    def test_catalog_prompt_replaces_role_template(self, tmp_path: Path, make_task) -> None:
+        """When catalog_system_prompt is provided it appears in the rendered prompt."""
+        task = make_task(role="backend")
+        prompt = _render_prompt(
+            [task],
+            tmp_path,
+            tmp_path,
+            catalog_system_prompt="You are the Agency backend specialist.",
+        )
+        assert "You are the Agency backend specialist." in prompt
+
+    def test_catalog_prompt_none_falls_back_to_default(self, tmp_path: Path, make_task) -> None:
+        """When catalog_system_prompt is None, the agency prompt text is absent."""
+        task = make_task(role="backend")
+        prompt = _render_prompt([task], tmp_path, tmp_path, catalog_system_prompt=None)
+        assert "Agency backend specialist" not in prompt
+
+    def test_task_block_present_with_catalog_system_prompt(self, tmp_path: Path, make_task) -> None:
+        """Assigned tasks section is always included even when catalog prompt replaces template."""
+        task = make_task(role="backend", title="Add JWT endpoint", description="Implement JWT.")
+        prompt = _render_prompt(
+            [task],
+            tmp_path,
+            tmp_path,
+            catalog_system_prompt="Agency specialist prompt.",
+        )
+        assert "Assigned tasks" in prompt
+        assert "Add JWT endpoint" in prompt
+
+    def test_catalog_prompt_with_session_id_includes_signals(self, tmp_path: Path, make_task) -> None:
+        """Signal-check instructions are appended when session_id is provided."""
+        task = make_task(role="backend")
+        prompt = _render_prompt(
+            [task],
+            tmp_path,
+            tmp_path,
+            catalog_system_prompt="Agency prompt.",
+            session_id="backend-abc123",
+        )
+        assert "backend-abc123" in prompt
+        assert "SHUTDOWN" in prompt
+
+
+# --- AgentSpawner.spawn_for_tasks with CatalogRegistry ---
+
+
+class TestSpawnForTasksWithCatalog:
+    """AgentSpawner uses CatalogAgent system prompt and tools when a catalog match is found."""
+
+    def _make_catalog_agent(
+        self,
+        *,
+        name: str = "Auth Specialist",
+        role: str = "backend",
+        system_prompt: str = "You are the auth specialist agent.",
+        tools: list[str] | None = None,
+        capabilities: list[str] | None = None,
+    ):  # type: ignore[return]
+        from bernstein.agents.catalog import CatalogAgent
+
+        return CatalogAgent(
+            name=name,
+            role=role,
+            description="Specialist agent from Agency.",
+            system_prompt=system_prompt,
+            id=f"agency:{name.lower().replace(' ', '-')}",
+            tools=tools or [],
+            capabilities=capabilities or [],
+            source="agency",
+        )
+
+    def test_catalog_system_prompt_injected_into_spawn_prompt(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Spawner passes catalog agent's system_prompt as the role section of the prompt."""
+        from bernstein.agents.catalog import CatalogRegistry
+
+        agent = self._make_catalog_agent(
+            system_prompt="You are the Agency JWT expert.",
+            capabilities=["authentication", "jwt"],
+        )
+        catalog = CatalogRegistry()
+        catalog.register_agent(agent)
+
+        adapter = mock_adapter_factory(pid=700)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog)
+
+        task = make_task(role="backend", description="Implement JWT authentication")
+        spawner.spawn_for_tasks([task])
+
+        prompt = adapter.spawn.call_args.kwargs["prompt"]
+        assert "You are the Agency JWT expert." in prompt
+
+    def test_catalog_tools_hint_appended_to_prompt(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """Tool preferences declared by the catalog agent appear in the prompt."""
+        from bernstein.agents.catalog import CatalogRegistry
+
+        agent = self._make_catalog_agent(
+            system_prompt="You are the code reviewer.",
+            tools=["ruff", "mypy", "pytest"],
+            capabilities=["code-review"],
+        )
+        catalog = CatalogRegistry()
+        catalog.register_agent(agent)
+
+        adapter = mock_adapter_factory(pid=701)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog)
+
+        task = make_task(role="backend", description="Review code quality")
+        spawner.spawn_for_tasks([task])
+
+        prompt = adapter.spawn.call_args.kwargs["prompt"]
+        assert "ruff" in prompt
+        assert "mypy" in prompt
+        assert "pytest" in prompt
+        assert "Preferred tools" in prompt
+
+    def test_no_catalog_does_not_inject_agency_prompt(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """When catalog=None, the spawner uses the built-in role template (no agency text)."""
+        adapter = mock_adapter_factory(pid=702)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=None)
+
+        task = make_task(role="backend", description="Write some code")
+        spawner.spawn_for_tasks([task])
+
+        prompt = adapter.spawn.call_args.kwargs["prompt"]
+        assert "Agency JWT expert" not in prompt
+
+    def test_agent_source_set_to_catalog_source(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """AgentSession.agent_source reflects the matched catalog agent's source field."""
+        from bernstein.agents.catalog import CatalogRegistry
+
+        agent = self._make_catalog_agent(
+            capabilities=["authentication"],
+        )
+        catalog = CatalogRegistry()
+        catalog.register_agent(agent)
+
+        adapter = mock_adapter_factory(pid=703)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog)
+
+        task = make_task(role="backend", description="Implement JWT auth")
+        session = spawner.spawn_for_tasks([task])
+
+        assert session.agent_source == "agency"
+
+    def test_agent_source_builtin_when_no_catalog_match(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        """AgentSession.agent_source is 'built-in' when no catalog agent matches."""
+        from bernstein.agents.catalog import CatalogRegistry
+
+        # Register a qa agent; task role is backend — no match
+        agent = self._make_catalog_agent(role="qa", capabilities=["testing"])
+        catalog = CatalogRegistry()
+        catalog.register_agent(agent)
+
+        adapter = mock_adapter_factory(pid=704)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog)
+
+        task = make_task(role="backend", description="Write some backend code")
+        session = spawner.spawn_for_tasks([task])
+
+        assert session.agent_source == "built-in"
