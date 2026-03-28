@@ -170,6 +170,7 @@ class Task:
     model: str | None = None               # "opus", "sonnet", "haiku"
     effort: str | None = None              # "max", "high", "medium", "low"
     created_at: float = field(default_factory=time.time)
+    progress_log: list[dict] = field(default_factory=list)  # [{timestamp, message, percent}]
 
 
 @dataclass(frozen=True)
@@ -213,6 +214,7 @@ class AgentSession:
     cell_id: str | None = None             # Which cell this agent belongs to
     provider: str | None = None            # Provider selected by TierAwareRouter
     agent_source: str = "built-in"         # "catalog", "agency", or "built-in"
+    timeout_s: int | None = None           # Per-agent wall-clock timeout; None = use OrchestratorConfig.max_agent_runtime_s
 
 
 @dataclass
@@ -250,3 +252,4 @@ class OrchestratorConfig:
     evolution_tick_interval: int = 30
     max_task_retries: int = 2
     evolve_mode: bool = False
+    budget_usd: float = 0.0  # Stop spawning when cumulative cost reaches this (0 = unlimited)

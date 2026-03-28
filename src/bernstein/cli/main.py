@@ -190,6 +190,15 @@ def cli(
     already_running = server_pid is not None and _is_alive(server_pid)
 
     if not already_running:
+        # Write run_config.json so the orchestrator subprocess can read budget_usd
+        if budget > 0:
+            import json as _json
+            runtime_dir = workdir / ".sdd" / "runtime"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            (runtime_dir / "run_config.json").write_text(
+                _json.dumps({"budget_usd": budget})
+            )
+
         if goal is not None:
             # Inline goal — no config files needed
             console.print(f"Goal: [bold]{goal}[/bold]")

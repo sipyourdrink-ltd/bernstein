@@ -527,6 +527,53 @@ async def test_invalid_signal_type_rejected(client: AsyncClient) -> None:
     assert resp.status_code == 422
 
 
+# -- POST /tasks/{id}/progress -------------------------------------------------
+
+@pytest.mark.anyio
+async def test_progress_updates_stored_and_retrievable(client: AsyncClient) -> None:
+    """POST /tasks/{id}/progress stores entries that appear in GET /tasks/{id}."""
+    # Create task
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    assert create_resp.status_code == 201
+    task_id = create_resp.json()["id"]
+
+    # Post first progress update
+    resp1 = await client.post(f"/tasks/{task_id}/progress", json={"message": "Parsing started", "percent": 10})
+    assert resp1.status_code == 200
+    data1 = resp1.json()
+    assert len(data1["progress_log"]) == 1
+    assert data1["progress_log"][0]["message"] == "Parsing started"
+    assert data1["progress_log"][0]["percent"] == 10
+    assert "timestamp" in data1["progress_log"][0]
+
+    # Post second progress update
+    resp2 = await client.post(f"/tasks/{task_id}/progress", json={"message": "Half done", "percent": 50})
+    assert resp2.status_code == 200
+    assert len(resp2.json()["progress_log"]) == 2
+
+    # Verify via GET /tasks/{id}
+    get_resp = await client.get(f"/tasks/{task_id}")
+    assert get_resp.status_code == 200
+    log = get_resp.json()["progress_log"]
+    assert len(log) == 2
+    assert log[0]["message"] == "Parsing started"
+    assert log[0]["percent"] == 10
+    assert log[1]["message"] == "Half done"
+    assert log[1]["percent"] == 50
+
+    # Also appears in GET /tasks list
+    list_resp = await client.get("/tasks")
+    tasks = {t["id"]: t for t in list_resp.json()}
+    assert len(tasks[task_id]["progress_log"]) == 2
+
+
+@pytest.mark.anyio
+async def test_progress_on_missing_task_returns_404(client: AsyncClient) -> None:
+    """POST /tasks/{id}/progress returns 404 for unknown task id."""
+    resp = await client.post("/tasks/nonexistent/progress", json={"message": "nope", "percent": 0})
+    assert resp.status_code == 404
+
+
 @pytest.mark.anyio
 async def test_completion_signals_preserved_after_complete(client: AsyncClient) -> None:
     """Completing a task does not discard completion_signals."""

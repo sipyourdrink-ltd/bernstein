@@ -458,6 +458,108 @@ class TestOrchestratorTick:
         assert "spawn" in result.errors[0]
         assert len(result.spawned) == 0
 
+    def test_tick_skips_spawning_when_budget_exceeded(self, tmp_path: Path) -> None:
+        """tick() must not spawn agents when cumulative cost has reached the budget cap."""
+        # Simulate $0.10 already spent by writing a cost_efficiency metrics file
+        metrics_dir = tmp_path / ".sdd" / "metrics"
+        metrics_dir.mkdir(parents=True)
+        today = time.strftime("%Y-%m-%d")
+        cost_file = metrics_dir / f"cost_efficiency_{today}.jsonl"
+        cost_file.write_text(
+            json.dumps({
+                "timestamp": time.time(),
+                "metric_type": "cost_efficiency",
+                "value": 0.10,
+                "labels": {"task_id": "T-prev", "role": "backend", "model": "sonnet"},
+            }) + "\n"
+        )
+
+        task = _make_task(id="T-001")
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(task)]),
+            "GET /tasks?status=done": httpx.Response(200, json=[]),
+        })
+        adapter = _mock_adapter()
+        config = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            server_url="http://testserver",
+            budget_usd=0.05,  # budget is $0.05, but $0.10 already spent
+        )
+        orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=config)
+
+        result = orch.tick()
+
+        adapter.spawn.assert_not_called()
+        assert result.spawned == []
+
+    def test_tick_spawns_normally_when_under_budget(self, tmp_path: Path) -> None:
+        """tick() spawns normally when spent < budget_usd."""
+        metrics_dir = tmp_path / ".sdd" / "metrics"
+        metrics_dir.mkdir(parents=True)
+        today = time.strftime("%Y-%m-%d")
+        cost_file = metrics_dir / f"cost_efficiency_{today}.jsonl"
+        cost_file.write_text(
+            json.dumps({
+                "timestamp": time.time(),
+                "metric_type": "cost_efficiency",
+                "value": 0.01,
+                "labels": {"task_id": "T-prev", "role": "backend", "model": "sonnet"},
+            }) + "\n"
+        )
+
+        task = _make_task(id="T-001")
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(task)]),
+            "GET /tasks?status=done": httpx.Response(200, json=[]),
+        })
+        adapter = _mock_adapter()
+        config = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            server_url="http://testserver",
+            budget_usd=1.00,  # $0.01 spent < $1.00 budget
+        )
+        orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=config)
+
+        result = orch.tick()
+
+        assert len(result.spawned) == 1
+
+    def test_tick_no_budget_check_when_budget_is_zero(self, tmp_path: Path) -> None:
+        """tick() never enforces a budget when budget_usd=0 (default)."""
+        metrics_dir = tmp_path / ".sdd" / "metrics"
+        metrics_dir.mkdir(parents=True)
+        today = time.strftime("%Y-%m-%d")
+        cost_file = metrics_dir / f"cost_efficiency_{today}.jsonl"
+        cost_file.write_text(
+            json.dumps({
+                "timestamp": time.time(),
+                "metric_type": "cost_efficiency",
+                "value": 999.99,
+                "labels": {"task_id": "T-prev", "role": "backend", "model": "sonnet"},
+            }) + "\n"
+        )
+
+        task = _make_task(id="T-001")
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(task)]),
+            "GET /tasks?status=done": httpx.Response(200, json=[]),
+        })
+        adapter = _mock_adapter()
+        # Default config has budget_usd=0 (no cap)
+        config = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            server_url="http://testserver",
+            budget_usd=0.0,
+        )
+        orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=config)
+
+        result = orch.tick()
+
+        assert len(result.spawned) == 1
+
 
 # --- Spawn resilience: claim-before-spawn, backoff, and failure escalation ---
 
@@ -2760,3 +2862,266 @@ class TestReplenishBacklog:
         assert orch._pending_ruff_future is not None
         # Clean up — wait for the background thread so it doesn't leak
         orch._pending_ruff_future.result()
+
+
+# --- Per-task timeout calculation ---
+
+
+def test_per_task_timeout_short_task(tmp_path: Path) -> None:
+    """A 5-minute task gets ~450s timeout (5 * 60 * 1.5)."""
+    task = Task(
+        id="T-short",
+        title="Short task",
+        description=".",
+        role="backend",
+        estimated_minutes=5,
+        status=TaskStatus.OPEN,
+        scope=Scope.SMALL,
+        complexity=Complexity.LOW,
+    )
+    task_dict = {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description,
+        "role": task.role,
+        "estimated_minutes": task.estimated_minutes,
+        "status": "open",
+        "scope": "small",
+        "complexity": "low",
+        "priority": 2,
+        "depends_on": [],
+        "owned_files": [],
+        "assigned_agent": None,
+        "result_summary": None,
+        "task_type": "standard",
+    }
+    transport = _mock_transport({
+        "GET /tasks?status=open": httpx.Response(200, json=[task_dict]),
+        "GET /tasks?status=done": httpx.Response(200, json=[]),
+        "GET /tasks?status=failed": httpx.Response(200, json=[]),
+        "GET /status": httpx.Response(200, json={"open": 1, "done": 0}),
+        f"POST /tasks/{task.id}/claim": httpx.Response(200, json={}),
+    })
+    cfg = OrchestratorConfig(
+        max_agents=6,
+        poll_interval_s=1,
+        max_agent_runtime_s=600,
+        max_tasks_per_agent=1,
+        server_url="http://testserver",
+    )
+    orch = _build_orchestrator(tmp_path, transport, config=cfg)
+    orch.tick()
+
+    # Verify that the spawned session has the per-task timeout set
+    sessions = list(orch._agents.values())
+    assert sessions, "Expected one agent to be spawned"
+    session = sessions[0]
+    # 5 min * 60 * 1.5 = 450s
+    assert session.timeout_s == 450
+
+
+def test_per_task_timeout_long_task_clamped(tmp_path: Path) -> None:
+    """A 60-minute task would be 5400s but is clamped to max_agent_runtime_s (600s)."""
+    task = Task(
+        id="T-long",
+        title="Long task",
+        description=".",
+        role="backend",
+        estimated_minutes=60,
+        status=TaskStatus.OPEN,
+        scope=Scope.LARGE,
+        complexity=Complexity.HIGH,
+    )
+    task_dict = {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description,
+        "role": task.role,
+        "estimated_minutes": task.estimated_minutes,
+        "status": "open",
+        "scope": "large",
+        "complexity": "high",
+        "priority": 2,
+        "depends_on": [],
+        "owned_files": [],
+        "assigned_agent": None,
+        "result_summary": None,
+        "task_type": "standard",
+    }
+    transport = _mock_transport({
+        "GET /tasks?status=open": httpx.Response(200, json=[task_dict]),
+        "GET /tasks?status=done": httpx.Response(200, json=[]),
+        "GET /tasks?status=failed": httpx.Response(200, json=[]),
+        "GET /status": httpx.Response(200, json={"open": 1, "done": 0}),
+        f"POST /tasks/{task.id}/claim": httpx.Response(200, json={}),
+    })
+    cfg = OrchestratorConfig(
+        max_agents=6,
+        poll_interval_s=1,
+        max_agent_runtime_s=600,
+        max_tasks_per_agent=1,
+        server_url="http://testserver",
+    )
+    orch = _build_orchestrator(tmp_path, transport, config=cfg)
+    orch.tick()
+
+    sessions = list(orch._agents.values())
+    assert sessions, "Expected one agent to be spawned"
+    session = sessions[0]
+    # 60 * 60 * 1.5 = 5400s, clamped to max_agent_runtime_s=600
+    assert session.timeout_s == 600
+
+
+def test_reap_uses_per_session_timeout(tmp_path: Path) -> None:
+    """_reap_dead_agents uses session.timeout_s when set, not config.max_agent_runtime_s."""
+    cfg = OrchestratorConfig(
+        max_agents=6,
+        poll_interval_s=1,
+        max_agent_runtime_s=600,
+        server_url="http://testserver",
+    )
+    transport = _mock_transport({
+        "GET /tasks?status=open": httpx.Response(200, json=[]),
+        "GET /tasks?status=done": httpx.Response(200, json=[]),
+        "GET /tasks?status=failed": httpx.Response(200, json=[]),
+        "GET /status": httpx.Response(200, json={"open": 0, "done": 0}),
+    })
+    orch = _build_orchestrator(tmp_path, transport, config=cfg)
+
+    # Inject a session with a short timeout (120s) that has been running for 130s
+    session = AgentSession(id="sess-1", role="backend", pid=9999, task_ids=["T-x"])
+    session.timeout_s = 120
+    session.spawn_ts = time.time() - 130  # running for 130s > 120s timeout
+    orch._agents[session.id] = session
+
+    result = TickResult()
+    orch._spawner.kill = MagicMock()  # type: ignore[method-assign]
+    orch._reap_dead_agents(result)
+
+    assert session.id in result.reaped, "Session should be reaped due to per-session timeout"
+
+
+# --- Run completion summary ---
+
+
+class TestRunCompletionSummary:
+    """tick() writes .sdd/runtime/summary.md when all tasks are done and evolve_mode is off."""
+
+    def _build(
+        self,
+        tmp_path: Path,
+        *,
+        done_tasks: list[dict] | None = None,
+        failed_tasks: list[dict] | None = None,
+    ) -> Orchestrator:
+        _done = done_tasks or []
+        _failed = failed_tasks or []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            key = f"{request.method} {url.path}"
+            if url.query:
+                key += f"?{url.query.decode()}"
+            if key == "GET /tasks?status=open":
+                return httpx.Response(200, json=[])
+            if key == "GET /tasks?status=done":
+                return httpx.Response(200, json=_done)
+            if key == "GET /tasks?status=failed":
+                return httpx.Response(200, json=_failed)
+            return httpx.Response(200, json={})
+
+        transport = httpx.MockTransport(handler)
+        cfg = OrchestratorConfig(
+            server_url="http://testserver",
+            evolve_mode=False,
+            evolution_enabled=False,
+        )
+        return _build_orchestrator(tmp_path, transport, config=cfg)
+
+    def test_summary_created_when_all_tasks_done(self, tmp_path: Path) -> None:
+        """summary.md is created when open=0, agents=0, evolve_mode=False."""
+        done = [_task_as_dict(_make_task(id="T-1", title="Fix auth bug", status="done"))]
+        orch = self._build(tmp_path, done_tasks=done)
+
+        orch.tick()
+
+        summary_path = tmp_path / ".sdd" / "runtime" / "summary.md"
+        assert summary_path.exists(), "summary.md should be created"
+
+    def test_summary_contains_task_counts(self, tmp_path: Path) -> None:
+        done = [_task_as_dict(_make_task(id=f"T-{i}", title=f"Task {i}", status="done")) for i in range(3)]
+        failed = [_task_as_dict(_make_task(id="T-fail", title="Failed task", status="failed"))]
+        orch = self._build(tmp_path, done_tasks=done, failed_tasks=failed)
+
+        orch.tick()
+
+        content = (tmp_path / ".sdd" / "runtime" / "summary.md").read_text()
+        assert "**Total completed:** 3" in content
+        assert "**Total failed:** 1" in content
+
+    def test_summary_lists_task_titles(self, tmp_path: Path) -> None:
+        done = [_task_as_dict(_make_task(id="T-1", title="Implement login", status="done"))]
+        failed = [_task_as_dict(_make_task(id="T-2", title="Write tests", status="failed"))]
+        orch = self._build(tmp_path, done_tasks=done, failed_tasks=failed)
+
+        orch.tick()
+
+        content = (tmp_path / ".sdd" / "runtime" / "summary.md").read_text()
+        assert "Implement login" in content
+        assert "Write tests" in content
+        assert "*(failed)*" in content
+
+    def test_summary_not_written_twice(self, tmp_path: Path) -> None:
+        """Second tick with same state does not overwrite summary.md."""
+        done = [_task_as_dict(_make_task(id="T-1", title="Task A", status="done"))]
+        orch = self._build(tmp_path, done_tasks=done)
+
+        orch.tick()
+        summary_path = tmp_path / ".sdd" / "runtime" / "summary.md"
+        first_mtime = summary_path.stat().st_mtime
+
+        orch.tick()
+        second_mtime = summary_path.stat().st_mtime
+
+        assert first_mtime == second_mtime, "summary.md should not be rewritten on second tick"
+
+    def test_summary_not_created_in_evolve_mode(self, tmp_path: Path) -> None:
+        """summary.md is NOT created when evolve_mode=True."""
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            key = f"{request.method} {url.path}"
+            if url.query:
+                key += f"?{url.query.decode()}"
+            if key == "GET /tasks?status=open":
+                return httpx.Response(200, json=[])
+            if key == "GET /tasks?status=claimed":
+                return httpx.Response(200, json=[])
+            if key == "GET /tasks?status=done":
+                return httpx.Response(200, json=[_task_as_dict(_make_task(id="T-1", status="done"))])
+            if key == "GET /tasks?status=failed":
+                return httpx.Response(200, json=[])
+            return httpx.Response(200, json={})
+
+        transport = httpx.MockTransport(handler)
+        cfg = OrchestratorConfig(
+            server_url="http://testserver",
+            evolve_mode=True,
+            evolution_enabled=False,
+        )
+        orch = _build_orchestrator(tmp_path, transport, config=cfg)
+
+        orch.tick()
+
+        summary_path = tmp_path / ".sdd" / "runtime" / "summary.md"
+        assert not summary_path.exists(), "summary.md should not be created in evolve_mode"
+
+    def test_summary_includes_duration_and_cost(self, tmp_path: Path) -> None:
+        done = [_task_as_dict(_make_task(id="T-1", title="Deploy", status="done"))]
+        orch = self._build(tmp_path, done_tasks=done)
+
+        orch.tick()
+
+        content = (tmp_path / ".sdd" / "runtime" / "summary.md").read_text()
+        assert "**Wall-clock duration:**" in content
+        assert "**Estimated cost:**" in content
+        assert "**Files modified:**" in content

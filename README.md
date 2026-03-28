@@ -5,7 +5,7 @@
 ### One command. Multiple AI agents. Your codebase moves forward while you sleep.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-1592-2ea44f)]()
+[![Tests](https://img.shields.io/badge/tests-1598-2ea44f)]()
 [![License](https://img.shields.io/badge/license-PolyForm_NC-f89820)](LICENSE)
 
 </div>
@@ -87,12 +87,16 @@ bernstein
 ```
 
 ```bash
-bernstein                      # live dashboard
-bernstein --headless           # no UI (CI, overnight runs)
-bernstein --evolve             # continuous self-improvement mode
-bernstein stop                 # graceful shutdown
-bernstein cancel <task_id>     # cancel a queued or running task
-bernstein cost                 # show cost summary
+bernstein                          # live dashboard
+bernstein --headless               # no UI (CI, overnight runs)
+bernstein --evolve                 # continuous self-improvement mode
+bernstein --evolve --max-cycles 10 # limit evolution cycles
+bernstein --evolve --budget 5.00   # stop at $5 spent
+bernstein stop                     # graceful shutdown
+bernstein cancel <task_id>         # cancel a queued or running task
+bernstein cost                     # show cost summary
+bernstein agents sync              # pull latest agent catalog
+bernstein agents list              # list available agents
 ```
 
 ## Supports your existing tools
