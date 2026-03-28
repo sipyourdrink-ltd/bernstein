@@ -764,9 +764,7 @@ class TestSpawnForTasksWithCatalog:
         prompt = adapter.spawn.call_args.kwargs["prompt"]
         assert "You are the Agency JWT expert." in prompt
 
-    def test_catalog_tools_hint_appended_to_prompt(
-        self, tmp_path: Path, make_task, mock_adapter_factory
-    ) -> None:
+    def test_catalog_tools_hint_appended_to_prompt(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         """Tool preferences declared by the catalog agent appear in the prompt."""
         from bernstein.agents.catalog import CatalogRegistry
 
@@ -792,9 +790,7 @@ class TestSpawnForTasksWithCatalog:
         assert "pytest" in prompt
         assert "Preferred tools" in prompt
 
-    def test_no_catalog_does_not_inject_agency_prompt(
-        self, tmp_path: Path, make_task, mock_adapter_factory
-    ) -> None:
+    def test_no_catalog_does_not_inject_agency_prompt(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         """When catalog=None, the spawner uses the built-in role template (no agency text)."""
         adapter = mock_adapter_factory(pid=702)
         templates_dir = tmp_path / "templates" / "roles"
@@ -807,9 +803,7 @@ class TestSpawnForTasksWithCatalog:
         prompt = adapter.spawn.call_args.kwargs["prompt"]
         assert "Agency JWT expert" not in prompt
 
-    def test_agent_source_set_to_catalog_source(
-        self, tmp_path: Path, make_task, mock_adapter_factory
-    ) -> None:
+    def test_agent_source_set_to_catalog_source(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         """AgentSession.agent_source reflects the matched catalog agent's source field."""
         from bernstein.agents.catalog import CatalogRegistry
 
@@ -829,9 +823,7 @@ class TestSpawnForTasksWithCatalog:
 
         assert session.agent_source == "agency"
 
-    def test_agent_source_builtin_when_no_catalog_match(
-        self, tmp_path: Path, make_task, mock_adapter_factory
-    ) -> None:
+    def test_agent_source_builtin_when_no_catalog_match(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         """AgentSession.agent_source is 'built-in' when no catalog agent matches."""
         from bernstein.agents.catalog import CatalogRegistry
 

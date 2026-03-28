@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
 # Map short model names to Claude Code CLI model IDs
@@ -118,8 +119,33 @@ class ClaudeCodeAdapter(CLIAdapter):
         return cmd
 
     @staticmethod
-    def _wrapper_script() -> str:
-        """Return the stream-json → human-readable log converter script."""
+    def _wrapper_script(session_id: str = "", tokens_path: str = "") -> str:
+        """Return the stream-json → human-readable log converter script.
+
+        When ``session_id`` and ``tokens_path`` are provided, token usage from
+        ``result`` messages is appended to ``tokens_path`` as JSON-lines so the
+        token growth monitor can read it without re-parsing the full log.
+
+        Args:
+            session_id: Agent session ID, injected for token sidecar writes.
+            tokens_path: Absolute path to the ``.tokens`` sidecar file.
+        """
+        token_writer = ""
+        if tokens_path:
+            token_writer = (
+                "        usage = msg.get('usage') or {}\n"
+                "        if not usage:\n"
+                "            usage = msg.get('message', {}).get('usage') or {}\n"
+                "        inp_tok = int(usage.get('input_tokens', 0))\n"
+                "        out_tok = int(usage.get('output_tokens', 0))\n"
+                "        if inp_tok or out_tok:\n"
+                "            import time as _t\n"
+                f"            _rec = json.dumps({{'ts': _t.time(), 'in': inp_tok, 'out': out_tok}})\n"
+                f"            try:\n"
+                f"                open({tokens_path!r}, 'a').write(_rec + '\\n')\n"
+                f"            except OSError:\n"
+                f"                pass\n"
+            )
         return (
             "import sys, json\n"
             "seen_text = set()\n"
@@ -146,7 +172,7 @@ class ClaudeCodeAdapter(CLIAdapter):
             "    elif t == 'result':\n"
             "        txt = msg.get('result', '')\n"
             "        if txt:\n"
-            "            print(txt, flush=True)\n"
+            "            print(txt, flush=True)\n" + token_writer
         )
 
     def _launch_process(
@@ -155,11 +181,21 @@ class ClaudeCodeAdapter(CLIAdapter):
         wrapper: str,
         workdir: Path,
         log_path: Path,
+        env: dict[str, str] | None = None,
     ) -> tuple[subprocess.Popen[bytes], subprocess.Popen[bytes]]:
         """Launch claude piped through wrapper, writing output to log_path.
 
         Uses try/finally to guarantee log_file is closed even if the wrapper
         Popen fails after claude has already started.
+
+        Args:
+            cmd: The CLI command to execute (wrapped by bernstein-worker).
+            wrapper: Python source for the stream-json log converter script.
+            workdir: Working directory for both processes.
+            log_path: Path where the wrapper writes decoded output.
+            env: Filtered environment dict.  When provided, both child
+                processes receive only these variables; when None the full
+                parent environment is inherited (legacy behaviour).
         """
         log_file = log_path.open("w")
         try:
@@ -167,6 +203,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                 claude_proc = subprocess.Popen(
                     cmd,
                     cwd=workdir,
+                    env=env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
@@ -184,6 +221,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
                     cwd=workdir,
+                    env=env,
                 )
             except Exception:
                 claude_proc.kill()
@@ -222,8 +260,10 @@ class ClaudeCodeAdapter(CLIAdapter):
             model=model_id,
         )
 
-        wrapper = self._wrapper_script()
-        claude_proc, wrapper_proc = self._launch_process(wrapped_cmd, wrapper, workdir, log_path)
+        tokens_path = workdir / ".sdd" / "runtime" / f"{session_id}.tokens"
+        wrapper = self._wrapper_script(session_id=session_id, tokens_path=str(tokens_path))
+        env = build_filtered_env(["ANTHROPIC_API_KEY"])
+        claude_proc, wrapper_proc = self._launch_process(wrapped_cmd, wrapper, workdir, log_path, env=env)
 
         # Track the worker process (wraps claude) for is_alive/kill
         self._procs[claude_proc.pid] = claude_proc

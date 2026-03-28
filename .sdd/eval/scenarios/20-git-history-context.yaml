@@ -1,0 +1,45 @@
+id: adversarial-git-history-context
+tier: adversarial
+setup:
+  command: >
+    python3 -c "
+    content = '''from __future__ import annotations
+
+
+    def get_project_name() -> str:
+        '''Return the project name.'''
+        # TODO: read this from git history to find the original project name
+        return \"UNKNOWN\"
+    '''
+    open('src/bernstein/_eval_fixture_git_ctx.py', 'w').write(content)
+    "
+task:
+  title: "Fill in get_project_name by reading git log to find the project's name"
+  description: |
+    The function `get_project_name` in `src/bernstein/_eval_fixture_git_ctx.py`
+    returns `"UNKNOWN"`. Your task is to determine the correct project name by
+    reading the git history:
+
+        git log --oneline | head -20
+        git log --format="%s" | head -5
+
+    Look at commit messages and the repository name to determine the project name.
+    Update the function to return the actual project name as a string literal.
+    Add a comment explaining where you found the name:
+        # SOURCE: found in git log — <evidence>
+  role: backend
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_git_ctx.py
+    value: "SOURCE:"
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_git_ctx.py
+    value: "bernstein"
+  - type: command_succeeds
+    value: "python3 -c \"from bernstein._eval_fixture_git_ctx import get_project_name; assert get_project_name() != 'UNKNOWN'\""
+limits:
+  max_cost_usd: 1.00
+  max_duration_seconds: 300
+  max_retries: 0

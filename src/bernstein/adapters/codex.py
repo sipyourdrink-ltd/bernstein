@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
 
@@ -48,11 +49,13 @@ class CodexAdapter(CLIAdapter):
             model=model_config.model,
         )
 
+        env = build_filtered_env(["OPENAI_API_KEY", "OPENAI_ORG_ID", "OPENAI_BASE_URL"])
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
                     wrapped_cmd,
                     cwd=workdir,
+                    env=env,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,

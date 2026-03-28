@@ -1,0 +1,44 @@
+id: add-integration-test-server-status
+tier: stretch
+setup:
+  command: >
+    python3 -c "
+    import pathlib
+    p = pathlib.Path('tests/integration/test_server_status.py')
+    p.parent.mkdir(exist_ok=True)
+    if p.exists():
+        p.unlink()
+    init = p.parent / '__init__.py'
+    if not init.exists():
+        init.write_text('')
+    "
+task:
+  title: "Write an integration test that starts the task server and queries GET /status"
+  description: |
+    Create `tests/integration/test_server_status.py` with an integration test that:
+    1. Starts the Bernstein task server on a free port using a subprocess or
+       `uvicorn` programmatically (use `anyio` or `asyncio`).
+    2. Issues `GET /status` and asserts the response status code is 200 and
+       the response JSON contains `"agents"` and `"tasks"` keys.
+    3. Shuts the server down cleanly after the test.
+    Use `httpx` for the HTTP call. The test must be runnable with:
+        uv run pytest tests/integration/test_server_status.py -x -q
+    Use a pytest fixture for server lifecycle management.
+  role: qa
+  effort: medium
+  model: sonnet
+expected_signals:
+  - type: path_exists
+    value: tests/integration/test_server_status.py
+  - type: file_contains
+    path: tests/integration/test_server_status.py
+    value: "httpx"
+  - type: file_contains
+    path: tests/integration/test_server_status.py
+    value: "/status"
+  - type: test_passes
+    value: "uv run pytest tests/integration/test_server_status.py -x -q"
+limits:
+  max_cost_usd: 2.00
+  max_duration_seconds: 600
+  max_retries: 1

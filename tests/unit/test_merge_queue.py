@@ -96,8 +96,7 @@ class TestMergeQueue:
         """Concurrent enqueues from multiple threads should not lose items."""
         q = MergeQueue()
         threads = [
-            threading.Thread(target=q.enqueue, args=(f"session-{i}",), kwargs={"task_id": f"T-{i}"})
-            for i in range(20)
+            threading.Thread(target=q.enqueue, args=(f"session-{i}",), kwargs={"task_id": f"T-{i}"}) for i in range(20)
         ]
         for t in threads:
             t.start()

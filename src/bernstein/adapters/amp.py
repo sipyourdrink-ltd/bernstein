@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.env_isolation import build_filtered_env
 
 # Map Bernstein short model names to Amp model identifiers.
 # Amp accepts provider-prefixed names (e.g. "anthropic:claude-sonnet-4-6", "openai:gpt-5.4").
@@ -66,11 +67,14 @@ class AmpAdapter(CLIAdapter):
             model=model_id,
         )
 
+        # Amp supports Anthropic and OpenAI models; SRC vars are for Sourcegraph auth
+        env = build_filtered_env(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "SRC_ENDPOINT", "SRC_ACCESS_TOKEN"])
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
                     wrapped_cmd,
                     cwd=workdir,
+                    env=env,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,

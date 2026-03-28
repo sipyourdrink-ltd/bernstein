@@ -6,16 +6,16 @@ post-run retrospective document written to .sdd/runtime/retrospective.md.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections import defaultdict
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bernstein.core.models import Complexity, Task
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from bernstein.core.metrics import MetricsCollector, TaskMetrics
 
 logger = logging.getLogger(__name__)
@@ -330,6 +330,20 @@ def generate_retrospective(
     retro_path.write_text("\n".join(lines))
     logger.info("Retrospective written to .sdd/runtime/retrospective.md")
 
+    # Append to cross-run project memory for manager context in future runs
+    sdd_dir = runtime_dir.parent
+    goal = all_tasks[0].title if all_tasks else "Unknown goal"
+    run_id = time.strftime("%Y%m%d-%H%M%S")
+    append_to_project_memory(
+        sdd_dir=sdd_dir,
+        run_id=run_id,
+        goal=goal,
+        tasks_done=n_done,
+        tasks_failed=n_failed,
+        cost_usd=total_cost,
+        lesson="",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -417,3 +431,68 @@ def _build_recommendations(
         recs.append("Run exceeded 2 hours — consider parallelising independent tasks or increasing max_agents.")
 
     return recs
+
+
+def append_to_project_memory(
+    *,
+    sdd_dir: Path,
+    run_id: str,
+    goal: str,
+    tasks_done: int,
+    tasks_failed: int,
+    cost_usd: float,
+    lesson: str = "",
+) -> None:
+    """Append a run summary to the cross-run project memory.
+
+    Maintains a JSON file of the last 20 run outcomes. Each run summary includes
+    the run ID, goal, task completion counts, cost, and any lessons learned.
+
+    Args:
+        sdd_dir: Path to .sdd directory.
+        run_id: Unique identifier for the run (e.g., "20260329-120000").
+        goal: High-level goal for the run.
+        tasks_done: Number of tasks completed.
+        tasks_failed: Number of tasks that failed.
+        cost_usd: Total cost in USD for the run.
+        lesson: Optional lesson or note from the run.
+    """
+    sdd_dir = Path(sdd_dir)
+    memory_dir = sdd_dir / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+
+    memory_file = memory_dir / "project_memory.json"
+
+    # Load existing entries or start fresh
+    if memory_file.exists():
+        try:
+            entries = json.loads(memory_file.read_text(encoding="utf-8"))
+            if not isinstance(entries, list):
+                entries = []
+        except (json.JSONDecodeError, OSError):
+            logger.warning(f"Failed to read project memory, starting fresh")
+            entries = []
+    else:
+        entries = []
+
+    # Append new entry
+    entry = {
+        "run_id": run_id,
+        "goal": goal,
+        "tasks_done": tasks_done,
+        "tasks_failed": tasks_failed,
+        "cost_usd": cost_usd,
+        "lesson": lesson,
+        "timestamp": time.time(),
+    }
+    entries.append(entry)
+
+    # Keep only last 20 entries
+    if len(entries) > 20:
+        entries = entries[-20:]
+
+    # Write back
+    try:
+        memory_file.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    except OSError as e:
+        logger.error(f"Failed to write project memory: {e}")

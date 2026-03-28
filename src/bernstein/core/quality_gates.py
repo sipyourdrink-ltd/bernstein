@@ -76,7 +76,7 @@ class QualityGatesResult:
 
     task_id: str
     passed: bool
-    gate_results: list[QualityGateCheckResult] = field(default_factory=list)
+    gate_results: list[QualityGateCheckResult] = field(default_factory=list[QualityGateCheckResult])
 
 
 # ---------------------------------------------------------------------------

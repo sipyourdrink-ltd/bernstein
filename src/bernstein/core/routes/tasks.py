@@ -261,18 +261,51 @@ async def get_task(task_id: str, request: Request) -> TaskResponse:
 
 @router.patch("/tasks/{task_id}", response_model=TaskResponse)
 async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> TaskResponse:
-    """Update mutable task fields (role, priority) — manager corrections.
+    """Update mutable task fields (role, priority, model) — manager corrections.
 
-    Used by the manager agent to correct mis-assigned tasks or adjust
-    priority without interrupting the deterministic orchestrator.
+    Used by the manager agent or dashboard to correct mis-assigned tasks,
+    adjust priority, or change model without interrupting the orchestrator.
     """
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     try:
-        task = await store.update(task_id, role=body.role, priority=body.priority)
+        task = await store.update(task_id, role=body.role, priority=body.priority, model=body.model)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
+    return task_to_response(task)
+
+
+@router.post("/tasks/{task_id}/prioritize", response_model=TaskResponse)
+async def prioritize_task(task_id: str, request: Request) -> TaskResponse:
+    """Bump a task to priority 0 so the orchestrator picks it up next."""
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+    try:
+        task = await store.prioritize(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
+    return task_to_response(task)
+
+
+@router.post("/tasks/{task_id}/force-claim", response_model=TaskResponse)
+async def force_claim_task(task_id: str, request: Request) -> TaskResponse:
+    """Force a task back to open with priority 0 for immediate pickup.
+
+    Resets claimed/in_progress tasks back to open so the orchestrator's
+    next tick will spawn a fresh agent for them.  Terminal tasks
+    (done/failed/cancelled) are rejected with 409.
+    """
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+    try:
+        task = await store.force_claim(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "open"}))
     return task_to_response(task)
 
 

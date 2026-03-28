@@ -245,45 +245,35 @@ class TestBuildCiRoutingPayload:
     def test_title_contains_sha_and_workflow(self) -> None:
         from bernstein.github_app.ci_router import build_ci_routing_payload
 
-        payload = build_ci_routing_payload(
-            self._parse_failures(), self._make_blame(), "CI", retry_count=0
-        )
+        payload = build_ci_routing_payload(self._parse_failures(), self._make_blame(), "CI", retry_count=0)
         assert "abcdef12" in payload["title"]
         assert "CI" in payload["title"]
 
     def test_priority_is_1_and_role_qa(self) -> None:
         from bernstein.github_app.ci_router import build_ci_routing_payload
 
-        payload = build_ci_routing_payload(
-            self._parse_failures(), self._make_blame(), "CI"
-        )
+        payload = build_ci_routing_payload(self._parse_failures(), self._make_blame(), "CI")
         assert payload["priority"] == 1
         assert payload["role"] == "qa"
 
     def test_first_attempt_uses_sonnet(self) -> None:
         from bernstein.github_app.ci_router import build_ci_routing_payload
 
-        payload = build_ci_routing_payload(
-            self._parse_failures(), self._make_blame(), "CI", retry_count=0
-        )
+        payload = build_ci_routing_payload(self._parse_failures(), self._make_blame(), "CI", retry_count=0)
         assert payload["model"] == "sonnet"
         assert payload["effort"] == "high"
 
     def test_third_attempt_escalates_to_opus(self) -> None:
         from bernstein.github_app.ci_router import build_ci_routing_payload
 
-        payload = build_ci_routing_payload(
-            self._parse_failures(), self._make_blame(), "CI", retry_count=2
-        )
+        payload = build_ci_routing_payload(self._parse_failures(), self._make_blame(), "CI", retry_count=2)
         assert payload["model"] == "opus"
         assert payload["effort"] == "max"
 
     def test_description_contains_diff(self) -> None:
         from bernstein.github_app.ci_router import build_ci_routing_payload
 
-        payload = build_ci_routing_payload(
-            self._parse_failures(), self._make_blame(), "CI"
-        )
+        payload = build_ci_routing_payload(self._parse_failures(), self._make_blame(), "CI")
         assert "+# new line" in payload["description"]
 
     def test_description_contains_run_url(self) -> None:
@@ -300,17 +290,13 @@ class TestBuildCiRoutingPayload:
     def test_retry_note_in_description(self) -> None:
         from bernstein.github_app.ci_router import build_ci_routing_payload
 
-        payload = build_ci_routing_payload(
-            self._parse_failures(), self._make_blame(), "CI", retry_count=1
-        )
+        payload = build_ci_routing_payload(self._parse_failures(), self._make_blame(), "CI", retry_count=1)
         assert "Retry attempt" in payload["description"]
 
     def test_title_max_120_chars(self) -> None:
         from bernstein.github_app.ci_router import build_ci_routing_payload
 
-        payload = build_ci_routing_payload(
-            self._parse_failures(), self._make_blame(), "A" * 100, retry_count=0
-        )
+        payload = build_ci_routing_payload(self._parse_failures(), self._make_blame(), "A" * 100, retry_count=0)
         assert len(payload["title"]) <= 120
 
 

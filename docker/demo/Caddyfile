@@ -15,7 +15,7 @@ demo.bernstein.dev {
     }
 
     # Proxy read-only paths to the internal bernstein-server
-    @public path /dashboard /dashboard/* /events /health /status /tasks /tasks/*
+    @public path /dashboard /dashboard/* /events /health /status /tasks /tasks/* /agents /agents/*
     handle @public {
         reverse_proxy bernstein-server:8052 {
             header_up X-Forwarded-Proto {scheme}

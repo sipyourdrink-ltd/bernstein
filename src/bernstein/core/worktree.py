@@ -129,9 +129,7 @@ def setup_worktree_env(
             else:
                 logger.info("Worktree setup command succeeded")
         except subprocess.TimeoutExpired:
-            logger.warning(
-                "Worktree setup command timed out after %ds", _SETUP_COMMAND_TIMEOUT_S
-            )
+            logger.warning("Worktree setup command timed out after %ds", _SETUP_COMMAND_TIMEOUT_S)
         except OSError as exc:
             logger.warning("Failed to run worktree setup command: %s", exc)
 

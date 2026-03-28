@@ -128,18 +128,14 @@ class TestLintGate:
 
 class TestTypeCheckGate:
     def test_type_check_pass(self, tmp_path: Path) -> None:
-        config = QualityGatesConfig(
-            enabled=True, lint=False, type_check=True, type_check_command="exit 0", tests=False
-        )
+        config = QualityGatesConfig(enabled=True, lint=False, type_check=True, type_check_command="exit 0", tests=False)
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
         assert result.passed
         assert result.gate_results[0].gate == "type_check"
 
     def test_type_check_fail_blocks(self, tmp_path: Path) -> None:
-        config = QualityGatesConfig(
-            enabled=True, lint=False, type_check=True, type_check_command="exit 1", tests=False
-        )
+        config = QualityGatesConfig(enabled=True, lint=False, type_check=True, type_check_command="exit 1", tests=False)
         task = _make_task()
         result = run_quality_gates(task, tmp_path, tmp_path, config)
         assert not result.passed

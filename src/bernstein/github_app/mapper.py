@@ -12,6 +12,8 @@ import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from bernstein.github_app.webhooks import WebhookEvent
 
 logger = logging.getLogger(__name__)
@@ -257,6 +259,94 @@ def push_to_tasks(event: WebhookEvent) -> list[dict[str, Any]]:
     )
 
     return [task]
+
+
+def workflow_run_to_task(
+    event: WebhookEvent,
+    retry_count: int = 0,
+    cwd: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Convert a ``workflow_run`` failure event into a ci-fix task payload.
+
+    Downloads the failed-step log via ``gh run view --log-failed``, parses
+    it with :class:`~bernstein.adapters.ci.github_actions.GitHubActionsParser`,
+    attributes the failure to the triggering commit, and returns one task
+    payload enriched with commit diff context.
+
+    Returns an empty list when:
+    - the workflow did not fail (conclusion != ``"failure"``),
+    - the log download fails (degraded: no log available),
+    - no parseable failures are found.
+
+    Args:
+        event: A webhook event with ``event_type == "workflow_run"`` and
+            ``action == "completed"``.
+        retry_count: Number of previous ci-fix attempts for this branch.
+            Passed through to :func:`~bernstein.github_app.ci_router.build_ci_routing_payload`
+            for model/effort escalation.
+        cwd: Repository root for git operations.  ``None`` means current dir.
+
+    Returns:
+        List with at most one task creation dict matching ``TaskCreate`` fields.
+    """
+    if event.event_type != "workflow_run" or event.action != "completed":
+        return []
+
+    run: dict[str, Any] = event.payload.get("workflow_run", {})
+    if run.get("conclusion") != "failure":
+        return []
+
+    from bernstein.adapters.ci.github_actions import (
+        GitHubActionsParser,
+        download_github_actions_log,
+    )
+    from bernstein.github_app.ci_router import (
+        MAX_CI_RETRIES,
+        CIBlameResult,
+        blame_ci_failures,
+        build_ci_routing_payload,
+    )
+
+    workflow_name: str = run.get("name", "CI")
+    head_sha: str = run.get("head_sha", "")
+    run_url: str = run.get("html_url", "")
+
+    # Download and parse the CI log.
+    raw_log = ""
+    try:
+        raw_log = download_github_actions_log(run_url)
+    except Exception as exc:
+        logger.warning("Could not download CI log for %s: %s", run_url[:80], exc)
+
+    failures = GitHubActionsParser().parse(raw_log) if raw_log else []
+
+    if not failures:
+        logger.info(
+            "workflow_run_to_task: no parseable failures in run %s",
+            run_url[:60] or head_sha[:8],
+        )
+        return []
+
+    # Attribute blame to the triggering commit.
+    blame = blame_ci_failures(failures, head_sha, cwd) if head_sha else CIBlameResult(head_sha="")
+
+    payload = build_ci_routing_payload(
+        failures=failures,
+        blame=blame,
+        workflow_name=workflow_name,
+        run_url=run_url,
+        retry_count=retry_count,
+    )
+
+    logger.info(
+        "Mapped workflow_run failure to ci-fix task: workflow=%s sha=%s retry=%d/%d",
+        workflow_name,
+        head_sha[:8],
+        retry_count + 1,
+        MAX_CI_RETRIES,
+    )
+
+    return [payload]
 
 
 def label_to_action(event: WebhookEvent) -> dict[str, Any] | None:

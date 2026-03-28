@@ -404,10 +404,10 @@ class TestPrioritizeStarvingRoles:
     def test_multiple_starving_roles_all_move_front(self) -> None:
         """All starving roles are moved before any served role."""
         batches = [
-            [_make_task(id="b1", role="backend")],   # served (3 agents)
-            [_make_task(id="q1", role="qa")],         # starving
-            [_make_task(id="d1", role="docs")],       # starving
-            [_make_task(id="b2", role="backend")],    # served
+            [_make_task(id="b1", role="backend")],  # served (3 agents)
+            [_make_task(id="q1", role="qa")],  # starving
+            [_make_task(id="d1", role="docs")],  # starving
+            [_make_task(id="b2", role="backend")],  # served
         ]
         alive_per_role = {"backend": 3}
         result = prioritize_starving_roles(batches, alive_per_role)
@@ -475,9 +475,140 @@ class TestTickStarvingRolePriority:
         new_session_id = result.spawned[0]
         new_session = orch._agents.get(new_session_id)
         assert new_session is not None, "spawned session must be tracked"
-        assert new_session.role == "qa", (
-            f"starving qa role should have gotten the last slot; got {new_session.role}"
+        assert new_session.role == "qa", f"starving qa role should have gotten the last slot; got {new_session.role}"
+
+
+# --- Per-role cap enforcement ---
+
+
+class TestPerRoleCapDistribution:
+    """Integration tests: per-role cap prevents a single role from consuming all slots."""
+
+    def _make_handler(self, task_dicts: list[dict]) -> object:
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            if request.method == "GET" and url.path == "/tasks":
+                return httpx.Response(200, json=task_dicts)
+            if request.method == "POST" and "/claim" in url.path:
+                task_id = url.path.split("/")[-2]
+                td = next((t for t in task_dicts if t["id"] == task_id), task_dicts[0])
+                return httpx.Response(200, json=td)
+            return httpx.Response(404)
+
+        return handler
+
+    def test_backend_at_cap_does_not_get_more_agents(self, tmp_path: Path) -> None:
+        """When backend is at its proportional cap, remaining slots go to other roles.
+
+        Setup: max_agents=6, backend: 2 tasks (cap=4), qa: 1 task (cap=2).
+        Pre-seed 4 alive backend agents (exactly at cap).
+        Global slots: 6 - 4 = 2 free, but backend is at cap.
+        Expected: only qa agent(s) spawn, not additional backend agents.
+        """
+        be1 = _make_task(id="T-be1", role="backend", title="Backend 1")
+        be2 = _make_task(id="T-be2", role="backend", title="Backend 2")
+        qa1 = _make_task(id="T-qa1", role="qa", title="QA 1")
+        task_dicts = [_task_as_dict(be1), _task_as_dict(be2), _task_as_dict(qa1)]
+
+        cfg = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            max_tasks_per_agent=1,
+            server_url="http://testserver",
         )
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(self._make_handler(task_dicts)), config=cfg)
+
+        # Pre-seed 4 alive backend agents (at cap: ceil(6 * 2 / 3) = 4)
+        for i in range(4):
+            session = AgentSession(
+                id=f"existing-backend-{i}",
+                role="backend",
+                pid=10000 + i,
+                task_ids=[f"T-claimed-{i}"],
+                status="running",
+                model_config=RouterModelConfig(model="claude-sonnet-4-6", effort="normal"),
+                spawn_ts=time.time(),
+            )
+            orch._agents[session.id] = session
+
+        result = orch.tick()
+
+        # Only QA agent(s) should spawn — backend is at its per-role cap
+        spawned_roles = [orch._agents[sid].role for sid in result.spawned if sid in orch._agents]
+        assert "backend" not in spawned_roles, (
+            f"backend is at its per-role cap; should not spawn more. Got: {spawned_roles}"
+        )
+        assert "qa" in spawned_roles, f"qa should have gotten a slot; got: {spawned_roles}"
+
+    def test_proportional_cap_allows_both_roles(self, tmp_path: Path) -> None:
+        """Both roles stay under cap: each gets at least one agent this tick.
+
+        Setup: max_agents=4, backend: 2 tasks, qa: 2 tasks (cap = 2 each).
+        No pre-seeded agents. Both roles are starving.
+        Expected: exactly 2 agents spawned (1 backend + 1 qa, capped by max_tasks_per_agent=2).
+        """
+        tasks = [
+            _make_task(id="T-be1", role="backend", title="Backend 1"),
+            _make_task(id="T-be2", role="backend", title="Backend 2"),
+            _make_task(id="T-qa1", role="qa", title="QA 1"),
+            _make_task(id="T-qa2", role="qa", title="QA 2"),
+        ]
+        task_dicts = [_task_as_dict(t) for t in tasks]
+
+        cfg = OrchestratorConfig(
+            max_agents=4,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            max_tasks_per_agent=2,
+            server_url="http://testserver",
+        )
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(self._make_handler(task_dicts)), config=cfg)
+
+        result = orch.tick()
+
+        spawned_roles = [orch._agents[sid].role for sid in result.spawned if sid in orch._agents]
+        assert "backend" in spawned_roles, "backend should get a slot"
+        assert "qa" in spawned_roles, "qa should get a slot"
+
+    def test_cap_minimum_one_per_role(self, tmp_path: Path) -> None:
+        """ceil() ensures every role with tasks gets at least 1 cap slot.
+
+        Setup: max_agents=5, backend: 9 tasks, qa: 1 task (total 10).
+        Backend cap = ceil(5 * 9 / 10) = 5, qa cap = ceil(5 * 1 / 10) = 1.
+        Pre-seed 5 backend agents (at cap). 0 free global slots — no qa spawn.
+        This confirms the formula doesn't round qa cap to 0 (ceil enforces >= 1).
+        """
+        backend_tasks = [_make_task(id=f"T-be{i}", role="backend", title=f"Backend {i}") for i in range(9)]
+        qa_task = _make_task(id="T-qa1", role="qa", title="QA 1")
+        task_dicts = [_task_as_dict(t) for t in backend_tasks + [qa_task]]
+
+        cfg = OrchestratorConfig(
+            max_agents=5,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            max_tasks_per_agent=1,
+            server_url="http://testserver",
+        )
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(self._make_handler(task_dicts)), config=cfg)
+
+        # Pre-seed 5 backend agents (at global cap AND at per-role cap)
+        for i in range(5):
+            session = AgentSession(
+                id=f"existing-backend-{i}",
+                role="backend",
+                pid=20000 + i,
+                task_ids=[f"T-claimed-{i}"],
+                status="running",
+                model_config=RouterModelConfig(model="claude-sonnet-4-6", effort="normal"),
+                spawn_ts=time.time(),
+            )
+            orch._agents[session.id] = session
+
+        result = orch.tick()
+
+        # Global cap hit — no new spawns
+        assert len(result.spawned) == 0, f"global cap (5/5) should block all spawns; got {result.spawned}"
 
 
 # --- Orchestrator.tick ---
@@ -5158,9 +5289,7 @@ class TestRunManagerQueueReview:
         transport = httpx.MockTransport(handler)
         orch = self._make_orch(tmp_path, transport)
 
-        result = self._make_correction_result(
-            [{"action": "cancel", "task_id": "t2", "reason": "stalled > 5 min"}]
-        )
+        result = self._make_correction_result([{"action": "cancel", "task_id": "t2", "reason": "stalled > 5 min"}])
         with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
             mock_agent = MagicMock()
             mock_agent.review_queue_sync.return_value = result

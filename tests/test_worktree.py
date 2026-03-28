@@ -364,9 +364,10 @@ class TestSetupWorktreeEnv:
     def test_manager_without_setup_config_skips_env_setup(self, tmp_path: Path) -> None:
         mgr = WorktreeManager(tmp_path)  # no setup_config
 
-        with patch("subprocess.run", return_value=_ok()), patch(
-            "bernstein.core.worktree.setup_worktree_env"
-        ) as mock_setup:
+        with (
+            patch("subprocess.run", return_value=_ok()),
+            patch("bernstein.core.worktree.setup_worktree_env") as mock_setup,
+        ):
             mgr.create("sess-plain")
 
         mock_setup.assert_not_called()

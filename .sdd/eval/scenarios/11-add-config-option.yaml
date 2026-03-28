@@ -1,0 +1,30 @@
+id: add-config-option-max-agents
+tier: standard
+setup:
+  command: "git checkout HEAD -- src/bernstein/core/models.py"
+task:
+  title: "Add max_parallel_agents field to OrchestratorConfig in models.py"
+  description: |
+    In `src/bernstein/core/models.py`, find the `OrchestratorConfig` dataclass and
+    add a new field `max_parallel_agents: int = 4`.
+    The field should be documented with an inline comment:
+        # Maximum number of agents running concurrently
+    Place it after the existing fields. Do not change any other logic.
+  role: backend
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/core/models.py
+    value: "max_parallel_agents"
+  - type: file_contains
+    path: src/bernstein/core/models.py
+    value: "max_parallel_agents: int = 4"
+  - type: command_succeeds
+    value: "python3 -c \"from bernstein.core.models import OrchestratorConfig; cfg = OrchestratorConfig(); assert cfg.max_parallel_agents == 4\""
+  - type: test_passes
+    value: "uv run pytest tests/unit/test_models.py -x -q"
+limits:
+  max_cost_usd: 0.50
+  max_duration_seconds: 180
+  max_retries: 1

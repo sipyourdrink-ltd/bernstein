@@ -185,6 +185,9 @@ class RouterState:
     cost_optimization: bool = True  # Prefer cheaper providers
     free_tier_priority: bool = True  # Prioritize free tier usage
 
+    # Active-agent counts per provider for load-spreading (updated by RateLimitTracker)
+    active_agent_counts: dict[str, int] = field(default_factory=dict[str, int])
+
 
 class TierAwareRouter:
     """
@@ -280,6 +283,7 @@ class TierAwareRouter:
                 not in (
                     ProviderHealthStatus.UNHEALTHY,
                     ProviderHealthStatus.OFFLINE,
+                    ProviderHealthStatus.RATE_LIMITED,
                 )
                 and p.health.success_rate >= self.state.min_health_score
             ]
@@ -293,10 +297,11 @@ class TierAwareRouter:
         Higher score = better provider.
 
         Factors:
-        - Health status (40%)
-        - Cost efficiency (30%)
+        - Health status (35%)
+        - Cost efficiency (25%)
         - Free tier availability (20%)
         - Latency (10%)
+        - Load spreading (10%): penalises providers with more active agents
         """
         # Health score (0-1)
         health_score = provider.health.success_rate
@@ -313,8 +318,19 @@ class TierAwareRouter:
         max_latency = self.state.max_latency_ms
         latency_score = 1.0 - min(provider.health.avg_latency_ms / max_latency, 1.0)
 
+        # Spreading score (0-1): prefer providers with fewer active agents.
+        # Normalises against a soft ceiling of 10 concurrent agents per provider.
+        active = self.state.active_agent_counts.get(provider.name, 0)
+        spreading_score = 1.0 - min(active / 10.0, 1.0)
+
         # Weighted sum
-        return health_score * 0.4 + cost_score * 0.3 + free_tier_score * 0.2 + latency_score * 0.1
+        return (
+            health_score * 0.35
+            + cost_score * 0.25
+            + free_tier_score * 0.20
+            + latency_score * 0.10
+            + spreading_score * 0.10
+        )
 
     def select_provider_for_task(
         self,
@@ -476,6 +492,17 @@ class TierAwareRouter:
         estimated_tokens = model_config.max_tokens * 0.5
         effective_cost = provider.get_effective_cost()
         return (estimated_tokens / 1000) * effective_cost
+
+    def update_active_agent_counts(self, counts: dict[str, int]) -> None:
+        """Refresh the active-agent counts used for load-spreading.
+
+        Should be called each tick by the orchestrator after consulting the
+        RateLimitTracker so that provider scores reflect current load.
+
+        Args:
+            counts: Mapping of provider name -> number of active agents.
+        """
+        self.state.active_agent_counts = dict(counts)
 
     def route_batch(
         self,

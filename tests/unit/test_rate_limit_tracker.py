@@ -9,7 +9,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from bernstein.core.rate_limit_tracker import RateLimitTracker, ThrottleState
-from bernstein.core.router import ProviderConfig, ProviderHealth, ProviderHealthStatus, RouterState, Tier, TierAwareRouter
+from bernstein.core.router import (
+    ProviderConfig,
+    ProviderHealth,
+    ProviderHealthStatus,
+    RouterState,
+    Tier,
+    TierAwareRouter,
+)
 
 
 # ---------------------------------------------------------------------------

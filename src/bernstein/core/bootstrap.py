@@ -188,7 +188,7 @@ def preflight_checks(cli: str, port: int) -> None:
     """
     if cli == "auto":
         # Auto mode: use agent_discovery for rich detection with auth + model info
-        from bernstein.core.agent_discovery import _short_model, discover_agents_cached
+        from bernstein.core.agent_discovery import discover_agents_cached, short_model
 
         discovery = discover_agents_cached()
         if not discovery.agents:
@@ -200,7 +200,7 @@ def preflight_checks(cli: str, port: int) -> None:
         # Build "Claude (sonnet/opus), Codex (o4-mini)" description
         agent_parts: list[str] = []
         for agent in discovery.agents:
-            short_models = [_short_model(m) for m in agent.available_models[:2]]
+            short_models = [short_model(m) for m in agent.available_models[:2]]
             auth_note = "" if agent.logged_in else " [dim](not authenticated)[/dim]"
             agent_parts.append(f"{agent.name.capitalize()} ({'/'.join(short_models)}){auth_note}")
         routing_note = "Using auto-routing." if len(discovery.agents) > 1 else "Using as primary."
@@ -651,6 +651,8 @@ def bootstrap_from_seed(
     remote: bool = False,
     force_fresh: bool = False,
     evolve_mode: bool = False,
+    cli: str | None = None,
+    model: str | None = None,
 ) -> BootstrapResult:
     """Full bootstrap: parse seed -> init .sdd -> start server -> plan -> orchestrate.
 
@@ -672,6 +674,8 @@ def bootstrap_from_seed(
         force_fresh: Ignore any saved session and start from scratch.
         evolve_mode: When True, start the server with ``--reload`` so that
             source changes by agents are picked up without killing agents.
+        cli: Optional CLI override (e.g. "claude", "codex"). Overrides seed config.
+        model: Optional model override (e.g. "opus", "sonnet"). Overrides seed config.
 
     Returns:
         BootstrapResult with PIDs and task ID.
@@ -690,6 +694,11 @@ def bootstrap_from_seed(
     # 1. Parse seed
     with Status("[bold]Parsing seed file...[/bold]", console=console):
         seed = parse_seed(seed_path)
+        # Apply CLI overrides (--cli, --model take precedence over seed config)
+        if cli is not None:
+            seed.cli = cli
+        if model is not None:
+            seed.model = model
         # Pre-flight: verify binary, API key, and port before touching anything.
         preflight_checks(seed.cli, port)
     effective_cells = cells if cells is not None else seed.cells
@@ -962,7 +971,7 @@ def _auto_write_bernstein_yaml(workdir: Path) -> None:
     content = (
         "# Bernstein orchestration config — auto-generated\n"
         "# Uncomment 'goal' to run from this file: bernstein (without -g)\n"
-        "# goal: \"Describe what you want to build\"\n"
+        '# goal: "Describe what you want to build"\n'
         "\n"
         f"{cli_line}\n"
         "team: auto\n"

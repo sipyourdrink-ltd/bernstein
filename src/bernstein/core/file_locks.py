@@ -100,11 +100,7 @@ class FileLockManager:
             Empty list on success, or the paths of files with conflicting locks.
         """
         self._evict_expired()
-        conflicts = [
-            f
-            for f in files
-            if f in self._locks and self._locks[f].agent_id != agent_id
-        ]
+        conflicts = [f for f in files if f in self._locks and self._locks[f].agent_id != agent_id]
         if conflicts:
             for f in conflicts:
                 existing = self._locks[f]
@@ -201,7 +197,7 @@ class FileLockManager:
                 lock = FileLock(**entry)
                 self._locks[lock.file_path] = lock
             logger.debug("Loaded %d file lock(s) from %s", len(self._locks), self._path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("Could not load file locks from %s: %s", self._path, exc)
             self._locks = {}
 

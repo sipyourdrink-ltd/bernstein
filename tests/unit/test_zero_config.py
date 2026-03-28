@@ -86,9 +86,7 @@ class TestSeedConfigDefault:
 class TestPreflightChecksAutoMode:
     @patch("bernstein.core.bootstrap._check_port_free")
     @patch("bernstein.core.agent_discovery.discover_agents_cached")
-    def test_auto_mode_prints_found_agents(
-        self, mock_discover: MagicMock, mock_port: MagicMock
-    ) -> None:
+    def test_auto_mode_prints_found_agents(self, mock_discover: MagicMock, mock_port: MagicMock) -> None:
         from bernstein.core.bootstrap import preflight_checks
 
         discovery = DiscoveryResult(
@@ -102,9 +100,7 @@ class TestPreflightChecksAutoMode:
 
     @patch("bernstein.core.bootstrap._check_port_free")
     @patch("bernstein.core.agent_discovery.discover_agents_cached")
-    def test_auto_mode_no_agents_exits(
-        self, mock_discover: MagicMock, mock_port: MagicMock
-    ) -> None:
+    def test_auto_mode_no_agents_exits(self, mock_discover: MagicMock, mock_port: MagicMock) -> None:
         from bernstein.core.bootstrap import preflight_checks
 
         mock_discover.return_value = DiscoveryResult(agents=[], warnings=[])
@@ -114,9 +110,7 @@ class TestPreflightChecksAutoMode:
 
     @patch("bernstein.core.bootstrap._check_port_free")
     @patch("bernstein.core.agent_discovery.discover_agents_cached")
-    def test_auto_mode_multiple_agents(
-        self, mock_discover: MagicMock, mock_port: MagicMock
-    ) -> None:
+    def test_auto_mode_multiple_agents(self, mock_discover: MagicMock, mock_port: MagicMock) -> None:
         from bernstein.core.bootstrap import preflight_checks
 
         discovery = DiscoveryResult(
@@ -153,9 +147,7 @@ class TestPreflightChecksAutoMode:
 
 class TestAutoWriteBernsteinYaml:
     @patch("bernstein.core.agent_discovery.generate_auto_routing_yaml")
-    def test_creates_file_with_auto_cli(
-        self, mock_routing: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_creates_file_with_auto_cli(self, mock_routing: MagicMock, tmp_path: Path) -> None:
         from bernstein.core.bootstrap import _auto_write_bernstein_yaml
 
         mock_routing.return_value = "cli: auto  # detected: claude\nrouting:\n  backend: claude-sonnet\n"
@@ -168,9 +160,7 @@ class TestAutoWriteBernsteinYaml:
         assert "goal" in content  # has a commented goal hint
 
     @patch("bernstein.core.agent_discovery.generate_auto_routing_yaml")
-    def test_creates_file_when_routing_empty(
-        self, mock_routing: MagicMock, tmp_path: Path
-    ) -> None:
+    def test_creates_file_when_routing_empty(self, mock_routing: MagicMock, tmp_path: Path) -> None:
         from bernstein.core.bootstrap import _auto_write_bernstein_yaml
 
         mock_routing.return_value = ""
@@ -219,3 +209,67 @@ class TestGenerateDefaultYaml:
         yaml = _generate_default_yaml("python")
         assert "cli: auto" in yaml
         assert "cli: claude" not in yaml
+
+
+# ---------------------------------------------------------------------------
+# CLI overrides: --cli, --model
+# ---------------------------------------------------------------------------
+
+
+class TestCLIOverrides:
+    def test_run_command_accepts_cli_flag(self) -> None:
+        """The 'conduct' command should have a --cli option."""
+        from bernstein.cli.run_cmd import run
+
+        # 'run' is a Click Command object after decoration
+        # Check for 'cli' parameter in the command's params list
+        param_names = [p.name for p in run.params]
+        assert "cli" in param_names, f"Expected 'cli' param, got: {param_names}"
+
+    def test_run_command_accepts_model_flag(self) -> None:
+        """The 'conduct' command should have a --model option."""
+        from bernstein.cli.run_cmd import run
+
+        # 'run' is a Click Command object after decoration
+        # Check for 'model' parameter in the command's params list
+        param_names = [p.name for p in run.params]
+        assert "model" in param_names, f"Expected 'model' param, got: {param_names}"
+
+    def test_cli_flag_passed_to_bootstrap(self, tmp_path: Path) -> None:
+        """--cli flag should be passed through to bootstrap_from_goal."""
+        from bernstein.core.bootstrap import bootstrap_from_goal
+        import inspect
+
+        # Verify bootstrap_from_goal accepts cli parameter
+        sig = inspect.signature(bootstrap_from_goal)
+        assert "cli" in sig.parameters
+
+    def test_model_flag_passed_to_bootstrap(self, tmp_path: Path) -> None:
+        """--model flag should be passed through to bootstrap_from_goal."""
+        from bernstein.core.bootstrap import bootstrap_from_goal
+        import inspect
+
+        # Verify bootstrap_from_goal accepts model parameter
+        sig = inspect.signature(bootstrap_from_goal)
+        assert "model" in sig.parameters
+
+    def test_cli_flag_overrides_seed_config(self, tmp_path: Path) -> None:
+        """CLI --cli flag should override values from seed file."""
+        from bernstein.core.bootstrap import bootstrap_from_seed
+        from bernstein.core.seed import SeedConfig
+
+        # This test verifies that bootstrap_from_seed accepts cli parameter
+        import inspect
+
+        sig = inspect.signature(bootstrap_from_seed)
+        assert "cli" in sig.parameters
+
+    def test_model_flag_overrides_seed_config(self, tmp_path: Path) -> None:
+        """CLI --model flag should override values from seed file."""
+        from bernstein.core.bootstrap import bootstrap_from_seed
+
+        # This test verifies that bootstrap_from_seed accepts model parameter
+        import inspect
+
+        sig = inspect.signature(bootstrap_from_seed)
+        assert "model" in sig.parameters

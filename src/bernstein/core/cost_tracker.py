@@ -24,6 +24,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from bernstein.core.cost import _MODEL_COST_USD_PER_1K  # pyright: ignore[reportPrivateUsage]
+from bernstein.core.models import (
+    AgentCostSummary,
+    ModelCostBreakdown,
+    RunCostProjection,
+    RunCostReport,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +390,138 @@ class CostTracker:
         else:
             lines.append(f"   Cost:  ${actual:.2f}")
         return "\n".join(lines)
+
+    # ---- breakdowns & projection ------------------------------------------
+
+    def agent_summaries(self) -> list[AgentCostSummary]:
+        """Build per-agent cost summaries from recorded usages.
+
+        Returns:
+            List of :class:`AgentCostSummary` sorted by total cost descending.
+        """
+        data: dict[str, dict[str, Any]] = {}
+        for u in self._usages:
+            if u.agent_id not in data:
+                data[u.agent_id] = {"total": 0.0, "count": 0, "models": {}}
+            data[u.agent_id]["total"] += u.cost_usd
+            data[u.agent_id]["count"] += 1
+            bucket: dict[str, float] = data[u.agent_id]["models"]
+            bucket[u.model] = bucket.get(u.model, 0.0) + u.cost_usd
+
+        return [
+            AgentCostSummary(
+                agent_id=aid,
+                total_cost_usd=round(d["total"], 6),
+                task_count=int(d["count"]),
+                model_breakdown={m: round(c, 6) for m, c in d["models"].items()},
+            )
+            for aid, d in sorted(data.items(), key=lambda kv: kv[1]["total"], reverse=True)
+        ]
+
+    def model_breakdowns(self) -> list[ModelCostBreakdown]:
+        """Build per-model cost breakdowns from recorded usages.
+
+        Returns:
+            List of :class:`ModelCostBreakdown` sorted by total cost descending.
+        """
+        data: dict[str, dict[str, Any]] = {}
+        for u in self._usages:
+            if u.model not in data:
+                data[u.model] = {"total": 0.0, "tokens": 0, "count": 0}
+            data[u.model]["total"] += u.cost_usd
+            data[u.model]["tokens"] += u.input_tokens + u.output_tokens
+            data[u.model]["count"] += 1
+
+        return [
+            ModelCostBreakdown(
+                model=model,
+                total_cost_usd=round(d["total"], 6),
+                total_tokens=int(d["tokens"]),
+                invocation_count=int(d["count"]),
+            )
+            for model, d in sorted(data.items(), key=lambda kv: kv[1]["total"], reverse=True)
+        ]
+
+    def project(self, tasks_done: int, tasks_remaining: int) -> RunCostProjection:
+        """Project total run cost based on completed-task history.
+
+        Uses ``current_cost / tasks_done`` as the per-task average and
+        multiplies by ``tasks_remaining`` to estimate the remaining spend.
+        Confidence is 0 with no data and approaches 1.0 after 5+ tasks.
+
+        Args:
+            tasks_done: Number of tasks completed so far.
+            tasks_remaining: Number of tasks still outstanding.
+
+        Returns:
+            :class:`RunCostProjection` with estimate and confidence.
+        """
+        current = self._spent_usd
+        avg_per_task = (current / tasks_done) if tasks_done > 0 else 0.0
+        projected_total = current + avg_per_task * max(tasks_remaining, 0)
+        confidence = min(tasks_done / 5.0, 1.0) if tasks_done > 0 else 0.0
+
+        if self.budget_usd <= 0:
+            within_budget = True
+        else:
+            within_budget = projected_total <= self.budget_usd
+
+        return RunCostProjection(
+            run_id=self.run_id,
+            tasks_done=tasks_done,
+            tasks_remaining=max(tasks_remaining, 0),
+            current_cost_usd=round(current, 6),
+            projected_total_usd=round(projected_total, 6),
+            avg_cost_per_task_usd=round(avg_per_task, 6),
+            budget_usd=self.budget_usd,
+            within_budget=within_budget,
+            confidence=round(confidence, 3),
+        )
+
+    def report(self, tasks_done: int = 0, tasks_remaining: int = 0) -> RunCostReport:
+        """Build a full cost report for this run.
+
+        Args:
+            tasks_done: Tasks completed; used for projection (0 = no projection).
+            tasks_remaining: Tasks still outstanding; used for projection.
+
+        Returns:
+            :class:`RunCostReport` with per-agent, per-model, and projection data.
+        """
+        projection: RunCostProjection | None = None
+        if tasks_done > 0 or tasks_remaining > 0:
+            projection = self.project(tasks_done, tasks_remaining)
+
+        return RunCostReport(
+            run_id=self.run_id,
+            total_spent_usd=round(self._spent_usd, 6),
+            budget_usd=self.budget_usd,
+            per_agent=self.agent_summaries(),
+            per_model=self.model_breakdowns(),
+            projection=projection,
+        )
+
+    def save_metrics(self, metrics_dir: "Path") -> "Path":
+        """Persist a cost report to ``.sdd/metrics/costs_{run_id}.json``.
+
+        Creates the directory if it does not exist.  Handles zero/missing
+        budget gracefully — ``budget_usd=0`` is written as-is (unlimited).
+
+        Args:
+            metrics_dir: The ``.sdd/metrics`` directory path.
+
+        Returns:
+            Path to the written JSON file.
+        """
+        from pathlib import Path as _Path
+
+        metrics_path = _Path(str(metrics_dir))
+        metrics_path.mkdir(parents=True, exist_ok=True)
+        file_path = metrics_path / f"costs_{self.run_id}.json"
+        r = self.report()
+        file_path.write_text(json.dumps(r.to_dict(), indent=2))
+        logger.debug("Cost report for run %s saved to %s", self.run_id, file_path)
+        return file_path
 
     # ---- internal ---------------------------------------------------------
 

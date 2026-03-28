@@ -57,6 +57,7 @@ def _fetch_all() -> dict[str, Any]:
         "tasks": _get("/tasks"),
         "status": _get("/status"),
         "agents": _load_agents(),
+        "costs": _get("/costs/live"),
     }
 
 
@@ -92,10 +93,18 @@ class AgentWidget(Static):
 
     can_focus = False
 
-    def __init__(self, agent: dict[str, Any], tasks: dict[str, str], **kw: Any) -> None:
+    def __init__(
+        self,
+        agent: dict[str, Any],
+        tasks: dict[str, str],
+        task_progress: dict[str, int] | None = None,
+        **kw: Any,
+    ) -> None:
         super().__init__(**kw)
         self.agent_data = agent
         self.task_titles = tasks
+        self.task_progress: dict[str, int] = task_progress or {}
+        self.agent_cost: float = 0.0
 
     def render(self) -> Text:
         a = self.agent_data
@@ -125,10 +134,25 @@ class AgentWidget(Static):
         t.append(f"  {model}", style="bold dim")
         t.append(f"  {m}:{s:02d}", style="dim")
 
+        # Per-agent cost ticker
+        if self.agent_cost > 0:
+            t.append(f"  ${self.agent_cost:.4f}", style="bold bright_green")
+
         task_ids: list[str] = a.get("task_ids", [])
         for tid in task_ids[:2]:
             title = self.task_titles.get(tid, tid[:12])
-            t.append(f"\n   \u2192 {title[:60]}", style="italic dim")
+            progress = self.task_progress.get(tid, 0)
+            t.append(f"\n   \u2192 {title[:48]}", style="italic dim")
+            if progress > 0:
+                # Compact inline progress bar (8 blocks)
+                bar_w = 8
+                filled = int(progress / 100 * bar_w)
+                bar_color = "bright_green" if progress >= 100 else "bright_cyan"
+                t.append("  \u2590", style="dim")
+                for i in range(bar_w):
+                    t.append("\u2588" if i < filled else "\u2591", style=bar_color if i < filled else "dim")
+                t.append("\u258c", style="dim")
+                t.append(f" {progress}%", style=f"bold {bar_color}")
 
         lines = _tail_log(aid, 5)
         for line in lines:
@@ -149,6 +173,10 @@ class BigStats(Static):
     elapsed = reactive(0)
     evolve = reactive(False)
     failed = reactive(0)
+    spent_usd = reactive(0.0)
+    budget_usd = reactive(0.0)
+    budget_pct = reactive(0.0)
+    per_model: reactive[dict[str, float]] = reactive(dict)  # type: ignore[assignment]
 
     def render(self) -> Text:
         pct = int(self.done / self.total * 100) if self.total > 0 else 0
@@ -186,6 +214,38 @@ class BigStats(Static):
             t.append(f"  {h}h{m:02d}m", style="dim")
         else:
             t.append(f"  {m}m{s:02d}s", style="dim")
+
+        # -- Cost row --
+        t.append("\n")
+        t.append(f" ${self.spent_usd:.4f}", style="bold bright_green")
+
+        if self.budget_usd > 0:
+            t.append(f" / ${self.budget_usd:.2f}", style="bold")
+            # Budget bar
+            bw = 20
+            bp = min(self.budget_pct, 1.0)
+            bf = int(bp * bw)
+            bar_color = (
+                "bold bright_red"
+                if self.budget_pct >= 0.95
+                else ("bold bright_yellow" if self.budget_pct >= 0.80 else "bold bright_green")
+            )
+            t.append("  \u2590", style="dim")
+            for i in range(bw):
+                t.append("\u2588" if i < bf else "\u2591", style=bar_color if i < bf else "dim")
+            t.append("\u258c", style="dim")
+            t.append(f" {int(self.budget_pct * 100)}%", style=bar_color)
+
+        # Burn rate
+        if self.elapsed > 0 and self.spent_usd > 0:
+            rate = self.spent_usd / (self.elapsed / 60.0)
+            t.append(f"  (${rate:.4f}/min)", style="dim")
+
+        # Per-model breakdown
+        models = self.per_model
+        if models:
+            parts = [f"{m}:${c:.4f}" for m, c in sorted(models.items(), key=lambda x: -x[1])]
+            t.append(f"  {' '.join(parts)}", style="dim")
 
         return t
 
@@ -289,7 +349,7 @@ class BernsteinApp(App[None]):
     }
 
     #stats-row {
-        height: 1;
+        height: 2;
         padding: 0 1;
     }
 
@@ -340,6 +400,7 @@ class BernsteinApp(App[None]):
         self._evolve = False
         self._activity_visible = True
         self._task_titles: dict[str, str] = {}
+        self._task_progress: dict[str, int] = {}
         self._last_activity: list[str] = []
 
     def compose(self) -> ComposeResult:
@@ -414,16 +475,18 @@ class BernsteinApp(App[None]):
     def _apply_data(self, data: dict[str, Any]) -> None:
         """Apply fetched data to widgets (main thread, non-blocking)."""
         self._update_tasks(data.get("tasks"))
-        self._update_agents(data.get("agents", []))
-        self._update_stats(data.get("status"), data.get("agents", []))
+        costs: dict[str, Any] = data.get("costs") or {}
+        self._update_agents(data.get("agents", []), costs)
+        self._update_stats(data.get("status"), data.get("agents", []), costs)
         self._update_activity(data.get("agents", []))
 
     # -- Agents --
 
-    def _update_agents(self, agents: list[dict[str, Any]]) -> None:
+    def _update_agents(self, agents: list[dict[str, Any]], costs: dict[str, Any] | None = None) -> None:
         col = self.query_one("#col-agents")
         alive = [a for a in agents if a.get("status") != "dead"]
         alive_ids = {a.get("id", "") for a in alive}
+        per_agent: dict[str, float] = (costs or {}).get("per_agent", {})
 
         existing_ids: set[str] = set()
         for child in list(col.children):
@@ -439,6 +502,9 @@ class BernsteinApp(App[None]):
                     if matching:
                         child.agent_data = matching[0]
                         child.task_titles = self._task_titles
+                        child.task_progress = self._task_progress
+                    child.agent_cost = per_agent.get(aid, 0.0)
+                    child.refresh()
                     continue
             child.remove()
 
@@ -450,7 +516,9 @@ class BernsteinApp(App[None]):
                 w.remove()
             for a in alive:
                 if a.get("id", "") not in existing_ids:
-                    col.mount(AgentWidget(a, self._task_titles))
+                    widget = AgentWidget(a, self._task_titles, self._task_progress)
+                    widget.agent_cost = per_agent.get(a.get("id", ""), 0.0)
+                    col.mount(widget)
 
     # -- Tasks --
 
@@ -461,6 +529,9 @@ class BernsteinApp(App[None]):
 
         tasks: list[dict[str, Any]] = list(data)  # pyright: ignore[reportUnknownArgumentType]
         self._task_titles = {t.get("id", ""): t.get("title", "?") for t in tasks}
+        self._task_progress = {
+            str(t.get("id", "")): int(p) for t in tasks if isinstance((p := t.get("progress", 0)), (int, float))
+        }
 
         table.clear()
         order: dict[str, int] = {"claimed": 0, "in_progress": 0, "open": 1, "done": 2, "failed": 3}
@@ -478,7 +549,12 @@ class BernsteinApp(App[None]):
 
     # -- Stats --
 
-    def _update_stats(self, sd: Any, agents: list[dict[str, Any]]) -> None:
+    def _update_stats(
+        self,
+        sd: Any,
+        agents: list[dict[str, Any]],
+        costs: dict[str, Any] | None = None,
+    ) -> None:
         bar = self.query_one("#stats-row", BigStats)
 
         if sd:
@@ -491,8 +567,46 @@ class BernsteinApp(App[None]):
         bar.elapsed = int(time.time() - self._start_ts)
         bar.evolve = self._evolve
 
+        # Cost data
+        if costs:
+            spent = float(costs.get("spent_usd", 0.0))
+            budget = float(costs.get("budget_usd", 0.0))
+            pct = float(costs.get("percentage_used", 0.0))
+            bar.spent_usd = spent
+            bar.budget_usd = budget
+            bar.budget_pct = pct
+            bar.per_model = costs.get("per_model", {})
+
+            # Budget threshold alerts (fire once per level)
+            self._check_budget_alerts(pct, spent, budget)
+
         spark = self.query_one("#spark", Sparkline)
         spark.data = list(self._history) if self._history else [0.0]
+
+    def _check_budget_alerts(self, pct: float, spent: float, budget: float) -> None:
+        """Fire toast notifications when budget thresholds are crossed."""
+        if budget <= 0:
+            return
+        if pct >= 1.0 and not getattr(self, "_alert_100", False):
+            self._alert_100 = True  # type: ignore[attr-defined]
+            self.notify(
+                f"BUDGET EXCEEDED: ${spent:.2f} / ${budget:.2f}",
+                severity="error",
+            )
+        elif pct >= 0.95 and not getattr(self, "_alert_95", False):
+            self._alert_95 = True  # type: ignore[attr-defined]
+            self.notify(
+                f"Budget critical: ${spent:.2f} / ${budget:.2f} ({int(pct * 100)}%)",
+                severity="error",
+                timeout=10,
+            )
+        elif pct >= 0.80 and not getattr(self, "_alert_80", False):
+            self._alert_80 = True  # type: ignore[attr-defined]
+            self.notify(
+                f"Budget warning: ${spent:.2f} / ${budget:.2f} ({int(pct * 100)}%)",
+                severity="warning",
+                timeout=8,
+            )
 
     ROLE_COLORS: ClassVar[dict[str, str]] = {
         "backend": "bright_green",

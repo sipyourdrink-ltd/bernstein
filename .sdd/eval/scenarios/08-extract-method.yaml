@@ -1,0 +1,49 @@
+id: extract-method-from-fixture
+tier: standard
+setup:
+  command: >
+    python3 -c "
+    content = '''from __future__ import annotations
+
+
+    def process_tasks(task_ids: list[str], prefix: str = \"TASK\") -> list[str]:
+        '''Process task IDs: validate, format, and deduplicate.'''
+        results = []
+        seen: set[str] = set()
+        for tid in task_ids:
+            if not tid or len(tid) < 3:
+                continue
+            if tid in seen:
+                continue
+            seen.add(tid)
+            formatted = f\"{prefix}-{tid.upper().strip()}\"
+            results.append(formatted)
+        results.sort()
+        return results
+    '''
+    open('src/bernstein/_eval_fixture_extract.py', 'w').write(content)
+    "
+task:
+  title: "Extract the format+dedup logic in process_tasks into a private helper _format_task_id"
+  description: |
+    In `src/bernstein/_eval_fixture_extract.py`, extract the formatting logic
+    (`formatted = f"{prefix}-{tid.upper().strip()}"`) into a new private function
+    `_format_task_id(tid: str, prefix: str) -> str`.
+    Call `_format_task_id` from `process_tasks` instead of inlining the logic.
+    Behaviour of `process_tasks` must be identical after the refactor.
+  role: backend
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_extract.py
+    value: "_format_task_id"
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_extract.py
+    value: "def _format_task_id"
+  - type: command_succeeds
+    value: "python3 -c \"from bernstein._eval_fixture_extract import process_tasks; assert process_tasks(['abc', 'abc', 'xy', 'def']) == ['TASK-ABC', 'TASK-DEF']\""
+limits:
+  max_cost_usd: 0.50
+  max_duration_seconds: 180
+  max_retries: 1

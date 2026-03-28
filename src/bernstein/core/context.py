@@ -198,7 +198,75 @@ def gather_project_context(workdir: Path, max_lines: int = 100) -> str:
     if project_md:
         sections.append(f"## Project description (.sdd/project.md)\n{project_md}")
 
+    # Recent project memory
+    sdd_dir = workdir / ".sdd"
+    memory = gather_project_memory(sdd_dir=sdd_dir)
+    if memory:
+        sections.append(memory)
+
     return "\n\n".join(sections) if sections else "(no project context available)"
+
+
+def get_recent_project_memory(sdd_dir: Path, limit: int = 5) -> list[dict]:
+    """Get the last N entries from project memory.
+
+    Args:
+        sdd_dir: Path to .sdd directory.
+        limit: Maximum number of entries to return.
+
+    Returns:
+        List of memory entries (oldest first).
+    """
+    memory_file = sdd_dir / "memory" / "project_memory.json"
+    if not memory_file.exists():
+        return []
+
+    try:
+        data = json.loads(memory_file.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            return []
+        # Return last N entries in chronological order (oldest first)
+        return data[-limit:] if len(data) > limit else data
+    except (json.JSONDecodeError, OSError):
+        logger.warning(f"Failed to read project memory from {memory_file}")
+        return []
+
+
+def gather_project_memory(sdd_dir: Path) -> str:
+    """Format recent project memory for context injection.
+
+    Args:
+        sdd_dir: Path to .sdd directory.
+
+    Returns:
+        Formatted memory section or empty string if no memory available.
+    """
+    entries = get_recent_project_memory(sdd_dir=sdd_dir, limit=5)
+    if not entries:
+        return ""
+
+    lines: list[str] = ["## Recent run history"]
+    lines.append("")
+
+    for entry in entries:
+        goal = entry.get("goal", "")
+        tasks_done = entry.get("tasks_done", 0)
+        tasks_failed = entry.get("tasks_failed", 0)
+        total = tasks_done + tasks_failed
+        lesson = entry.get("lesson", "")
+
+        if total > 0:
+            line = f"- **{goal}**: {tasks_done}/{total} tasks done"
+        else:
+            line = f"- **{goal}**: no tasks"
+
+        if lesson:
+            line += f" — {lesson}"
+
+        lines.append(line)
+
+    lines.append("")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

@@ -167,7 +167,10 @@ class TestSaveSessionOnStop:
         (sdd / "backlog" / "open" / "1-task.md").write_text("# T")
         (sdd / "backlog" / "claimed" / "2-task.md").write_text("# T2")
 
-        save_session_on_stop(tmp_path)
+        # Mock httpx to force fallback path (no running server)
+        with patch("bernstein.cli.stop_cmd.auth_headers", return_value={}):
+            with patch("httpx.get", side_effect=Exception("no server")):
+                save_session_on_stop(tmp_path)
 
         state_file = sdd / "runtime" / "session_state.json"
         assert state_file.exists()
@@ -178,7 +181,8 @@ class TestSaveSessionOnStop:
 
     def test_handles_missing_backlog_dirs(self, tmp_path: Path) -> None:
         """Works even when backlog directories don't exist."""
-        save_session_on_stop(tmp_path)
+        with patch("httpx.get", side_effect=Exception("no server")):
+            save_session_on_stop(tmp_path)
 
         state_file = tmp_path / ".sdd" / "runtime" / "session_state.json"
         assert state_file.exists()

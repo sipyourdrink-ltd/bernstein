@@ -1,0 +1,44 @@
+id: implement-scenario-result-dataclass
+tier: standard
+setup:
+  command: >
+    python3 -c "
+    import pathlib
+    p = pathlib.Path('src/bernstein/eval/scenario_result.py')
+    if p.exists():
+        p.unlink()
+    "
+task:
+  title: "Create a ScenarioResult dataclass in src/bernstein/eval/scenario_result.py"
+  description: |
+    Create a new file `src/bernstein/eval/scenario_result.py` containing a frozen
+    dataclass `ScenarioResult` with the following fields:
+    - `scenario_id: str` — ID of the scenario
+    - `tier: str` — smoke | standard | stretch | adversarial
+    - `passed: bool` — whether the scenario passed
+    - `signals_passed: int` — how many signals passed
+    - `signals_total: int` — total signals checked
+    - `cost_usd: float` — actual cost incurred
+    - `duration_s: float` — wall-clock time in seconds
+    - `failure_reason: str | None = None` — why it failed (if applicable)
+    Also add a `pass_fraction` property that returns `signals_passed / signals_total`
+    (return 0.0 if `signals_total == 0`).
+    Include a module docstring and Google-style docstrings on the class.
+  role: backend
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: path_exists
+    value: src/bernstein/eval/scenario_result.py
+  - type: file_contains
+    path: src/bernstein/eval/scenario_result.py
+    value: "class ScenarioResult"
+  - type: file_contains
+    path: src/bernstein/eval/scenario_result.py
+    value: "pass_fraction"
+  - type: command_succeeds
+    value: "python3 -c \"from bernstein.eval.scenario_result import ScenarioResult; r = ScenarioResult('s1', 'smoke', True, 3, 3, 0.05, 30.0); assert r.pass_fraction == 1.0\""
+limits:
+  max_cost_usd: 0.50
+  max_duration_seconds: 180
+  max_retries: 1

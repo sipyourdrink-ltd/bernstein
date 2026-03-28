@@ -1,0 +1,89 @@
+id: multi-file-bug-fix-rate-metric
+tier: stretch
+setup:
+  command: >
+    python3 -c "
+    # File A: rate calculation with a subtle off-by-one bug
+    file_a = '''from __future__ import annotations
+
+
+    def compute_pass_rate(passed: int, total: int) -> float:
+        '''Compute pass rate. Returns value in [0.0, 1.0].'''
+        # BUG: divides by (total + 1) instead of total
+        if total == 0:
+            return 0.0
+        return passed / (total + 1)
+    '''
+    open('src/bernstein/_eval_fixture_bug_a.py', 'w').write(file_a)
+
+    # File B: uses compute_pass_rate and checks threshold
+    file_b = '''from __future__ import annotations
+
+    from bernstein._eval_fixture_bug_a import compute_pass_rate
+
+
+    def is_passing_tier(passed: int, total: int, threshold: float = 0.8) -> bool:
+        '''Return True if pass rate meets or exceeds threshold.'''
+        rate = compute_pass_rate(passed, total)
+        return rate >= threshold
+
+
+    def passing_summary(results: list[tuple[int, int]]) -> dict[str, float]:
+        '''Summarise pass rates across multiple runs.'''
+        rates = [compute_pass_rate(p, t) for p, t in results if t > 0]
+        if not rates:
+            return {'mean': 0.0, 'min': 0.0, 'max': 0.0}
+        return {'mean': sum(rates) / len(rates), 'min': min(rates), 'max': max(rates)}
+    '''
+    open('src/bernstein/_eval_fixture_bug_b.py', 'w').write(file_b)
+
+    # Failing test that exposes the bug
+    test_code = '''from bernstein._eval_fixture_bug_a import compute_pass_rate
+    from bernstein._eval_fixture_bug_b import is_passing_tier, passing_summary
+
+
+    def test_pass_rate_all_pass():
+        assert compute_pass_rate(5, 5) == 1.0
+
+
+    def test_pass_rate_none_pass():
+        assert compute_pass_rate(0, 10) == 0.0
+
+
+    def test_is_passing_tier():
+        assert is_passing_tier(8, 10) is True
+        assert is_passing_tier(7, 10) is False
+
+
+    def test_passing_summary():
+        result = passing_summary([(8, 10), (9, 10)])
+        assert result[\"min\"] >= 0.8
+    '''
+    open('tests/unit/test_eval_fixture_bug.py', 'w').write(test_code)
+    "
+task:
+  title: "Fix the off-by-one bug in src/bernstein/_eval_fixture_bug_a.py that breaks tests"
+  description: |
+    The function `compute_pass_rate` in `src/bernstein/_eval_fixture_bug_a.py` has
+    a bug: it divides by `(total + 1)` instead of `total`.
+    This causes all dependent code in `src/bernstein/_eval_fixture_bug_b.py` to
+    return wrong values.
+
+    Run the failing test suite to locate the root cause:
+        uv run pytest tests/unit/test_eval_fixture_bug.py -x -q
+
+    Fix the bug in `_eval_fixture_bug_a.py`. Do not change `_eval_fixture_bug_b.py`
+    or the test file.
+  role: backend
+  effort: medium
+  model: sonnet
+expected_signals:
+  - type: test_passes
+    value: "uv run pytest tests/unit/test_eval_fixture_bug.py -x -q"
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_bug_a.py
+    value: "return passed / total"
+limits:
+  max_cost_usd: 2.00
+  max_duration_seconds: 600
+  max_retries: 1

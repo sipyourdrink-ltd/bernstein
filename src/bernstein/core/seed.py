@@ -376,9 +376,7 @@ def parse_seed(path: Path) -> SeedConfig:
         copy_files = _parse_string_list(ws_dict.get("copy_files"), "worktree_setup.copy_files")
         setup_cmd_raw: object = ws_dict.get("setup_command")
         if setup_cmd_raw is not None and not isinstance(setup_cmd_raw, str):
-            raise SeedError(
-                f"worktree_setup.setup_command must be a string, got: {type(setup_cmd_raw).__name__}"
-            )
+            raise SeedError(f"worktree_setup.setup_command must be a string, got: {type(setup_cmd_raw).__name__}")
         worktree_setup = WorktreeSetupConfig(
             symlink_dirs=symlink_dirs,
             copy_files=copy_files,

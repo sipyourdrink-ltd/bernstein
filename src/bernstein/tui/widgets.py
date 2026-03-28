@@ -164,10 +164,13 @@ class ActionBar(Static):
             task_id: The task ID to show actions for.
         """
         markup = (
-            f"  \u25b8 [bold][k][/bold]ill  "
+            f"  \u25b8 [bold][s][/bold]pawn now  "
             f"[bold][p][/bold]rioritize  "
             f"[bold][m][/bold]odel  "
-            f"[bold][c][/bold]ancel"
+            f"[bold][r][/bold]ole  "
+            f"[bold][c][/bold]ancel  "
+            f"[bold][k][/bold]ill  "
+            f"[dim][ESC] close[/dim]"
             f"  [dim]({task_id})[/dim]"
         )
         self.update(Text.from_markup(markup))

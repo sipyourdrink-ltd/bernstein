@@ -318,9 +318,7 @@ class TestEvaluateTask:
             "completion_signals_passed": 1,
             "tests_failed": 0,
         }
-        verdict = JudgeVerdict(
-            correctness=4, style=3, test_coverage=4, safety=5, verdict="PASS"
-        )
+        verdict = JudgeVerdict(correctness=4, style=3, test_coverage=4, safety=5, verdict="PASS")
         result = h.evaluate_task(task, telemetry_raw=telemetry, judge_verdict=verdict)
         assert result.passed is True
         assert result.judge_verdict is verdict
@@ -332,9 +330,7 @@ class TestEvaluateTask:
 
 
 class TestMultiplicativeScoring:
-    def _make_passing_result(
-        self, task_id: str = "t1", tier: str = "smoke", cost: float = 0.10
-    ) -> TaskEvalResult:
+    def _make_passing_result(self, task_id: str = "t1", tier: str = "smoke", cost: float = 0.10) -> TaskEvalResult:
         return TaskEvalResult(
             task_id=task_id,
             tier=tier,
@@ -347,14 +343,10 @@ class TestMultiplicativeScoring:
                 completion_signals_checked=1,
                 completion_signals_passed=1,
             ),
-            judge_verdict=JudgeVerdict(
-                correctness=4, style=4, test_coverage=4, safety=4, verdict="PASS"
-            ),
+            judge_verdict=JudgeVerdict(correctness=4, style=4, test_coverage=4, safety=4, verdict="PASS"),
         )
 
-    def _make_failing_result(
-        self, task_id: str = "f1", tier: str = "smoke"
-    ) -> TaskEvalResult:
+    def _make_failing_result(self, task_id: str = "f1", tier: str = "smoke") -> TaskEvalResult:
         return TaskEvalResult(
             task_id=task_id,
             tier=tier,
@@ -558,9 +550,7 @@ class TestTaxonomyAccess:
         state_dir.mkdir()
         h = EvalHarness(state_dir)
 
-        task = GoldenTask(
-            id="acc-1", tier="smoke", title="Test", description="Test"
-        )
+        task = GoldenTask(id="acc-1", tier="smoke", title="Test", description="Test")
         telemetry = {
             "task_id": "acc-1",
             "completion_signals_checked": 1,

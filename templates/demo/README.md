@@ -12,7 +12,7 @@ python app.py
 ## Testing
 
 ```bash
-python scripts/run_tests.py -x
+pytest tests/ -q
 ```
 
 ## Tasks seeded by Bernstein

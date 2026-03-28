@@ -61,6 +61,7 @@ _PUBLIC_PATHS = frozenset(
         "/webhooks/github",
         "/dashboard",
         "/dashboard/data",
+        "/dashboard/file_locks",
         "/events",
     }
 )
@@ -284,6 +285,7 @@ class TaskPatchRequest(BaseModel):
 
     role: str | None = None
     priority: int | None = None
+    model: str | None = None
 
 
 class TaskProgressRequest(BaseModel):
@@ -357,6 +359,7 @@ class HealthResponse(BaseModel):
     uptime_s: float
     task_count: int
     agent_count: int
+    is_readonly: bool = False
 
 
 class BulletinPostRequest(BaseModel):
@@ -783,24 +786,29 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             return task
 
-    async def claim_by_id(self, task_id: str, expected_version: int | None = None) -> Task:
-        """Claim a specific task by ID with optional optimistic locking.
+    async def claim_by_id(self, task_id: str, expected_version: int | None = None, agent_role: str | None = None) -> Task:
+        """Claim a specific task by ID with optional optimistic locking and role matching.
 
         When ``expected_version`` is provided, the claim only succeeds if
         the task's current version matches (compare-and-swap). This
         prevents two nodes from claiming the same task in a distributed
         cluster.
 
+        When ``agent_role`` is provided, the claim only succeeds if the
+        task's role matches the agent's role (role-locked claiming).
+
         Args:
             task_id: Task identifier.
             expected_version: If set, CAS — reject if task.version != this.
+            agent_role: If set, reject if task.role != agent_role.
 
         Returns:
             The claimed Task.
 
         Raises:
             KeyError: If task_id does not exist.
-            ValueError: If expected_version doesn't match (CAS conflict).
+            ValueError: If expected_version doesn't match (CAS conflict) or
+                if agent_role doesn't match task role.
         """
         async with self._lock:
             task = self._tasks.get(task_id)
@@ -810,6 +818,10 @@ class TaskStore:
                 raise ValueError(
                     f"Version conflict: task {task_id} is at version {task.version}, expected {expected_version}"
                 )
+            if agent_role is not None and task.role != agent_role:
+                raise ValueError(
+                    f"role mismatch: task {task_id} requires role '{task.role}', agent has role '{agent_role}'"
+                )
             if task.status == TaskStatus.OPEN:
                 self._index_remove(task)
                 task.status = TaskStatus.CLAIMED
@@ -818,14 +830,17 @@ class TaskStore:
                 await self._append_jsonl(self._task_to_record(task))
             return task
 
-    async def claim_batch(self, task_ids: list[str], agent_id: str) -> tuple[list[str], list[str]]:
-        """Atomically claim multiple tasks by ID.
+    async def claim_batch(self, task_ids: list[str], agent_id: str, agent_role: str | None = None) -> tuple[list[str], list[str]]:
+        """Atomically claim multiple tasks by ID with optional role matching.
 
         Tasks that are not in OPEN status are skipped and reported as failed.
+        If agent_role is provided, tasks with mismatched roles are also
+        reported as failed (not claimed).
 
         Args:
             task_ids: List of task identifiers to claim.
             agent_id: The agent claiming the tasks.
+            agent_role: If set, only tasks with matching role can be claimed.
 
         Returns:
             A tuple of (claimed_ids, failed_ids).
@@ -836,6 +851,9 @@ class TaskStore:
             for task_id in task_ids:
                 task = self._tasks.get(task_id)
                 if task is None or task.status != TaskStatus.OPEN:
+                    failed.append(task_id)
+                    continue
+                if agent_role is not None and task.role != agent_role:
                     failed.append(task_id)
                     continue
                 self._index_remove(task)
@@ -1021,8 +1039,14 @@ class TaskStore:
             await self._append_archive(task, completed_at)
             return task
 
-    async def update(self, task_id: str, role: str | None, priority: int | None) -> Task:
-        """Update mutable task fields (role, priority) — manager corrections.
+    async def update(
+        self,
+        task_id: str,
+        role: str | None,
+        priority: int | None,
+        model: str | None = None,
+    ) -> Task:
+        """Update mutable task fields (role, priority, model) — manager corrections.
 
         Only open or failed tasks can be reassigned; claimed/in-progress tasks
         are left to finish before the new assignment takes effect.
@@ -1031,6 +1055,7 @@ class TaskStore:
             task_id: Task identifier.
             role: New role if provided.
             priority: New priority if provided.
+            model: New model hint if provided (e.g. "haiku", "sonnet", "opus").
 
         Returns:
             The updated Task.
@@ -1049,6 +1074,67 @@ class TaskStore:
                 self._index_add(task)
             if priority is not None:
                 task.priority = priority
+            if model is not None:
+                task.model = model
+            task.version += 1
+            await self._append_jsonl(self._task_to_record(task))
+            return task
+
+    async def prioritize(self, task_id: str) -> Task:
+        """Set a task's priority to 0 (highest) so it is claimed next.
+
+        Works on any non-terminal task (open, claimed, in_progress).
+
+        Args:
+            task_id: Task identifier.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            task.priority = 0
+            task.version += 1
+            await self._append_jsonl(self._task_to_record(task))
+            return task
+
+    async def force_claim(self, task_id: str) -> Task:
+        """Force a task back to open with priority 0 so it is claimed immediately.
+
+        If the task is already open its priority is set to 0 and it stays open.
+        If it is in a terminal state (done, failed, cancelled) it is returned
+        unchanged — only open/claimed/in_progress tasks can be force-claimed.
+
+        Args:
+            task_id: Task identifier.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+            ValueError: If the task is in a terminal state and cannot be re-queued.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            terminal = {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}
+            if task.status in terminal:
+                raise ValueError(
+                    f"Task '{task_id}' is in terminal state '{task.status.value}' and cannot be force-claimed"
+                )
+            if task.status != TaskStatus.OPEN:
+                # Reset claimed/in_progress back to open
+                self._index_remove(task)
+                task.status = TaskStatus.OPEN
+                self._index_add(task)
+            task.priority = 0
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))
             return task
@@ -1283,6 +1369,11 @@ class TaskStore:
         """Server start timestamp."""
         return self._start_ts
 
+    @property
+    def metrics_jsonl_path(self) -> Path:
+        """Path to the metrics JSONL file (for dashboard cost history)."""
+        return self._metrics_jsonl_path
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1513,6 +1604,7 @@ def create_app(
     """
     from bernstein.core.routes.agents import router as agents_router
     from bernstein.core.routes.costs import router as costs_router
+    from bernstein.core.routes.dashboard import router as dashboard_router
     from bernstein.core.routes.status import router as status_router
     from bernstein.core.routes.tasks import router as tasks_router
     from bernstein.core.routes.webhooks import router as webhooks_router
@@ -1575,6 +1667,7 @@ def create_app(
     application.state.sse_bus = sse_bus  # type: ignore[attr-defined]
     application.state.runtime_dir = jsonl_path.parent  # type: ignore[attr-defined]  # .sdd/runtime/
     application.state.sdd_dir = jsonl_path.parent.parent  # type: ignore[attr-defined]  # .sdd/
+    application.state.readonly = readonly  # type: ignore[attr-defined]
 
     # Mount routers
     application.include_router(agents_router)
@@ -1582,6 +1675,7 @@ def create_app(
     application.include_router(status_router)
     application.include_router(webhooks_router)
     application.include_router(costs_router)
+    application.include_router(dashboard_router)
 
     return application
 

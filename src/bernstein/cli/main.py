@@ -339,6 +339,38 @@ def cli(
         except (KeyboardInterrupt, EOFError):
             console.print("\n[yellow]Aborted.[/yellow]")
 
+    # Auto-initialize .sdd/ and bernstein.yaml if needed (zero-config entry point)
+    sdd_dir = workdir / ".sdd"
+    bernstein_yaml = workdir / "bernstein.yaml"
+    needs_init = not sdd_dir.exists() or not bernstein_yaml.exists()
+
+    if needs_init and goal is None and seed_path is None:
+        # Auto-detect available agents and initialize workspace
+        console.print("[dim]No project setup found. Auto-detecting...[/dim]")
+        from bernstein.core.agent_discovery import discover_agents_cached
+        from bernstein.core.bootstrap import _auto_write_bernstein_yaml, _ensure_sdd
+
+        # Create .sdd/ structure
+        _ensure_sdd(workdir)
+
+        # Create bernstein.yaml with auto-detected agents
+        _auto_write_bernstein_yaml(workdir)
+
+        # Print what was detected
+        discovery = discover_agents_cached()
+        if discovery.agents:
+            def model_short(m: str) -> str:
+                return m.split("-")[-1]
+
+            agents_str = []
+            for a in discovery.agents:
+                models = ", ".join(model_short(m) for m in a.available_models[:2])
+                agents_str.append(f"{a.name.capitalize()} ({models})")
+            agent_list = ", ".join(agents_str)
+            console.print(f"[green]✓[/green] Found: {agent_list}")
+        console.print("[green]✓[/green] Created .sdd/ and bernstein.yaml")
+        console.print()
+
     # Check if already running
     server_pid_path = Path(SDD_PID_SERVER)
     server_pid = read_pid(str(server_pid_path))
@@ -624,6 +656,32 @@ def cancel(task_id: str, reason: str) -> None:
         raise SystemExit(1)
     console.print(f"[green]Cancelled:[/green] {data['title']}")
     console.print(f"[dim]Status: {data['status']}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# review (trigger manager queue review)
+# ---------------------------------------------------------------------------
+
+
+@cli.command("review")
+@click.option("--workdir", default=".", help="Project root directory.", type=click.Path())
+def review_cmd(workdir: str) -> None:
+    """Trigger an immediate manager queue review.
+
+    Writes a flag file that the running orchestrator picks up on its next
+    tick, prompting the manager agent to inspect the task queue and issue
+    corrections (reassign mis-routed tasks, cancel stalled tasks, etc.).
+
+    \b
+    Example:
+      bernstein review
+    """
+    flag = Path(workdir) / ".sdd" / "runtime" / "review_requested"
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.write_text("1")
+    console.print(
+        "[green]Review queued.[/green] The manager will inspect the task queue on the next orchestrator tick."
+    )
 
 
 # ---------------------------------------------------------------------------

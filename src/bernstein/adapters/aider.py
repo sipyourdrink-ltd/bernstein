@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.env_isolation import build_filtered_env
 
 # Map Bernstein short model names to aider model identifiers.
 # Aider accepts provider-prefixed names (e.g. "openai/gpt-4o", "anthropic/claude-3-5-sonnet").
@@ -65,11 +66,14 @@ class AiderAdapter(CLIAdapter):
             model=model_id,
         )
 
+        # Aider supports both Anthropic and OpenAI models; include both API keys
+        env = build_filtered_env(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AZURE_OPENAI_API_KEY"])
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
                     wrapped_cmd,
                     cwd=workdir,
+                    env=env,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,

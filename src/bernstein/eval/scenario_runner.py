@@ -29,7 +29,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 import yaml
 
@@ -528,7 +528,7 @@ class ScenarioRunner:
         if not isinstance(raw_data, dict):
             raise ValueError(f"{path.name}: top-level must be a mapping")
 
-        raw: dict[str, object] = dict(raw_data)
+        raw: dict[str, object] = cast("dict[str, object]", raw_data)
 
         scenario_id = str(raw.get("id") or path.stem)
         tier = str(raw.get("tier", "smoke"))
@@ -537,13 +537,15 @@ class ScenarioRunner:
 
         # Setup
         setup_raw_val: object = raw.get("setup") or {}
-        setup_dict: dict[str, object] = dict(setup_raw_val) if isinstance(setup_raw_val, dict) else {}
+        setup_dict: dict[str, object] = (
+            cast("dict[str, object]", setup_raw_val) if isinstance(setup_raw_val, dict) else {}
+        )
         setup_cmd: object = setup_dict.get("command")
         setup = ScenarioSetup(command=str(setup_cmd) if setup_cmd is not None else None)
 
         # Task
         task_raw_val: object = raw.get("task") or {}
-        task_dict: dict[str, object] = dict(task_raw_val) if isinstance(task_raw_val, dict) else {}
+        task_dict: dict[str, object] = cast("dict[str, object]", task_raw_val) if isinstance(task_raw_val, dict) else {}
         task = ScenarioTask(
             title=str(task_dict.get("title", "")),
             description=str(task_dict.get("description", "")),
@@ -554,10 +556,12 @@ class ScenarioRunner:
 
         # Signals
         signals_raw_val: object = raw.get("expected_signals") or []
-        signals_list: list[object] = list(signals_raw_val) if isinstance(signals_raw_val, list) else []
+        signals_list: list[object] = cast("list[object]", signals_raw_val) if isinstance(signals_raw_val, list) else []
         signals: list[ScenarioSignal] = []
         for sig_raw_item in signals_list:
-            sig_dict: dict[str, object] = dict(sig_raw_item) if isinstance(sig_raw_item, dict) else {}
+            sig_dict: dict[str, object] = (
+                cast("dict[str, object]", sig_raw_item) if isinstance(sig_raw_item, dict) else {}
+            )
             sig_type = str(sig_dict.get("type", ""))
             if sig_type not in VALID_SIGNAL_TYPES:
                 raise ValueError(f"{path.name}: unknown signal type '{sig_type}'; must be one of {VALID_SIGNAL_TYPES}")
@@ -572,7 +576,9 @@ class ScenarioRunner:
 
         # Limits
         limits_raw_val: object = raw.get("limits") or {}
-        limits_dict: dict[str, object] = dict(limits_raw_val) if isinstance(limits_raw_val, dict) else {}
+        limits_dict: dict[str, object] = (
+            cast("dict[str, object]", limits_raw_val) if isinstance(limits_raw_val, dict) else {}
+        )
         limits = ScenarioLimits(
             max_cost_usd=float(str(limits_dict.get("max_cost_usd", 1.00))),
             max_duration_seconds=int(str(limits_dict.get("max_duration_seconds", 300))),

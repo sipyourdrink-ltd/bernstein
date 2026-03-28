@@ -4,7 +4,26 @@
 
 These are simulated results derived from a dependency-aware scheduling model and empirical cost estimates. All task definitions and the simulation harness are in this directory — reproducible in under 10 seconds, no API keys required.
 
-## Results
+## Benchmark 2: 25 Real GitHub Issues
+
+See [`results/issues_benchmark_20260328_211300.md`](results/issues_benchmark_20260328_211300.md) for a simulation across **25 curated real GitHub issues** from SWE-Bench Lite and popular Python repos. Metrics: resolve rate, wall-clock time, cost, plus formal statistical testing (Wilson CIs, two-proportion z-test, Cohen's h).
+
+```bash
+# Run it yourself (no API keys)
+uv run python benchmarks/run_benchmark.py --issues-file benchmarks/issues.json
+```
+
+Results (simulated, seed=42):
+
+| Scenario | Resolved | Rate | Speedup | Cost |
+|----------|:--------:|-----:|:-------:|-----:|
+| Single agent | 15/25 | 60% | — | baseline |
+| Multi-3 (Bernstein) | 17/25 | 68% | **1.59x** | -20% |
+| Multi-5 (Bernstein) | 18/25 | 72% | **1.74x** | -22% |
+
+Two-proportion z-test (single vs multi-3): p=0.556, Cohen's h=0.17 (N=25 — see note in report on statistical power). Run [`benchmarks/swe_bench/`](swe_bench/) for the full 300-issue evaluation.
+
+## Benchmark 1: 10 Engineering Tasks (DAG Simulation)
 
 | Task | Category | Subtasks | Single | 3-Agent | 5-Agent | Speedup 3× | Speedup 5× | Cost − | Quality + |
 |------|----------|:--------:|-------:|--------:|--------:|:----------:|:----------:|:------:|:---------:|
@@ -23,8 +42,11 @@ These are simulated results derived from a dependency-aware scheduling model and
 ## Run it yourself
 
 ```bash
-# Simulate — no API keys, runs in a few seconds
+# Simulate 10 engineering tasks — no API keys, runs in a few seconds
 uv run python benchmarks/run_benchmark.py
+
+# Benchmark on 25 real GitHub issues (simulate resolve rates + statistical testing)
+uv run python benchmarks/run_benchmark.py --issues-file benchmarks/issues.json
 
 # Write JSON + Markdown to benchmarks/results/
 uv run python benchmarks/run_benchmark.py --output benchmarks/results/

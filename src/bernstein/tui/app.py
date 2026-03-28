@@ -87,6 +87,29 @@ def _post(path: str, data: dict[str, Any] | None = None) -> dict[str, Any] | Non
         return None
 
 
+def _patch(path: str, data: dict[str, Any]) -> dict[str, Any] | None:  # type: ignore[reportUnusedFunction]
+    """HTTP PATCH to the task server.
+
+    Args:
+        path: URL path (e.g. "/tasks/{id}").
+        data: JSON body payload.
+
+    Returns:
+        Parsed JSON response, or None on failure.
+    """
+    try:
+        resp = httpx.patch(
+            f"{SERVER_URL}{path}",
+            json=data,
+            timeout=5.0,
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()  # type: ignore[no-any-return]
+    except Exception:
+        return None
+
+
 def _kill_agent(session_id: str) -> bool:
     """Kill an agent process by its session ID.
 
@@ -162,13 +185,14 @@ class BernsteinApp(App[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit", show=False),
         Binding("r", "refresh", "Refresh", show=False),
-        Binding("s", "soft_stop", "Soft stop", show=False),
         Binding("S", "hard_stop", "Hard stop", show=False, priority=True),
         Binding("enter", "toggle_action_bar", "Actions", show=False),
+        Binding("s", "spawn_now", "Spawn now", show=False),
+        Binding("p", "prioritize", "Prioritize", show=False),
         Binding("k", "kill_agent", "Kill agent", show=False),
+        Binding("c", "cancel_task", "Cancel task", show=False),
         Binding("escape", "close_action_bar", "Close", show=False),
         Binding("j", "cursor_down", "Down", show=False),
-        Binding("k", "cursor_up", "Up", show=False, priority=True),
     ]
 
     def __init__(self, *, poll_interval: float = _POLL_INTERVAL) -> None:
@@ -220,6 +244,51 @@ class BernsteinApp(App[None]):
         else:
             log_widget.append_line("[red]Soft stop failed \u2014 server unreachable[/red]")
         status_bar.update("Stopping...")
+
+    def action_spawn_now(self) -> None:
+        """Force-spawn an agent for the selected task (action bar must be open)."""
+        if not self._action_bar_visible:
+            return
+        task_id = self._selected_task_id()
+        if not task_id:
+            return
+        log_widget = self.query_one("#agent-log", AgentLogWidget)
+        result = _post(f"/tasks/{task_id}/force-claim")
+        if result is not None:
+            log_widget.append_line(f"[green]Spawn queued for task {task_id} (priority 0)[/green]")
+        else:
+            log_widget.append_line(f"[red]Spawn failed for task {task_id}[/red]")
+        self.action_close_action_bar()
+
+    def action_prioritize(self) -> None:
+        """Bump the selected task to priority 0 (next in queue)."""
+        if not self._action_bar_visible:
+            return
+        task_id = self._selected_task_id()
+        if not task_id:
+            return
+        log_widget = self.query_one("#agent-log", AgentLogWidget)
+        result = _post(f"/tasks/{task_id}/prioritize")
+        if result is not None:
+            log_widget.append_line(f"[cyan]Task {task_id} bumped to priority 0[/cyan]")
+        else:
+            log_widget.append_line(f"[red]Prioritize failed for task {task_id}[/red]")
+        self.action_close_action_bar()
+
+    def action_cancel_task(self) -> None:
+        """Cancel the selected task."""
+        if not self._action_bar_visible:
+            return
+        task_id = self._selected_task_id()
+        if not task_id:
+            return
+        log_widget = self.query_one("#agent-log", AgentLogWidget)
+        result = _post(f"/tasks/{task_id}/cancel", {"reason": "cancelled via TUI"})
+        if result is not None:
+            log_widget.append_line(f"[dim]Task {task_id} cancelled[/dim]")
+        else:
+            log_widget.append_line(f"[red]Cancel failed for task {task_id}[/red]")
+        self.action_close_action_bar()
 
     def action_hard_stop(self) -> None:
         """Hard stop: kill all agent PIDs immediately."""
@@ -300,6 +369,17 @@ class BernsteinApp(App[None]):
         action_bar.set_task(task_id)
         action_bar.display = True
         self._action_bar_visible = True
+
+    # -- helpers --------------------------------------------------------------
+
+    def _selected_task_id(self) -> str:
+        """Return the task ID of the currently highlighted row, or empty string."""
+        task_list = self.query_one("#task-list", TaskListWidget)
+        try:
+            row_key, _ = task_list.coordinate_to_cell_key(task_list.cursor_coordinate)
+            return str(row_key.value) if row_key.value is not None else ""
+        except Exception:
+            return ""
 
     # -- data fetching --------------------------------------------------------
 

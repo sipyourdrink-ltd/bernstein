@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -10,6 +11,8 @@ from fastapi.responses import JSONResponse
 
 from bernstein.core.server import TaskCreate, TaskStore
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -17,18 +20,56 @@ def _get_store(request: Request) -> TaskStore:
     return request.app.state.store  # type: ignore[no-any-return]
 
 
+def _count_ci_fix_attempts(store: TaskStore, head_branch: str) -> int:
+    """Count active ci-fix tasks for *head_branch* to enforce the retry cap.
+
+    A task is "active" (counts toward the retry budget) when it is in any
+    non-terminal status: ``open``, ``claimed``, ``in_progress``, or ``failed``.
+    Tasks that are ``done`` or ``cancelled`` are excluded — a successful fix
+    clears the budget so the branch can accumulate failures again.
+
+    Args:
+        store: Task store.
+        head_branch: Branch name from the ``workflow_run`` payload.
+
+    Returns:
+        Number of ci-fix tasks still consuming the retry budget.
+    """
+    from bernstein.core.models import TaskStatus
+
+    _ACTIVE = {
+        TaskStatus.OPEN,
+        TaskStatus.CLAIMED,
+        TaskStatus.IN_PROGRESS,
+        TaskStatus.FAILED,
+    }
+    tasks = store.list_tasks()
+    return sum(
+        1 for t in tasks if t.title.startswith("[ci-fix]") and head_branch in t.description and t.status in _ACTIVE
+    )
+
+
 @router.post("/webhooks/github", status_code=200)
 async def github_webhook(request: Request) -> JSONResponse:
     """Receive a GitHub App webhook, verify signature, and create tasks.
 
+    Handles the following event types:
+    - ``issues`` (opened / labeled)
+    - ``pull_request_review_comment`` / ``issue_comment``
+    - ``push``
+    - ``workflow_run`` (completed + failure) — creates a ci-fix task, capped at
+      ``MAX_CI_RETRIES`` active attempts per branch.
+
     Reads ``GITHUB_WEBHOOK_SECRET`` from environment for HMAC verification.
     Returns 200 on success, 401 on bad/missing signature, 400 on parse error.
     """
+    from bernstein.github_app.ci_router import MAX_CI_RETRIES
     from bernstein.github_app.mapper import (
         issue_to_tasks,
         label_to_action,
         pr_review_to_task,
         push_to_tasks,
+        workflow_run_to_task,
     )
     from bernstein.github_app.webhooks import parse_webhook, verify_signature
 
@@ -70,6 +111,29 @@ async def github_webhook(request: Request) -> JSONResponse:
             task_payloads.append(review_task)
     elif event.event_type == "push":
         task_payloads.extend(push_to_tasks(event))
+    elif event.event_type == "workflow_run" and event.action == "completed":
+        run: dict[str, Any] = event.payload.get("workflow_run", {})
+        if run.get("conclusion") == "failure":
+            head_branch: str = run.get("head_branch", "")
+            retry_count = _count_ci_fix_attempts(store, head_branch)
+            if retry_count >= MAX_CI_RETRIES:
+                logger.warning(
+                    "CI fix retry cap reached for branch %r (%d/%d) — skipping",
+                    head_branch,
+                    retry_count,
+                    MAX_CI_RETRIES,
+                )
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "event_type": event.event_type,
+                        "action": event.action,
+                        "tasks_created": 0,
+                        "task_ids": [],
+                        "skipped_reason": f"max_retries_reached ({retry_count}/{MAX_CI_RETRIES})",
+                    },
+                )
+            task_payloads.extend(workflow_run_to_task(event, retry_count=retry_count))
 
     # Create tasks in the store
     created_ids: list[str] = []

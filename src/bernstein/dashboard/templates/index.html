@@ -72,8 +72,37 @@
       <div class="text-xs font-mono text-muted" x-text="elapsedFormatted"></div>
       <!-- Refresh indicator -->
       <div class="text-[10px] text-muted/50" x-text="'Updated ' + lastUpdate"></div>
+      <!-- GitHub link -->
+      <a href="https://github.com/get-bernstein/bernstein"
+         target="_blank" rel="noopener noreferrer"
+         class="flex items-center gap-1.5 text-xs text-muted hover:text-text transition-colors">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+        <span class="hidden sm:inline">GitHub</span>
+      </a>
     </div>
   </header>
+
+  <!-- Demo banner — shown when server is in read-only / demo mode -->
+  <template x-if="isReadonly">
+    <div class="bg-accent/10 border-b border-accent/30 px-4 py-2 flex items-center justify-between text-xs">
+      <div class="flex items-center gap-2 text-accent">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2zm3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/>
+        </svg>
+        <span class="font-medium">Live demo — real agents, read-only view. Resets every 15 minutes.</span>
+      </div>
+      <a href="https://github.com/get-bernstein/bernstein"
+         target="_blank" rel="noopener noreferrer"
+         class="flex items-center gap-1.5 bg-accent text-bg font-semibold px-3 py-1 rounded-md hover:bg-accent/90 transition-colors">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+        Install bernstein
+      </a>
+    </div>
+  </template>
 
   <!-- Stats Bar -->
   <div class="bg-surface border-b border-border px-4 py-2">
@@ -114,10 +143,15 @@
           <div class="flex items-center justify-between mb-1.5">
             <div class="flex items-center gap-1.5">
               <span class="inline-block w-2 h-2 rounded-full"
-                    :class="agent.status === 'working' ? 'bg-green-500 pulse-dot' : agent.status === 'idle' ? 'bg-yellow-500' : 'bg-gray-500'"></span>
+                    :class="agent.status === 'working' ? 'bg-green-500 pulse-dot' : (agent.status === 'starting' ? 'bg-yellow-500 pulse-dot' : (agent.status === 'idle' ? 'bg-yellow-500' : 'bg-gray-500'))"></span>
               <span class="font-mono text-[11px] text-text" x-text="agent.id.slice(0, 12)"></span>
             </div>
-            <span class="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-medium" x-text="agent.role"></span>
+            <div class="flex items-center gap-1">
+              <template x-if="agent.agent_source && !['built-in','builtin',''].includes(agent.agent_source)">
+                <span class="text-[9px] text-muted italic truncate max-w-[60px]" x-text="agent.agent_source"></span>
+              </template>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-medium" x-text="agent.role"></span>
+            </div>
           </div>
           <!-- Model + Runtime -->
           <div class="flex items-center justify-between text-[10px] text-muted mb-1.5">
@@ -138,10 +172,10 @@
               </div>
             </div>
           </template>
-          <!-- Cost -->
+          <!-- Cost ticker -->
           <div class="flex items-center justify-between text-[10px] mt-1 pt-1 border-t border-border/50">
             <span class="text-muted">Cost</span>
-            <span class="font-mono text-green-400" x-text="'$' + agent.cost_usd.toFixed(2)"></span>
+            <span class="font-mono text-green-400" x-text="formatCost(agent.cost_usd)"></span>
           </div>
         </div>
       </template>
@@ -243,46 +277,116 @@
 
       <!-- Gantt Timeline -->
       <div x-show="centerTab === 'gantt'" class="flex-1 overflow-auto p-3">
-        <div class="space-y-1">
-          <template x-for="task in ganttTasks" :key="task.id">
-            <div class="flex items-center gap-2 h-6">
-              <div class="w-[120px] shrink-0 text-[10px] text-muted truncate" x-text="task.title"></div>
-              <div class="flex-1 relative h-4 bg-border/30 rounded overflow-hidden">
-                <div class="gantt-bar absolute top-0 left-0 h-full rounded"
-                     :class="task.status === 'done' ? 'bg-green-500/60' : task.status === 'failed' ? 'bg-red-500/60' : task.status === 'open' ? 'bg-gray-600/40' : 'bg-accent/50'"
-                     :style="'width:' + task.progress + '%; left:' + ganttOffset(task) + '%'">
-                </div>
-                <div class="absolute inset-0 flex items-center px-1">
-                  <span class="text-[9px] font-mono text-white/70" x-text="task.id.slice(0, 6)"></span>
+        <!-- Legend -->
+        <div class="flex items-center gap-4 mb-2.5 flex-wrap">
+          <span class="text-[9px] text-muted uppercase tracking-widest">Status:</span>
+          <span class="flex items-center gap-1 text-[9px] text-muted"><span class="inline-block w-2 h-2 rounded-sm bg-gray-600/80"></span>open</span>
+          <span class="flex items-center gap-1 text-[9px] text-muted"><span class="inline-block w-2 h-2 rounded-sm bg-yellow-500/70"></span>active</span>
+          <span class="flex items-center gap-1 text-[9px] text-muted"><span class="inline-block w-2 h-2 rounded-sm bg-green-500/70"></span>done</span>
+          <span class="flex items-center gap-1 text-[9px] text-muted"><span class="inline-block w-2 h-2 rounded-sm bg-red-500/70"></span>failed</span>
+          <span class="ml-2 text-[9px] text-muted/50">· dot color = role</span>
+        </div>
+        <!-- Time axis -->
+        <div class="flex items-end mb-0.5">
+          <div class="w-[140px] shrink-0"></div>
+          <div class="flex-1 relative h-5">
+            <template x-for="lbl in ganttTimeLabels" :key="lbl.pct">
+              <div class="absolute flex flex-col items-center" :style="'left:' + lbl.pct + '%'">
+                <span class="text-[9px] text-muted/70 font-mono whitespace-nowrap -translate-x-1/2" x-text="lbl.label"></span>
+                <div class="w-px h-1.5 bg-border/50 mt-0.5"></div>
+              </div>
+            </template>
+          </div>
+          <div class="w-8 shrink-0"></div>
+        </div>
+        <!-- Task rows -->
+        <div class="space-y-px">
+          <template x-for="task in ganttTaskRows" :key="task.id">
+            <div class="flex items-center gap-2 h-6 group">
+              <!-- Role dot + label -->
+              <div class="w-[140px] shrink-0 flex items-center gap-1.5 pr-1">
+                <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                      :style="'background:' + ganttRoleColor(task.role)"></span>
+                <span class="text-[10px] text-muted truncate group-hover:text-text transition-colors cursor-default"
+                      :title="task.title + ' [' + task.role + ']'" x-text="task.title"></span>
+              </div>
+              <!-- Timeline bar track -->
+              <div class="flex-1 relative h-4 bg-border/15 rounded overflow-hidden">
+                <!-- "Now" vertical line -->
+                <div class="absolute top-0 bottom-0 w-px bg-accent/30 z-10 pointer-events-none"
+                     :style="'left:' + ganttNowPct.toFixed(1) + '%'"></div>
+                <!-- Task bar -->
+                <div class="gantt-bar absolute top-px bottom-px rounded-sm"
+                     :style="'left:' + task.barLeft.toFixed(1) + '%; width:' + Math.max(task.barWidth, 0.5).toFixed(1) + '%; background:' + task.barColor + '; opacity:' + task.barOpacity"></div>
+                <!-- Progress overlay for active tasks -->
+                <template x-if="task.progress > 0 && task.status !== 'done'">
+                  <div class="absolute top-px bottom-px rounded-sm pointer-events-none"
+                       :style="'left:' + task.barLeft.toFixed(1) + '%; width:' + (task.barWidth * task.progress / 100).toFixed(1) + '%; background: rgba(255,255,255,0.18)'"></div>
+                </template>
+                <!-- Task ID label (wide bars only) -->
+                <div class="absolute inset-0 flex items-center px-1" x-show="task.barWidth > 8">
+                  <span class="text-[8px] font-mono text-white/70 truncate" x-text="task.id.slice(0, 7)"></span>
                 </div>
               </div>
-              <span class="w-8 text-right text-[10px] font-mono"
-                    :class="task.status === 'done' ? 'text-green-400' : 'text-muted'"
-                    x-text="task.progress + '%'"></span>
+              <!-- Progress % -->
+              <div class="w-8 shrink-0 text-right text-[10px] font-mono"
+                   :class="task.status === 'done' ? 'text-green-400' : task.status === 'failed' ? 'text-red-400/70' : 'text-muted'"
+                   x-text="task.progress + '%'"></div>
             </div>
           </template>
           <template x-if="tasks.length === 0">
-            <div class="text-center py-8 text-xs text-muted">No tasks to display</div>
+            <div class="text-center py-12 text-xs text-muted">No tasks to display in timeline</div>
           </template>
         </div>
+        <!-- Bottom ruler for long lists -->
+        <template x-if="ganttTaskRows.length > 12">
+          <div class="flex items-start mt-0.5">
+            <div class="w-[140px] shrink-0"></div>
+            <div class="flex-1 relative h-4 border-t border-border/30">
+              <template x-for="lbl in ganttTimeLabels" :key="lbl.pct">
+                <div class="absolute" :style="'left:' + lbl.pct + '%'">
+                  <div class="w-px h-1.5 bg-border/50"></div>
+                </div>
+              </template>
+            </div>
+            <div class="w-8 shrink-0"></div>
+          </div>
+        </template>
       </div>
 
       <!-- File Lock Map -->
       <div x-show="centerTab === 'files'" class="flex-1 overflow-auto p-3">
-        <template x-if="Object.keys(fileLocks).length > 0">
-          <div class="space-y-1">
-            <template x-for="[file, info] in Object.entries(fileLocks)" :key="file">
-              <div class="flex items-center gap-2 px-2 py-1 rounded bg-surface hover:bg-surface-2 transition-colors">
-                <svg class="w-3.5 h-3.5 text-yellow-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                </svg>
-                <span class="font-mono text-[11px] text-text flex-1 truncate" x-text="file"></span>
-                <span class="text-[10px] text-accent font-mono" x-text="info.agent.slice(0, 10)"></span>
+        <template x-if="Object.keys(locksData.locks_by_agent).length > 0">
+          <div class="space-y-2">
+            <template x-for="[agentId, agentInfo] in Object.entries(locksData.locks_by_agent)" :key="agentId">
+              <div class="bg-surface rounded-lg border border-border p-2">
+                <!-- Agent header -->
+                <div class="flex items-center gap-2 mb-1.5">
+                  <span class="inline-block w-2 h-2 rounded-full bg-yellow-500 shrink-0"></span>
+                  <span class="text-[10px] font-mono text-accent truncate" x-text="agentId.slice(0, 16)"></span>
+                  <span class="text-[10px] text-muted truncate flex-1" x-text="agentInfo.task_title || agentInfo.task_id"></span>
+                  <button @click="selectAgent(agentId)"
+                          class="text-[9px] text-accent/70 hover:text-accent transition-colors whitespace-nowrap ml-1"
+                          title="View logs">logs &#x2192;</button>
+                  <span class="text-[9px] text-muted/60 font-mono whitespace-nowrap"
+                        x-text="formatRuntime(agentInfo.elapsed_s)"></span>
+                </div>
+                <!-- Locked files list -->
+                <div class="space-y-0.5 pl-3">
+                  <template x-for="file in agentInfo.files" :key="file">
+                    <div class="flex items-center gap-1.5">
+                      <svg class="w-3 h-3 text-yellow-500/60 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                      </svg>
+                      <span class="font-mono text-[10px] text-text/80 truncate" x-text="file"></span>
+                    </div>
+                  </template>
+                </div>
               </div>
             </template>
           </div>
         </template>
-        <template x-if="Object.keys(fileLocks).length === 0">
+        <template x-if="Object.keys(locksData.locks_by_agent).length === 0">
           <div class="text-center py-8 text-xs text-muted">No file locks active</div>
         </template>
       </div>
@@ -325,9 +429,27 @@
                   class="px-2 py-1 text-[10px] rounded bg-red-900/40 text-red-400 hover:bg-red-800/60 disabled:opacity-40 transition-colors whitespace-nowrap"
                   title="Kill agent">Kill</button>
         </div>
+        <!-- Locked files for selected agent -->
+        <div x-show="selectedAgent && locksData.locks_by_agent[selectedAgent]"
+             class="px-2 py-1 border-b border-yellow-700/30 bg-yellow-900/10">
+          <span class="text-[9px] text-yellow-500 font-mono">
+            &#x1F512;
+            <span x-text="(locksData.locks_by_agent[selectedAgent]?.files || []).length + ' locked file(s)'"></span>
+            <span class="ml-2 text-muted/70" x-text="(locksData.locks_by_agent[selectedAgent]?.task_title || '').slice(0, 35)"></span>
+          </span>
+        </div>
+        <!-- Log toolbar: auto-scroll toggle -->
+        <div class="flex items-center justify-between px-2 py-0.5 border-b border-border/30 bg-surface/40">
+          <span class="text-[9px] text-muted">stdout</span>
+          <button @click="logAutoScroll = !logAutoScroll; if (logAutoScroll) { const el = $refs.logContainer; if (el) el.scrollTop = el.scrollHeight; }"
+                  class="text-[9px] font-mono px-1.5 py-0.5 rounded transition-colors"
+                  :class="logAutoScroll ? 'bg-accent/20 text-accent' : 'bg-border/60 text-muted hover:text-text'"
+                  x-text="logAutoScroll ? '\u2193 Follow' : '\u23F8 Paused'"></button>
+        </div>
         <!-- Log output -->
         <div class="flex-1 overflow-auto bg-bg p-2 font-mono" id="log-container"
-             x-ref="logContainer">
+             x-ref="logContainer"
+             @scroll="logAutoScroll = ($el.scrollHeight - $el.scrollTop) <= ($el.clientHeight + 50)">
           <template x-if="selectedAgent && logLines.length > 0">
             <div>
               <template x-for="(line, i) in logLines" :key="i">
@@ -450,10 +572,12 @@
     function missionControl() {
       return {
         connected: false,
+        isReadonly: false,
         startTime: Date.now(),
         elapsed: 0,
         elapsedFormatted: '00:00:00',
         lastUpdate: 'never',
+        nowTs: Date.now() / 1000,
         eventSource: null,
 
         // Data
@@ -463,6 +587,7 @@
         costByRole: {},
         costHistory: [],
         fileLocks: {},
+        locksData: { all_locks: [], locks_by_agent: {}, count: 0 },
         mergeQueue: [],
         alerts: [],
 
@@ -472,6 +597,7 @@
         selectedAgent: '',
         logLines: [],
         logOffset: 0,
+        logAutoScroll: true,
         killLoading: false,
         sortCol: 'priority',
         sortAsc: true,
@@ -509,8 +635,80 @@
         },
 
         get ganttTasks() {
-          // Sort by created_at for timeline view
           return [...this.tasks].sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+        },
+
+        get ganttTimeMin() {
+          const now = this.nowTs;
+          if (!this.tasks.length) return now - 3600;
+          const earliest = Math.min(...this.tasks.map(t => t.created_at || now));
+          const span = now - earliest;
+          return earliest - span * 0.03;  // 3% left padding
+        },
+
+        get ganttTimeMax() {
+          const now = this.nowTs;
+          const min = this.ganttTimeMin;
+          const span = Math.max(now - min, 60);
+          return now + span * 0.05;  // 5% right padding
+        },
+
+        get ganttNowPct() {
+          const range = this.ganttTimeMax - this.ganttTimeMin;
+          if (range <= 0) return 100;
+          return Math.min(100, Math.max(0, (this.nowTs - this.ganttTimeMin) / range * 100));
+        },
+
+        get ganttTimeLabels() {
+          const min = this.ganttTimeMin;
+          const range = this.ganttTimeMax - min;
+          return [0, 0.25, 0.5, 0.75, 1.0].map(frac => {
+            const ts = min + range * frac;
+            const d = new Date(ts * 1000);
+            return { pct: frac * 100, label: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+          });
+        },
+
+        get ganttTaskRows() {
+          const min = this.ganttTimeMin;
+          const range = Math.max(this.ganttTimeMax - min, 1);
+          const now = this.nowTs;
+          return this.ganttTasks.map(task => {
+            const startTs = task.created_at || now;
+            const barLeft = Math.max(0, (startTs - min) / range * 100);
+            let barWidth;
+            if (task.status === 'done' || task.status === 'failed') {
+              barWidth = Math.min(8, 100 - barLeft);  // fixed width — no completed_at available
+            } else if (task.status === 'in_progress' || task.status === 'claimed') {
+              barWidth = Math.max(0.5, (now - startTs) / range * 100);
+            } else {
+              barWidth = 1.5;  // open: tiny marker
+            }
+            if (barLeft + barWidth > 100) barWidth = Math.max(0.5, 100 - barLeft);
+
+            const roleColorMap = {
+              manager: '#a371f7', backend: '#58a6ff', frontend: '#3dc9b0',
+              qa: '#3fb950', security: '#f85149', devops: '#e3b341',
+              docs: '#8b949e', planner: '#bc8cff',
+            };
+            const roleColor = roleColorMap[(task.role || '').toLowerCase()] || '#58a6ff';
+            let barColor, barOpacity;
+            if (task.status === 'done')           { barColor = '#3fb950'; barOpacity = 0.75; }
+            else if (task.status === 'failed')    { barColor = '#f85149'; barOpacity = 0.60; }
+            else if (task.status === 'open')      { barColor = '#484f58'; barOpacity = 0.50; }
+            else                                  { barColor = roleColor;  barOpacity = 0.75; }
+
+            return { ...task, barLeft, barWidth, barColor, barOpacity };
+          });
+        },
+
+        ganttRoleColor(role) {
+          const colors = {
+            manager: '#a371f7', backend: '#58a6ff', frontend: '#3dc9b0',
+            qa: '#3fb950', security: '#f85149', devops: '#e3b341',
+            docs: '#8b949e', planner: '#bc8cff',
+          };
+          return colors[(role || '').toLowerCase()] || '#58a6ff';
         },
 
         get costChartPoints() {
@@ -536,7 +734,19 @@
           this.connectSSE();
           this.startTimer();
           this.fetchData();
+          this.fetchHealth();
+          this.fetchFileLocks();
           setInterval(() => this.fetchData(), 3000);
+          setInterval(() => this.fetchFileLocks(), 5000);
+        },
+
+        async fetchHealth() {
+          try {
+            const resp = await fetch('/health');
+            if (!resp.ok) return;
+            const data = await resp.json();
+            this.isReadonly = data.is_readonly || false;
+          } catch (e) { /* ignore */ }
         },
 
         async fetchData() {
@@ -584,10 +794,12 @@
                 const payload = JSON.parse(e.data);
                 if (payload.line) {
                   this.logLines = [...this.logLines, payload.line].slice(-500);
-                  this.$nextTick(() => {
-                    const el = this.$refs.logContainer;
-                    if (el) el.scrollTop = el.scrollHeight;
-                  });
+                  if (this.logAutoScroll) {
+                    this.$nextTick(() => {
+                      const el = this.$refs.logContainer;
+                      if (el) el.scrollTop = el.scrollHeight;
+                    });
+                  }
                 }
               } catch (_) {}
             };
@@ -621,12 +833,22 @@
                 this.logLines = [...this.logLines, ...lines].slice(-200);
               }
               this.logOffset = data.size || 0;
-              this.$nextTick(() => {
-                const el = this.$refs.logContainer;
-                if (el) el.scrollTop = el.scrollHeight;
-              });
+              if (this.logAutoScroll) {
+                this.$nextTick(() => {
+                  const el = this.$refs.logContainer;
+                  if (el) el.scrollTop = el.scrollHeight;
+                });
+              }
             }
           } catch (e) { /* agent may not have logs yet */ }
+        },
+
+        async fetchFileLocks() {
+          try {
+            const resp = await fetch('/dashboard/file_locks');
+            if (!resp.ok) return;
+            this.locksData = await resp.json();
+          } catch (e) { /* ignore */ }
         },
 
         async killSelectedAgent() {
@@ -656,7 +878,9 @@
 
         startTimer() {
           setInterval(() => {
-            this.elapsed = Math.floor((Date.now() - this.startTime) / 1000);
+            const now = Date.now();
+            this.nowTs = now / 1000;
+            this.elapsed = Math.floor((now - this.startTime) / 1000);
             const h = String(Math.floor(this.elapsed / 3600)).padStart(2, '0');
             const m = String(Math.floor((this.elapsed % 3600) / 60)).padStart(2, '0');
             const s = String(this.elapsed % 60).padStart(2, '0');
@@ -675,11 +899,10 @@
           return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
         },
 
-        ganttOffset(task) {
-          // Offset based on creation order within the batch
-          if (this.ganttTasks.length <= 1) return 0;
-          const idx = this.ganttTasks.findIndex(t => t.id === task.id);
-          return 0; // All start at 0 since we don't have end times
+        formatCost(cost) {
+          if (!cost) return '$0.00';
+          if (cost < 0.01) return '$' + cost.toFixed(4);
+          return '$' + cost.toFixed(2);
         },
 
         statusBadge(status) {

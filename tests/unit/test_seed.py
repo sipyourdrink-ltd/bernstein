@@ -62,7 +62,7 @@ class TestParseSeedValid:
         assert cfg.goal == "Build a REST API"
         assert cfg.budget_usd is None
         assert cfg.team == "auto"
-        assert cfg.cli == "claude"
+        assert cfg.cli == "auto"
         assert cfg.max_agents == 6
         assert cfg.model is None
 
@@ -174,25 +174,19 @@ class TestParseSeedWorktreeSetup:
         assert cfg.worktree_setup is None
 
     def test_symlink_dirs_parsed(self, seed_file: Path) -> None:
-        seed_file.write_text(
-            'goal: "T"\nworktree_setup:\n  symlink_dirs: [node_modules, .venv]\n'
-        )
+        seed_file.write_text('goal: "T"\nworktree_setup:\n  symlink_dirs: [node_modules, .venv]\n')
         cfg = parse_seed(seed_file)
         assert cfg.worktree_setup is not None
         assert cfg.worktree_setup.symlink_dirs == ("node_modules", ".venv")
 
     def test_copy_files_parsed(self, seed_file: Path) -> None:
-        seed_file.write_text(
-            'goal: "T"\nworktree_setup:\n  copy_files: [.env, .env.local]\n'
-        )
+        seed_file.write_text('goal: "T"\nworktree_setup:\n  copy_files: [.env, .env.local]\n')
         cfg = parse_seed(seed_file)
         assert cfg.worktree_setup is not None
         assert cfg.worktree_setup.copy_files == (".env", ".env.local")
 
     def test_setup_command_parsed(self, seed_file: Path) -> None:
-        seed_file.write_text(
-            'goal: "T"\nworktree_setup:\n  setup_command: "uv sync"\n'
-        )
+        seed_file.write_text('goal: "T"\nworktree_setup:\n  setup_command: "uv sync"\n')
         cfg = parse_seed(seed_file)
         assert cfg.worktree_setup is not None
         assert cfg.worktree_setup.setup_command == "uv sync"
@@ -282,7 +276,7 @@ class TestSeedConfig:
         cfg = SeedConfig(goal="Test")
         assert cfg.budget_usd is None
         assert cfg.team == "auto"
-        assert cfg.cli == "claude"
+        assert cfg.cli == "auto"
         assert cfg.max_agents == 6
         assert cfg.model is None
 

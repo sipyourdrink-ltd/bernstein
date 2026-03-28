@@ -1,0 +1,26 @@
+id: add-docstring-to-router
+tier: smoke
+setup:
+  command: "git checkout HEAD -- src/bernstein/core/router.py"
+task:
+  title: "Add Google-style docstring to TierAwareRouter.select method"
+  description: |
+    Find the `select` method in `src/bernstein/core/router.py` (class TierAwareRouter).
+    Add a complete Google-style docstring with Args: and Returns: sections.
+    Do not change any logic.
+  role: backend
+  effort: low
+  model: haiku
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/core/router.py
+    value: "Args:"
+  - type: file_contains
+    path: src/bernstein/core/router.py
+    value: "Returns:"
+  - type: command_succeeds
+    value: "uv run ruff check src/bernstein/core/router.py"
+limits:
+  max_cost_usd: 0.10
+  max_duration_seconds: 60
+  max_retries: 0

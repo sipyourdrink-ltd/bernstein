@@ -312,6 +312,186 @@ class ModelConfig:
     max_tokens: int = 200_000
 
 
+# ---------------------------------------------------------------------------
+# Cost tracking models
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class AgentCostSummary:
+    """Per-agent cost accumulation across a run.
+
+    Attributes:
+        agent_id: The agent session identifier.
+        total_cost_usd: Sum of all costs incurred by this agent.
+        task_count: Number of tasks (invocations) recorded for this agent.
+        model_breakdown: Mapping of model name → cost in USD for that model.
+    """
+
+    agent_id: str
+    total_cost_usd: float
+    task_count: int
+    model_breakdown: dict[str, float]
+
+
+@dataclass(frozen=True)
+class ModelCostBreakdown:
+    """Per-model cost breakdown across a run.
+
+    Attributes:
+        model: Model name (e.g. ``"sonnet"``, ``"opus"``).
+        total_cost_usd: Sum of all costs incurred using this model.
+        total_tokens: Total input + output tokens consumed by this model.
+        invocation_count: Number of times this model was invoked.
+    """
+
+    model: str
+    total_cost_usd: float
+    total_tokens: int
+    invocation_count: int
+
+
+@dataclass(frozen=True)
+class RunCostProjection:
+    """Estimated final cost for an ongoing run.
+
+    Computes a simple linear projection: ``projected_total = current +
+    avg_cost_per_task * tasks_remaining``.  Confidence grows toward 1.0 as
+    more tasks complete and the per-task average stabilises.
+
+    Attributes:
+        run_id: Orchestrator run identifier.
+        tasks_done: Tasks completed so far.
+        tasks_remaining: Tasks still in backlog / in-progress.
+        current_cost_usd: Cost incurred so far.
+        projected_total_usd: Estimated final cost if the run completes.
+        avg_cost_per_task_usd: Average cost per completed task (0 if no data).
+        budget_usd: Budget cap (0 = unlimited).
+        within_budget: True when projected total does not exceed the cap.
+        confidence: 0.0–1.0; reaches 1.0 after 5 completed tasks.
+    """
+
+    run_id: str
+    tasks_done: int
+    tasks_remaining: int
+    current_cost_usd: float
+    projected_total_usd: float
+    avg_cost_per_task_usd: float
+    budget_usd: float
+    within_budget: bool
+    confidence: float
+
+
+@dataclass
+class RunCostReport:
+    """Aggregated cost report for a run, suitable for persistence.
+
+    Attributes:
+        run_id: Orchestrator run identifier.
+        total_spent_usd: Total cost incurred in this run.
+        budget_usd: Budget cap (0 = unlimited).
+        per_agent: Per-agent cost summaries, sorted by spend descending.
+        per_model: Per-model cost breakdowns, sorted by spend descending.
+        projection: Run-end cost projection, or ``None`` if no task counts provided.
+        timestamp: Unix timestamp when this report was generated.
+    """
+
+    run_id: str
+    total_spent_usd: float
+    budget_usd: float
+    per_agent: list[AgentCostSummary]
+    per_model: list[ModelCostBreakdown]
+    projection: RunCostProjection | None
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-safe dict."""
+        proj: dict[str, Any] | None = None
+        if self.projection is not None:
+            p = self.projection
+            proj = {
+                "run_id": p.run_id,
+                "tasks_done": p.tasks_done,
+                "tasks_remaining": p.tasks_remaining,
+                "current_cost_usd": p.current_cost_usd,
+                "projected_total_usd": p.projected_total_usd,
+                "avg_cost_per_task_usd": p.avg_cost_per_task_usd,
+                "budget_usd": p.budget_usd,
+                "within_budget": p.within_budget,
+                "confidence": p.confidence,
+            }
+        return {
+            "run_id": self.run_id,
+            "total_spent_usd": self.total_spent_usd,
+            "budget_usd": self.budget_usd,
+            "timestamp": self.timestamp,
+            "per_agent": [
+                {
+                    "agent_id": a.agent_id,
+                    "total_cost_usd": a.total_cost_usd,
+                    "task_count": a.task_count,
+                    "model_breakdown": a.model_breakdown,
+                }
+                for a in self.per_agent
+            ],
+            "per_model": [
+                {
+                    "model": m.model,
+                    "total_cost_usd": m.total_cost_usd,
+                    "total_tokens": m.total_tokens,
+                    "invocation_count": m.invocation_count,
+                }
+                for m in self.per_model
+            ],
+            "projection": proj,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> RunCostReport:
+        """Deserialise from a dict produced by :meth:`to_dict`."""
+        per_agent = [
+            AgentCostSummary(
+                agent_id=a["agent_id"],
+                total_cost_usd=float(a["total_cost_usd"]),
+                task_count=int(a["task_count"]),
+                model_breakdown={k: float(v) for k, v in a.get("model_breakdown", {}).items()},
+            )
+            for a in d.get("per_agent", [])
+        ]
+        per_model = [
+            ModelCostBreakdown(
+                model=m["model"],
+                total_cost_usd=float(m["total_cost_usd"]),
+                total_tokens=int(m["total_tokens"]),
+                invocation_count=int(m["invocation_count"]),
+            )
+            for m in d.get("per_model", [])
+        ]
+        proj: RunCostProjection | None = None
+        if d.get("projection"):
+            p = d["projection"]
+            proj = RunCostProjection(
+                run_id=str(p["run_id"]),
+                tasks_done=int(p["tasks_done"]),
+                tasks_remaining=int(p["tasks_remaining"]),
+                current_cost_usd=float(p["current_cost_usd"]),
+                projected_total_usd=float(p["projected_total_usd"]),
+                avg_cost_per_task_usd=float(p["avg_cost_per_task_usd"]),
+                budget_usd=float(p["budget_usd"]),
+                within_budget=bool(p["within_budget"]),
+                confidence=float(p["confidence"]),
+            )
+        return cls(
+            run_id=str(d["run_id"]),
+            total_spent_usd=float(d.get("total_spent_usd", 0.0)),
+            budget_usd=float(d.get("budget_usd", 0.0)),
+            per_agent=per_agent,
+            per_model=per_model,
+            projection=proj,
+            timestamp=float(d.get("timestamp", 0.0)),
+        )
+
+
 @dataclass
 class ProgressSnapshot:
     """A point-in-time progress snapshot reported by an agent.
@@ -383,6 +563,7 @@ class AgentSession:
     agent_source: str = "built-in"  # "catalog", "agency", or "built-in"
     timeout_s: int | None = None  # Per-agent wall-clock timeout; None = use OrchestratorConfig default
     log_path: str = ""  # Path to agent log file for live streaming
+    tokens_used: int = 0  # Running total of input+output tokens consumed by this agent
 
 
 @dataclass
@@ -410,6 +591,7 @@ class OrchestratorConfig:
         evolution_enabled: Whether the self-evolution feedback loop is active.
         evolution_tick_interval: Run evolution analysis every N ticks (~1.5 min at 3s poll).
         max_task_retries: Max times a task is re-queued after agent crash (0 = no retry).
+        cross_model_verify: Cross-model verification config (None = disabled).
     """
 
     max_agents: int = 6
@@ -431,6 +613,7 @@ class OrchestratorConfig:
     approval: str = "auto"  # "auto" | "review" | "pr" — gate between verification and merge
     recovery: str = "resume"  # "resume" | "restart" | "escalate" — crash recovery strategy
     max_crash_retries: int = 2  # Max times to resume in same worktree before escalating
+    cross_model_verify: Any | None = None  # CrossModelVerifierConfig | None
 
 
 # ---------------------------------------------------------------------------

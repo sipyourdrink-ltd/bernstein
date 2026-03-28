@@ -13,16 +13,20 @@ import pytest
 
 from bernstein.core.manager import (
     ManagerAgent,
+    QueueCorrection,
+    QueueReviewResult,
     _extract_json,
     _format_existing_tasks,
     _format_roles,
     _parse_completion_signal,
     _parse_upgrade_details,
     _resolve_depends_on,
+    parse_queue_review_response,
     parse_review_response,
     parse_tasks_response,
     raw_dicts_to_tasks,
     render_plan_prompt,
+    render_queue_review_prompt,
     render_review_prompt,
 )
 from bernstein.core.models import (
@@ -1086,3 +1090,273 @@ class TestManagerAgentReplan:
         assert "Deploy" in call_args
         assert "Write tests" in call_args
         assert "Build API" in call_args
+
+
+# ---------------------------------------------------------------------------
+# render_queue_review_prompt
+# ---------------------------------------------------------------------------
+
+
+class TestRenderQueueReviewPrompt:
+    """Tests for the queue review prompt renderer."""
+
+    def _make_task(self, *, id: str, title: str, role: str, status: str = "open") -> Task:
+        return Task(
+            id=id,
+            title=title,
+            description="desc",
+            role=role,
+            status=TaskStatus(status),
+        )
+
+    def test_includes_completion_counts(self) -> None:
+        prompt = render_queue_review_prompt(
+            completed_count=5,
+            failed_count=2,
+            open_tasks=[],
+            claimed_tasks=[],
+            failed_tasks=[],
+            server_url="http://localhost:8052",
+        )
+        assert "5 task(s) completed" in prompt
+        assert "2 failed" in prompt
+
+    def test_includes_open_task_details(self) -> None:
+        open_tasks = [self._make_task(id="t1", title="Fix CSS layout", role="frontend")]
+        prompt = render_queue_review_prompt(
+            completed_count=0,
+            failed_count=0,
+            open_tasks=open_tasks,
+            claimed_tasks=[],
+            failed_tasks=[],
+            server_url="http://localhost:8052",
+        )
+        assert "Fix CSS layout" in prompt
+        assert "frontend" in prompt
+        assert "t1" in prompt
+
+    def test_includes_claimed_and_failed(self) -> None:
+        claimed = [self._make_task(id="t2", title="Add auth", role="backend", status="claimed")]
+        failed = [self._make_task(id="t3", title="Deploy service", role="backend", status="failed")]
+        prompt = render_queue_review_prompt(
+            completed_count=1,
+            failed_count=1,
+            open_tasks=[],
+            claimed_tasks=claimed,
+            failed_tasks=failed,
+            server_url="http://localhost:8052",
+        )
+        assert "Add auth" in prompt
+        assert "Deploy service" in prompt
+
+    def test_empty_queue(self) -> None:
+        prompt = render_queue_review_prompt(
+            completed_count=0,
+            failed_count=0,
+            open_tasks=[],
+            claimed_tasks=[],
+            failed_tasks=[],
+            server_url="http://localhost:8052",
+        )
+        assert "corrections" in prompt.lower()
+
+    def test_contains_json_response_format(self) -> None:
+        prompt = render_queue_review_prompt(
+            completed_count=3,
+            failed_count=0,
+            open_tasks=[],
+            claimed_tasks=[],
+            failed_tasks=[],
+            server_url="http://localhost:8052",
+        )
+        assert '"action"' in prompt
+        assert "reassign" in prompt
+        assert "cancel" in prompt
+        assert "add_task" in prompt
+
+
+# ---------------------------------------------------------------------------
+# parse_queue_review_response
+# ---------------------------------------------------------------------------
+
+
+class TestParseQueueReviewResponse:
+    """Tests for parse_queue_review_response."""
+
+    def _valid_response(self, corrections: list[dict]) -> str:  # type: ignore[type-arg]
+        return json.dumps({"reasoning": "All good.", "corrections": corrections})
+
+    def test_empty_corrections(self) -> None:
+        result = parse_queue_review_response(self._valid_response([]))
+        assert result.corrections == []
+        assert result.reasoning == "All good."
+        assert not result.skipped
+
+    def test_reassign_correction(self) -> None:
+        raw = self._valid_response(
+            [{"action": "reassign", "task_id": "t1", "new_role": "frontend", "reason": "CSS is frontend work"}]
+        )
+        result = parse_queue_review_response(raw)
+        assert len(result.corrections) == 1
+        c = result.corrections[0]
+        assert c.action == "reassign"
+        assert c.task_id == "t1"
+        assert c.new_role == "frontend"
+        assert c.reason == "CSS is frontend work"
+
+    def test_cancel_correction(self) -> None:
+        raw = self._valid_response([{"action": "cancel", "task_id": "t2", "reason": "Stalled for 10 minutes"}])
+        result = parse_queue_review_response(raw)
+        c = result.corrections[0]
+        assert c.action == "cancel"
+        assert c.task_id == "t2"
+
+    def test_change_priority_correction(self) -> None:
+        raw = self._valid_response(
+            [{"action": "change_priority", "task_id": "t3", "new_priority": 1, "reason": "Critical blocker"}]
+        )
+        result = parse_queue_review_response(raw)
+        c = result.corrections[0]
+        assert c.action == "change_priority"
+        assert c.task_id == "t3"
+        assert c.new_priority == 1
+
+    def test_add_task_correction(self) -> None:
+        raw = self._valid_response(
+            [
+                {
+                    "action": "add_task",
+                    "title": "Write migration script",
+                    "role": "backend",
+                    "description": "Add DB migration",
+                    "priority": 2,
+                    "reason": "Missing step",
+                }
+            ]
+        )
+        result = parse_queue_review_response(raw)
+        c = result.corrections[0]
+        assert c.action == "add_task"
+        assert c.new_task is not None
+        assert c.new_task["title"] == "Write migration script"
+        assert c.new_task["role"] == "backend"
+
+    def test_unknown_action_skipped(self) -> None:
+        raw = self._valid_response([{"action": "teleport", "task_id": "t1", "reason": "unknown"}])
+        result = parse_queue_review_response(raw)
+        assert result.corrections == []
+
+    def test_multiple_corrections(self) -> None:
+        raw = self._valid_response(
+            [
+                {"action": "reassign", "task_id": "t1", "new_role": "frontend", "reason": "wrong role"},
+                {"action": "cancel", "task_id": "t2", "reason": "stalled"},
+            ]
+        )
+        result = parse_queue_review_response(raw)
+        assert len(result.corrections) == 2
+
+    def test_invalid_json_raises(self) -> None:
+        with pytest.raises(ValueError, match="not valid JSON"):
+            parse_queue_review_response("not json at all")
+
+    def test_non_dict_raises(self) -> None:
+        with pytest.raises(ValueError, match="Expected a JSON object"):
+            parse_queue_review_response(json.dumps([1, 2, 3]))
+
+    def test_fenced_json(self) -> None:
+        inner = json.dumps({"reasoning": "ok", "corrections": []})
+        result = parse_queue_review_response(f"```json\n{inner}\n```")
+        assert result.reasoning == "ok"
+
+
+# ---------------------------------------------------------------------------
+# QueueCorrection and QueueReviewResult dataclasses
+# ---------------------------------------------------------------------------
+
+
+class TestQueueCorrectionDataclass:
+    """Smoke tests for the QueueCorrection and QueueReviewResult dataclasses."""
+
+    def test_queue_correction_fields(self) -> None:
+        c = QueueCorrection(
+            action="reassign",
+            task_id="t-001",
+            new_role="qa",
+            new_priority=None,
+            reason="wrong role",
+            new_task=None,
+        )
+        assert c.action == "reassign"
+        assert c.task_id == "t-001"
+        assert c.new_role == "qa"
+
+    def test_queue_review_result_defaults(self) -> None:
+        r = QueueReviewResult(corrections=[], reasoning="all fine")
+        assert not r.skipped
+        assert r.corrections == []
+
+    def test_queue_review_result_skipped(self) -> None:
+        r = QueueReviewResult(corrections=[], reasoning="budget low", skipped=True)
+        assert r.skipped
+
+
+# ---------------------------------------------------------------------------
+# ManagerAgent.review_queue (mocked LLM + HTTP)
+# ---------------------------------------------------------------------------
+
+
+class TestManagerAgentReviewQueue:
+    """Tests for ManagerAgent.review_queue with mocked dependencies."""
+
+    @pytest.mark.asyncio()
+    async def test_skips_when_budget_below_threshold(self, manager_agent: ManagerAgent) -> None:
+        result = await manager_agent.review_queue(completed_count=5, failed_count=1, budget_remaining_pct=0.05)
+        assert result.skipped
+
+    @pytest.mark.asyncio()
+    async def test_skips_when_http_fails(self, manager_agent: ManagerAgent) -> None:
+        import httpx
+
+        with patch("bernstein.core.manager.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get.side_effect = httpx.ConnectError("refused")
+            mock_client_cls.return_value = mock_client
+
+            result = await manager_agent.review_queue(completed_count=3, failed_count=0, budget_remaining_pct=1.0)
+        assert result.skipped
+
+    @pytest.mark.asyncio()
+    async def test_applies_corrections_from_llm(self, manager_agent: ManagerAgent) -> None:
+        tasks_payload = [
+            {"id": "t1", "title": "Fix layout", "role": "backend", "status": "open", "priority": 2},
+        ]
+        llm_response = json.dumps(
+            {
+                "reasoning": "Fix layout is frontend work",
+                "corrections": [{"action": "reassign", "task_id": "t1", "new_role": "frontend", "reason": "CSS"}],
+            }
+        )
+
+        with (
+            patch("bernstein.core.manager.httpx.AsyncClient") as mock_client_cls,
+            patch("bernstein.core.manager.call_llm", new_callable=AsyncMock, return_value=llm_response),
+        ):
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = tasks_payload
+            mock_resp.raise_for_status = MagicMock()
+
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.get.return_value = mock_resp
+            mock_client_cls.return_value = mock_client
+
+            result = await manager_agent.review_queue(completed_count=3, failed_count=0, budget_remaining_pct=1.0)
+
+        assert not result.skipped
+        assert len(result.corrections) == 1
+        assert result.corrections[0].action == "reassign"
+        assert result.corrections[0].new_role == "frontend"

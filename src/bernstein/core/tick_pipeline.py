@@ -145,6 +145,38 @@ def complete_task(client: httpx.Client, base_url: str, task_id: str, result_summ
     resp.raise_for_status()
 
 
+def prioritize_starving_roles(
+    batches: list[list[Task]],
+    alive_per_role: dict[str, int],
+) -> list[list[Task]]:
+    """Re-order batches so that roles with zero alive agents come first.
+
+    Within each group (starving vs. non-starving) the original ordering
+    produced by :func:`group_by_role` is preserved (stable sort).
+
+    This prevents a scenario where a well-served role is still under its
+    per-role cap and happens to appear first in the round-robin sequence,
+    consuming the last available agent slot before a role with **no** agents
+    gets one.
+
+    Args:
+        batches: Batches from :func:`group_by_role`, in round-robin order.
+        alive_per_role: Number of alive (non-dead) agents per role.  Roles
+            that have never had an agent are absent from this mapping and
+            are treated as having zero alive agents (i.e. starving).
+
+    Returns:
+        Re-ordered list with starving-role batches first.  The caller's
+        ``batches`` reference is not mutated.
+    """
+    if not alive_per_role:
+        return batches
+    return sorted(
+        batches,
+        key=lambda b: (0 if alive_per_role.get(b[0].role, 0) == 0 else 1) if b else 1,
+    )
+
+
 def group_by_role(tasks: list[Task], max_per_batch: int) -> list[list[Task]]:
     """Group open tasks by role into batches of up to max_per_batch.
 

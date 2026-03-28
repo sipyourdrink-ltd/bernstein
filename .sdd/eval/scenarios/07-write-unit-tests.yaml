@@ -1,0 +1,34 @@
+id: write-unit-tests-for-compute-efficiency
+tier: standard
+setup:
+  command: >
+    python3 -c "
+    import pathlib
+    p = pathlib.Path('tests/unit/test_eval_efficiency.py')
+    if p.exists():
+        p.unlink()
+    "
+task:
+  title: "Write 3 unit tests for compute_efficiency in src/bernstein/eval/metrics.py"
+  description: |
+    Create `tests/unit/test_eval_efficiency.py` with at least 3 pytest test functions
+    that cover `compute_efficiency` from `bernstein.eval.metrics`:
+    1. When tasks_completed == 0, returns 0.0
+    2. When actual cost equals baseline, efficiency == 1.0 (or close to it)
+    3. When actual cost is 2× baseline, efficiency < 1.0
+    Each test must be independent and must not mock internals — call the real function.
+  role: qa
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: path_exists
+    value: tests/unit/test_eval_efficiency.py
+  - type: file_contains
+    path: tests/unit/test_eval_efficiency.py
+    value: "compute_efficiency"
+  - type: test_passes
+    value: "uv run pytest tests/unit/test_eval_efficiency.py -x -q"
+limits:
+  max_cost_usd: 0.50
+  max_duration_seconds: 180
+  max_retries: 1

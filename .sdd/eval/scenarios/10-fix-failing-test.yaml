@@ -1,0 +1,49 @@
+id: fix-failing-test
+tier: standard
+setup:
+  command: >
+    python3 -c "
+    content = '''from __future__ import annotations
+
+    import pytest
+
+    from bernstein.eval.metrics import TaskCompletionRate
+
+
+    def test_completion_rate_zero_tasks():
+        # BUG: wrong expected value — should be 0.0 not 1.0
+        metric = TaskCompletionRate(total_tasks=0, passed_tasks=0)
+        assert metric.rate == 1.0
+
+
+    def test_completion_rate_all_pass():
+        metric = TaskCompletionRate(total_tasks=5, passed_tasks=5)
+        assert metric.rate == 1.0
+
+
+    def test_completion_rate_partial():
+        metric = TaskCompletionRate(total_tasks=4, passed_tasks=3)
+        assert metric.rate == pytest.approx(0.75)
+    '''
+    open('tests/unit/test_eval_fixture_metric.py', 'w').write(content)
+    "
+task:
+  title: "Fix the failing test in tests/unit/test_eval_fixture_metric.py"
+  description: |
+    Run `uv run pytest tests/unit/test_eval_fixture_metric.py -x -q` and you will
+    see a failure in `test_completion_rate_zero_tasks`. The assertion is wrong:
+    when `total_tasks == 0`, the rate should be `0.0`, not `1.0`.
+    Fix the assertion so all three tests pass.
+  role: qa
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: test_passes
+    value: "uv run pytest tests/unit/test_eval_fixture_metric.py -x -q"
+  - type: file_contains
+    path: tests/unit/test_eval_fixture_metric.py
+    value: "0.0"
+limits:
+  max_cost_usd: 0.50
+  max_duration_seconds: 180
+  max_retries: 1

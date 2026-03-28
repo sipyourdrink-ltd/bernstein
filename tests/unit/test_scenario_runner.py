@@ -124,9 +124,7 @@ class TestScenarioLoading:
     def test_invalid_tier_raises(self, tmp_path: Path) -> None:
         d = tmp_path / "scenarios"
         d.mkdir()
-        (d / "bad.yaml").write_text(
-            _minimal_yaml(scenario_id="bad", tier="invalid-tier")
-        )
+        (d / "bad.yaml").write_text(_minimal_yaml(scenario_id="bad", tier="invalid-tier"))
         r = ScenarioRunner(scenarios_dir=d, repo_root=tmp_path)
         # Invalid file is skipped (warning logged), so result is empty
         scenarios = r.load_scenarios()
@@ -184,9 +182,7 @@ class TestSetupExecution:
         )
         assert runner.run_setup(scenario) is True
 
-    def test_successful_command_returns_true(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_successful_command_returns_true(self, tmp_path: Path, scenarios_dir: Path) -> None:
         r = ScenarioRunner(scenarios_dir=scenarios_dir, repo_root=tmp_path)
         scenario = Scenario(
             id="x",
@@ -198,9 +194,7 @@ class TestSetupExecution:
         )
         assert r.run_setup(scenario) is True
 
-    def test_failing_command_returns_false(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_failing_command_returns_false(self, tmp_path: Path, scenarios_dir: Path) -> None:
         r = ScenarioRunner(scenarios_dir=scenarios_dir, repo_root=tmp_path)
         scenario = Scenario(
             id="x",
@@ -236,87 +230,65 @@ class TestSignalEvaluation:
     def _runner(self, tmp_path: Path, scenarios_dir: Path) -> ScenarioRunner:
         return ScenarioRunner(scenarios_dir=scenarios_dir, repo_root=tmp_path)
 
-    def test_path_exists_true(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_path_exists_true(self, tmp_path: Path, scenarios_dir: Path) -> None:
         (tmp_path / "myfile.txt").write_text("hi")
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="path_exists", value="myfile.txt")
         assert r.check_signal(sig) is True
 
-    def test_path_exists_false(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_path_exists_false(self, tmp_path: Path, scenarios_dir: Path) -> None:
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="path_exists", value="no_such_file.txt")
         assert r.check_signal(sig) is False
 
-    def test_path_exists_uses_path_field(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_path_exists_uses_path_field(self, tmp_path: Path, scenarios_dir: Path) -> None:
         (tmp_path / "other.txt").write_text("hi")
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="path_exists", value="", path="other.txt")
         assert r.check_signal(sig) is True
 
-    def test_file_contains_true(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_file_contains_true(self, tmp_path: Path, scenarios_dir: Path) -> None:
         f = tmp_path / "sample.py"
         f.write_text("def hello(): pass\n")
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="file_contains", value="def hello", path="sample.py")
         assert r.check_signal(sig) is True
 
-    def test_file_contains_false(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_file_contains_false(self, tmp_path: Path, scenarios_dir: Path) -> None:
         f = tmp_path / "sample.py"
         f.write_text("def hello(): pass\n")
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="file_contains", value="def goodbye", path="sample.py")
         assert r.check_signal(sig) is False
 
-    def test_file_contains_legacy_format(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_file_contains_legacy_format(self, tmp_path: Path, scenarios_dir: Path) -> None:
         f = tmp_path / "code.py"
         f.write_text("# Args:\n")
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="file_contains", value="code.py :: Args:")
         assert r.check_signal(sig) is True
 
-    def test_file_contains_missing_file(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_file_contains_missing_file(self, tmp_path: Path, scenarios_dir: Path) -> None:
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="file_contains", value="text", path="no_file.py")
         assert r.check_signal(sig) is False
 
-    def test_command_succeeds_true(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_command_succeeds_true(self, tmp_path: Path, scenarios_dir: Path) -> None:
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="command_succeeds", value="echo ok")
         assert r.check_signal(sig) is True
 
-    def test_command_succeeds_false(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_command_succeeds_false(self, tmp_path: Path, scenarios_dir: Path) -> None:
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="command_succeeds", value="exit 42")
         assert r.check_signal(sig) is False
 
-    def test_unknown_signal_type_returns_false(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_unknown_signal_type_returns_false(self, tmp_path: Path, scenarios_dir: Path) -> None:
         r = self._runner(tmp_path, scenarios_dir)
         sig = ScenarioSignal(type="unknown_type_xyzzy", value="anything")
         assert r.check_signal(sig) is False
 
-    def test_check_signals_all_pass(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_check_signals_all_pass(self, tmp_path: Path, scenarios_dir: Path) -> None:
         (tmp_path / "a.txt").write_text("hello world")
         r = self._runner(tmp_path, scenarios_dir)
         scenario = Scenario(
@@ -334,9 +306,7 @@ class TestSignalEvaluation:
         assert passed == 2
         assert total == 2
 
-    def test_check_signals_partial(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_check_signals_partial(self, tmp_path: Path, scenarios_dir: Path) -> None:
         (tmp_path / "b.txt").write_text("hello")
         r = self._runner(tmp_path, scenarios_dir)
         scenario = Scenario(
@@ -485,9 +455,7 @@ class TestRunScenarioOnce:
         assert result.run_index == 0
         assert result.duration_s >= 0.0
 
-    def test_setup_failure_short_circuits(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_setup_failure_short_circuits(self, tmp_path: Path, scenarios_dir: Path) -> None:
         r = ScenarioRunner(scenarios_dir=scenarios_dir, repo_root=tmp_path)
         scenario = Scenario(
             id="x",
@@ -529,9 +497,7 @@ class TestRunScenarioOnce:
         assert result.passed is True
         assert result.cost_usd == pytest.approx(0.05)
 
-    def test_executor_exception_captured(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_executor_exception_captured(self, tmp_path: Path, scenarios_dir: Path) -> None:
         def failing_executor(scenario: Scenario, repo_root: Path) -> float:
             raise RuntimeError("agent crashed")
 
@@ -574,9 +540,7 @@ class TestRunScenarioOnce:
 
 
 class TestRunScenarioBatch:
-    def test_run_scenario_returns_batch(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_run_scenario_returns_batch(self, tmp_path: Path, scenarios_dir: Path) -> None:
         (tmp_path / "README.md").write_text("hello")
         r = ScenarioRunner(scenarios_dir=scenarios_dir, repo_root=tmp_path)
         scenario = runner_load_first_smoke(r)
@@ -584,9 +548,7 @@ class TestRunScenarioBatch:
         assert len(batch.runs) == 2
         assert batch.scenario_id == scenario.id
 
-    def test_run_all_returns_one_per_scenario(
-        self, tmp_path: Path, scenarios_dir: Path
-    ) -> None:
+    def test_run_all_returns_one_per_scenario(self, tmp_path: Path, scenarios_dir: Path) -> None:
         (tmp_path / "README.md").write_text("hello")
         r = ScenarioRunner(scenarios_dir=scenarios_dir, repo_root=tmp_path)
         results = r.run_all(runs=1)
@@ -612,9 +574,7 @@ def runner_load_first_smoke(r: ScenarioRunner) -> Scenario:
 class TestScenarioFiles:
     """Verify the 20 bundled scenario files parse without errors."""
 
-    _scenarios_dir = (
-        Path(__file__).parent.parent.parent / ".sdd" / "eval" / "scenarios"
-    )
+    _scenarios_dir = Path(__file__).parent.parent.parent / ".sdd" / "eval" / "scenarios"
 
     @pytest.mark.skipif(
         not _scenarios_dir.exists(),
@@ -626,10 +586,7 @@ class TestScenarioFiles:
             repo_root=Path(__file__).parent.parent.parent,
         )
         scenarios = r.load_scenarios()
-        assert len(scenarios) == 20, (
-            f"Expected 20 scenarios, found {len(scenarios)}: "
-            f"{[s.id for s in scenarios]}"
-        )
+        assert len(scenarios) == 20, f"Expected 20 scenarios, found {len(scenarios)}: {[s.id for s in scenarios]}"
 
     @pytest.mark.skipif(
         not _scenarios_dir.exists(),
@@ -660,9 +617,7 @@ class TestScenarioFiles:
         )
         scenarios = r.load_scenarios()
         for s in scenarios:
-            assert len(s.expected_signals) > 0, (
-                f"Scenario {s.id} has no expected_signals"
-            )
+            assert len(s.expected_signals) > 0, f"Scenario {s.id} has no expected_signals"
 
     @pytest.mark.skipif(
         not _scenarios_dir.exists(),

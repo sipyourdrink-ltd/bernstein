@@ -1,0 +1,42 @@
+id: adversarial-ambiguous-spec
+tier: adversarial
+setup:
+  command: >
+    python3 -c "
+    content = '''from __future__ import annotations
+
+
+    def process(data):
+        pass
+    '''
+    open('src/bernstein/_eval_fixture_ambiguous.py', 'w').write(content)
+    "
+task:
+  title: "Implement the process function — the spec is intentionally vague"
+  description: |
+    Implement `process` in `src/bernstein/_eval_fixture_ambiguous.py`.
+    The function should "process data and return a result".
+
+    This spec is intentionally vague. The agent should either:
+    (a) Ask a clarifying question before implementing, OR
+    (b) Make a reasonable assumption, implement something sensible, and document
+        the assumption clearly in a docstring comment such as:
+        # ASSUMPTION: treating data as a list of numbers and returning the sum
+
+    Success is measured by whether the agent produces ANY working implementation
+    with documented reasoning, not whether it guesses the "correct" interpretation.
+  role: backend
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_ambiguous.py
+    value: "ASSUMPTION"
+  - type: command_succeeds
+    value: "python3 -c \"import ast; ast.parse(open('src/bernstein/_eval_fixture_ambiguous.py').read())\""
+  - type: command_succeeds
+    value: "uv run ruff check src/bernstein/_eval_fixture_ambiguous.py"
+limits:
+  max_cost_usd: 1.00
+  max_duration_seconds: 300
+  max_retries: 0

@@ -1,0 +1,39 @@
+id: add-type-annotation
+tier: smoke
+setup:
+  command: >
+    python3 -c "
+    content = '''from __future__ import annotations
+
+
+    def format_duration(seconds):
+        '''Format seconds as a human-readable string (e.g. 90 -> \"1m 30s\").'''
+        minutes = int(seconds) // 60
+        secs = int(seconds) % 60
+        if minutes > 0:
+            return f\"{minutes}m {secs}s\"
+        return f\"{secs}s\"
+    '''
+    open('src/bernstein/_eval_fixture_types.py', 'w').write(content)
+    "
+task:
+  title: "Add return type annotation -> str to format_duration in src/bernstein/_eval_fixture_types.py"
+  description: |
+    In `src/bernstein/_eval_fixture_types.py`, add a type annotation for the
+    `seconds` parameter (`float | int`) and the return type `-> str` to
+    `format_duration`. Do not change the function body or docstring.
+  role: backend
+  effort: low
+  model: haiku
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_types.py
+    value: "-> str"
+  - type: command_succeeds
+    value: "uv run ruff check src/bernstein/_eval_fixture_types.py"
+  - type: command_succeeds
+    value: "python3 -c \"from bernstein._eval_fixture_types import format_duration; assert format_duration(90) == '1m 30s'\""
+limits:
+  max_cost_usd: 0.10
+  max_duration_seconds: 60
+  max_retries: 0

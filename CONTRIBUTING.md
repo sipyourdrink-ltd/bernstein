@@ -2,6 +2,15 @@
 
 Thanks for your interest! Here's how to get started.
 
+## Community
+
+Join the [Bernstein Discord](https://discord.gg/bernstein) to:
+- Get help in `#help`
+- Share what you built in `#show-and-tell`
+- Discuss adapter development in `#adapters`
+- Post benchmark results in `#benchmarks`
+- Talk to contributors in `#dev`
+
 ## Quick Start
 
 ```bash
@@ -125,6 +134,36 @@ class CLIAdapter(ABC):
 3. **Run checks**: `uv run ruff check src/ && uv run pyright src/ && uv run python scripts/run_tests.py -x`.
 
 4. Open a PR — include a short note on how you tested it (e.g., ran a real task with `bernstein run --adapter mycli`).
+
+## Writing a Custom CI Parser
+
+CI parsers let Bernstein understand failures from different CI systems and route fix tasks to the right agent. Implement the `CILogParser` protocol from `src/bernstein/core/ci_log_parser.py`.
+
+### Interface
+
+```python
+class CILogParser(Protocol):
+    name: str                                    # e.g. "gitlab", "circleci"
+    def parse(self, raw_log: str) -> list[CIFailure]: ...
+```
+
+`CIFailure` fields: `kind` (a `CIFailureKind` enum), `job` (step/stage name), `message` (human-readable summary), `raw` (original log excerpt).
+
+### Steps
+
+1. **Create** `src/bernstein/adapters/ci/<name>.py` from the template in `templates/ci-parsers/TEMPLATE.py`.
+   See `src/bernstein/adapters/ci/github_actions.py` for a complete working example.
+
+2. **Register** your parser so the CI fix pipeline can use it:
+   ```python
+   from bernstein.core.ci_log_parser import register_parser
+   from bernstein.adapters.ci.myci import MyCIParser
+   register_parser(MyCIParser())
+   ```
+
+3. **Run checks**: `uv run ruff check src/ && uv run pyright src/ && uv run python scripts/run_tests.py -x`.
+
+4. Open a PR — mention which CI provider you tested against.
 
 ## Writing a Custom Role
 

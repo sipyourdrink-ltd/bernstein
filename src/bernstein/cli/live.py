@@ -126,7 +126,7 @@ class LiveView:
         """Fetch all dashboard data in a single pass.
 
         Returns:
-            Dict with ``status``, ``tasks``, ``agents`` keys.
+            Dict with ``status``, ``tasks``, ``agents``, ``costs`` keys.
         """
         status_resp = self._get("/status")
         status: dict[str, Any] = status_resp if isinstance(status_resp, dict) else {}
@@ -134,10 +134,14 @@ class LiveView:
         tasks_resp = self._get("/tasks")
         tasks: list[dict[str, Any]] = tasks_resp if isinstance(tasks_resp, list) else []  # type: ignore[assignment]
 
+        costs_resp = self._get("/costs/live")
+        costs: dict[str, Any] = costs_resp if isinstance(costs_resp, dict) else {}  # type: ignore[assignment]
+
         return {
             "status": status,
             "tasks": tasks,
             "agents": status.get("agents", []),
+            "costs": costs,
         }
 
     # -- Rendering --
@@ -154,19 +158,25 @@ class LiveView:
         status: dict[str, Any] = data.get("status", {})
         tasks: list[dict[str, Any]] = data.get("tasks", [])
         agents_raw: list[dict[str, Any]] = data.get("agents", [])
+        costs: dict[str, Any] = data.get("costs", {})
 
         summary = TaskSummary.from_dict(status)
         agents = [AgentInfo.from_dict(a) for a in agents_raw]
         elapsed = time.time() - self._start_ts
-        total_cost = float(status.get("total_cost_usd", 0.0))
+        total_cost = float(costs.get("spent_usd", 0.0)) or float(status.get("total_cost_usd", 0.0))
+        budget_usd = float(costs.get("budget_usd", 0.0))
+        per_model: dict[str, float] = costs.get("per_model") or {}
+        per_agent: dict[str, float] = costs.get("per_agent") or {}
 
         # Track history
         self._cost_history.append(total_cost)
         self._done_history.append(float(summary.done))
 
-        # Agents table
+        # Agents table (with per-agent cost column)
         agent_widget = AgentStatusTable()
-        agents_table = agent_widget.render(agents) if agents else _empty_panel("Waiting for agents\u2026")
+        agents_table = (
+            agent_widget.render(agents, agent_costs=per_agent) if agents else _empty_panel("Waiting for agents\u2026")
+        )
 
         # Tasks table
         tasks_table = _build_tasks_table(tasks)
@@ -176,11 +186,18 @@ class LiveView:
         progress_text = progress.render(summary)
 
         cost_panel = CostBurnPanel()
-        cost_renderable = cost_panel.render(total_cost, elapsed)
+        cost_renderable = cost_panel.render(
+            total_cost, elapsed, budget_usd=budget_usd, per_model=per_model, per_agent=per_agent
+        )
 
-        # Sparkline
+        # Progress sparkline (task done count over time)
         spark = render_sparkline(list(self._done_history))
         spark_panel = Panel(spark, title="Progress Over Time", border_style="dim", height=3)
+
+        # Cost sparkline (cumulative spend over time)
+        cost_spark = render_sparkline(list(self._cost_history), width=40)
+        cost_spark.stylize("bright_yellow")
+        cost_spark_panel = Panel(cost_spark, title="Spend Over Time ($)", border_style="dim green", height=3)
 
         # Stats bar
         stats_bar = _build_stats_text(summary, elapsed, len(agents))
@@ -190,6 +207,7 @@ class LiveView:
             tasks_table,
             Panel(progress_text, title="Progress", border_style="cyan"),
             cost_renderable,
+            cost_spark_panel,
             spark_panel,
             stats_bar,
         )

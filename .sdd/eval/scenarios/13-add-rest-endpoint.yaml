@@ -1,0 +1,35 @@
+id: add-rest-endpoint-version
+tier: stretch
+setup:
+  command: "git checkout HEAD -- src/bernstein/core/server.py"
+task:
+  title: "Add GET /version endpoint to the task server in src/bernstein/core/server.py"
+  description: |
+    Add a new FastAPI endpoint `GET /version` to `src/bernstein/core/server.py`.
+    It should return a JSON response: `{"version": "<package version>", "name": "bernstein"}`.
+    Use `importlib.metadata.version("bernstein")` to get the version; fall back to
+    `"dev"` if `PackageNotFoundError` is raised.
+    Add a Pydantic response model `VersionResponse` with fields `version: str` and
+    `name: str`.
+    The endpoint must not require authentication.
+  role: backend
+  effort: medium
+  model: sonnet
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/core/server.py
+    value: "GET /version"
+  - type: file_contains
+    path: src/bernstein/core/server.py
+    value: "VersionResponse"
+  - type: file_contains
+    path: src/bernstein/core/server.py
+    value: "importlib.metadata"
+  - type: command_succeeds
+    value: "uv run ruff check src/bernstein/core/server.py"
+  - type: test_passes
+    value: "uv run pytest tests/unit/test_server.py -x -q"
+limits:
+  max_cost_usd: 2.00
+  max_duration_seconds: 600
+  max_retries: 1

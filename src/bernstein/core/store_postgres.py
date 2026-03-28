@@ -575,6 +575,30 @@ class PostgresTaskStore(BaseTaskStore):
                 raise KeyError(task_id)
         return _row_to_task(row)
 
+    async def update(self, task_id: str, role: str | None, priority: int | None) -> Task:
+        """Update mutable task fields (role, priority) — manager corrections."""
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            current = await conn.fetchrow("SELECT id FROM tasks WHERE id=$1", task_id)
+            if current is None:
+                raise KeyError(task_id)
+            updates: list[str] = ["version = version + 1"]
+            params: list[object] = []
+            if role is not None:
+                params.append(role)
+                updates.append(f"role = ${len(params)}")
+            if priority is not None:
+                params.append(priority)
+                updates.append(f"priority = ${len(params)}")
+            params.append(task_id)
+            row = await conn.fetchrow(
+                f"UPDATE tasks SET {', '.join(updates)} WHERE id = ${len(params)} RETURNING *",
+                *params,
+            )
+            if row is None:  # pragma: no cover
+                raise KeyError(task_id)
+            return _row_to_task(row)
+
     async def cancel(self, task_id: str, reason: str) -> Task:
         """Cancel a non-terminal task."""
         assert self._pool is not None

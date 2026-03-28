@@ -1,0 +1,46 @@
+id: add-error-handling-to-fixture
+tier: standard
+setup:
+  command: >
+    python3 -c "
+    content = '''from __future__ import annotations
+
+    import json
+    from pathlib import Path
+
+
+    def load_config(path: Path) -> dict[str, object]:
+        '''Load JSON config from path and return as dict.'''
+        return json.loads(path.read_text())
+    '''
+    open('src/bernstein/_eval_fixture_errors.py', 'w').write(content)
+    "
+task:
+  title: "Add error handling to load_config in src/bernstein/_eval_fixture_errors.py"
+  description: |
+    In `src/bernstein/_eval_fixture_errors.py`, update `load_config` to handle two
+    failure cases:
+    1. If the file does not exist (`FileNotFoundError`), raise `ValueError` with
+       message `"Config file not found: {path}"`.
+    2. If the file contains invalid JSON (`json.JSONDecodeError`), raise `ValueError`
+       with message `"Invalid JSON in config: {path}"`.
+    Happy-path behaviour must remain unchanged.
+  role: backend
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_errors.py
+    value: "FileNotFoundError"
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_errors.py
+    value: "JSONDecodeError"
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_errors.py
+    value: "ValueError"
+  - type: command_succeeds
+    value: "uv run ruff check src/bernstein/_eval_fixture_errors.py"
+limits:
+  max_cost_usd: 0.50
+  max_duration_seconds: 180
+  max_retries: 1

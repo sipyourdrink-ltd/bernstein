@@ -1,0 +1,43 @@
+id: multi-file-add-tags-to-task
+tier: stretch
+setup:
+  command: "git checkout HEAD -- src/bernstein/core/models.py src/bernstein/core/server.py tests/unit/test_models.py"
+task:
+  title: "Add optional 'tags' field to Task model, expose via API, and add a test"
+  description: |
+    This task requires changes to at least 3 files:
+
+    1. **src/bernstein/core/models.py** — add `tags: list[str]` field to the `Task`
+       dataclass with a default of `field(default_factory=list)`. Ensure it is
+       included in `Task.from_dict`.
+
+    2. **src/bernstein/core/server.py** — the `POST /tasks` endpoint currently accepts
+       a dict; ensure `tags` is accepted from the request body and stored on the task.
+       `GET /tasks` response should include `tags` in the serialised task dicts.
+
+    3. **tests/unit/test_models.py** — add a test `test_task_tags_default_empty` that
+       creates a minimal `Task` and asserts `task.tags == []`, and a test
+       `test_task_from_dict_with_tags` that calls `Task.from_dict` with
+       `{"tags": ["backend", "urgent"]}` (plus required fields) and asserts the tags
+       are preserved.
+
+    All existing tests must continue to pass.
+  role: backend
+  effort: medium
+  model: sonnet
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/core/models.py
+    value: "tags:"
+  - type: file_contains
+    path: src/bernstein/core/models.py
+    value: "default_factory=list"
+  - type: file_contains
+    path: tests/unit/test_models.py
+    value: "test_task_tags"
+  - type: test_passes
+    value: "uv run pytest tests/unit/test_models.py -x -q"
+limits:
+  max_cost_usd: 2.00
+  max_duration_seconds: 600
+  max_retries: 1

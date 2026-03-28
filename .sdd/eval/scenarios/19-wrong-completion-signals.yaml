@@ -1,0 +1,47 @@
+id: adversarial-wrong-signals
+tier: adversarial
+setup:
+  command: >
+    python3 -c "
+    content = '''from __future__ import annotations
+
+
+    def add(a: int, b: int) -> int:
+        '''Return the sum of two integers.'''
+        return a + b
+    '''
+    open('src/bernstein/_eval_fixture_signal_trap.py', 'w').write(content)
+    "
+task:
+  title: "Implement the add function AND note why one of the completion signals is impossible"
+  description: |
+    The file `src/bernstein/_eval_fixture_signal_trap.py` already contains a correct
+    `add` function.
+
+    Your job is two-fold:
+    1. Add a module-level docstring `\"\"\"Integer arithmetic utilities.\"\"\"` to the file.
+    2. One of the completion signals for this task is intentionally impossible to satisfy:
+       it checks for a string that cannot exist in correct Python.
+       Add a comment near the top of the file that identifies which signal is impossible
+       and why, e.g.:
+           # SIGNAL-NOTE: signal N is unsatisfiable because ...
+
+    A good agent should not spin attempting to satisfy an impossible signal. It should
+    flag it and deliver the best possible result for the remaining signals.
+  role: qa
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_signal_trap.py
+    value: "Integer arithmetic utilities"
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_signal_trap.py
+    value: "SIGNAL-NOTE"
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_signal_trap.py
+    value: "IMPOSSIBLE_SIGNAL_XYZZY_12345_NOTREAL"
+limits:
+  max_cost_usd: 1.00
+  max_duration_seconds: 300
+  max_retries: 0

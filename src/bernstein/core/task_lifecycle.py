@@ -18,15 +18,15 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from bernstein.core.context import append_decision
+from bernstein.core.cross_model_verifier import (
+    CrossModelVerifierConfig,
+    run_cross_model_verification_sync,
+)
 from bernstein.core.fast_path import (
     TaskLevel,
     classify_task,
     get_l1_model_config,
     try_fast_path_batch,
-)
-from bernstein.core.cross_model_verifier import (
-    CrossModelVerifierConfig,
-    run_cross_model_verification_sync,
 )
 from bernstein.core.janitor import verify_task
 from bernstein.core.metrics import get_collector
@@ -35,6 +35,7 @@ from bernstein.core.models import (
     Task,
 )
 from bernstein.core.quality_gates import run_quality_gates
+from bernstein.core.router import RouterError
 from bernstein.core.tick_pipeline import (
     CompletionData,
     fail_task,
@@ -826,6 +827,10 @@ def claim_and_spawn_batches(
             session.heartbeat_ts = time.time()
             orch._spawn_failures.pop(batch_key, None)
             _spawned_per_role[batch[0].role] += 1
+            # Track active-agent count for rate-limit load spreading
+            _rl_tracker = getattr(orch, "_rate_limit_tracker", None)
+            if _rl_tracker is not None and session.provider:
+                _rl_tracker.increment_active(session.provider)
 
             logger.info(
                 "Spawned %s for %d tasks: %s",
@@ -853,7 +858,7 @@ def claim_and_spawn_batches(
                 session.id,
                 session.agent_source,
             )
-        except (OSError, RuntimeError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError, RouterError) as exc:
             logger.error("Spawn failed for batch %s: %s", [t.id for t in batch], exc)
             result.errors.append(f"spawn: {exc}")
             collector = get_collector(orch._workdir / ".sdd" / "metrics")
@@ -935,9 +940,7 @@ def process_completed_tasks(
                 if not _qg_result.passed:
                     janitor_passed = False
                     _qg_failed = [
-                        f"quality_gate:{r.gate}"
-                        for r in _qg_result.gate_results
-                        if r.blocked and not r.passed
+                        f"quality_gate:{r.gate}" for r in _qg_result.gate_results if r.blocked and not r.passed
                     ]
                     with contextlib.suppress(ValueError):
                         result.verified.remove(task.id)
@@ -950,24 +953,18 @@ def process_completed_tasks(
 
             # Cross-model verification: route diff to a different model for review.
             # Runs after quality gates, before the approval gate.
-            _cmv_config: CrossModelVerifierConfig | None = getattr(
-                orch._config, "cross_model_verify", None
-            )
+            _cmv_config: CrossModelVerifierConfig | None = getattr(orch._config, "cross_model_verify", None)
             if janitor_passed and _cmv_config is not None and _cmv_config.enabled:
                 _cmv_worktree = orch._spawner.get_worktree_path(session.id)
                 _cmv_path = _cmv_worktree if _cmv_worktree is not None else orch._workdir
                 _cmv_writer = session.model_config.model
-                _cmv_verdict = run_cross_model_verification_sync(
-                    task, _cmv_path, _cmv_writer, _cmv_config
-                )
+                _cmv_verdict = run_cross_model_verification_sync(task, _cmv_path, _cmv_writer, _cmv_config)
                 if _cmv_verdict.verdict == "request_changes" and _cmv_config.block_on_issues:
                     janitor_passed = False
                     _cmv_issues_str = "; ".join(_cmv_verdict.issues) if _cmv_verdict.issues else _cmv_verdict.feedback
                     with contextlib.suppress(ValueError):
                         result.verified.remove(task.id)
-                    result.verification_failures.append(
-                        (task.id, [f"cross_model_review:{_cmv_issues_str}"])
-                    )
+                    result.verification_failures.append((task.id, [f"cross_model_review:{_cmv_issues_str}"]))
                     logger.info(
                         "Cross-model review blocked merge for task %s (reviewer=%s): %s",
                         task.id,
@@ -994,9 +991,7 @@ def process_completed_tasks(
                         "owned_files": task.owned_files,
                     }
                     try:
-                        orch._client.post(
-                            f"{orch._config.server_url}/tasks", json=_cmv_fix_body
-                        ).raise_for_status()
+                        orch._client.post(f"{orch._config.server_url}/tasks", json=_cmv_fix_body).raise_for_status()
                     except httpx.HTTPError as _cmv_exc:
                         logger.warning(
                             "cross_model_verifier: failed to create fix task for %s: %s",

@@ -1,0 +1,31 @@
+id: add-cli-version-command
+tier: standard
+setup:
+  command: "git checkout HEAD -- src/bernstein/cli/main.py"
+task:
+  title: "Add a `bernstein version` CLI command that prints the package version"
+  description: |
+    Add a new `@cli.command()` named `version` to `src/bernstein/cli/main.py`.
+    It should print the installed package version using
+    `importlib.metadata.version("bernstein")`.
+    Use a try/except to handle `PackageNotFoundError` and print "dev" as fallback.
+    The command takes no arguments.
+  role: backend
+  effort: low
+  model: sonnet
+expected_signals:
+  - type: file_contains
+    path: src/bernstein/cli/main.py
+    value: "@cli.command"
+  - type: file_contains
+    path: src/bernstein/cli/main.py
+    value: "version"
+  - type: file_contains
+    path: src/bernstein/cli/main.py
+    value: "importlib.metadata"
+  - type: command_succeeds
+    value: "uv run ruff check src/bernstein/cli/main.py"
+limits:
+  max_cost_usd: 0.50
+  max_duration_seconds: 180
+  max_retries: 1

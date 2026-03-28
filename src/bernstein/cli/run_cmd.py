@@ -228,7 +228,26 @@ def _show_run_summary() -> None:
     default=False,
     help="Bind server to 0.0.0.0 for remote/cluster access (default: 127.0.0.1).",
 )
-def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: bool) -> None:
+@click.option(
+    "--cli",
+    default=None,
+    type=click.Choice(["auto", "claude", "codex", "gemini", "aider", "qwen"], case_sensitive=False),
+    help="Force specific CLI agent (overrides auto-detection and config file).",
+)
+@click.option(
+    "--model",
+    default=None,
+    help="Force specific model (e.g. opus, sonnet, o4-mini; overrides config file).",
+)
+def run(
+    goal: str | None,
+    seed_file: str | None,
+    port: int,
+    cells: int,
+    remote: bool,
+    cli: str | None,
+    model: str | None,
+) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
     \b
@@ -237,6 +256,8 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
       bernstein conduct --seed custom.yaml  # custom seed file
       bernstein conduct --cells 3           # 3 parallel cells (multi-cell mode)
       bernstein conduct --remote            # bind to 0.0.0.0 for cluster access
+      bernstein conduct --cli claude        # force Claude Code agent
+      bernstein conduct --model opus        # force Opus model
     """
     print_banner()
 
@@ -256,7 +277,14 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
     if goal is not None:
         # Inline goal mode -- no YAML needed
         try:
-            bootstrap_from_goal(goal=goal, workdir=workdir, port=port, cells=cells)
+            bootstrap_from_goal(
+                goal=goal,
+                workdir=workdir,
+                port=port,
+                cells=cells,
+                cli=cli or "auto",  # Default to "auto" if not specified
+                model=model,
+            )
         except RuntimeError as exc:
             from bernstein.cli.errors import bootstrap_failed
 
@@ -282,7 +310,15 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
     try:
         # CLI --cells overrides seed file value when explicitly set (cells > 1)
         cli_cells: int | None = cells if cells > 1 else None
-        bootstrap_from_seed(seed_path=path, workdir=workdir, port=port, cells=cli_cells, remote=remote)
+        bootstrap_from_seed(
+            seed_path=path,
+            workdir=workdir,
+            port=port,
+            cells=cli_cells,
+            remote=remote,
+            cli=cli,
+            model=model,
+        )
     except SeedError as exc:
         from bernstein.cli.errors import seed_parse_error
 

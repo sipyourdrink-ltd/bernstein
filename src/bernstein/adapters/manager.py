@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from bernstein.core.models import ModelConfig
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.env_isolation import build_filtered_env
 
 
 class ManagerAdapter(CLIAdapter):
@@ -30,7 +31,7 @@ class ManagerAdapter(CLIAdapter):
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        env = os.environ.copy()
+        env = build_filtered_env(["ANTHROPIC_API_KEY"])
 
         # Extract the task ID. The ManagerAgent __main__ expects --task-id
         # We know tasks are passed in the prompt, let's grab the first task id.

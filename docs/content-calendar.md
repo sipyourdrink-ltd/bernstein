@@ -39,7 +39,7 @@
 | W5 | Twitter | Hot take: "LLM-based scheduling is a trap — here's why" |
 | W6 | Blog | "Why we chose git worktrees over Docker for agent isolation" |
 | W6 | YouTube | Architecture walkthrough: the orchestrator loop in 10 minutes |
-| W7 | Blog | Benchmark deep-dive: methodology, raw data, reproducibility |
+| W7 | Blog | Benchmark deep-dive: methodology, raw data, reproducibility (`docs/blog/multi-agent-benchmark.md`) |
 | W7 | Reddit | r/programming — "Building a distributed agent cluster without a message broker" |
 | W8 | Blog | "Contributing to Bernstein: how the self-evolution loop works" |
 
@@ -75,3 +75,6 @@
 - `docs/social/reddit-local-llama.md` — Reddit launch post
 - `docs/launch/hn-post.md` — Show HN
 - `docs/assets/youtube-script.md` — 2-minute demo script
+- `docs/blog/multi-agent-benchmark.md` — benchmark deep-dive (1.78× faster, 23% cheaper)
+- `docs/blog/swe-bench-orchestration-thesis.md` — SWE-Bench results (3-agent Sonnet beats solo Opus)
+- `docs/blog/self-evolution-30-days.md` — 30-day self-evolution run on Bernstein's own codebase

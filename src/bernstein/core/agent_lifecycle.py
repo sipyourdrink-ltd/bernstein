@@ -65,6 +65,10 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
             # Release file ownership for this agent
             _release_file_ownership(orch, session.id)
             _release_task_to_session(orch, session.task_ids)
+            # Decrement active-agent count for this provider
+            _rl_tracker = getattr(orch, "_rate_limit_tracker", None)
+            if _rl_tracker is not None and session.provider:
+                _rl_tracker.decrement_active(session.provider)
             # Handle orphaned tasks
             for task_id in session.task_ids:
                 # Increment crash count and preserve worktree when using resume strategy
@@ -210,6 +214,20 @@ def handle_orphaned_task(
             status.value,
         )
         return
+
+    # Rate-limit 429 detection: scan the agent's log before deciding how to retry.
+    # If a 429 pattern is found, throttle the provider so subsequent spawns avoid it.
+    _rl_tracker = getattr(orch, "_rate_limit_tracker", None)
+    if _rl_tracker is not None and session.provider:
+        _log_path = orch._workdir / ".sdd" / "runtime" / f"{session.id}.log"
+        if _rl_tracker.scan_log_for_429(_log_path):
+            _rl_tracker.throttle_provider(session.provider, getattr(orch, "_router", None))
+            logger.warning(
+                "Rate-limit detected in log for session %s (provider=%r, task=%s)",
+                session.id,
+                session.provider,
+                task_id,
+            )
 
     # Escalate strategy: block task when crash limit exceeded
     if orch._config.recovery == "escalate" and orch._crash_counts.get(task_id, 0) >= orch._config.max_crash_retries:

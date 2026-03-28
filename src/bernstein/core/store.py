@@ -98,20 +98,23 @@ class BaseTaskStore(ABC):
         self,
         task_id: str,
         expected_version: int | None = None,
+        agent_role: str | None = None,
     ) -> Task:
-        """Claim a specific task, optionally with CAS version check.
+        """Claim a specific task, optionally with CAS version check and role matching.
 
         Args:
             task_id: Task identifier.
             expected_version: If set, the claim is rejected unless the stored
                 task version matches (compare-and-swap).
+            agent_role: If set, the claim is rejected unless the task's role
+                matches the agent's role (role-locked claiming).
 
         Returns:
             The claimed :class:`~bernstein.core.models.Task`.
 
         Raises:
             KeyError: Task not found.
-            ValueError: Version conflict (CAS mismatch).
+            ValueError: Version conflict (CAS mismatch) or role mismatch.
         """
 
     @abstractmethod
@@ -119,16 +122,19 @@ class BaseTaskStore(ABC):
         self,
         task_ids: list[str],
         agent_id: str,
+        agent_role: str | None = None,
     ) -> tuple[list[str], list[str]]:
-        """Atomically claim multiple tasks by ID.
+        """Atomically claim multiple tasks by ID with optional role matching.
 
         Args:
             task_ids: Task identifiers to claim.
             agent_id: Claiming agent's identifier.
+            agent_role: If set, only tasks whose role matches the agent's role
+                can be claimed.
 
         Returns:
-            ``(claimed_ids, failed_ids)`` — tasks not in ``OPEN`` status are
-            reported in *failed_ids*.
+            ``(claimed_ids, failed_ids)`` — tasks not in ``OPEN`` status or
+            with mismatched roles are reported in *failed_ids*.
         """
 
     @abstractmethod
@@ -174,6 +180,25 @@ class BaseTaskStore(ABC):
             task_id: Task identifier.
             message: Human-readable progress message.
             percent: Completion percentage (0-100).
+
+        Returns:
+            The updated :class:`~bernstein.core.models.Task`.
+
+        Raises:
+            KeyError: Task not found.
+        """
+
+    @abstractmethod
+    async def update(self, task_id: str, role: str | None, priority: int | None) -> Task:
+        """Update mutable task fields (role, priority) — manager corrections.
+
+        Only open or failed tasks should be reassigned; claimed tasks are left
+        to finish before the new assignment takes effect.
+
+        Args:
+            task_id: Task identifier.
+            role: New role if provided.
+            priority: New priority if provided.
 
         Returns:
             The updated :class:`~bernstein.core.models.Task`.

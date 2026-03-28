@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.llm import LLMSettings
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
@@ -106,7 +106,7 @@ class QwenAdapter(CLIAdapter):
         provider = self._detect_provider(settings)
         api_key, base_url = self._resolve_provider_config(provider, settings)
 
-        env = os.environ.copy()
+        env = build_filtered_env(["OPENAI_API_KEY", "OPENAI_BASE_URL"])
         if api_key:
             env["OPENAI_API_KEY"] = api_key
         if base_url:

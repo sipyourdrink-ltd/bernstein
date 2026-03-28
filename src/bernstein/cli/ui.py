@@ -242,27 +242,86 @@ class StatusPanel:
 
 
 class CostBurnPanel:
-    """Displays real-time cost information."""
+    """Displays real-time cost information with model breakdown and optional budget bar."""
 
-    def render(self, total_cost_usd: float, elapsed_seconds: float) -> Panel:
-        """Build a panel showing current spend and burn rate.
+    def render(
+        self,
+        total_cost_usd: float,
+        elapsed_seconds: float,
+        budget_usd: float = 0.0,
+        per_model: dict[str, float] | None = None,
+        per_agent: dict[str, float] | None = None,
+    ) -> Panel:
+        """Build a panel showing current spend, burn rate, and breakdowns.
 
         Args:
             total_cost_usd: Cumulative spend in USD.
             elapsed_seconds: Time elapsed since run start.
+            budget_usd: Budget cap in USD (0 = unlimited).
+            per_model: Optional mapping of model name → cost in USD.
+            per_agent: Optional mapping of agent_id → cost in USD.
 
         Returns:
             A Rich Panel renderable.
         """
         text = Text()
         text.append("Spend: ", style="bold")
-        text.append(f"${total_cost_usd:.4f}", style="bold green")
 
-        if elapsed_seconds > 0:
+        # Color-code based on budget usage
+        if budget_usd > 0:
+            pct = total_cost_usd / budget_usd
+            cost_style = "bold red" if pct >= 0.95 else ("bold yellow" if pct >= 0.80 else "bold green")
+        else:
+            cost_style = "bold green"
+
+        text.append(f"${total_cost_usd:.4f}", style=cost_style)
+
+        if budget_usd > 0:
+            text.append(f" / ${budget_usd:.2f}", style="dim")
+            pct_int = min(int(total_cost_usd / budget_usd * 100), 100)
+            bar_w = 20
+            filled = min(int(total_cost_usd / budget_usd * bar_w), bar_w)
+            bar_style = "bold red" if pct_int >= 95 else ("bold yellow" if pct_int >= 80 else "bold green")
+            text.append(f"  [{pct_int}%]  ", style=bar_style)
+            text.append("\u2590", style="dim")
+            for i in range(bar_w):
+                text.append("\u2588" if i < filled else "\u2591", style=bar_style if i < filled else "dim")
+            text.append("\u258c", style="dim")
+
+        if elapsed_seconds > 0 and total_cost_usd > 0:
             rate_per_min = total_cost_usd / (elapsed_seconds / 60.0)
-            text.append(f"  (${rate_per_min:.4f}/min)", style="dim")
+            text.append(f"  (${rate_per_min:.4f}/min", style="dim")
+            projected_hourly = rate_per_min * 60.0
+            text.append(f", ~${projected_hourly:.2f}/hr)", style="dim")
+            # Budget depletion projection
+            if budget_usd > 0 and total_cost_usd < budget_usd:
+                rate_per_s = total_cost_usd / elapsed_seconds
+                if rate_per_s > 0:
+                    secs_until_empty = (budget_usd - total_cost_usd) / rate_per_s
+                    text.append(f"  \u2192 exhausts in {format_duration(secs_until_empty)}", style="dim yellow")
 
         text.append(f"\nElapsed: {format_duration(elapsed_seconds)}", style="dim")
+
+        # Model breakdown
+        if per_model:
+            text.append("  |  ", style="dim")
+            parts = sorted(per_model.items(), key=lambda kv: kv[1], reverse=True)
+            for i, (model, cost) in enumerate(parts):
+                if i > 0:
+                    text.append("  ", style="")
+                text.append(f"{model}:", style="dim")
+                text.append(f"${cost:.4f}", style="bold cyan")
+
+        # Per-agent breakdown (top 5 by spend)
+        if per_agent:
+            top = sorted(per_agent.items(), key=lambda kv: kv[1], reverse=True)[:5]
+            text.append("\nAgents: ", style="dim")
+            for i, (agent_id, cost) in enumerate(top):
+                if i > 0:
+                    text.append("  ", style="")
+                short_id = agent_id[-8:] if len(agent_id) > 8 else agent_id
+                text.append(f"{short_id}:", style="dim")
+                text.append(f"${cost:.4f}", style="bold yellow")
 
         return Panel(text, title="Cost", border_style="green")
 
@@ -324,13 +383,14 @@ class TaskProgressBar:
 
 
 class AgentStatusTable:
-    """Table showing active agents with role, model, status, and task count."""
+    """Table showing active agents with role, model, status, task count, and cost."""
 
-    def render(self, agents: list[AgentInfo]) -> Table:
+    def render(self, agents: list[AgentInfo], agent_costs: dict[str, float] | None = None) -> Table:
         """Build the agents table.
 
         Args:
             agents: List of agent snapshots.
+            agent_costs: Optional mapping of agent_id → cumulative cost in USD.
 
         Returns:
             A Rich Table renderable.
@@ -346,35 +406,47 @@ class AgentStatusTable:
         table.add_column("Status", min_width=10)
         table.add_column("Runtime", justify="right", min_width=7)
         table.add_column("Tasks", justify="right", min_width=5)
+        table.add_column("Cost", justify="right", min_width=9)
 
+        costs = agent_costs or {}
         for agent in agents:
             color = AGENT_STATUS_COLORS.get(agent.status, "dim")
             runtime_str = format_duration(agent.runtime_s) if agent.runtime_s > 0 else "\u2014"
+            cost_usd = costs.get(agent.agent_id, 0.0)
+            cost_cell = (
+                f"[bold bright_yellow]${cost_usd:.4f}[/bold bright_yellow]" if cost_usd > 0 else "[dim]\u2014[/dim]"
+            )
             table.add_row(
                 f"[bold]{agent.role}[/bold] [dim]{agent.agent_id[-8:]}[/dim]" if agent.agent_id else agent.role,
                 agent.model or "\u2014",
                 f"[{color}]{agent.status}[/{color}]",
                 runtime_str,
                 str(len(agent.task_ids)),
+                cost_cell,
             )
         return table
 
-    def render_plain(self, agents: list[AgentInfo]) -> str:
+    def render_plain(self, agents: list[AgentInfo], agent_costs: dict[str, float] | None = None) -> str:
         """Plain-text fallback for non-TTY.
 
         Args:
             agents: List of agent snapshots.
+            agent_costs: Optional mapping of agent_id → cumulative cost in USD.
 
         Returns:
             A plain tabular string.
         """
         if not agents:
             return "No active agents."
-        lines = ["AGENT            MODEL      STATUS     RUNTIME  TASKS"]
+        costs = agent_costs or {}
+        lines = ["AGENT            MODEL      STATUS     RUNTIME  TASKS  COST"]
         for agent in agents:
             runtime_str = format_duration(agent.runtime_s) if agent.runtime_s > 0 else "-"
+            cost_usd = costs.get(agent.agent_id, 0.0)
+            cost_str = f"${cost_usd:.4f}" if cost_usd > 0 else "-"
+            tasks_n = len(agent.task_ids)
             lines.append(
-                f"{agent.role:<16} {agent.model:<10} {agent.status:<10} {runtime_str:>7}  {len(agent.task_ids)}"
+                f"{agent.role:<16} {agent.model:<10} {agent.status:<10} {runtime_str:>7}  {tasks_n}  {cost_str}"
             )
         return "\n".join(lines)
 

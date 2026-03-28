@@ -92,10 +92,12 @@ class TestSpawn:
         kwargs = popen.call_args.kwargs
         assert kwargs.get("cwd") == tmp_path
 
-    def test_env_is_copy_of_os_environ(self, tmp_path: Path) -> None:
+    def test_env_is_provided(self, tmp_path: Path) -> None:
         popen, _ = self._spawn(tmp_path)
         kwargs = popen.call_args.kwargs
-        assert kwargs.get("env") == os.environ.copy()
+        env = kwargs.get("env")
+        assert env is not None
+        assert isinstance(env, dict)
 
     def test_log_file_created(self, tmp_path: Path) -> None:
         adapter = ManagerAdapter()

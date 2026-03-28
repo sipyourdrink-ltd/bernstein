@@ -1,0 +1,88 @@
+id: refactor-split-eval-metrics
+tier: stretch
+setup:
+  command: >
+    python3 -c "
+    content = '''from __future__ import annotations
+
+    from dataclasses import dataclass
+
+
+    @dataclass(frozen=True)
+    class RateMetric:
+        '''Base class for rate-style metrics.'''
+        total: int = 0
+        count: int = 0
+
+        @property
+        def rate(self) -> float:
+            if self.total == 0:
+                return 0.0
+            return self.count / self.total
+
+
+    @dataclass(frozen=True)
+    class PassRate(RateMetric):
+        '''Fraction of tasks that passed.'''
+
+
+    @dataclass(frozen=True)
+    class RetryRate(RateMetric):
+        '''Fraction of tasks that needed at least one retry.'''
+
+
+    @dataclass(frozen=True)
+    class CostMetric:
+        '''Tracks total cost in USD.'''
+        total_usd: float = 0.0
+        task_count: int = 0
+
+        @property
+        def cost_per_task(self) -> float:
+            if self.task_count == 0:
+                return 0.0
+            return self.total_usd / self.task_count
+
+
+    @dataclass(frozen=True)
+    class TimeMetric:
+        '''Tracks total wall-clock time.'''
+        total_seconds: float = 0.0
+        task_count: int = 0
+
+        @property
+        def seconds_per_task(self) -> float:
+            if self.task_count == 0:
+                return 0.0
+            return self.total_seconds / self.task_count
+    '''
+    open('src/bernstein/_eval_fixture_split.py', 'w').write(content)
+    "
+task:
+  title: "Split src/bernstein/_eval_fixture_split.py into rate_metrics.py and cost_metrics.py"
+  description: |
+    Split `src/bernstein/_eval_fixture_split.py` into two new files in the same directory:
+    - `src/bernstein/_eval_fixture_rate_metrics.py` — containing `RateMetric`, `PassRate`, `RetryRate`
+    - `src/bernstein/_eval_fixture_cost_metrics.py` — containing `CostMetric`, `TimeMetric`
+    Both files must have proper module docstrings and imports.
+    Keep the original file as a compatibility shim that re-exports everything:
+        from bernstein._eval_fixture_rate_metrics import PassRate, RateMetric, RetryRate
+        from bernstein._eval_fixture_cost_metrics import CostMetric, TimeMetric
+    All existing imports from `bernstein._eval_fixture_split` must still work.
+  role: backend
+  effort: medium
+  model: sonnet
+expected_signals:
+  - type: path_exists
+    value: src/bernstein/_eval_fixture_rate_metrics.py
+  - type: path_exists
+    value: src/bernstein/_eval_fixture_cost_metrics.py
+  - type: file_contains
+    path: src/bernstein/_eval_fixture_split.py
+    value: "from bernstein._eval_fixture_rate_metrics import"
+  - type: command_succeeds
+    value: "python3 -c \"from bernstein._eval_fixture_split import PassRate, CostMetric; assert PassRate(10, 8).rate == 0.8\""
+limits:
+  max_cost_usd: 2.00
+  max_duration_seconds: 600
+  max_retries: 1

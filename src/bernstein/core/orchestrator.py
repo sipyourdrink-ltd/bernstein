@@ -33,7 +33,6 @@ from bernstein.core.agent_lifecycle import (
     refresh_agent_states,
     send_shutdown_signals,
 )
-from bernstein.core.token_monitor import check_token_growth
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
@@ -45,10 +44,10 @@ from bernstein.core.fast_path import (
     FastPathStats,
     load_fast_path_config,
 )
+from bernstein.core.file_locks import FileLockManager
 from bernstein.core.graph import TaskGraph
 from bernstein.core.merge_queue import MergeQueue
 from bernstein.core.metrics import get_collector
-from bernstein.core.quality_gates import QualityGatesConfig
 from bernstein.core.models import (
     AgentSession,
     ClusterConfig,
@@ -60,14 +59,13 @@ from bernstein.core.models import (
     TaskType,
 )
 from bernstein.core.notifications import NotificationManager, NotificationPayload
-from bernstein.core.file_locks import FileLockManager
 from bernstein.core.quarantine import QuarantineStore
+from bernstein.core.rate_limit_tracker import RateLimitTracker
 from bernstein.core.retrospective import generate_retrospective
 from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
 from bernstein.core.signals import read_unresolved_pivots
 from bernstein.core.task_lifecycle import (
     auto_decompose_task,
-    check_file_overlap,
     claim_and_spawn_batches,
     collect_completion_data,
     maybe_retry_task,
@@ -93,6 +91,7 @@ from bernstein.core.tick_pipeline import (
 from bernstein.core.tick_pipeline import (
     total_spent_cache as total_spent_cache,
 )
+from bernstein.core.token_monitor import check_token_growth
 from bernstein.evolution.governance import AdaptiveGovernor, GovernanceEntry, ProjectContext
 from bernstein.evolution.risk import RiskScorer
 
@@ -104,6 +103,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from bernstein.core.quality_gates import QualityGatesConfig
     from bernstein.core.spawner import AgentSpawner
 
 logger = logging.getLogger(__name__)
@@ -202,6 +202,9 @@ class Orchestrator:
             providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
             if providers_yaml.exists():
                 load_providers_from_yaml(providers_yaml, self._router)
+
+        # Rate-limit-aware scheduling: tracks per-provider throttle state.
+        self._rate_limit_tracker = RateLimitTracker()
 
         # Self-evolution feedback loop
         if config.evolution_enabled:
@@ -496,6 +499,14 @@ class Orchestrator:
         batches = group_by_role(ready_tasks, self._config.max_tasks_per_agent)
 
         # 3. Count alive agents, spawn if capacity (capped by graph parallel width)
+        # 2b. Rate-limit recovery: restore providers whose throttle window expired.
+        _recovered = self._rate_limit_tracker.recover_expired_throttles(self._router)
+        if _recovered:
+            logger.info("Rate-limit: recovered providers %s", _recovered)
+        # Sync active-agent counts into the router for load-spreading scores.
+        if self._router is not None:
+            self._router.update_active_agent_counts(self._rate_limit_tracker.get_all_active_counts())
+
         refresh_agent_states(self, tasks_by_status)
         alive_count = sum(1 for a in self._agents.values() if a.status != "dead")
         result.active_agents = alive_count
@@ -934,8 +945,31 @@ class Orchestrator:
         )
 
     def _check_file_overlap(self, batch: list[Task]) -> bool:
-        """Return True if any file in *batch* is currently locked by another agent."""
+        """Return True if any file in *batch* is currently owned by an active agent.
+
+        Checks both the in-memory ``_file_ownership`` dict (cross-referenced
+        against live agent status) and the persistent ``_lock_manager`` (for
+        crash-recovery locks held across process restarts).  Dead agents do not
+        block new batches even if they appear in the ownership index.
+        """
         all_files = [f for task in batch for f in task.owned_files]
+        if not all_files:
+            return False
+
+        # In-memory ownership check — filters out dead agents explicitly.
+        for fpath in all_files:
+            owner_id = self._file_ownership.get(fpath)
+            if owner_id:
+                session = self._agents.get(owner_id)
+                if session and session.status == "working":
+                    logger.debug(
+                        "File %s owned by active agent %s, deferring batch",
+                        fpath,
+                        owner_id,
+                    )
+                    return True
+
+        # Persistent lock check (survives crashes via FileLockManager TTL).
         conflicts = self._lock_manager.check_conflicts(all_files)
         if conflicts:
             for fpath, lock in conflicts:

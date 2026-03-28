@@ -54,14 +54,16 @@ class TestJudgeVerdict:
 
 class TestParseVerdictCleanJson:
     def test_valid_json(self) -> None:
-        raw = json.dumps({
-            "correctness": 4,
-            "style": 3,
-            "test_coverage": 4,
-            "safety": 5,
-            "verdict": "PASS",
-            "issues": [],
-        })
+        raw = json.dumps(
+            {
+                "correctness": 4,
+                "style": 3,
+                "test_coverage": 4,
+                "safety": 5,
+                "verdict": "PASS",
+                "issues": [],
+            }
+        )
         v = _parse_verdict(raw)
         assert v.correctness == 4
         assert v.style == 3
@@ -71,14 +73,16 @@ class TestParseVerdictCleanJson:
         assert v.issues == []
 
     def test_fail_verdict(self) -> None:
-        raw = json.dumps({
-            "correctness": 2,
-            "style": 1,
-            "test_coverage": 0,
-            "safety": 4,
-            "verdict": "FAIL",
-            "issues": ["missing tests", "bad naming"],
-        })
+        raw = json.dumps(
+            {
+                "correctness": 2,
+                "style": 1,
+                "test_coverage": 0,
+                "safety": 4,
+                "verdict": "FAIL",
+                "issues": ["missing tests", "bad naming"],
+            }
+        )
         v = _parse_verdict(raw)
         assert v.verdict == "FAIL"
         assert len(v.issues) == 2
@@ -124,14 +128,16 @@ class TestParseVerdictQuirks:
 
 class TestParseVerdictClamping:
     def test_scores_above_max_clamped(self) -> None:
-        raw = json.dumps({
-            "correctness": 10,
-            "style": 99,
-            "test_coverage": 7,
-            "safety": 6,
-            "verdict": "PASS",
-            "issues": [],
-        })
+        raw = json.dumps(
+            {
+                "correctness": 10,
+                "style": 99,
+                "test_coverage": 7,
+                "safety": 6,
+                "verdict": "PASS",
+                "issues": [],
+            }
+        )
         v = _parse_verdict(raw)
         assert v.correctness == 5
         assert v.style == 5
@@ -139,14 +145,16 @@ class TestParseVerdictClamping:
         assert v.safety == 5
 
     def test_negative_scores_clamped(self) -> None:
-        raw = json.dumps({
-            "correctness": -1,
-            "style": -5,
-            "test_coverage": -10,
-            "safety": -3,
-            "verdict": "FAIL",
-            "issues": [],
-        })
+        raw = json.dumps(
+            {
+                "correctness": -1,
+                "style": -5,
+                "test_coverage": -10,
+                "safety": -3,
+                "verdict": "FAIL",
+                "issues": [],
+            }
+        )
         v = _parse_verdict(raw)
         assert v.correctness == 0
         assert v.style == 0
@@ -154,14 +162,16 @@ class TestParseVerdictClamping:
         assert v.safety == 0
 
     def test_float_scores_truncated(self) -> None:
-        raw = json.dumps({
-            "correctness": 3.7,
-            "style": 4.2,
-            "test_coverage": 2.9,
-            "safety": 4.5,
-            "verdict": "PASS",
-            "issues": [],
-        })
+        raw = json.dumps(
+            {
+                "correctness": 3.7,
+                "style": 4.2,
+                "test_coverage": 2.9,
+                "safety": 4.5,
+                "verdict": "PASS",
+                "issues": [],
+            }
+        )
         v = _parse_verdict(raw)
         assert v.correctness == 3
         assert v.style == 4
