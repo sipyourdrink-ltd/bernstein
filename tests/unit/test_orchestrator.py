@@ -2894,11 +2894,11 @@ class TestReplenishBacklog:
 
         orch, posted = self._build_orch_evolve(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                stdout=json.dumps(self._RUFF_VIOLATIONS),
-                returncode=1,
-            )
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (json.dumps(self._RUFF_VIOLATIONS), "")
+        mock_proc.pid = 9999
+
+        with patch("subprocess.Popen", return_value=mock_proc):
             result = MagicMock()
             result.open_tasks = 0
             # Phase 1: submit future
@@ -2964,11 +2964,10 @@ class TestReplenishBacklog:
         ]
         orch, posted = self._build_orch_evolve(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                stdout=json.dumps(many_violations),
-                returncode=1,
-            )
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (json.dumps(many_violations), "")
+        mock_proc.pid = 9999
+        with patch("subprocess.Popen", return_value=mock_proc):
             result = MagicMock()
             result.open_tasks = 0
             orch._replenish_backlog(result)  # submit
@@ -2984,11 +2983,10 @@ class TestReplenishBacklog:
 
         orch, posted = self._build_orch_evolve(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                stdout=json.dumps(self._RUFF_VIOLATIONS),
-                returncode=1,
-            )
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (json.dumps(self._RUFF_VIOLATIONS), "")
+        mock_proc.pid = 9999
+        with patch("subprocess.Popen", return_value=mock_proc):
             result = MagicMock()
             result.open_tasks = 0
             # Phase 1: submit future
@@ -3010,11 +3008,10 @@ class TestReplenishBacklog:
 
         orch, posted = self._build_orch_evolve(tmp_path)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                stdout=json.dumps(self._RUFF_VIOLATIONS),
-                returncode=1,
-            )
+        mock_proc = MagicMock()
+        mock_proc.communicate.return_value = (json.dumps(self._RUFF_VIOLATIONS), "")
+        mock_proc.pid = 9999
+        with patch("subprocess.Popen", return_value=mock_proc):
             result = MagicMock()
             result.open_tasks = 0
             # First cycle: submit → wait → harvest
@@ -3039,19 +3036,20 @@ class TestReplenishBacklog:
 
         orch, _posted = self._build_orch_evolve(tmp_path)
 
-        def slow_subprocess(*_args: object, **_kwargs: object) -> object:
-            time.sleep(2)
-            from unittest.mock import MagicMock as _MM
-            return _MM(stdout="[]", returncode=0)
+        def slow_popen(*_args: object, **_kwargs: object) -> object:
+            m = MagicMock()
+            def slow_communicate(timeout: object = None) -> tuple[str, str]:
+                time.sleep(2)
+                return ("[]", "")
+            m.communicate = slow_communicate
+            m.pid = 9999
+            return m
 
-        # Set up minimal HTTP mock so tick() can complete (no open tasks)
         result = MagicMock()
         result.open_tasks = 0
 
-        with patch("subprocess.run", side_effect=slow_subprocess):
+        with patch("subprocess.Popen", side_effect=slow_popen):
             start = time.monotonic()
-            # _replenish_backlog is called inside tick(); we call it directly here
-            # to test the non-blocking contract without needing a full HTTP mock
             orch._replenish_backlog(result)
             elapsed = time.monotonic() - start
 

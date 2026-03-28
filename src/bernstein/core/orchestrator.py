@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import signal
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -672,12 +673,37 @@ class Orchestrator:
                 self._restart()
                 return  # _restart calls os.execv, but just in case
 
+        self._cleanup()
         self._post_bulletin("status", "run stopped")
         logger.info("Orchestrator stopped")
 
     def stop(self) -> None:
         """Signal the run loop to exit after the current tick."""
         self._running = False
+
+    def _cleanup(self) -> None:
+        """Release resources held by the orchestrator.
+
+        Shuts down the background thread pool (which may be running pytest or
+        ruff subprocesses) and cancels any pending futures.  Without this,
+        ``uv run pytest`` processes survive parent death and eat 40 GB+ RAM.
+        """
+        # Cancel pending futures first
+        for future in (self._pending_ruff_future, self._pending_test_future):
+            if future is not None and not future.done():
+                future.cancel()
+        self._pending_ruff_future = None
+        self._pending_test_future = None
+
+        # Shut down the thread pool — this blocks until running threads finish
+        # or the interpreter exits.  cancel_futures=True prevents queued work
+        # from starting.
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            # Python <3.9 doesn't have cancel_futures
+            self._executor.shutdown(wait=False)
+        logger.info("Executor shut down, background test/ruff processes released")
 
     def _restart(self) -> None:
         """Replace the current process with a fresh orchestrator.
@@ -821,17 +847,29 @@ class Orchestrator:
     _REPLENISH_MAX_TASKS: int = 5
 
     def _run_ruff_check(self) -> list[RuffViolation]:
-        """Run ruff check and return parsed violations (runs in a background thread)."""
+        """Run ruff check and return parsed violations (runs in a background thread).
+
+        Uses Popen with a process group so we can kill the entire tree on
+        timeout, preventing orphaned ``uv`` / ``ruff`` processes from leaking
+        memory.
+        """
         import subprocess
 
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             ["uv", "run", "ruff", "check", ".", "--output-format", "json"],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             cwd=self._workdir,
-            timeout=60,
+            start_new_session=True,
         )
-        return json.loads(proc.stdout) if proc.stdout.strip() else []
+        try:
+            stdout, _ = proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            proc.wait()
+            return []
+        return json.loads(stdout) if stdout.strip() else []
 
     def _create_ruff_tasks(self, violations: list[RuffViolation]) -> None:
         """Create backlog tasks from ruff violations."""
@@ -922,15 +960,37 @@ class Orchestrator:
         logger.debug("Replenish: ruff check submitted to background thread")
 
     def _run_pytest(self) -> TestResults:
-        """Run pytest and return parsed results (runs in a background thread)."""
+        """Run pytest and return parsed results (runs in a background thread).
+
+        Uses Popen with a process group so the entire process tree can be
+        killed on timeout.  This prevents orphaned ``uv``/``pytest`` processes
+        from eating 40 GB+ RAM.
+        """
         import subprocess
 
         info: TestResults = {"passed": 0, "failed": 0, "summary": ""}
-        result = subprocess.run(
-            ["uv", "run", "pytest", "tests/", "-q", "--tb=line"],
-            capture_output=True, text=True, cwd=self._workdir, timeout=300,
+        proc = subprocess.Popen(
+            ["uv", "run", "pytest", "tests/", "-x", "-q", "--tb=line"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=self._workdir,
+            start_new_session=True,
         )
-        output = result.stdout + result.stderr
+        try:
+            stdout, stderr = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            # Kill the entire process group — not just the parent
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.wait()
+            info["summary"] = "pytest timed out after 120s"
+            logger.warning("Background pytest timed out, killed process group")
+            return info
+
+        output = stdout + stderr
         info["summary"] = output.strip().splitlines()[-1] if output.strip() else ""
         match = re.search(r"(\d+) passed", output)
         if match:

@@ -185,8 +185,15 @@ def _kill_pid(path: str, label: str) -> None:
         return
     if _is_alive(pid):
         try:
-            os.kill(pid, signal.SIGTERM)
-            console.print(f"[green]Sent SIGTERM to {label} (PID {pid}).[/green]")
+            # Kill the entire process group so child processes (pytest, uv,
+            # agent subprocesses) don't survive and leak memory.
+            try:
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGTERM)
+                console.print(f"[green]Sent SIGTERM to {label} process group (PID {pid}, PGID {pgid}).[/green]")
+            except (OSError, ProcessLookupError):
+                os.kill(pid, signal.SIGTERM)
+                console.print(f"[green]Sent SIGTERM to {label} (PID {pid}).[/green]")
         except OSError as exc:
             console.print(f"[yellow]Could not terminate {label} (PID {pid}): {exc}[/yellow]")
     else:
