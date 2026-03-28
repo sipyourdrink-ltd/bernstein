@@ -253,3 +253,4 @@ class OrchestratorConfig:
     max_task_retries: int = 2
     evolve_mode: bool = False
     budget_usd: float = 0.0  # Stop spawning when cumulative cost reaches this (0 = unlimited)
+    dry_run: bool = False  # Preview planned spawns without actually spawning agents

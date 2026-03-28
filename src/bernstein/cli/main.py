@@ -67,6 +67,57 @@ def _print_banner() -> None:
     console.print(Panel(BANNER, border_style="blue", expand=False))
 
 
+def _print_dry_run_table(workdir: Path) -> None:
+    """Print a summary table of tasks that would be spawned in dry-run mode.
+
+    Reads open backlog tasks directly from .sdd/backlog/open/ and renders
+    a Rich table showing role, title, model, effort, priority, and scope.
+
+    Args:
+        workdir: Project root directory.
+    """
+    from rich.table import Table
+
+    from bernstein.core.sync import parse_backlog_file
+
+    backlog_dir = workdir / ".sdd" / "backlog" / "open"
+    tasks = []
+    if backlog_dir.exists():
+        for md_file in sorted(backlog_dir.glob("*.md")):
+            bt = parse_backlog_file(md_file)
+            if bt is not None:
+                tasks.append(bt)
+
+    console.print("\n[bold cyan][DRY RUN] Planned task spawns:[/bold cyan]")
+
+    if not tasks:
+        console.print("[dim]No open tasks found in backlog.[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Role", style="cyan")
+    table.add_column("Title")
+    table.add_column("Priority", justify="center")
+    table.add_column("Scope", justify="center")
+    table.add_column("Complexity", justify="center")
+    table.add_column("Model", style="dim", justify="center")
+    table.add_column("Effort", style="dim", justify="center")
+
+    for bt in sorted(tasks, key=lambda t: t.priority):
+        table.add_row(
+            bt.role,
+            bt.title,
+            str(bt.priority),
+            bt.scope,
+            bt.complexity,
+            "auto",
+            "auto",
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Total: {len(tasks)} task(s) — no agents were spawned.[/dim]")
+
+
 def _server_get(path: str) -> dict[str, Any] | None:
     """GET from the task server.  Returns None if server is unreachable."""
     try:
@@ -160,10 +211,11 @@ def _find_seed_file() -> Path | None:
 @click.option("--budget", default=0.0, help="Stop after $N spent (0=unlimited).")
 @click.option("--interval", default=300, help="Seconds between evolve cycles (default 5min).")
 @click.option("--headless", is_flag=True, default=False, help="Run without dashboard (for overnight/CI).")
+@click.option("--dry-run", is_flag=True, default=False, help="Preview task plan without spawning agents.")
 @click.pass_context
 def cli(
     ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int,
-    budget: float, interval: int, headless: bool,
+    budget: float, interval: int, headless: bool, dry_run: bool,
 ) -> None:
     """Bernstein — multi-agent orchestration for CLI coding agents.
 
@@ -172,6 +224,7 @@ def cli(
       bernstein                             Start from seed file or backlog
       bernstein -g "Build auth with JWT"    Start with inline goal
       bernstein --evolve                    Continuous self-improvement
+      bernstein --dry-run                   Preview task plan (no agents spawned)
       bernstein stop                        Stop everything
 
     HTTP API on port 8052 for programmatic access.
@@ -184,6 +237,10 @@ def cli(
     seed_path = _find_seed_file()
     workdir = Path.cwd()
     port = 8052
+
+    if dry_run:
+        _print_dry_run_table(workdir)
+        return
 
     # Check if already running
     server_pid_path = Path(SDD_PID_SERVER)
@@ -756,26 +813,164 @@ def cancel(task_id: str, reason: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# logs  (bonus convenience command)
+# plan
 # ---------------------------------------------------------------------------
 
 
+@cli.command("plan")
+@click.option(
+    "--export",
+    "export_file",
+    default=None,
+    metavar="FILE",
+    help="Write full task list as formatted JSON to FILE.",
+)
+@click.option(
+    "--status",
+    "status_filter",
+    default=None,
+    type=click.Choice(["open", "claimed", "in_progress", "done", "failed", "blocked", "cancelled"]),
+    help="Filter tasks by status.",
+)
+def plan(export_file: str | None, status_filter: str | None) -> None:
+    """Show task backlog as a table, or export to JSON.
+
+    \b
+      bernstein plan                          # show all tasks
+      bernstein plan --status open            # show only open tasks
+      bernstein plan --export plan.json       # export full backlog to JSON
+    """
+    from rich.table import Table
+
+    path = "/tasks"
+    if status_filter:
+        path = f"/tasks?status={status_filter}"
+
+    raw = _server_get(path)
+    if raw is None:
+        console.print(
+            "[red]Cannot reach task server.[/red] "
+            "Is Bernstein running? Try [bold]bernstein start[/bold]."
+        )
+        raise SystemExit(1)
+
+    tasks: list[dict[str, Any]] = raw if isinstance(raw, list) else []
+
+    if export_file:
+        out = Path(export_file)
+        out.write_text(json.dumps(tasks, indent=2))
+        console.print(f"Exported {len(tasks)} tasks to {export_file}")
+        return
+
+    if not tasks:
+        console.print("[dim]No tasks found.[/dim]")
+        return
+
+    table = Table(title="Task Backlog", show_lines=False, header_style="bold cyan")
+    table.add_column("ID", style="dim", min_width=10)
+    table.add_column("Status", min_width=12)
+    table.add_column("Role", min_width=10)
+    table.add_column("Title", min_width=30)
+    table.add_column("Depends On", min_width=12)
+    table.add_column("Model", min_width=8)
+    table.add_column("Effort", min_width=8)
+
+    for t in tasks:
+        raw_status = t.get("status", "open")
+        color = STATUS_COLORS.get(raw_status, "white")
+        depends = ", ".join(d[:8] for d in t.get("depends_on", [])) or "—"
+        table.add_row(
+            t.get("id", "—")[:8],
+            f"[{color}]{raw_status}[/{color}]",
+            t.get("role", "—"),
+            t.get("title", "—"),
+            depends,
+            t.get("model") or "—",
+            t.get("effort") or "—",
+        )
+
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# logs — tail agent output in real-time
+# ---------------------------------------------------------------------------
+
+
+def _find_agent_logs(runtime_dir: Path, agent_id: str | None) -> list[Path]:
+    """Return agent log files from runtime_dir sorted by mtime, optionally filtered by agent_id."""
+    if not runtime_dir.exists():
+        return []
+    log_list = [p for p in runtime_dir.glob("*.log") if p.name != "watchdog.log"]
+    if agent_id:
+        log_list = [p for p in log_list if agent_id in p.stem]
+    return sorted(log_list, key=lambda p: p.stat().st_mtime)
+
+
+@cli.command("logs")
+@click.option("--follow", "-f", is_flag=True, default=False, help="Stream log output in real-time (like tail -f).")
+@click.option("--agent", "-a", default=None, help="Filter by agent session ID (partial match).")
+@click.option("--lines", "-n", default=50, show_default=True, help="Number of lines to show without --follow.")
+@click.option("--runtime-dir", default=".sdd/runtime", show_default=True, hidden=True, help="Directory containing agent log files.")
+def logs_cmd(follow: bool, agent: str | None, lines: int, runtime_dir: str) -> None:
+    """Tail agent log output.
+
+    Without --follow, prints the last N lines of the most recent agent log.
+    With --follow (-f), streams new output in real-time until Ctrl+C.
+    """
+    rdir = Path(runtime_dir)
+    log_files = _find_agent_logs(rdir, agent)
+
+    if not log_files:
+        suffix = f" matching '{agent}'" if agent else ""
+        console.print(f"[yellow]No agent logs found{suffix} in {rdir}[/yellow]")
+        raise SystemExit(1)
+
+    log_path = log_files[-1]  # most recent
+    console.print(f"[dim]Watching:[/dim] [bold]{log_path.name}[/bold]")
+
+    if not follow:
+        text = log_path.read_text(errors="replace")
+        tail_lines = text.splitlines()[-lines:]
+        console.print("\n".join(tail_lines) or "[dim](empty)[/dim]")
+        return
+
+    # --follow: print last N lines as context then stream new bytes
+    try:
+        existing = log_path.read_text(errors="replace")
+        context = existing.splitlines()[-lines:]
+        if context:
+            console.print("\n".join(context))
+        offset = log_path.stat().st_size
+    except FileNotFoundError:
+        offset = 0
+
+    console.print("[dim]--- following (Ctrl+C to stop) ---[/dim]")
+    try:
+        while True:
+            try:
+                size = log_path.stat().st_size
+            except FileNotFoundError:
+                time.sleep(0.2)
+                continue
+
+            if size > offset:
+                with log_path.open("rb") as fh:
+                    fh.seek(offset)
+                    new_bytes = fh.read(size - offset)
+                offset = size
+                console.print(new_bytes.decode(errors="replace"), end="")
+
+            time.sleep(0.2)
+    except KeyboardInterrupt:
+        console.print("\n[dim]stopped.[/dim]")
+
+
 @cli.command("notes", hidden=True)
-@click.option(
-    "--lines",
-    "-n",
-    default=40,
-    show_default=True,
-    help="Number of tail lines to display.",
-)
-@click.option(
-    "--component",
-    type=click.Choice(["server", "spawner"]),
-    default="server",
-    show_default=True,
-)
-def logs(lines: int, component: str) -> None:
-    """Tail server or spawner logs."""
+@click.option("--lines", "-n", default=40, show_default=True, help="Number of tail lines to display.")
+@click.option("--component", type=click.Choice(["server", "spawner"]), default="server", show_default=True)
+def _notes_legacy(lines: int, component: str) -> None:
+    """Tail server or spawner logs (legacy alias)."""
     log_path = Path(f".sdd/runtime/{component}.log")
     if not log_path.exists():
         console.print(f"[red]Log file not found:[/red] {log_path}")
@@ -1353,7 +1548,7 @@ cli.add_command(click.Command("start", callback=start, hidden=True), "start")
 cli.add_command(click.Command("status", callback=status, hidden=True), "status")
 cli.add_command(click.Command("rest", callback=stop, hidden=True), "rest")
 cli.add_command(click.Command("add-task", callback=add_task, hidden=True), "add-task")
-cli.add_command(click.Command("logs", callback=logs, hidden=True), "logs")
+cli.add_command(click.Command("logs-legacy", callback=_notes_legacy, hidden=True), "logs-legacy")
 cli.add_command(click.Command("list-tasks", callback=list_tasks, hidden=True), "list-tasks")
 
 

@@ -254,7 +254,8 @@
       "sync",
       "stop",
       "cancel",
-      "logs",
+      "plan",
+      "logs_cmd",
       "list_tasks",
       "live",
       "benchmark_group",
@@ -281,7 +282,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T06:35:39.512983"
+    "last_modified": "2026-03-28T06:59:18.986173"
   },
   "src/bernstein/core/__init__.py": {
     "summary": "Core: task server, spawner, scheduler.",
@@ -548,7 +549,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T06:22:40.902611"
+    "last_modified": "2026-03-28T06:56:11.072019"
   },
   "src/bernstein/core/multi_cell.py": {
     "summary": "Multi-cell orchestrator: coordinates multiple cells, each with its own manager + workers.",
@@ -590,7 +591,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T06:35:37.404156"
+    "last_modified": "2026-03-28T06:58:23.452239"
   },
   "src/bernstein/core/policy.py": {
     "summary": "Policy engine for tier optimization and provider routing.",
@@ -718,7 +719,7 @@
       "typing",
       "uuid"
     ],
-    "last_modified": "2026-03-28T06:35:37.404350"
+    "last_modified": "2026-03-28T06:56:20.273211"
   },
   "src/bernstein/core/spawner.py": {
     "summary": "Spawn short-lived CLI agents for task batches.",
@@ -732,7 +733,7 @@
       "typing",
       "uuid"
     ],
-    "last_modified": "2026-03-28T06:35:37.404524"
+    "last_modified": "2026-03-28T06:47:06.072735"
   },
   "src/bernstein/core/sync.py": {
     "summary": "Sync .sdd/backlog/*.md files with the task server.",
@@ -2181,7 +2182,7 @@
       "time",
       "unittest"
     ],
-    "last_modified": "2026-03-28T06:41:29.543164"
+    "last_modified": "2026-03-28T06:58:56.589249"
   },
   "tests/unit/test_policy.py": {
     "summary": "Tests for the policy engine \u2014 policy loading, evaluation, and management.",
@@ -2331,6 +2332,11 @@
       "test_claim_next_no_tasks",
       "test_claim_next_role_filter",
       "test_claim_does_not_double_claim",
+      "test_depends_on_nonexistent_task",
+      "test_depends_on_valid_chain",
+      "test_simple_cycle_rejected",
+      "test_transitive_cycle_rejected",
+      "test_no_cycle_for_valid_chain",
       "test_complete_task",
       "test_complete_unknown_task",
       "test_fail_task",
@@ -2417,7 +2423,7 @@
       "pathlib",
       "pytest"
     ],
-    "last_modified": "2026-03-28T06:02:35.516294"
+    "last_modified": "2026-03-28T06:56:59.980376"
   },
   "tests/unit/test_spawner.py": {
     "summary": "Tests for AgentSpawner \u2014 adapter is always mocked.",

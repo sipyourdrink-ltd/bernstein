@@ -371,6 +371,42 @@ class TaskStore:
 
     # -- public API ---------------------------------------------------------
 
+    @staticmethod
+    def _detect_cycle(tasks: dict[str, Task], new_task: Task) -> list[str] | None:
+        """Return the cycle path if adding *new_task* creates a dependency cycle, else None.
+
+        Args:
+            tasks: Existing tasks (not yet including new_task).
+            new_task: The task about to be inserted.
+
+        Returns:
+            A list of task IDs forming the cycle (first == last), or None.
+        """
+        # Build adjacency map including the new task.
+        graph: dict[str, list[str]] = {t.id: list(t.depends_on) for t in tasks.values()}
+        graph[new_task.id] = list(new_task.depends_on)
+
+        # DFS from new_task only — existing tasks were validated on insertion.
+        visited: set[str] = set()
+        path: list[str] = []
+
+        def dfs(node: str) -> list[str] | None:
+            if node in path:
+                cycle_start = path.index(node)
+                return path[cycle_start:] + [node]
+            if node in visited:
+                return None
+            visited.add(node)
+            path.append(node)
+            for neighbour in graph.get(node, []):
+                result = dfs(neighbour)
+                if result is not None:
+                    return result
+            path.pop()
+            return None
+
+        return dfs(new_task.id)
+
     async def create(self, req: TaskCreate) -> Task:
         """Create a new task and persist it.
 
@@ -379,6 +415,9 @@ class TaskStore:
 
         Returns:
             The newly created Task.
+
+        Raises:
+            HTTPException: 422 if depends_on references a non-existent task or creates a cycle.
         """
         from bernstein.core.models import Complexity, Scope
 
@@ -404,6 +443,19 @@ class TaskStore:
             ],
         )
         async with self._lock:
+            if task.depends_on:
+                missing = [dep for dep in task.depends_on if dep not in self._tasks]
+                if missing:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"depends_on references non-existent task(s): {', '.join(missing)}",
+                    )
+                cycle = self._detect_cycle(self._tasks, task)
+                if cycle is not None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Circular dependency detected: " + " -> ".join(cycle),
+                    )
             self._tasks[task.id] = task
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))

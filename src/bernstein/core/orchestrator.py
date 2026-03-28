@@ -151,22 +151,6 @@ def _parse_backlog_file(filename: str, content: str) -> dict[str, Any]:
     }
 
 
-def _fetch_tasks(client: httpx.Client, base_url: str, status: str) -> list[Task]:
-    """GET /tasks?status=<status> and parse into Task objects.
-
-    Args:
-        client: httpx client.
-        base_url: Server base URL.
-        status: Task status filter (e.g. "open", "done").
-
-    Returns:
-        List of tasks matching the status filter.
-    """
-    resp = client.get(f"{base_url}/tasks", params={"status": status})
-    resp.raise_for_status()
-    return [_task_from_dict(t) for t in resp.json()]
-
-
 def _fetch_all_tasks(client: httpx.Client, base_url: str) -> dict[str, list[Task]]:
     """GET /tasks (no filter) and bucket results by status in one round-trip.
 
@@ -352,8 +336,8 @@ class Orchestrator:
         """Execute one orchestrator cycle.
 
         Steps:
-            1. Fetch open tasks from server.
-            2. Group into role-based batches.
+            1. Fetch ALL tasks in one HTTP call and split by status.
+            2. Group open tasks into role-based batches.
             3. Spawn agents if capacity allows.
             4. Check done tasks and run janitor.
             5. Reap dead/stale agents and fail their tasks.
@@ -364,6 +348,7 @@ class Orchestrator:
         result = TickResult()
         self._tick_count += 1
         base = self._config.server_url
+        _tick_http_reads = 0  # counts GET requests this tick (should stay at 1)
 
         # 0. Ingest any new backlog files before fetching tasks
         try:
@@ -374,12 +359,21 @@ class Orchestrator:
         # 1. Fetch ALL tasks in a single round-trip and split by status.
         try:
             tasks_by_status = _fetch_all_tasks(self._client, base)
+            _tick_http_reads += 1
         except httpx.HTTPError as exc:
             logger.error("Failed to fetch tasks: %s", exc)
             result.errors.append(f"fetch_all: {exc}")
             return result
 
-        logger.debug("tick #%d: 1 HTTP fetch covers open/claimed/done/failed", self._tick_count)
+        logger.debug(
+            "tick #%d: %d HTTP read(s) this tick (open=%d claimed=%d done=%d failed=%d)",
+            self._tick_count,
+            _tick_http_reads,
+            len(tasks_by_status.get("open", [])),
+            len(tasks_by_status.get("claimed", [])),
+            len(tasks_by_status.get("done", [])),
+            len(tasks_by_status.get("failed", [])),
+        )
 
         # Server-filtered open tasks already exclude unmet deps when queried with
         # ?status=open, so replicate that filter client-side from the bulk fetch.
@@ -397,7 +391,7 @@ class Orchestrator:
         batches = group_by_role(ready_tasks, self._config.max_tasks_per_agent)
 
         # 3. Count alive agents, spawn if capacity
-        self._refresh_agent_states()
+        self._refresh_agent_states(tasks_by_status)
         alive_count = sum(1 for a in self._agents.values() if a.status != "dead")
         result.active_agents = alive_count
 
@@ -408,7 +402,18 @@ class Orchestrator:
                 assigned_task_ids.update(agent.task_ids)
 
         # 3b. Claim tasks and spawn agents for ready batches (skip if budget is exhausted)
-        if self._config.budget_usd > 0:
+        if self._config.dry_run:
+            for batch in batches:
+                for task in batch:
+                    logger.info(
+                        "[DRY RUN] Would spawn %s agent for: %s (model=%s, effort=%s)",
+                        task.role,
+                        task.title,
+                        task.model,
+                        task.effort,
+                    )
+                    result.dry_run_planned.append((task.role, task.title, task.model, task.effort))
+        elif self._config.budget_usd > 0:
             total_spent = _compute_total_spent(self._workdir)
             if total_spent >= self._config.budget_usd:
                 logger.warning(
@@ -431,7 +436,7 @@ class Orchestrator:
                 result.retried.append(task.id)
 
         # 5. Reap dead/stale agents and fail their tasks
-        self._reap_dead_agents(result)
+        self._reap_dead_agents(result, tasks_by_status)
 
         # 6. Run evolution analysis cycle every N ticks
         if self._evolution is not None and self._tick_count % self._config.evolution_tick_interval == 0:
@@ -497,6 +502,8 @@ class Orchestrator:
                         consecutive_failures,
                     )
                     break
+            if self._config.dry_run:
+                break
             time.sleep(self._config.poll_interval_s)
 
             # Check if a restart was requested (own source code changed)
@@ -1089,13 +1096,16 @@ class Orchestrator:
 
     # -- Internal helpers ----------------------------------------------------
 
-    def _refresh_agent_states(self) -> None:
+    def _refresh_agent_states(self, tasks_snapshot: dict[str, list[Task]]) -> None:
         """Update alive/dead status for all tracked agents.
 
         When an agent process dies, handles orphaned tasks via the agent
         completion protocol: checks task status on the server, runs janitor
         verification if completion signals exist, and completes or fails
         accordingly. Also releases file ownership and emits metrics.
+
+        Args:
+            tasks_snapshot: Pre-fetched tasks bucketed by status from this tick.
         """
         for session in list(self._agents.values()):
             if session.status == "dead":
@@ -1106,36 +1116,54 @@ class Orchestrator:
                 self._release_file_ownership(session.id)
                 # Handle orphaned tasks
                 for task_id in session.task_ids:
-                    self._handle_orphaned_task(task_id, session)
+                    self._handle_orphaned_task(task_id, session, tasks_snapshot)
 
-    def _handle_orphaned_task(self, task_id: str, session: AgentSession) -> None:
+    def _handle_orphaned_task(
+        self,
+        task_id: str,
+        session: AgentSession,
+        tasks_snapshot: dict[str, list[Task]],
+    ) -> None:
         """Handle a task left behind by a dead agent process.
 
-        Checks task status on the server, runs janitor verification if
-        the task has completion signals, and marks it complete or failed.
-        Emits a MetricsRecord afterward.
+        Checks task status using the pre-fetched snapshot (no extra HTTP call).
+        Falls back to a live fetch only if the task is not found in the snapshot.
+        Runs janitor verification if the task has completion signals, and marks
+        it complete or failed. Emits a MetricsRecord afterward.
 
         Args:
             task_id: ID of the orphaned task.
             session: The dead agent's session.
+            tasks_snapshot: Pre-fetched tasks bucketed by status from this tick.
         """
         base = self._config.server_url
         start_ts = session.heartbeat_ts if session.heartbeat_ts > 0 else time.time()
         success = False
         error_type: str | None = None
 
-        try:
-            resp = self._client.get(f"{base}/tasks/{task_id}")
-            resp.raise_for_status()
-            task_data = resp.json()
-            task = _task_from_dict(task_data)
-        except httpx.HTTPError as exc:
-            logger.error("Failed to fetch orphaned task %s: %s", task_id, exc)
-            error_type = "fetch_failed"
-            self._emit_orphan_metrics(
-                task_id, session, start_ts, success=False, error_type=error_type,
-            )
-            return
+        # Try to find the task in the pre-fetched snapshot first (avoids HTTP call)
+        all_cached: list[Task] = []
+        for bucket in tasks_snapshot.values():
+            all_cached.extend(bucket)
+        task_by_id = {t.id: t for t in all_cached}
+
+        if task_id in task_by_id:
+            task = task_by_id[task_id]
+            logger.debug("_handle_orphaned_task %s: resolved from tick snapshot", task_id)
+        else:
+            # Not in snapshot — fall back to a live fetch
+            try:
+                resp = self._client.get(f"{base}/tasks/{task_id}")
+                resp.raise_for_status()
+                task = _task_from_dict(resp.json())
+                logger.debug("_handle_orphaned_task %s: fetched live (not in snapshot)", task_id)
+            except httpx.HTTPError as exc:
+                logger.error("Failed to fetch orphaned task %s: %s", task_id, exc)
+                error_type = "fetch_failed"
+                self._emit_orphan_metrics(
+                    task_id, session, start_ts, success=False, error_type=error_type,
+                )
+                return
 
         status = task.status
         if status not in (TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
@@ -1444,7 +1472,12 @@ class Orchestrator:
             if cost_usd > 0 or tokens > 0:
                 self._router.record_provider_cost(session.provider, tokens, cost_usd)
 
-    def _retry_or_fail_task(self, task_id: str, reason: str) -> None:
+    def _retry_or_fail_task(
+        self,
+        task_id: str,
+        reason: str,
+        tasks_snapshot: dict[str, list[Task]] | None = None,
+    ) -> None:
         """Re-queue a task for retry, or fail it permanently if max retries reached.
 
         Reads the current retry count from a ``[retry:N]`` marker in the task
@@ -1456,17 +1489,33 @@ class Orchestrator:
         Args:
             task_id: ID of the task to retry or fail.
             reason: Human-readable reason for the failure / retry.
+            tasks_snapshot: Optional pre-fetched tasks snapshot to avoid an
+                extra HTTP round-trip when the task is already in cache.
         """
         base = self._config.server_url
         max_retries = self._config.max_task_retries
 
-        try:
-            resp = self._client.get(f"{base}/tasks/{task_id}")
-            resp.raise_for_status()
-            task = _task_from_dict(resp.json())
-        except httpx.HTTPError as exc:
-            logger.error("_retry_or_fail_task: could not fetch task %s: %s", task_id, exc)
-            return
+        # Try the pre-fetched snapshot first to avoid an extra GET
+        task: Task | None = None
+        if tasks_snapshot is not None:
+            for bucket in tasks_snapshot.values():
+                for t in bucket:
+                    if t.id == task_id:
+                        task = t
+                        break
+                if task is not None:
+                    break
+            if task is not None:
+                logger.debug("_retry_or_fail_task %s: resolved from tick snapshot", task_id)
+
+        if task is None:
+            try:
+                resp = self._client.get(f"{base}/tasks/{task_id}")
+                resp.raise_for_status()
+                task = _task_from_dict(resp.json())
+            except httpx.HTTPError as exc:
+                logger.error("_retry_or_fail_task: could not fetch task %s: %s", task_id, exc)
+                return
 
         # Extract current retry count from description marker
         marker_re = re.compile(r"^\[retry:(\d+)\]\s*")
@@ -1700,13 +1749,14 @@ class Orchestrator:
                 except Exception as exc:
                     logger.warning("Evolution record_task_completion failed: %s", exc)
 
-    def _reap_dead_agents(self, result: TickResult) -> None:
+    def _reap_dead_agents(self, result: TickResult, tasks_snapshot: dict[str, list[Task]]) -> None:
         """Kill agents that exceeded heartbeat or wall-clock timeout.
 
         Also fails any tasks owned by reaped agents.
 
         Args:
             result: TickResult to record reaped agent IDs into.
+            tasks_snapshot: Pre-fetched tasks bucketed by status from this tick.
         """
         now = time.time()
         collector = get_collector()
@@ -1726,7 +1776,7 @@ class Orchestrator:
                 result.reaped.append(session.id)
                 self._release_file_ownership(session.id)
                 for task_id in session.task_ids:
-                    self._handle_orphaned_task(task_id, session)
+                    self._handle_orphaned_task(task_id, session, tasks_snapshot)
                 continue
 
             # Heartbeat timeout
@@ -1751,6 +1801,7 @@ class Orchestrator:
                         self._retry_or_fail_task(
                             task_id,
                             f"Agent {session.id} reaped (heartbeat timeout)",
+                            tasks_snapshot,
                         )
                     except httpx.HTTPError as exc:
                         logger.error("Failed to retry/fail task %s: %s", task_id, exc)
@@ -1984,6 +2035,8 @@ class TickResult:
         self.verification_failures: list[tuple[str, list[str]]] = []
         self.retried: list[str] = []
         self.errors: list[str] = []
+        # Populated when dry_run=True: (role, title, model, effort) tuples
+        self.dry_run_planned: list[tuple[str, str, str | None, str | None]] = []
 
 if __name__ == "__main__":
     import argparse
@@ -2075,11 +2128,13 @@ if __name__ == "__main__":
             catalog=seed.catalogs if seed else None,
         )
         budget_usd = 0.0
+        dry_run = False
         run_config_path = workdir / ".sdd" / "runtime" / "run_config.json"
         if run_config_path.exists():
             try:
                 run_cfg = json.loads(run_config_path.read_text())
                 budget_usd = float(run_cfg.get("budget_usd", 0.0))
+                dry_run = bool(run_cfg.get("dry_run", False))
             except (json.JSONDecodeError, ValueError):
                 pass
 
@@ -2087,6 +2142,7 @@ if __name__ == "__main__":
             server_url=f"http://127.0.0.1:{args.port}",
             max_agents=6,
             budget_usd=budget_usd,
+            dry_run=dry_run,
         )
 
         orchestrator = Orchestrator(config=config, spawner=spawner, workdir=workdir, router=router)

@@ -552,6 +552,30 @@ class TestOrchestratorTick:
 
         assert len(result.spawned) == 1
 
+    def test_dry_run_prevents_spawning(self, tmp_path: Path) -> None:
+        """tick() with dry_run=True logs planned spawns but never calls adapter.spawn."""
+        task = _make_task(id="T-dry", role="backend", title="Build something")
+        transport = _mock_transport({
+            "GET /tasks": httpx.Response(200, json=[_task_as_dict(task)]),
+        })
+        adapter = _mock_adapter()
+        config = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            server_url="http://testserver",
+            dry_run=True,
+        )
+        orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=config)
+
+        result = orch.tick()
+
+        adapter.spawn.assert_not_called()
+        assert result.spawned == []
+        assert len(result.dry_run_planned) == 1
+        role, title, _model, _effort = result.dry_run_planned[0]
+        assert role == "backend"
+        assert title == "Build something"
+
 
 # --- Spawn resilience: claim-before-spawn, backoff, and failure escalation ---
 
@@ -2920,7 +2944,7 @@ def test_reap_uses_per_session_timeout(tmp_path: Path) -> None:
 
     result = TickResult()
     orch._spawner.kill = MagicMock()  # type: ignore[method-assign]
-    orch._reap_dead_agents(result)
+    orch._reap_dead_agents(result, {})
 
     assert session.id in result.reaped, "Session should be reaped due to per-session timeout"
 
@@ -3035,3 +3059,73 @@ class TestRunCompletionSummary:
         assert "**Wall-clock duration:**" in content
         assert "**Estimated cost:**" in content
         assert "**Files modified:**" in content
+
+
+# --- DryRun ---
+
+
+class TestDryRun:
+    """dry_run=True should populate TickResult.dry_run_planned but never spawn agents."""
+
+    def test_dry_run_populates_planned(self, tmp_path: Path) -> None:
+        open_task = _task_as_dict(_make_task(id="T-1", role="backend", title="Add feature"))
+        transport = _mock_transport({
+            "GET /tasks": httpx.Response(200, json=[open_task]),
+        })
+        cfg = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            server_url="http://testserver",
+            dry_run=True,
+        )
+        orch = _build_orchestrator(tmp_path, transport, config=cfg)
+
+        result = orch.tick()
+
+        assert len(result.dry_run_planned) == 1
+        role, title, _model, _effort = result.dry_run_planned[0]
+        assert role == "backend"
+        assert title == "Add feature"
+
+    def test_dry_run_does_not_spawn_agents(self, tmp_path: Path) -> None:
+        adapter = _mock_adapter()
+        open_task = _task_as_dict(_make_task(id="T-1", role="backend", title="Add feature"))
+        transport = _mock_transport({
+            "GET /tasks": httpx.Response(200, json=[open_task]),
+        })
+        cfg = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            server_url="http://testserver",
+            dry_run=True,
+        )
+        orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=cfg)
+
+        orch.tick()
+
+        adapter.spawn.assert_not_called()
+
+    def test_dry_run_false_does_spawn(self, tmp_path: Path) -> None:
+        """Sanity check: without dry_run, spawn IS called for open tasks."""
+        adapter = _mock_adapter()
+        open_task = _task_as_dict(_make_task(id="T-1", role="backend", title="Add feature"))
+        transport = _mock_transport({
+            "GET /tasks": httpx.Response(200, json=[open_task]),
+            "POST /tasks/T-1/claim": httpx.Response(200, json=_task_as_dict(
+                _make_task(id="T-1", status="claimed")
+            )),
+        })
+        cfg = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            server_url="http://testserver",
+            dry_run=False,
+        )
+        orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=cfg)
+
+        orch.tick()
+
+        adapter.spawn.assert_called_once()

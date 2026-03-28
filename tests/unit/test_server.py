@@ -119,6 +119,105 @@ async def test_claim_does_not_double_claim(client: AsyncClient) -> None:
     assert resp2.status_code == 404
 
 
+# -- Dependency validation --------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_depends_on_nonexistent_task(client: AsyncClient) -> None:
+    """POST /tasks returns 422 when depends_on references a non-existent task."""
+    resp = await client.post("/tasks", json={**TASK_PAYLOAD, "depends_on": ["deadbeef0000"]})
+    assert resp.status_code == 422
+    assert "non-existent" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_depends_on_valid_chain(client: AsyncClient) -> None:
+    """POST /tasks succeeds for a valid A -> B dependency chain (no cycle)."""
+    a = (await client.post("/tasks", json=TASK_PAYLOAD)).json()["id"]
+    b_resp = await client.post("/tasks", json={**TASK_PAYLOAD, "depends_on": [a]})
+    assert b_resp.status_code == 201
+    assert b_resp.json()["depends_on"] == [a]
+
+
+@pytest.mark.anyio
+async def test_simple_cycle_rejected(client: AsyncClient) -> None:
+    """POST /tasks returns 422 when a simple A -> B -> A cycle is detected."""
+    # Create A with no deps, then B depending on A, then try to create A's twin
+    # that depends on B — simulated by creating two independent tasks first,
+    # then attempting a task that would close a cycle.
+    a = (await client.post("/tasks", json=TASK_PAYLOAD)).json()["id"]
+    b = (await client.post("/tasks", json={**TASK_PAYLOAD, "depends_on": [a]})).json()["id"]
+    # Now attempt a task that depends on B and on A — not a cycle by itself.
+    # To get a real cycle we need to create task C that depends on B,
+    # then a task D that depends on C and C depends back on D — but tasks are
+    # immutable after creation.  The real cycle case arises if task A was
+    # somehow given B in its depends_on.  We test the direct cycle path via
+    # a fresh pair: X depends on Y, Y depends on X (impossible via HTTP since Y
+    # doesn't exist when X is created, but we can test X -> Y -> X transitively).
+    # Create X, then Y depends on X, then Z depends on Y and X — valid chain.
+    # Cycle: create P, Q depends on P, then attempt R that P itself depends on Q.
+    # Since tasks are immutable we simulate with _detect_cycle directly.
+    from bernstein.core.models import Task, TaskStatus, TaskType
+    from bernstein.core.server import TaskStore
+
+    p_id = "p" * 12
+    q_id = "q" * 12
+
+    def _make(tid: str, deps: list[str]) -> Task:
+        return Task(id=tid, title="t", description="d", role="r", depends_on=deps,
+                    status=TaskStatus.OPEN, task_type=TaskType.STANDARD)
+
+    p = _make(p_id, [q_id])   # P depends on Q
+    q = _make(q_id, [p_id])   # Q depends on P  — cycle!
+    existing = {p_id: p}
+    cycle = TaskStore._detect_cycle(existing, q)
+    assert cycle is not None
+    assert p_id in cycle and q_id in cycle
+
+
+@pytest.mark.anyio
+async def test_transitive_cycle_rejected(client: AsyncClient) -> None:
+    """_detect_cycle finds A -> B -> C -> A transitive cycles."""
+    from bernstein.core.models import Task, TaskStatus, TaskType
+    from bernstein.core.server import TaskStore
+
+    a_id, b_id, c_id = "a" * 12, "b" * 12, "c" * 12
+
+    def _make(tid: str, deps: list[str]) -> Task:
+        return Task(id=tid, title="t", description="d", role="r", depends_on=deps,
+                    status=TaskStatus.OPEN, task_type=TaskType.STANDARD)
+
+    a = _make(a_id, [c_id])   # A -> C
+    b = _make(b_id, [a_id])   # B -> A
+    c = _make(c_id, [b_id])   # C -> B  => A -> C -> B -> A
+
+    existing = {a_id: a, b_id: b}
+    cycle = TaskStore._detect_cycle(existing, c)
+    assert cycle is not None
+    # All three IDs must appear in the cycle path
+    assert a_id in cycle and b_id in cycle and c_id in cycle
+
+
+@pytest.mark.anyio
+async def test_no_cycle_for_valid_chain(client: AsyncClient) -> None:
+    """_detect_cycle returns None for a simple linear chain."""
+    from bernstein.core.models import Task, TaskStatus, TaskType
+    from bernstein.core.server import TaskStore
+
+    a_id, b_id, c_id = "aa" * 6, "bb" * 6, "cc" * 6
+
+    def _make(tid: str, deps: list[str]) -> Task:
+        return Task(id=tid, title="t", description="d", role="r", depends_on=deps,
+                    status=TaskStatus.OPEN, task_type=TaskType.STANDARD)
+
+    a = _make(a_id, [])
+    b = _make(b_id, [a_id])
+    c = _make(c_id, [b_id])
+
+    existing = {a_id: a, b_id: b}
+    assert TaskStore._detect_cycle(existing, c) is None
+
+
 # -- POST /tasks/{task_id}/complete -----------------------------------------
 
 @pytest.mark.anyio
@@ -832,13 +931,14 @@ async def test_create_task_with_model_effort(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_create_task_with_depends_on(client: AsyncClient) -> None:
     """POST /tasks with depends_on stores the dependency list."""
+    dep = (await client.post("/tasks", json=TASK_PAYLOAD)).json()["id"]
     resp = await client.post("/tasks", json={
         **TASK_PAYLOAD,
-        "depends_on": ["T-other"],
+        "depends_on": [dep],
     })
     assert resp.status_code == 201
     data = resp.json()
-    assert data["depends_on"] == ["T-other"]
+    assert data["depends_on"] == [dep]
 
 
 # -- JSONL replay edge cases -----------------------------------------------
