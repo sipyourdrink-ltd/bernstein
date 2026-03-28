@@ -210,6 +210,22 @@ Output is written to `.sdd/runtime/` logs instead of the terminal.
 
 ---
 
+## Dry-run mode
+
+Preview the task plan that Bernstein would create without actually spawning any
+agents or writing state:
+
+```bash
+bernstein --dry-run -g "Build a REST API with auth"
+bernstein --dry-run   # preview plan from bernstein.yaml
+```
+
+The output shows the tasks, roles, priorities, and dependencies that the manager
+agent would generate.  Nothing is written to disk and no agents are spawned.
+Useful for validating a goal or seed file before committing to a full run.
+
+---
+
 ## Continuous self-improvement (evolve mode)
 
 `--evolve` runs a continuous loop where Bernstein analyses its own metrics,
@@ -429,10 +445,14 @@ top-level subcommands:
 | Command | Description |
 |---------|-------------|
 | `bernstein [-g GOAL] [--evolve] [--headless]` | Start orchestration; shows live TUI dashboard unless `--headless` |
+| `bernstein --dry-run [-g GOAL]` | Preview the task plan without spawning any agents |
+| `bernstein init` | Initialise a `.sdd/` workspace in the current directory |
 | `bernstein stop [--timeout N]` | Gracefully stop all agents and the task server |
 | `bernstein cancel TASK_ID [-r REASON]` | Cancel a running or queued task |
 | `bernstein cost` | Show agent spend: cost, tokens, and duration per model |
 | `bernstein live [--interval N]` | Attach the live TUI dashboard to a running session |
+| `bernstein logs [AGENT_ID]` | Tail agent log output (all agents, or a specific one) |
+| `bernstein plan [--json]` | Show task backlog as a table, or export to JSON |
 | `bernstein benchmark run [--tier smoke\|capability\|stretch\|all]` | Run the tiered golden benchmark suite |
 | `bernstein agents sync` | Refresh all agent catalogs and update the cache |
 | `bernstein agents list [--source local\|agency\|all]` | List available agents from loaded catalogs |

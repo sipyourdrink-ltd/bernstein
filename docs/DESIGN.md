@@ -115,23 +115,23 @@ Cells communicate via shared bulletin board (`.sdd/agents/BULLETIN.jsonl`).
 ## Implementation plan
 
 ### Phase 1: Core (MVP)
-- [ ] Task server with spawn endpoint
-- [ ] Agent spawner (model routing, prompt rendering)
-- [ ] CLI: `bernstein start`, `bernstein status`, `bernstein add-task`
-- [ ] Role templates: manager, backend, qa
-- [ ] Heartbeat monitoring + auto-respawn
+- [x] Task server with spawn endpoint
+- [x] Agent spawner (model routing, prompt rendering)
+- [x] CLI: `bernstein` (start), `bernstein live` (dashboard), `curl http://127.0.0.1:8052/tasks` (task API)
+- [x] Role templates: manager, backend, qa
+- [x] Heartbeat monitoring + auto-respawn
 
 ### Phase 2: Intelligence
-- [ ] Manager agent that decomposes goals into tasks
-- [ ] Janitor signals for automatic task verification
-- [ ] Budget tracking (tokens, time, cost)
+- [x] Manager agent that decomposes goals into tasks
+- [x] Janitor signals for automatic task verification
+- [x] Budget tracking (tokens, time, cost)
 - [ ] Run reports with retrospectives
 
 ### Phase 3: Scale
 - [ ] Multi-cell coordination
 - [ ] Git worktree isolation per agent
 - [ ] Bulletin board for cross-agent communication
-- [ ] Dashboard UI
+- [x] Dashboard UI (`bernstein live`)
 
 ## Key lessons from rag_challenge
 

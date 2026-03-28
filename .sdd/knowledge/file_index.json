@@ -597,7 +597,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T07:39:24.321473"
+    "last_modified": "2026-03-28T07:57:07.875463"
   },
   "src/bernstein/core/policy.py": {
     "summary": "Policy engine for tier optimization and provider routing.",
@@ -2223,7 +2223,7 @@
       "time",
       "unittest"
     ],
-    "last_modified": "2026-03-28T07:42:56.999701"
+    "last_modified": "2026-03-28T07:55:45.194790"
   },
   "tests/unit/test_plan_cmd.py": {
     "summary": "Tests for the `bernstein plan` CLI command.",

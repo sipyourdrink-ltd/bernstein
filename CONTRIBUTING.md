@@ -39,7 +39,7 @@ After making changes, verify them end-to-end before opening a PR.
    ```bash
    uv run bernstein -g "Add a hello-world utility function" --headless
    ```
-   Or start just the task server: `uv run bernstein serve`
+   The task server starts automatically on port 8052.
 
 2. **Submit a test task** via curl:
    ```bash

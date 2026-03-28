@@ -5,7 +5,7 @@
 ### One command. Multiple AI agents. Your codebase moves forward while you sleep.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-1716-2ea44f)]()
+[![Tests](https://img.shields.io/badge/tests-1777-2ea44f)]()
 [![License](https://img.shields.io/badge/license-PolyForm_NC-f89820)](LICENSE)
 
 </div>

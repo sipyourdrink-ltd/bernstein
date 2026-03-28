@@ -2,47 +2,47 @@
 
 No decisions recorded yet.
 
-## [2026-03-28 07:25] [RETRY 1] Lazy-import Rich dashboard components in CLI modules (09f944f46aed)
-Completed: [RETRY 1] Lazy-import Rich dashboard components in CLI modules
-
-## [2026-03-28 07:27] Evolve cycle 14: performance (0416d00fa3d3)
-Created 4 performance tasks: (1) mtime-cached _compute_total_spent to avoid re-reading JSONL files every tick, (2) server-side status filtering in _fetch_all_tasks to reduce JSON payload, (3) parallel done-task verification using existing ThreadPoolExecutor, (4) write buffering for JSONL appends in TaskStore to reduce file I/O.
-
-## [2026-03-28 07:27] [RETRY 1] Narrow except Exception catches in orchestrator.py (6d360c0b7fcd)
-Completed: [RETRY 1] Narrow except Exception catches in orchestrator.py
-
-## [2026-03-28 07:30] Cache _compute_total_spent with mtime-based invalidation (56cd38abae9b)
-Completed: Cache _compute_total_spent with mtime-based invalidation
-
-## [2026-03-28 07:33] Add write buffering for JSONL appends in TaskStore (b6491f934ea3)
-Completed: Add write buffering for JSONL appends in TaskStore
-
-## [2026-03-28 07:43] [RETRY 2] Use server-side status filtering instead of fetching all tasks (c1d31998811e)
-Completed: _fetch_all_tasks already uses server-side status filtering with per-status GET /tasks?status=X calls. All 140 orchestrator tests and 84 server tests pass.
-
-## [2026-03-28 07:44] [RETRY 1] Use server-side status filtering instead of fetching all tasks (4f5bcc17065f)
+## [2026-03-28 07:56] [RETRY 1] Use server-side status filtering instead of fetching all tasks (22850454c089)
 Completed: [RETRY 1] Use server-side status filtering instead of fetching all tasks
 
-## [2026-03-28 07:44] [RETRY 1] Parallelize done-task verification in _process_completed_tasks (6a82ecdf4607)
+## [2026-03-28 07:56] [RETRY 1] Parallelize done-task verification in _process_completed_tasks (2d55588d591d)
 Completed: [RETRY 1] Parallelize done-task verification in _process_completed_tasks
 
-## [2026-03-28 07:45] [RETRY 1] Parallelize done-task verification in _process_completed_tasks (2645bc46794c)
-Completed: [RETRY 1] Parallelize done-task verification in _process_completed_tasks
-
-## [2026-03-28 07:45] [RETRY 1] Parallelize done-task verification in _process_completed_tasks (f47349d4c1f6)
-Completed: [RETRY 1] Parallelize done-task verification in _process_completed_tasks
-
-## [2026-03-28 07:45] [RETRY 1] Use server-side status filtering instead of fetching all tasks (2c72d5e52a56)
+## [2026-03-28 07:56] [RETRY 1] Use server-side status filtering instead of fetching all tasks (c85d95cc8917)
 Completed: [RETRY 1] Use server-side status filtering instead of fetching all tasks
 
-## [2026-03-28 07:45] [RETRY 2] Parallelize done-task verification in _process_completed_tasks (d75f22ece52f)
-Completed: [RETRY 2] Parallelize done-task verification in _process_completed_tasks — verified existing implementation: verify_task() calls fan out via self._executor (ThreadPoolExecutor max_workers=4), results collected after all complete. Two parallel verification tests pass. All 140 tests pass.
-
-## [2026-03-28 07:45] [RETRY 2] Use server-side status filtering instead of fetching all tasks (acc75ae24b88)
-Completed: Server-side status filtering already implemented. _fetch_all_tasks() makes per-status filtered GET /tasks?status=X calls (line 168) instead of unfiltered fetch. Defaults to [open, claimed, done, failed]. All 224 tests pass.
-
-## [2026-03-28 07:48] [RETRY 1] Use server-side status filtering instead of fetching all tasks (04ca90131cad)
+## [2026-03-28 07:58] [RETRY 1] Use server-side status filtering instead of fetching all tasks (8aee2041bf4b)
 Completed: [RETRY 1] Use server-side status filtering instead of fetching all tasks
 
-## [2026-03-28 07:48] [RETRY 2] Use server-side status filtering instead of fetching all tasks (1b9da3b00886)
-Completed: [RETRY 2] Use server-side status filtering instead of fetching all tasks. Implementation already in place: _fetch_all_tasks accepts optional statuses list, makes one GET /tasks?status=X per status (defaulting to open,claimed,done,failed). All 224 tests pass.
+## [2026-03-28 07:58] [RETRY 2] Parallelize done-task verification in _process_completed_tasks (542f5325b748)
+Completed: [RETRY 2] Parallelize done-task verification in _process_completed_tasks
+
+## [2026-03-28 07:58] [RETRY 2] Use server-side status filtering instead of fetching all tasks (857f0bb5e151)
+Completed: _fetch_all_tasks now makes per-status GET /tasks?status=X calls instead of one unfiltered GET /tasks. All 1778 tests pass.
+
+## [2026-03-28 07:59] Fix CONTRIBUTING.md reference to nonexistent bernstein serve command (6d403064f183)
+Completed: Fix CONTRIBUTING.md reference to nonexistent bernstein serve command
+
+## [2026-03-28 07:59] Add missing CLI subcommands to GETTING_STARTED.md reference table (e318b85ad557)
+Completed: Add missing CLI subcommands to GETTING_STARTED.md reference table
+
+## [2026-03-28 07:59] [RETRY 2] Use server-side status filtering instead of fetching all tasks (6cbaa6daa9f8)
+Completed: [RETRY 2] Use server-side status filtering instead of fetching all tasks — _fetch_all_tasks now makes per-status GET /tasks?status=X calls instead of one unfiltered GET /tasks. Updated caller comment and HTTP read counter. All 140 orchestrator tests pass.
+
+## [2026-03-28 07:59] Update DESIGN.md implementation plan to reflect current state (4a9e3857ab4e)
+Completed: Update DESIGN.md implementation plan to reflect current state
+
+## [2026-03-28 08:00] [RETRY 2] Use server-side status filtering instead of fetching all tasks (19b8e8936544)
+Completed: [RETRY 2] Use server-side status filtering instead of fetching all tasks
+
+## [2026-03-28 08:01] [RETRY 1] Parallelize done-task verification in _process_completed_tasks (4b3bd6401307)
+Completed: [RETRY 1] Parallelize done-task verification in _process_completed_tasks
+
+## [2026-03-28 08:01] Update README.md test count and verify CLI usage (af8e8c7ce062)
+Completed: Update README.md test count and verify CLI usage
+
+## [2026-03-28 08:02] [RETRY 1] Reduce HTTP round-trips in orchestrator tick loop (65a1c650fceb)
+Already implemented: tick loop makes 1 GET /tasks per tick via _fetch_all_tasks(), buckets client-side, passes tasks_by_status to _check_evolve() and all consumers. Debug log already present counting requests per tick.
+
+## [2026-03-28 08:03] [RETRY 2] Reduce HTTP round-trips in orchestrator tick loop (11989050c702)
+Verified: tick loop already makes 1 HTTP read via _fetch_all_tasks (single GET /tasks, client-side bucketing). Fixed stale docstring that incorrectly claimed per-status queries. Fallback GET /tasks/{id} calls in _handle_orphaned_task and _retry_or_fail_task only fire on cache misses (edge case). Debug log counting HTTP reads per tick already present at line 420. 140 tests pass.

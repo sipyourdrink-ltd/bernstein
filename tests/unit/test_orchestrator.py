@@ -417,18 +417,20 @@ class TestOrchestratorTick:
 
     def test_tracks_agents_across_ticks(self, tmp_path: Path) -> None:
         tasks_tick1 = [_make_task(id="T-1")]
-        tasks_tick2 = [_make_task(id="T-2", role="qa")]
+        tasks_tick2 = [_make_task(id="T-1", status="claimed"), _make_task(id="T-2", role="qa")]
 
-        tick_count = 0
+        # Switch to tick2 data once T-1 has been claimed (POST /tasks/T-1/claim).
+        # This approach is agnostic to how many GET /tasks requests the orchestrator
+        # makes per tick (works with both 1 bulk request and N per-status requests).
+        phase = [1]  # mutable container to avoid nonlocal in nested fn
         def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal tick_count
             url = request.url
+            if request.method == "POST" and url.path == "/tasks/T-1/claim":
+                phase[0] = 2
+                return httpx.Response(200, json={})
             if request.method == "GET" and url.path == "/tasks":
                 status_filter = url.params.get("status")
-                # Advance tick on first status query ("open") of each tick
-                if status_filter == "open":
-                    tick_count += 1
-                tasks = tasks_tick1 if tick_count <= 1 else tasks_tick2
+                tasks = tasks_tick1 if phase[0] == 1 else tasks_tick2
                 filtered = [_task_as_dict(t) for t in tasks if status_filter is None or t.status.value == status_filter]
                 return httpx.Response(200, json=filtered)
             return httpx.Response(404)

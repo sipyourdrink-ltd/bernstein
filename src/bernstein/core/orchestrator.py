@@ -142,34 +142,34 @@ def _fetch_all_tasks(
     base_url: str,
     statuses: list[str] | None = None,
 ) -> dict[str, list[Task]]:
-    """Fetch tasks from the server filtered by status.
+    """Fetch all tasks from the server in a single GET /tasks call.
 
-    Makes one GET /tasks?status=X request per requested status rather than
-    fetching all tasks and bucketing client-side.  This dramatically reduces
-    JSON payload size as task history grows.
+    Makes exactly one HTTP request and buckets the results client-side by
+    status, keeping per-tick round-trips to a minimum.
 
     Args:
         client: httpx client.
         base_url: Server base URL.
-        statuses: List of status strings to fetch.  Defaults to
-            ["open", "claimed", "done", "failed"] — the statuses needed in
-            the hot path.
+        statuses: Status keys to include in the result dict.  Defaults to
+            ["open", "claimed", "done", "failed"].
 
     Returns:
         Dict mapping status string → list of Tasks.  Always includes keys for
         every requested status even if the list is empty.
         NOTE: "open" here includes tasks with unmet dependencies; callers
-        that need the server-filtered view should apply their own dep check.
+        that need the dependency-filtered view should apply their own dep check.
     """
     if statuses is None:
         statuses = ["open", "claimed", "done", "failed"]
     by_status: dict[str, list[Task]] = {s: [] for s in statuses}
-    for status in statuses:
-        resp = client.get(f"{base_url}/tasks", params={"status": status})
-        resp.raise_for_status()
-        for raw in resp.json():
-            task = Task.from_dict(raw)
-            by_status[task.status.value].append(task)
+    resp = client.get(f"{base_url}/tasks")
+    resp.raise_for_status()
+    for raw in resp.json():
+        task = Task.from_dict(raw)
+        key = task.status.value
+        if key not in by_status:
+            by_status[key] = []
+        by_status[key].append(task)
     return by_status
 
 
@@ -408,10 +408,10 @@ class Orchestrator:
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             logger.warning("ingest_backlog failed: %s", exc)
 
-        # 1. Fetch tasks by status via targeted filtered queries (one call per status).
+        # 1. Fetch all tasks in a single bulk request, bucketed client-side.
         try:
             tasks_by_status = _fetch_all_tasks(self._client, base)
-            _tick_http_reads += 4  # one GET /tasks?status=X per status
+            _tick_http_reads += 1  # single GET /tasks (no status filter)
         except httpx.HTTPError as exc:
             logger.error("Failed to fetch tasks: %s", exc)
             result.errors.append(f"fetch_all: {exc}")
@@ -427,8 +427,8 @@ class Orchestrator:
             len(tasks_by_status.get("failed", [])),
         )
 
-        # Server-filtered open tasks already exclude unmet deps when queried with
-        # ?status=open, so replicate that filter client-side from the bulk fetch.
+        # The server returns tasks matching the requested status; apply the
+        # dependency filter here for "open" tasks.
         done_tasks = tasks_by_status["done"]
         done_ids = {t.id for t in done_tasks}
         open_tasks = [
