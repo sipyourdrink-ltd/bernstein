@@ -73,3 +73,30 @@ def missing_api_key(adapter: str, env_var: str) -> BernsteinError:
         why=f"Environment variable {env_var} is not set",
         fix=f"export {env_var}=your-api-key",
     )
+
+
+def bootstrap_failed(exc: Exception) -> BernsteinError:
+    """Return a BernsteinError for a bootstrap/startup failure."""
+    return BernsteinError(
+        what="Bootstrap failed",
+        why=str(exc),
+        fix="Check .sdd/runtime/server.log for details, or run 'bernstein doctor'",
+    )
+
+
+def seed_parse_error(exc: Exception) -> BernsteinError:
+    """Return a BernsteinError for a seed file parsing failure."""
+    return BernsteinError(
+        what="Cannot parse seed file",
+        why=str(exc),
+        fix="Check bernstein.yaml syntax — see 'bernstein help-all' for format",
+    )
+
+
+def server_error(exc: Exception) -> BernsteinError:
+    """Return a BernsteinError for a task server communication failure."""
+    return BernsteinError(
+        what="Task server error",
+        why=str(exc),
+        fix="Check if the server is running with 'bernstein status', or restart with 'bernstein stop && bernstein'",
+    )

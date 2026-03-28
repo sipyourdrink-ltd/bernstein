@@ -402,3 +402,25 @@ def project_monthly_cost(records: list[dict[str, Any]], window_days: int = 7) ->
         return 0.0
     avg_daily = sum(d["cost_usd"] for d in daily) / len(daily)
     return avg_daily * 30
+
+
+def estimate_run_cost(task_count: int, model: str = "sonnet") -> tuple[float, float]:
+    """Estimate cost range for a planned run before spending anything.
+
+    Uses average token consumption per task (roughly 50k-150k tokens) and
+    the model's per-1k-token pricing to produce a low-high range.
+
+    Args:
+        task_count: Number of tasks to be spawned.
+        model: Default model name (e.g. "sonnet", "opus", "haiku").
+
+    Returns:
+        Tuple of (low_estimate_usd, high_estimate_usd).
+    """
+    cost_per_1k = _model_cost(model)
+    # Conservative range: 50k tokens (small task) to 150k tokens (large task)
+    low_tokens_per_task = 50
+    high_tokens_per_task = 150
+    low = task_count * low_tokens_per_task * cost_per_1k
+    high = task_count * high_tokens_per_task * cost_per_1k
+    return (round(low, 2), round(high, 2))

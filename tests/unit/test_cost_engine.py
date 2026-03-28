@@ -21,6 +21,7 @@ from bernstein.core.cost import (
     EpsilonGreedyBandit,
     compute_daily_cost,
     compute_savings_vs_opus,
+    estimate_run_cost,
     get_cascade_model,
     project_monthly_cost,
 )
@@ -418,3 +419,32 @@ class TestProjectMonthlyCost:
             records.append({"timestamp": ts, "cost_usd": 1.0})
         projected = project_monthly_cost(records, window_days=7)
         assert projected == pytest.approx(30.0, rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# estimate_run_cost
+# ---------------------------------------------------------------------------
+
+
+class TestEstimateRunCost:
+    def test_returns_low_high_tuple(self) -> None:
+        low, high = estimate_run_cost(5, model="sonnet")
+        assert isinstance(low, float)
+        assert isinstance(high, float)
+        assert low <= high
+
+    def test_scales_with_task_count(self) -> None:
+        low1, high1 = estimate_run_cost(1)
+        low5, high5 = estimate_run_cost(5)
+        assert low5 == low1 * 5
+        assert high5 == high1 * 5
+
+    def test_haiku_cheaper_than_opus(self) -> None:
+        _, high_haiku = estimate_run_cost(1, model="haiku")
+        low_opus, _ = estimate_run_cost(1, model="opus")
+        assert high_haiku < low_opus or high_haiku <= low_opus  # haiku is always cheaper
+
+    def test_zero_tasks_returns_zero(self) -> None:
+        low, high = estimate_run_cost(0)
+        assert low == 0.0
+        assert high == 0.0

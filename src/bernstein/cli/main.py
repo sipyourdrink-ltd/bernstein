@@ -139,7 +139,9 @@ def _server_get(path: str) -> dict[str, Any] | None:
     except httpx.ConnectError:
         return None
     except Exception as exc:
-        console.print(f"[red]Server error:[/red] {exc}")
+        from bernstein.cli.errors import server_error
+
+        server_error(exc).print()
         return None
 
 
@@ -152,7 +154,9 @@ def _server_post(path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
     except httpx.ConnectError:
         return None
     except Exception as exc:
-        console.print(f"[red]Server error:[/red] {exc}")
+        from bernstein.cli.errors import server_error
+
+        server_error(exc).print()
         return None
 
 
@@ -524,17 +528,44 @@ def cli(
             try:
                 bootstrap_from_goal(goal, workdir=workdir, port=port, force_fresh=force_fresh)
             except RuntimeError as exc:
-                console.print(f"[red]Error:[/red] {exc}")
+                from bernstein.cli.errors import bootstrap_failed
+
+                bootstrap_failed(exc).print()
                 raise SystemExit(1) from exc
         elif seed_path is not None:
             console.print(f"Using: [bold]{seed_path.name}[/bold]")
             from bernstein.core.bootstrap import bootstrap_from_seed
             from bernstein.core.seed import SeedError
 
+            # Cost estimate before spawning agents
+            if not yes:
+                from bernstein.core.cost import estimate_run_cost
+
+                backlog_dir_est = workdir / ".sdd" / "backlog" / "open"
+                est_count = sum(1 for _ in backlog_dir_est.glob("*.md")) if backlog_dir_est.exists() else 1
+                low, high = estimate_run_cost(max(est_count, 1))
+                console.print(
+                    f"[bold yellow]Cost estimate:[/bold yellow] ~${low:.2f}-${high:.2f} "
+                    f"for {est_count} task(s). "
+                    "Press [bold]Enter[/bold] to continue or Ctrl+C to cancel."
+                )
+                try:
+                    input()
+                except (KeyboardInterrupt, EOFError):
+                    console.print("\n[yellow]Aborted.[/yellow]")
+                    raise SystemExit(0) from None
+
             try:
                 bootstrap_from_seed(seed_path, workdir=workdir, port=port, force_fresh=force_fresh)
-            except (SeedError, RuntimeError) as exc:
-                console.print(f"[red]Error:[/red] {exc}")
+            except SeedError as exc:
+                from bernstein.cli.errors import seed_parse_error
+
+                seed_parse_error(exc).print()
+                raise SystemExit(1) from exc
+            except RuntimeError as exc:
+                from bernstein.cli.errors import bootstrap_failed
+
+                bootstrap_failed(exc).print()
                 raise SystemExit(1) from exc
         else:
             # No seed file, no goal — check if backlog has tasks
@@ -543,12 +574,31 @@ def cli(
             if has_backlog:
                 task_count = sum(1 for _ in backlog_dir.glob("*.md"))
                 console.print(f"[dim]No seed file — loading {task_count} tasks from backlog[/dim]")
+
+                # Cost estimate before spawning agents
+                if not yes:
+                    from bernstein.core.cost import estimate_run_cost as _est
+
+                    low, high = _est(task_count)
+                    console.print(
+                        f"[bold yellow]Cost estimate:[/bold yellow] ~${low:.2f}-${high:.2f} "
+                        f"for {task_count} task(s). "
+                        "Press [bold]Enter[/bold] to continue or Ctrl+C to cancel."
+                    )
+                    try:
+                        input()
+                    except (KeyboardInterrupt, EOFError):
+                        console.print("\n[yellow]Aborted.[/yellow]")
+                        raise SystemExit(0) from None
+
                 from bernstein.core.bootstrap import bootstrap_from_goal
 
                 try:
                     bootstrap_from_goal("Execute backlog tasks", workdir=workdir, port=port, force_fresh=force_fresh)
                 except RuntimeError as exc:
-                    console.print(f"[red]Error:[/red] {exc}")
+                    from bernstein.cli.errors import bootstrap_failed
+
+                    bootstrap_failed(exc).print()
                     raise SystemExit(1) from exc
             else:
                 console.print(
@@ -842,7 +892,9 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
         try:
             bootstrap_from_goal(goal=goal, workdir=workdir, port=port, cells=cells)
         except RuntimeError as exc:
-            console.print(f"[red]Bootstrap error:[/red] {exc}")
+            from bernstein.cli.errors import bootstrap_failed
+
+            bootstrap_failed(exc).print()
             raise SystemExit(1) from exc
         return
 
@@ -854,10 +906,9 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
         if found is not None:
             path = found
         else:
-            console.print(
-                "[yellow]No seed file found and no --goal given.[/yellow]\n"
-                "Create bernstein.yaml or pass [bold]--goal 'your goal'[/bold]."
-            )
+            from bernstein.cli.errors import no_seed_or_goal
+
+            no_seed_or_goal().print()
             raise SystemExit(1)
 
     console.print(f"[dim]Using seed file:[/dim] {path}")
@@ -866,10 +917,14 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
         cli_cells: int | None = cells if cells > 1 else None
         bootstrap_from_seed(seed_path=path, workdir=workdir, port=port, cells=cli_cells, remote=remote)
     except SeedError as exc:
-        console.print(f"[red]Seed error:[/red] {exc}")
+        from bernstein.cli.errors import seed_parse_error
+
+        seed_parse_error(exc).print()
         raise SystemExit(1) from exc
     except RuntimeError as exc:
-        console.print(f"[red]Bootstrap error:[/red] {exc}")
+        from bernstein.cli.errors import bootstrap_failed
+
+        bootstrap_failed(exc).print()
         raise SystemExit(1) from exc
 
 
@@ -912,22 +967,28 @@ def start(goal: str | None, seed_file: str, port: int) -> None:
         try:
             bootstrap_from_goal(goal=goal, workdir=workdir, port=port)
         except RuntimeError as exc:
-            console.print(f"[red]Bootstrap error:[/red] {exc}")
+            from bernstein.cli.errors import bootstrap_failed
+
+            bootstrap_failed(exc).print()
             raise SystemExit(1) from exc
     else:
         path = Path(seed_file)
         if not path.exists():
-            console.print(
-                f"[yellow]No GOAL argument and no seed file found.[/yellow] Pass a goal or create {seed_file}."
-            )
+            from bernstein.cli.errors import no_seed_or_goal
+
+            no_seed_or_goal().print()
             raise SystemExit(1)
         try:
             bootstrap_from_seed(seed_path=path, workdir=workdir, port=port)
         except SeedError as exc:
-            console.print(f"[red]Seed error:[/red] {exc}")
+            from bernstein.cli.errors import seed_parse_error
+
+            seed_parse_error(exc).print()
             raise SystemExit(1) from exc
         except RuntimeError as exc:
-            console.print(f"[red]Bootstrap error:[/red] {exc}")
+            from bernstein.cli.errors import bootstrap_failed
+
+            bootstrap_failed(exc).print()
             raise SystemExit(1) from exc
 
 
@@ -1804,7 +1865,9 @@ def demo(dry_run: bool, adapter: str | None, timeout: int) -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]")
     except RuntimeError as exc:
-        console.print(f"[red]Bootstrap error:[/red] {exc}")
+        from bernstein.cli.errors import bootstrap_failed
+
+        bootstrap_failed(exc).print()
     finally:
         _stop_demo_processes(project_dir)
 
@@ -2788,7 +2851,9 @@ def workspace_group(ctx: click.Context) -> None:
         try:
             cfg = parse_seed(seed_path)
         except SeedError as exc:
-            console.print(f"[red]Error parsing seed file:[/red] {exc}")
+            from bernstein.cli.errors import seed_parse_error
+
+            seed_parse_error(exc).print()
             return
 
         if cfg.workspace is None:
