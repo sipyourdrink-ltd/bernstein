@@ -321,7 +321,7 @@ class TestEvolvePriorityRotation:
         """Each cycle should pick a different focus area based on cycle count."""
         focus_areas_seen: list[str] = []
 
-        for cycle in range(5):
+        for cycle in range(6):
             evolve_path = _write_evolve_json(tmp_path, _cycle_count=cycle)
             spawner = _make_spawner(tmp_path)
             config = _make_config()
@@ -339,10 +339,11 @@ class TestEvolvePriorityRotation:
                         focus = title.split(": ", 1)[1] if ": " in title else ""
                         focus_areas_seen.append(focus)
 
-        # Should have 5 different focus areas
-        assert len(focus_areas_seen) == 5
+        # Should have 6 different focus areas (one per element in _EVOLVE_FOCUS_AREAS)
+        assert len(focus_areas_seen) == 6
         expected = [
             "new features",
+            "user interface",
             "test coverage",
             "code quality",
             "performance",

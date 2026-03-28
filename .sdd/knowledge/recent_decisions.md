@@ -2,6 +2,23 @@
 
 No decisions recorded yet.
 
+## [2026-03-28 07:56] [RETRY 1] Use server-side status filtering instead of fetching all tasks (22850454c089)
+Completed: [RETRY 1] Use server-side status filtering instead of fetching all tasks
+
+## [2026-03-28 07:56] [RETRY 1] Parallelize done-task verification in _process_completed_tasks (2d55588d591d)
+Completed: [RETRY 1] Parallelize done-task verification in _process_completed_tasks
+
+## [2026-03-28 07:56] [RETRY 1] Use server-side status filtering instead of fetching all tasks (c85d95cc8917)
+Completed: [RETRY 1] Use server-side status filtering instead of fetching all tasks
+
+## [2026-03-28 07:58] [RETRY 1] Use server-side status filtering instead of fetching all tasks (8aee2041bf4b)
+Completed: [RETRY 1] Use server-side status filtering instead of fetching all tasks
+
+## [2026-03-28 07:58] [RETRY 2] Parallelize done-task verification in _process_completed_tasks (542f5325b748)
+Completed: [RETRY 2] Parallelize done-task verification in _process_completed_tasks
+
+## [2026-03-28 07:58] [RETRY 2] Use server-side status filtering instead of fetching all tasks (857f0bb5e151)
+Completed: _fetch_all_tasks now makes per-status GET /tasks?status=X calls instead of one unfiltered GET /tasks. All 1778 tests pass.
 ## [2026-03-28 07:59] Fix CONTRIBUTING.md reference to nonexistent bernstein serve command (6d403064f183)
 Completed: Fix CONTRIBUTING.md reference to nonexistent bernstein serve command
 

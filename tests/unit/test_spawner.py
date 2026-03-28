@@ -553,6 +553,7 @@ class TestLoadRoleConfig:
         assert result.effort == "high"
 
 
+
 # --- WorktreeManager integration ---
 
 

@@ -282,7 +282,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T07:03:46.370808"
+    "last_modified": "2026-03-28T08:18:20.886416"
   },
   "src/bernstein/core/__init__.py": {
     "summary": "Core: task server, spawner, scheduler.",
@@ -329,7 +329,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T06:21:43.313543"
+    "last_modified": "2026-03-28T08:17:11.923872"
   },
   "src/bernstein/core/bulletin.py": {
     "summary": "Append-only bulletin board for cross-agent communication.",
@@ -571,34 +571,6 @@
     ],
     "last_modified": "2026-03-22T17:26:55.101872"
   },
-  "src/bernstein/core/orchestrator.py": {
-    "summary": "Orchestrator loop: watch tasks, spawn agents, verify completion, repeat.",
-    "exports": [
-      "_RuffLocation",
-      "RuffViolation",
-      "TestResults",
-      "CompletionData",
-      "Orchestrator",
-      "TickResult",
-      "group_by_role"
-    ],
-    "imports": [
-      "__future__",
-      "bernstein",
-      "collections",
-      "concurrent",
-      "contextlib",
-      "datetime",
-      "httpx",
-      "json",
-      "logging",
-      "os",
-      "re",
-      "time",
-      "typing"
-    ],
-    "last_modified": "2026-03-28T08:14:48.341640"
-  },
   "src/bernstein/core/policy.py": {
     "summary": "Policy engine for tier optimization and provider routing.",
     "exports": [
@@ -642,6 +614,21 @@
     ],
     "last_modified": "2026-03-28T04:04:58.121469"
   },
+  "src/bernstein/core/retrospective.py": {
+    "summary": "Run retrospective report generation.",
+    "exports": [
+      "generate_retrospective"
+    ],
+    "imports": [
+      "__future__",
+      "bernstein",
+      "collections",
+      "logging",
+      "pathlib",
+      "time"
+    ],
+    "last_modified": "2026-03-28T08:19:00.066462"
+  },
   "src/bernstein/core/router.py": {
     "summary": "Route tasks to appropriate model and effort level with tier awareness.",
     "exports": [
@@ -668,25 +655,6 @@
       "typing"
     ],
     "last_modified": "2026-03-28T04:04:58.123319"
-  },
-  "src/bernstein/core/seed.py": {
-    "summary": "Seed file parser for bernstein.yaml.",
-    "exports": [
-      "SeedError",
-      "NotifyConfig",
-      "SeedConfig",
-      "parse_seed",
-      "seed_to_initial_task"
-    ],
-    "imports": [
-      "__future__",
-      "bernstein",
-      "dataclasses",
-      "re",
-      "typing",
-      "yaml"
-    ],
-    "last_modified": "2026-03-28T04:46:13.659392"
   },
   "src/bernstein/core/server.py": {
     "summary": "FastAPI task server \u2014 central coordination point for all agents.",
@@ -729,21 +697,6 @@
       "uuid"
     ],
     "last_modified": "2026-03-28T07:39:24.321711"
-  },
-  "src/bernstein/core/spawner.py": {
-    "summary": "Spawn short-lived CLI agents for task batches.",
-    "exports": [
-      "AgentSpawner"
-    ],
-    "imports": [
-      "__future__",
-      "bernstein",
-      "logging",
-      "subprocess",
-      "typing",
-      "uuid"
-    ],
-    "last_modified": "2026-03-28T08:16:00.652201"
   },
   "src/bernstein/core/sync.py": {
     "summary": "Sync .sdd/backlog/*.md files with the task server.",
@@ -1136,6 +1089,23 @@
       "time"
     ],
     "last_modified": "2026-03-28T01:47:18.573743"
+  },
+  "tests/integration/test_lifecycle.py": {
+    "summary": "Integration test: full spawn \u2192 execute \u2192 complete lifecycle.",
+    "exports": [
+      "test_lifecycle_spawn_execute_complete",
+      "test_lifecycle_model_effort_routing_by_complexity",
+      "test_lifecycle_orchestrator_detects_completion_state"
+    ],
+    "imports": [
+      "__future__",
+      "bernstein",
+      "pathlib",
+      "pytest",
+      "starlette",
+      "unittest"
+    ],
+    "last_modified": "2026-03-28T08:18:46.039140"
   },
   "tests/test_evolution_e2e.py": {
     "summary": "End-to-end tests for the self-evolution feedback loop (ADR-003).",
@@ -2325,6 +2295,22 @@
     ],
     "last_modified": "2026-03-28T01:30:25.997375"
   },
+  "tests/unit/test_retrospective.py": {
+    "summary": "Tests for bernstein.core.retrospective.",
+    "exports": [
+      "TestFmtSeconds",
+      "TestBuildRecommendations",
+      "TestGenerateRetrospective"
+    ],
+    "imports": [
+      "__future__",
+      "bernstein",
+      "pathlib",
+      "pytest",
+      "time"
+    ],
+    "last_modified": "2026-03-28T08:18:52.506006"
+  },
   "tests/unit/test_router.py": {
     "summary": "Tests for TierAwareRouter \u2014 tier-based routing decisions.",
     "exports": [
@@ -2489,27 +2475,6 @@
       "unittest"
     ],
     "last_modified": "2026-03-28T07:39:24.322385"
-  },
-  "tests/unit/test_spawner.py": {
-    "summary": "Tests for AgentSpawner \u2014 adapter is always mocked.",
-    "exports": [
-      "TestSpawnForTasks",
-      "TestLifecycle",
-      "TestRenderPrompt",
-      "TestSelectBatchConfig",
-      "TestSpawnerWithRouter",
-      "TestRenderPromptWithAgencyCatalog",
-      "TestRenderFallback",
-      "TestSelectBatchConfigExtended",
-      "TestLoadRoleConfig"
-    ],
-    "imports": [
-      "__future__",
-      "bernstein",
-      "pathlib",
-      "pytest"
-    ],
-    "last_modified": "2026-03-28T03:03:18.965214"
   },
   "tests/unit/test_sync.py": {
     "summary": "Tests for the backlog-to-server sync module.",
