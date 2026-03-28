@@ -105,7 +105,8 @@ from bernstein.cli.run_cmd import (
     setup_demo_project,
     start,
 )
-from bernstein.cli.status_cmd import doctor, ps_cmd, status
+from bernstein.cli.status_cmd import doctor as _doctor_impl
+from bernstein.cli.status_cmd import ps_cmd, status
 
 # Re-export stop_cmd helpers used by tests and other modules
 from bernstein.cli.stop_cmd import (
@@ -438,7 +439,7 @@ def cli(
 # Primary names
 cli.add_command(stop, "stop")
 cli.add_command(ps_cmd, "ps")
-cli.add_command(doctor, "doctor")
+# doctor is registered via @cli.command decorator below
 cli.add_command(agents_group, "agents")
 cli.add_command(evolve, "evolve")
 cli.add_command(demo, "demo")
@@ -1109,7 +1110,7 @@ def live(interval: float, classic: bool) -> None:
         return layout
 
     try:
-        with Live(_render(), refresh_per_second=1, screen=True) as live_display:
+        with Live(_render(), refresh_per_second=4, screen=True) as live_display:
             while True:
                 data = _fetch_dashboard()
                 tasks_list: list[dict[str, Any]] = data.get("tasks", [])
@@ -2252,6 +2253,24 @@ def plugins_cmd(workdir: str) -> None:
 
     console.print(table)
     console.print(f"\n[dim]Total: {len(names)} plugin(s)[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# doctor — self-diagnostics (delegates to status_cmd)
+# ---------------------------------------------------------------------------
+
+
+@cli.command("doctor")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
+@click.pass_context
+def doctor(ctx: click.Context, as_json: bool) -> None:
+    """Run self-diagnostics: check Python, adapters, API keys, port, and workspace.
+
+    \b
+      bernstein doctor          # print diagnostic report
+      bernstein doctor --json   # machine-readable output
+    """
+    ctx.invoke(_doctor_impl, as_json=as_json)
 
 
 # ---------------------------------------------------------------------------

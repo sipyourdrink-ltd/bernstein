@@ -135,14 +135,15 @@ Analyzes metrics, proposes changes to prompts and routing rules, sandboxes them,
 
 ## Supported agents
 
-| Agent | Provider | CLI flag | Install |
-|-------|----------|----------|---------|
-| [Aider](https://github.com/Aider-AI/aider) | OpenAI / Anthropic / any | `--cli aider` | `pip install aider-chat` |
-| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Anthropic | `--cli claude` | `npm install -g @anthropic-ai/claude-code` |
-| [Codex CLI](https://github.com/openai/codex) | OpenAI | `--cli codex` | `npm install -g @openai/codex` |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Google | `--cli gemini` | `npm install -g @google/gemini-cli` |
-| [Qwen](https://github.com/QwenLM/Qwen-Agent) | Alibaba / OpenRouter | `--cli qwen` | `npm install -g qwen-code` |
-| Any CLI agent | Yours | `--cli generic` | Provide `--cli-command` and `--prompt-flag` |
+| Agent | Provider | Models (Mar 2026) | CLI flag | Install |
+|-------|----------|-------------------|----------|---------|
+| [Aider](https://github.com/Aider-AI/aider) | OpenAI / Anthropic / any | any | `--cli aider` | `pip install aider-chat` |
+| [Amp](https://ampcode.com) | Sourcegraph | opus 4.6, gpt-5.4 | `--cli amp` | `brew install amp` |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Anthropic | opus 4.6, sonnet 4.6, haiku 4.5 | `--cli claude` | `npm install -g @anthropic-ai/claude-code` |
+| [Codex CLI](https://github.com/openai/codex) | OpenAI | gpt-5.4, o3, o4-mini | `--cli codex` | `npm install -g @openai/codex` |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Google | gemini-3-pro, 3-flash | `--cli gemini` | `npm install -g @google/gemini-cli` |
+| [Qwen](https://github.com/QwenLM/Qwen-Agent) | Alibaba / OpenRouter | qwen3-coder, qwen-max | `--cli qwen` | `npm install -g qwen-code` |
+| Any CLI agent | Yours | pass-through | `--cli generic` | Provide `--cli-command` and `--prompt-flag` |
 
 Mix and match in a single run — the orchestrator doesn't care which agent handles which task:
 

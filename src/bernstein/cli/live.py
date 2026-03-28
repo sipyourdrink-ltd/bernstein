@@ -206,13 +206,13 @@ class LiveView:
             with Live(
                 Text("Connecting\u2026", style="dim"),
                 console=self._console,
-                refresh_per_second=1,
+                refresh_per_second=4,
                 screen=True,
             ) as live:
                 while True:
                     data = self._fetch()
                     live.update(self._render(data))
-                    time.sleep(self._interval)
+                    time.sleep(min(self._interval, 1.0))
         except KeyboardInterrupt:
             pass
         self._console.print("\n[dim]Live display stopped.[/dim]")

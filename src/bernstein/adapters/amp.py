@@ -13,14 +13,16 @@ if TYPE_CHECKING:
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
 
 # Map Bernstein short model names to Amp model identifiers.
-# Amp accepts provider-prefixed names (e.g. "anthropic:claude-sonnet-4-6", "openai:gpt-4o").
+# Amp accepts provider-prefixed names (e.g. "anthropic:claude-sonnet-4-6", "openai:gpt-5.4").
 # Short names are mapped to the most common Amp-compatible IDs; unknown names pass through.
 _MODEL_MAP: dict[str, str] = {
     "opus": "anthropic:claude-opus-4-6",
     "sonnet": "anthropic:claude-sonnet-4-6",
     "haiku": "anthropic:claude-haiku-4-5-20251001",
-    "gpt-4o": "openai:gpt-4o",
-    "gpt-4.1": "openai:gpt-4.1",
+    "gpt-5.4": "openai:gpt-5.4",
+    "gpt-5.4-mini": "openai:gpt-5.4-mini",
+    "o3": "openai:o3",
+    "o4-mini": "openai:o4-mini",
 }
 
 

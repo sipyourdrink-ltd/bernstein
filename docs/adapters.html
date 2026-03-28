@@ -94,9 +94,9 @@
         <tr>
           <td>Model selection</td>
           <td>opus / sonnet / haiku</td>
-          <td>gpt-4o / o3-mini / any</td>
-          <td>gemini-2.5-pro / flash / any</td>
-          <td>qwen-max / coder / any</td>
+          <td>gpt-5.4 / o3 / o4-mini</td>
+          <td>gemini-3-pro / 3-flash / 2.5-pro</td>
+          <td>qwen3-coder / qwen-max</td>
           <td>Pass-through</td>
         </tr>
         <tr>
@@ -198,7 +198,7 @@ export ANTHROPIC_API_KEY=sk-ant-...</code></pre>
 export OPENAI_API_KEY=sk-proj-...</code></pre>
     </div>
 
-    <p>Runs in <code>--approval-mode full-auto</code> with <code>--quiet</code> to suppress interactive prompts. Pass any OpenAI model name directly via <code>--model</code>. Tier detection checks for <code>OPENAI_ORG_ID</code> (enterprise) and key prefix (<code>sk-proj</code> = pro).</p>
+    <p>Runs in <code>--approval-mode full-auto</code> with <code>--quiet</code> to suppress interactive prompts. Pass any OpenAI model name directly via <code>--model</code>. Recommended model: <code>gpt-5.4</code> (Mar 2026). The o-series reasoning models (<code>o3</code>, <code>o4-mini</code>) are also supported. Tier detection checks for <code>OPENAI_ORG_ID</code> (enterprise) and key prefix (<code>sk-proj</code> = pro).</p>
 
     <h2 id="gemini">Gemini CLI</h2>
 
@@ -209,7 +209,7 @@ export OPENAI_API_KEY=sk-proj-...</code></pre>
 export GOOGLE_API_KEY=AIza...</code></pre>
     </div>
 
-    <p>Runs with <code>--sandbox none</code>. For Vertex AI / enterprise use, set <code>GOOGLE_CLOUD_PROJECT</code> — tier detection will pick this up and apply higher rate limits accordingly.</p>
+    <p>Runs with <code>--sandbox none</code>. The default model is <code>gemini-3-pro</code> (preview, Mar 2026). Gemini 2.5 Pro/Flash are GA but <a href="https://ai.google.dev/gemini-api/docs/models" target="_blank" rel="noopener">deprecating June 2026</a>. For Vertex AI / enterprise use, set <code>GOOGLE_CLOUD_PROJECT</code> — tier detection will pick this up and apply higher rate limits accordingly.</p>
 
     <h2 id="qwen">Qwen</h2>
 
@@ -319,11 +319,11 @@ cli: claude
 # Per-role overrides
 role_config:
   qa:
-    cli: codex          # GPT-4o for test generation
-    model: gpt-4o
+    cli: codex          # GPT-5.4 for test generation
+    model: gpt-5.4
   docs:
     cli: gemini         # Gemini Flash for docs — cheaper
-    model: gemini-2.0-flash</code></pre>
+    model: gemini-3-flash</code></pre>
     </div>
 
     <p>The orchestrator assigns each task to the right adapter based on role. All tasks write to the same <code>.sdd/</code> state — adapter choice is transparent to the rest of the system.</p>

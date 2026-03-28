@@ -137,8 +137,8 @@ def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
         version=version,
         logged_in=logged_in,
         login_method=login_method,
-        available_models=["o4-mini", "o3", "codex-mini"],
-        default_model="o4-mini",
+        available_models=["gpt-5.4", "gpt-5.4-mini", "o3", "o4-mini"],
+        default_model="gpt-5.4",
         supports_headless=True,
         supports_sandbox=True,
         supports_mcp=True,
@@ -184,16 +184,15 @@ def _detect_gemini() -> tuple[AgentCapabilities | None, list[str]]:
         version=version,
         logged_in=logged_in,
         login_method=login_method,
-        available_models=["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
-        default_model="gemini-2.5-pro",
+        available_models=["gemini-3-pro", "gemini-3-flash", "gemini-2.5-pro"],
+        default_model="gemini-3-pro",
         supports_headless=True,
         supports_sandbox=True,
         supports_mcp=True,
         max_context_tokens=1_000_000,
         reasoning_strength="very_high",
         best_for=["frontend", "long-context", "multimodal", "free-tier"],
-        cost_tier="free",  # 1000 free requests/day; paid: 2.5-pro $1.25/$10, flash $0.30/$2.50
-        # NOTE: gemini-2.5-pro and 2.5-flash deprecated June 17, 2026
+        cost_tier="free",  # generous free tier; paid: 3-pro ~$2-4/$12-18 per 1M
     ), warnings
 
 

@@ -48,15 +48,18 @@ _MODEL_COST_USD_PER_1K: dict[str, float] = {
     "haiku": 0.003,  # ($1 + $5) / 2 / 1000
     "sonnet": 0.009,  # ($3 + $15) / 2 / 1000
     "opus": 0.015,  # ($5 + $25) / 2 / 1000
-    # Codex (OpenAI) — per 1M tokens: o3 $2/$8, o4-mini $1.10/$4.40
+    # OpenAI — per 1M tokens: GPT-5.4 $2.50/$15, o3 $2/$8, o4-mini $1.10/$4.40
+    "gpt-5.4": 0.00875,  # ($2.50 + $15) / 2 / 1000
+    "gpt-5.4-mini": 0.002625,  # ($0.75 + $4.50) / 2 / 1000
     "o3": 0.005,  # ($2 + $8) / 2 / 1000
     "o4-mini": 0.00275,  # ($1.10 + $4.40) / 2 / 1000
-    "codex-mini": 0.00375,  # ($1.50 + $6) / 2 / 1000
-    # Gemini (Google) — per 1M tokens: 2.5-pro $1.25/$10, 2.5-flash $0.30/$2.50
+    # Gemini (Google) — per 1M tokens: 3-pro ~$3/$15, 3-flash $0.50/$3, 2.5-pro $1.25/$10
+    "gemini-3": 0.009,  # ($3 + $15) / 2 / 1000
     "gemini-2.5-pro": 0.005625,  # ($1.25 + $10) / 2 / 1000
     "gemini-2.5-flash": 0.0014,  # ($0.30 + $2.50) / 2 / 1000
-    "gemini-2.0-flash": 0.0005,  # near-free tier
-    # Qwen (OpenRouter free)
+    "gemini-3-flash": 0.00175,  # ($0.50 + $3) / 2 / 1000
+    # Qwen — open-weight, very cheap via API
+    "qwen3-coder": 0.00056,  # ($0.22 + $0.90) / 2 / 1000
     "qwen-max": 0.001,
     "qwen-plus": 0.0005,
     "qwen-turbo": 0.0002,

@@ -344,6 +344,9 @@ class BernsteinApp(App[None]):
         # Tail live agent log files for near-real-time output.
         self._tail_agent_logs(log_widget)
 
+        # Force a screen redraw so updates render without waiting for input.
+        self.refresh()
+
     @staticmethod
     def _count_active_agents() -> int:
         """Read agent count from the orchestrator's agents.json file.
