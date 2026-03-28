@@ -435,7 +435,7 @@ def _generate_default_yaml(project_type: str) -> str:
     """
     lines = [
         "# Bernstein orchestration config",
-        '# Uncomment and edit the goal, then run: bernstein',
+        "# Uncomment and edit the goal, then run: bernstein",
         "",
         '# goal: "Describe what you want the agents to build or improve"',
         "",

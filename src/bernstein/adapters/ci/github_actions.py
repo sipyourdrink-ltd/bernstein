@@ -46,7 +46,7 @@ class GHAStep:
 
     name: str
     body: str
-    errors: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list[str])
 
 
 # ---------------------------------------------------------------------------
