@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class RiskLevel(Enum):
@@ -60,7 +61,7 @@ class MetricsRecord:
     schema_version: int = 1
     config_id: str = "default"  # tracks which config was active
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for JSONL output."""
         return {
             "schema_version": self.schema_version,

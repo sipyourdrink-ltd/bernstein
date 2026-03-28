@@ -7,7 +7,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import yaml
 
@@ -41,7 +41,7 @@ class AgentDefinition:
     description: str = ""
     system_prompt_template: str | None = None
     max_concurrent_tasks: int = 3
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
     schema_version: str = "1.0"
 
 
@@ -53,7 +53,7 @@ class AgentInstance:
     definition: AgentDefinition
     created_at: float = field(default_factory=time.time)
     status: str = "idle"
-    current_task_ids: list[str] = field(default_factory=list)
+    current_task_ids: list[str] = field(default_factory=list[str])
 
 
 class SchemaValidationError(Exception):
@@ -96,6 +96,11 @@ class AgentRegistry:
         self._file_hashes: dict[str, str] = {}
         self._last_reload: float = 0.0
         self._instances: dict[str, AgentInstance] = {}
+
+    @property
+    def definitions_dir(self) -> Path:
+        """Get the definitions directory path."""
+        return self._definitions_dir
 
     @property
     def definitions(self) -> dict[str, AgentDefinition]:
@@ -300,29 +305,31 @@ class AgentRegistry:
             SchemaValidationError: If validation fails.
         """
         content = yaml_file.read_text(encoding="utf-8")
-        data = yaml.safe_load(content)
+        raw_data: object = yaml.safe_load(content)
 
-        if not isinstance(data, dict):
-            raise SchemaValidationError(["YAML must contain a mapping (dictionary)"], data)
+        if not isinstance(raw_data, dict):
+            raise SchemaValidationError(["YAML must contain a mapping (dictionary)"], {})
+
+        data: dict[str, Any] = cast("dict[str, Any]", raw_data)
 
         self._validate_schema(data, yaml_file)
 
         model_config = ModelConfig(
-            model=data["model"],
-            effort=data.get("effort", "normal"),
-            max_tokens=data.get("max_tokens", 200_000),
+            model=str(data["model"]),
+            effort=str(data.get("effort", "normal")),
+            max_tokens=int(data.get("max_tokens", 200_000)),
         )
 
         return AgentDefinition(
-            name=data["name"],
-            role=data["role"],
+            name=str(data["name"]),
+            role=str(data["role"]),
             model_config=model_config,
-            version=data["version"],
-            description=data.get("description", ""),
+            version=str(data["version"]),
+            description=str(data.get("description", "")),
             system_prompt_template=data.get("system_prompt_template"),
-            max_concurrent_tasks=data.get("max_concurrent_tasks", 3),
-            metadata=data.get("metadata", {}),
-            schema_version=data.get("schema_version", self.SCHEMA_VERSION),
+            max_concurrent_tasks=int(data.get("max_concurrent_tasks", 3)),
+            metadata=cast("dict[str, Any]", data.get("metadata", {})),
+            schema_version=str(data.get("schema_version", self.SCHEMA_VERSION)),
         )
 
     def _validate_schema(self, data: dict[str, Any], source: Path) -> None:
@@ -414,7 +421,7 @@ def get_registry(
             auto_reload=auto_reload,
         )
         _registry.load_definitions()
-    elif definitions_dir is not None and _registry._definitions_dir != definitions_dir:
+    elif definitions_dir is not None and _registry.definitions_dir != definitions_dir:
         # Reinitialize with new directory
         _registry = AgentRegistry(
             definitions_dir=definitions_dir,

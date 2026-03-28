@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
@@ -102,25 +102,26 @@ def parse_agency_agent(path: Path) -> AgencyAgent:
         raise ValueError(f"Cannot read agency file {path}: {exc}") from exc
 
     try:
-        data = yaml.safe_load(raw_text)
+        raw_data: object = yaml.safe_load(raw_text)
     except yaml.YAMLError as exc:
         raise ValueError(f"Invalid YAML in {path}: {exc}") from exc
 
-    if not isinstance(data, dict):
+    if not isinstance(raw_data, dict):
         raise ValueError(f"Agency file must be a YAML mapping: {path}")
 
-    name = data.get("name")
-    if not name or not isinstance(name, str):
-        raise ValueError(f"Agency file missing 'name': {path}")
+    data: dict[str, Any] = cast("dict[str, Any]", raw_data)
 
-    description = str(data.get("description", ""))
-    division = str(data.get("division", "general"))
+    name_val: Any = data.get("name")
+    if not name_val or not isinstance(name_val, str):
+        raise ValueError(f"Agency file missing 'name': {path}")
+    name: str = name_val
+
+    description: str = str(data.get("description", ""))
+    division: str = str(data.get("division", "general"))
     role = _map_division(division)
 
     # Accept either 'system_prompt' or 'prompt' as the body field.
-    prompt_body = data.get("system_prompt") or data.get("prompt") or ""
-    if not isinstance(prompt_body, str):
-        prompt_body = str(prompt_body)
+    prompt_body: str = str(data.get("system_prompt") or data.get("prompt") or "")
 
     return AgencyAgent(
         name=name,

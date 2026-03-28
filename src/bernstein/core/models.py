@@ -109,7 +109,7 @@ class RiskAssessment:
 
     level: Literal["low", "medium", "high", "critical"] = "medium"
     breaking_changes: bool = False
-    affected_components: list[str] = field(default_factory=list)
+    affected_components: list[str] = field(default_factory=list[str])
     mitigation: str = ""
 
 
@@ -124,7 +124,7 @@ class RollbackPlan:
         estimated_rollback_minutes: Time estimate for rollback.
     """
 
-    steps: list[str] = field(default_factory=list)
+    steps: list[str] = field(default_factory=list[str])
     revert_commit: str | None = None
     data_migration: str = ""
     estimated_rollback_minutes: int = 30
@@ -146,7 +146,7 @@ class UpgradeProposalDetails:
 
     current_state: str = ""
     proposed_change: str = ""
-    benefits: list[str] = field(default_factory=list)
+    benefits: list[str] = field(default_factory=list[str])
     risk_assessment: RiskAssessment = field(default_factory=RiskAssessment)
     rollback_plan: RollbackPlan = field(default_factory=RollbackPlan)
     cost_estimate_usd: float = 0.0
@@ -176,9 +176,9 @@ class Task:
     status: TaskStatus = TaskStatus.OPEN
     task_type: TaskType = TaskType.STANDARD  # Type of task
     upgrade_details: UpgradeProposalDetails | None = None  # For upgrade proposals
-    depends_on: list[str] = field(default_factory=list)
-    completion_signals: list[CompletionSignal] = field(default_factory=list)
-    owned_files: list[str] = field(default_factory=list)
+    depends_on: list[str] = field(default_factory=list[str])
+    completion_signals: list[CompletionSignal] = field(default_factory=list[CompletionSignal])
+    owned_files: list[str] = field(default_factory=list[str])
     assigned_agent: str | None = None
     result_summary: str | None = None
     cell_id: str | None = None  # Which cell this task belongs to
@@ -186,7 +186,7 @@ class Task:
     model: str | None = None  # "opus", "sonnet", "haiku"
     effort: str | None = None  # "max", "high", "medium", "low"
     created_at: float = field(default_factory=time.time)
-    progress_log: list[dict] = field(default_factory=list)  # [{timestamp, message, percent}]
+    progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
 
     @classmethod
@@ -271,7 +271,7 @@ class JanitorResult:
     task_id: str
     passed: bool
     signal_results: list[tuple[str, bool, str]]  # (signal_desc, passed, detail)
-    fix_tasks_created: list[str] = field(default_factory=list)  # IDs of created fix tasks
+    fix_tasks_created: list[str] = field(default_factory=list[str])  # IDs of created fix tasks
     judge_verdict: JudgeVerdict | None = None  # Set when llm_judge signal was evaluated
 
 
@@ -291,7 +291,7 @@ class AgentSession:
     id: str
     role: str
     pid: int | None = None
-    task_ids: list[str] = field(default_factory=list)
+    task_ids: list[str] = field(default_factory=list[str])
     model_config: ModelConfig = field(default_factory=lambda: ModelConfig("sonnet", "high"))
     heartbeat_ts: float = 0.0
     spawn_ts: float = field(default_factory=time.time)
@@ -309,9 +309,9 @@ class Cell:
     id: str
     name: str
     manager: AgentSession | None = None
-    workers: list[AgentSession] = field(default_factory=list)
+    workers: list[AgentSession] = field(default_factory=list[AgentSession])
     max_workers: int = 6
-    task_queue: list[Task] = field(default_factory=list)
+    task_queue: list[Task] = field(default_factory=list[Task])
 
 
 @dataclass
@@ -387,8 +387,8 @@ class NodeInfo:
     status: NodeStatus = NodeStatus.ONLINE
     last_heartbeat: float = field(default_factory=time.time)
     registered_at: float = field(default_factory=time.time)
-    labels: dict[str, str] = field(default_factory=dict)  # e.g. {"gpu": "true", "region": "us-east"}
-    cell_ids: list[str] = field(default_factory=list)  # Cells running on this node
+    labels: dict[str, str] = field(default_factory=dict[str, str])  # e.g. {"gpu": "true", "region": "us-east"}
+    cell_ids: list[str] = field(default_factory=list[str])  # Cells running on this node
 
     def is_alive(self, timeout_s: float = 60.0) -> bool:
         """Check if the node has sent a heartbeat within timeout."""

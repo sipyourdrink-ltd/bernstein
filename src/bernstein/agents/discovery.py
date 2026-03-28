@@ -134,8 +134,8 @@ class AgentDiscovery:
     """
 
     registry_path: Path = field(default_factory=lambda: _REGISTRY_PATH)
-    directories: list[DirectoryEntry] = field(default_factory=list)
-    metrics: dict[str, AgentMetrics] = field(default_factory=dict)
+    directories: list[DirectoryEntry] = field(default_factory=list[DirectoryEntry])
+    metrics: dict[str, AgentMetrics] = field(default_factory=dict[str, AgentMetrics])
     total_agents: int = 0
     last_full_sync: str | None = None
 
