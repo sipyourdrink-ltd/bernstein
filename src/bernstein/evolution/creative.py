@@ -108,8 +108,8 @@ class AnalystVerdict:
     risk_score: float
     composite_score: float
     reasoning: str
-    revisions: list[str] = field(default_factory=list)
-    decomposition: list[str] = field(default_factory=list)
+    revisions: list[str] = field(default_factory=list[str])
+    decomposition: list[str] = field(default_factory=list[str])
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dict."""

@@ -39,7 +39,7 @@ class ImprovementOpportunity:
     expected_improvement: str
     confidence: float
     risk_level: Literal["low", "medium", "high"]
-    affected_components: list[str] = field(default_factory=list)
+    affected_components: list[str] = field(default_factory=list[str])
     estimated_cost_impact_usd: float = 0.0
 
 
@@ -57,7 +57,7 @@ class FailurePattern:
     affected_models: list[str]
     first_seen: float
     last_seen: float
-    sample_task_ids: list[str] = field(default_factory=list)
+    sample_task_ids: list[str] = field(default_factory=list[str])
 
 
 @dataclass

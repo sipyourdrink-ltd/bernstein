@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from bernstein.evolution.types import RiskLevel, UpgradeProposal
 
@@ -90,7 +90,7 @@ class ApprovalDecision:
     decided_at: float = field(default_factory=time.time)
     reviewer: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialise for JSONL logging."""
         return {
             "proposal_id": self.proposal_id,

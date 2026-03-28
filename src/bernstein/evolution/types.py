@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class RiskLevel(Enum):
@@ -60,7 +61,7 @@ class MetricsRecord:
     schema_version: int = 1
     config_id: str = "default"  # tracks which config was active
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to dict for JSONL output."""
         return {
             "schema_version": self.schema_version,
@@ -99,7 +100,7 @@ class UpgradeProposal:
     created_at: float = field(default_factory=time.time)
     evaluated_at: float | None = None
     applied_at: float | None = None
-    sandbox_result: dict | None = None  # metrics from sandbox run
+    sandbox_result: dict[str, Any] | None = None  # metrics from sandbox run
     reviewer: str | None = None  # human reviewer if applicable
 
 

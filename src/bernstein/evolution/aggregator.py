@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -275,8 +276,8 @@ class CompositeScore:
 
     score: float
     components: dict[str, float]
-    divergence_flags: list[str] = field(default_factory=list)
-    trip_wire_flags: list[str] = field(default_factory=list)
+    divergence_flags: list[str] = field(default_factory=list[str])
+    trip_wire_flags: list[str] = field(default_factory=list[str])
 
 
 # ---------------------------------------------------------------------------
@@ -368,11 +369,11 @@ class FileMetricsCollector:
         filepath = self.metrics_dir / filename
         if not filepath.exists():
             return []
-        records = []
+        records: list[Any] = []
         with filepath.open() as f:
             for line in f:
                 if line.strip():
-                    data = json.loads(line)
+                    data: dict[str, Any] = json.loads(line)
                     with contextlib.suppress(TypeError):
                         records.append(cls(**data))
         return records
@@ -875,20 +876,20 @@ class MetricsAggregator:
             return []
 
         trends: list[TrendAnalysis] = []
-        extractors: list[tuple[str, Any]] = [
+        extractors: list[tuple[str, Callable[[TaskMetrics], float]]] = [
             ("cost_per_task", lambda m: m.cost_usd),
             ("task_duration", lambda m: m.duration_seconds),
             ("success_rate", lambda m: 1.0 if m.janitor_passed else 0.0),
         ]
         for metric_name, extractor in extractors:
             values = [extractor(m) for m in task_metrics]
-            trend = self._calculate_trend(values, metric_name)
+            trend = self.calculate_trend(values, metric_name)
             if trend:
                 trends.append(trend)
 
         return trends
 
-    def _calculate_trend(
+    def calculate_trend(
         self,
         values: list[float],
         metric_name: str,

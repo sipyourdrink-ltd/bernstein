@@ -72,6 +72,8 @@ from bernstein.evolution.types import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from bernstein.core.models import Task
 
 __all__ = [
@@ -159,7 +161,7 @@ class AnalysisEngine:
             return
 
         trends: list[TrendAnalysis] = []
-        extractors: list[tuple[str, Any]] = [
+        extractors: list[tuple[str, Callable[[TaskMetrics], float]]] = [
             ("cost_per_task", lambda m: m.cost_usd),
             ("task_duration", lambda m: m.duration_seconds),
             ("success_rate", lambda m: 1.0 if m.janitor_passed else 0.0),
@@ -178,7 +180,7 @@ class AnalysisEngine:
         metric_name: str,
     ) -> TrendAnalysis | None:
         """Calculate trend for a series of values. Delegates to aggregator."""
-        return self._aggregator._calculate_trend(values, metric_name)
+        return self._aggregator.calculate_trend(values, metric_name)
 
     def _detect_anomalies(self) -> None:
         """Detect anomalies in recent metrics."""
@@ -230,7 +232,7 @@ class EvolutionCoordinator:
 
         # Load historical metrics persisted from previous runs so trend
         # analysis has cross-session data from the first analysis cycle.
-        if hasattr(self.collector, "load_from_files"):
+        if isinstance(self.collector, FileMetricsCollector):
             self.collector.load_from_files()
 
     def _create_proposal(
@@ -264,7 +266,7 @@ class EvolutionCoordinator:
         self.analysis_engine.run_analysis()
 
         # Generate proposals from opportunities
-        proposals = []
+        proposals: list[UpgradeProposal] = []
         for opportunity in self.analysis_engine.get_opportunities():
             proposal = self._proposal_generator.create_proposal(opportunity, trigger)
 
@@ -301,7 +303,7 @@ class EvolutionCoordinator:
 
         On execution failure, attempts rollback via the executor.
         """
-        executed = []
+        executed: list[UpgradeProposal] = []
 
         for proposal in self._pending_upgrades:
             if proposal.status == UpgradeStatus.APPROVED:

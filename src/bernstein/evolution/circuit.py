@@ -16,7 +16,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from bernstein.evolution.types import CircuitState, RiskLevel
 
@@ -53,8 +53,8 @@ class CircuitBreaker:
     rate_limits: dict[RiskLevel, int] = field(default_factory=lambda: dict(DEFAULT_RATE_LIMITS))
     state: CircuitState = CircuitState.CLOSED
     opened_at: float = 0.0
-    recent_changes: list[dict] = field(default_factory=list)
-    recent_rollbacks: list[float] = field(default_factory=list)
+    recent_changes: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    recent_rollbacks: list[float] = field(default_factory=list[float])
 
     def __post_init__(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -67,7 +67,7 @@ class CircuitBreaker:
         """Load persisted state from disk."""
         path = self._state_path()
         if path.exists():
-            data = json.loads(path.read_text())
+            data: dict[str, Any] = json.loads(path.read_text())
             self.state = CircuitState(data.get("state", "closed"))
             self.opened_at = data.get("opened_at", 0.0)
             self.recent_changes = data.get("recent_changes", [])

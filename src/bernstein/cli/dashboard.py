@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 import httpx
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import (
@@ -65,7 +65,9 @@ def _load_agents() -> list[dict[str, Any]]:
     if not p.exists():
         return []
     try:
-        return json.loads(p.read_text()).get("agents", [])
+        data: dict[str, Any] = json.loads(p.read_text())
+        agents: list[dict[str, Any]] = data.get("agents", [])
+        return agents
     except Exception as exc:
         logger.warning("Failed to load agents.json: %s", exc)
         return []
@@ -92,11 +94,11 @@ class AgentWidget(Static):
 
     def __init__(self, agent: dict[str, Any], tasks: dict[str, str], **kw: Any) -> None:
         super().__init__(**kw)
-        self._a = agent
-        self._tasks = tasks
+        self.agent_data = agent
+        self.task_titles = tasks
 
     def render(self) -> Text:
-        a = self._a
+        a = self.agent_data
         role = a.get("role", "?")
         model = (a.get("model") or "?").upper()
         status = a.get("status", "?")
@@ -123,8 +125,9 @@ class AgentWidget(Static):
         t.append(f"  {model}", style="bold dim")
         t.append(f"  {m}:{s:02d}", style="dim")
 
-        for tid in a.get("task_ids", [])[:2]:
-            title = self._tasks.get(tid, tid[:12])
+        task_ids: list[str] = a.get("task_ids", [])
+        for tid in task_ids[:2]:
+            title = self.task_titles.get(tid, tid[:12])
             t.append(f"\n   \u2192 {title[:60]}", style="italic dim")
 
         lines = _tail_log(aid, 5)
@@ -193,7 +196,7 @@ class BigStats(Static):
 class ChatInput(Input):
     """Input that yields focus on Escape."""
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "unfocus", "Back", show=False),
     ]
 
@@ -204,7 +207,7 @@ class ChatInput(Input):
 # -- App -----------------------------------------------------------
 
 
-class BernsteinApp(App):
+class BernsteinApp(App[None]):
     TITLE = "BERNSTEIN"
     SUB_TITLE = "Agent Orchestra"
 
@@ -322,7 +325,7 @@ class BernsteinApp(App):
     }
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
         Binding("s", "stop_bernstein", "Stop"),
@@ -373,7 +376,7 @@ class BernsteinApp(App):
         # When NOT in input: single-char bindings work normally via BINDINGS
 
     def on_mount(self) -> None:
-        t = self.query_one("#tasks-table", DataTable)
+        t: DataTable[Any] = self.query_one("#tasks-table", DataTable)  # pyright: ignore[reportUnknownVariableType]
         t.add_columns("", "ROLE", "TASK")
         t.cursor_type = "row"
         t.zebra_stripes = True
@@ -381,7 +384,8 @@ class BernsteinApp(App):
         evolve_p = Path(".sdd/runtime/evolve.json")
         if evolve_p.exists():
             try:
-                self._evolve = json.loads(evolve_p.read_text()).get("enabled", False)
+                evolve_data: dict[str, Any] = json.loads(evolve_p.read_text())
+                self._evolve = evolve_data.get("enabled", False)
             except Exception as exc:
                 logger.warning("Failed to read evolve.json: %s", exc)
 
@@ -395,9 +399,10 @@ class BernsteinApp(App):
         self.run_worker(_fetch_all, thread=True, group="poll", exclusive=True)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        if event.worker.group != "poll" or event.state != WorkerState.SUCCESS:
+        worker: Worker[dict[str, Any]] = event.worker  # type: ignore[assignment]
+        if worker.group != "poll" or event.state != WorkerState.SUCCESS:
             return
-        data = event.worker.result
+        data: dict[str, Any] | None = worker.result
         if not isinstance(data, dict):
             return
         focused = self.focused
@@ -427,13 +432,13 @@ class BernsteinApp(App):
             if child.has_class("col-header"):
                 continue
             if isinstance(child, AgentWidget):
-                aid = child._a.get("id", "")
+                aid = child.agent_data.get("id", "")
                 if aid in alive_ids:
                     existing_ids.add(aid)
                     matching = [a for a in alive if a.get("id", "") == aid]
                     if matching:
-                        child._a = matching[0]
-                        child._tasks = self._task_titles
+                        child.agent_data = matching[0]
+                        child.task_titles = self._task_titles
                     continue
             child.remove()
 
@@ -450,24 +455,25 @@ class BernsteinApp(App):
     # -- Tasks --
 
     def _update_tasks(self, data: Any) -> None:
-        table = self.query_one("#tasks-table", DataTable)
+        table: DataTable[Any] = self.query_one("#tasks-table", DataTable)  # pyright: ignore[reportUnknownVariableType]
         if not isinstance(data, list):
             return
 
-        self._task_titles = {t.get("id", ""): t.get("title", "?") for t in data}
+        tasks: list[dict[str, Any]] = list(data)  # pyright: ignore[reportUnknownArgumentType]
+        self._task_titles = {t.get("id", ""): t.get("title", "?") for t in tasks}
 
         table.clear()
-        order = {"claimed": 0, "in_progress": 0, "open": 1, "done": 2, "failed": 3}
-        data.sort(key=lambda t: order.get(t.get("status", "open"), 9))
+        order: dict[str, int] = {"claimed": 0, "in_progress": 0, "open": 1, "done": 2, "failed": 3}
+        tasks.sort(key=lambda t: order.get(t.get("status", "open"), 9))
 
-        for t in data:
-            st = t.get("status", "open")
+        for t in tasks:
+            st: str = t.get("status", "open")
             icon = {"done": "\u2713", "failed": "\u2717", "claimed": "\u26a1", "open": "\u00b7"}.get(st, "?")
             color = {"done": "green", "failed": "red", "claimed": "yellow", "open": "dim"}.get(st, "white")
             table.add_row(
                 Text(f" {icon}", style=f"bold {color}"),
-                Text(t.get("role", "-").upper().ljust(9), style=color),
-                Text(t.get("title", "-"), style=color if st != "open" else ""),
+                Text(str(t.get("role", "-")).upper().ljust(9), style=color),
+                Text(str(t.get("title", "-")), style=color if st != "open" else ""),
             )
 
     # -- Stats --
