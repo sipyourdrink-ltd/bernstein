@@ -18,7 +18,7 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
 [![Tests](https://img.shields.io/badge/tests-2415-2ea44f)]()
-[![License](https://img.shields.io/badge/license-PolyForm_NC-f89820)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
 
 [Homepage](https://alexchernysh.com/bernstein) | [Documentation](https://chernistry.github.io/bernstein/)
 
@@ -49,10 +49,21 @@ The orchestrator is **deterministic Python** -- zero LLM tokens on coordination.
 ## Quick start
 
 ```bash
-bernstein -g "Add rate limiting and improve test coverage"  # inline goal
-bernstein                                                    # from bernstein.yaml or backlog
-bernstein --evolve --budget 5.00                             # self-improvement mode
+# 1. Install
+pipx install bernstein          # or: uv tool install bernstein
+
+# 2. Init (auto-detects project type, creates bernstein.yaml)
+cd your-project
+bernstein init
+
+# 3. Run -- set a goal inline or edit bernstein.yaml first
+bernstein -g "Add rate limiting and improve test coverage"
+bernstein                       # reads from bernstein.yaml
 ```
+
+See [`examples/quickstart/`](examples/quickstart/) for a ready-to-run example with a Flask app and pre-configured `bernstein.yaml`.
+
+> **[The Bernstein Way](docs/the-bernstein-way.md)** — architecture tenets and default workflow
 
 <details>
 <summary><strong>All CLI commands</strong></summary>
