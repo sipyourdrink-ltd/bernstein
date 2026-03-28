@@ -11,8 +11,9 @@ if TYPE_CHECKING:
     from bernstein.adapters.base import CLIAdapter
     from bernstein.core.agency_loader import AgencyAgent
 
-from bernstein.agents.catalog import CatalogRegistry
+from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
 from bernstein.agents.registry import AgentRegistry, get_registry
+from bernstein.core.context import TaskContextBuilder
 from bernstein.core.models import AgentSession, ModelConfig, Task
 from bernstein.core.router import RouterError, TierAwareRouter
 from bernstein.templates.renderer import TemplateError, render_role_prompt
@@ -26,6 +27,7 @@ def _render_prompt(
     workdir: Path,
     agency_catalog: dict[str, AgencyAgent] | None = None,
     catalog_system_prompt: str | None = None,
+    context_builder: TaskContextBuilder | None = None,
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -44,6 +46,7 @@ def _render_prompt(
         agency_catalog: Optional Agency agent catalog for extended roles.
         catalog_system_prompt: Optional system prompt from a catalog agent.
             When set, this replaces the template/role-based role prompt.
+        context_builder: Optional TaskContextBuilder for rich context injection.
 
     Returns:
         Complete prompt string ready for the CLI adapter.
@@ -98,6 +101,14 @@ def _render_prompt(
                 + "\n".join(specialists)
             )
 
+    # Build rich task context via TaskContextBuilder
+    rich_context = ""
+    if context_builder is not None:
+        try:
+            rich_context = context_builder.build_context(tasks)
+        except Exception as exc:
+            logger.warning("TaskContextBuilder failed, skipping rich context: %s", exc)
+
     # Build template context for renderer
     context = {
         "GOAL": tasks[0].title,
@@ -120,6 +131,8 @@ def _render_prompt(
     if specialist_block:
         sections.append(specialist_block)
     sections.append(f"\n## Assigned tasks\n{task_block}")
+    if rich_context:
+        sections.append(f"\n{rich_context}\n")
     if project_context:
         sections.append(f"\n## Project context\n{project_context}\n")
     sections.append(f"\n## Instructions\n{instructions}\n")
@@ -198,6 +211,7 @@ class AgentSpawner:
         self._router = router
         self._mcp_config = mcp_config
         self._catalog = catalog
+        self._context_builder = TaskContextBuilder(workdir)
 
     def spawn_for_tasks(self, tasks: list[Task]) -> AgentSession:
         """Route, render prompt, and spawn an agent for a task batch.
@@ -234,7 +248,7 @@ class AgentSpawner:
         # Check catalog for a specialist agent before building from templates
         role = tasks[0].role
         task_description = " ".join(t.description for t in tasks)
-        catalog_agent = None
+        catalog_agent: CatalogAgent | None = None
         if self._catalog is not None:
             catalog_agent = self._catalog.match(role, task_description)
 
@@ -245,6 +259,7 @@ class AgentSpawner:
             self._workdir,
             self._agency_catalog,
             catalog_system_prompt=catalog_agent.system_prompt if catalog_agent else None,
+            context_builder=self._context_builder,
         )
 
         agent_source = catalog_agent.source if catalog_agent else "built-in"

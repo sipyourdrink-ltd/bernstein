@@ -33,3 +33,9 @@ When the orchestrator assigns a task to a role, it currently only uses built-in 
 ## Completion signals
 - test_passes: uv run pytest tests/unit/test_catalog_matching.py -x -q
 - file_contains: src/bernstein/core/spawner.py :: CatalogAgent
+
+
+---
+**completed**: 2026-03-28 04:55:16
+**task_id**: 52374ea5178c
+**result**: Completed: 404 — Role matching with catalog fallback

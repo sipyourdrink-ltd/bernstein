@@ -2,7 +2,7 @@
 
 <img src="https://img.shields.io/badge/🎼-Bernstein-black?style=for-the-badge&labelColor=1a1a2e" alt="Bernstein">
 
-### Agent orchestration for code that writes itself
+### One command. Multiple AI agents. Your codebase moves forward while you sleep.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
 [![Tests](https://img.shields.io/badge/tests-1471+-2ea44f)]()
@@ -13,12 +13,53 @@
 ---
 
 ```bash
-bernstein
+bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 ```
 
-Bernstein is a multi-agent orchestrator. You define a goal or a backlog of tasks. It assigns them to AI coding agents, verifies the output, and adapts its own configuration between runs. The scheduler is deterministic Python — no LLM tokens wasted on coordination.
+Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and commits the results. You come back to working code, passing tests, and a clean git history.
 
-Works with **Claude Code**, **Codex CLI**, **Gemini CLI**, and **Qwen**. Agents are short-lived: spawn, do the work, exit. No context drift, no sleeping processes.
+**No API keys to wire up. No framework to learn.** If you have Claude Code, Codex CLI, or Gemini CLI installed, Bernstein can use them. Agents are short-lived -- they spawn, do the work, and exit. No context drift. No runaway processes. No babysitting.
+
+## Who it's for
+
+- **Solo developers** who want to mass-parallelize feature work, bug fixes, and refactoring
+- **Small teams** that need to ship faster without hiring
+- **Open source maintainers** drowning in issues and PRs
+- **Anyone who's thought** "I wish I could run 6 copies of myself on this codebase"
+
+## What happens when you run it
+
+```
+$ bernstein -g "Add rate limiting, improve test coverage, fix auth bug"
+
+  BERNSTEIN  Agent Orchestra                           12:34:05
+ ┌─────────────────────────┬───────────────────────────┐
+ │ AGENTS                  │ TASKS                     │
+ │                         │                           │
+ │ ◉ BACKEND  SONNET 2:14 │ ⚡ BACKEND  Add rate limit │
+ │   → Add rate limiting   │ ⚡ QA       Cover auth mod │
+ │   implementing middlew… │ ⚡ BACKEND  Fix auth bug   │
+ │                         │ ✓ MANAGER  Plan decompose │
+ │ ◉ QA  SONNET 1:45      │                           │
+ │   → Improve test cover… │                           │
+ │   writing test cases f… │                           │
+ │                         │                           │
+ │ ◉ BACKEND  SONNET 0:32 │                           │
+ │   → Fix auth token bug  │                           │
+ │   reading auth module…  │                           │
+ ├─────────────────────────┴───────────────────────────┤
+ │ ACTIVITY                                            │
+ │ backend  Added RateLimiter middleware to app.py     │
+ │ qa       test_auth_refresh passed (12 new tests)    │
+ ├─────────────────────────────────────────────────────┤
+ │ 3/4  ▐████████████████████░░░░░░░░░░░░░░░▌ 75%     │
+ └─────────────────────────────────────────────────────┘
+```
+
+1. A **manager agent** reads your codebase and decomposes the goal into scoped tasks
+2. **Specialist agents** (backend, QA, security, etc.) pick up tasks and work in parallel
+3. A **janitor** verifies each result -- tests pass, files exist, no regressions
+4. You get commits. Done.
 
 ## Quick start
 
@@ -27,227 +68,165 @@ git clone https://github.com/chernistry/bernstein && cd bernstein
 uv venv && uv pip install -e .
 ```
 
-Option A — inline goal:
+Three ways to give it work:
 
 ```bash
+# Inline goal -- Bernstein plans and executes
 bernstein -g "Add JWT authentication with refresh tokens and tests"
-```
 
-Option B — seed file:
-
-```yaml
-# bernstein.yaml
-goal: "Add JWT authentication with refresh tokens and tests"
+# Seed file -- for repeatable setups
+cat > bernstein.yaml << 'EOF'
+goal: "Refactor the payments module and add integration tests"
 cli: claude
+EOF
+bernstein
+
+# Backlog -- drop .md task files in .sdd/backlog/open/
+# Bernstein picks them up automatically
+bernstein
 ```
 
 ```bash
-bernstein                      # starts agents, shows live dashboard
-bernstein --headless           # run without dashboard (overnight/CI)
+bernstein                      # live dashboard
+bernstein --headless           # no UI (CI, overnight runs)
 bernstein --evolve             # continuous self-improvement mode
-bernstein --evolve \
-  --max-cycles 10 \
-  --budget 5.00 \
-  --interval 300               # evolve with limits
 bernstein stop                 # graceful shutdown
 ```
 
-Option C — put `.md` task files in `.sdd/backlog/open/` with YAML frontmatter. Bernstein loads them automatically on start.
+## Supports your existing tools
 
-## Commands
+No vendor lock-in. Bernstein works with the CLI agents you already have installed:
 
-```
-bernstein             Start from seed file, inline goal, or backlog
-bernstein stop        Gracefully stop all agents and the task server
-bernstein benchmark   Run the tiered golden benchmark suite
-bernstein evolve      Manage self-evolution proposals
-bernstein cost        Show agent spend: cost, tokens, and duration per model
-```
+| Agent | CLI flag | Notes |
+|-------|----------|-------|
+| Claude Code | `--cli claude` | Default. Full tool-use, file editing, tests. |
+| Codex CLI | `--cli codex` | OpenAI Codex. |
+| Gemini CLI | `--cli gemini` | Google Gemini. |
+| Qwen | `--cli qwen` | Local-friendly, Alibaba Qwen. |
 
-### `bernstein evolve` subcommands
+Mix and match per task using routing rules, or let the orchestrator pick based on task complexity.
 
-```
-bernstein evolve review           List proposals pending human review
-bernstein evolve approve <id>     Approve a specific proposal
-bernstein evolve run              Run the autoresearch evolution loop
-```
-
-### `bernstein benchmark` subcommands
+## How it works
 
 ```
-bernstein benchmark run                  Run all benchmark tiers
-bernstein benchmark run --tier smoke     Smoke tier only
-bernstein benchmark run --tier stretch   Stretch tier only
-```
-
-## Dashboard
-
-Live TUI dashboard shows agents, tasks, and activity in a three-column Bloomberg-style layout. Hotkeys: `q` quit, `r` refresh, `s` stop, `l` toggle activity, `c` chat (type tasks inline). `Esc` exits the chat input.
-
-```bash
-bernstein          # starts with dashboard
-bernstein --headless   # no dashboard (CI/overnight)
-```
-
-## Architecture
-
-```
-bernstein
+You define a goal
     │
-    ├── Task Server (HTTP :8052)     ← agents pull tasks, report completion
-    ├── Orchestrator (Python)        ← deterministic scheduler, no LLM
-    ├── Spawner                      ← launches CLI agents per task batch
-    ├── Janitor                      ← verifies done tasks (tests pass? files exist?)
-    ├── Context Builder              ← injects file maps, architecture notes into agent prompts
-    └── Evolution                    ← adjusts prompts/config between runs
+    ▼
+Manager agent decomposes it into tasks
+    │
+    ▼
+Orchestrator assigns tasks to specialist agents
+    │                    (deterministic Python -- no LLM tokens wasted)
+    ▼
+Agents work in parallel ──► Janitor verifies output
+    │                              │
+    ▼                              ▼
+Commits to your repo          Failed? Re-queue with context
 ```
 
-Agents are spawned fresh per task batch (1-3 tasks), work in the same repo, then exit. File ownership prevents concurrent edits to the same file. The orchestrator polls every 10s, spawns when capacity allows (max 6 agents default), and reaps stale processes.
+The orchestrator is **deterministic code**, not an LLM. It doesn't "think" about scheduling -- it routes tasks by role, manages file ownership to prevent conflicts, and enforces capacity limits. Zero tokens spent on coordination.
 
-## Adapters
+Agents are **short-lived** (1-3 tasks, then exit). This is by design: no context window bloat, no sleeping processes, no memory leaks. Fresh agent, fresh context, focused work.
 
-| Adapter | CLI | Notes |
-|---------|-----|-------|
-| Claude Code | `claude` | Default. Full tool-use, file editing, tests. |
-| Codex CLI | `codex` | OpenAI Codex — lightweight, fast. |
-| Gemini CLI | `gemini` | Google Gemini models. |
-| Qwen | `qwen` | Local-friendly, Alibaba Qwen models. |
+## Specialist roles
 
-Set `cli: <adapter>` in `bernstein.yaml`, or pass `--cli <adapter>` on the command line.
-
-## Roles
-
-Bernstein routes tasks to specialist agents based on the `role` field. The following roles are available:
-
-| Role | Purpose |
-|------|---------|
-| `manager` | Plans work, decomposes goals, coordinates other roles |
-| `backend` | Server-side code, APIs, data models |
-| `frontend` | UI, components, browser-side logic |
-| `qa` | Tests, coverage, regression prevention |
-| `security` | Vulnerability analysis, hardening, auth |
-| `devops` | CI/CD, deployment, infrastructure |
-| `architect` | System design, ADRs, structural decisions |
-| `docs` | Documentation, READMEs, changelogs |
-| `ml-engineer` | Models, training pipelines, inference |
-| `prompt-engineer` | Prompt design, LLM integration |
+| Role | What it does |
+|------|-------------|
+| `manager` | Decomposes goals, creates tasks, coordinates |
+| `backend` | APIs, data models, business logic |
+| `frontend` | UI, components, styling |
+| `qa` | Tests, coverage, edge cases |
+| `security` | Vulnerability analysis, hardening |
+| `architect` | System design, refactoring |
+| `devops` | CI/CD, infrastructure |
 | `reviewer` | Code review, quality gates |
-| `retrieval` | RAG, embeddings, vector search |
-| `vp` | High-level strategy, cross-team decisions |
-
-Tasks default to `backend` if no role is specified.
-
-## Task server API
-
-Any tool, agent, or framework can interact with Bernstein programmatically:
-
-```bash
-# Create a task
-curl -X POST http://127.0.0.1:8052/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"title": "Add rate limiting", "role": "backend", "priority": 1}'
-
-# List tasks
-curl http://127.0.0.1:8052/tasks?status=open
-
-# Mark done
-curl -X POST http://127.0.0.1:8052/tasks/{id}/complete \
-  -d '{"result_summary": "Added rate limiter middleware"}'
-
-# Dashboard
-curl http://127.0.0.1:8052/status
-```
-
-This is the integration layer. Other agents, CI pipelines, Slack bots, or custom UIs can create tasks and read status without knowing anything about Bernstein internals.
 
 ## Self-evolution
 
-After each run, Bernstein analyzes metrics and proposes configuration changes. The pipeline:
-
-```
-metrics → analysis → proposal → sandbox → gate → apply
-```
-
-1. **Metrics** — aggregate task completion rates, failure patterns, cost per role
-2. **Analysis** — detect regressions, bottlenecks, and improvement opportunities
-3. **Proposal** — generate a concrete change (prompt tweak, routing rule, batch size)
-4. **Sandbox** — run the proposed change against a test suite in isolation
-5. **Gate** — risk-stratified acceptance check; reject on test regression
-6. **Apply** — write the change to config/templates if it passes
-
-Changes are risk-stratified:
-
-| Risk | Scope | Method |
-|------|-------|--------|
-| L0 | Routing, batch sizes, timeouts | Auto-apply |
-| L1 | Prompts, role templates | Sandbox test first |
-| L2 | Routing logic, strategies | PR for review |
-| L3 | Python source | Blocked |
-
-`InvariantsGuard` SHA-locks critical files on boot. `CircuitBreaker` halts evolution on test regression.
-
-Continuous evolution mode:
+Leave Bernstein running and it gets better at its job:
 
 ```bash
-bernstein --evolve                        # evolve indefinitely
-bernstein --evolve --max-cycles 10        # stop after 10 cycles
-bernstein --evolve --budget 5.00          # stop after $5 spent
-bernstein evolve run --window 2h          # dedicated evolution session
+bernstein --evolve                   # continuous improvement
+bernstein --evolve --max-cycles 10   # with limits
+bernstein --evolve --budget 5.00     # stop at $5 spent
 ```
+
+It analyzes completion rates, detects bottlenecks, and proposes changes to prompts, routing rules, and batch sizes. Changes go through a safety pipeline:
+
+| Risk | What changes | How |
+|------|-------------|-----|
+| L0 | Timeouts, batch sizes | Auto-apply |
+| L1 | Prompts, templates | Sandbox + tests first |
+| L2 | Routing logic | PR for human review |
+| L3 | Core Python | Blocked |
+
+Critical files are SHA-locked on boot. A circuit breaker halts evolution on any test regression.
 
 ## Agent catalogs
 
-Bernstein can load agent definitions from external catalogs. [Agency](https://github.com/msitarzewski/agency-agents) is the default. Custom registries can be added via `bernstein.yaml`:
+Hire specialist agents from external catalogs. [Agency](https://github.com/msitarzewski/agency-agents) is the default -- 100+ pre-built agents across engineering, QA, security, DevOps, and more.
 
 ```yaml
+# bernstein.yaml
 catalogs:
   - name: agency
     type: agency
     source: https://github.com/msitarzewski/agency-agents
     priority: 100
-  - name: internal
+  - name: my-team
     type: generic
-    path: ./custom-agents/
-    format: yaml
+    path: ./our-agents/
     priority: 50
 ```
 
 ```bash
-bernstein agents sync       # refresh catalogs
-bernstein agents list       # show available agents
-bernstein agents validate   # check catalog health
+bernstein agents sync       # pull latest catalog
+bernstein agents list       # see available agents
 ```
 
-When a task is assigned, the orchestrator checks the catalog for a specialized agent before falling back to built-in roles.
+The orchestrator checks catalogs for a specialized agent before falling back to built-in roles.
 
-## Project structure
+## Task server API
 
-```
-src/bernstein/
-├── adapters/      # CLI agent adapters (claude, codex, gemini, qwen)
-├── agents/        # agent catalog, providers, registry
-├── cli/           # CLI entry points
-├── core/          # orchestrator, server, spawner, janitor, context
-├── evolution/     # metrics aggregation, proposal generation, safety gates
-└── templates/     # role system prompts
-.sdd/              # file-based runtime state (backlog, metrics, config)
+Bernstein exposes an HTTP API. Plug in CI pipelines, Slack bots, custom UIs, or other agents:
+
+```bash
+curl -X POST http://127.0.0.1:8052/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Add rate limiting", "role": "backend", "priority": 1}'
+
+curl http://127.0.0.1:8052/tasks?status=open
+curl http://127.0.0.1:8052/status
 ```
 
 ## How it compares
 
 |  | Bernstein | CrewAI | AutoGen | LangGraph |
 |--|-----------|--------|---------|-----------|
-| Scheduling | Deterministic code | LLM | LLM | Graph |
+| Scheduling | Deterministic code | LLM-based | LLM-based | Graph |
 | Agent lifetime | Short (minutes) | Long-running | Long-running | Long-running |
 | Verification | Built-in janitor | Manual | Manual | Manual |
-| Self-evolution | Risk-gated (L0-L3) + continuous `--evolve` mode | No | No | No |
-| External agent catalogs | Yes (Agency, custom registries) | No | No | No |
-| Works with CLI agents | Yes | No | No | No |
-| Multi-provider | Claude/Codex/Gemini/Qwen | API-only | API-only | API-only |
+| Self-evolution | Yes (risk-gated) | No | No | No |
+| CLI agent support | Claude/Codex/Gemini/Qwen | API-only | API-only | API-only |
+| Agent catalogs | Yes (Agency + custom) | No | No | No |
+| Zero coordination tokens | Yes | No | No | No |
 
 ## Origin
 
-Built during a 47-hour sprint where 12 AI agents ran on a single laptop, closing 737 tickets (15.7/hour) across 826 commits. The [full write-up](docs/rag-challenge-swarm-architecture.md) documents what worked and what failed. Every design decision here is a direct response to those findings.
+Built during a 47-hour sprint where 12 AI agents ran on a single laptop, closing 737 tickets (15.7/hour) across 826 commits. The [full write-up](docs/rag-challenge-swarm-architecture.md) documents the findings. Every design decision is a direct response to what worked and what failed.
+
+## Project structure
+
+```
+src/bernstein/
+├── adapters/      # CLI agent adapters
+├── agents/        # agent catalog, providers
+├── cli/           # CLI and TUI dashboard
+├── core/          # orchestrator, server, spawner, janitor
+├── evolution/     # self-improvement pipeline
+└── templates/     # role prompts
+.sdd/              # file-based state (backlog, metrics, config)
+```
 
 ## Contributing
 
@@ -255,4 +234,4 @@ PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and [open issues](https://gi
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — Free for non-commercial use. Commercial licensing: [alex@alexchernysh.com](mailto:alex@alexchernysh.com)
+[PolyForm Noncommercial 1.0.0](LICENSE) -- Free for non-commercial use. Commercial licensing: [alex@alexchernysh.com](mailto:alex@alexchernysh.com)

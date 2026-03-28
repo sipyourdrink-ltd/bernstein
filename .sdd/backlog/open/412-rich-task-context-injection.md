@@ -6,70 +6,83 @@
 **Complexity:** high
 
 ## Problem
-Every spawned agent starts fresh and spends significant time (and tokens) reading files, running `find`, `rg`, `cat` to understand the codebase before doing actual work. The manager creates tasks with titles and short descriptions, but agents lack:
-- File structure relevant to the task
-- Contents of key files they'll need to modify
-- Architecture context specific to the subsystem
-- Results/decisions from prior agents working on related tasks
+Every spawned agent starts fresh and spends 30-50% of its turns (and tokens) reading files, running `find`, `rg`, `cat` to understand the codebase. Research across CrewAI, AutoGen, MetaGPT, Aider, OpenHands, Devin, and Google ADK (2025-2026) converges on the same solution: **pre-computed context injection** with **layered architecture** and **explicit token budgets**.
 
-This wastes 30-50% of agent turns on "orientation" that the orchestrator already knows.
+Key finding: Aider's repo-map (tree-sitter AST signatures + dependency graph, token-budgeted) is the single highest-ROI technique. AGENTS.md-style briefing docs correlate with 29% runtime reduction (arXiv 2602.20478).
+
+## Design: Three-Layer Context Architecture
+
+### Layer 1: Hot Context (injected into every agent, ~15% token budget)
+- Role system prompt (already exists)
+- Project conventions from `.sdd/project.md` (already exists)
+- **NEW: Repo map** — compressed codebase summary
+
+### Layer 2: Warm Context (injected per-task, ~40% token budget)
+- **NEW: Task context packet** — files to touch, dependency info, predecessor outputs
+- **NEW: Relevant knowledge** — decisions/findings from related completed tasks
+
+### Layer 3: Cold Context (agent pulls on-demand via tools, ~35% reserved)
+- Full file contents (agent reads via tools as needed)
+- Full specs, historical data
 
 ## Implementation
 
-### 1. Context builder (`src/bernstein/core/context.py`)
-Create a `TaskContextBuilder` that enriches task descriptions before spawning:
+### 1. Repo Map Generator (`src/bernstein/core/repomap.py`)
+Aider-style codebase digest:
+- Parse Python files via `ast` module (no tree-sitter dependency needed)
+- Extract: module docstrings, class names + bases, function signatures, top-level constants
+- Build import graph: file A imports from file B
+- Rank by relevance: files with most importers = most important
+- Token-budget the output (configurable, default 1500 tokens)
+- Cache to `.sdd/knowledge/repo_map.md`, regenerate on file changes (check mtimes)
 
-- **File map**: For each `owned_files` entry, include a brief summary (first docstring, class/function signatures). Generate via AST parsing, not LLM.
-- **Dependency graph**: For each owned file, list imports and importers (who calls this code).
-- **Related files**: Files frequently co-modified with owned files (from git log --follow).
-- **Subsystem context**: If task touches `evolution/`, include the evolution module map. If `core/`, include core architecture. Derived from directory-level README or module docstrings.
+### 2. Task Context Packet Builder (`src/bernstein/core/context.py`)
+For each task, construct a structured packet:
+- **Owned files summary**: For each file in `owned_files`, include function/class signatures (from repo map data)
+- **Dependency context**: Which files import owned files, which files owned files import
+- **Predecessor outputs**: If task depends on completed tasks, include their `result_summary` (from task server)
+- **Recent decisions**: Last 5 entries from `.sdd/knowledge/decisions.jsonl` relevant to the touched subsystem
 
-### 2. Manager enrichment
-When the manager agent creates tasks via POST /tasks:
-- Manager should include `context_hints` field: list of file paths, function names, architectural notes relevant to the task.
-- Update manager role prompt to instruct: "For each task you create, include a `context_hints` section listing the specific files, functions, and architectural decisions the assigned agent needs to know."
+### 3. Knowledge Capture on Task Completion
+When janitor confirms a task is done:
+- Parse agent output log for key decisions (heuristic: lines containing "decided", "chose", "because", "approach")
+- Append structured entry to `.sdd/knowledge/decisions.jsonl`: `{task_id, title, files_changed, summary, timestamp}`
+- Update repo map if files were modified
 
-### 3. Prompt injection in spawner
-In `_render_prompt()`, after the task block, inject:
+### 4. Manager Enrichment
+Update manager role prompt to require `context_hints` in created tasks:
+- List specific files the agent will need
+- Note any architectural constraints or gotchas
+- Reference related completed tasks
+
+### 5. Prompt Assembly in Spawner
+Modify `_render_prompt()` in `spawner.py`:
 ```
-### Context (auto-generated)
-#### Files you'll work with:
-- src/bernstein/evolution/loop.py: EvolutionLoop class, runs 5-min cycles...
-  - Key functions: run_cycle(), _detect_opportunities(), _generate_proposals()
-  - Imports: detector, proposals, sandbox, gate, applicator
-  - Imported by: orchestrator.py
-
-#### Related recent changes:
-- commit abc123: "Fix proposal scoring" — changed detector.py scoring logic
-- commit def456: "Add EWMA to aggregator" — new trend detection
-
-#### Architecture notes:
-- Evolution pipeline: Detect → Propose → Sandbox → Gate → Apply
-- Risk levels L0-L3, only L0-L1 auto-apply
+[Role system prompt]              ← hot (existing)
+[Repo map]                        ← hot (NEW)
+[Task description + context_hints]← warm (existing + enriched)
+[File signatures for owned_files] ← warm (NEW)
+[Predecessor task summaries]      ← warm (NEW)
+[Recent relevant decisions]       ← warm (NEW)
+[Completion instructions]         ← hot (existing)
 ```
-
-### 4. Shared knowledge base (`.sdd/knowledge/`)
-- `.sdd/knowledge/architecture.md` — auto-generated module map with signatures
-- `.sdd/knowledge/recent_decisions.md` — last 10 completed tasks with summaries
-- `.sdd/knowledge/file_index.json` — file → {summary, exports, imports, last_modified}
-- Regenerated periodically by orchestrator (every 5 cycles or on significant changes)
-- Included in agent prompts as compressed context
-
-### 5. Post-task knowledge capture
-When an agent completes a task:
-- Extract key decisions/findings from the agent's output log
-- Append to `.sdd/knowledge/recent_decisions.md`
-- Update `file_index.json` for modified files
 
 ## Files
-- src/bernstein/core/context.py — TaskContextBuilder (new or extend existing)
-- src/bernstein/core/spawner.py — inject rich context into prompts
-- src/bernstein/core/orchestrator.py — trigger knowledge base refresh
-- templates/roles/manager/system_prompt.md — instruct manager to include context_hints
-- tests/unit/test_context_builder.py (new)
+- src/bernstein/core/repomap.py (new) — AST-based repo map generator
+- src/bernstein/core/context.py — extend with TaskContextPacket builder
+- src/bernstein/core/spawner.py — inject repo map + context packet into prompts
+- src/bernstein/core/janitor.py — knowledge capture on task completion
+- src/bernstein/core/orchestrator.py — trigger repo map refresh
+- templates/roles/manager/system_prompt.md — require context_hints
+- tests/unit/test_repomap.py (new)
+- tests/unit/test_context_packet.py (new)
 
 ## Completion signals
-- test_passes: uv run pytest tests/unit/test_context_builder.py -x -q
-- file_contains: src/bernstein/core/context.py :: TaskContextBuilder
-- file_contains: src/bernstein/core/spawner.py :: context_builder
-- path_exists: .sdd/knowledge/file_index.json
+- test_passes: uv run pytest tests/unit/test_repomap.py -x -q
+- test_passes: uv run pytest tests/unit/test_context_packet.py -x -q
+- file_contains: src/bernstein/core/repomap.py :: RepoMap
+- file_contains: src/bernstein/core/spawner.py :: repo_map
+- path_exists: .sdd/knowledge/repo_map.md
+
+## Research reference
+- .sdd/research/auto/context-sharing-best-practices-2026.md
