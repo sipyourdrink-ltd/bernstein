@@ -4180,7 +4180,20 @@ def doctor(as_json: bool) -> None:
         "Run 'bernstein stop' to clean up" if stale_pids else "",
     )
 
-    # 7. CI tool dependencies (ruff, pytest, pyright)
+    # 7. Guardrail stats
+    from bernstein.core.guardrails import get_guardrail_stats
+
+    guardrail_stats = get_guardrail_stats(workdir)
+    g_total = guardrail_stats["total"]
+    g_blocked = guardrail_stats["blocked"]
+    g_flagged = guardrail_stats["flagged"]
+    if g_total > 0:
+        g_detail = f"{g_total} checked, {g_blocked} blocked, {g_flagged} flagged"
+    else:
+        g_detail = "no events recorded yet"
+    _check("Guardrails", True, g_detail)
+
+    # 8. CI tool dependencies (ruff, pytest, pyright)
     from bernstein.core.ci_fix import check_test_dependencies
 
     ci_dep_results = check_test_dependencies()
@@ -4262,7 +4275,7 @@ def doctor(as_json: bool) -> None:
             "Set BERNSTEIN_STORAGE_BACKEND to memory, postgres, or redis",
         )
 
-    # 9. Overall readiness
+    # 10. Overall readiness
     any_adapter_key = any_adapter and any_key
     _check(
         "Ready to run",
