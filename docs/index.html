@@ -251,6 +251,21 @@
         <h3>Live dashboard</h3>
         <p>Real-time TUI shows agent status, task progress, activity feed, sparkline, and cost tracking. Chat input lets you add tasks mid-run without leaving the terminal.</p>
       </div>
+      <div class="card">
+        <div class="feature-icon"><i data-lucide="dollar-sign"></i></div>
+        <h3>Cost budgeting</h3>
+        <p>Set a dollar cap with <code>--budget 5.00</code>. The tracker warns at 80%, alerts at 95%, and hard-stops agents at 100%. No more runaway API bills.</p>
+      </div>
+      <div class="card">
+        <div class="feature-icon"><i data-lucide="git-pull-request"></i></div>
+        <h3>GitHub Action</h3>
+        <p>Trigger orchestration from CI. Auto-fix failing builds, run coding tasks on push, or schedule maintenance. Ships as a composite action — <code>uses: chernistry/bernstein@v1</code>.</p>
+      </div>
+      <div class="card">
+        <div class="feature-icon"><i data-lucide="wrench"></i></div>
+        <h3>MCP tool access</h3>
+        <p>Agents can use MCP servers (stdio/SSE) for external tools — GitHub, filesystem, web search. The orchestrator manages MCP server lifecycle automatically.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -342,6 +357,22 @@
           </tr>
           <tr>
             <td>A2A protocol (agent federation)</td>
+            <td class="col-bern"><span class="check">✓</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>Per-run cost budgeting</td>
+            <td class="col-bern"><span class="check">✓</span></td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>GitHub Action (CI integration)</td>
             <td class="col-bern"><span class="check">✓</span></td>
             <td>—</td>
             <td>—</td>
