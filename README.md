@@ -10,14 +10,16 @@
 
 ### One command. Multiple AI agents. Your codebase moves forward while you sleep.
 
-<img alt="Bernstein demo — one command, three agents, 47 seconds" src="docs/assets/demo.gif" width="700">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dashboard.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/dashboard.svg">
+  <img alt="Bernstein Dashboard" src="docs/assets/dashboard.svg" width="700">
+</picture>
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-2415-2ea44f)]()
+[![Tests](https://img.shields.io/badge/tests-2500+-2ea44f)]()
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
-[![Benchmark: 1.78x faster](https://img.shields.io/badge/benchmark-1.78x_faster_than_single_agent-brightgreen)](benchmarks/README.md)
-<!-- TODO: replace the URL below with the actual YouTube link once uploaded -->
-[![Watch demo](https://img.shields.io/badge/▶_watch_demo-2min-ff0000?logo=youtube&logoColor=white)](https://github.com/chernistry/bernstein)
+[![Benchmark](https://img.shields.io/badge/benchmark-1.78x_faster-brightgreen)](benchmarks/README.md)
 
 [Homepage](https://alexchernysh.com/bernstein) | [Documentation](https://chernistry.github.io/bernstein/)
 
@@ -63,6 +65,12 @@ bernstein                       # reads from bernstein.yaml
 See [`examples/quickstart/`](examples/quickstart/) for a ready-to-run example with a Flask app and pre-configured `bernstein.yaml`.
 
 > **[The Bernstein Way](docs/the-bernstein-way.md)** — architecture tenets and default workflow
+
+<details>
+<summary><strong>Watch: terminal demo (GIF)</strong></summary>
+<br>
+<img alt="Bernstein terminal demo" src="docs/assets/demo.gif" width="700">
+</details>
 
 <details>
 <summary><strong>All CLI commands</strong></summary>
