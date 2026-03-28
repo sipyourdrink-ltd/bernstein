@@ -10,8 +10,10 @@ import json
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 MessageType = Literal["alert", "blocker", "finding", "status", "dependency"]
 
@@ -163,12 +165,12 @@ class BulletinBoard:
                 data: dict[str, object] = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            ts = float(cast(float, data.get("timestamp", 0.0)))
+            ts = float(cast("float", data.get("timestamp", 0.0)))
             if ts in existing_ts:
                 continue
             msg = BulletinMessage(
                 agent_id=str(data.get("agent_id", "")),
-                type=cast(MessageType, data.get("type", "status")),
+                type=cast("MessageType", data.get("type", "status")),
                 content=str(data.get("content", "")),
                 timestamp=ts,
                 cell_id=cast("str | None", data.get("cell_id")),

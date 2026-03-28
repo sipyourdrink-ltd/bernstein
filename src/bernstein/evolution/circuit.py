@@ -15,9 +15,12 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.evolution.types import CircuitState, RiskLevel
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -104,10 +107,9 @@ class CircuitBreaker:
             self._save_state()
             logger.info("Circuit transitioning to HALF_OPEN")
 
-        if self.state == CircuitState.HALF_OPEN:
+        if self.state == CircuitState.HALF_OPEN and risk_level != RiskLevel.L0_CONFIG:
             # Only allow L0 in half-open
-            if risk_level != RiskLevel.L0_CONFIG:
-                return False, "Circuit HALF_OPEN — only L0 config changes allowed"
+            return False, "Circuit HALF_OPEN — only L0 config changes allowed"
 
         # Check rate limits
         now = time.time()
@@ -151,7 +153,7 @@ class CircuitBreaker:
         if len(recent_48h) >= 1:
             self._trip(f"Rollback detected (proposal {proposal_id})")
         elif len(self.recent_rollbacks) > 2:
-            self._trip(f">2 rollbacks in 7 days")
+            self._trip(">2 rollbacks in 7 days")
         self._save_state()
 
     def record_sandbox_failure(self, proposal_id: str) -> None:

@@ -3,14 +3,15 @@ from __future__ import annotations
 
 import logging
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from bernstein.adapters.base import CLIAdapter
+    from bernstein.core.agency_loader import AgencyAgent
 
 from bernstein.agents.registry import AgentRegistry, get_registry
-from bernstein.core.agency_loader import AgencyAgent
 from bernstein.core.models import AgentSession, ModelConfig, Task
 from bernstein.core.router import RouterError, TierAwareRouter
 from bernstein.templates.renderer import TemplateError, render_role_prompt

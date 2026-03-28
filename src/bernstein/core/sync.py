@@ -12,10 +12,12 @@ import re
 import shutil
 import unicodedata
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -272,10 +274,7 @@ def _task_already_exists(task: BacklogTask, existing_slugs: set[str]) -> bool:
     if normalise_title(task.title) in existing_slugs:
         return True
     file_slug = _file_to_slug(task.source_file)
-    for slug in existing_slugs:
-        if file_slug and file_slug == slug:
-            return True
-    return False
+    return any(file_slug and file_slug == slug for slug in existing_slugs)
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +300,7 @@ def _get_tasks_by_status(
     try:
         resp = client.get(f"{server_url}/tasks", params={"status": status})
         resp.raise_for_status()
-        return cast(list[dict[str, Any]], resp.json())
+        return cast("list[dict[str, Any]]", resp.json())
     except httpx.ConnectError:
         raise
     except httpx.HTTPError as exc:

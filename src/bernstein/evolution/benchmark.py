@@ -103,13 +103,12 @@ def _eval_import_succeeds(spec: SignalSpec) -> SignalResult:
     except ImportError as exc:
         return SignalResult("import_succeeds", False, f"ImportError: {exc}")
 
-    if spec.attribute:
-        if not hasattr(mod, spec.attribute):
-            return SignalResult(
-                "import_succeeds",
-                False,
-                f"Module '{spec.module}' has no attribute '{spec.attribute}'",
-            )
+    if spec.attribute and not hasattr(mod, spec.attribute):
+        return SignalResult(
+            "import_succeeds",
+            False,
+            f"Module '{spec.module}' has no attribute '{spec.attribute}'",
+        )
 
     return SignalResult("import_succeeds", True, f"OK: {spec.module}")
 

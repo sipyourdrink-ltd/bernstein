@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from bernstein.core.models import ApiTierInfo, ModelConfig
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.core.models import ApiTierInfo, ModelConfig
 
 
 @dataclass

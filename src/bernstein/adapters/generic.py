@@ -1,14 +1,18 @@
 """Generic CLI adapter for arbitrary coding agent CLIs."""
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
-from bernstein.core.models import ModelConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.core.models import ModelConfig
 
 
 class GenericAdapter(CLIAdapter):
@@ -82,10 +86,8 @@ class GenericAdapter(CLIAdapter):
             return False
 
     def kill(self, pid: int) -> None:
-        try:
+        with contextlib.suppress(OSError):
             os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except OSError:
-            pass
 
     def name(self) -> str:
         return self._display_name

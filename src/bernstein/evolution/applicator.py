@@ -5,14 +5,16 @@ import json
 import logging
 import shutil
 import time
-from pathlib import Path
-from typing import Any, Protocol
-
-logger = logging.getLogger(__name__)
+from typing import TYPE_CHECKING, Any, Protocol
 
 import yaml
 
 from bernstein.evolution.proposals import UpgradeCategory, UpgradeProposal
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class UpgradeExecutor(Protocol):

@@ -7,11 +7,13 @@ import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 logger = logging.getLogger(__name__)
 
-from bernstein.evolution.aggregator import MetricsCollector
+
+if TYPE_CHECKING:
+    from bernstein.evolution.aggregator import MetricsCollector
 
 
 class UpgradeCategory(Enum):

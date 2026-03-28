@@ -224,7 +224,7 @@ def parse_tasks_response(raw: str) -> list[dict[str, Any]]:
         raise ValueError(f"LLM response is not valid JSON: {exc}") from exc
     if not isinstance(parsed, list):
         raise ValueError(f"Expected a JSON array, got {type(parsed).__name__}")
-    return cast(list[dict[str, Any]], parsed)
+    return cast("list[dict[str, Any]]", parsed)
 
 
 def _parse_completion_signal(raw: dict[str, str]) -> CompletionSignal:
@@ -247,7 +247,10 @@ def _parse_completion_signal(raw: dict[str, str]) -> CompletionSignal:
     if not sig_value:
         raise ValueError(f"Completion signal value cannot be empty (type={sig_type})")
     return CompletionSignal(
-        type=cast(Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"], sig_type),
+        type=cast(  # type: ignore[arg-type]
+            "Literal['path_exists', 'glob_exists', 'test_passes', 'file_contains', 'llm_review', 'llm_judge']",
+            sig_type,
+        ),
         value=sig_value,
     )
 
@@ -435,7 +438,7 @@ def parse_review_response(raw: str) -> dict[str, Any]:
     if verdict not in _VALID_VERDICTS:
         raise ValueError(f"Invalid verdict: {verdict!r}. Must be one of {sorted(_VALID_VERDICTS)}")
 
-    return cast(dict[str, Any], parsed)
+    return cast("dict[str, Any]", parsed)
 
 
 
@@ -488,7 +491,7 @@ async def _post_task_to_server(
 
     resp = await client.post(f"{server_url}/tasks", json=body)
     resp.raise_for_status()
-    return cast(str, resp.json()["id"])
+    return cast("str", resp.json()["id"])
 
 
 async def _fetch_existing_tasks(

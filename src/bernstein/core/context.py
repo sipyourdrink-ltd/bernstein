@@ -11,8 +11,10 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from bernstein.core.models import ApiTier
+if TYPE_CHECKING:
+    from bernstein.core.models import ApiTier
 
 _IGNORED_DIRS = frozenset({
     ".git", "__pycache__", "node_modules", ".mypy_cache",

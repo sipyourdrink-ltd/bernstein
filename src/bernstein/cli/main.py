@@ -17,6 +17,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from bernstein.cli.cost import cost_cmd
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -158,7 +160,10 @@ def _find_seed_file() -> Path | None:
 @click.option("--interval", default=300, help="Seconds between evolve cycles (default 5min).")
 @click.option("--headless", is_flag=True, default=False, help="Run without dashboard (for overnight/CI).")
 @click.pass_context
-def cli(ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int, budget: float, interval: int, headless: bool) -> None:
+def cli(
+    ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int,
+    budget: float, interval: int, headless: bool,
+) -> None:
     """Bernstein — multi-agent orchestration for CLI coding agents.
 
     \b
@@ -208,7 +213,8 @@ def cli(ctx: click.Context, goal: str | None, evolve: bool, max_cycles: int, bud
             backlog_dir = workdir / ".sdd" / "backlog" / "open"
             has_backlog = backlog_dir.exists() and any(backlog_dir.glob("*.md"))
             if has_backlog:
-                console.print(f"[dim]No seed file — loading {sum(1 for _ in backlog_dir.glob('*.md'))} tasks from backlog[/dim]")
+                task_count = sum(1 for _ in backlog_dir.glob("*.md"))
+                console.print(f"[dim]No seed file — loading {task_count} tasks from backlog[/dim]")
                 from bernstein.core.bootstrap import bootstrap_from_goal
                 try:
                     bootstrap_from_goal("Execute backlog tasks", workdir=workdir, port=port)
@@ -1051,10 +1057,7 @@ def benchmark_run(tier: str, benchmarks_dir: str, save: bool) -> None:
         console.print(f"[red]Benchmarks directory not found:[/red] {bdir}")
         raise SystemExit(1)
 
-    if tier == "all":
-        summary = run_all(bdir)
-    else:
-        summary = run_selected(bdir, tier)  # type: ignore[arg-type]
+    summary = run_all(bdir) if tier == "all" else run_selected(bdir, tier)  # type: ignore[arg-type]
 
     # ---- Results table ----
     table = Table(title=f"Benchmarks — tier={tier}", header_style="bold cyan", show_lines=False)
@@ -1103,8 +1106,6 @@ def benchmark_run(tier: str, benchmarks_dir: str, save: bool) -> None:
 # ---------------------------------------------------------------------------
 # cost
 # ---------------------------------------------------------------------------
-
-from bernstein.cli.cost import cost_cmd
 
 cli.add_command(cost_cmd, "cost")
 

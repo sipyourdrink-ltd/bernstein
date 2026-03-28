@@ -8,6 +8,7 @@ Metrics are organized by type and date (e.g., task_completion_time_2026-03-22.js
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -660,10 +661,8 @@ class MetricsCollector:
 
     def __del__(self) -> None:
         """Flush remaining buffered metrics on garbage collection."""
-        try:
+        with contextlib.suppress(Exception):
             self._flush_buffer()
-        except Exception:
-            pass
 
     def record_api_call(
         self,

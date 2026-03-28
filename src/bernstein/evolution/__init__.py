@@ -13,9 +13,8 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from bernstein.core.models import Task
 from bernstein.evolution.aggregator import (
     AgentMetrics,
     AnomalyDetection,
@@ -65,58 +64,61 @@ from bernstein.evolution.types import (
     SandboxResult,
 )
 
+if TYPE_CHECKING:
+    from bernstein.core.models import Task
+
 __all__ = [
-    # types
-    "RiskLevel",
-    "ProposalStatus",
-    "CircuitState",
-    "MetricsRecord",
-    "SandboxResult",
-    # aggregator
-    "MetricRecord",
-    "TaskMetrics",
     "AgentMetrics",
-    "CostMetrics",
-    "QualityMetrics",
-    "TrendAnalysis",
-    "AnomalyDetection",
-    "MetricsCollector",
-    "FileMetricsCollector",
-    "MetricsAggregator",
     "AnalysisEngine",  # wrapper combining aggregator + detector
-    # detector
-    "UpgradeCategory",
-    "ImprovementOpportunity",
-    "OpportunityDetector",
-    "FailurePattern",
-    "FailureRecord",
-    "FailureAnalyzer",
     # proposals
     "AnalysisTrigger",
-    "UpgradeStatus",
-    "ApprovalMode",
-    "UpgradeProposal",
-    "ProposalGenerator",
-    # applicator
-    "UpgradeExecutor",
-    "FileUpgradeExecutor",
+    "AnomalyDetection",
     # gate
     "ApprovalGate",
-    # sandbox
-    "SandboxValidator",
-    # invariants
-    "compute_invariants",
-    "write_lockfile",
-    "verify_invariants",
-    "check_proposal_targets",
+    "ApprovalMode",
     # circuit
     "CircuitBreaker",
+    "CircuitState",
+    "CostMetrics",
+    # coordinator
+    "EvolutionCoordinator",
     # loop
     "EvolutionLoop",
     "ExperimentResult",
-    # coordinator
-    "EvolutionCoordinator",
+    "FailureAnalyzer",
+    "FailurePattern",
+    "FailureRecord",
+    "FileMetricsCollector",
+    "FileUpgradeExecutor",
+    "ImprovementOpportunity",
+    # aggregator
+    "MetricRecord",
+    "MetricsAggregator",
+    "MetricsCollector",
+    "MetricsRecord",
+    "OpportunityDetector",
+    "ProposalGenerator",
+    "ProposalStatus",
+    "QualityMetrics",
+    # types
+    "RiskLevel",
+    "SandboxResult",
+    # sandbox
+    "SandboxValidator",
+    "TaskMetrics",
+    "TrendAnalysis",
+    # detector
+    "UpgradeCategory",
+    # applicator
+    "UpgradeExecutor",
+    "UpgradeProposal",
+    "UpgradeStatus",
+    "check_proposal_targets",
+    # invariants
+    "compute_invariants",
     "get_default_coordinator",
+    "verify_invariants",
+    "write_lockfile",
 ]
 
 

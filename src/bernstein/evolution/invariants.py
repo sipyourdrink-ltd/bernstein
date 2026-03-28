@@ -11,7 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

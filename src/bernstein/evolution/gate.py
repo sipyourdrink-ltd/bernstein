@@ -72,7 +72,7 @@ class ApprovalDecision:
     Attributes:
         proposal_id: ID of the evaluated proposal.
         risk_level: Classified risk level.
-        confidence: Proposal confidence score (0–1).
+        confidence: Proposal confidence score (0-1).
         outcome: Routing decision.
         reason: Human-readable explanation.
         requires_human: True when a human must act before the change is applied.

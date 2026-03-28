@@ -11,11 +11,10 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -30,6 +29,9 @@ from bernstein.core.models import (
     TaskType,
     UpgradeProposalDetails,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
@@ -216,10 +218,8 @@ class TaskStore:
         self._by_status[task.status].pop(task.id, None)
         ids = self._by_role_status.get((task.role, task.status))
         if ids is not None:
-            try:
+            with contextlib.suppress(ValueError):
                 ids.remove(task.id)
-            except ValueError:
-                pass
 
     # -- persistence --------------------------------------------------------
 

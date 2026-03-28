@@ -6,7 +6,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import yaml
 
@@ -76,9 +76,9 @@ class AgentRegistry:
     """
 
     SCHEMA_VERSION = "1.0"
-    REQUIRED_FIELDS = {"name", "role", "model", "version"}
-    VALID_MODEL_VALUES = {"opus", "sonnet", "gpt-4.1", "gpt-4", "gemini-pro", "qwen-max"}
-    VALID_EFFORT_VALUES = {"max", "high", "normal", "low"}
+    REQUIRED_FIELDS: ClassVar[set[str]] = {"name", "role", "model", "version"}
+    VALID_MODEL_VALUES: ClassVar[set[str]] = {"opus", "sonnet", "gpt-4.1", "gpt-4", "gemini-pro", "qwen-max"}
+    VALID_EFFORT_VALUES: ClassVar[set[str]] = {"max", "high", "normal", "low"}
 
     def __init__(
         self,
@@ -231,7 +231,8 @@ class AgentRegistry:
         removed_names: list[str] = []
         for filename in removed_files:
             for name in list(self._definitions.keys()):
-                if self._definitions[name].system_prompt_template and filename in str(self._definitions[name].system_prompt_template):
+                defn = self._definitions[name]
+                if defn.system_prompt_template and filename in str(defn.system_prompt_template):
                     del self._definitions[name]
                     removed_names.append(name)
             del self._file_hashes[filename]

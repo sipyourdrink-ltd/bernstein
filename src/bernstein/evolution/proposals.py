@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from bernstein.core.models import (
     Complexity,
@@ -14,8 +15,10 @@ from bernstein.core.models import (
     TaskType,
     UpgradeProposalDetails,
 )
-from bernstein.evolution.aggregator import AnomalyDetection
 from bernstein.evolution.detector import ImprovementOpportunity, UpgradeCategory
+
+if TYPE_CHECKING:
+    from bernstein.evolution.aggregator import AnomalyDetection
 
 
 class AnalysisTrigger(Enum):

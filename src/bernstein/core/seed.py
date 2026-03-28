@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import yaml
 
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class SeedError(Exception):
@@ -183,7 +185,7 @@ def parse_seed(path: Path) -> SeedConfig:
     cli_raw = data.get("cli", "claude")
     if cli_raw not in _VALID_CLIS:
         raise SeedError(f"cli must be one of {sorted(_VALID_CLIS)}, got: {cli_raw!r}")
-    cli = cast(Literal["claude", "codex", "gemini", "qwen"], cli_raw)
+    cli = cast("Literal['claude', 'codex', 'gemini', 'qwen']", cli_raw)
 
     max_agents_raw = data.get("max_agents", 6)
     if not isinstance(max_agents_raw, int) or max_agents_raw < 1:

@@ -5,13 +5,14 @@ via the spawner and verifies completion via the janitor. See ADR-001.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 
@@ -487,12 +488,12 @@ class Orchestrator:
 
         logger.info("Exec'ing fresh orchestrator process")
         # Re-exec the same command that started us
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        os.execv(sys.executable, [sys.executable, *sys.argv])
 
     # -- Evolve mode ---------------------------------------------------------
 
     # Priority rotation for evolve mode — each cycle emphasizes a different area
-    _EVOLVE_FOCUS_AREAS = [
+    _EVOLVE_FOCUS_AREAS: ClassVar[list[str]] = [
         "new_features",
         "test_coverage",
         "code_quality",
@@ -598,10 +599,8 @@ class Orchestrator:
         now = time.time()
         evolve_cfg["_cycle_count"] = cycle_number
         evolve_cfg["_last_cycle_ts"] = now
-        try:
+        with contextlib.suppress(OSError):
             evolve_path.write_text(json.dumps(evolve_cfg))
-        except OSError:
-            pass
 
         # Log cycle metrics
         self._log_evolve_cycle(cycle_number, now, {
@@ -1272,10 +1271,8 @@ class Orchestrator:
                 _fail_task(self._client, base, task_id, f"Max retries exceeded: {reason}")
                 return
             # Fail the old task silently (it has been replaced)
-            try:
+            with contextlib.suppress(httpx.HTTPError):
                 _fail_task(self._client, base, task_id, f"Retried: {reason}")
-            except httpx.HTTPError:
-                pass
         else:
             _fail_task(self._client, base, task_id, f"Max retries exceeded: {reason}")
 

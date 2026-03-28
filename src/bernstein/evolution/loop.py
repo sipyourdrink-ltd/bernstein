@@ -18,8 +18,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.evolution.aggregator import (
     FileMetricsCollector,
@@ -37,6 +36,10 @@ from bernstein.evolution.proposals import (
 )
 from bernstein.evolution.sandbox import SandboxValidator
 from bernstein.evolution.types import RiskLevel, SandboxResult
+from bernstein.evolution.types import UpgradeProposal as TypesUpgradeProposal
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -558,7 +561,7 @@ class EvolutionLoop:
 def _to_types_proposal(
     proposal: UpgradeProposal,
     risk_level: RiskLevel,
-) -> "bernstein.evolution.types.UpgradeProposal":
+) -> TypesUpgradeProposal:
     """Convert a proposals.UpgradeProposal to a types.UpgradeProposal for the gate.
 
     The ApprovalGate.route() expects bernstein.evolution.types.UpgradeProposal
@@ -572,8 +575,6 @@ def _to_types_proposal(
     Returns:
         A types-module UpgradeProposal suitable for the approval gate.
     """
-    from bernstein.evolution.types import UpgradeProposal as TypesUpgradeProposal
-
     return TypesUpgradeProposal(
         id=proposal.id,
         title=proposal.title,

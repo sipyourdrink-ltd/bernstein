@@ -1,6 +1,7 @@
 """Bernstein cost — spend visibility across all recorded metrics."""
 from __future__ import annotations
 
+import contextlib
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -25,10 +26,8 @@ def _load_tasks_jsonl(metrics_dir: Path) -> list[dict[str, Any]]:
     for line in p.read_text().splitlines():
         line = line.strip()
         if line:
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 records.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
     return records
 
 
@@ -38,10 +37,8 @@ def _load_api_usage_jsonl(metrics_dir: Path) -> list[dict[str, Any]]:
         for line in p.read_text().splitlines():
             line = line.strip()
             if line:
-                try:
+                with contextlib.suppress(json.JSONDecodeError):
                     records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
     return records
 
 

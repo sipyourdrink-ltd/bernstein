@@ -6,15 +6,14 @@ Bottom: sparkline + stats + chat input.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any
-
-logger = logging.getLogger(__name__)
+from typing import Any, ClassVar
 
 import httpx
 from rich.text import Text
@@ -30,6 +29,8 @@ from textual.widgets import (
     Sparkline,
     Static,
 )
+
+logger = logging.getLogger(__name__)
 
 SERVER_URL = "http://127.0.0.1:8052"
 
@@ -86,7 +87,9 @@ class AgentWidget(Static):
         m, s = divmod(runtime, 60)
         aid = a.get("id", "")
 
-        color = {"working": "bright_yellow", "starting": "bright_cyan", "dead": "bright_red"}.get(status, "bright_green")
+        color = {
+            "working": "bright_yellow", "starting": "bright_cyan", "dead": "bright_red"
+        }.get(status, "bright_green")
         dot = {"working": "◉", "starting": "◎", "dead": "◌"}.get(status, "●")
 
         t = Text()
@@ -271,12 +274,12 @@ class BernsteinApp(App):
     }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh"),
         ("s", "stop_bernstein", "Stop"),
         ("l", "toggle_activity", "Activity"),
-        ("slash", "focus_chat", "Chat"),
+        ("c", "focus_chat", "Chat"),
     ]
 
     def __init__(self, **kw: Any) -> None:
@@ -341,8 +344,8 @@ class BernsteinApp(App):
 
         # Remove dynamic widgets
         for child in list(col.children):
-            if isinstance(child, (AgentWidget, Static)) and child.id != "col-agents":
-                if not child.has_class("col-header"):
+            is_dynamic = isinstance(child, (AgentWidget, Static))
+            if is_dynamic and child.id != "col-agents" and not child.has_class("col-header"):
                     child.remove()
 
         if not alive:
@@ -438,18 +441,14 @@ class BernsteinApp(App):
         for name in ("watchdog", "spawner", "server"):
             pp = Path(f".sdd/runtime/{name}.pid")
             if pp.exists():
-                try:
+                with contextlib.suppress(ValueError, OSError):
                     os.kill(int(pp.read_text().strip()), signal.SIGTERM)
-                except (ValueError, OSError):
-                    pass
                 pp.unlink(missing_ok=True)
         for a in _load_agents():
             pid = a.get("pid")
             if pid:
-                try:
+                with contextlib.suppress(OSError):
                     os.killpg(os.getpgid(pid), signal.SIGTERM)
-                except OSError:
-                    pass
         self.exit(message="Bernstein stopped.")
 
     def on_input_submitted(self, event: Input.Submitted) -> None:

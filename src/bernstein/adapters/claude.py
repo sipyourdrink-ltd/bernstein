@@ -1,13 +1,14 @@
 """Claude Code CLI adapter."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
@@ -78,8 +79,8 @@ class ClaudeCodeAdapter(CLIAdapter):
     """Spawn and monitor Claude Code CLI sessions."""
 
     # Track Popen objects for reliable is_alive() via poll()
-    _procs: dict[int, subprocess.Popen[bytes]] = {}
-    _wrapper_pids: dict[int, int] = {}  # claude_pid → wrapper_pid
+    _procs: ClassVar[dict[int, subprocess.Popen[bytes]]] = {}
+    _wrapper_pids: ClassVar[dict[int, int]] = {}  # claude_pid → wrapper_pid
 
     def spawn(
         self,
@@ -99,7 +100,8 @@ class ClaudeCodeAdapter(CLIAdapter):
         effort = getattr(model_config, "effort", "high")
         max_turns = {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
         # Claude Code effort levels: low, medium, high, max
-        claude_effort = {"max": "max", "high": "high", "medium": "medium", "normal": "medium", "low": "low"}.get(effort, "high")
+        effort_map = {"max": "max", "high": "high", "medium": "medium", "normal": "medium", "low": "low"}
+        claude_effort = effort_map.get(effort, "high")
 
         cmd = [
             "claude",
@@ -198,17 +200,13 @@ class ClaudeCodeAdapter(CLIAdapter):
             return False
 
     def kill(self, pid: int) -> None:
-        try:
+        with contextlib.suppress(OSError):
             os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except OSError:
-            pass
         # Also kill the wrapper process
         wrapper_pid = self._wrapper_pids.pop(pid, None)
         if wrapper_pid:
-            try:
+            with contextlib.suppress(OSError):
                 os.kill(wrapper_pid, signal.SIGTERM)
-            except OSError:
-                pass
         self._procs.pop(pid, None)
 
     def name(self) -> str:

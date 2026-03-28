@@ -1,11 +1,14 @@
 """Google Gemini CLI adapter."""
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
@@ -43,7 +46,9 @@ class GeminiAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError("gemini not found in PATH. Install it with: npm install -g @google/gemini-cli") from exc
+                raise RuntimeError(
+                    "gemini not found in PATH. Install it with: npm install -g @google/gemini-cli"
+                ) from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing gemini: {exc}") from exc
 
@@ -57,10 +62,8 @@ class GeminiAdapter(CLIAdapter):
             return False
 
     def kill(self, pid: int) -> None:
-        try:
+        with contextlib.suppress(OSError):
             os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except OSError:
-            pass
 
     def name(self) -> str:
         return "Gemini"

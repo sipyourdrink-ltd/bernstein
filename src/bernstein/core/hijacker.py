@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
 
-logger = logging.getLogger(__name__)
-
 from bernstein.core.models import ApiTier, ModelConfig, ProviderType, RateLimit
 from bernstein.core.router import ProviderConfig, Tier, TierAwareRouter
+
+logger = logging.getLogger(__name__)
 
 
 class FreeTierSource(Enum):
@@ -89,9 +89,7 @@ class EnvVarTierDetector:
         if config.tier == ApiTier.FREE:
             return True
         # Check for trial-specific key prefixes
-        if value.startswith("sk-trial-") or value.startswith("trial-"):
-            return True
-        return False
+        return value.startswith("sk-trial-") or value.startswith("trial-")
 
     def _estimate_tokens(self, tier: ApiTier) -> int:
         """Estimate free token allocation based on tier."""
@@ -202,19 +200,18 @@ class TierHijacker:
         opportunities = []
 
         for provider_name, provider in self.router.state.providers.items():
-            if provider.tier == Tier.FREE and provider.quota_remaining:
-                if provider.quota_remaining > 0:
-                    # Check if this quota was already tracked
-                    old_quota = self.quota_tracker.get_quota(provider_name)
-                    if old_quota is None or provider.quota_remaining > old_quota:
-                        opportunities.append(HijackOpportunity(
-                            source=FreeTierSource.UNUSED_QUOTA,
-                            provider_name=provider_name,
-                            provider_type=ProviderType.CLAUDE,  # Default, detectors should specify
-                            description=f"Provider {provider_name} has {provider.quota_remaining} free requests remaining",
-                            estimated_free_tokens=provider.quota_remaining * 1000,  # Rough estimate
-                            confidence=0.95,
-                        ))
+            if provider.tier == Tier.FREE and provider.quota_remaining and provider.quota_remaining > 0:
+                # Check if this quota was already tracked
+                old_quota = self.quota_tracker.get_quota(provider_name)
+                if old_quota is None or provider.quota_remaining > old_quota:
+                    opportunities.append(HijackOpportunity(
+                        source=FreeTierSource.UNUSED_QUOTA,
+                        provider_name=provider_name,
+                        provider_type=ProviderType.CLAUDE,  # Default, detectors should specify
+                        description=f"Provider {provider_name} has {provider.quota_remaining} free requests remaining",
+                        estimated_free_tokens=provider.quota_remaining * 1000,  # Rough estimate
+                        confidence=0.95,
+                    ))
 
         return opportunities
 
@@ -495,10 +492,7 @@ class QuotaSafetyCheck(SafetyCheck):
 
     def pre_hijack_check(self, opportunities: list[HijackOpportunity]) -> bool:
         # Check if any opportunity has sufficient quota
-        for opp in opportunities:
-            if opp.estimated_free_tokens >= self.min_quota_tokens:
-                return True
-        return False
+        return any(opp.estimated_free_tokens >= self.min_quota_tokens for opp in opportunities)
 
 
 # Default detector configurations

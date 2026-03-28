@@ -357,7 +357,7 @@ class SandboxValidator:
 
             return passed, failed, total, output
         except subprocess.TimeoutExpired:
-            raise RuntimeError(f"Tests timed out after {SANDBOX_TIMEOUT}s")
+            raise RuntimeError(f"Tests timed out after {SANDBOX_TIMEOUT}s") from None
 
     def _cleanup_worktree(self, path: Path, branch_name: str) -> None:
         """Remove the temporary git worktree and its branch."""

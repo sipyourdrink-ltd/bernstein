@@ -1,13 +1,16 @@
 """Metrics aggregation with EWMA, CUSUM, BOCPD, and Goodhart defenses."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
 import time
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -348,10 +351,8 @@ class FileMetricsCollector:
             for line in f:
                 if line.strip():
                     data = json.loads(line)
-                    try:
+                    with contextlib.suppress(TypeError):
                         records.append(cls(**data))
-                    except TypeError:
-                        pass
         return records
 
 
@@ -879,10 +880,7 @@ class MetricsAggregator:
         baseline_avg = sum(baseline) / len(baseline)
         current_avg = sum(current) / len(current)
 
-        if baseline_avg == 0:
-            change_percent = 0.0
-        else:
-            change_percent = ((current_avg - baseline_avg) / baseline_avg) * 100
+        change_percent = 0.0 if baseline_avg == 0 else (current_avg - baseline_avg) / baseline_avg * 100
 
         if change_percent > 10:
             direction: Literal["increasing", "decreasing", "stable"] = "increasing"
