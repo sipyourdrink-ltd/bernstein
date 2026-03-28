@@ -158,9 +158,12 @@ def _render_prompt(
     project_md = workdir / ".sdd" / "project.md"
     project_context = _read_cached(project_md)
 
-    # Completion instructions with concrete curl commands
+    # Completion instructions with concrete curl commands and retry logic.
+    # The server may briefly restart during hot-reload (evolve mode), so
+    # agents must retry on transient connection errors.
     completion_cmds = "\n".join(
-        f"curl -s -X POST http://127.0.0.1:8052/tasks/{t.id}/complete "
+        f"curl -s --retry 3 --retry-delay 2 --retry-all-errors "
+        f"-X POST http://127.0.0.1:8052/tasks/{t.id}/complete "
         f'-H "Content-Type: application/json" '
         f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
         for t in tasks
@@ -168,6 +171,8 @@ def _render_prompt(
     instructions = (
         f"Complete these tasks. When ALL are done, mark each complete on the task server:\n\n"
         f"```bash\n{completion_cmds}\n```\n\n"
+        f"**Note:** If a curl request fails with a connection error, retry up to 3 times "
+        f"with a 2-second delay. The server may briefly restart during code updates.\n\n"
         f"Then exit."
     )
 

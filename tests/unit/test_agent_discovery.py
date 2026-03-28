@@ -418,7 +418,7 @@ class TestRecommendRouting:
         rec_map = {r.role: r for r in recs}
 
         assert rec_map["architect"].agent_name == "claude"
-        assert rec_map["backend"].agent_name == "codex"
+        assert rec_map["backend"].agent_name == "claude"  # Sonnet 79.6% SWE-bench > o4-mini 72%
         assert rec_map["frontend"].agent_name == "gemini"
         assert rec_map["qa"].agent_name == "codex"
         assert rec_map["security"].agent_name == "claude"

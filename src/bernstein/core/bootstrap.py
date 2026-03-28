@@ -378,6 +378,7 @@ def _start_server(
     bind_host: str = "127.0.0.1",
     cluster_enabled: bool = False,
     auth_token: str | None = None,
+    evolve_mode: bool = False,
 ) -> int:
     """Launch the task server as a background process.
 
@@ -387,6 +388,9 @@ def _start_server(
         bind_host: Host to bind to. Use "0.0.0.0" for remote access.
         cluster_enabled: Enable cluster endpoints and node reaper.
         auth_token: Bearer token for API auth.
+        evolve_mode: When True, start uvicorn with ``--reload`` so that
+            source changes made by agents are picked up automatically
+            without killing running agents (they communicate via HTTP).
 
     Returns:
         PID of the server process.
@@ -415,21 +419,29 @@ def _start_server(
         if _storage_var in os.environ and _storage_var not in env:
             env[_storage_var] = os.environ[_storage_var]
 
+    server_cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "bernstein.core.server:app",
+        "--host",
+        bind_host,
+        "--port",
+        str(port),
+    ]
+    if evolve_mode:
+        # In self-development mode, let uvicorn watch for source changes
+        # and auto-reload.  Agents survive because they communicate via
+        # HTTP — they see a brief connection error during reload and retry.
+        src_dir = str(workdir / "src" / "bernstein")
+        server_cmd.extend(["--reload", "--reload-dir", src_dir])
+
     log_path = workdir / ".sdd" / "runtime" / "server.log"
     # Keep the log file open — child inherits the fd via fork().
     # Closing it prematurely can cause the child's stdout to break.
     log_fh = log_path.open("w")
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "bernstein.core.server:app",
-            "--host",
-            bind_host,
-            "--port",
-            str(port),
-        ],
+        server_cmd,
         env=env,
         stdout=log_fh,
         stderr=subprocess.STDOUT,
@@ -601,6 +613,7 @@ def bootstrap_from_seed(
     cells: int | None = None,
     remote: bool = False,
     force_fresh: bool = False,
+    evolve_mode: bool = False,
 ) -> BootstrapResult:
     """Full bootstrap: parse seed -> init .sdd -> start server -> plan -> orchestrate.
 
@@ -620,6 +633,8 @@ def bootstrap_from_seed(
         cells: Number of parallel cells. If None, reads from seed config.
         remote: If True, bind to 0.0.0.0 for remote access.
         force_fresh: Ignore any saved session and start from scratch.
+        evolve_mode: When True, start the server with ``--reload`` so that
+            source changes by agents are picked up without killing agents.
 
     Returns:
         BootstrapResult with PIDs and task ID.
@@ -700,6 +715,7 @@ def bootstrap_from_seed(
             bind_host=bind_host,
             cluster_enabled=cluster_enabled,
             auth_token=auth_token,
+            evolve_mode=evolve_mode,
         )
         if not _wait_for_server(port, server_url=server_url):
             from bernstein.cli.errors import BernsteinError
@@ -710,7 +726,8 @@ def bootstrap_from_seed(
                 fix="Check .sdd/runtime/server.log for details",
             ).print()
             raise SystemExit(1)
-    console.print(f"[green]→[/green] Task server ready (PID {server_pid}, {bind_host}:{port})")
+    reload_label = " +reload" if evolve_mode else ""
+    console.print(f"[green]→[/green] Task server ready (PID {server_pid}, {bind_host}:{port}{reload_label})")
 
     # 4. Sync backlog / create manager task
     from bernstein.core.session import check_resume_session

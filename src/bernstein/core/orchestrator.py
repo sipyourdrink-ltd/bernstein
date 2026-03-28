@@ -518,6 +518,43 @@ class Orchestrator:
                 capacity_fn=self._current_capacity,
             )
 
+        # Hot-reload: track source file mtimes so the orchestrator can
+        # detect when agents modify its own code and restart in-place.
+        self._source_mtime: float = time.time()
+
+    # -- Hot-reload source detection -----------------------------------------
+
+    # Key source files whose modification triggers an orchestrator restart.
+    _HOT_RELOAD_SOURCES: ClassVar[list[str]] = [
+        "src/bernstein/core/orchestrator.py",
+        "src/bernstein/core/spawner.py",
+        "src/bernstein/core/router.py",
+        "src/bernstein/core/server.py",
+        "src/bernstein/core/models.py",
+    ]
+
+    def _check_source_changed(self) -> bool:
+        """Check if orchestrator source files changed since last tick.
+
+        Compares mtime of key source files against the timestamp recorded
+        at startup (or the last restart).  When any file is newer, a
+        restart is warranted so the orchestrator picks up the new code.
+
+        Returns:
+            True if at least one source file was modified after startup.
+        """
+        from pathlib import Path as _Path
+
+        for rel in self._HOT_RELOAD_SOURCES:
+            src = _Path(rel)
+            try:
+                if src.exists() and src.stat().st_mtime > self._source_mtime:
+                    logger.info("Source changed: %s", rel)
+                    return True
+            except OSError:
+                continue
+        return False
+
     def _current_capacity(self) -> NodeCapacity:
         """Build a NodeCapacity snapshot reflecting current agent usage."""
         alive = sum(1 for a in self._agents.values() if a.status != "dead")
@@ -815,11 +852,19 @@ class Orchestrator:
                 self._idle_multiplier = min(self._idle_multiplier * 2, 1024)
             time.sleep(min(self._config.poll_interval_s * self._idle_multiplier, 30.0))
 
-            # Check if a restart was requested (own source code changed)
+            # Check if a restart was requested via flag file or source change.
+            # The flag-file path is the legacy mechanism; proactive mtime
+            # detection covers evolve mode where agents modify our source.
             restart_flag = self._workdir / ".sdd" / "runtime" / "restart_requested"
-            if restart_flag.exists():
+            needs_restart = restart_flag.exists()
+            if needs_restart:
                 restart_flag.unlink(missing_ok=True)
-                logger.info("Restarting orchestrator (own code updated)")
+            elif self._config.evolve_mode and self._check_source_changed():
+                needs_restart = True
+
+            if needs_restart:
+                logger.info("Source code changed, restarting orchestrator...")
+                self._save_session_state()
                 self._restart()
                 return  # _restart calls os.execv, but just in case
 
@@ -910,13 +955,21 @@ class Orchestrator:
     def _restart(self) -> None:
         """Replace the current process with a fresh orchestrator.
 
-        Uses os.execv to re-exec with the same arguments, picking up
-        any code changes made by agents to src/bernstein/.
+        Uses ``os.execv`` to re-exec with the same arguments, picking up
+        any code changes made by agents to ``src/bernstein/``.  Running
+        agents are NOT killed because they live in separate process groups
+        (``start_new_session=True``) and communicate with the server via
+        HTTP.  During the brief restart window, agents may see transient
+        connection errors which they retry automatically.
         """
         import os
         import sys
 
-        logger.info("Exec'ing fresh orchestrator process")
+        alive = sum(1 for a in self._agents.values() if a.status != "dead")
+        logger.info(
+            "Exec'ing fresh orchestrator process (%d agent(s) will survive restart)",
+            alive,
+        )
         # Re-exec the same command that started us
         os.execv(sys.executable, [sys.executable, *sys.argv])
 

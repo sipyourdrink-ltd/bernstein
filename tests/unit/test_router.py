@@ -384,20 +384,20 @@ class TestRouteTask:
         assert config.model == "opus"
         assert config.effort == "max"
 
-    def test_security_routes_to_opus_high(self) -> None:
-        # Sonnet-first routing: security uses opus but high effort (not max)
+    def test_security_routes_to_opus_max(self) -> None:
+        # Security needs deep analysis -- always use opus/max
         task = _make_task(role="security")
         config = route_task(task)
 
         assert config.model == "opus"
-        assert config.effort == "high"
+        assert config.effort == "max"
 
-    def test_large_high_complexity_routes_to_sonnet_max(self) -> None:
-        # Sonnet-first routing: large/high-complexity tasks stay on sonnet/max
+    def test_large_high_complexity_routes_to_opus_max(self) -> None:
+        # Large scope + high complexity = hardest tasks, use opus/max
         task = _make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
         config = route_task(task)
 
-        assert config.model == "sonnet"
+        assert config.model == "opus"
         assert config.effort == "max"
 
     def test_medium_complexity_routes_to_sonnet_high(self) -> None:
