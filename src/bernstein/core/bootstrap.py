@@ -186,8 +186,20 @@ def preflight_checks(cli: str, port: int) -> None:
     Raises:
         SystemExit: On any pre-flight failure, with an actionable message.
     """
-    _check_binary(cli)
-    _check_api_key(cli)
+    if cli == "auto":
+        # Auto mode: check that at least one CLI agent is available
+        import shutil
+
+        found = [name for name in ("claude", "codex", "gemini", "qwen") if shutil.which(name)]
+        if not found:
+            console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
+            for name, hint in _CLI_INSTALL_HINT.items():
+                console.print(f"  {name}: {hint}")
+            raise SystemExit(1)
+        console.print(f"[green]→[/green] Auto-detected agents: [bold]{', '.join(found)}[/bold]")
+    else:
+        _check_binary(cli)
+        _check_api_key(cli)
     _check_port_free(port)
 
 

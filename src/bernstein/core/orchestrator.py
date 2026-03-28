@@ -1908,9 +1908,20 @@ if __name__ == "__main__":
             except Exception as exc:
                 logger.warning("Failed to parse seed for adapter config: %s", exc)
 
-        adapter_inst = get_adapter(adapter_name)
+        if adapter_name == "auto":
+            # Auto mode: default to Claude Code (primary), others used via routing
+            adapter_inst = get_adapter("claude")
+            if not adapter_inst:
+                # Fallback: try any available adapter
+                for fallback_name in ("codex", "gemini", "qwen"):
+                    adapter_inst = get_adapter(fallback_name)
+                    if adapter_inst:
+                        logger.info("Auto mode: using %s as primary adapter", fallback_name)
+                        break
+        else:
+            adapter_inst = get_adapter(adapter_name)
         if not adapter_inst:
-            logger.error(f"Adapter {adapter_name} not found.")
+            logger.error("No adapter found (tried: %s)", adapter_name)
             sys.exit(1)
 
         # Create TierAwareRouter from providers.yaml if available
