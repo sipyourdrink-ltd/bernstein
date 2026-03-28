@@ -1,4 +1,4 @@
-# 716 — Alex Chernysh Content Flywheel
+# 716 — Technical Content Strategy
 
 **Role:** docs
 **Priority:** 0 (urgent)
@@ -7,7 +7,7 @@
 
 ## Problem
 
-Harrison Chase IS LangChain. Joao Moura IS CrewAI. The founder is the brand. Alex Chernysh needs to be "the multi-agent orchestration guy." Content drives stars, stars drive credibility, credibility drives consulting/speaking revenue.
+Successful open-source tools are built through consistent technical content. LangChain, CrewAI, and Aider all grew through founder-led technical writing and community engagement. Bernstein has no content strategy — no blog posts, no architecture walkthroughs, no benchmark publications.
 
 ## Design
 
@@ -31,8 +31,8 @@ Harrison Chase IS LangChain. Joao Moura IS CrewAI. The founder is the brand. Ale
 - Dev.to / Hashnode (SEO blog posts)
 - HN (Show HN, then comment on relevant threads)
 
-### Revenue pipeline
-Content → Stars → Speaking invitations → Consulting inquiries → Enterprise licenses
+### Growth pipeline
+Content → Community adoption → Contributors → Ecosystem growth
 
 ## Files to modify
 
