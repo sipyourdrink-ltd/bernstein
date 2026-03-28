@@ -5,11 +5,15 @@ from pathlib import Path
 
 import pytest
 
+from unittest.mock import MagicMock, patch
+
 from bernstein.core.context import (
+    _git_cochanged_files,
     _read_if_exists,
     _should_skip,
     ApiUsageTracker,
     available_roles,
+    clear_caches,
     file_tree,
     gather_project_context,
     get_usage_tracker,
@@ -66,6 +70,18 @@ class TestFileTree:
     def test_empty_dir(self, tmp_path: Path) -> None:
         tree = file_tree(tmp_path, max_lines=50)
         assert tree == ""
+
+    def test_ttl_cache_avoids_repeated_subprocess(self, tmp_path: Path) -> None:
+        clear_caches()
+        mock_result = MagicMock()
+        mock_result.returncode = 1  # force fallback so subprocess.run is the only call we track
+        mock_result.stdout = ""
+        (tmp_path / "x.py").touch()
+
+        with patch("bernstein.core.context.subprocess.run", return_value=mock_result) as mock_run:
+            file_tree(tmp_path, max_lines=50)
+            file_tree(tmp_path, max_lines=50)
+            assert mock_run.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -327,3 +343,80 @@ class TestApiUsageTracker:
         # Second call returns the same instance
         tracker2 = get_usage_tracker(tmp_path)
         assert tracker1 is tracker2
+
+
+# ---------------------------------------------------------------------------
+# _git_cochanged_files — batched subprocess + lru_cache
+# ---------------------------------------------------------------------------
+
+class TestGitCochangedFiles:
+    """Tests for the batched git co-changed files lookup."""
+
+    def _make_log_output(self, entries: list[tuple[str, list[str]]]) -> str:
+        """Build a fake ``git log --name-only`` output string."""
+        blocks = []
+        for commit_hash, files in entries:
+            block = commit_hash + "\n" + "\n".join(files)
+            blocks.append(block)
+        return "\n\n".join(blocks)
+
+    def test_second_call_uses_cache(self, tmp_path: Path) -> None:
+        """Repeated calls with identical args must not spawn a second subprocess."""
+        _git_cochanged_files.cache_clear()
+        fake_output = self._make_log_output([
+            ("abc123", ["src/a.py", "src/b.py"]),
+            ("def456", ["src/a.py", "src/c.py"]),
+        ])
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = fake_output
+
+        with patch("bernstein.core.context.subprocess.run", return_value=mock_result) as mock_run:
+            result1 = _git_cochanged_files("src/a.py", tmp_path, 5)
+            result2 = _git_cochanged_files("src/a.py", tmp_path, 5)
+
+        assert mock_run.call_count == 1, "subprocess.run called more than once — cache miss"
+        assert result1 == result2
+
+    def test_single_subprocess_call(self, tmp_path: Path) -> None:
+        """Verify only one subprocess is spawned regardless of commit count."""
+        _git_cochanged_files.cache_clear()
+        commits = [(f"{'a' * 40}", ["src/x.py", "src/y.py"]) for _ in range(20)]
+        fake_output = self._make_log_output(commits)
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = fake_output
+
+        with patch("bernstein.core.context.subprocess.run", return_value=mock_result) as mock_run:
+            _git_cochanged_files("src/x.py", tmp_path, 5)
+
+        assert mock_run.call_count == 1
+
+    def test_counts_cochanged_correctly(self, tmp_path: Path) -> None:
+        """Most frequently co-changed file appears first."""
+        _git_cochanged_files.cache_clear()
+        fake_output = self._make_log_output([
+            ("aaa", ["target.py", "src/frequent.py"]),
+            ("bbb", ["target.py", "src/frequent.py"]),
+            ("ccc", ["target.py", "src/rare.py"]),
+        ])
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = fake_output
+
+        with patch("bernstein.core.context.subprocess.run", return_value=mock_result):
+            result = _git_cochanged_files("target.py", tmp_path, 5)
+
+        assert result[0] == "src/frequent.py"
+        assert "src/rare.py" in result
+
+    def test_returns_empty_on_git_failure(self, tmp_path: Path) -> None:
+        _git_cochanged_files.cache_clear()
+        mock_result = MagicMock()
+        mock_result.returncode = 128
+        mock_result.stdout = ""
+
+        with patch("bernstein.core.context.subprocess.run", return_value=mock_result):
+            result = _git_cochanged_files("src/missing.py", tmp_path, 5)
+
+        assert result == []

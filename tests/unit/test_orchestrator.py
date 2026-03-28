@@ -2587,7 +2587,7 @@ class TestReplenishBacklog:
         return orch, posted
 
     def test_creates_tasks_from_ruff_output(self, tmp_path: Path) -> None:
-        """Replenishment creates one task per unique ruff rule code."""
+        """Replenishment creates one task per unique ruff rule code (async two-phase)."""
         from unittest.mock import patch
 
         orch, posted = self._build_orch_evolve(tmp_path)
@@ -2599,6 +2599,13 @@ class TestReplenishBacklog:
             )
             result = MagicMock()
             result.open_tasks = 0
+            # Phase 1: submit future
+            orch._replenish_backlog(result)
+            assert len(posted) == 0  # no tasks yet — future is pending
+            # Wait for background thread to finish
+            assert orch._pending_ruff_future is not None
+            orch._pending_ruff_future.result()
+            # Phase 2: harvest result and create tasks
             orch._replenish_backlog(result)
 
         # E501 appears twice but should produce only one task; F401 = one task
@@ -2662,12 +2669,15 @@ class TestReplenishBacklog:
             )
             result = MagicMock()
             result.open_tasks = 0
-            orch._replenish_backlog(result)
+            orch._replenish_backlog(result)  # submit
+            assert orch._pending_ruff_future is not None
+            orch._pending_ruff_future.result()  # wait for thread
+            orch._replenish_backlog(result)  # harvest
 
         assert len(posted) == 5
 
     def test_respects_60s_cooldown(self, tmp_path: Path) -> None:
-        """Second call within 60s is a no-op."""
+        """After harvesting, a second submission is blocked by cooldown."""
         from unittest.mock import patch
 
         orch, posted = self._build_orch_evolve(tmp_path)
@@ -2679,14 +2689,18 @@ class TestReplenishBacklog:
             )
             result = MagicMock()
             result.open_tasks = 0
-            # First call — should run
+            # Phase 1: submit future
             orch._replenish_backlog(result)
-            first_count = len(posted)
-            # Second immediate call — should be skipped due to cooldown
+            assert orch._pending_ruff_future is not None
+            orch._pending_ruff_future.result()  # wait for thread
+            # Phase 2: harvest — creates 2 tasks
+            orch._replenish_backlog(result)
+            tasks_after_harvest = len(posted)
+            # Phase 3: immediate retry — cooldown blocks new submission
             orch._replenish_backlog(result)
 
-        assert first_count == 2
-        assert len(posted) == 2  # no new tasks from the second call
+        assert tasks_after_harvest == 2
+        assert len(posted) == 2  # no new tasks from the third call
 
     def test_cooldown_resets_after_60s(self, tmp_path: Path) -> None:
         """After 60s the replenishment runs again."""
@@ -2701,11 +2715,48 @@ class TestReplenishBacklog:
             )
             result = MagicMock()
             result.open_tasks = 0
-            # First call
+            # First cycle: submit → wait → harvest
+            orch._replenish_backlog(result)
+            assert orch._pending_ruff_future is not None
+            orch._pending_ruff_future.result()
             orch._replenish_backlog(result)
             # Fake that 61 seconds have passed
             orch._last_replenish_ts -= 61
-            # Second call — should run again
+            # Second cycle: submit → wait → harvest
+            orch._replenish_backlog(result)
+            assert orch._pending_ruff_future is not None
+            orch._pending_ruff_future.result()
             orch._replenish_backlog(result)
 
         assert len(posted) == 4  # 2 unique rules × 2 cycles
+
+    def test_tick_does_not_block_on_ruff_or_pytest(self, tmp_path: Path) -> None:
+        """tick() must return in under 1 second even when ruff/pytest are slow."""
+        import time
+        from unittest.mock import patch
+
+        orch, _posted = self._build_orch_evolve(tmp_path)
+
+        def slow_subprocess(*_args: object, **_kwargs: object) -> object:
+            time.sleep(2)
+            from unittest.mock import MagicMock as _MM
+            return _MM(stdout="[]", returncode=0)
+
+        # Set up minimal HTTP mock so tick() can complete (no open tasks)
+        result = MagicMock()
+        result.open_tasks = 0
+
+        with patch("subprocess.run", side_effect=slow_subprocess):
+            start = time.monotonic()
+            # _replenish_backlog is called inside tick(); we call it directly here
+            # to test the non-blocking contract without needing a full HTTP mock
+            orch._replenish_backlog(result)
+            elapsed = time.monotonic() - start
+
+        assert elapsed < 1.0, (
+            f"_replenish_backlog blocked for {elapsed:.2f}s; expected < 1s"
+        )
+        # Future should be pending (submitted to thread pool, not yet complete)
+        assert orch._pending_ruff_future is not None
+        # Clean up — wait for the background thread so it doesn't leak
+        orch._pending_ruff_future.result()

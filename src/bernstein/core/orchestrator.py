@@ -5,6 +5,7 @@ via the spawner and verifies completion via the janitor. See ADR-001.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
 import json
 import logging
@@ -260,6 +261,10 @@ class Orchestrator:
         self._spawn_failures: dict[frozenset[str], tuple[int, float]] = {}
         # Track last backlog replenishment timestamp
         self._last_replenish_ts: float = 0.0
+        # Background thread pool for non-blocking ruff/pytest runs
+        self._executor: concurrent.futures.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self._pending_ruff_future: concurrent.futures.Future[list[dict[str, Any]]] | None = None
+        self._pending_test_future: concurrent.futures.Future[dict[str, Any]] | None = None
 
         # Provider-aware routing and health tracking
         self._router = router
@@ -575,51 +580,25 @@ class Orchestrator:
     _REPLENISH_COOLDOWN_S: float = 60.0
     _REPLENISH_MAX_TASKS: int = 5
 
-    def _replenish_backlog(self, result: TickResult) -> None:
-        """Create fix tasks from ruff lint violations when evolve mode is idle.
-
-        Only runs when:
-        - evolve_mode is enabled in config
-        - open_tasks == 0
-        - At least 60 seconds since last replenishment
-
-        Caps at 5 tasks per cycle to avoid flooding the task server.
-
-        Args:
-            result: Current tick result (used to read open_tasks count).
-        """
+    def _run_ruff_check(self) -> list[dict[str, Any]]:
+        """Run ruff check and return parsed violations (runs in a background thread)."""
         import subprocess
 
-        if not self._config.evolve_mode:
-            return
-        if result.open_tasks > 0:
-            return
+        proc = subprocess.run(
+            ["uv", "run", "ruff", "check", ".", "--output-format", "json"],
+            capture_output=True,
+            text=True,
+            cwd=self._workdir,
+            timeout=60,
+        )
+        return json.loads(proc.stdout) if proc.stdout.strip() else []
 
-        now = time.time()
-        if now - self._last_replenish_ts < self._REPLENISH_COOLDOWN_S:
-            return
-
-        self._last_replenish_ts = now
-
-        # Run ruff and collect violations
-        try:
-            proc = subprocess.run(
-                ["uv", "run", "ruff", "check", ".", "--output-format", "json"],
-                capture_output=True,
-                text=True,
-                cwd=self._workdir,
-                timeout=60,
-            )
-            violations: list[dict[str, Any]] = json.loads(proc.stdout) if proc.stdout.strip() else []
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
-            logger.warning("Replenish: ruff check failed: %s", exc)
-            return
-
+    def _create_ruff_tasks(self, violations: list[dict[str, Any]]) -> None:
+        """Create backlog tasks from ruff violations."""
         if not violations:
             logger.debug("Replenish: no ruff violations found, backlog is clean")
             return
 
-        # Group by rule code; pick one representative violation per rule
         by_rule: dict[str, dict[str, Any]] = {}
         for v in violations:
             code = (v.get("code") or "unknown").strip()
@@ -657,35 +636,96 @@ class Orchestrator:
         if created:
             logger.info("Replenish: created %d lint-fix task(s)", created)
 
+    def _replenish_backlog(self, result: TickResult) -> None:
+        """Create fix tasks from ruff lint violations when evolve mode is idle.
+
+        Only runs when:
+        - evolve_mode is enabled in config
+        - open_tasks == 0
+        - At least 60 seconds since last replenishment
+
+        Ruff is run in a background thread so the tick loop is never blocked.
+        On the first eligible tick a future is submitted; on subsequent ticks
+        the result is harvested once the future completes.
+
+        Caps at 5 tasks per cycle to avoid flooding the task server.
+
+        Args:
+            result: Current tick result (used to read open_tasks count).
+        """
+        if not self._config.evolve_mode:
+            return
+        if result.open_tasks > 0:
+            return
+
+        # Harvest a completed ruff future
+        if self._pending_ruff_future is not None:
+            if not self._pending_ruff_future.done():
+                return  # still running; skip this tick
+            try:
+                violations: list[dict[str, Any]] = self._pending_ruff_future.result()
+            except Exception as exc:
+                logger.warning("Replenish: ruff check failed: %s", exc)
+                self._pending_ruff_future = None
+                return
+            self._pending_ruff_future = None
+            self._create_ruff_tasks(violations)
+            return
+
+        # Check cooldown before submitting a new run
+        now = time.time()
+        if now - self._last_replenish_ts < self._REPLENISH_COOLDOWN_S:
+            return
+
+        self._last_replenish_ts = now
+        self._pending_ruff_future = self._executor.submit(self._run_ruff_check)
+        logger.debug("Replenish: ruff check submitted to background thread")
+
+    def _run_pytest(self) -> dict[str, Any]:
+        """Run pytest and return parsed results (runs in a background thread)."""
+        import subprocess
+
+        info: dict[str, Any] = {"passed": 0, "failed": 0, "summary": ""}
+        result = subprocess.run(
+            ["uv", "run", "pytest", "tests/", "-q", "--tb=line"],
+            capture_output=True, text=True, cwd=self._workdir, timeout=300,
+        )
+        output = result.stdout + result.stderr
+        info["summary"] = output.strip().splitlines()[-1] if output.strip() else ""
+        match = re.search(r"(\d+) passed", output)
+        if match:
+            info["passed"] = int(match.group(1))
+        match = re.search(r"(\d+) failed", output)
+        if match:
+            info["failed"] = int(match.group(1))
+        return info
+
     def _evolve_run_tests(self) -> dict[str, Any]:
-        """Run test suite and return parsed results.
+        """Return test results from a background pytest run.
+
+        On the first call a future is submitted and an empty result is returned.
+        On subsequent calls the future is checked; once done the result is
+        harvested and a new future is submitted for the next cycle.
 
         Returns:
             Dict with 'passed', 'failed', 'summary' keys.
         """
-        import subprocess
-
         info: dict[str, Any] = {"passed": 0, "failed": 0, "summary": ""}
-        try:
-            result = subprocess.run(
-                ["uv", "run", "pytest", "tests/", "-q", "--tb=line"],
-                capture_output=True, text=True, cwd=self._workdir, timeout=300,
-            )
-            output = result.stdout + result.stderr
-            info["summary"] = output.strip().splitlines()[-1] if output.strip() else ""
 
-            # Parse "N passed, M failed" from pytest output
-            match = re.search(r"(\d+) passed", output)
-            if match:
-                info["passed"] = int(match.group(1))
-            match = re.search(r"(\d+) failed", output)
-            if match:
-                info["failed"] = int(match.group(1))
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            logger.warning("Evolve: test run failed: %s", exc)
-            info["summary"] = f"test run error: {exc}"
+        if self._pending_test_future is not None:
+            if not self._pending_test_future.done():
+                return info  # still running; return empty until done
+            try:
+                info = self._pending_test_future.result()
+            except Exception as exc:
+                logger.warning("Evolve: test run failed: %s", exc)
+                info["summary"] = f"test run error: {exc}"
+            self._pending_test_future = None
+            return info
 
-        return info
+        # Submit a new test run in the background
+        self._pending_test_future = self._executor.submit(self._run_pytest)
+        return info  # results available on the next call
 
     def _evolve_auto_commit(self) -> bool:
         """Auto-commit and push any uncommitted changes from the last cycle.
@@ -1554,6 +1594,11 @@ class Orchestrator:
             session = self._find_session_for_task(task.id)
             if session is not None:
                 self._record_provider_health(session, success=janitor_passed)
+                self._spawner.reap_completed_agent(session)
+                session.status = "dead"
+                logger.info(
+                    "Agent %s finished task %s, process reaped", session.id, task.id
+                )
 
             self._sync_backlog_file(task)
 
@@ -1634,57 +1679,6 @@ class Orchestrator:
                         )
                     except httpx.HTTPError as exc:
                         logger.error("Failed to retry/fail task %s: %s", task_id, exc)
-
-    def ingest_backlog(self) -> int:
-        """Scan backlog/open/ and POST any uningested files to the task server.
-
-        Files already present in backlog/claimed/ (by filename) are skipped.
-        Successfully POSTed files are moved to backlog/claimed/.
-
-        Returns:
-            Number of files ingested this call.
-        """
-        from bernstein.core.sync import parse_backlog_file
-
-        open_dir = self._workdir / ".sdd" / "backlog" / "open"
-        if not open_dir.exists():
-            return 0
-
-        claimed_dir = self._workdir / ".sdd" / "backlog" / "claimed"
-        claimed_names = {f.name for f in claimed_dir.glob("*.md")} if claimed_dir.exists() else set()
-
-        count = 0
-        for md_file in sorted(open_dir.glob("*.md")):
-            if md_file.name in claimed_names:
-                continue
-
-            task = parse_backlog_file(md_file)
-            if task is None:
-                logger.warning("Could not parse backlog file %s, skipping", md_file.name)
-                continue
-
-            payload = {
-                "title": task.title,
-                "description": task.description,
-                "role": task.role,
-                "priority": task.priority,
-                "scope": task.scope,
-                "complexity": task.complexity,
-            }
-            try:
-                resp = self._client.post(f"{self._config.server_url}/tasks", json=payload)
-                resp.raise_for_status()
-            except httpx.HTTPError as exc:
-                logger.error("Failed to ingest backlog file %s: %s", md_file.name, exc)
-                continue
-
-            claimed_dir.mkdir(parents=True, exist_ok=True)
-            md_file.rename(claimed_dir / md_file.name)
-            claimed_names.add(md_file.name)
-            count += 1
-            logger.info("Ingested backlog file: %s", md_file.name)
-
-        return count
 
     def _sync_backlog_file(self, task: Task) -> None:
         """Move the matching .md file from backlog/open/ to backlog/closed/.

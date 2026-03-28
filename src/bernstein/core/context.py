@@ -10,6 +10,7 @@ context — so spawned agents skip the "orientation" phase.
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import logging
 import subprocess
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     from bernstein.core.models import ApiTier, Task
 
 logger = logging.getLogger(__name__)
+
+_file_tree_cache: dict[str, tuple[float, str]] = {}
 
 _IGNORED_DIRS = frozenset({
     ".git", "__pycache__", "node_modules", ".mypy_cache",
@@ -41,11 +44,22 @@ def _should_skip(path: Path) -> bool:
     return path.suffix in _IGNORED_SUFFIXES
 
 
+_FILE_TREE_TTL = 60.0  # seconds
+
+
+def clear_caches() -> None:
+    """Reset all module-level caches. Useful for tests."""
+    _file_tree_cache.clear()
+
+
 def file_tree(workdir: Path, max_lines: int = 50) -> str:
     """Build a compact file-tree listing of the project.
 
     Uses ``git ls-files`` when inside a git repo (fast, respects
     .gitignore). Falls back to a recursive walk with heuristic filters.
+
+    Results are cached per *workdir* for 60 seconds to avoid repeated
+    subprocess calls during a single orchestrator run.
 
     Args:
         workdir: Project root directory.
@@ -54,6 +68,13 @@ def file_tree(workdir: Path, max_lines: int = 50) -> str:
     Returns:
         A newline-separated file listing, truncated to *max_lines*.
     """
+    cache_key = str(workdir)
+    now = time.monotonic()
+    if cache_key in _file_tree_cache:
+        cached_time, cached_result = _file_tree_cache[cache_key]
+        if now - cached_time < _FILE_TREE_TTL:
+            return cached_result
+
     lines: list[str] = []
 
     # Try git ls-files first — fast and .gitignore-aware.
@@ -83,9 +104,12 @@ def file_tree(workdir: Path, max_lines: int = 50) -> str:
     if len(lines) > max_lines:
         truncated = lines[:max_lines]
         truncated.append(f"... ({len(lines) - max_lines} more files)")
-        return "\n".join(truncated)
+        output = "\n".join(truncated)
+    else:
+        output = "\n".join(lines)
 
-    return "\n".join(lines)
+    _file_tree_cache[cache_key] = (now, output)
+    return output
 
 
 def _read_if_exists(path: Path, max_chars: int = 4000) -> str | None:
@@ -281,8 +305,14 @@ def _find_importers(target_rel: str, workdir: Path) -> list[str]:
     return sorted(set(importers))[:10]  # Cap at 10
 
 
+@functools.lru_cache(maxsize=256)
 def _git_cochanged_files(target_rel: str, workdir: Path, max_results: int = 5) -> list[str]:
     """Find files frequently co-modified with the target in git history.
+
+    Uses a single batched ``git log --name-only`` call instead of per-commit
+    ``git diff-tree`` calls, reducing subprocess overhead from O(n_commits) to
+    O(1) per unique (target_rel, workdir) pair.  Results are cached via
+    ``lru_cache`` so repeated calls within the same process are free.
 
     Args:
         target_rel: Relative path of the file to analyze.
@@ -293,9 +323,19 @@ def _git_cochanged_files(target_rel: str, workdir: Path, max_results: int = 5) -
         List of relative paths, most frequently co-changed first.
     """
     try:
-        # Get commits that touched this file
+        # Single call: commit hashes + changed filenames in one shot.
+        # Output format per commit block: "<hash>\n<file1>\n<file2>\n\n"
+        # (blank line separates commit blocks).
         result = subprocess.run(
-            ["git", "log", "--pretty=format:%H", "--follow", "-20", "--", target_rel],
+            [
+                "git", "log",
+                "--pretty=format:%H",
+                "--name-only",
+                "--follow",
+                "-20",
+                "--",
+                target_rel,
+            ],
             cwd=workdir,
             capture_output=True,
             text=True,
@@ -303,30 +343,21 @@ def _git_cochanged_files(target_rel: str, workdir: Path, max_results: int = 5) -
         )
         if result.returncode != 0 or not result.stdout.strip():
             return []
-
-        commits = result.stdout.strip().splitlines()[:20]
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
 
-    # Count co-changed files across those commits
+    # Parse: blocks separated by blank lines; first non-empty line is the hash,
+    # remaining lines are files changed in that commit.
     cochange_counts: dict[str, int] = {}
-    for commit in commits:
-        try:
-            diff_result = subprocess.run(
-                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit],
-                cwd=workdir,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if diff_result.returncode == 0:
-                for f in diff_result.stdout.strip().splitlines():
-                    if f != target_rel and f.endswith(".py"):
-                        cochange_counts[f] = cochange_counts.get(f, 0) + 1
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+    for block in result.stdout.split("\n\n"):
+        lines = [ln for ln in block.splitlines() if ln.strip()]
+        if len(lines) < 2:
             continue
+        # lines[0] is the commit hash, lines[1:] are changed files
+        for f in lines[1:]:
+            if f != target_rel and f.endswith(".py"):
+                cochange_counts[f] = cochange_counts.get(f, 0) + 1
 
-    # Sort by frequency
     ranked = sorted(cochange_counts.items(), key=lambda x: x[1], reverse=True)
     return [f for f, _ in ranked[:max_results]]
 
