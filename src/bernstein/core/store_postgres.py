@@ -27,7 +27,7 @@ import logging
 import time
 import uuid
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from bernstein.core.models import (
     CompletionSignal,
@@ -50,10 +50,12 @@ logger = logging.getLogger(__name__)
 try:
     import asyncpg  # type: ignore[import-untyped]
 
-    _ASYNCPG_AVAILABLE = True
+    _has_asyncpg = True
 except ModuleNotFoundError:
     asyncpg = None  # type: ignore[assignment]
-    _ASYNCPG_AVAILABLE = False
+    _has_asyncpg = False
+
+_ASYNCPG_AVAILABLE: bool = _has_asyncpg
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +167,8 @@ def _row_to_task(row: Any) -> Task:
     raw: dict[str, Any] = dict(row)
 
     signals: list[CompletionSignal] = []
-    for sig in raw.get("completion_signals") or []:
+    raw_signals: list[dict[str, Any]] = raw.get("completion_signals") or []
+    for sig in raw_signals:
         with contextlib.suppress(KeyError, TypeError):
             signals.append(CompletionSignal(type=sig["type"], value=sig["value"]))
 
@@ -194,7 +197,7 @@ def _row_to_task(row: Any) -> Task:
         effort=raw.get("effort"),
         completion_signals=signals,
         created_at=raw.get("created_at") or time.time(),
-        progress_log=list(raw.get("progress_log") or []),
+        progress_log=cast("list[dict[str, Any]]", list(raw.get("progress_log") or [])),
         version=raw.get("version", 1),
     )
 
@@ -233,7 +236,7 @@ class PostgresTaskStore(BaseTaskStore):
         self._redis = redis_coordinator
         self._pool_min = pool_min
         self._pool_max = pool_max
-        self._pool: asyncpg.Pool | None = None  # type: ignore[name-defined]
+        self._pool: Any = None
         # Local cache for fast property reads
         self._agent_count: int = 0
 
@@ -241,11 +244,12 @@ class PostgresTaskStore(BaseTaskStore):
 
     async def startup(self) -> None:
         """Create the connection pool and run DDL migrations."""
-        self._pool = await asyncpg.create_pool(  # type: ignore[union-attr]
+        self._pool = cast("Any", await asyncpg.create_pool(  # type: ignore[union-attr]
             self._dsn,
             min_size=self._pool_min,
             max_size=self._pool_max,
-        )
+        ))
+        assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(_DDL)
         if self._redis is not None:
@@ -289,7 +293,7 @@ class PostgresTaskStore(BaseTaskStore):
             task.effort,
             json.dumps([{"type": s.type, "value": s.value} for s in task.completion_signals]),
             task.created_at,
-            json.dumps(task.progress_log),
+            json.dumps(task.progress_log),  # type: ignore[reportUnknownMemberType]
             task.version,
         )
 

@@ -87,7 +87,16 @@ class TestWorkerProcess:
             time.sleep(0.1)
 
         assert pid_file.exists(), "PID file was not created"
-        info = json.loads(pid_file.read_text())
+
+        # Wait for child_pid to be written (second write after child spawn)
+        deadline2 = time.monotonic() + 5
+        info: dict[str, object] = {}
+        while time.monotonic() < deadline2:
+            info = json.loads(pid_file.read_text())
+            if "child_pid" in info:
+                break
+            time.sleep(0.1)
+
         assert info["role"] == "test"
         assert info["session"] == "test-123"
         assert info["command"] == "sleep"
