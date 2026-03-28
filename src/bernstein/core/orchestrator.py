@@ -136,6 +136,8 @@ class Orchestrator:
     _MAX_SPAWN_FAILURES: int = 3  # consecutive failures before marking tasks failed
     _MAX_DEAD_AGENTS_KEPT: int = 20  # purge oldest dead agents beyond this
     _MAX_PROCESSED_DONE: int = 500  # cap _processed_done_tasks set size
+    _MANAGER_REVIEW_COMPLETION_THRESHOLD: int = 3  # trigger review after this many completions
+    _MANAGER_REVIEW_STALL_S: float = 300.0  # trigger review after 5 min of no progress
 
     def __init__(
         self,
@@ -256,6 +258,11 @@ class Orchestrator:
             if _approval_mode != ApprovalMode.AUTO
             else None
         )
+
+        # Manager queue review: trigger after N completions/failures or stall.
+        self._completions_since_review: int = 0
+        self._failures_since_review: int = 0
+        self._last_review_ts: float = 0.0
 
         # Hot-reload: track source file mtimes so the orchestrator can
         # detect when agents modify its own code and restart in-place.
@@ -528,6 +535,23 @@ class Orchestrator:
             if self._maybe_retry_task(task):
                 result.retried.append(task.id)
 
+        # 4b.5 Track completions/failures for manager review trigger
+        self._completions_since_review += len(result.verified)
+        self._failures_since_review += len([t for t in failed_tasks if t.id not in self._retried_task_ids])
+
+        # Check for explicit review trigger (e.g. from `bernstein review` CLI)
+        _review_flag = self._workdir / ".sdd" / "runtime" / "review_requested"
+        if _review_flag.exists():
+            _review_flag.unlink(missing_ok=True)
+            self._completions_since_review = max(
+                self._completions_since_review,
+                self._MANAGER_REVIEW_COMPLETION_THRESHOLD,
+            )
+
+        # Run manager queue review when triggered (periodic correction pass)
+        if self._should_trigger_manager_review(self._failures_since_review):
+            self._run_manager_queue_review()
+
         # 4c. Check heartbeat-based staleness; send WAKEUP/SHUTDOWN as needed
         check_stale_agents(self)
 
@@ -750,6 +774,121 @@ class Orchestrator:
     def _collect_completion_data(self, session: AgentSession) -> CompletionData:
         """Delegate to task_lifecycle.collect_completion_data."""
         return collect_completion_data(self._workdir, session)
+
+    def _should_trigger_manager_review(self, failed_count: int) -> bool:
+        """Return True when a manager queue review is warranted.
+
+        Triggers on:
+        - 3+ completions since last review
+        - Any task failure
+        - 5 minutes of no review (stall guard)
+
+        Args:
+            failed_count: Number of tasks failed since last review.
+
+        Returns:
+            True if the manager should review the queue.
+        """
+        now = time.time()
+        if self._completions_since_review >= self._MANAGER_REVIEW_COMPLETION_THRESHOLD:
+            return True
+        if failed_count > 0:
+            return True
+        return self._last_review_ts > 0 and (now - self._last_review_ts) >= self._MANAGER_REVIEW_STALL_S
+
+    def _run_manager_queue_review(self) -> None:
+        """Invoke manager queue review and apply corrections.
+
+        Fetches the task queue, calls the ManagerAgent to review it, and
+        applies corrections (reassign, cancel, change_priority, add_task)
+        via the task server.  All changes go through the server so the
+        deterministic orchestrator remains in full control.
+        """
+        from bernstein import get_templates_dir
+        from bernstein.core.manager import ManagerAgent
+
+        try:
+            budget_pct = 1.0
+            if self._cost_tracker.budget_usd > 0:
+                status = self._cost_tracker.status()
+                budget_pct = max(0.0, 1.0 - status.percentage_used)
+
+            workdir = self._workdir
+            manager = ManagerAgent(
+                server_url=self._config.server_url,
+                workdir=workdir,
+                templates_dir=get_templates_dir(workdir),
+            )
+
+            result = manager.review_queue_sync(
+                completed_count=self._completions_since_review,
+                failed_count=self._failures_since_review,
+                budget_remaining_pct=budget_pct,
+            )
+
+            self._last_review_ts = time.time()
+            self._completions_since_review = 0
+            self._failures_since_review = 0
+
+            if result.skipped:
+                return
+
+            base = self._config.server_url
+            for correction in result.corrections:
+                try:
+                    if correction.action == "reassign" and correction.task_id and correction.new_role:
+                        self._client.patch(
+                            f"{base}/tasks/{correction.task_id}",
+                            json={"role": correction.new_role},
+                        )
+                        logger.info(
+                            "Manager review: reassigned %s to role=%s (%s)",
+                            correction.task_id,
+                            correction.new_role,
+                            correction.reason,
+                        )
+                    elif correction.action == "change_priority" and correction.task_id and correction.new_priority:
+                        self._client.patch(
+                            f"{base}/tasks/{correction.task_id}",
+                            json={"priority": correction.new_priority},
+                        )
+                        logger.info(
+                            "Manager review: changed priority of %s to %d (%s)",
+                            correction.task_id,
+                            correction.new_priority,
+                            correction.reason,
+                        )
+                    elif correction.action == "cancel" and correction.task_id:
+                        self._client.post(
+                            f"{base}/tasks/{correction.task_id}/cancel",
+                            json={"reason": correction.reason or "manager review"},
+                        )
+                        logger.info(
+                            "Manager review: cancelled %s (%s)",
+                            correction.task_id,
+                            correction.reason,
+                        )
+                    elif correction.action == "add_task" and correction.new_task:
+                        self._client.post(
+                            f"{base}/tasks",
+                            json=correction.new_task,
+                        )
+                        logger.info(
+                            "Manager review: added task %r (%s)",
+                            correction.new_task.get("title"),
+                            correction.reason,
+                        )
+                except httpx.HTTPError as exc:
+                    logger.warning("Manager review: correction %s failed: %s", correction.action, exc)
+
+            if result.corrections:
+                self._post_bulletin(
+                    "status",
+                    f"Manager review applied {len(result.corrections)} correction(s): {result.reasoning}",
+                )
+
+        except Exception as exc:
+            logger.warning("Manager queue review failed: %s", exc)
 
     def _retry_or_fail_task(
         self,

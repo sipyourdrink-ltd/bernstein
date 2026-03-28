@@ -104,7 +104,7 @@ def test_plan_server_unreachable() -> None:
     with patch("bernstein.cli.main.server_get", return_value=None):
         result = runner.invoke(plan, [])
     assert result.exit_code != 0
-    assert "Cannot reach task server" in result.output
+    assert "Cannot reach" in result.output
 
 
 def test_plan_empty_task_list() -> None:

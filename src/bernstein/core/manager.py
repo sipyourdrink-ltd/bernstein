@@ -65,6 +65,42 @@ class ReviewResult:
     follow_up_tasks: list[Task]
 
 
+@dataclass
+class QueueCorrection:
+    """A single manager correction to the task queue.
+
+    Attributes:
+        action: One of 'reassign', 'cancel', 'change_priority', 'add_task'.
+        task_id: Target task ID (None for add_task).
+        new_role: New role for reassign action.
+        new_priority: New priority for change_priority action.
+        reason: Human-readable reason for the correction.
+        new_task: Task definition dict for add_task action.
+    """
+
+    action: Literal["reassign", "cancel", "change_priority", "add_task"]
+    task_id: str | None
+    new_role: str | None
+    new_priority: int | None
+    reason: str
+    new_task: dict[str, Any] | None
+
+
+@dataclass
+class QueueReviewResult:
+    """Outcome of a manager queue review.
+
+    Attributes:
+        corrections: List of corrections to apply.
+        reasoning: Manager's overall assessment.
+        skipped: True if the review was skipped (e.g. budget too low).
+    """
+
+    corrections: list[QueueCorrection]
+    reasoning: str
+    skipped: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Prompt rendering
 # ---------------------------------------------------------------------------
@@ -146,6 +182,133 @@ def render_plan_prompt(
         .replace("{{CONTEXT}}", context)
         .replace("{{AVAILABLE_ROLES}}", _format_roles(roles))
         .replace("{{EXISTING_TASKS}}", _format_existing_tasks(existing_tasks))
+    )
+
+
+def render_queue_review_prompt(
+    completed_count: int,
+    failed_count: int,
+    open_tasks: list[Task],
+    claimed_tasks: list[Task],
+    failed_tasks: list[Task],
+    server_url: str,
+) -> str:
+    """Build the queue review prompt for the manager.
+
+    The manager sees the current task queue and can issue corrections:
+    reassign, cancel, change_priority, or add_task.
+
+    Args:
+        completed_count: Total tasks completed since last review.
+        failed_count: Total tasks failed since last review.
+        open_tasks: Tasks waiting to be claimed.
+        claimed_tasks: Tasks currently being worked on.
+        failed_tasks: Tasks that failed (recent).
+        server_url: Task server URL (shown in prompt for curl examples).
+
+    Returns:
+        Rendered prompt string.
+    """
+
+    def _fmt_task(t: Task) -> str:
+        age = ""
+        agent = f" claimed by {t.assigned_agent}" if t.assigned_agent else ""
+        return f'  - [{t.role}] [{t.id}] "{t.title}" — {t.status.value}{agent}{age}'
+
+    lines: list[str] = [
+        f"{completed_count} task(s) completed, {failed_count} failed since last review.",
+        "",
+        "## Current queue",
+    ]
+    if open_tasks:
+        lines.append("### Open (waiting):")
+        lines.extend(_fmt_task(t) for t in open_tasks)
+    if claimed_tasks:
+        lines.append("### In progress:")
+        lines.extend(_fmt_task(t) for t in claimed_tasks)
+    if failed_tasks:
+        lines.append("### Recently failed:")
+        lines.extend(_fmt_task(t) for t in failed_tasks[:5])
+
+    lines += [
+        "",
+        "## Your job",
+        "Review the queue for problems: wrong role assignments, stalled agents, tasks that are "
+        "too large, or missing work. Issue ONLY corrections that are clearly needed.",
+        "",
+        "Respond with a JSON object — no markdown, no preamble:",
+        "{",
+        '  "reasoning": "<one sentence overall assessment>",',
+        '  "corrections": [',
+        "    // reassign a mis-routed task:",
+        '    {"action": "reassign", "task_id": "<id>", "new_role": "<role>", "reason": "..."},',
+        "    // cancel a stalled or pointless task:",
+        '    {"action": "cancel", "task_id": "<id>", "reason": "..."},',
+        "    // change priority (1=critical, 2=high, 3=medium, 4=low):",
+        '    {"action": "change_priority", "task_id": "<id>", "new_priority": 1, "reason": "..."},',
+        "    // inject a missing task:",
+        '    {"action": "add_task", "title": "...", "role": "...", '
+        '"description": "...", "priority": 2, "reason": "..."}',
+        "  ]",
+        "}",
+        "",
+        "Rules:",
+        "- Empty corrections list is fine — only add what is genuinely needed.",
+        "- Never cancel an in-progress task unless it has been stuck for >5 minutes.",
+        "- Only reassign tasks that are clearly in the wrong role bucket.",
+        "- Max 500 tokens total output.",
+    ]
+    return "\n".join(lines)
+
+
+def parse_queue_review_response(raw: str) -> QueueReviewResult:
+    """Parse the LLM queue review response.
+
+    Args:
+        raw: Raw LLM response (should be a JSON object).
+
+    Returns:
+        QueueReviewResult with corrections to apply.
+
+    Raises:
+        ValueError: If the response is not valid JSON.
+    """
+    cleaned = _extract_json(raw)
+    try:
+        parsed: Any = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Queue review response is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Expected a JSON object, got {type(parsed).__name__}")
+    result_dict = cast("dict[str, Any]", parsed)
+
+    corrections: list[QueueCorrection] = []
+    raw_corrections = cast("list[dict[str, Any]]", result_dict.get("corrections", []))
+    for raw_c in raw_corrections:
+        action: str = raw_c.get("action", "")
+        if action not in ("reassign", "cancel", "change_priority", "add_task"):
+            logger.warning("Skipping unknown correction action: %r", action)
+            continue
+        corrections.append(
+            QueueCorrection(
+                action=action,  # type: ignore[arg-type]  # narrowed by guard above
+                task_id=str(raw_c.get("task_id", "")),
+                new_role=str(raw_c.get("new_role", "")),
+                new_priority=int(raw_c.get("new_priority", 0)),
+                reason=str(raw_c.get("reason", "")),
+                new_task={
+                    "title": str(raw_c.get("title", "")),
+                    "role": str(raw_c.get("role", "backend")),
+                    "description": str(raw_c.get("description", raw_c.get("title", ""))),
+                    "priority": int(raw_c.get("priority", 2)),
+                }
+                if action == "add_task"
+                else None,
+            )
+        )
+    return QueueReviewResult(
+        corrections=corrections,
+        reasoning=str(result_dict.get("reasoning", "")),
     )
 
 
@@ -944,6 +1107,118 @@ Be precise and complete. Include all necessary imports, tests, and documentation
             "Do not duplicate remaining tasks."
         )
         return await self.plan(progress)
+
+    async def review_queue(
+        self,
+        completed_count: int,
+        failed_count: int,
+        budget_remaining_pct: float = 1.0,
+    ) -> QueueReviewResult:
+        """Review the task queue and return corrections.
+
+        Uses a cheap model (haiku) with a tight token budget. Skipped if
+        budget is below 10% to conserve spend.
+
+        Args:
+            completed_count: Tasks completed since last review.
+            failed_count: Tasks failed since last review.
+            budget_remaining_pct: Fraction of budget remaining (0.0-1.0).
+
+        Returns:
+            QueueReviewResult with corrections to apply.
+        """
+        if budget_remaining_pct < 0.10:
+            logger.info("Manager queue review skipped — budget below 10%%")
+            return QueueReviewResult(corrections=[], reasoning="skipped: budget < 10%", skipped=True)
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                resp = await client.get(f"{self._server_url}/tasks")
+                resp.raise_for_status()
+                all_tasks_raw: list[dict[str, Any]] = cast("list[dict[str, Any]]", resp.json())
+            except httpx.HTTPError as exc:
+                logger.warning("Manager queue review: failed to fetch tasks: %s", exc)
+                return QueueReviewResult(corrections=[], reasoning="failed to fetch tasks", skipped=True)
+
+        def _task_from_raw(t: dict[str, Any]) -> Task:
+            return Task(
+                id=t["id"],
+                title=t["title"],
+                description=t.get("description", ""),
+                role=t.get("role", ""),
+                priority=t.get("priority", 2),
+                status=TaskStatus(t.get("status", "open")),
+                assigned_agent=t.get("assigned_agent"),
+                result_summary=t.get("result_summary"),
+            )
+
+        open_tasks = [_task_from_raw(t) for t in all_tasks_raw if t.get("status") == "open"]
+        claimed_tasks = [_task_from_raw(t) for t in all_tasks_raw if t.get("status") in ("claimed", "in_progress")]
+        failed_tasks = [_task_from_raw(t) for t in all_tasks_raw if t.get("status") == "failed"]
+
+        prompt = render_queue_review_prompt(
+            completed_count=completed_count,
+            failed_count=failed_count,
+            open_tasks=open_tasks,
+            claimed_tasks=claimed_tasks,
+            failed_tasks=failed_tasks,
+            server_url=self._server_url,
+        )
+
+        try:
+            raw_response = await call_llm(
+                prompt,
+                model=self._model,
+                provider=self._provider,
+                max_tokens=500,
+            )
+        except Exception as exc:
+            logger.warning("Manager queue review LLM call failed: %s", exc)
+            return QueueReviewResult(corrections=[], reasoning=f"llm error: {exc}", skipped=True)
+
+        try:
+            result = parse_queue_review_response(raw_response)
+        except ValueError as exc:
+            logger.warning("Manager queue review parse failed: %s", exc)
+            return QueueReviewResult(corrections=[], reasoning=f"parse error: {exc}", skipped=True)
+
+        logger.info(
+            "Manager queue review: %d correction(s) — %s",
+            len(result.corrections),
+            result.reasoning,
+        )
+        return result
+
+    def review_queue_sync(
+        self,
+        completed_count: int,
+        failed_count: int,
+        budget_remaining_pct: float = 1.0,
+    ) -> QueueReviewResult:
+        """Synchronous wrapper for :meth:`review_queue`.
+
+        Safe to call from the orchestrator's synchronous tick loop.
+
+        Args:
+            completed_count: Tasks completed since last review.
+            failed_count: Tasks failed since last review.
+            budget_remaining_pct: Fraction of budget remaining (0.0-1.0).
+
+        Returns:
+            QueueReviewResult with corrections to apply.
+        """
+        import asyncio as _asyncio
+        import concurrent.futures as _futures
+
+        coro = self.review_queue(completed_count, failed_count, budget_remaining_pct)
+        try:
+            loop = _asyncio.get_event_loop()
+            if loop.is_running():
+                with _futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    return pool.submit(_asyncio.run, coro).result(timeout=30)
+            return loop.run_until_complete(coro)
+        except RuntimeError:
+            return _asyncio.run(coro)
 
 
 if __name__ == "__main__":
