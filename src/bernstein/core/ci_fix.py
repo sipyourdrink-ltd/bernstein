@@ -19,7 +19,7 @@ import subprocess
 import textwrap
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,7 +55,7 @@ class CIFailure:
     summary: str
     details: str = ""
     fix_hint: str = ""
-    affected_files: list[str] = field(default_factory=list)
+    affected_files: list[str] = field(default_factory=list[str])
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ def parse_failures(log: str, job: str = "ci") -> list[CIFailure]:
 # ---------------------------------------------------------------------------
 
 
-def build_task_payload(failures: list[CIFailure], run_url: str = "") -> dict:
+def build_task_payload(failures: list[CIFailure], run_url: str = "") -> dict[str, Any]:
     """Build a Bernstein task payload from a list of CI failures.
 
     Args:

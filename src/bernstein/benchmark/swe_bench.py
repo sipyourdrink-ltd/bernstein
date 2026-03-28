@@ -20,7 +20,7 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,12 +81,14 @@ class SWEInstance:
 
         def _parse_tests(value: Any) -> list[str]:
             if isinstance(value, list):
-                return [str(v) for v in value]
+                lst = cast("list[Any]", value)
+                return [str(v) for v in lst]
             if isinstance(value, str):
                 try:
-                    parsed = json.loads(value)
+                    parsed: Any = json.loads(value)
                     if isinstance(parsed, list):
-                        return [str(v) for v in parsed]
+                        plst = cast("list[Any]", parsed)
+                        return [str(v) for v in plst]
                 except json.JSONDecodeError:
                     pass
                 return [value] if value else []
@@ -321,7 +323,7 @@ class SWEBenchRunner:
         try:
             from datasets import load_dataset as hf_load  # type: ignore[import-untyped]
 
-            raw_dataset = hf_load("princeton-nlp/SWE-bench_Lite", split="test")
+            raw_dataset: list[Any] = cast("list[Any]", hf_load("princeton-nlp/SWE-bench_Lite", split="test"))
             instances = [SWEInstance.from_dict(dict(row)) for row in raw_dataset]
             return self.filter_instances(instances)
         except ImportError:

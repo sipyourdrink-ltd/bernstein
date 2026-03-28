@@ -12,20 +12,20 @@ from __future__ import annotations
 
 import logging
 import uuid
-
-import redis.asyncio as aioredis
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # ``redis`` is an optional dependency — only imported when cluster mode is
 # enabled.  We guard the import so the rest of Bernstein keeps working with
 # zero extra packages.
+_redis_available: bool
 try:
     import redis.asyncio as aioredis  # type: ignore[import-untyped]
 
-    _REDIS_AVAILABLE = True
+    _redis_available = True
 except ModuleNotFoundError:
-    _REDIS_AVAILABLE = False
+    _redis_available = False
     aioredis = None  # type: ignore[assignment]
 
 
@@ -52,13 +52,13 @@ class RedisCoordinator:
     """
 
     def __init__(self, redis_url: str, lock_ttl_ms: int = 30_000) -> None:
-        if not _REDIS_AVAILABLE:
+        if not _redis_available:
             raise RuntimeError(
                 "redis package is required for cluster mode. Install it with: pip install bernstein[cluster]"
             )
         self._url = redis_url
         self._ttl_ms = lock_ttl_ms
-        self._client: aioredis.Redis | None = None  # type: ignore[name-defined]
+        self._client: Any | None = None
 
     async def connect(self) -> None:
         """Open the Redis connection pool."""

@@ -51,7 +51,7 @@ class MetricPoint:
 
     timestamp: float
     value: float
-    labels: dict[str, str] = field(default_factory=dict)  # e.g., {role: "backend", model: "sonnet"}
+    labels: dict[str, str] = field(default_factory=dict[str, str])  # e.g., {role: "backend", model: "sonnet"}
 
 
 @dataclass
@@ -505,7 +505,7 @@ class MetricsCollector:
         Returns:
             Dict of quota type to UsageQuota.
         """
-        result = {}
+        result: dict[str, UsageQuota] = {}
         prefix = f"{provider}:{model}:"
         for key, quota in self._usage_quotas.items():
             if key.startswith(prefix):
@@ -789,7 +789,7 @@ class MetricsCollector:
         if not tasks:
             return 0.0
 
-        total_time = sum(t.end_time - t.start_time for t in tasks)
+        total_time: float = sum((t.end_time - t.start_time) for t in tasks if t.end_time is not None)
         return total_time / len(tasks)
 
     def get_total_cost(self, agent_id: str | None = None) -> float:

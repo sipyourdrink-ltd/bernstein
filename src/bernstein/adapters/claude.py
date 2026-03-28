@@ -9,7 +9,7 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
@@ -45,9 +45,10 @@ def load_mcp_config(
             global_cfg = json.loads(global_path.read_text(encoding="utf-8"))
             if isinstance(global_cfg, dict):
                 # mcp.json has {"mcpServers": {...}} structure
-                servers = global_cfg.get("mcpServers", global_cfg)
+                cfg = cast("dict[str, Any]", global_cfg)
+                servers = cfg.get("mcpServers", cfg)
                 if isinstance(servers, dict):
-                    merged.update(servers)
+                    merged.update(cast("dict[str, Any]", servers))
         except (OSError, json.JSONDecodeError):
             pass
 
@@ -70,9 +71,11 @@ def _resolve_env_vars(obj: Any) -> Any:
         var_name = obj[2:-1]
         return os.environ.get(var_name, obj)
     if isinstance(obj, dict):
-        return {k: _resolve_env_vars(v) for k, v in obj.items()}
+        d = cast("dict[str, Any]", obj)
+        return {k: _resolve_env_vars(v) for k, v in d.items()}
     if isinstance(obj, list):
-        return [_resolve_env_vars(item) for item in obj]
+        lst = cast("list[Any]", obj)
+        return [_resolve_env_vars(item) for item in lst]
     return obj
 
 

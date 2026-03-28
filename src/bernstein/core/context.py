@@ -625,7 +625,7 @@ def build_architecture_md(workdir: Path) -> str:
             mod_summary = _parse_python_file(workdir / mod_path)
             if mod_summary:
                 doc = f" — {mod_summary.docstring}" if mod_summary.docstring else ""
-                exports = []
+                exports: list[str] = []
                 for cls_name, _ in mod_summary.classes:
                     exports.append(cls_name)
                 for fn in mod_summary.functions:
@@ -766,7 +766,7 @@ class ProviderUsageSummary:
     successful_calls: int = 0
     failed_calls: int = 0
     avg_latency_ms: float = 0.0
-    models_used: set[str] = field(default_factory=set)
+    models_used: set[str] = field(default_factory=set[str])
 
 
 @dataclass
@@ -787,7 +787,7 @@ class AgentSessionUsage:
     total_calls: int = 0
     total_tokens: int = 0
     total_cost_usd: float = 0.0
-    providers_used: set[str] = field(default_factory=set)
+    providers_used: set[str] = field(default_factory=set[str])
     start_time: float | None = None
     last_activity: float | None = None
 
@@ -1039,7 +1039,7 @@ class ApiUsageTracker:
         Returns:
             List of TierConsumption for all tiers.
         """
-        return [tc for key, tc in self._tier_consumption.items() if tc.provider == provider]
+        return [tc for _, tc in self._tier_consumption.items() if tc.provider == provider]
 
     def get_global_summary(self) -> dict[str, str]:
         """Get a global summary of all API usage.
