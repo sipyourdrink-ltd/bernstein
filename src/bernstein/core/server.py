@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from bernstein.core.a2a import A2AHandler, A2ATaskStatus
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, MessageType
 from bernstein.core.models import (
     AgentSession,
@@ -246,6 +247,58 @@ class BulletinMessageResponse(BaseModel):
     content: str
     timestamp: float
     cell_id: str | None
+
+
+# -- A2A protocol schemas --------------------------------------------------
+
+
+class A2ATaskSendRequest(BaseModel):
+    """Body for POST /a2a/tasks/send — receive a task from an external A2A agent."""
+
+    sender: str
+    message: str
+    role: str = "backend"
+
+
+class A2AArtifactRequest(BaseModel):
+    """Body for POST /a2a/tasks/{id}/artifacts — attach an artifact."""
+
+    name: str
+    data: str = ""
+    content_type: str = "text/plain"
+
+
+class A2AArtifactResponse(BaseModel):
+    """Single artifact in responses."""
+
+    name: str
+    content_type: str
+    data: str
+    created_at: float
+
+
+class A2ATaskResponse(BaseModel):
+    """Serialised A2A task in responses."""
+
+    id: str
+    bernstein_task_id: str | None
+    sender: str
+    message: str
+    status: str
+    artifacts: list[A2AArtifactResponse]
+    created_at: float
+    updated_at: float
+
+
+class A2AAgentCardResponse(BaseModel):
+    """Agent Card response for /.well-known/agent.json."""
+
+    name: str
+    description: str
+    capabilities: list[str]
+    protocol_version: str
+    endpoint: str
+    provider: str
 
 
 # ---------------------------------------------------------------------------
@@ -946,6 +999,28 @@ def _parse_upgrade_dict(raw: dict[str, Any] | None) -> UpgradeProposalDetails | 
     )
 
 
+def _a2a_task_to_response(task: Any) -> A2ATaskResponse:
+    """Convert an A2ATask to its Pydantic response model."""
+    return A2ATaskResponse(
+        id=task.id,
+        bernstein_task_id=task.bernstein_task_id,
+        sender=task.sender,
+        message=task.message,
+        status=task.status.value,
+        artifacts=[
+            A2AArtifactResponse(
+                name=a.name,
+                content_type=a.content_type,
+                data=a.data,
+                created_at=a.created_at,
+            )
+            for a in task.artifacts
+        ],
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
+
+
 def _task_to_response(task: Task) -> TaskResponse:
     """Convert a domain Task to a Pydantic response model."""
     return TaskResponse(
@@ -1172,11 +1247,84 @@ def create_app(
             for m in messages
         ]
 
+    # -- A2A protocol routes ---------------------------------------------------
+
+    a2a_handler = A2AHandler(server_url="http://localhost:8052")
+
+    @application.get("/.well-known/agent.json", response_model=A2AAgentCardResponse)
+    async def agent_card() -> A2AAgentCardResponse:
+        """Publish the Bernstein orchestrator Agent Card (A2A spec)."""
+        card = a2a_handler.orchestrator_card()
+        d = card.to_dict()
+        return A2AAgentCardResponse(**d)
+
+    @application.post("/a2a/tasks/send", response_model=A2ATaskResponse, status_code=201)
+    async def a2a_send_task(body: A2ATaskSendRequest) -> A2ATaskResponse:
+        """Receive a task from an external A2A agent.
+
+        Creates both an A2A task record and a corresponding Bernstein task,
+        linking them together for lifecycle synchronisation.
+        """
+        a2a_task = a2a_handler.create_task(
+            sender=body.sender,
+            message=body.message,
+            role=body.role,
+        )
+        # Create the corresponding Bernstein task.
+        bernstein_task = await store.create(
+            TaskCreate(
+                title=f"[A2A] {body.message[:80]}",
+                description=body.message,
+                role=body.role,
+            )
+        )
+        a2a_handler.link_bernstein_task(a2a_task.id, bernstein_task.id)
+        return _a2a_task_to_response(a2a_task)
+
+    @application.get("/a2a/tasks/{a2a_task_id}", response_model=A2ATaskResponse)
+    async def a2a_get_task(a2a_task_id: str) -> A2ATaskResponse:
+        """Get an A2A task by ID, syncing status from the Bernstein task."""
+        a2a_task = a2a_handler.get_task(a2a_task_id)
+        if a2a_task is None:
+            raise HTTPException(status_code=404, detail=f"A2A task '{a2a_task_id}' not found")
+        # Sync status from the underlying Bernstein task.
+        if a2a_task.bernstein_task_id is not None:
+            bt = store.get_task(a2a_task.bernstein_task_id)
+            if bt is not None:
+                a2a_handler.sync_status(a2a_task.id, bt.status.value)
+        return _a2a_task_to_response(a2a_task)
+
+    @application.post(
+        "/a2a/tasks/{a2a_task_id}/artifacts",
+        response_model=A2AArtifactResponse,
+        status_code=201,
+    )
+    async def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest) -> A2AArtifactResponse:
+        """Attach an artifact to an A2A task."""
+        try:
+            artifact = a2a_handler.add_artifact(
+                a2a_task_id=a2a_task_id,
+                name=body.name,
+                data=body.data,
+                content_type=body.content_type,
+            )
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail=f"A2A task '{a2a_task_id}' not found"
+            ) from None
+        return A2AArtifactResponse(
+            name=artifact.name,
+            content_type=artifact.content_type,
+            data=artifact.data,
+            created_at=artifact.created_at,
+        )
+
     # Attach store and bulletin for testing access.
     # FastAPI's `state` is a plain object with no predefined attributes;
     # type: ignore[attr-defined] is the standard pattern here.
     application.state.store = store  # type: ignore[attr-defined]
     application.state.bulletin = bulletin  # type: ignore[attr-defined]
+    application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
 
     return application
 

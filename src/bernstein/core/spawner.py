@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.core.context import TaskContextBuilder
+from bernstein.core.mcp_registry import MCPRegistry
 from bernstein.core.models import AgentSession, ModelConfig, Task
 from bernstein.core.router import RouterError, TierAwareRouter
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
@@ -251,6 +252,7 @@ class AgentSpawner:
         agency_catalog: dict[str, AgencyAgent] | None = None,
         router: TierAwareRouter | None = None,
         mcp_config: dict[str, Any] | None = None,
+        mcp_registry: MCPRegistry | None = None,
         catalog: CatalogRegistry | None = None,
         use_worktrees: bool = False,
     ) -> None:
@@ -264,6 +266,7 @@ class AgentSpawner:
         self._agency_catalog = agency_catalog
         self._router = router
         self._mcp_config = mcp_config
+        self._mcp_registry = mcp_registry
         self._catalog = catalog
         self._context_builder = TaskContextBuilder(workdir)
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
@@ -359,13 +362,18 @@ class AgentSpawner:
                     exc,
                 )
 
+        # Build per-task MCP config: auto-detected servers merged with base config
+        effective_mcp = self._mcp_config
+        if self._mcp_registry is not None:
+            effective_mcp = self._mcp_registry.resolve_for_tasks(tasks, base_config=self._mcp_config)
+
         # Spawn via adapter
         result = target_adapter.spawn(
             prompt=prompt,
             workdir=spawn_cwd,
             model_config=model_config,
             session_id=session_id,
-            mcp_config=self._mcp_config,
+            mcp_config=effective_mcp,
         )
         session.pid = result.pid
         session.status = "working"

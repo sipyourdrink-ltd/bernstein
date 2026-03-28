@@ -24,6 +24,7 @@ from bernstein.core.evolution import EvolutionCoordinator, UpgradeStatus
 from bernstein.core.janitor import verify_task
 from bernstein.core.metrics import get_collector
 from bernstein.core.retrospective import generate_retrospective
+from bernstein.core.graph import TaskGraph
 from bernstein.core.models import (
     AgentSession,
     OrchestratorConfig,
@@ -31,6 +32,7 @@ from bernstein.core.models import (
     TaskStatus,
     TaskType,
 )
+from bernstein.core.signals import read_unresolved_pivots
 from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
 from bernstein.evolution.types import MetricsRecord
 
@@ -468,13 +470,62 @@ class Orchestrator:
             if all(dep in done_ids for dep in t.depends_on)
         ]
         result.open_tasks = len(open_tasks)
-        # ready_tasks == open_tasks (dep filter already applied above)
+
+        # 1b. Hold back tasks blocked by unresolved high-severity pivots
         ready_tasks = open_tasks
+        try:
+            unresolved = read_unresolved_pivots(self._workdir)
+            if unresolved:
+                blocked_ids: set[str] = set()
+                for pivot in unresolved:
+                    blocked_ids.update(pivot.affected_tickets)
+                if blocked_ids:
+                    before = len(ready_tasks)
+                    ready_tasks = [t for t in ready_tasks if t.id not in blocked_ids]
+                    held = before - len(ready_tasks)
+                    if held:
+                        logger.warning(
+                            "Holding %d task(s) pending VP pivot review: %s",
+                            held,
+                            blocked_ids,
+                        )
+        except OSError as exc:
+            logger.warning("Failed to read pivot signals: %s", exc)
+
+        # 1c. Build task graph and compute optimal parallelism
+        all_tasks = [
+            t
+            for status_tasks in tasks_by_status.values()
+            for t in status_tasks
+        ]
+        task_graph = TaskGraph(all_tasks)
+        analysis = task_graph.analyse()
+
+        if analysis.parallel_width < self._config.max_agents and analysis.parallel_width > 0:
+            logger.debug(
+                "Graph parallel width (%d) < max_agents (%d) — "
+                "dependency filter already limits concurrency",
+                analysis.parallel_width,
+                self._config.max_agents,
+            )
+
+        if analysis.bottlenecks:
+            logger.info(
+                "Graph bottleneck(s): %s — %d downstream tasks blocked",
+                analysis.bottlenecks,
+                sum(len(task_graph.dependents(b)) for b in analysis.bottlenecks),
+            )
+
+        # Persist graph snapshot for dashboard / debugging
+        try:
+            task_graph.save(self._workdir / ".sdd" / "runtime")
+        except OSError as exc:
+            logger.debug("Failed to save task graph: %s", exc)
 
         # 2. Group into batches
         batches = group_by_role(ready_tasks, self._config.max_tasks_per_agent)
 
-        # 3. Count alive agents, spawn if capacity
+        # 3. Count alive agents, spawn if capacity (capped by graph parallel width)
         self._refresh_agent_states(tasks_by_status)
         alive_count = sum(1 for a in self._agents.values() if a.status != "dead")
         result.active_agents = alive_count
@@ -2340,6 +2391,7 @@ class Orchestrator:
                 "pid": s.pid,
                 "spawn_ts": s.spawn_ts,
                 "runtime_s": round(time.time() - s.spawn_ts) if s.spawn_ts > 0 else 0,
+                "agent_source": s.agent_source,
             }
             for s in self._agents.values()
         ]

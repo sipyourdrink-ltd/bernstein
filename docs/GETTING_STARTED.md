@@ -290,6 +290,100 @@ bernstein evolve run
 
 ---
 
+## Zero-to-running demo
+
+`bernstein demo` creates a temporary Flask starter project, seeds three backlog
+tasks, and runs agents to complete them — all in one command.  Good for a first
+look or to verify your adapter is wired up correctly.
+
+```bash
+# Run the full demo (auto-detects adapter)
+bernstein demo
+
+# Preview the plan without spawning any agents
+bernstein demo --dry-run
+
+# Use a specific adapter
+bernstein demo --adapter codex
+
+# Cap the run time at 60 seconds
+bernstein demo --timeout 60
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--dry-run` | `false` | Show the demo plan without spawning any agents |
+| `--adapter NAME` | auto-detect | CLI adapter to use (`claude`, `codex`, `gemini`, `qwen`) |
+| `--timeout N` | `120` | Maximum seconds to wait for tasks to complete |
+
+The demo creates a throwaway directory under `$TMPDIR`.  Nothing is written to
+your current project.
+
+---
+
+## Creative evolution pipeline (ideate)
+
+`bernstein ideate` runs a two-stage pipeline: a *visionary* stage that generates
+bold feature proposals and an *analyst* stage that evaluates them.  Approved
+proposals are converted into backlog tasks automatically.
+
+Agent-driven generation of proposals and verdicts is a future feature; today
+you supply pre-written JSON files.
+
+```bash
+# Convert pre-written proposals and verdicts into tasks
+bernstein ideate --proposals ideas.json --verdicts evals.json
+
+# Dry-run: show what would be created without writing tasks
+bernstein ideate --proposals ideas.json --verdicts evals.json --dry-run
+
+# Raise the approval bar (default 7.0)
+bernstein ideate --proposals ideas.json --verdicts evals.json --threshold 8
+
+# Run against a different project directory
+bernstein ideate --proposals ideas.json --verdicts evals.json --dir ../other-project
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--dry-run` | `false` | Show proposals without creating backlog tasks |
+| `--proposals FILE` | — | JSON file with pre-written visionary proposals |
+| `--verdicts FILE` | — | JSON file with pre-written analyst verdicts |
+| `--threshold N` | `7.0` | Minimum analyst score (0–10) to approve a proposal |
+| `--dir DIR` | `.` | Project root directory (parent of `.sdd/`) |
+
+See `templates/roles/visionary/` and `templates/roles/analyst/` for the expected
+JSON formats.
+
+---
+
+## Retrospective report
+
+`bernstein retro` reads completed and failed tasks from the archive and writes a
+markdown retrospective report.
+
+```bash
+# Report on all recorded tasks
+bernstein retro
+
+# Last 24 hours only
+bernstein retro --since 24
+
+# Print to stdout as well as writing the file
+bernstein retro --print
+
+# Write to a custom file instead of .sdd/runtime/retrospective.md
+bernstein retro -o report.md
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--since HOURS` | all time | Include only tasks completed in the last N hours |
+| `-o / --output FILE` | `.sdd/runtime/retrospective.md` | Write report to FILE instead of the default path |
+| `--print` | `false` | Print the report to stdout in addition to writing it |
+
+---
+
 ## Agent spend
 
 ```bash
@@ -460,6 +554,9 @@ top-level subcommands:
 | `bernstein evolve review` | List evolution proposals awaiting human review |
 | `bernstein evolve approve PROPOSAL_ID` | Approve a specific evolution proposal |
 | `bernstein evolve run [--window N] [--max-proposals N]` | Run the autoresearch evolution loop |
+| `bernstein demo [--dry-run] [--adapter NAME] [--timeout N]` | Zero-to-running demo: Flask starter project with 3 tasks |
+| `bernstein ideate --proposals FILE --verdicts FILE [--dry-run] [--threshold N]` | Creative evolution pipeline: proposals → verdicts → tasks |
+| `bernstein retro [--since HOURS] [-o FILE] [--print]` | Generate a retrospective report from task history |
 
 ---
 

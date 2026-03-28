@@ -2,47 +2,47 @@
 
 No decisions recorded yet.
 
-## [2026-03-28 09:23] Complete retrospective cost calculation (stubbed) (081213de4433)
-Completed: Complete retrospective cost calculation (stubbed)
-
-## [2026-03-28 09:24] Plan and decompose goal into tasks (b5d6a38d6b9f)
-Completed: Plan and decompose goal into tasks. Analysis: 2027 tests passing, 6 failing (worktree mock assertions + orchestrator evolution cycle mocks). Codebase is ~80% complete vs DESIGN.md. Created 6 tasks: (1) Fix worktree test regressions [P1 qa], (2) Fix orchestrator evolution cycle test regressions [P1 qa], (3) Wire creative pipeline into evolution loop [P2 backend], (4) Add integration test for self-evolution feedback loop [P2 qa], (5) Complete retrospective cost calculation [P2 backend], (6) Implement adapter tier detection for non-Claude adapters [P3 backend].
-
-## [2026-03-28 09:24] Fix worktree test regressions from git_ops refactoring (1a557f5b3235)
-Completed: Fix worktree test regressions from git_ops refactoring
-
-## [2026-03-28 09:24] Fix orchestrator evolution cycle test regressions (a728517fc867)
-Completed: Fix orchestrator evolution cycle test regressions
-
-## [2026-03-28 09:24] Wire creative evolution pipeline into evolution loop rotation (b7e085054bed)
-Completed: Wire creative evolution pipeline into evolution loop rotation
-
-## [2026-03-28 09:24] Add end-to-end integration test for self-evolution feedback loop (49690e8b50ec)
-Completed: Add end-to-end integration test for self-evolution feedback loop
-
-## [2026-03-28 09:24] Complete retrospective cost calculation (stubbed) (081213de4433)
-Completed: Complete retrospective cost calculation (stubbed)
-
-## [2026-03-28 09:24] Implement tier detection for non-Claude adapters (846e37f2b5e4)
-Completed: Implement tier detection for non-Claude adapters
-
-## [2026-03-28 09:27] Evolve cycle 17: performance (571c45dca3af)
-Created 4 performance tasks: (1) 908e21fc - incremental cost metric parsing to avoid O(n) full reparse, (2) d607fb59 - reverse index for O(1) task-to-session lookup, (3) 9dea5f17 - adaptive polling with exponential backoff to reduce idle CPU/network 5x, (4) 2d760e55 - single-pass log parsing to halve memory allocation in _collect_completion_data
-
-## [2026-03-28 09:29] Incremental cost metric parsing in _compute_total_spent (908e21fcb4fb)
-Completed: Incremental cost metric parsing in _compute_total_spent
-
-## [2026-03-28 09:29] Single-pass log parsing in _collect_completion_data (2d760e55ad04)
-Completed: Single-pass log parsing in _collect_completion_data
-
-## [2026-03-28 09:37] [RETRY 1] Adaptive polling with exponential backoff in orchestrator main loop (7aba36595bb4)
-Completed: [RETRY 1] Adaptive polling with exponential backoff in orchestrator main loop
-
-## [2026-03-28 09:37] [RETRY 1] Adaptive polling with exponential backoff in orchestrator main loop (ac31c64f16d3)
-Completed: [RETRY 1] Adaptive polling with exponential backoff in orchestrator main loop
-
-## [2026-03-28 09:43] [RETRY 1] Add reverse index for task-to-session lookup in orchestrator (80fb7c304ed1)
-Completed: Add reverse index for task-to-session lookup in orchestrator. Added _task_to_session dict[str,str], populated in _spawn_agent, improved _release_task_to_session to use task_ids for O(k) cleanup instead of O(n) scan, _find_session_for_task is O(1). Fixed 5 tests that relied on old linear scan behavior.
-
-## [2026-03-28 09:44] [RETRY 1] Add reverse index for task-to-session lookup in orchestrator (dd5661642796)
+## [2026-03-28 09:47] [RETRY 1] Add reverse index for task-to-session lookup in orchestrator (1fa8d0e133ee)
 Completed: [RETRY 1] Add reverse index for task-to-session lookup in orchestrator
+
+## [2026-03-28 09:47] Evolve cycle 18: documentation (7567f4269e87)
+Completed: Evolve cycle 18 documentation — created 3 tasks: (1) README.md update (test count 1777→2056, missing CLI commands, missing roles), (2) GETTING_STARTED.md add demo/ideate/retro docs, (3) CONTRIBUTING.md role docs verification
+
+## [2026-03-28 09:48] Add demo, ideate, retro commands to GETTING_STARTED.md (215901314484)
+Completed: Add demo, ideate, retro commands to GETTING_STARTED.md
+
+## [2026-03-28 09:48] Add analyst, resolver, visionary role descriptions to CONTRIBUTING.md (02bc554a3ca8)
+Completed: Add analyst, resolver, visionary role descriptions to CONTRIBUTING.md
+
+## [2026-03-28 09:48] 502 — CI/CD pipeline: GitHub Actions, PyPI publishing, Dependabot (1634fc1769a3)
+Completed: 502 — CI/CD pipeline: GitHub Actions, PyPI publishing, Dependabot
+
+## [2026-03-28 09:48] Update README.md: test count, missing CLI commands, missing roles (74ab3d71c2f6)
+Completed: Update README.md: test count, missing CLI commands, missing roles
+
+## [2026-03-28 09:49] 505 — One-command cross-platform installation (85ce17301b23)
+Completed: 505 — One-command cross-platform installation
+
+## [2026-03-28 09:49] 507 — bernstein init creates bernstein.yaml and .gitignore entry (f1e8c1a887a5)
+Completed: 507 — bernstein init creates bernstein.yaml and .gitignore entry
+
+## [2026-03-28 09:52] 501 — Fix critical UX blockers: broken aliases, missing pre-flight checks (acf827d928e1)
+Completed: 501 — Fix critical UX blockers: broken aliases, missing pre-flight checks
+
+## [2026-03-28 09:54] 504 — Align dashboard SVG mockup with real TUI (850f38640dfe)
+Completed: 504 — Align dashboard SVG mockup with real TUI
+
+## [2026-03-28 09:55] 506 — Ticket re-evaluation system: VP gate for strategic pivots (32fefa677b2a)
+Completed: 506 — Ticket re-evaluation system: VP gate for strategic pivots. Created signals.py with PivotSignal/TicketChange/VPDecision models + file/read/resolve functions. Updated VP system_prompt.md with pivot evaluation instructions. Integrated pivot-blocked task filtering into orchestrator tick loop. 17 new tests, all 1999 unit tests pass.
+
+## [2026-03-28 09:58] 508 — Agent-task dependency graph with graph theory optimizations (72460b387f19)
+Completed: 508 — Agent-task dependency graph with graph theory optimizations
+
+## [2026-03-28 10:00] [RETRY 1] 503 — Apple-like UX overhaul: zero-friction first run, progressive disclosure (65ca72dfc38b)
+Completed: [RETRY 1] 503 — Apple-like UX overhaul: zero-friction first run, progressive disclosure
+
+## [2026-03-28 10:01] [RETRY 1] 503 — Apple-like UX overhaul: zero-friction first run, progressive disclosure (d8a5482f88ec)
+Completed: [RETRY 1] 503 — Apple-like UX overhaul: zero-friction first run, progressive disclosure
+
+## [2026-03-28 10:03] 511 — A2A (Agent-to-Agent) protocol support (4288a75cd56f)
+Completed: 511 — A2A (Agent-to-Agent) protocol support

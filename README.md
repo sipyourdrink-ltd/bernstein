@@ -17,7 +17,7 @@
 </picture>
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-1777-2ea44f)]()
+[![Tests](https://img.shields.io/badge/tests-2056-2ea44f)]()
 [![License](https://img.shields.io/badge/license-PolyForm_NC-f89820)](LICENSE)
 
 </div>
@@ -25,7 +25,7 @@
 ---
 
 ```bash
-pip install bernstein-orchestrator  # or: git clone && uv pip install -e .
+pipx install bernstein   # or: uv tool install bernstein
 bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 ```
 
@@ -67,6 +67,11 @@ bernstein benchmark run            # run golden benchmark suite
 bernstein agents sync              # pull latest agent catalog
 bernstein agents list              # list available agents
 bernstein agents validate          # check catalog health
+bernstein plan                     # show task backlog
+bernstein logs                     # tail agent log output
+bernstein demo                     # zero-to-running demo
+bernstein ideate                   # run creative evolution pipeline
+bernstein retro                    # generate retrospective report
 ```
 
 </details>
@@ -113,7 +118,7 @@ Analyzes metrics, proposes changes to prompts and routing rules, sandboxes them,
 <details>
 <summary><strong>Specialist roles</strong></summary>
 
-`manager` `backend` `frontend` `qa` `security` `architect` `devops` `reviewer` `docs` `ml-engineer` `prompt-engineer` `retrieval` `vp`
+`manager` `backend` `frontend` `qa` `security` `architect` `devops` `reviewer` `docs` `ml-engineer` `prompt-engineer` `retrieval` `vp` `analyst` `resolver` `visionary`
 
 Tasks default to `backend` if no role is specified. The orchestrator checks agent catalogs for a specialized match before falling back to built-in roles.
 

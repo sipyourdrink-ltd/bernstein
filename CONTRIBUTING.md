@@ -113,6 +113,29 @@ class CLIAdapter(ABC):
 
 Role templates let you define new specialist agent types (e.g., `data-engineer`, `ml-ops`, `dba`). Each role lives in its own directory under `templates/roles/` and consists of three files.
 
+### Built-in roles
+
+| Role | Purpose |
+|---|---|
+| `analyst` | Evaluates proposals for feasibility, ROI, and risk — produces APPROVE/REVISE/REJECT verdicts |
+| `architect` | High-level system design and technical decision-making |
+| `backend` | Server-side code, APIs, data models |
+| `devops` | CI/CD, infrastructure, deployment |
+| `docs` | Documentation, guides, contributor-facing writing |
+| `frontend` | UI components, client-side code |
+| `manager` | Task planning and coordination (used by the orchestrator) |
+| `ml-engineer` | Machine learning pipelines and model integration |
+| `prompt-engineer` | Prompt design and LLM interaction patterns |
+| `qa` | Testing and quality assurance |
+| `resolver` | Resolves git merge conflicts between concurrent agent branches |
+| `retrieval` | RAG pipelines, embedding, and search |
+| `reviewer` | Code review and feedback |
+| `security` | Security audits and vulnerability assessment |
+| `visionary` | Generates bold product proposals from a user perspective |
+| `vp` | Executive-level strategy and prioritization |
+
+Assign any role to a task with `"role": "<role-name>"` in the task payload.
+
 ### Directory structure
 
 ```

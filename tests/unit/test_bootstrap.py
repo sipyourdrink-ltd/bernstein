@@ -10,6 +10,9 @@ import pytest
 
 from bernstein.core.bootstrap import (
     SDD_DIRS,
+    _check_api_key,
+    _check_binary,
+    _check_port_free,
     _clean_stale_runtime,
     _ensure_sdd,
     _is_alive,
@@ -18,6 +21,7 @@ from bernstein.core.bootstrap import (
     _start_server,
     _start_spawner,
     _wait_for_server,
+    preflight_checks,
 )
 from bernstein.core.seed import NotifyConfig
 
@@ -328,3 +332,162 @@ class TestSendWebhook:
         config = NotifyConfig(webhook_url="https://hooks.example.com/notify")
         with patch("httpx.post", side_effect=RuntimeError("boom")):
             _send_webhook(config, {"event": "complete"})
+
+
+# ---------------------------------------------------------------------------
+# _check_binary
+# ---------------------------------------------------------------------------
+
+
+class TestCheckBinary:
+    def test_passes_when_binary_found(self) -> None:
+        with patch("shutil.which", return_value="/usr/local/bin/claude"):
+            _check_binary("claude")  # must not raise
+
+    def test_exits_when_binary_missing(self) -> None:
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(SystemExit):
+                _check_binary("claude")
+
+    def test_exits_for_unknown_cli(self) -> None:
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(SystemExit):
+                _check_binary("nonexistent-cli")
+
+    def test_exit_for_codex_when_missing(self) -> None:
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(SystemExit):
+                _check_binary("codex")
+
+    def test_exit_for_gemini_when_missing(self) -> None:
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(SystemExit):
+                _check_binary("gemini")
+
+
+# ---------------------------------------------------------------------------
+# _check_api_key
+# ---------------------------------------------------------------------------
+
+
+class TestCheckApiKey:
+    def test_passes_when_claude_key_set(self) -> None:
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
+            _check_api_key("claude")  # must not raise
+
+    def test_exits_when_claude_key_missing(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(SystemExit):
+                _check_api_key("claude")
+
+    def test_passes_when_codex_key_set(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+            _check_api_key("codex")
+
+    def test_exits_when_codex_key_missing(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(SystemExit):
+                _check_api_key("codex")
+
+    def test_passes_when_gemini_key_set(self) -> None:
+        with patch.dict(os.environ, {"GOOGLE_API_KEY": "AIza-test"}):
+            _check_api_key("gemini")
+
+    def test_exits_when_gemini_key_missing(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "GOOGLE_API_KEY"}
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(SystemExit):
+                _check_api_key("gemini")
+
+    def test_qwen_passes_with_openai_key(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
+            _check_api_key("qwen")
+
+    def test_qwen_passes_with_openrouter_key(self) -> None:
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY_PAID": "or-test"}):
+            _check_api_key("qwen")
+
+    def test_qwen_exits_when_no_keys_set(self) -> None:
+        qwen_vars = (
+            "OPENROUTER_API_KEY_PAID",
+            "OPENROUTER_API_KEY_FREE",
+            "OPENAI_API_KEY",
+            "TOGETHERAI_USER_KEY",
+            "OXen_API_KEY",
+            "G4F_API_KEY",
+        )
+        env = {k: v for k, v in os.environ.items() if k not in qwen_vars}
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(SystemExit):
+                _check_api_key("qwen")
+
+
+# ---------------------------------------------------------------------------
+# _check_port_free
+# ---------------------------------------------------------------------------
+
+
+class TestCheckPortFree:
+    def test_passes_when_port_is_free(self) -> None:
+        # Mock socket.socket so bind succeeds
+        mock_sock = MagicMock()
+        mock_sock.__enter__ = MagicMock(return_value=mock_sock)
+        mock_sock.__exit__ = MagicMock(return_value=False)
+        mock_sock.bind = MagicMock()
+
+        with patch("socket.socket", return_value=mock_sock):
+            _check_port_free(8052)  # must not raise
+
+    def test_exits_when_port_is_occupied(self) -> None:
+        mock_sock = MagicMock()
+        mock_sock.__enter__ = MagicMock(return_value=mock_sock)
+        mock_sock.__exit__ = MagicMock(return_value=False)
+        mock_sock.bind = MagicMock(side_effect=OSError("address in use"))
+
+        with patch("socket.socket", return_value=mock_sock):
+            with pytest.raises(SystemExit):
+                _check_port_free(8052)
+
+
+# ---------------------------------------------------------------------------
+# preflight_checks
+# ---------------------------------------------------------------------------
+
+
+class TestPreflightChecks:
+    def test_passes_all_checks(self) -> None:
+        mock_sock = MagicMock()
+        mock_sock.__enter__ = MagicMock(return_value=mock_sock)
+        mock_sock.__exit__ = MagicMock(return_value=False)
+        mock_sock.bind = MagicMock()
+
+        with patch("shutil.which", return_value="/usr/bin/claude"):
+            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
+                with patch("socket.socket", return_value=mock_sock):
+                    preflight_checks("claude", 8052)  # must not raise
+
+    def test_fails_on_missing_binary(self) -> None:
+        with patch("shutil.which", return_value=None):
+            with pytest.raises(SystemExit):
+                preflight_checks("claude", 8052)
+
+    def test_fails_on_missing_api_key(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        with patch("shutil.which", return_value="/usr/bin/claude"):
+            with patch.dict(os.environ, env, clear=True):
+                with pytest.raises(SystemExit):
+                    preflight_checks("claude", 8052)
+
+    def test_fails_on_port_conflict(self) -> None:
+        mock_sock = MagicMock()
+        mock_sock.__enter__ = MagicMock(return_value=mock_sock)
+        mock_sock.__exit__ = MagicMock(return_value=False)
+        mock_sock.bind = MagicMock(side_effect=OSError("address in use"))
+
+        with patch("shutil.which", return_value="/usr/bin/claude"):
+            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
+                with patch("socket.socket", return_value=mock_sock):
+                    with pytest.raises(SystemExit):
+                        preflight_checks("claude", 8052)

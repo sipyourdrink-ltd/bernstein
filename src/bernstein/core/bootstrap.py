@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -39,6 +41,120 @@ _SERVER_READY_TIMEOUT_S = 10.0
 _SERVER_POLL_INTERVAL_S = 0.25
 
 console = Console()
+
+# Binary install hints for each supported CLI adapter.
+_CLI_INSTALL_HINT: dict[str, str] = {
+    "claude": "https://claude.ai/code",
+    "codex": "npm install -g @openai/codex",
+    "gemini": "npm install -g @google/gemini-cli",
+    "qwen": "npm install -g qwen-code",
+}
+
+# Primary API key env var(s) per adapter.
+_CLI_API_KEY_ENV: dict[str, str] = {
+    "claude": "ANTHROPIC_API_KEY",
+    "codex": "OPENAI_API_KEY",
+    "gemini": "GOOGLE_API_KEY",
+}
+
+# Qwen supports multiple providers; any one of these is sufficient.
+_QWEN_API_KEY_VARS: tuple[str, ...] = (
+    "OPENROUTER_API_KEY_PAID",
+    "OPENROUTER_API_KEY_FREE",
+    "OPENAI_API_KEY",
+    "TOGETHERAI_USER_KEY",
+    "OXen_API_KEY",
+    "G4F_API_KEY",
+)
+
+
+def _check_binary(cli: str) -> None:
+    """Exit with an actionable message if the CLI binary is not in PATH.
+
+    Args:
+        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
+
+    Raises:
+        SystemExit: If the binary is not found.
+    """
+    binary = cli  # binary name matches adapter name for all supported adapters
+    if shutil.which(binary) is None:
+        hint = _CLI_INSTALL_HINT.get(cli, f"See documentation for {binary!r}")
+        console.print(f"[bold red]Error:[/bold red] {binary!r} not found in PATH.")
+        console.print(f"Install: {hint}")
+        raise SystemExit(1)
+
+
+def _check_api_key(cli: str) -> None:
+    """Exit with an actionable message if the required API key is not set.
+
+    Args:
+        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
+
+    Raises:
+        SystemExit: If the required API key env var is missing.
+    """
+    if cli == "qwen":
+        if not any(os.environ.get(v) for v in _QWEN_API_KEY_VARS):
+            console.print(
+                "[bold red]Error:[/bold red] No API key configured for qwen."
+            )
+            console.print(
+                "Set one of: " + ", ".join(_QWEN_API_KEY_VARS)
+            )
+            raise SystemExit(1)
+    else:
+        env_var = _CLI_API_KEY_ENV.get(cli)
+        if env_var and not os.environ.get(env_var):
+            console.print(
+                f"[bold red]Error:[/bold red] {env_var} is not set."
+            )
+            console.print(f"Export it: export {env_var}=<your-api-key>")
+            raise SystemExit(1)
+
+
+def _check_port_free(port: int) -> None:
+    """Exit with an actionable message if the port is already in use.
+
+    Args:
+        port: TCP port to check.
+
+    Raises:
+        SystemExit: If the port is occupied.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            console.print(
+                f"[bold red]Error:[/bold red] Port {port} is already in use."
+            )
+            console.print(
+                "Run [bold]bernstein stop[/bold] to free it, "
+                f"or pass [bold]--port <n>[/bold] to use a different port."
+            )
+            raise SystemExit(1)
+
+
+def preflight_checks(cli: str, port: int) -> None:
+    """Run pre-flight checks before starting the server.
+
+    Verifies that:
+    1. The CLI binary is installed and in PATH.
+    2. The required API key env var is present.
+    3. The server port is not already occupied.
+
+    Args:
+        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
+        port: TCP port the server will bind to.
+
+    Raises:
+        SystemExit: On any pre-flight failure, with an actionable message.
+    """
+    _check_binary(cli)
+    _check_api_key(cli)
+    _check_port_free(port)
 
 
 def _send_webhook(config: NotifyConfig, payload: dict[str, Any]) -> None:
@@ -182,6 +298,27 @@ def _discover_catalog(workdir: Path) -> None:
         )
     except Exception:
         logger.warning("Catalog auto-discovery failed (non-fatal)", exc_info=True)
+
+
+def _build_codebase_index(workdir: Path) -> None:
+    """Build or incrementally update the codebase search index.
+
+    Uses SQLite FTS5 for BM25-ranked full-text search so agents can find
+    relevant code without trial-and-error grepping.  On failure the error
+    is logged and startup continues — the index is optional.
+
+    Args:
+        workdir: Project root directory.
+    """
+    from bernstein.core.rag import build_or_update_index
+
+    try:
+        indexer = build_or_update_index(workdir)
+        console.print(
+            f"[dim]Codebase index: {indexer.file_count()} file(s) indexed[/dim]"
+        )
+    except Exception:
+        logger.warning("Codebase index build failed (non-fatal)", exc_info=True)
 
 
 def create_router(workdir: Path) -> TierAwareRouter | None:
@@ -375,85 +512,82 @@ def bootstrap_from_seed(
         bernstein.core.seed.SeedError: If the seed file is invalid.
         RuntimeError: If the server fails to start or respond.
     """
+    from rich.status import Status
+
     # 1. Parse seed
-    seed = parse_seed(seed_path)
+    with Status("[bold]Parsing seed file...[/bold]", console=console):
+        seed = parse_seed(seed_path)
+        # Pre-flight: verify binary, API key, and port before touching anything.
+        preflight_checks(seed.cli, port)
     effective_cells = cells if cells is not None else seed.cells
-    console.print(f"[bold]Goal:[/bold] {seed.goal}")
+    console.print(f"[green]→[/green] Parsed seed: [bold]{seed.goal[:80]}[/bold]")
     if seed.budget_usd is not None:
-        console.print(f"[bold]Budget:[/bold] ${seed.budget_usd:.2f}")
+        console.print(f"  [bold]Budget:[/bold] ${seed.budget_usd:.2f}")
     if seed.team != "auto":
-        console.print(f"[bold]Team:[/bold] {', '.join(seed.team)}")
-    else:
-        console.print("[bold]Team:[/bold] auto (manager decides)")
+        console.print(f"  [bold]Team:[/bold] {', '.join(seed.team)}")
     if seed.constraints:
-        console.print(f"[bold]Constraints:[/bold] {len(seed.constraints)} rules")
+        console.print(f"  [bold]Constraints:[/bold] {len(seed.constraints)} rules")
 
-    # 2. Init .sdd/
-    created = _ensure_sdd(workdir)
+    # 2. Init workspace + clean stale state
+    with Status("[bold]Initialising workspace...[/bold]", console=console):
+        created = _ensure_sdd(workdir)
+        _clean_stale_runtime(workdir)
+        _discover_catalog(workdir)
+        _build_codebase_index(workdir)
+        from bernstein.evolution.invariants import verify_invariants, write_lockfile
+        ok, violations = verify_invariants(workdir)
+        if not ok:
+            console.print(f"[bold red]SAFETY: {len(violations)} locked file(s) modified[/bold red]")
+            for v in violations:
+                console.print(f"  [red]{v}[/red]")
+        write_lockfile(workdir)
     if created:
-        console.print("[green]Created .sdd/ workspace[/green]")
+        console.print("[green]→[/green] Created .sdd/ workspace")
     else:
-        console.print("[dim]Using existing .sdd/ workspace[/dim]")
-
-    # 2b. Clean stale runtime from previous runs
-    _clean_stale_runtime(workdir)
-    console.print("[dim]Cleaned stale runtime state[/dim]")
-
-    # 2c. Auto-discover agents from catalogs (loads cache or refreshes providers)
-    _discover_catalog(workdir)
-
-    # Verify/write safety invariants
-    from bernstein.evolution.invariants import verify_invariants, write_lockfile
-    ok, violations = verify_invariants(workdir)
-    if not ok:
-        console.print(f"[bold red]SAFETY: {len(violations)} locked file(s) modified[/bold red]")
-        for v in violations:
-            console.print(f"  [red]{v}[/red]")
-        console.print("[yellow]Re-establishing baseline...[/yellow]")
-    write_lockfile(workdir)
-    console.print("[dim]Safety invariants locked[/dim]")
+        console.print("[green]→[/green] Workspace ready")
 
     # 3. Start server
-    console.print("[dim]Starting task server...[/dim]")
-    server_pid = _start_server(workdir, port)
-    console.print(f"[green]Task server started[/green] (PID {server_pid}, port {port})")
+    with Status(f"[bold]Starting task server on :{port}...[/bold]", console=console):
+        server_pid = _start_server(workdir, port)
+        if not _wait_for_server(port):
+            console.print(
+                f"[bold red]Error:[/bold red] Task server on port {port} did not respond within "
+                f"{_SERVER_READY_TIMEOUT_S:.0f}s.\n"
+                f"  [yellow]Reason:[/yellow] Server process may have crashed\n"
+                f"  [green]Fix:[/green] Check [dim].sdd/runtime/server.log[/dim] for details"
+            )
+            raise SystemExit(1)
+    console.print(f"[green]→[/green] Task server ready (PID {server_pid}, :{port})")
 
-    # 4. Wait for server
-    console.print("[dim]Waiting for server...[/dim]")
-    if not _wait_for_server(port):
-        console.print("[yellow]Server did not respond within timeout -- proceeding anyway[/yellow]")
-
-    # 5. Sync backlog tasks into the server. If backlog has tasks, skip manager.
+    # 4. Sync backlog / create manager task
     from bernstein.core.sync import sync_backlog_to_server
 
     server_url = f"http://127.0.0.1:{port}"
-    sync_result = sync_backlog_to_server(workdir, server_url=server_url)
+    with Status("[bold]Loading tasks...[/bold]", console=console):
+        sync_result = sync_backlog_to_server(workdir, server_url=server_url)
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
 
     manager_task_id = ""
     if backlog_count > 0:
         console.print(
-            f"[green]Loaded {len(sync_result.created)} task(s) from backlog[/green]"
-            f" ({len(sync_result.skipped)} already synced)"
+            f"[green]→[/green] Planning tasks ({backlog_count} found in backlog"
+            + (f", {len(sync_result.skipped)} already synced" if sync_result.skipped else "")
+            + ")"
         )
     else:
         # No backlog — use the manager agent to plan from scratch
-        manager_task_id = _inject_manager_task(seed, workdir, port)
-        console.print(f"[green]Manager task created:[/green] {manager_task_id}")
+        with Status("[bold]Creating planning task...[/bold]", console=console):
+            manager_task_id = _inject_manager_task(seed, workdir, port)
+        console.print("[green]→[/green] Planning tasks (manager agent will decompose goal)")
 
-    # 6. Start spawner
-    if effective_cells > 1:
-        console.print(f"[dim]Starting multi-cell orchestrator ({effective_cells} cells)...[/dim]")
-    spawner_pid = _start_spawner(workdir, port, cells=effective_cells)
-    console.print(f"[green]Orchestrator started[/green] (PID {spawner_pid})")
+    # 5. Start spawner + watchdog
+    cell_label = f"{effective_cells} cells" if effective_cells > 1 else "single cell"
+    with Status(f"[bold]Spawning agents ({cell_label})...[/bold]", console=console):
+        spawner_pid = _start_spawner(workdir, port, cells=effective_cells)
+        _start_watchdog(workdir, port)
+    console.print(f"[green]→[/green] Spawning agents (PID {spawner_pid})")
 
-    # 7. Start watchdog to auto-restart server/orchestrator if they die
-    _start_watchdog(workdir, port)
-
-    console.print(
-        "\n[bold green]Bernstein is running.[/bold green] "
-        "Use [bold]bernstein stop[/bold] to stop."
-    )
+    console.print("\n[bold green]Dashboard ready.[/bold green] Use [bold]bernstein stop[/bold] to stop.")
 
     result = BootstrapResult(
         seed=seed,
@@ -584,71 +718,73 @@ def bootstrap_from_goal(
     Returns:
         BootstrapResult with PIDs and task ID.
     """
+    from rich.status import Status
+
     seed = SeedConfig(goal=goal, cli=cli)  # type: ignore[arg-type]
 
-    # Reuse the same flow but skip file parsing
-    created = _ensure_sdd(workdir)
+    console.print(f"[green]→[/green] Goal: [bold]{goal[:80]}[/bold]")
+
+    # Pre-flight: verify binary, API key, and port before touching anything.
+    with Status("[bold]Running pre-flight checks...[/bold]", console=console):
+        preflight_checks(cli, port)
+
+    # Initialise workspace
+    with Status("[bold]Initialising workspace...[/bold]", console=console):
+        created = _ensure_sdd(workdir)
+        _clean_stale_runtime(workdir)
+        _discover_catalog(workdir)
+        _build_codebase_index(workdir)
+        from bernstein.evolution.invariants import verify_invariants, write_lockfile
+        ok, violations = verify_invariants(workdir)
+        if not ok:
+            console.print(f"[bold red]SAFETY: {len(violations)} locked file(s) modified[/bold red]")
+            for v in violations:
+                console.print(f"  [red]{v}[/red]")
+        write_lockfile(workdir)
     if created:
-        console.print("[green]Created .sdd/ workspace[/green]")
+        console.print("[green]→[/green] Created .sdd/ workspace")
     else:
-        console.print("[dim]Using existing .sdd/ workspace[/dim]")
+        console.print("[green]→[/green] Workspace ready")
 
-    # Clean stale runtime from previous runs
-    _clean_stale_runtime(workdir)
-    console.print("[dim]Cleaned stale runtime state[/dim]")
-
-    # Auto-discover agents from catalogs
-    _discover_catalog(workdir)
-
-    # Verify/write safety invariants
-    from bernstein.evolution.invariants import verify_invariants, write_lockfile
-    ok, violations = verify_invariants(workdir)
-    if not ok:
-        console.print(f"[bold red]SAFETY: {len(violations)} locked file(s) modified[/bold red]")
-        for v in violations:
-            console.print(f"  [red]{v}[/red]")
-        console.print("[yellow]Re-establishing baseline...[/yellow]")
-    write_lockfile(workdir)
-    console.print("[dim]Safety invariants locked[/dim]")
-
-    console.print(f"[bold]Goal:[/bold] {goal}")
-
-    console.print("[dim]Starting task server...[/dim]")
-    server_pid = _start_server(workdir, port)
-    console.print(f"[green]Task server started[/green] (PID {server_pid}, port {port})")
-
-    console.print("[dim]Waiting for server...[/dim]")
-    if not _wait_for_server(port):
-        console.print("[yellow]Server did not respond within timeout -- proceeding anyway[/yellow]")
+    with Status(f"[bold]Starting task server on :{port}...[/bold]", console=console):
+        server_pid = _start_server(workdir, port)
+        if not _wait_for_server(port):
+            console.print(
+                f"[bold red]Error:[/bold red] Task server on port {port} did not respond within "
+                f"{_SERVER_READY_TIMEOUT_S:.0f}s.\n"
+                f"  [yellow]Reason:[/yellow] Server process may have crashed\n"
+                f"  [green]Fix:[/green] Check [dim].sdd/runtime/server.log[/dim] for details"
+            )
+            raise SystemExit(1)
+    console.print(f"[green]→[/green] Task server ready (PID {server_pid}, :{port})")
 
     # Sync backlog first; only use manager if backlog is empty
     from bernstein.core.sync import sync_backlog_to_server
 
     server_url = f"http://127.0.0.1:{port}"
-    sync_result = sync_backlog_to_server(workdir, server_url=server_url)
+    with Status("[bold]Loading tasks...[/bold]", console=console):
+        sync_result = sync_backlog_to_server(workdir, server_url=server_url)
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
 
     manager_task_id = ""
     if backlog_count > 0:
         console.print(
-            f"[green]Loaded {len(sync_result.created)} task(s) from backlog[/green]"
-            f" ({len(sync_result.skipped)} already synced)"
+            f"[green]→[/green] Planning tasks ({backlog_count} found in backlog"
+            + (f", {len(sync_result.skipped)} already synced" if sync_result.skipped else "")
+            + ")"
         )
     else:
-        manager_task_id = _inject_manager_task(seed, workdir, port)
-        console.print(f"[green]Manager task created:[/green] {manager_task_id}")
+        with Status("[bold]Creating planning task...[/bold]", console=console):
+            manager_task_id = _inject_manager_task(seed, workdir, port)
+        console.print("[green]→[/green] Planning tasks (manager agent will decompose goal)")
 
-    if cells > 1:
-        console.print(f"[dim]Starting multi-cell orchestrator ({cells} cells)...[/dim]")
-    spawner_pid = _start_spawner(workdir, port, cells=cells)
-    console.print(f"[green]Orchestrator started[/green] (PID {spawner_pid})")
+    cell_label = f"{cells} cells" if cells > 1 else "single cell"
+    with Status(f"[bold]Spawning agents ({cell_label})...[/bold]", console=console):
+        spawner_pid = _start_spawner(workdir, port, cells=cells)
+        _start_watchdog(workdir, port)
+    console.print(f"[green]→[/green] Spawning agents (PID {spawner_pid})")
 
-    _start_watchdog(workdir, port)
-
-    console.print(
-        "\n[bold green]Bernstein is running.[/bold green] "
-        "Use [bold]bernstein stop[/bold] to stop."
-    )
+    console.print("\n[bold green]Dashboard ready.[/bold green] Use [bold]bernstein stop[/bold] to stop.")
 
     return BootstrapResult(
         seed=seed,

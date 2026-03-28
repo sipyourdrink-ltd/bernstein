@@ -108,9 +108,17 @@ class AgentWidget(Static):
         }.get(status, "bright_green")
         dot = {"working": "\u25c9", "starting": "\u25ce", "dead": "\u25cc"}.get(status, "\u25cf")
 
+        agent_source = a.get("agent_source", "built-in")
+        # Show catalog agent ID when not built-in, e.g. "(agency:code-reviewer)"
+        source_suffix = ""
+        if agent_source and agent_source not in ("built-in", "builtin", ""):
+            source_suffix = f" ({agent_source})"
+
         t = Text()
         t.append(f" {dot} ", style=f"bold {color}")
         t.append(f"{role.upper()}", style=f"bold {color}")
+        if source_suffix:
+            t.append(source_suffix, style=f"italic {color}")
         t.append(f"  {model}", style="bold dim")
         t.append(f"  {m}:{s:02d}", style="dim")
 
@@ -503,6 +511,19 @@ class BernsteinApp(App):
         bar.display = self._activity_visible
 
     def action_stop_bernstein(self) -> None:
+        # Require double-press: first press shows a confirmation notification.
+        if not getattr(self, "_stop_pending", False):
+            self._stop_pending = True  # type: ignore[attr-defined]
+            self.notify(
+                "Press [bold]s[/bold] again to stop all agents, or any other key to cancel.",
+                severity="warning",
+                timeout=4,
+            )
+            # Auto-clear the flag after 4s so a stray keypress doesn't linger
+            self.set_timer(4.0, self._clear_stop_pending)
+            return
+
+        self._stop_pending = False
         import signal
         for name in ("watchdog", "spawner", "server"):
             pp = Path(f".sdd/runtime/{name}.pid")
@@ -517,18 +538,39 @@ class BernsteinApp(App):
                     os.killpg(os.getpgid(pid), signal.SIGTERM)
         self.exit(message="Bernstein stopped.")
 
+    def _clear_stop_pending(self) -> None:
+        self._stop_pending = False  # type: ignore[attr-defined]
+
+    @staticmethod
+    def _detect_role(text: str) -> str:
+        """Infer the best role from task description keywords."""
+        lower = text.lower()
+        if any(k in lower for k in ("test", "spec", "pytest", "coverage", "assert")):
+            return "qa"
+        if any(k in lower for k in ("security", "auth", "jwt", "oauth", "csrf", "xss", "sql inject")):
+            return "security"
+        if any(k in lower for k in ("design", "architect", "schema", "erd", "diagram", "system design")):
+            return "architect"
+        if any(k in lower for k in ("frontend", "react", "vue", "css", "ui", "html", "component")):
+            return "frontend"
+        if any(k in lower for k in ("devops", "docker", "ci", "cd", "deploy", "kubernetes", "helm")):
+            return "devops"
+        # Default: let manager decide
+        return "manager"
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         if not text:
             return
         event.input.value = ""
+        role = self._detect_role(text)
         try:
             resp = httpx.post(
                 f"{SERVER_URL}/tasks",
                 json={
                     "title": text,
                     "description": f"User request (P1): {text}",
-                    "role": "backend",
+                    "role": role,
                     "priority": 1,
                     "model": "sonnet",
                     "effort": "high",
@@ -536,7 +578,7 @@ class BernsteinApp(App):
                 timeout=5.0,
             )
             if resp.status_code == 201:
-                self.notify(f"\u2192 {text[:50]}", severity="information")
+                self.notify(f"\u2192 [{role}] {text[:48]}", severity="information")
             else:
                 self.notify(f"Failed: {resp.status_code}", severity="error")
         except Exception as exc:
