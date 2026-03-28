@@ -8,7 +8,8 @@
 
 <br>
 
-### One command. Multiple AI agents. Your codebase moves forward while you sleep.
+### Multi-agent orchestration for agentic engineering.
+### One command. Multiple coding agents. Your codebase moves forward while you sleep.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dashboard.svg">
@@ -43,6 +44,8 @@ Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents r
 </picture>
 
 The orchestrator is **deterministic Python** -- zero LLM tokens on coordination. A **janitor** verifies every result: tests pass, files exist, no regressions.
+
+> **[Agentic engineering](https://thenewstack.io/vibe-coding-is-passe/)** is the practice of orchestrating AI agents to write code while humans own architecture and quality ([Karpathy, 2026](https://x.com/karpathy/status/1886192184808149383)). Most tools make you a **conductor** -- one agent, synchronous, pair-programming. Bernstein makes you an **orchestrator** -- multiple agents, parallel, asynchronous ([Osmani](https://addyosmani.com/blog/future-agentic-coding/)). No vibe coding. Deterministic scheduling, verified output, portable across providers.
 
 > [!TIP]
 > Run `bernstein --headless` for CI pipelines and overnight runs. Add `--evolve` for continuous self-improvement.
@@ -150,7 +153,7 @@ bernstein -g "Refactor auth module, add tests, update API docs" \
   # override per task via bernstein.yaml roles config
 ```
 
-> **Why this matters:** every other AI agent framework (OpenAI Agents SDK, Google ADK, Anthropic Agent SDK) ties your orchestration to one provider. Bernstein doesn't. Your prompts, task graphs, and agent roles are portable. Swap providers without touching your workflow.
+> **Why this matters:** every other agentic coding framework (OpenAI Agents SDK, Google ADK, Anthropic Agent SDK) ties your orchestration to one provider. Bernstein doesn't. Your prompts, task graphs, and agent roles are portable. Swap providers without touching your workflow.
 
 See [`docs/adapters.html`](https://chernistry.github.io/bernstein/adapters.html) for a feature matrix and the "bring your own agent" guide.
 
@@ -237,6 +240,12 @@ bernstein github test-webhook  # verify configuration
 ```
 
 Set `GITHUB_WEBHOOK_SECRET` and point webhooks at `POST /webhooks/github`. See [`deploy/github-app/README.md`](deploy/github-app/README.md) for step-by-step setup.
+
+## Comparisons
+
+- [Bernstein vs. GitHub Agent HQ](docs/compare/bernstein-vs-github-agent-hq.md) — open-source alternative to GitHub's multi-agent system
+- [Full comparison index](docs/compare/README.md) — Conductor, Crystal, Stoneforge, single-agent baseline, and more
+- [Benchmark data](benchmarks/README.md) — 1.78× faster, 23% lower cost vs. single-agent baseline
 
 ## Origin
 

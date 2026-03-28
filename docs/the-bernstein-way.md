@@ -2,6 +2,10 @@
 
 How Bernstein thinks about multi-agent orchestration. These are defaults, not laws — every tenet has an escape hatch.
 
+Bernstein is infrastructure for **agentic engineering** — the discipline of orchestrating AI coding agents while humans own architecture, quality, and intent. The term was [coined by Andrej Karpathy](https://x.com/karpathy/status/1886192184808149383) as the rigorous successor to "vibe coding": you are not writing code directly, you are directing agents who do.
+
+Addy Osmani [distinguishes](https://addyosmani.com/blog/future-agentic-coding/) two modes: **conductor** (one agent, synchronous, pair-programming) and **orchestrator** (multiple agents, parallel, asynchronous). Bernstein is an orchestrator. You describe what needs to happen; the system handles decomposition, scheduling, agent lifecycle, verification, and integration.
+
 ## Default lifecycle
 
 ```
