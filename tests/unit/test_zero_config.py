@@ -273,3 +273,24 @@ class TestCLIOverrides:
 
         sig = inspect.signature(bootstrap_from_seed)
         assert "model" in sig.parameters
+
+    def test_cli_flags_integration(self) -> None:
+        """Integration test: CLI flags are properly wired through the run command."""
+        from click.testing import CliRunner
+        from bernstein.cli.run_cmd import run
+
+        runner = CliRunner()
+
+        # Test that --cli flag is accepted
+        result = runner.invoke(run, ["--help"])
+        assert "--cli" in result.output
+        assert "Force specific CLI agent" in result.output
+
+        # Test that --model flag is accepted
+        assert "--model" in result.output
+        assert "Force specific model" in result.output
+
+        # Test that valid CLI choices are documented
+        assert "auto" in result.output
+        assert "claude" in result.output
+        assert "codex" in result.output

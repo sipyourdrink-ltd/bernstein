@@ -472,17 +472,24 @@
         <div class="bg-surface rounded-lg border border-border p-2">
           <div class="flex items-center justify-between mb-1">
             <span class="text-[10px] text-muted uppercase tracking-widest">Cost Burn</span>
-            <span class="text-xs font-mono text-green-400" x-text="'$' + totalCost.toFixed(2)"></span>
+            <span class="text-xs font-mono text-green-400" x-text="'$' + totalCost.toFixed(4)"></span>
           </div>
           <svg class="w-full" viewBox="0 0 300 80" preserveAspectRatio="none">
             <!-- Grid lines -->
             <line x1="0" y1="20" x2="300" y2="20" stroke="#30363d" stroke-width="0.5" stroke-dasharray="4,4"/>
             <line x1="0" y1="40" x2="300" y2="40" stroke="#30363d" stroke-width="0.5" stroke-dasharray="4,4"/>
             <line x1="0" y1="60" x2="300" y2="60" stroke="#30363d" stroke-width="0.5" stroke-dasharray="4,4"/>
+            <!-- Budget ceiling line (red dashed) -->
+            <line x1="0" :y1="budgetLineY" x2="300" :y2="budgetLineY"
+                  stroke="#f85149" stroke-width="0.8" stroke-dasharray="5,3"
+                  :opacity="budgetUsd > 0 && costHistory.length > 0 ? 0.65 : 0"/>
+            <!-- Cost area fill -->
+            <polygon :points="costAreaPoints" fill="url(#costGradient)" opacity="0.3"/>
             <!-- Cost line -->
             <polyline :points="costChartPoints" fill="none" stroke="#58a6ff" stroke-width="1.5" stroke-linejoin="round"/>
-            <!-- Area fill -->
-            <polygon :points="costAreaPoints" fill="url(#costGradient)" opacity="0.3"/>
+            <!-- Current value dot -->
+            <circle :cx="costHistory.length > 1 ? '300' : '0'" :cy="costHistory.length > 0 ? costChartPoints.split(' ').pop().split(',')[1] : '75'"
+                    r="2.5" fill="#58a6ff" :opacity="costHistory.length > 0 ? 1 : 0"/>
             <defs>
               <linearGradient id="costGradient" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stop-color="#58a6ff" stop-opacity="0.4"/>
@@ -490,6 +497,52 @@
               </linearGradient>
             </defs>
           </svg>
+          <!-- X-axis labels + burn rate -->
+          <div class="flex items-center justify-between mt-0.5">
+            <span class="text-[9px] text-muted/50 font-mono" x-text="costHistoryStart"></span>
+            <span class="text-[9px] font-mono"
+                  :class="burnRatePerHour > 0 ? 'text-yellow-400/80' : 'text-muted/30'"
+                  x-text="burnRatePerHour > 0 ? '$' + burnRatePerHour.toFixed(3) + '/hr' : '—'"></span>
+            <span class="text-[9px] text-muted/50 font-mono" x-text="costHistory.length > 0 ? 'now' : ''"></span>
+          </div>
+        </div>
+
+        <!-- Budget utilization gauge -->
+        <div x-show="budgetUsd > 0" class="bg-surface rounded-lg border border-border p-2">
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-[10px] text-muted uppercase tracking-widest">Budget</span>
+            <span class="text-[10px] font-mono"
+                  :class="budgetPct >= 95 ? 'text-red-400' : budgetPct >= 80 ? 'text-yellow-400' : 'text-green-400'"
+                  x-text="'$' + totalCost.toFixed(4) + ' / $' + budgetUsd.toFixed(2)"></span>
+          </div>
+          <div class="h-2.5 bg-border rounded-full overflow-hidden">
+            <div class="h-full rounded-full transition-all duration-500"
+                 :class="budgetPct >= 95 ? 'bg-red-500' : budgetPct >= 80 ? 'bg-yellow-500' : 'bg-green-500'"
+                 :style="'width:' + Math.min(100, budgetPct) + '%'"></div>
+          </div>
+          <div class="flex items-center justify-between mt-1">
+            <span class="text-[9px] text-muted" x-text="budgetPct.toFixed(1) + '% used'"></span>
+            <span class="text-[9px] text-muted" x-text="'$' + Math.max(0, budgetUsd - totalCost).toFixed(4) + ' remaining'"></span>
+          </div>
+        </div>
+
+        <!-- Cost by model breakdown -->
+        <div x-show="perModelCosts.length > 0" class="bg-surface rounded-lg border border-border p-2">
+          <span class="text-[10px] text-muted uppercase tracking-widest">By Model</span>
+          <div class="mt-1.5 space-y-1">
+            <template x-for="[model, cost] in perModelCosts" :key="model">
+              <div class="flex items-center gap-2">
+                <span class="text-[10px] text-muted w-20 truncate font-mono"
+                      x-text="model.replace('claude-', '').replace(/-2025\d+/, '')"></span>
+                <div class="flex-1 h-1.5 bg-border rounded-full overflow-hidden">
+                  <div class="h-full bg-purple-400 rounded-full"
+                       :style="'width:' + (totalCost > 0 ? (cost/totalCost*100) : 0) + '%'"></div>
+                </div>
+                <span class="text-[10px] font-mono text-text w-14 text-right"
+                      x-text="cost < 0.01 ? '$' + cost.toFixed(4) : '$' + cost.toFixed(3)"></span>
+              </div>
+            </template>
+          </div>
         </div>
 
         <!-- Cost by role breakdown -->
@@ -500,10 +553,15 @@
               <div class="flex items-center gap-2">
                 <span class="text-[10px] text-muted w-16 truncate" x-text="role"></span>
                 <div class="flex-1 h-1.5 bg-border rounded-full overflow-hidden">
-                  <div class="h-full bg-accent rounded-full" :style="'width:' + (totalCost > 0 ? (cost/totalCost*100) : 0) + '%'"></div>
+                  <div class="h-full bg-accent rounded-full"
+                       :style="'width:' + (totalCost > 0 ? (cost/totalCost*100) : 0) + '%'"></div>
                 </div>
-                <span class="text-[10px] font-mono text-text w-12 text-right" x-text="'$' + cost.toFixed(2)"></span>
+                <span class="text-[10px] font-mono text-text w-14 text-right"
+                      x-text="cost < 0.01 ? '$' + cost.toFixed(4) : '$' + cost.toFixed(3)"></span>
               </div>
+            </template>
+            <template x-if="Object.keys(costByRole).length === 0">
+              <p class="text-[10px] text-muted/40 text-center py-2">No cost data yet</p>
             </template>
           </div>
         </div>
@@ -586,6 +644,7 @@
         agents: [],
         costByRole: {},
         costHistory: [],
+        liveCosts: {},
         fileLocks: {},
         locksData: { all_locks: [], locks_by_agent: {}, count: 0 },
         mergeQueue: [],
@@ -608,6 +667,33 @@
         get progressPct() {
           if (this.stats.total === 0) return 0;
           return Math.round(this.stats.done / this.stats.total * 100);
+        },
+
+        get budgetUsd() { return this.liveCosts.budget_usd || 0; },
+        get budgetPct() {
+          if (!this.budgetUsd || this.budgetUsd <= 0) return 0;
+          return Math.min(100, (this.totalCost / this.budgetUsd) * 100);
+        },
+        get perModelCosts() {
+          const pm = this.liveCosts.per_model || {};
+          return Object.entries(pm).sort((a, b) => b[1] - a[1]);
+        },
+        get burnRatePerHour() {
+          if (this.elapsed <= 0 || this.totalCost <= 0) return 0;
+          return this.totalCost / (this.elapsed / 3600);
+        },
+        get costHistoryStart() {
+          if (this.costHistory.length === 0) return '';
+          const ts = this.costHistory[0].ts;
+          if (!ts) return '';
+          const d = new Date(ts * 1000);
+          return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        },
+        get budgetLineY() {
+          if (!this.budgetUsd || this.costHistory.length === 0) return -1;
+          const maxCost = Math.max(...this.costHistory.map(p => p.cost), 0.01);
+          const y = 75 - (this.budgetUsd / maxCost) * 65;
+          return Math.max(2, Math.min(73, y)).toFixed(1);
         },
 
         get statItems() {
@@ -759,6 +845,7 @@
             this.agents = data.agents || [];
             this.costByRole = data.cost_by_role || {};
             this.costHistory = data.cost_history || [];
+            this.liveCosts = data.live_costs || {};
             this.fileLocks = data.file_locks || {};
             this.mergeQueue = data.merge_queue || [];
             this.alerts = data.alerts || [];

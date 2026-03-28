@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path  # noqa: TC003 — used at runtime in dashboard_data
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request
@@ -104,6 +105,29 @@ async def dashboard_data(request: Request) -> JSONResponse:
     tasks = store.list_tasks()
     agents = store.agents
     now = time.time()
+
+    # Fallback: if store has no agents, read from agents.json on disk
+    if not agents:
+        import json as _json
+
+        sdd_dir: Path = request.app.state.sdd_dir
+        agents_file = sdd_dir / "runtime" / "agents.json"
+        if agents_file.exists():
+            try:
+                data = _json.loads(agents_file.read_text())
+                from bernstein.core.models import AgentSession
+
+                for a_raw in data.get("agents", []):
+                    session = AgentSession(
+                        id=a_raw.get("id", ""),
+                        pid=a_raw.get("pid", 0),
+                        role=a_raw.get("role", ""),
+                        status=a_raw.get("status", "dead"),
+                        task_ids=a_raw.get("task_ids", []),
+                    )
+                    agents[session.id] = session
+            except Exception:
+                pass
 
     alive_agents = [a for a in agents.values() if a.status != "dead"]
     cost_by_role = store.cost_by_role()

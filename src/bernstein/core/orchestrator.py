@@ -83,7 +83,6 @@ from bernstein.core.tick_pipeline import (
     fetch_all_tasks,
     group_by_role,
     parse_backlog_file,
-    prioritize_starving_roles,
 )
 from bernstein.core.tick_pipeline import (
     compute_total_spent as compute_total_spent,
@@ -495,9 +494,6 @@ class Orchestrator:
         except OSError as exc:
             logger.debug("Failed to save task graph: %s", exc)
 
-        # 2. Group into batches
-        batches = group_by_role(ready_tasks, self._config.max_tasks_per_agent)
-
         # 3. Count alive agents, spawn if capacity (capped by graph parallel width)
         # 2b. Rate-limit recovery: restore providers whose throttle window expired.
         _recovered = self._rate_limit_tracker.recover_expired_throttles(self._router)
@@ -511,13 +507,15 @@ class Orchestrator:
         alive_count = sum(1 for a in self._agents.values() if a.status != "dead")
         result.active_agents = alive_count
 
-        # 3a. Rebalance: move starving-role batches (0 alive agents) to the front
-        # so they are guaranteed a slot before well-served roles consume remaining capacity.
+        # 3a. Build alive-per-role map for task distribution prioritization.
+        # Starving roles (0 alive agents) get scheduled before well-served roles.
         _alive_per_role: dict[str, int] = {}
         for _agent in self._agents.values():
             if _agent.status != "dead":
                 _alive_per_role[_agent.role] = _alive_per_role.get(_agent.role, 0) + 1
-        batches = prioritize_starving_roles(batches, _alive_per_role)
+
+        # 2. Group into batches with starving-role prioritization wired in
+        batches = group_by_role(ready_tasks, self._config.max_tasks_per_agent, alive_per_role=_alive_per_role)
 
         # Track which task IDs are already assigned to active agents
         assigned_task_ids: set[str] = set()

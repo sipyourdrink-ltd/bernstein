@@ -177,7 +177,9 @@ def prioritize_starving_roles(
     )
 
 
-def group_by_role(tasks: list[Task], max_per_batch: int) -> list[list[Task]]:
+def group_by_role(
+    tasks: list[Task], max_per_batch: int, alive_per_role: dict[str, int] | None = None
+) -> list[list[Task]]:
     """Group open tasks by role into batches of up to max_per_batch.
 
     Tasks are sorted by priority (ascending, 1=critical first) within each
@@ -190,6 +192,9 @@ def group_by_role(tasks: list[Task], max_per_batch: int) -> list[list[Task]]:
     critical role (lowest priority value) is emitted first, preserving
     priority ordering while guaranteeing fair distribution.
 
+    If alive_per_role is provided, batches are further reordered to prioritize
+    roles with zero alive agents (starving roles) before well-served roles.
+
     Example: backend(5 tasks) + qa(3 tasks) → [b1,q1, b2,q2, b3,q3, b4, b5]
     The orchestrator iterates this list and stops at max_agents, so qa never
     starves even though backend has more work.
@@ -197,9 +202,12 @@ def group_by_role(tasks: list[Task], max_per_batch: int) -> list[list[Task]]:
     Args:
         tasks: Open tasks to batch.
         max_per_batch: Maximum tasks per batch (typically 1-3).
+        alive_per_role: Optional map of role -> alive agent count. If provided,
+            batches are reordered to prioritize starving roles.
 
     Returns:
         List of batches, each a list of same-role tasks, round-robin interleaved.
+        If alive_per_role is provided, starving roles come first.
     """
     by_role: dict[str, list[Task]] = defaultdict(list)
     for task in tasks:
@@ -230,6 +238,10 @@ def group_by_role(tasks: list[Task], max_per_batch: int) -> list[list[Task]]:
                 round_batches.append(role_batch_queues[role].pop(0))
         round_batches.sort(key=lambda b: b[0].priority)
         result.extend(round_batches)
+
+    # If alive_per_role info is available, prioritize starving roles
+    if alive_per_role is not None:
+        result = prioritize_starving_roles(result, alive_per_role)
 
     return result
 

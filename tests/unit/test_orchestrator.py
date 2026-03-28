@@ -360,6 +360,25 @@ class TestGroupByRole:
         backend_ids = [b[0].id for b in batches if b[0].role == "backend"]
         assert backend_ids == ["b-crit", "b-norm"]
 
+    def test_group_by_role_with_alive_per_role_starving_first(self) -> None:
+        """group_by_role with alive_per_role should order batches with starving roles first."""
+        tasks = [
+            _make_task(id="b1", role="backend", priority=2),
+            _make_task(id="b2", role="backend", priority=2),
+            _make_task(id="q1", role="qa", priority=2),
+        ]
+        # backend has 3 agents, qa has none (starving)
+        alive_per_role = {"backend": 3}
+        batches = group_by_role(tasks, max_per_batch=1, alive_per_role=alive_per_role)
+
+        assert len(batches) == 3
+        # qa (starving) should come first, even though it has fewer tasks
+        roles = [b[0].role for b in batches]
+        qa_index = roles.index("qa")
+        backend_indices = [i for i, r in enumerate(roles) if r == "backend"]
+        # All qa batches should come before backend batches
+        assert all(qa_index < bi for bi in backend_indices)
+
 
 # --- prioritize_starving_roles ---
 
@@ -609,6 +628,49 @@ class TestPerRoleCapDistribution:
 
         # Global cap hit — no new spawns
         assert len(result.spawned) == 0, f"global cap (5/5) should block all spawns; got {result.spawned}"
+
+    def test_qa_gets_slot_before_backend_third(self, tmp_path: Path) -> None:
+        """Starving qa gets the last open slot; backend does not receive its 3rd agent.
+
+        Setup: max_agents=3, backend: 5 tasks with 2 alive agents (per-role cap = 2),
+        qa: 3 tasks with 0 alive agents (per-role cap = 2).
+        Per-role cap for backend: ceil(3 * 5/8) = 2 — backend is already at cap.
+        One global slot remains. qa is starving (0 agents) so it is promoted to the
+        front of the spawn queue. The slot must go to qa, not to a 3rd backend agent.
+        """
+        backend_tasks = [_make_task(id=f"T-be{i}", role="backend", title=f"Backend {i}") for i in range(5)]
+        qa_tasks = [_make_task(id=f"T-qa{i}", role="qa", title=f"QA {i}") for i in range(3)]
+        task_dicts = [_task_as_dict(t) for t in backend_tasks + qa_tasks]
+
+        cfg = OrchestratorConfig(
+            max_agents=3,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            max_tasks_per_agent=1,
+            server_url="http://testserver",
+        )
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(self._make_handler(task_dicts)), config=cfg)
+
+        # Pre-seed 2 alive backend agents — exactly at their per-role cap (ceil(3 * 5/8) = 2)
+        for i in range(2):
+            session = AgentSession(
+                id=f"existing-backend-{i}",
+                role="backend",
+                pid=30000 + i,
+                task_ids=[f"T-claimed-be{i}"],
+                status="running",
+                model_config=RouterModelConfig(model="claude-sonnet-4-6", effort="normal"),
+                spawn_ts=time.time(),
+            )
+            orch._agents[session.id] = session
+
+        result = orch.tick()
+
+        spawned_roles = [orch._agents[sid].role for sid in result.spawned if sid in orch._agents]
+        assert "qa" in spawned_roles, f"qa should get the last slot (starving, under cap); got: {spawned_roles}"
+        assert "backend" not in spawned_roles, (
+            f"backend is at its per-role cap (2/2); should not get a 3rd agent. Got: {spawned_roles}"
+        )
 
 
 # --- Orchestrator.tick ---

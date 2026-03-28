@@ -178,6 +178,34 @@ async def get_cost_alerts(request: Request) -> JSONResponse:
     )
 
 
+@router.get("/costs/history")
+async def get_cost_history(request: Request) -> JSONResponse:
+    """Return daily cost history with burn rate for chart visualization.
+
+    Loads daily snapshots from ``.sdd/metrics/cost_history.jsonl`` and computes
+    a burn rate from the most recent 7 days.  Burn rate is expressed both as
+    USD/day (7-day trailing average) and USD/hour.
+    """
+    from bernstein.core.cost_history import compute_trends, load_history
+
+    sdd_dir = _get_sdd_dir(request)
+    history = load_history(sdd_dir)
+    trend = compute_trends(history)
+
+    recent_7d = history[-7:] if len(history) >= 7 else history
+    daily_avg = sum(s.spent_usd for s in recent_7d) / len(recent_7d) if recent_7d else 0.0
+
+    return JSONResponse(
+        content={
+            "history": [s.to_dict() for s in history],
+            "trend": trend.to_dict(),
+            "burn_rate_usd_per_hour": round(daily_avg / 24.0, 6),
+            "burn_rate_usd_per_day": round(daily_avg, 6),
+            "history_days": len(history),
+        }
+    )
+
+
 @router.get("/costs/{run_id}")
 async def get_cost_budget(run_id: str, request: Request) -> JSONResponse:
     """Return budget status for a specific run.

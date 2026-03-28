@@ -35,3 +35,9 @@
 - `bernstein evolve approve 1` immediately enqueues the proposal
 - Running orchestrator picks it up within one tick cycle
 - `bernstein evolve reject` works
+
+
+---
+**completed**: 2026-03-29 00:19:24
+**task_id**: f1a03d7e4113
+**result**: Completed: 374 — Eval-gated evolution: only apply changes that improve eval scores. All components already implemented: EvalGate class in gate.py with L0-L3 tiered eval, baseline tracking via EvalBaseline, trajectory logging to eval_trajectory.jsonl, convenience eval_gate() function, and full integration in evolution loop step 7b. 30/30 tests passing.

@@ -2,30 +2,6 @@
 
 No decisions recorded yet.
 
-## [2026-03-29 00:05] [RETRY 1] 347b — Environment Variable Isolation for Agents (030b21aa1b74)
-Completed: [RETRY 1] 347b — Environment Variable Isolation for Agents. env_isolation.py fully implemented with build_filtered_env(), used by all 7 adapters (claude, codex, gemini, aider, amp, qwen, generic, manager). 17 unit tests pass.
-
-## [2026-03-29 00:06] [DECOMPOSE] [RETRY 2] [RETRY 1] 334b — Real-Time Cost Dashboard with Per-Agent Tracking (d9bc8c377f54)
-Completed: [DECOMPOSE] [RETRY 2] [RETRY 1] 334b — Real-Time Cost Dashboard with Per-Agent Tracking. Created 5 atomic subtasks: 334b-01 (cost API), 334b-02 (web dashboard), 334b-03 (TUI widget), 334b-04 (history+alerts), 334b-05 (cost model).
-
-## [2026-03-29 00:06] 334d-02: Task Timeline & Gantt Visualization (7b529ad5fd20)
-Completed: 334d-02: Task Timeline & Gantt Visualization
-
-## [2026-03-29 00:07] 383 — Creative evolution: visionary → analyst → production pipeline (5a0b9afcdaab)
-Completed: 383 — Creative evolution: visionary → analyst → production pipeline. All components already implemented: VisionaryProposal, AnalystVerdict, CreativePipeline classes in creative.py (22KB), visionary and analyst role templates in templates/roles/, creative_vision in evolution loop focus rotation. 20/20 tests passing.
-
-## [2026-03-29 00:07] 334b-01: Cost aggregation API endpoints (8ed3bab37d2c)
-Completed: 334b-01: Cost aggregation API endpoints
-
-## [2026-03-29 00:09] 333c — Cross-Run Project Memory (8f73aab019e7)
-Completed: 333c — Cross-Run Project Memory
-
-## [2026-03-29 00:09] [RETRY 1] 333d — Smart Task Distribution (No Greedy Claiming) (e9d0188b9b5e)
-Completed: 333d — Smart Task Distribution. The core implementation (per-role cap via ceil(max_agents*role_tasks/total_tasks), starvation prevention, round-robin grouping) was already in place across tick_pipeline.py and task_lifecycle.py. Added 3 new integration tests in TestPerRoleCapDistribution to explicitly verify: (1) backend at cap does not steal remaining slots from other roles, (2) proportional cap allows both roles to get agents, (3) ceil() ensures minimum 1 slot per role.
-
-## [2026-03-29 00:09] 334b-04: Cost history & alert thresholds (af84998a6d2f)
-Completed: 334b-04: Cost history & alert thresholds
-
 ## [2026-03-29 00:10] [DECOMPOSE] [RETRY 2] [RETRY 1] 332 — Zero-Config Agent Setup (2e2176216934)
 Decomposed task 039847068f48 into 4 atomic subtasks: 332a (agent discovery auth), 332b (bootstrap auto-config), 332c (zero-config entry point), 332d (tests + CLI overrides). Each subtask targets specific files with clear completion signals.
 
@@ -46,3 +22,27 @@ Completed: 373 — Evaluation harness: multiplicative scoring, LLM judge, failur
 
 ## [2026-03-29 00:15] 332a — Agent Discovery: Auto-detect and authenticate (e739aa17cadd)
 Completed: 332a — Agent Discovery: Auto-detect and authenticate. Implemented detect_auth_status() function that returns dict mapping agent_name to (installed: bool, authenticated: bool). Added _detect_aider() for Aider agent detection. All 42 unit tests pass, including 3 new tests for detect_auth_status() and 4 tests for _detect_aider().
+
+## [2026-03-29 00:16] 332c — Zero-config entry point: Skip init, auto-initialize .sdd/ (e17788733ff0)
+Completed: 332c — Zero-config entry point: Skip init, auto-initialize .sdd/
+
+## [2026-03-29 00:17] 332d — Zero-config tests and CLI overrides (--cli, --model) (c92c7af40f8b)
+Completed: 332d — Zero-config tests and CLI overrides (--cli, --model). Added 7 new test cases, implemented --cli flag (auto/claude/codex/gemini/aider/qwen), implemented --model flag, both override auto-detected and config-file values. 20/20 tests passing.
+
+## [2026-03-29 00:18] 392 — Orchestration Benchmark (928a170c045a)
+Completed: 392 — Orchestration Benchmark. Added --issues-file mode to run_benchmark.py for 25 real GitHub issues. Statistical testing via two-proportion z-test, Wilson CIs, Cohen's h, bootstrap CIs. Results published in benchmarks/results/. README updated with Benchmark 2 section. All 64 benchmark tests pass.
+
+## [2026-03-29 00:18] [DECOMPOSE] 341 — SWE-Bench Evaluation with Scaffolding Thesis (fcdae44c7d1d)
+Completed: [DECOMPOSE] 341 — SWE-Bench Evaluation with Scaffolding Thesis. Created 4 atomic subtasks: 341-01 (harness setup), 341-02 (baselines), 341-03 (Bernstein multi-agent), 341-04 (analysis & narrative).
+
+## [2026-03-29 00:19] [RETRY 1] 333d-01: Role-locked task claiming in orchestrator (0908013d4b21)
+Completed: [RETRY 1] 333d-01: Role-locked task claiming in orchestrator. Both claim_by_id() and claim_batch() already enforce role matching via agent_role parameter. All 5 unit tests pass.
+
+## [2026-03-29 00:19] 374 — Eval-gated evolution: only apply changes that improve eval scores (f1a03d7e4113)
+Completed: 374 — Eval-gated evolution: only apply changes that improve eval scores. All components already implemented: EvalGate class in gate.py with L0-L3 tiered eval, baseline tracking via EvalBaseline, trajectory logging to eval_trajectory.jsonl, convenience eval_gate() function, and full integration in evolution loop step 7b. 30/30 tests passing.
+
+## [2026-03-29 00:19] 334d-04: Cost Burn & Performance Charts (b859593c62c1)
+Completed: 334d-04: Cost Burn & Performance Charts
+
+## [2026-03-29 00:20] [RETRY 1] 333d-02: Fair spawn distribution algorithm (6a052b841201)
+Completed: [RETRY 1] 333d-02: Fair spawn distribution algorithm. The per-role cap (ceil(max_agents * role_tasks / total_tasks)) and starvation prevention were already implemented in task_lifecycle.py and tick_pipeline.py. Added test_qa_gets_slot_before_backend_third to TestPerRoleCapDistribution: verifies that with backend=5 tasks, 2 alive agents (at cap=2) and qa=3 tasks, 0 alive agents, the 1 remaining global slot goes to qa not backend. All 4 tests pass.
