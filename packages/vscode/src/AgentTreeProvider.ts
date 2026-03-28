@@ -30,6 +30,13 @@ export class AgentItem extends vscode.TreeItem {
       .join('\n');
 
     this.contextValue = isActive ? 'agent.active' : 'agent.idle';
+
+    // Single-click → open output channel
+    this.command = {
+      command: 'bernstein.showAgentOutput',
+      title: 'Show Agent Output',
+      arguments: [this],
+    };
   }
 }
 

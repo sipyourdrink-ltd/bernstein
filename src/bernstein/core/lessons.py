@@ -15,9 +15,11 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass, asdict, field
-from pathlib import Path
-from typing import Any
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +160,7 @@ def get_lessons_for_agent(
     now = time.time()
 
     try:
-        with open(lessons_path, "r", encoding="utf-8") as f:
+        with open(lessons_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -271,7 +273,7 @@ def _find_similar_lesson(
     content_lower = content.lower()
 
     try:
-        with open(lessons_path, "r", encoding="utf-8") as f:
+        with open(lessons_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -292,9 +294,8 @@ def _find_similar_lesson(
                     jaccard = intersection / union if union > 0 else 0.0
 
                     # If Jaccard is high AND content is similar, it's a duplicate
-                    if jaccard >= _DEDUP_THRESHOLD:
-                        if _content_similarity(content_lower, lesson.content.lower()) > 0.8:
-                            return lesson.lesson_id
+                    if jaccard >= _DEDUP_THRESHOLD and _content_similarity(content_lower, lesson.content.lower()) > 0.8:
+                        return lesson.lesson_id
                 except (json.JSONDecodeError, TypeError, KeyError):
                     continue
     except OSError:
@@ -340,7 +341,7 @@ def _update_lesson_confidence(
     lines: list[str] = []
 
     try:
-        with open(lessons_path, "r", encoding="utf-8") as f:
+        with open(lessons_path, encoding="utf-8") as f:
             for line in f:
                 line_stripped = line.strip()
                 if not line_stripped:

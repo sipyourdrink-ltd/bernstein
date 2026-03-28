@@ -12,6 +12,7 @@ let stopSse: StopFn | undefined;
 
 /** Called by VS Code when the extension activates. */
 export function activate(context: vscode.ExtensionContext): void {
+  console.log('Bernstein extension activated');
   const config = vscode.workspace.getConfiguration('bernstein');
   const baseUrl = config.get<string>('apiUrl', 'http://127.0.0.1:8052');
   const token = config.get<string>('apiToken', '');

@@ -14,10 +14,38 @@ spec:
   minReplicas: {{ .Values.worker.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.worker.autoscaling.maxReplicas }}
   metrics:
+    # Primary metric: queue depth (custom metric from Prometheus)
+    {{- if .Values.worker.autoscaling.targetQueueDepth }}
+    - type: Pods
+      pods:
+        metric:
+          name: bernstein_queue_depth
+        target:
+          type: AverageValue
+          averageValue: "{{ .Values.worker.autoscaling.targetQueueDepth }}"
+    {{- end }}
+    # Fallback: CPU utilization
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
           averageUtilization: {{ .Values.worker.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 15
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
 {{- end }}

@@ -3,15 +3,22 @@ version: "3.9"
 # Bernstein cluster-mode deployment
 #
 # Roles:
-#   bernstein-server      — task server (port 8052), shared state coordinator
+#   bernstein-server      — task server + web dashboard (port 8052)
 #   bernstein-orchestrator — reads the backlog, spawns workers via HTTP
 #   bernstein-worker      — claims and executes tasks (scale with --scale)
+#   prometheus            — scrapes /metrics from bernstein-server (port 9090)
+#   grafana               — pre-built agent dashboards (port 3000, admin/admin)
 #   postgres              — shared relational state (future: persistent task store)
 #   redis                 — distributed locks + bulletin board (future)
 #
 # Usage:
 #   docker compose up -d
 #   docker compose up --scale bernstein-worker=4
+#
+# Dashboards:
+#   Bernstein web UI  → http://localhost:8052/dashboard
+#   Prometheus        → http://localhost:9090
+#   Grafana           → http://localhost:3000  (admin / admin)
 #
 # Required env vars (copy .env.example → .env):
 #   ANTHROPIC_API_KEY, OPENAI_API_KEY, BERNSTEIN_AUTH_TOKEN
@@ -104,6 +111,42 @@ services:
       bernstein-server:
         condition: service_healthy
 
+  # ── Monitoring ─────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      bernstein-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboard.json:/var/lib/grafana/dashboards/bernstein.json:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
   # ── Infrastructure ─────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
@@ -140,4 +183,8 @@ volumes:
   postgres-data:
     driver: local
   redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
     driver: local

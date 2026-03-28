@@ -13,7 +13,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 
 class A2ATaskStatus(Enum):
@@ -80,6 +80,73 @@ class AgentCard:
             "protocol_version": self.protocol_version,
             "endpoint": self.endpoint,
             "provider": self.provider,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgentCard:
+        """Deserialise from a JSON-compatible dict.
+
+        Args:
+            data: Dictionary with agent card fields.
+
+        Returns:
+            An AgentCard instance.
+
+        Raises:
+            ValueError: If required fields are missing or have wrong types.
+        """
+        cls.validate(data)
+        return cls(
+            name=data["name"],
+            description=data["description"],
+            capabilities=list(data.get("capabilities", [])),
+            protocol_version=str(data.get("protocol_version", "0.1")),
+            endpoint=str(data.get("endpoint", "")),
+            provider=str(data.get("provider", "bernstein")),
+        )
+
+    @staticmethod
+    def validate(data: dict[str, Any]) -> None:
+        """Validate a dict against the AgentCard JSON schema.
+
+        Args:
+            data: Dictionary to validate.
+
+        Raises:
+            ValueError: If required fields are missing or have wrong types.
+        """
+        if not isinstance(data.get("name"), str) or not data["name"]:
+            raise ValueError("AgentCard requires a non-empty 'name' string")
+        if not isinstance(data.get("description"), str):
+            raise ValueError("AgentCard requires a 'description' string")
+        caps_raw = data.get("capabilities")
+        if caps_raw is not None and not isinstance(caps_raw, list):
+            raise ValueError("AgentCard 'capabilities' must be a list")
+        if caps_raw is not None:
+            caps = cast("list[object]", caps_raw)
+            for i, c in enumerate(caps):
+                if not isinstance(c, str):
+                    raise ValueError(f"AgentCard capability at index {i} must be a string")
+
+    @staticmethod
+    def json_schema() -> dict[str, Any]:
+        """Return the JSON Schema for an AgentCard."""
+        return {
+            "type": "object",
+            "required": ["name", "description"],
+            "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "description": {"type": "string"},
+                "capabilities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                },
+                "protocol_version": {"type": "string", "default": "0.1"},
+                "endpoint": {"type": "string", "default": ""},
+                "provider": {"type": "string", "default": "bernstein"},
+            },
+            "additionalProperties": False,
         }
 
 

@@ -1,0 +1,10 @@
+apiVersion: 1
+
+providers:
+  - name: Bernstein
+    folder: Bernstein
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

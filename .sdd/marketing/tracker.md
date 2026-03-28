@@ -1,8 +1,8 @@
 # PR Tracker
 
-Last updated: 2026-03-28 (Wave 4 recon — 24 open PRs, 4 closed today, 2 merged today)
+Last updated: 2026-03-29 (Wave 5 — 31 open PRs, 7 new PRs submitted today)
 
-## Open PRs — Bernstein (18 PRs)
+## Open PRs — Bernstein (25 PRs)
 
 | # | Target Repo | Stars | PR Link | Section | Wave |
 |---|-------------|-------|---------|---------|------|
@@ -24,6 +24,13 @@ Last updated: 2026-03-28 (Wave 4 recon — 24 open PRs, 4 closed today, 2 merged
 | 16 | alternbits/awesome-ai-agents | 125 | [PR #19](https://github.com/alternbits/awesome-ai-agents/pull/19) | Open-source projects | W2 |
 | 17 | EuniAI/awesome-code-agents | 92 | [PR #3](https://github.com/EuniAI/awesome-code-agents/pull/3) | Terminal Operating | W1 |
 | 18 | bradAGI/awesome-cli-coding-agents | 87 | [PR #22](https://github.com/bradAGI/awesome-cli-coding-agents/pull/22) | Orchestrators & autonomous loops | W1 |
+| 19 | ai-for-developers/awesome-ai-coding-tools | 1.59K | [PR #179](https://github.com/ai-for-developers/awesome-ai-coding-tools/pull/179) | Coding Agents | W5 |
+| 20 | webfuse-com/awesome-claude | 1.25K | [PR #143](https://github.com/webfuse-com/awesome-claude/pull/143) | Applications > Developer Tools | W5 |
+| 21 | rohitg00/awesome-claude-code-toolkit | 935 | [PR #154](https://github.com/rohitg00/awesome-claude-code-toolkit/pull/154) | Companion Apps & GUIs | W5 |
+| 22 | wsxiaoys/awesome-ai-coding | 768 | [PR #64](https://github.com/wsxiaoys/awesome-ai-coding/pull/64) | Projects | W5 |
+| 23 | rahulvrane/awesome-claude-agents | 299 | [PR #19](https://github.com/rahulvrane/awesome-claude-agents/pull/19) | Specialized Frameworks & Tools | W5 |
+| 24 | 0xWelt/Awesome-Vibe-Coding | 84 | [PR #123](https://github.com/0xWelt/Awesome-Vibe-Coding/pull/123) | CLI Tools | W5 |
+| 25 | jiji262/awesome-vibe-coding-tools | 80 | [PR #8](https://github.com/jiji262/awesome-vibe-coding-tools/pull/8) | Multi-Agent Orchestration | W5 |
 
 ## Open PRs — RightLayout (5 PRs)
 
@@ -88,7 +95,26 @@ Last updated: 2026-03-28 (Wave 4 recon — 24 open PRs, 4 closed today, 2 merged
 | jim-schwoebel/awesome_ai_agents | #145 | Duplicate of #146 |
 | e2b-dev/awesome-ai-agents | #605 | Duplicate of #604 |
 
-## Wave 4 candidates (discovered 2026-03-28)
+## Wave 5 skipped by recon (2026-03-29)
+
+| Target | Stars | Reason |
+|--------|-------|--------|
+| ComposioHQ/awesome-claude-skills | 48.8K | Claude Skills format (YAML), not a link list |
+| VoltAgent/awesome-claude-code-subagents | 15.5K | Subagent YAML files repo, not a link list |
+| travisvn/awesome-claude-skills | 9.9K | Claude Skills only |
+| BehiSecc/awesome-claude-skills | 7.9K | Claude Skills only |
+| langgptai/awesome-claude-prompts | 4.7K | Prompts, no fit |
+| ComposioHQ/awesome-claude-plugins | 1.2K | Local plugin files, not link list |
+| kyegomez/awesome-multi-agent-papers | 1.3K | Academic papers only |
+| ccplugins/awesome-claude-code-plugins | 650 | Local plugin files, 0 community PRs |
+| devtoolsd/awesome-devtools | 637 | Last merge Oct 2025 (6 months stale) |
+| cloudflare/awesome-agents | 189 | Cloudflare Agents SDK only |
+| cassler/awesome-claude-code-setup | 259 | Installable toolkit itself, not a link list |
+| quemsah/awesome-claude-plugins | 255 | Local plugin files, 0 community PRs |
+| YuyaoGe/Awesome-Vibe-Coding | 119 | Academic survey, stale (Oct 2025) |
+| machinae/awesome-claws | 381 | OpenClaw-only policy |
+
+## Wave 4 candidates (discovered 2026-03-28, now submitted as Wave 5)
 
 | Target | Stars | Score | Fit Section | Notes |
 |--------|-------|-------|-------------|-------|
@@ -116,12 +142,12 @@ Last updated: 2026-03-28 (Wave 4 recon — 24 open PRs, 4 closed today, 2 merged
 
 | Metric | Count |
 |--------|-------|
-| Total open PRs | 24 (18 Bernstein + 5 RightLayout + 1 Blog) |
-| Combined target stars | ~170K+ |
+| Total open PRs | 31 (25 Bernstein + 5 RightLayout + 1 Blog) |
+| Combined target stars | ~185K+ |
 | Total merged | 2 |
 | Closed by maintainers | 5 |
 | Closed by us (cleanup) | 6 |
-| Skipped by recon | 12 |
+| Skipped by recon | 26 |
 | Social proof — Bernstein | ⭐5 / 🍴1 |
 | Social proof — RightLayout | ⭐6 / 🍴0 |
 

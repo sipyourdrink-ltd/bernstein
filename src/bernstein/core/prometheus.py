@@ -32,6 +32,7 @@ __all__ = [
     "generate_latest",
     "registry",
     "task_duration_seconds",
+    "task_queue_depth",
     "tasks_total",
     "update_metrics_from_status",
 ]
@@ -58,6 +59,12 @@ agents_active: Gauge = Gauge(
     "bernstein_agents_active",
     "Currently active agents by role.",
     labelnames=["role"],
+    registry=registry,
+)
+
+task_queue_depth: Gauge = Gauge(
+    "bernstein_task_queue_depth",
+    "Number of open (unclaimed) tasks in the queue.",
     registry=registry,
 )
 
@@ -112,6 +119,10 @@ def update_metrics_from_status(status_data: dict[str, Any]) -> None:
         if delta > 0:
             tasks_total.labels(status=status_key).inc(delta)
         _prev_tasks[status_key] = current
+
+    # -- Queue depth gauge (for HPA) -----------------------------------------
+    queue_depth: float = float(status_data.get("open", 0))
+    task_queue_depth.set(queue_depth)
 
     # -- Cost counter --------------------------------------------------------
     current_cost: float = float(status_data.get("total_cost_usd", 0.0))

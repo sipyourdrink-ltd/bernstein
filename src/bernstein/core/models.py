@@ -614,6 +614,7 @@ class OrchestratorConfig:
     recovery: str = "resume"  # "resume" | "restart" | "escalate" — crash recovery strategy
     max_crash_retries: int = 2  # Max times to resume in same worktree before escalating
     cross_model_verify: Any | None = None  # CrossModelVerifierConfig | None
+    force_parallel: bool = False  # Skip complexity advisor — always decompose/parallelize
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.models import ModelConfig
+
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 
@@ -75,9 +77,7 @@ class RooCodeAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError(
-                    "roo-code not found in PATH. Install it with: npm install -g @roo-code/cli"
-                ) from exc
+                raise RuntimeError("roo-code not found in PATH. Install it with: npm install -g @roo-code/cli") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing roo-code: {exc}") from exc
 
@@ -85,6 +85,3 @@ class RooCodeAdapter(CLIAdapter):
 
     def name(self) -> str:
         return "Roo Code"
-
-
-from bernstein.core.models import ModelConfig  # noqa: E402 — avoid circular at module level

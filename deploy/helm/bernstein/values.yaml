@@ -56,11 +56,15 @@ worker:
     storageClass: ""
     accessMode: ReadWriteOnce
     size: 20Gi
-  # HPA: scale workers based on task queue depth
+  # HPA: scale workers based on task queue depth and CPU
   autoscaling:
     enabled: true
     minReplicas: 1
     maxReplicas: 20
+    # Queue depth metric (tasks per replica): requires Prometheus Adapter
+    # Set to empty string to disable queue-depth scaling and use CPU only
+    # Typical values: "2" (scale when 2+ tasks per replica), "5" (when 5+ tasks per replica)
+    targetQueueDepth: "2"
     targetCPUUtilizationPercentage: 70
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -113,6 +117,10 @@ ingress:
         - path: /
           pathType: Prefix
   tls: []
+
+# ── Prometheus Monitoring (Prometheus Operator required) ──────────────────────
+prometheus:
+  enabled: false
 
 # ── Pod configuration ─────────────────────────────────────────────────────────
 podAnnotations: {}

@@ -1,5 +1,8 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
 scrape_configs:
   - job_name: bernstein
-    scrape_interval: 15s
     static_configs:
-      - targets: ['localhost:8052']
+      - targets: ['bernstein-server:8052']

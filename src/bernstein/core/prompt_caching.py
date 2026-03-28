@@ -7,8 +7,10 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +69,7 @@ class CacheManifest:
         total_cached_requests: Total spawn calls using cached prefixes.
     """
 
-    entries: dict[str, CacheEntry] = field(default_factory=dict)
+    entries: dict[str, CacheEntry] = field(default_factory=lambda: dict[str, CacheEntry]())
     total_cached_tokens: int = 0
     total_cached_requests: int = 0
 
@@ -148,7 +150,7 @@ def extract_system_prefix(prompt: str) -> tuple[str, str]:
     instruction_marker = "\n## Instructions\n"
     signal_marker = "\n## Signal files —"
 
-    split_points = []
+    split_points: list[int] = []
     for marker in [task_marker, instruction_marker, signal_marker]:
         idx = prompt.find(marker)
         if idx != -1:
@@ -157,7 +159,7 @@ def extract_system_prefix(prompt: str) -> tuple[str, str]:
     if not split_points:
         return prompt, ""
 
-    split_idx = min(split_points)
+    split_idx: int = min(split_points)
     prefix = prompt[:split_idx]
     suffix = prompt[split_idx:]
 

@@ -16,7 +16,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -54,7 +54,7 @@ class RuleSpec:
     severity: str = "error"  # "error" | "warning"
     pattern: str | None = None
     files: str | None = None
-    exclude: list[str] = field(default_factory=list)
+    exclude: list[str] = field(default_factory=lambda: list[str]())
     path: str | None = None
     command: str | None = None
     message: str | None = None
@@ -71,7 +71,7 @@ class RulesConfig:
     """
 
     version: int = 1
-    rules: list[RuleSpec] = field(default_factory=list)
+    rules: list[RuleSpec] = field(default_factory=lambda: list[RuleSpec]())
     enabled: bool = True
 
 
@@ -97,7 +97,7 @@ class RuleViolation:
     description: str
     blocked: bool
     detail: str
-    files: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=lambda: list[str]())
     fix_hint: str = ""
 
 
@@ -113,7 +113,7 @@ class RuleEnforcerResult:
 
     task_id: str
     passed: bool
-    violations: list[RuleViolation] = field(default_factory=list)
+    violations: list[RuleViolation] = field(default_factory=lambda: list[RuleViolation]())
 
 
 # ---------------------------------------------------------------------------
@@ -149,32 +149,43 @@ def load_rules_config(workdir: Path) -> RulesConfig | None:
         logger.warning("rules.yaml must be a YAML mapping, got %s", type(raw).__name__)
         return None
 
-    version = int(raw.get("version", 1))
-    enabled = bool(raw.get("enabled", True))
+    config_data = cast("dict[str, Any]", raw)
+    version = int(config_data.get("version", 1))
+    enabled = bool(config_data.get("enabled", True))
 
     rules: list[RuleSpec] = []
-    for rule_raw in raw.get("rules", []):
-        if not isinstance(rule_raw, dict):
-            logger.warning("Skipping non-mapping rule entry: %r", rule_raw)
+    raw_rules_val: object = config_data.get("rules", [])
+    if not isinstance(raw_rules_val, list):
+        raw_rules_val = []
+    raw_rules = cast("list[object]", raw_rules_val)
+    for rule_entry in raw_rules:
+        if not isinstance(rule_entry, dict):
+            logger.warning("Skipping non-mapping rule entry: %r", rule_entry)
             continue
+        rule_raw = cast("dict[str, Any]", rule_entry)
         rule_id = str(rule_raw.get("id", "")).strip()
         if not rule_id:
             logger.warning("Skipping rule with missing/empty id: %r", rule_raw)
             continue
-        exclude_raw = rule_raw.get("exclude", [])
-        exclude: list[str] = list(exclude_raw) if isinstance(exclude_raw, list) else []
+        exclude_raw: object = rule_raw.get("exclude", [])
+        exclude: list[str] = list(cast("list[str]", exclude_raw)) if isinstance(exclude_raw, list) else []
+        pattern_val: str | None = cast("str | None", rule_raw.get("pattern"))
+        files_val: str | None = cast("str | None", rule_raw.get("files"))
+        path_val: str | None = cast("str | None", rule_raw.get("path"))
+        command_val: str | None = cast("str | None", rule_raw.get("command"))
+        message_val: str | None = cast("str | None", rule_raw.get("message"))
         rules.append(
             RuleSpec(
                 id=rule_id,
                 type=str(rule_raw.get("type", "forbidden_pattern")),
                 description=str(rule_raw.get("description", "")),
                 severity=str(rule_raw.get("severity", "error")),
-                pattern=rule_raw.get("pattern"),
-                files=rule_raw.get("files"),
+                pattern=pattern_val,
+                files=files_val,
                 exclude=exclude,
-                path=rule_raw.get("path"),
-                command=rule_raw.get("command"),
-                message=rule_raw.get("message"),
+                path=path_val,
+                command=command_val,
+                message=message_val,
             )
         )
 
@@ -279,14 +290,9 @@ def _check_forbidden_pattern(rule: RuleSpec, diff: str) -> RuleViolation | None:
         return None
 
     files_list = list(violations_by_file.keys())
-    sample = "; ".join(
-        f"{fp}: {lines[0]!r}" for fp, lines in list(violations_by_file.items())[:3]
-    )
+    sample = "; ".join(f"{fp}: {lines[0]!r}" for fp, lines in list(violations_by_file.items())[:3])
     detail = f"[{rule.id}] forbidden pattern in {len(files_list)} file(s): {sample}"
-    fix_hint = (
-        rule.message
-        or f"Remove additions matching '{rule.pattern}' from: {', '.join(files_list[:3])}"
-    )
+    fix_hint = rule.message or f"Remove additions matching '{rule.pattern}' from: {', '.join(files_list[:3])}"
     return RuleViolation(
         rule_id=rule.id,
         description=rule.description or f"Forbidden pattern: {rule.pattern}",

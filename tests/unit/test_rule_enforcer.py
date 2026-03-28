@@ -327,18 +327,14 @@ class TestRunRuleEnforcement:
         assert result.passed
 
     def test_no_violations_passes(self, tmp_path: Path) -> None:
-        config = RulesConfig(
-            rules=[RuleSpec(id="no-todo", type="forbidden_pattern", pattern=r"\bTODO\b")]
-        )
+        config = RulesConfig(rules=[RuleSpec(id="no-todo", type="forbidden_pattern", pattern=r"\bTODO\b")])
         task = _make_task()
         # No diff to inspect (empty repo or no changes)
         result = run_rule_enforcement(task, tmp_path, tmp_path, config)
         assert result.passed
 
     def test_required_file_violation_blocks(self, tmp_path: Path) -> None:
-        config = RulesConfig(
-            rules=[RuleSpec(id="need-changelog", type="required_file", path="CHANGELOG.md")]
-        )
+        config = RulesConfig(rules=[RuleSpec(id="need-changelog", type="required_file", path="CHANGELOG.md")])
         task = _make_task()
         result = run_rule_enforcement(task, tmp_path, tmp_path, config)
         assert not result.passed
@@ -363,18 +359,14 @@ class TestRunRuleEnforcement:
         assert not result.violations[0].blocked
 
     def test_unknown_rule_type_skipped(self, tmp_path: Path) -> None:
-        config = RulesConfig(
-            rules=[RuleSpec(id="weird", type="unknown_type")]
-        )
+        config = RulesConfig(rules=[RuleSpec(id="weird", type="unknown_type")])
         task = _make_task()
         result = run_rule_enforcement(task, tmp_path, tmp_path, config)
         assert result.passed
         assert result.violations == []
 
     def test_command_rule_blocks_on_failure(self, tmp_path: Path) -> None:
-        config = RulesConfig(
-            rules=[RuleSpec(id="fail-cmd", type="command", command="exit 1")]
-        )
+        config = RulesConfig(rules=[RuleSpec(id="fail-cmd", type="command", command="exit 1")])
         task = _make_task()
         result = run_rule_enforcement(task, tmp_path, tmp_path, config)
         assert not result.passed

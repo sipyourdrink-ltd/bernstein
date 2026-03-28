@@ -1,32 +1,54 @@
-"""Bootstrap: parse seed -> init .sdd -> start server -> plan -> orchestrate.
+"""Bootstrap orchestration: coordinate startup, task planning, and agent spawning.
 
-This is the single entry point for the "drop bernstein.yaml, run one command"
-UX. Called by `bernstein run` and by the bare `bernstein` invocation when a
-seed file is detected.
+This module orchestrates the full bootstrap flow: parsing seed, starting server,
+and spawning agents. It imports lower-level startup logic from server_launch.py
+and preflight checks from preflight.py.
+
+Entry points:
+- bootstrap_from_seed() — read bernstein.yaml and launch
+- bootstrap_from_goal() — quick launch from inline goal string
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import shutil
-import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
 from rich.console import Console
+from rich.status import Status
 
-from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
-from bernstein.core.seed import NotifyConfig, SeedConfig, parse_seed, seed_to_initial_task
+# Import from sub-modules (facade re-exports)
+from bernstein.core.preflight import _claude_has_oauth_session, preflight_checks
+from bernstein.core.seed import NotifyConfig, SeedConfig, parse_seed
+from bernstein.core.server_launch import (
+    BootstrapResult,
+    _build_codebase_index,
+    _clean_stale_runtime,
+    _discover_catalog,
+    _inject_manager_task,
+    _is_alive,
+    _read_pid,
+    _resolve_auth_token,
+    _resolve_bind_host,
+    _resolve_server_url,
+    _start_server,
+    _start_spawner,
+    _wait_for_server,
+    auto_write_bernstein_yaml,
+    create_router,
+    ensure_sdd,
+)
 
 logger = logging.getLogger(__name__)
+console = Console()
 
-# Dirs that make up the .sdd workspace.
+# Constants — re-export for backward compat
 SDD_DIRS = (
     ".sdd",
     ".sdd/backlog",
@@ -38,181 +60,22 @@ SDD_DIRS = (
     ".sdd/decisions",
 )
 
-_SERVER_READY_TIMEOUT_S = 10.0
-_SERVER_POLL_INTERVAL_S = 0.25
-
-console = Console()
-
-# Binary install hints for each supported CLI adapter.
-_CLI_INSTALL_HINT: dict[str, str] = {
-    "claude": "https://claude.ai/code",
-    "codex": "npm install -g @openai/codex",
-    "gemini": "npm install -g @google/gemini-cli",
-    "qwen": "npm install -g qwen-code",
-}
-
-# Primary API key env var(s) per adapter.
-_CLI_API_KEY_ENV: dict[str, str] = {
-    "claude": "ANTHROPIC_API_KEY",
-    "codex": "OPENAI_API_KEY",
-    "gemini": "GOOGLE_API_KEY",
-}
-
-# Qwen supports multiple providers; any one of these is sufficient.
-_QWEN_API_KEY_VARS: tuple[str, ...] = (
-    "OPENROUTER_API_KEY_PAID",
-    "OPENROUTER_API_KEY_FREE",
-    "OPENAI_API_KEY",
-    "TOGETHERAI_USER_KEY",
-    "OXen_API_KEY",
-    "G4F_API_KEY",
-)
-
-
-def _check_binary(cli: str) -> None:
-    """Exit with an actionable message if the CLI binary is not in PATH.
-
-    Args:
-        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
-
-    Raises:
-        SystemExit: If the binary is not found.
-    """
-    from bernstein.cli.errors import BernsteinError
-
-    binary = cli  # binary name matches adapter name for all supported adapters
-    if shutil.which(binary) is None:
-        hint = _CLI_INSTALL_HINT.get(cli, f"See documentation for {binary!r}")
-        BernsteinError(
-            what=f"{binary!r} not found in PATH",
-            why=f"The {cli} CLI adapter is required but not installed",
-            fix=f"Install: {hint}",
-        ).print()
-        raise SystemExit(1)
-
-
-def _claude_has_oauth_session() -> bool:
-    """Check if Claude Code has an active OAuth session (no API key needed)."""
-    import subprocess
-
-    try:
-        result = subprocess.run(
-            ["claude", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        # If claude --version works, the binary is functional.
-        # Claude Code with OAuth doesn't need ANTHROPIC_API_KEY.
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
-def _check_api_key(cli: str) -> None:
-    """Exit with an actionable message if the required API key is not set.
-
-    For Claude Code: skips the check if an OAuth session is active (no API key
-    needed when using `claude` CLI with built-in auth).
-
-    Args:
-        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
-
-    Raises:
-        SystemExit: If the required API key env var is missing.
-    """
-    from bernstein.cli.errors import BernsteinError
-
-    if cli == "qwen":
-        if not any(os.environ.get(v) for v in _QWEN_API_KEY_VARS):
-            BernsteinError(
-                what="No API key configured for qwen",
-                why="Qwen requires one of: " + ", ".join(_QWEN_API_KEY_VARS),
-                fix="export OPENROUTER_API_KEY_PAID=your-key (or any supported key var)",
-            ).print()
-            raise SystemExit(1)
-    elif cli == "claude":
-        # Claude Code supports OAuth — API key not required if OAuth session active
-        if not os.environ.get("ANTHROPIC_API_KEY") and not _claude_has_oauth_session():
-            BernsteinError(
-                what="No Claude authentication found",
-                why="Neither ANTHROPIC_API_KEY nor an active OAuth session was detected",
-                fix="export ANTHROPIC_API_KEY=your-key, or log in via: claude login",
-            ).print()
-            raise SystemExit(1)
-    else:
-        env_var = _CLI_API_KEY_ENV.get(cli)
-        if env_var and not os.environ.get(env_var):
-            BernsteinError(
-                what=f"{cli} adapter requires an API key",
-                why=f"Environment variable {env_var} is not set",
-                fix=f"export {env_var}=your-api-key",
-            ).print()
-            raise SystemExit(1)
-
-
-def _check_port_free(port: int) -> None:
-    """Exit with an actionable message if the port is already in use.
-
-    Args:
-        port: TCP port to check.
-
-    Raises:
-        SystemExit: If the port is occupied.
-    """
-    from bernstein.cli.errors import port_in_use
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind(("127.0.0.1", port))
-        except OSError:
-            port_in_use(port).print()
-            raise SystemExit(1) from None
-
-
-def preflight_checks(cli: str, port: int) -> None:
-    """Run pre-flight checks before starting the server.
-
-    Verifies that:
-    1. The CLI binary is installed and in PATH.
-    2. The required API key env var is present.
-    3. The server port is not already occupied.
-
-    Args:
-        cli: Adapter name (e.g. "claude", "codex", "gemini", "qwen").
-        port: TCP port the server will bind to.
-
-    Raises:
-        SystemExit: On any pre-flight failure, with an actionable message.
-    """
-    if cli == "auto":
-        # Auto mode: use agent_discovery for rich detection with auth + model info
-        from bernstein.core.agent_discovery import discover_agents_cached, short_model
-
-        discovery = discover_agents_cached()
-        if not discovery.agents:
-            console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
-            for name, hint in _CLI_INSTALL_HINT.items():
-                console.print(f"  {name}: {hint}")
-            raise SystemExit(1)
-
-        # Build "Claude (sonnet/opus), Codex (o4-mini)" description
-        agent_parts: list[str] = []
-        for agent in discovery.agents:
-            short_models = [short_model(m) for m in agent.available_models[:2]]
-            auth_note = "" if agent.logged_in else " [dim](not authenticated)[/dim]"
-            agent_parts.append(f"{agent.name.capitalize()} ({'/'.join(short_models)}){auth_note}")
-        routing_note = "Using auto-routing." if len(discovery.agents) > 1 else "Using as primary."
-        console.print(f"[green]✓[/green] Found: {', '.join(agent_parts)}. {routing_note}")
-
-        # Surface any auth warnings as hints
-        for w in discovery.warnings:
-            console.print(f"  [yellow]↳[/yellow] {w}")
-    else:
-        _check_binary(cli)
-        _check_api_key(cli)
-    _check_port_free(port)
+__all__ = [
+    # From server_launch (re-exported for backward compat)
+    "BootstrapResult",
+    "auto_write_bernstein_yaml",
+    "create_router",
+    "ensure_sdd",
+    # From preflight
+    "_claude_has_oauth_session",
+    "preflight_checks",
+    # This module
+    "SDD_DIRS",
+    "bootstrap_from_seed",
+    "bootstrap_from_goal",
+    "run_watchdog",
+    "console",
+]
 
 
 def _send_webhook(config: NotifyConfig, payload: dict[str, Any]) -> None:
@@ -231,416 +94,6 @@ def _send_webhook(config: NotifyConfig, payload: dict[str, Any]) -> None:
         logger.info("Webhook POST %s -> %d", config.webhook_url, resp.status_code)
     except Exception:
         logger.exception("Webhook POST to %s failed (ignored)", config.webhook_url)
-
-
-@dataclass
-class BootstrapResult:
-    """Outcome of a full bootstrap run.
-
-    Attributes:
-        seed: The parsed seed config.
-        server_pid: PID of the launched task server.
-        spawner_pid: PID of the launched spawner process.
-        manager_task_id: ID of the initial manager task.
-    """
-
-    seed: SeedConfig
-    server_pid: int
-    spawner_pid: int
-    manager_task_id: str
-
-
-def _clean_stale_runtime(workdir: Path) -> None:
-    """Remove stale PID files and old logs from .sdd/runtime/.
-
-    Called before starting a new run to prevent "server already running"
-    errors from crashed previous runs.
-
-    Args:
-        workdir: Project root directory.
-    """
-    runtime_dir = workdir / ".sdd" / "runtime"
-    if not runtime_dir.exists():
-        return
-
-    # Remove stale PID files (check if process is actually alive)
-    for pid_file in runtime_dir.glob("*.pid"):
-        pid = _read_pid(pid_file)
-        if pid is None or not _is_alive(pid):
-            pid_file.unlink(missing_ok=True)
-
-    # Clear old log files (they'll be recreated)
-    for log_file in runtime_dir.glob("*.log"):
-        log_file.unlink(missing_ok=True)
-
-    # Clear stale tasks.jsonl to start fresh
-    jsonl = runtime_dir / "tasks.jsonl"
-    if jsonl.exists():
-        jsonl.unlink(missing_ok=True)
-
-
-def ensure_sdd(workdir: Path) -> bool:
-    """Create .sdd/ workspace structure if it does not exist.
-
-    Args:
-        workdir: Project root directory.
-
-    Returns:
-        True if the workspace was newly created, False if it already existed.
-    """
-    created = False
-    for d in SDD_DIRS:
-        p = workdir / d
-        if not p.exists():
-            p.mkdir(parents=True, exist_ok=True)
-            created = True
-
-    # Write default config if missing
-    config_path = workdir / ".sdd" / "config.yaml"
-    if not config_path.exists():
-        config_path.write_text(
-            "# Bernstein workspace config\n"
-            "server_port: 8052\n"
-            "max_workers: 4\n"
-            "default_model: opus\n"
-            "default_effort: max\n"
-        )
-
-    # .gitignore for runtime dir — ensure session.json is always listed.
-    gi_path = workdir / ".sdd" / "runtime" / ".gitignore"
-    if not gi_path.exists():
-        gi_path.write_text("*.pid\n*.log\ntasks.jsonl\nsession.json\n")
-    else:
-        existing = gi_path.read_text()
-        if "session.json" not in existing:
-            gi_path.write_text(existing.rstrip("\n") + "\nsession.json\n")
-
-    return created
-
-
-def _read_pid(pid_path: Path) -> int | None:
-    """Read a PID from a file, returning None if missing or invalid."""
-    if pid_path.exists():
-        try:
-            return int(pid_path.read_text().strip())
-        except ValueError:
-            return None
-    return None
-
-
-def _is_alive(pid: int) -> bool:
-    """Check whether a process with the given PID is alive."""
-
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
-
-def _discover_catalog(workdir: Path) -> None:
-    """Run CatalogRegistry.discover() and sync Agency catalog on startup.
-
-    Loads the agent catalog from cache (if fresh) or re-fetches from providers.
-    Also attempts to sync the Agency GitHub catalog (TTL-protected, 24h).
-    On failure the error is logged and startup continues — catalog is optional.
-
-    Args:
-        workdir: Project root directory.
-    """
-
-    from bernstein.agents.catalog import CatalogRegistry
-
-    cache_path = workdir / ".sdd" / "agents" / "catalog.json"
-    try:
-        registry = CatalogRegistry.default()
-        registry._cache_path = cache_path  # type: ignore[reportPrivateUsage]
-        registry.discover()
-        console.print(f"[dim]Catalog: {len(registry._cached_roles)} role(s) ready[/dim]")  # type: ignore[reportPrivateUsage]
-    except Exception:
-        logger.warning("Catalog auto-discovery failed (non-fatal)", exc_info=True)
-
-    # Auto-sync Agency catalog (TTL = 24h — skipped if synced recently)
-    try:
-        from bernstein.agents.agency_provider import AgencyProvider
-
-        ok, msg = AgencyProvider.sync_catalog()
-        if ok:
-            logger.debug("Agency catalog sync: %s", msg)
-        else:
-            logger.debug("Agency catalog sync skipped or failed: %s", msg)
-    except Exception:
-        logger.debug("Agency catalog auto-sync failed (non-fatal)", exc_info=True)
-
-
-def _build_codebase_index(workdir: Path) -> None:
-    """Build or incrementally update the codebase search index.
-
-    Uses SQLite FTS5 for BM25-ranked full-text search so agents can find
-    relevant code without trial-and-error grepping.  On failure the error
-    is logged and startup continues — the index is optional.
-
-    Args:
-        workdir: Project root directory.
-    """
-    from bernstein.core.rag import build_or_update_index
-
-    try:
-        indexer = build_or_update_index(workdir)
-        console.print(f"[dim]Codebase index: {indexer.file_count()} file(s) indexed[/dim]")
-    except Exception:
-        logger.warning("Codebase index build failed (non-fatal)", exc_info=True)
-
-
-def create_router(workdir: Path) -> TierAwareRouter | None:
-    """Create a TierAwareRouter from providers.yaml if it exists.
-
-    Args:
-        workdir: Project root directory.
-
-    Returns:
-        Configured TierAwareRouter, or None if no providers.yaml found.
-    """
-    providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
-    if not providers_yaml.exists():
-        return None
-    router = TierAwareRouter()
-    load_providers_from_yaml(providers_yaml, router)
-    return router
-
-
-def _start_server(
-    workdir: Path,
-    port: int,
-    bind_host: str = "127.0.0.1",
-    cluster_enabled: bool = False,
-    auth_token: str | None = None,
-    evolve_mode: bool = False,
-) -> int:
-    """Launch the task server as a background process.
-
-    Args:
-        workdir: Project root (server runs from here).
-        port: TCP port for the uvicorn server.
-        bind_host: Host to bind to. Use "0.0.0.0" for remote access.
-        cluster_enabled: Enable cluster endpoints and node reaper.
-        auth_token: Bearer token for API auth.
-        evolve_mode: When True, start uvicorn with ``--reload`` so that
-            source changes made by agents are picked up automatically
-            without killing running agents (they communicate via HTTP).
-
-    Returns:
-        PID of the server process.
-
-    Raises:
-        RuntimeError: If a server is already running on the PID file.
-    """
-    pid_path = workdir / ".sdd" / "runtime" / "server.pid"
-    existing = _read_pid(pid_path)
-    if existing is not None and _is_alive(existing):
-        raise RuntimeError(f"Server already running (PID {existing}). Run `bernstein stop` first.")
-
-    # Build env for the server subprocess — inherit parent env and overlay
-    # cluster-specific and storage vars so the server's module-level app
-    # factory picks them up.
-    env = dict(os.environ)
-    if cluster_enabled:
-        env["BERNSTEIN_CLUSTER_ENABLED"] = "1"
-    env["BERNSTEIN_BIND_HOST"] = bind_host
-    if auth_token:
-        env["BERNSTEIN_AUTH_TOKEN"] = auth_token
-
-    # Propagate storage backend config if set in the current process env.
-    # The server reads these at import time via the store_factory module.
-    for _storage_var in ("BERNSTEIN_STORAGE_BACKEND", "BERNSTEIN_DATABASE_URL", "BERNSTEIN_REDIS_URL"):
-        if _storage_var in os.environ and _storage_var not in env:
-            env[_storage_var] = os.environ[_storage_var]
-
-    server_cmd = [
-        sys.executable,
-        "-m",
-        "uvicorn",
-        "bernstein.core.server:app",
-        "--host",
-        bind_host,
-        "--port",
-        str(port),
-    ]
-    if evolve_mode:
-        # In self-development mode, let uvicorn watch for source changes
-        # and auto-reload.  Agents survive because they communicate via
-        # HTTP — they see a brief connection error during reload and retry.
-        src_dir = str(workdir / "src" / "bernstein")
-        server_cmd.extend(["--reload", "--reload-dir", src_dir])
-
-    log_path = workdir / ".sdd" / "runtime" / "server.log"
-    # Keep the log file open — child inherits the fd via fork().
-    # Closing it prematurely can cause the child's stdout to break.
-    log_fh = log_path.open("w")
-    proc = subprocess.Popen(
-        server_cmd,
-        env=env,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-        cwd=str(workdir),
-    )
-    # Safe to close in parent after Popen — child has its own fd copy
-    log_fh.close()
-    pid_path.write_text(str(proc.pid))
-    return proc.pid
-
-
-def _wait_for_server(port: int, server_url: str | None = None) -> bool:
-    """Block until the server responds to /health, or timeout.
-
-    Args:
-        port: Server port (used to build URL if server_url is None).
-        server_url: Explicit base URL to check (overrides port).
-
-    Returns:
-        True if the server is reachable, False on timeout.
-    """
-    deadline = time.monotonic() + _SERVER_READY_TIMEOUT_S
-    base = server_url or f"http://127.0.0.1:{port}"
-    url = f"{base}/health"
-    while time.monotonic() < deadline:
-        try:
-            resp = httpx.get(url, timeout=2.0)
-            if resp.status_code == 200:
-                return True
-        except httpx.ConnectError:
-            pass
-        time.sleep(_SERVER_POLL_INTERVAL_S)
-    return False
-
-
-def _inject_manager_task(
-    seed: SeedConfig,
-    workdir: Path,
-    port: int,
-    server_url: str | None = None,
-    auth_token: str | None = None,
-) -> str:
-    """Create the initial manager task on the running server.
-
-    Args:
-        seed: Parsed seed configuration.
-        workdir: Project root for resolving context files.
-        port: Server port (used if server_url is None).
-        server_url: Explicit base URL of the task server.
-        auth_token: Bearer token for authenticated requests.
-
-    Returns:
-        The task ID assigned by the server.
-
-    Raises:
-        RuntimeError: If the server rejects the task.
-    """
-    task = seed_to_initial_task(seed, workdir=workdir)
-
-    payload: dict[str, Any] = {
-        "title": "Plan and decompose goal into tasks",
-        "role": "manager",
-        "description": task.description,
-        "priority": 1,
-        "scope": "large",
-        "complexity": "high",
-    }
-
-    base = server_url or f"http://127.0.0.1:{port}"
-    headers: dict[str, str] = {}
-    if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
-
-    resp = httpx.post(
-        f"{base}/tasks",
-        json=payload,
-        headers=headers,
-        timeout=5.0,
-    )
-    if resp.status_code != 201:
-        raise RuntimeError(f"Failed to create manager task: {resp.status_code} {resp.text}")
-
-    data: dict[str, Any] = resp.json()
-    return str(data.get("id", "unknown"))
-
-
-def _start_spawner(
-    workdir: Path,
-    port: int,
-    cells: int = 1,
-    server_url: str | None = None,
-    auth_token: str | None = None,
-    cluster_enabled: bool = False,
-) -> int:
-    """Launch the spawner process in the background.
-
-    Args:
-        workdir: Project root.
-        port: Task server port.
-        cells: Number of parallel orchestration cells (1 = single-cell).
-        server_url: Override server URL (e.g. remote central server).
-        auth_token: Bearer token for API auth.
-        cluster_enabled: Whether cluster mode is active.
-
-    Returns:
-        PID of the spawner process.
-    """
-    pid_path = workdir / ".sdd" / "runtime" / "spawner.pid"
-    log_path = workdir / ".sdd" / "runtime" / "spawner.log"
-
-    # Pass cluster-related env vars to the spawner subprocess so the
-    # orchestrator's __main__ block can build ClusterConfig from them.
-    env = dict(os.environ)
-    if server_url:
-        env["BERNSTEIN_SERVER_URL"] = server_url
-    if auth_token:
-        env["BERNSTEIN_AUTH_TOKEN"] = auth_token
-    if cluster_enabled:
-        env["BERNSTEIN_CLUSTER_ENABLED"] = "1"
-
-    log_fh = log_path.open("w")
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "bernstein.core.orchestrator",
-            "--port",
-            str(port),
-            "--cells",
-            str(cells),
-        ],
-        env=env,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-        cwd=str(workdir),
-    )
-    log_fh.close()
-    pid_path.write_text(str(proc.pid))
-    return proc.pid
-
-
-def _resolve_server_url(port: int) -> str:
-    """Build the effective server URL from env var or port.
-
-    Priority: BERNSTEIN_SERVER_URL env var > constructed from port.
-    """
-    return os.environ.get("BERNSTEIN_SERVER_URL", f"http://127.0.0.1:{port}")
-
-
-def _resolve_bind_host() -> str:
-    """Determine server bind host from env var.
-
-    Priority: BERNSTEIN_BIND_HOST env var > default "127.0.0.1".
-    """
-    return os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1")
-
-
-def _resolve_auth_token() -> str | None:
-    """Read auth token from env var."""
-    return os.environ.get("BERNSTEIN_AUTH_TOKEN")
 
 
 def bootstrap_from_seed(
@@ -684,8 +137,6 @@ def bootstrap_from_seed(
         bernstein.core.seed.SeedError: If the seed file is invalid.
         RuntimeError: If the server fails to start or respond.
     """
-    from rich.status import Status
-
     # Resolve cluster-aware settings
     bind_host = "0.0.0.0" if remote else _resolve_bind_host()
     auth_token = _resolve_auth_token()
@@ -767,7 +218,7 @@ def bootstrap_from_seed(
             from bernstein.cli.errors import BernsteinError
 
             BernsteinError(
-                what=f"Task server on port {port} did not respond within {_SERVER_READY_TIMEOUT_S:.0f}s",
+                what=f"Task server on port {port} did not respond within 10.0s",
                 why="Server process may have crashed during startup",
                 fix="Check .sdd/runtime/server.log for details",
             ).print()
@@ -950,37 +401,6 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
                     logger.exception("Failed to restart orchestrator")
 
 
-def auto_write_bernstein_yaml(workdir: Path) -> None:
-    """Write a minimal bernstein.yaml with auto-routing to the project root.
-
-    Called on first ``bernstein -g`` when no bernstein.yaml exists so users
-    have a starting point they can customise later.
-
-    Args:
-        workdir: Project root directory.
-    """
-    from bernstein.core.agent_discovery import generate_auto_routing_yaml
-
-    routing_block = generate_auto_routing_yaml()
-    if routing_block:
-        # Extract just the "cli: auto" line + comment from the routing block
-        cli_line = next((ln for ln in routing_block.splitlines() if ln.startswith("cli:")), "cli: auto")
-    else:
-        cli_line = "cli: auto"
-
-    content = (
-        "# Bernstein orchestration config — auto-generated\n"
-        "# Uncomment 'goal' to run from this file: bernstein (without -g)\n"
-        '# goal: "Describe what you want to build"\n'
-        "\n"
-        f"{cli_line}\n"
-        "team: auto\n"
-        'budget: "$10"\n'
-    )
-    (workdir / "bernstein.yaml").write_text(content)
-    console.print("[green]✓[/green] Created bernstein.yaml")
-
-
 def bootstrap_from_goal(
     goal: str,
     workdir: Path,
@@ -1008,8 +428,6 @@ def bootstrap_from_goal(
     Returns:
         BootstrapResult with PIDs and task ID.
     """
-    from rich.status import Status
-
     seed = SeedConfig(goal=goal, cli=cli, model=model)  # type: ignore[arg-type]
 
     # Detect first run: no .sdd/ and no bernstein.yaml yet
@@ -1057,7 +475,7 @@ def bootstrap_from_goal(
             from bernstein.cli.errors import BernsteinError
 
             BernsteinError(
-                what=f"Task server on port {port} did not respond within {_SERVER_READY_TIMEOUT_S:.0f}s",
+                what=f"Task server on port {port} did not respond within 10.0s",
                 why="Server process may have crashed during startup",
                 fix="Check .sdd/runtime/server.log for details",
             ).print()

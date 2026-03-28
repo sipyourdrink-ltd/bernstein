@@ -211,7 +211,7 @@ def doctor(as_json: bool) -> None:
         status_str = "set" if set_val else "not set"
         if var == "ANTHROPIC_API_KEY" and not set_val:
             # Check for OAuth session
-            from bernstein.core.bootstrap import _claude_has_oauth_session  # type: ignore[reportPrivateUsage]
+            from bernstein.core.preflight import _claude_has_oauth_session  # type: ignore[reportPrivateUsage]
 
             if _claude_has_oauth_session():
                 status_str = "not set (OAuth active — OK)"

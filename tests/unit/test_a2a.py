@@ -60,6 +60,68 @@ class TestAgentCard:
         assert d["capabilities"] == ["read"]
         assert d["protocol_version"] == "0.1"
 
+    def test_agent_card_from_dict(self) -> None:
+        data = {
+            "name": "scanner",
+            "description": "scans things",
+            "capabilities": ["scan", "report"],
+            "protocol_version": "0.2",
+            "endpoint": "http://localhost:9000",
+            "provider": "external",
+        }
+        card = AgentCard.from_dict(data)
+        assert card.name == "scanner"
+        assert card.description == "scans things"
+        assert card.capabilities == ["scan", "report"]
+        assert card.protocol_version == "0.2"
+        assert card.endpoint == "http://localhost:9000"
+        assert card.provider == "external"
+
+    def test_agent_card_from_dict_defaults(self) -> None:
+        card = AgentCard.from_dict({"name": "minimal", "description": "bare"})
+        assert card.capabilities == []
+        assert card.protocol_version == "0.1"
+        assert card.endpoint == ""
+        assert card.provider == "bernstein"
+
+    def test_agent_card_roundtrip(self) -> None:
+        original = AgentCard(
+            name="rt",
+            description="roundtrip",
+            capabilities=["a", "b"],
+            endpoint="http://x",
+            provider="test",
+        )
+        rebuilt = AgentCard.from_dict(original.to_dict())
+        assert rebuilt == original
+
+    def test_agent_card_validate_missing_name(self) -> None:
+        with pytest.raises(ValueError, match="name"):
+            AgentCard.validate({"description": "no name"})
+
+    def test_agent_card_validate_empty_name(self) -> None:
+        with pytest.raises(ValueError, match="name"):
+            AgentCard.validate({"name": "", "description": "empty name"})
+
+    def test_agent_card_validate_missing_description(self) -> None:
+        with pytest.raises(ValueError, match="description"):
+            AgentCard.validate({"name": "ok"})
+
+    def test_agent_card_validate_bad_capabilities(self) -> None:
+        with pytest.raises(ValueError, match="capabilities"):
+            AgentCard.validate({"name": "ok", "description": "d", "capabilities": "not-a-list"})
+
+    def test_agent_card_validate_bad_capability_item(self) -> None:
+        with pytest.raises(ValueError, match="capability at index 0"):
+            AgentCard.validate({"name": "ok", "description": "d", "capabilities": [123]})
+
+    def test_agent_card_json_schema(self) -> None:
+        schema = AgentCard.json_schema()
+        assert schema["type"] == "object"
+        assert "name" in schema["required"]
+        assert "description" in schema["required"]
+        assert schema["properties"]["capabilities"]["type"] == "array"
+
 
 class TestA2AHandler:
     def test_create_task(self, handler: A2AHandler) -> None:

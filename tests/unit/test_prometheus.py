@@ -16,6 +16,7 @@ from bernstein.core.prometheus import (
     evolve_proposals_total,
     registry,
     task_duration_seconds,
+    task_queue_depth,
     tasks_total,
     update_metrics_from_status,
 )
@@ -61,6 +62,12 @@ def test_agents_active_gauge_exists() -> None:
     assert "bernstein_agents_active" in names
 
 
+def test_queue_depth_gauge_exists() -> None:
+    """bernstein_task_queue_depth gauge is registered."""
+    names = {m.name for m in registry.collect()}
+    assert "bernstein_task_queue_depth" in names
+
+
 def test_task_duration_histogram_exists() -> None:
     """bernstein_task_duration_seconds histogram is registered."""
     names = {m.name for m in registry.collect()}
@@ -86,7 +93,7 @@ def test_evolve_proposals_counter_exists() -> None:
 
 
 def test_update_metrics_from_status_populates_gauges() -> None:
-    """update_metrics_from_status sets agent gauges from per_role data."""
+    """update_metrics_from_status sets agent and queue depth gauges from status data."""
     update_metrics_from_status(_SAMPLE_STATUS)
 
     # backend has 1 claimed task — gauge should be 1
@@ -96,6 +103,10 @@ def test_update_metrics_from_status_populates_gauges() -> None:
     # qa has 1 claimed task — gauge should be 1
     qa_gauge = agents_active.labels(role="qa")
     assert qa_gauge._value.get() == 1.0  # type: ignore[attr-defined]
+
+    # queue depth should match the "open" task count (3)
+    queue_gauge = task_queue_depth._value.get()  # type: ignore[attr-defined]
+    assert queue_gauge == 3.0
 
 
 def test_update_metrics_from_status_increments_task_counters() -> None:
@@ -193,6 +204,7 @@ async def test_metrics_endpoint_contains_bernstein_metrics(client: AsyncClient) 
     assert "bernstein_task_duration_seconds" in body
     assert "bernstein_cost_usd_total" in body
     assert "bernstein_evolve_proposals_total" in body
+    assert "bernstein_task_queue_depth" in body
 
 
 @pytest.mark.anyio

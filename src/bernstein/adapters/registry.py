@@ -10,6 +10,7 @@ from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.qwen import QwenAdapter
+from bernstein.adapters.roo_code import RooCodeAdapter
 
 _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "amp": AmpAdapter,
@@ -18,6 +19,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "codex": CodexAdapter,
     "gemini": GeminiAdapter,
     "qwen": QwenAdapter,
+    "roo-code": RooCodeAdapter,
 }
 
 

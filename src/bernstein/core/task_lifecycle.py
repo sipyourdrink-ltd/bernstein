@@ -1007,11 +1007,7 @@ def process_completed_tasks(
                     _re_result = run_rule_enforcement(task, _re_run_dir, orch._workdir, _rules_config)
                     if not _re_result.passed:
                         janitor_passed = False
-                        _re_failed = [
-                            f"rule:{v.rule_id}: {v.fix_hint}"
-                            for v in _re_result.violations
-                            if v.blocked
-                        ]
+                        _re_failed = [f"rule:{v.rule_id}: {v.fix_hint}" for v in _re_result.violations if v.blocked]
                         with contextlib.suppress(ValueError):
                             result.verified.remove(task.id)
                         result.verification_failures.append((task.id, _re_failed))

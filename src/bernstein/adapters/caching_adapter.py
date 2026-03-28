@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.prompt_caching import PromptCachingManager
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from bernstein.core.models import ModelConfig
 
 logger = logging.getLogger(__name__)
