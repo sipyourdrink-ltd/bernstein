@@ -3129,3 +3129,434 @@ class TestDryRun:
         orch.tick()
 
         adapter.spawn.assert_called_once()
+
+
+# --- _run_evolution_cycle ---
+
+
+class TestRunEvolutionCycle:
+    """Unit tests for Orchestrator._run_evolution_cycle."""
+
+    def _build_with_evolution_mock(self, tmp_path: Path) -> tuple[Orchestrator, MagicMock]:
+        from bernstein.core.evolution import EvolutionCoordinator
+
+        evolution = MagicMock(spec=EvolutionCoordinator)
+        evolution.execute_pending_upgrades.return_value = []
+        transport = _mock_transport({
+            "GET /tasks": httpx.Response(200, json=[]),
+        })
+        cfg = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            server_url="http://testserver",
+            evolution_enabled=True,
+        )
+        adp = _mock_adapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adp, templates_dir, tmp_path)
+        client = httpx.Client(transport=transport, base_url="http://testserver")
+        orch = Orchestrator(cfg, spawner, tmp_path, client=client, evolution=evolution)
+        return orch, evolution
+
+    def _make_proposal(self, proposal_id: str = "P-001", title: str = "Improve routing") -> MagicMock:
+        proposal = MagicMock()
+        proposal.id = proposal_id
+        proposal.title = title
+        proposal.description = f"Description for {title}"
+        return proposal
+
+    def test_happy_path_creates_http_task_per_proposal(self, tmp_path: Path) -> None:
+        """run_analysis_cycle returns proposals → POST /tasks for each."""
+        posted: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "POST" and request.url.path == "/tasks":
+                posted.append(json.loads(request.content))
+                return httpx.Response(200, json={"id": "T-new"})
+            return httpx.Response(200, json=[])
+
+        orch, evolution = self._build_with_evolution_mock(tmp_path)
+        orch._client = httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="http://testserver",
+        )
+
+        p1 = self._make_proposal("P-001", "Proposal One")
+        p2 = self._make_proposal("P-002", "Proposal Two")
+        evolution.run_analysis_cycle.return_value = [p1, p2]
+
+        result = TickResult()
+        orch._run_evolution_cycle(result)
+
+        assert len(posted) == 2
+        assert posted[0]["title"] == "Upgrade: Proposal One"
+        assert posted[1]["title"] == "Upgrade: Proposal Two"
+        assert result.errors == []
+
+    def test_task_payload_structure(self, tmp_path: Path) -> None:
+        """Posted task body has correct fields: title, description, role, priority, task_type."""
+        posted: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "POST" and request.url.path == "/tasks":
+                posted.append(json.loads(request.content))
+                return httpx.Response(200, json={"id": "T-new"})
+            return httpx.Response(200, json=[])
+
+        orch, evolution = self._build_with_evolution_mock(tmp_path)
+        orch._client = httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="http://testserver",
+        )
+
+        p = self._make_proposal("P-001", "Optimize model router")
+        evolution.run_analysis_cycle.return_value = [p]
+
+        result = TickResult()
+        orch._run_evolution_cycle(result)
+
+        assert len(posted) == 1
+        body = posted[0]
+        assert body["title"] == "Upgrade: Optimize model router"
+        assert body["description"] == p.description
+        assert body["role"] == "backend"
+        assert body["priority"] == 2
+        assert body["task_type"] == TaskType.UPGRADE_PROPOSAL.value
+
+    def test_no_proposals_makes_no_http_calls(self, tmp_path: Path) -> None:
+        """When run_analysis_cycle returns [], no POST /tasks calls are made."""
+        posted: list[object] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "POST" and request.url.path == "/tasks":
+                posted.append(request)
+            return httpx.Response(200, json=[])
+
+        orch, evolution = self._build_with_evolution_mock(tmp_path)
+        orch._client = httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="http://testserver",
+        )
+        evolution.run_analysis_cycle.return_value = []
+
+        result = TickResult()
+        orch._run_evolution_cycle(result)
+
+        assert posted == []
+        assert result.errors == []
+
+    def test_http_post_failure_logs_warning_and_continues(self, tmp_path: Path) -> None:
+        """If one POST fails, logs warning, adds to errors, continues with remaining proposals."""
+        call_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            if request.method == "POST" and request.url.path == "/tasks":
+                call_count += 1
+                if call_count == 1:
+                    return httpx.Response(500, json={"detail": "server error"})
+                return httpx.Response(200, json={"id": "T-new"})
+            return httpx.Response(200, json=[])
+
+        orch, evolution = self._build_with_evolution_mock(tmp_path)
+        orch._client = httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="http://testserver",
+        )
+
+        p1 = self._make_proposal("P-001", "First proposal")
+        p2 = self._make_proposal("P-002", "Second proposal")
+        evolution.run_analysis_cycle.return_value = [p1, p2]
+
+        result = TickResult()
+        orch._run_evolution_cycle(result)
+
+        # Both proposals attempted
+        assert call_count == 2
+        # One error recorded for the failed POST
+        assert len(result.errors) == 1
+        assert "evolution_task:" in result.errors[0]
+
+    def test_analysis_cycle_raises_adds_error(self, tmp_path: Path) -> None:
+        """If run_analysis_cycle raises, error is added to result.errors."""
+        orch, evolution = self._build_with_evolution_mock(tmp_path)
+        evolution.run_analysis_cycle.side_effect = RuntimeError("analysis failed")
+
+        result = TickResult()
+        orch._run_evolution_cycle(result)
+
+        assert len(result.errors) == 1
+        assert "evolution:" in result.errors[0]
+        assert "analysis failed" in result.errors[0]
+
+
+# --- _collect_completion_data ---
+
+
+class TestExtractFromAgentLog:
+    def _make_session(self, session_id: str = "sess-001") -> AgentSession:
+        from bernstein.core.models import ModelConfig
+        return AgentSession(id=session_id, role="backend", model_config=ModelConfig("sonnet", "high"))
+
+    def _make_orch(self, tmp_path: Path) -> Orchestrator:
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
+        return _build_orchestrator(tmp_path, transport)
+
+    def _write_log(self, tmp_path: Path, session_id: str, content: str) -> Path:
+        log_dir = tmp_path / ".sdd" / "runtime"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"{session_id}.log"
+        log_path.write_text(content, encoding="utf-8")
+        return log_path
+
+    def test_modified_and_created_files(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        session = self._make_session("s1")
+        self._write_log(tmp_path, "s1", (
+            "Some output\n"
+            "Modified: src/foo.py\n"
+            "Created: src/bar.py\n"
+            "More output\n"
+            "Modified: tests/test_foo.py\n"
+        ))
+        result = orch._collect_completion_data(session)
+        assert result["files_modified"] == ["src/foo.py", "src/bar.py", "tests/test_foo.py"]
+
+    def test_deduplicates_file_paths(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        session = self._make_session("s2")
+        self._write_log(tmp_path, "s2", (
+            "Modified: src/foo.py\n"
+            "Modified: src/foo.py\n"
+            "Created: src/foo.py\n"
+            "Modified: src/bar.py\n"
+        ))
+        result = orch._collect_completion_data(session)
+        assert result["files_modified"] == ["src/foo.py", "src/bar.py"]
+
+    def test_extracts_pytest_summary(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        session = self._make_session("s3")
+        self._write_log(tmp_path, "s3", (
+            "collecting ...\n"
+            "test_foo.py::test_bar PASSED\n"
+            "===== 3 passed, 1 failed in 0.42s =====\n"
+        ))
+        result = orch._collect_completion_data(session)
+        assert result["test_results"] == {"summary": "===== 3 passed, 1 failed in 0.42s ====="}
+
+    def test_log_file_does_not_exist(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        session = self._make_session("missing-session")
+        result = orch._collect_completion_data(session)
+        assert result == {"files_modified": [], "test_results": {}}
+
+    def test_oserror_on_read(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+        orch = self._make_orch(tmp_path)
+        session = self._make_session("s4")
+        log_path = tmp_path / ".sdd" / "runtime" / "s4.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("some content")
+        with patch.object(log_path.__class__, "read_text", side_effect=OSError("disk error")):
+            result = orch._collect_completion_data(session)
+        assert result == {"files_modified": [], "test_results": {}}
+
+    def test_empty_log_file(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        session = self._make_session("s5")
+        self._write_log(tmp_path, "s5", "")
+        result = orch._collect_completion_data(session)
+        assert result["files_modified"] == []
+
+
+# --- _check_evolve: cycle management unit tests ---
+
+
+class TestCheckEvolve:
+    """Direct unit tests for Orchestrator._check_evolve."""
+
+    def _make_orch(self, tmp_path: Path) -> Orchestrator:
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
+        cfg = OrchestratorConfig(
+            max_agents=6,
+            poll_interval_s=1,
+            server_url="http://testserver",
+            evolution_enabled=False,
+        )
+        adp = _mock_adapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        spawner = AgentSpawner(adp, templates_dir, tmp_path)
+        client = httpx.Client(transport=transport, base_url="http://testserver")
+        return Orchestrator(cfg, spawner, tmp_path, client=client)
+
+    def _patch_evolve_helpers(
+        self,
+        orch: Orchestrator,
+        *,
+        committed: bool = False,
+        test_info: dict[str, object] | None = None,
+    ) -> tuple[MagicMock, MagicMock, MagicMock]:
+        """Patch sub-methods to avoid subprocess/git calls; return mocks."""
+        from unittest.mock import patch
+
+        _test_info = test_info or {"passed": 5, "failed": 0, "summary": "5 passed"}
+        mock_run_tests = MagicMock(return_value=_test_info)
+        mock_auto_commit = MagicMock(return_value=committed)
+        mock_spawn_manager = MagicMock(return_value=None)
+        orch._evolve_run_tests = mock_run_tests  # type: ignore[assignment]
+        orch._evolve_auto_commit = mock_auto_commit  # type: ignore[assignment]
+        orch._evolve_spawn_manager = mock_spawn_manager  # type: ignore[assignment]
+        orch._log_evolve_cycle = MagicMock(return_value=None)  # type: ignore[assignment]
+        return mock_run_tests, mock_auto_commit, mock_spawn_manager
+
+    def test_no_evolve_json_is_noop(self, tmp_path: Path) -> None:
+        """No evolve.json → _check_evolve returns without doing anything."""
+        orch = self._make_orch(tmp_path)
+        mock_run, mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
+
+        orch._check_evolve(TickResult(), {})
+
+        mock_run.assert_not_called()
+        mock_commit.assert_not_called()
+        mock_spawn.assert_not_called()
+
+    def test_invalid_json_is_noop(self, tmp_path: Path) -> None:
+        """evolve.json with invalid JSON → no crash, no cycle triggered."""
+        runtime = tmp_path / ".sdd" / "runtime"
+        runtime.mkdir(parents=True)
+        (runtime / "evolve.json").write_text("{not valid json!!")
+        orch = self._make_orch(tmp_path)
+        mock_run, mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
+
+        orch._check_evolve(TickResult(), {})  # must not raise
+
+        mock_run.assert_not_called()
+        mock_spawn.assert_not_called()
+
+    def test_oserror_on_read_is_noop(self, tmp_path: Path) -> None:
+        """OSError reading evolve.json → no crash, no cycle triggered."""
+        from unittest.mock import patch
+
+        runtime = tmp_path / ".sdd" / "runtime"
+        runtime.mkdir(parents=True)
+        evolve_path = runtime / "evolve.json"
+        evolve_path.write_text('{"enabled": true}')
+        orch = self._make_orch(tmp_path)
+        mock_run, mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
+
+        with patch.object(evolve_path.__class__, "read_text", side_effect=OSError("disk error")):
+            orch._check_evolve(TickResult(), {})  # must not raise
+
+        mock_run.assert_not_called()
+        mock_spawn.assert_not_called()
+
+    def test_enabled_false_is_noop(self, tmp_path: Path) -> None:
+        """enabled=false in evolve.json → no cycle triggered."""
+        _write_evolve_config(tmp_path, enabled=False)
+        orch = self._make_orch(tmp_path)
+        mock_run, mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
+
+        orch._check_evolve(TickResult(), {})
+
+        mock_run.assert_not_called()
+        mock_spawn.assert_not_called()
+
+    def test_triggers_cycle_when_all_tasks_complete(self, tmp_path: Path) -> None:
+        """When enabled and no open/claimed tasks or alive agents, cycle runs."""
+        _write_evolve_config(tmp_path, interval_s=0)
+        orch = self._make_orch(tmp_path)
+        mock_run, mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
+
+        orch._check_evolve(TickResult(), {"done": [_make_task(id="T-1", status="done")]})
+
+        mock_run.assert_called_once()
+        mock_commit.assert_called_once()
+        mock_spawn.assert_called_once()
+
+    def test_cycle_count_increments_and_written_back(self, tmp_path: Path) -> None:
+        """After a successful cycle, _cycle_count increments in evolve.json."""
+        evolve_path = _write_evolve_config(tmp_path, interval_s=0, cycle_count=2)
+        orch = self._make_orch(tmp_path)
+        self._patch_evolve_helpers(orch)
+
+        orch._check_evolve(TickResult(), {})
+
+        updated = json.loads(evolve_path.read_text())
+        assert updated["_cycle_count"] == 3
+        assert updated["_last_cycle_ts"] > 0
+
+    def test_focus_area_uses_cycle_count_modulo(self, tmp_path: Path) -> None:
+        """Focus area passed to _evolve_spawn_manager rotates by cycle_count % len."""
+        focus_areas = Orchestrator._EVOLVE_FOCUS_AREAS
+        for i, expected_focus in enumerate(focus_areas):
+            _write_evolve_config(tmp_path, interval_s=0, cycle_count=i)
+            orch = self._make_orch(tmp_path)
+            _, _, mock_spawn = self._patch_evolve_helpers(orch)
+
+            orch._check_evolve(TickResult(), {})
+
+            call_kwargs = mock_spawn.call_args
+            assert call_kwargs is not None
+            actual_focus = call_kwargs.kwargs.get("focus_area") or call_kwargs.args[1]
+            assert actual_focus == expected_focus, (
+                f"cycle_count={i}: expected focus={expected_focus!r}, got {actual_focus!r}"
+            )
+
+    def test_focus_area_wraps_around(self, tmp_path: Path) -> None:
+        """Focus area wraps when cycle_count exceeds len(_EVOLVE_FOCUS_AREAS)."""
+        areas = Orchestrator._EVOLVE_FOCUS_AREAS
+        wrap_cycle = len(areas)  # should map back to index 0
+        _write_evolve_config(tmp_path, interval_s=0, cycle_count=wrap_cycle)
+        orch = self._make_orch(tmp_path)
+        _, _, mock_spawn = self._patch_evolve_helpers(orch)
+
+        orch._check_evolve(TickResult(), {})
+
+        call_kwargs = mock_spawn.call_args
+        actual_focus = call_kwargs.kwargs.get("focus_area") or call_kwargs.args[1]
+        assert actual_focus == areas[0]
+
+    def test_spawn_manager_receives_cycle_number_and_test_summary(self, tmp_path: Path) -> None:
+        """_evolve_spawn_manager is called with correct cycle_number and test_summary."""
+        _write_evolve_config(tmp_path, interval_s=0, cycle_count=4)
+        orch = self._make_orch(tmp_path)
+        _, _, mock_spawn = self._patch_evolve_helpers(
+            orch, test_info={"passed": 7, "failed": 1, "summary": "7 passed, 1 failed"}
+        )
+
+        orch._check_evolve(TickResult(), {})
+
+        mock_spawn.assert_called_once()
+        kwargs = mock_spawn.call_args.kwargs
+        assert kwargs["cycle_number"] == 5
+        assert kwargs["test_summary"] == "7 passed, 1 failed"
+
+    def test_consecutive_empty_resets_when_committed(self, tmp_path: Path) -> None:
+        """If committed=True, _consecutive_empty resets to 0."""
+        evolve_path = _write_evolve_config(
+            tmp_path, interval_s=0, consecutive_empty=5
+        )
+        orch = self._make_orch(tmp_path)
+        self._patch_evolve_helpers(orch, committed=True)
+
+        orch._check_evolve(TickResult(), {})
+
+        updated = json.loads(evolve_path.read_text())
+        assert updated["_consecutive_empty"] == 0
+
+    def test_consecutive_empty_increments_when_no_changes(self, tmp_path: Path) -> None:
+        """If nothing committed and no done tasks, _consecutive_empty increments."""
+        evolve_path = _write_evolve_config(
+            tmp_path, interval_s=0, consecutive_empty=2
+        )
+        orch = self._make_orch(tmp_path)
+        self._patch_evolve_helpers(orch, committed=False)
+
+        # tasks_by_status has no "done" key → tasks_completed = 0
+        orch._check_evolve(TickResult(), {})
+
+        updated = json.loads(evolve_path.read_text())
+        assert updated["_consecutive_empty"] == 3

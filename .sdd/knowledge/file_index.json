@@ -282,7 +282,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T06:59:18.986173"
+    "last_modified": "2026-03-28T07:03:46.370808"
   },
   "src/bernstein/core/__init__.py": {
     "summary": "Core: task server, spawner, scheduler.",
@@ -719,7 +719,7 @@
       "typing",
       "uuid"
     ],
-    "last_modified": "2026-03-28T06:56:20.273211"
+    "last_modified": "2026-03-28T07:03:47.144895"
   },
   "src/bernstein/core/spawner.py": {
     "summary": "Spawn short-lived CLI agents for task batches.",
@@ -1988,6 +1988,31 @@
     ],
     "last_modified": "2026-03-28T04:43:58.556231"
   },
+  "tests/unit/test_logs_cmd.py": {
+    "summary": "Tests for the `bernstein logs` CLI command.",
+    "exports": [
+      "test_find_agent_logs_empty_dir",
+      "test_find_agent_logs_missing_dir",
+      "test_find_agent_logs_returns_sorted_by_mtime",
+      "test_find_agent_logs_excludes_watchdog",
+      "test_find_agent_logs_filters_by_agent_id",
+      "runtime_dir",
+      "test_logs_cmd_accepts_follow_flag",
+      "test_logs_cmd_shows_last_n_lines",
+      "test_logs_cmd_no_logs_exits_nonzero",
+      "test_logs_cmd_agent_filter",
+      "test_logs_cmd_agent_filter_no_match"
+    ],
+    "imports": [
+      "__future__",
+      "bernstein",
+      "click",
+      "pathlib",
+      "pytest",
+      "time"
+    ],
+    "last_modified": "2026-03-28T06:59:08.504795"
+  },
   "tests/unit/test_manager.py": {
     "summary": "Tests for bernstein.core.manager \u2014 parsing, rendering, task construction.",
     "exports": [
@@ -2169,6 +2194,9 @@
       "TestMaybeRetryTask",
       "TestReplenishBacklog",
       "TestRunCompletionSummary",
+      "TestDryRun",
+      "TestRunEvolutionCycle",
+      "TestExtractFromAgentLog",
       "test_per_task_timeout_short_task",
       "test_per_task_timeout_long_task_clamped",
       "test_reap_uses_per_session_timeout"
@@ -2182,7 +2210,27 @@
       "time",
       "unittest"
     ],
-    "last_modified": "2026-03-28T06:58:56.589249"
+    "last_modified": "2026-03-28T07:10:22.075802"
+  },
+  "tests/unit/test_plan_cmd.py": {
+    "summary": "Tests for the `bernstein plan` CLI command.",
+    "exports": [
+      "test_plan_table_output",
+      "test_plan_status_filter_passes_param",
+      "test_plan_export_creates_json",
+      "test_plan_server_unreachable",
+      "test_plan_empty_task_list"
+    ],
+    "imports": [
+      "__future__",
+      "bernstein",
+      "click",
+      "json",
+      "pathlib",
+      "pytest",
+      "unittest"
+    ],
+    "last_modified": "2026-03-28T06:57:45.318327"
   },
   "tests/unit/test_policy.py": {
     "summary": "Tests for the policy engine \u2014 policy loading, evaluation, and management.",
@@ -2310,6 +2358,7 @@
       "TestSeedToInitialTask",
       "TestSeedConfig",
       "TestNotifyConfig",
+      "TestBuildManagerDescription",
       "seed_file"
     ],
     "imports": [
@@ -2318,7 +2367,7 @@
       "pathlib",
       "pytest"
     ],
-    "last_modified": "2026-03-28T03:38:45.681337"
+    "last_modified": "2026-03-28T07:09:50.950808"
   },
   "tests/unit/test_server.py": {
     "summary": "Tests for the Bernstein task server.",

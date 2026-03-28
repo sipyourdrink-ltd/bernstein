@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.models import Scope, Complexity, TaskStatus
-from bernstein.core.seed import NotifyConfig, SeedConfig, SeedError, parse_seed, seed_to_initial_task
+from bernstein.core.seed import NotifyConfig, SeedConfig, SeedError, _build_manager_description, parse_seed, seed_to_initial_task
 
 
 # ---------------------------------------------------------------------------
@@ -267,3 +267,107 @@ class TestNotifyConfig:
         nc = NotifyConfig(webhook_url="https://example.com")
         with pytest.raises(AttributeError):
             nc.webhook_url = "changed"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# _build_manager_description
+# ---------------------------------------------------------------------------
+
+class TestBuildManagerDescription:
+    """Tests for _build_manager_description()."""
+
+    def test_goal_only(self) -> None:
+        cfg = SeedConfig(goal="Build a REST API")
+        result = _build_manager_description(cfg, workdir=None)
+        assert "## Goal" in result
+        assert "Build a REST API" in result
+        assert "## Team" not in result
+        assert "## Budget" not in result
+        assert "## Constraints" not in result
+        assert "## Context files" not in result
+
+    def test_with_team_list(self) -> None:
+        cfg = SeedConfig(goal="Deploy infra", team=["backend", "qa", "devops"])
+        result = _build_manager_description(cfg, workdir=None)
+        assert "## Team" in result
+        assert "backend" in result
+        assert "qa" in result
+        assert "devops" in result
+
+    def test_auto_team_omitted(self) -> None:
+        cfg = SeedConfig(goal="Deploy infra", team="auto")
+        result = _build_manager_description(cfg, workdir=None)
+        assert "## Team" not in result
+
+    def test_with_budget(self) -> None:
+        cfg = SeedConfig(goal="Build X", budget_usd=42.50)
+        result = _build_manager_description(cfg, workdir=None)
+        assert "## Budget" in result
+        assert "42.50" in result
+
+    def test_with_constraints(self) -> None:
+        cfg = SeedConfig(goal="Build X", constraints=("Python only", "No external APIs"))
+        result = _build_manager_description(cfg, workdir=None)
+        assert "## Constraints" in result
+        assert "- Python only" in result
+        assert "- No external APIs" in result
+
+    def test_with_context_files_real_files(self, tmp_path: Path) -> None:
+        (tmp_path / "spec.md").write_text("# My spec\nHello world")
+        cfg = SeedConfig(goal="Build X", context_files=("spec.md",))
+        result = _build_manager_description(cfg, workdir=tmp_path)
+        assert "## Context files" in result
+        assert "spec.md" in result
+        assert "# My spec" in result
+        assert "Hello world" in result
+        assert "```" in result
+
+    def test_with_context_files_missing_file(self, tmp_path: Path) -> None:
+        cfg = SeedConfig(goal="Build X", context_files=("missing.md",))
+        result = _build_manager_description(cfg, workdir=tmp_path)
+        assert "## Context files" in result
+        assert "missing.md" in result
+        assert "(file not found)" in result
+
+    def test_with_context_files_unreadable_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        target = tmp_path / "secret.txt"
+        target.write_text("contents")
+        original_read_text = Path.read_text
+
+        def mock_read_text(self: Path, *args: object, **kwargs: object) -> str:
+            if self == target:
+                raise OSError("Permission denied")
+            return original_read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", mock_read_text)
+        cfg = SeedConfig(goal="Build X", context_files=("secret.txt",))
+        result = _build_manager_description(cfg, workdir=tmp_path)
+        assert "## Context files" in result
+        assert "secret.txt" in result
+        assert "(could not read file)" in result
+
+    def test_context_files_ignored_when_no_workdir(self) -> None:
+        cfg = SeedConfig(goal="Build X", context_files=("spec.md",))
+        result = _build_manager_description(cfg, workdir=None)
+        assert "## Context files" not in result
+
+    def test_all_fields_combined(self, tmp_path: Path) -> None:
+        (tmp_path / "notes.txt").write_text("Important notes here")
+        cfg = SeedConfig(
+            goal="Build everything",
+            team=["backend", "frontend"],
+            budget_usd=100.00,
+            constraints=("No TypeScript",),
+            context_files=("notes.txt",),
+        )
+        result = _build_manager_description(cfg, workdir=tmp_path)
+        assert "## Goal" in result
+        assert "Build everything" in result
+        assert "## Team" in result
+        assert "backend" in result
+        assert "## Budget" in result
+        assert "100.00" in result
+        assert "## Constraints" in result
+        assert "No TypeScript" in result
+        assert "## Context files" in result
+        assert "Important notes here" in result

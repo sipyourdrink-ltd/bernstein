@@ -911,7 +911,13 @@ def _find_agent_logs(runtime_dir: Path, agent_id: str | None) -> list[Path]:
 @click.option("--follow", "-f", is_flag=True, default=False, help="Stream log output in real-time (like tail -f).")
 @click.option("--agent", "-a", default=None, help="Filter by agent session ID (partial match).")
 @click.option("--lines", "-n", default=50, show_default=True, help="Number of lines to show without --follow.")
-@click.option("--runtime-dir", default=".sdd/runtime", show_default=True, hidden=True, help="Directory containing agent log files.")
+@click.option(
+    "--runtime-dir",
+    default=".sdd/runtime",
+    show_default=True,
+    hidden=True,
+    help="Directory containing agent log files.",
+)
 def logs_cmd(follow: bool, agent: str | None, lines: int, runtime_dir: str) -> None:
     """Tail agent log output.
 

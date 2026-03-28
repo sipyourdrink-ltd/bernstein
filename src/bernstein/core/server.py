@@ -393,7 +393,7 @@ class TaskStore:
         def dfs(node: str) -> list[str] | None:
             if node in path:
                 cycle_start = path.index(node)
-                return path[cycle_start:] + [node]
+                return [*path[cycle_start:], node]
             if node in visited:
                 return None
             visited.add(node)
