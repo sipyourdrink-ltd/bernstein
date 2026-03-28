@@ -195,6 +195,22 @@ def _fail_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -
     resp.raise_for_status()
 
 
+def _complete_task(client: httpx.Client, base_url: str, task_id: str, result_summary: str) -> None:
+    """POST /tasks/{task_id}/complete to mark a task as done.
+
+    Args:
+        client: httpx client.
+        base_url: Server base URL.
+        task_id: ID of the task to complete.
+        result_summary: Human-readable summary of what was accomplished.
+    """
+    resp = client.post(
+        f"{base_url}/tasks/{task_id}/complete",
+        json={"result_summary": result_summary},
+    )
+    resp.raise_for_status()
+
+
 def group_by_role(tasks: list[Task], max_per_batch: int) -> list[list[Task]]:
     """Group open tasks by role into batches of up to max_per_batch.
 
