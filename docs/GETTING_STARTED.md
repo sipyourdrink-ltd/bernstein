@@ -65,25 +65,33 @@ Bernstein will:
 
 ### 3. Monitor progress
 
-**Built-in TUI dashboard** — `bernstein` blocks in a live terminal dashboard by default after starting
-orchestration.  Press `Ctrl+C` to exit the dashboard (the agents keep running).
-
-**Standalone dashboard** — attach the dashboard to an already-running session without starting a new one:
+**Process visibility** — agents appear in Activity Monitor / `ps` as `bernstein: <role> [<session>]`:
 
 ```bash
-bernstein live
+bernstein ps                        # table of running agents
 ```
+
+**TUI dashboard** — `bernstein` blocks in a live terminal dashboard by default.
+Press `Ctrl+C` to exit (agents keep running).
+
+```bash
+bernstein live                      # attach dashboard to running session
+```
+
+**Web dashboard** — real-time browser UI:
+
+```bash
+bernstein dashboard                 # opens http://localhost:8052/dashboard
+```
+
+**Prometheus metrics** — available at `/metrics` for Grafana/alerting.
 
 **HTTP API** — query the task server directly:
 
 ```bash
-# Dashboard summary (counts by status and role)
-curl http://127.0.0.1:8052/status
-
-# All tasks (optionally filter by status)
-curl http://127.0.0.1:8052/tasks
-curl "http://127.0.0.1:8052/tasks?status=open"
-curl "http://127.0.0.1:8052/tasks?status=in_progress"
+curl http://127.0.0.1:8052/status   # dashboard summary
+curl http://127.0.0.1:8052/tasks    # all tasks
+curl http://127.0.0.1:8052/metrics  # Prometheus format
 ```
 
 ### 4. Add a task manually
@@ -542,6 +550,13 @@ top-level subcommands:
 | `bernstein --dry-run [-g GOAL]` | Preview the task plan without spawning any agents |
 | `bernstein init` | Initialise a `.sdd/` workspace in the current directory |
 | `bernstein stop [--timeout N]` | Gracefully stop all agents and the task server |
+| `bernstein ps [--json-output]` | Show running agent processes (PID, role, model, runtime) |
+| `bernstein doctor [--json]` | Pre-flight health check: Python, CLI tools, API keys, ports |
+| `bernstein plugins` | List discovered plugins and their hooks |
+| `bernstein dashboard` | Open real-time web dashboard in browser |
+| `bernstein trace TASK_ID` | Show step-by-step agent decision trace |
+| `bernstein replay TRACE_ID [--model M]` | Re-run a task from its trace, optionally with a different model |
+| `bernstein workspace` | Show multi-repo workspace status |
 | `bernstein cancel TASK_ID [-r REASON]` | Cancel a running or queued task |
 | `bernstein cost` | Show agent spend: cost, tokens, and duration per model |
 | `bernstein live [--interval N]` | Attach the live TUI dashboard to a running session |

@@ -17,7 +17,7 @@
 </picture>
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-2056-2ea44f)]()
+[![Tests](https://img.shields.io/badge/tests-2415-2ea44f)]()
 [![License](https://img.shields.io/badge/license-PolyForm_NC-f89820)](LICENSE)
 
 [Homepage](https://alexchernysh.com/bernstein) | [Documentation](https://chernistry.github.io/bernstein/)
@@ -59,9 +59,15 @@ bernstein --evolve --budget 5.00                             # self-improvement 
 
 ```bash
 bernstein stop                     # graceful shutdown
+bernstein ps                       # show running agent processes
 bernstein cancel <task_id>         # cancel a task
 bernstein cost                     # show cost summary
-bernstein live                     # open live dashboard
+bernstein live                     # open live TUI dashboard
+bernstein dashboard                # open web dashboard in browser
+bernstein doctor                   # health check: deps, keys, ports
+bernstein plugins                  # list active plugins
+bernstein trace <task_id>          # step-by-step agent decision trace
+bernstein replay <trace_id>        # re-run a task from its trace
 bernstein init                     # initialize project
 bernstein evolve review            # list evolution proposals
 bernstein evolve approve <id>      # approve a proposal
@@ -69,6 +75,7 @@ bernstein benchmark run            # run golden benchmark suite
 bernstein agents sync              # pull latest agent catalog
 bernstein agents list              # list available agents
 bernstein agents validate          # check catalog health
+bernstein workspace                # show multi-repo workspace status
 bernstein plan                     # show task backlog
 bernstein logs                     # tail agent log output
 bernstein demo                     # zero-to-running demo
@@ -171,6 +178,33 @@ Any tool, CI pipeline, Slack bot, or custom UI can create tasks and read status.
 CrewAI, AutoGen, and LangGraph work with any model via API wrappers — but they require you to write Python code to orchestrate. Ruflo uses self-evolution but ties you to Claude. Bernstein works with installed CLI agents (no API key plumbing, no SDK) and doesn't care which provider you use.
 
 </details>
+
+## Observability
+
+```bash
+bernstein ps          # which agents are running, what role, which model
+bernstein doctor      # pre-flight check: Python, CLI tools, API keys, ports
+bernstein trace T-042 # step-by-step view of what agent did and why
+```
+
+Agents are visible in Activity Monitor / `ps` as `bernstein: <role> [<session>]` — no more hunting for mystery Python processes.
+
+**Prometheus metrics** at `/metrics` — wire up Grafana, set alerts, monitor cost.
+
+## Extensibility
+
+Pluggy-based plugin system. Hook into any lifecycle event:
+
+```python
+from bernstein.plugins import hookimpl
+
+class SlackNotifier:
+    @hookimpl
+    def on_task_completed(self, task_id, role, result_summary):
+        slack.post(f"#{role} finished {task_id}: {result_summary}")
+```
+
+Install via entry points (`pip install bernstein-plugin-slack`) or local config in `bernstein.yaml`.
 
 ## Origin
 
