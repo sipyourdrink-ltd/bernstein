@@ -33,9 +33,8 @@ build/
 .sdd/evolution/
 .sdd/researches/
 
-# Proprietary: agent prompts, design specs, development plans
+# Proprietary: agent role prompts, design specs, development plans
 templates/roles/
-templates/prompts/
 docs/specs/
 docs/plans/
 

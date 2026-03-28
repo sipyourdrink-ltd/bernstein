@@ -33,6 +33,7 @@ from bernstein.core.models import (
     TaskType,
 )
 from bernstein.core.signals import read_unresolved_pivots
+from bernstein.core.fast_path import FastPathStats, classify_task, try_fast_path_batch, TaskLevel, get_l1_model_config
 from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
 from bernstein.evolution.types import MetricsRecord
 
@@ -233,19 +234,24 @@ _total_spent_cache: dict[str, tuple[float, dict[str, tuple[int, float]]]] = {}
 
 
 def _parse_file_total(jsonl_file: Path) -> float:
-    """Parse cost contributions from a single cost_efficiency JSONL file."""
+    """Parse cost contributions from a single cost_efficiency JSONL file.
+
+    Streams line-by-line to avoid loading the entire file into memory
+    (files can grow to 100MB+ during long runs).
+    """
     file_total = 0.0
     try:
-        for line in jsonl_file.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                point = json.loads(line)
-                if "task_id" in point.get("labels", {}):
-                    file_total += point.get("value", 0.0)
-            except json.JSONDecodeError:
-                continue
+        with open(jsonl_file, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    point = json.loads(line)
+                    if "task_id" in point.get("labels", {}):
+                        file_total += point.get("value", 0.0)
+                except json.JSONDecodeError:
+                    continue
     except OSError:
         pass
     return file_total
@@ -326,8 +332,11 @@ class Orchestrator:
         client: httpx client for server communication (injectable for testing).
     """
 
-    _SPAWN_BACKOFF_S: float = 60.0   # seconds before retrying a failed batch
-    _MAX_SPAWN_FAILURES: int = 3     # consecutive failures before marking tasks failed
+    _SPAWN_BACKOFF_BASE_S: float = 30.0   # base backoff; actual = base * 2^failures
+    _SPAWN_BACKOFF_MAX_S: float = 300.0  # ceiling for exponential backoff
+    _MAX_SPAWN_FAILURES: int = 3         # consecutive failures before marking tasks failed
+    _MAX_DEAD_AGENTS_KEPT: int = 20      # purge oldest dead agents beyond this
+    _MAX_PROCESSED_DONE: int = 500       # cap _processed_done_tasks set size
 
     def __init__(
         self,
@@ -343,9 +352,13 @@ class Orchestrator:
         self._spawner = spawner
         self._workdir = workdir
         self._bulletin: BulletinBoard | None = bulletin
+        _headers: dict[str, str] = {}
+        if config.auth_token:
+            _headers["Authorization"] = f"Bearer {config.auth_token}"
         self._client = client or httpx.Client(
             timeout=10.0,
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+            headers=_headers,
         )
         self._agents: dict[str, AgentSession] = {}
         self._file_ownership: dict[str, str] = {}  # filepath → agent_id
@@ -385,6 +398,9 @@ class Orchestrator:
         # subsequent calls to get_collector() (without args) write to the right
         # directory regardless of cwd at call time.
         get_collector(workdir / ".sdd" / "metrics")
+
+        # Fast-path: deterministic execution for trivial tasks (L0)
+        self._fast_path_stats = FastPathStats()
 
         # Adaptive polling backoff: multiplied by 2 each idle tick, reset on work.
         self._idle_multiplier: int = 1
@@ -1088,10 +1104,11 @@ class Orchestrator:
             from bernstein.core.researcher import format_research_context, run_research_sync
 
             report = run_research_sync(self._workdir)
-            research_context = format_research_context(report)
-            if research_context:
-                logger.info("Evolve: research produced %d bytes of context", len(research_context))
-        except (ImportError, OSError, RuntimeError) as exc:
+            if report is not None:
+                research_context = format_research_context(report)
+                if research_context:
+                    logger.info("Evolve: research produced %d bytes of context", len(research_context))
+        except Exception as exc:
             logger.debug("Evolve: research unavailable: %s", exc)
 
         focus_instructions = {
@@ -1323,6 +1340,43 @@ class Orchestrator:
                 # Handle orphaned tasks
                 for task_id in session.task_ids:
                     self._handle_orphaned_task(task_id, session, tasks_snapshot)
+
+        # Purge dead agents to prevent unbounded dict growth (memory leak fix)
+        self._purge_dead_agents()
+
+        # Purge expired spawn backoff entries
+        now = time.time()
+        expired = [
+            k for k, (_, ts) in self._spawn_failures.items()
+            if now - ts > self._SPAWN_BACKOFF_MAX_S
+        ]
+        for k in expired:
+            del self._spawn_failures[k]
+
+        # Cap _processed_done_tasks to prevent unbounded set growth
+        if len(self._processed_done_tasks) > self._MAX_PROCESSED_DONE:
+            # Keep only the most recent half
+            excess = len(self._processed_done_tasks) - self._MAX_PROCESSED_DONE // 2
+            for _ in range(excess):
+                self._processed_done_tasks.pop()
+
+    def _purge_dead_agents(self) -> None:
+        """Remove oldest dead agent sessions to bound memory usage."""
+        dead = [
+            (sid, s) for sid, s in self._agents.items()
+            if s.status == "dead"
+        ]
+        if len(dead) <= self._MAX_DEAD_AGENTS_KEPT:
+            return
+        # Sort by heartbeat_ts (oldest first), remove excess
+        dead.sort(key=lambda x: x[1].heartbeat_ts)
+        to_remove = len(dead) - self._MAX_DEAD_AGENTS_KEPT
+        for sid, _ in dead[:to_remove]:
+            del self._agents[sid]
+            # Clean up reverse index entries pointing to this agent
+            stale_tasks = [tid for tid, aid in self._task_to_session.items() if aid == sid]
+            for tid in stale_tasks:
+                del self._task_to_session[tid]
 
     def _handle_orphaned_task(
         self,
@@ -1771,6 +1825,12 @@ class Orchestrator:
                 logger.error("_retry_or_fail_task: could not fetch task %s: %s", task_id, exc)
                 return
 
+        # Dedup: prevent retry fan-out (same task retried multiple times)
+        if task_id in self._retried_task_ids:
+            logger.debug("Skipping duplicate retry for task %s", task_id)
+            return
+        self._retried_task_ids.add(task_id)
+
         # Extract current retry count from description marker
         marker_re = re.compile(r"^\[retry:(\d+)\]\s*")
         m = marker_re.match(task.description)
@@ -1856,7 +1916,12 @@ class Orchestrator:
             # Check spawn backoff: skip batches that recently failed
             batch_key = frozenset(t.id for t in batch)
             fail_count, last_fail_ts = self._spawn_failures.get(batch_key, (0, 0.0))
-            if fail_count > 0 and (time.time() - last_fail_ts) < self._SPAWN_BACKOFF_S:
+            # Exponential backoff: base * 2^(failures-1), capped at max
+            backoff_s = min(
+                self._SPAWN_BACKOFF_BASE_S * (2 ** max(fail_count - 1, 0)),
+                self._SPAWN_BACKOFF_MAX_S,
+            ) if fail_count > 0 else 0.0
+            if fail_count > 0 and (time.time() - last_fail_ts) < backoff_s:
                 logger.warning(
                     "Skipping batch %s: in backoff after %d consecutive spawn failure(s)",
                     [t.id for t in batch],
@@ -1894,10 +1959,41 @@ class Orchestrator:
             if claim_failed:
                 continue
 
-            # Per-batch timeout: max(estimated_minutes) * 60 * 1.5, clamped [120s, max_agent_runtime_s]
+            # Fast-path: try deterministic execution for trivial (L0) tasks.
+            # Runs inline, marks task complete on server, skips spawner entirely.
+            if try_fast_path_batch(
+                batch, self._workdir, self._client, base, self._fast_path_stats,
+            ):
+                assigned_task_ids.update(t.id for t in batch)
+                result.spawned.append(f"fast-path:{batch[0].id}")
+                continue
+
+            # L1 downgrade: classify single-task batches and override to cheapest model
+            if len(batch) == 1:
+                l1_check = classify_task(batch[0])
+                if l1_check.level == TaskLevel.L1 and not batch[0].model:
+                    l1_cfg = get_l1_model_config()
+                    batch[0].model = l1_cfg.model
+                    batch[0].effort = l1_cfg.effort
+                    logger.info(
+                        "L1 downgrade for task %s → %s/%s (%s)",
+                        batch[0].id, l1_cfg.model, l1_cfg.effort, l1_check.reason,
+                    )
+
+            # Adaptive timeout: scale by task complexity/role
+            # Architect/security tasks need 3x base, large tasks 2x, etc.
+            _SCOPE_MULTIPLIER = {"small": 1.0, "medium": 1.5, "large": 2.5}
+            _ROLE_MULTIPLIER = {"architect": 3.0, "security": 2.5, "manager": 2.0}
             max_estimated_s = max((t.estimated_minutes for t in batch), default=30) * 60
+            scope_mult = max(
+                _SCOPE_MULTIPLIER.get(t.scope.value, 1.0) for t in batch
+            )
+            role_mult = max(
+                _ROLE_MULTIPLIER.get(t.role, 1.0) for t in batch
+            )
+            complexity_mult = max(scope_mult, role_mult)
             batch_timeout_s = int(
-                max(120, min(int(max_estimated_s * 1.5), self._config.max_agent_runtime_s))
+                max(120, min(int(max_estimated_s * complexity_mult), self._config.max_agent_runtime_s * complexity_mult))
             )
 
             try:
@@ -2372,10 +2468,12 @@ class Orchestrator:
 
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         alive = sum(1 for a in self._agents.values() if a.status != "dead")
+        fp = self._fast_path_stats
+        fp_tag = f" fast_path={fp.tasks_bypassed} saved=${fp.estimated_cost_saved_usd:.2f}" if fp.tasks_bypassed else ""
         line = (
             f"[{ts}] open={result.open_tasks} agents={alive} "
             f"spawned={len(result.spawned)} reaped={len(result.reaped)} "
-            f"verified={len(result.verified)} errors={len(result.errors)}\n"
+            f"verified={len(result.verified)} errors={len(result.errors)}{fp_tag}\n"
         )
         with log_path.open("a") as f:
             f.write(line)

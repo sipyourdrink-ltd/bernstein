@@ -31,6 +31,7 @@ class MetricType(Enum):
     COST_EFFICIENCY = "cost_efficiency"
     PROVIDER_HEALTH = "provider_health"
     FREE_TIER_USAGE = "free_tier_usage"
+    FAST_PATH = "fast_path"
 
 
 class ProviderStatus(Enum):
@@ -131,9 +132,6 @@ class MetricsCollector:
         self._agent_metrics: dict[str, AgentMetrics] = {}
         self._provider_health: dict[str, ProviderHealth] = {}
         self._usage_quotas: dict[str, UsageQuota] = {}
-
-        # Rate limiting tracking
-        self._request_timestamps: list[float] = []
 
         # Write buffer for batched file I/O
         self._buffer: list[tuple[Path, str]] = []

@@ -691,10 +691,15 @@ class TestSpawnResiliency:
         adapter.spawn.side_effect = RuntimeError("always fails")
         orch = _build_orchestrator(tmp_path, httpx.MockTransport(handler), adapter=adapter)
 
-        # Pre-seed failure count at (max - 1) with an expired backoff timestamp
+        # Pre-seed failure count at (max - 1) with a timestamp that is:
+        # - Past the exponential backoff window (so the batch is retried), but
+        # - Within the cleanup purge window (so the entry is NOT purged).
+        # Backoff for fail_count=2 is base*2^1 = 60s, cleanup purge is 300s.
+        import time as _time
         batch_key = frozenset(["T-maxfail"])
         max_failures = orch._MAX_SPAWN_FAILURES
-        orch._spawn_failures[batch_key] = (max_failures - 1, 0.0)
+        expired_ts = _time.time() - 120  # 120s ago: past 60s backoff, within 300s purge
+        orch._spawn_failures[batch_key] = (max_failures - 1, expired_ts)
 
         # This tick hits the limit and should mark the task as failed
         orch.tick()
@@ -3063,7 +3068,7 @@ class TestReplenishBacklog:
 
 
 def test_per_task_timeout_short_task(tmp_path: Path) -> None:
-    """A 5-minute task gets ~450s timeout (5 * 60 * 1.5)."""
+    """A 5-minute small/backend task gets 300s timeout (5*60*1.0=300, clamped to [120, 600])."""
     task = Task(
         id="T-short",
         title="Short task",
@@ -3111,12 +3116,12 @@ def test_per_task_timeout_short_task(tmp_path: Path) -> None:
     sessions = list(orch._agents.values())
     assert sessions, "Expected one agent to be spawned"
     session = sessions[0]
-    # 5 min * 60 * 1.5 = 450s
-    assert session.timeout_s == 450
+    # 5 min * 60 * 1.0 (small scope, backend role = 1.0x multiplier) = 300s
+    assert session.timeout_s == 300
 
 
 def test_per_task_timeout_long_task_clamped(tmp_path: Path) -> None:
-    """A 60-minute task would be 5400s but is clamped to max_agent_runtime_s (600s)."""
+    """A 60-minute large/backend task gets adaptive timeout: 60*60*2.5=9000, clamped to 600*2.5=1500."""
     task = Task(
         id="T-long",
         title="Long task",
@@ -3163,8 +3168,8 @@ def test_per_task_timeout_long_task_clamped(tmp_path: Path) -> None:
     sessions = list(orch._agents.values())
     assert sessions, "Expected one agent to be spawned"
     session = sessions[0]
-    # 60 * 60 * 1.5 = 5400s, clamped to max_agent_runtime_s=600
-    assert session.timeout_s == 600
+    # 60*60=3600, scope=large (2.5x), clamped to 600*2.5=1500
+    assert session.timeout_s == 1500
 
 
 def test_reap_uses_per_session_timeout(tmp_path: Path) -> None:
