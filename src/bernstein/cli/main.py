@@ -981,16 +981,18 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
         hours, minutes = divmod(minutes, 60)
         runtime_str = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m {secs:02d}s"
 
-        agents.append({
-            "session": info.get("session", "?"),
-            "role": info.get("role", "?"),
-            "command": info.get("command", "?"),
-            "model": info.get("model", "?"),
-            "worker_pid": worker_pid,
-            "child_pid": child_pid,
-            "runtime": runtime_str,
-            "started_at": started_at,
-        })
+        agents.append(
+            {
+                "session": info.get("session", "?"),
+                "role": info.get("role", "?"),
+                "command": info.get("command", "?"),
+                "model": info.get("model", "?"),
+                "worker_pid": worker_pid,
+                "child_pid": child_pid,
+                "runtime": runtime_str,
+                "started_at": started_at,
+            }
+        )
 
     # Clean up stale PID files
     for f in stale_files:
