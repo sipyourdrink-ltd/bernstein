@@ -35,6 +35,7 @@ from bernstein.core.router import (
     TierAwareRouter,
 )
 from bernstein.core.spawner import AgentSpawner
+from bernstein.core.tick_pipeline import prioritize_starving_roles
 
 # --- Helpers ---
 
@@ -358,6 +359,125 @@ class TestGroupByRole:
         # b-crit should appear before b-norm in the result
         backend_ids = [b[0].id for b in batches if b[0].role == "backend"]
         assert backend_ids == ["b-crit", "b-norm"]
+
+
+# --- prioritize_starving_roles ---
+
+
+class TestPrioritizeStarvingRoles:
+    """Unit tests for the starving-role reordering helper."""
+
+    def test_starving_role_moves_before_served_role(self) -> None:
+        """A role with 0 alive agents is moved before a role that already has agents."""
+        batches = [
+            [_make_task(id="b1", role="backend")],
+            [_make_task(id="q1", role="qa")],
+        ]
+        # backend has 3 alive agents, qa has none
+        alive_per_role = {"backend": 3}
+        result = prioritize_starving_roles(batches, alive_per_role)
+        roles = [b[0].role for b in result]
+        assert roles[0] == "qa", "starving qa should come before well-served backend"
+
+    def test_no_starving_roles_preserves_order(self) -> None:
+        """When all roles have alive agents, the original order is unchanged."""
+        batches = [
+            [_make_task(id="b1", role="backend")],
+            [_make_task(id="q1", role="qa")],
+            [_make_task(id="d1", role="docs")],
+        ]
+        alive_per_role = {"backend": 2, "qa": 1, "docs": 1}
+        result = prioritize_starving_roles(batches, alive_per_role)
+        assert [b[0].id for b in result] == ["b1", "q1", "d1"]
+
+    def test_empty_batches_returns_unchanged(self) -> None:
+        assert prioritize_starving_roles([], {"backend": 1}) == []
+
+    def test_empty_alive_per_role_returns_unchanged(self) -> None:
+        """No alive-agent info → nothing to reorder."""
+        batches = [
+            [_make_task(id="b1", role="backend")],
+            [_make_task(id="q1", role="qa")],
+        ]
+        assert prioritize_starving_roles(batches, {}) == batches
+
+    def test_multiple_starving_roles_all_move_front(self) -> None:
+        """All starving roles are moved before any served role."""
+        batches = [
+            [_make_task(id="b1", role="backend")],   # served (3 agents)
+            [_make_task(id="q1", role="qa")],         # starving
+            [_make_task(id="d1", role="docs")],       # starving
+            [_make_task(id="b2", role="backend")],    # served
+        ]
+        alive_per_role = {"backend": 3}
+        result = prioritize_starving_roles(batches, alive_per_role)
+        result_roles = [b[0].role for b in result]
+        # qa and docs (starving) must both appear before backend (served)
+        first_backend_idx = result_roles.index("backend")
+        for i, role in enumerate(result_roles[:first_backend_idx]):
+            assert role in ("qa", "docs"), f"unexpected role {role!r} at index {i} before backend"
+
+
+# --- Tick rebalancing integration ---
+
+
+class TestTickStarvingRolePriority:
+    """Integration tests: the tick reorders batches so starving roles get agents first."""
+
+    def test_starving_role_gets_slot_when_capacity_is_tight(self, tmp_path: Path) -> None:
+        """When max_agents capacity is near-full, a starving role gets the last slot
+        instead of a role that already has an agent and is still under its per-role cap.
+        """
+        backend_task = _make_task(id="T-be", role="backend", priority=2)
+        qa_task = _make_task(id="T-qa", role="qa", priority=2)
+        all_tasks = [_task_as_dict(backend_task), _task_as_dict(qa_task)]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            if request.method == "GET" and url.path == "/tasks":
+                return _tasks_response(url, all_tasks)
+            if request.method == "POST" and "/claim" in url.path:
+                # Return 200 for both task claims
+                task_id = url.path.split("/")[-2]
+                task_dict = next((t for t in all_tasks if t["id"] == task_id), all_tasks[0])
+                return httpx.Response(200, json=task_dict)
+            return httpx.Response(404)
+
+        # max_agents=2, pre-seed ONE alive backend agent so only 1 slot remains.
+        # Both backend and qa are under their per-role caps — without starving-first
+        # prioritization, backend (appearing first in alphabetical round-robin) would
+        # steal the last slot; with it, qa (starving) must get it.
+        cfg = OrchestratorConfig(
+            max_agents=2,
+            poll_interval_s=1,
+            heartbeat_timeout_s=120,
+            max_tasks_per_agent=1,
+            server_url="http://testserver",
+        )
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(handler), config=cfg)
+        be_session = AgentSession(
+            id="existing-backend",
+            role="backend",
+            pid=12345,  # non-None so check_alive calls adapter.is_alive(pid)
+            task_ids=["T-existing"],
+            status="running",
+            model_config=RouterModelConfig(model="claude-sonnet-4-6", effort="normal"),
+            spawn_ts=time.time(),
+        )
+        orch._agents["existing-backend"] = be_session
+
+        result = orch.tick()
+
+        # Exactly one new agent should have been spawned (only 1 slot was free)
+        assert len(result.spawned) == 1
+
+        # That new agent must be for QA (the starving role), not backend
+        new_session_id = result.spawned[0]
+        new_session = orch._agents.get(new_session_id)
+        assert new_session is not None, "spawned session must be tracked"
+        assert new_session.role == "qa", (
+            f"starving qa role should have gotten the last slot; got {new_session.role}"
+        )
 
 
 # --- Orchestrator.tick ---
@@ -4887,3 +5007,261 @@ class TestReverseTaskSessionIndex:
         # Should not raise even when task_ids are not in the index
         orch._release_task_to_session(["T-phantom"])
         assert orch._task_to_session == {}
+
+
+# ---------------------------------------------------------------------------
+# Manager queue review trigger (#333f)
+# ---------------------------------------------------------------------------
+
+
+class TestShouldTriggerManagerReview:
+    """Tests for Orchestrator._should_trigger_manager_review."""
+
+    def _make_orch(self, tmp_path: Path) -> Orchestrator:
+        transport = _mock_transport({})
+        return _build_orchestrator(tmp_path, transport)
+
+    def test_triggers_when_completions_reach_threshold(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        orch._completions_since_review = 3  # == THRESHOLD
+        assert orch._should_trigger_manager_review(failed_count=0) is True
+
+    def test_triggers_when_completions_exceed_threshold(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        orch._completions_since_review = 10
+        assert orch._should_trigger_manager_review(failed_count=0) is True
+
+    def test_does_not_trigger_when_below_threshold_no_failures(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        orch._completions_since_review = 2  # < THRESHOLD
+        assert orch._should_trigger_manager_review(failed_count=0) is False
+
+    def test_triggers_on_any_failure(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        orch._completions_since_review = 0
+        assert orch._should_trigger_manager_review(failed_count=1) is True
+
+    def test_triggers_on_stall_after_previous_review(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        orch._completions_since_review = 0
+        # Simulate a review that happened 6 minutes ago
+        orch._last_review_ts = time.time() - 360
+        assert orch._should_trigger_manager_review(failed_count=0) is True
+
+    def test_does_not_trigger_stall_when_no_prior_review(self, tmp_path: Path) -> None:
+        """Stall guard only fires after a previous review (last_review_ts > 0)."""
+        orch = self._make_orch(tmp_path)
+        orch._completions_since_review = 0
+        orch._last_review_ts = 0.0  # no prior review
+        assert orch._should_trigger_manager_review(failed_count=0) is False
+
+    def test_does_not_trigger_stall_when_recent_review(self, tmp_path: Path) -> None:
+        orch = self._make_orch(tmp_path)
+        orch._completions_since_review = 0
+        orch._last_review_ts = time.time() - 60  # only 1 minute ago
+        assert orch._should_trigger_manager_review(failed_count=0) is False
+
+
+# ---------------------------------------------------------------------------
+# Manager queue review corrections (#333f)
+# ---------------------------------------------------------------------------
+
+
+class TestRunManagerQueueReview:
+    """Tests for Orchestrator._run_manager_queue_review — mocked ManagerAgent."""
+
+    def _make_orch(self, tmp_path: Path, transport: httpx.MockTransport) -> Orchestrator:
+        return _build_orchestrator(tmp_path, transport)
+
+    def _make_correction_result(
+        self,
+        corrections: list[dict],  # type: ignore[type-arg]
+        reasoning: str = "test reasoning",
+    ):  # type: ignore[no-untyped-def]
+        from bernstein.core.manager import QueueCorrection, QueueReviewResult
+
+        parsed_corrections = []
+        for c in corrections:
+            parsed_corrections.append(
+                QueueCorrection(
+                    action=c["action"],
+                    task_id=c.get("task_id"),
+                    new_role=c.get("new_role"),
+                    new_priority=c.get("new_priority"),
+                    reason=c.get("reason", ""),
+                    new_task=c.get("new_task"),
+                )
+            )
+        return QueueReviewResult(corrections=parsed_corrections, reasoning=reasoning)
+
+    def test_resets_counters_and_sets_last_review_ts(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        from bernstein.core.manager import QueueReviewResult
+
+        transport = _mock_transport({})
+        orch = self._make_orch(tmp_path, transport)
+        orch._completions_since_review = 5
+        orch._failures_since_review = 2
+
+        skipped_result = QueueReviewResult(corrections=[], reasoning="skipped", skipped=True)
+        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.review_queue_sync.return_value = skipped_result
+            mock_cls.return_value = mock_agent
+            orch._run_manager_queue_review()
+
+        assert orch._completions_since_review == 0
+        assert orch._failures_since_review == 0
+        assert orch._last_review_ts > 0
+
+    def test_reassign_sends_patch_with_new_role(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        patched: list[tuple[str, dict]] = []  # type: ignore[type-arg]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "PATCH":
+                patched.append((request.url.path, json.loads(request.content)))
+                return httpx.Response(200, json={"id": "t1", "status": "open", "role": "frontend"})
+            return httpx.Response(200, json=[])
+
+        transport = httpx.MockTransport(handler)
+        orch = self._make_orch(tmp_path, transport)
+
+        result = self._make_correction_result(
+            [{"action": "reassign", "task_id": "t1", "new_role": "frontend", "reason": "CSS work"}]
+        )
+        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.review_queue_sync.return_value = result
+            mock_cls.return_value = mock_agent
+            orch._run_manager_queue_review()
+
+        assert len(patched) == 1
+        path, body = patched[0]
+        assert path == "/tasks/t1"
+        assert body == {"role": "frontend"}
+
+    def test_cancel_sends_post_to_cancel_endpoint(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        posted: list[tuple[str, dict]] = []  # type: ignore[type-arg]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            if request.method == "POST" and url.path.endswith("/cancel"):
+                posted.append((url.path, json.loads(request.content)))
+                return httpx.Response(200, json={"id": "t2", "status": "cancelled"})
+            return httpx.Response(200, json=[])
+
+        transport = httpx.MockTransport(handler)
+        orch = self._make_orch(tmp_path, transport)
+
+        result = self._make_correction_result(
+            [{"action": "cancel", "task_id": "t2", "reason": "stalled > 5 min"}]
+        )
+        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.review_queue_sync.return_value = result
+            mock_cls.return_value = mock_agent
+            orch._run_manager_queue_review()
+
+        assert len(posted) == 1
+        path, body = posted[0]
+        assert path == "/tasks/t2/cancel"
+        assert body["reason"] == "stalled > 5 min"
+
+    def test_change_priority_sends_patch_with_priority(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        patched: list[tuple[str, dict]] = []  # type: ignore[type-arg]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            if request.method == "PATCH":
+                patched.append((url.path, json.loads(request.content)))
+                return httpx.Response(200, json={"id": "t3", "status": "open", "priority": 1})
+            return httpx.Response(200, json=[])
+
+        transport = httpx.MockTransport(handler)
+        orch = self._make_orch(tmp_path, transport)
+
+        result = self._make_correction_result(
+            [{"action": "change_priority", "task_id": "t3", "new_priority": 1, "reason": "urgent"}]
+        )
+        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.review_queue_sync.return_value = result
+            mock_cls.return_value = mock_agent
+            orch._run_manager_queue_review()
+
+        assert len(patched) == 1
+        path, body = patched[0]
+        assert path == "/tasks/t3"
+        assert body == {"priority": 1}
+
+    def test_add_task_sends_post_to_tasks(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        posted: list[tuple[str, dict]] = []  # type: ignore[type-arg]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            if request.method == "POST" and url.path == "/tasks":
+                posted.append((url.path, json.loads(request.content)))
+                return httpx.Response(201, json={"id": "new-t", "status": "open"})
+            return httpx.Response(200, json=[])
+
+        transport = httpx.MockTransport(handler)
+        orch = self._make_orch(tmp_path, transport)
+
+        result = self._make_correction_result(
+            [
+                {
+                    "action": "add_task",
+                    "new_task": {
+                        "title": "Write E2E tests",
+                        "role": "qa",
+                        "description": "Add E2E test suite",
+                        "priority": 2,
+                    },
+                    "reason": "missing coverage",
+                }
+            ]
+        )
+        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.review_queue_sync.return_value = result
+            mock_cls.return_value = mock_agent
+            orch._run_manager_queue_review()
+
+        assert len(posted) == 1
+        path, body = posted[0]
+        assert path == "/tasks"
+        assert body["title"] == "Write E2E tests"
+        assert body["role"] == "qa"
+
+    def test_skipped_result_applies_no_corrections(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        from bernstein.core.manager import QueueReviewResult
+
+        requests_made: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests_made.append(f"{request.method} {request.url.path}")
+            return httpx.Response(200, json=[])
+
+        transport = httpx.MockTransport(handler)
+        orch = self._make_orch(tmp_path, transport)
+
+        skipped = QueueReviewResult(corrections=[], reasoning="budget < 10%", skipped=True)
+        with patch("bernstein.core.manager.ManagerAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.review_queue_sync.return_value = skipped
+            mock_cls.return_value = mock_agent
+            orch._run_manager_queue_review()
+
+        # No PATCH/POST/cancel calls — only the ManagerAgent was invoked
+        assert not any(m for m in requests_made if "PATCH" in m or "cancel" in m)
