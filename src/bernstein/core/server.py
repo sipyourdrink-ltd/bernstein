@@ -91,6 +91,7 @@ class TaskResponse(BaseModel):
     effort: str | None
     completion_signals: list[dict[str, str]] = Field(default_factory=list)
     created_at: float
+    progress_log: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TaskCompleteRequest(BaseModel):
@@ -109,6 +110,13 @@ class TaskCancelRequest(BaseModel):
     """Body for POST /tasks/{task_id}/cancel."""
 
     reason: str = ""
+
+
+class TaskProgressRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/progress."""
+
+    message: str
+    percent: int = 0
 
 
 class BatchClaimRequest(BaseModel):
@@ -520,6 +528,27 @@ class TaskStore:
             await self._append_archive(task, completed_at)
             return task
 
+    async def add_progress(self, task_id: str, message: str, percent: int) -> Task:
+        """Append an intermediate progress update to a task.
+
+        Args:
+            task_id: Task identifier.
+            message: Human-readable progress message.
+            percent: Completion percentage (0-100).
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            task.progress_log.append({"timestamp": time.time(), "message": message, "percent": percent})
+            return task
+
     async def cancel(self, task_id: str, reason: str) -> Task:
         """Cancel a task that has not yet finished.
 
@@ -820,6 +849,7 @@ def _task_to_response(task: Task) -> TaskResponse:
         effort=task.effort,
         completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
         created_at=task.created_at,
+        progress_log=list(task.progress_log),
     )
 
 
@@ -931,6 +961,15 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None
+        return _task_to_response(task)
+
+    @application.post("/tasks/{task_id}/progress", response_model=TaskResponse)
+    async def progress_task(task_id: str, body: TaskProgressRequest) -> TaskResponse:
+        """Append an intermediate progress update to a task."""
+        try:
+            task = await store.add_progress(task_id, body.message, body.percent)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
         return _task_to_response(task)
 
     @application.get("/tasks", response_model=list[TaskResponse])

@@ -555,7 +555,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:48:06.488869"
+    "last_modified": "2026-03-28T06:03:53.696220"
   },
   "src/bernstein/core/multi_cell.py": {
     "summary": "Multi-cell orchestrator: coordinates multiple cells, each with its own manager + workers.",
@@ -597,7 +597,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T05:43:25.840320"
+    "last_modified": "2026-03-28T06:04:32.757247"
   },
   "src/bernstein/core/policy.py": {
     "summary": "Policy engine for tier optimization and provider routing.",
@@ -697,6 +697,7 @@
       "TaskCompleteRequest",
       "TaskFailRequest",
       "TaskCancelRequest",
+      "TaskProgressRequest",
       "BatchClaimRequest",
       "BatchClaimResponse",
       "RoleCounts",
@@ -723,7 +724,7 @@
       "typing",
       "uuid"
     ],
-    "last_modified": "2026-03-28T04:35:10.463988"
+    "last_modified": "2026-03-28T06:02:35.515777"
   },
   "src/bernstein/core/spawner.py": {
     "summary": "Spawn short-lived CLI agents for task batches.",
@@ -2118,7 +2119,11 @@
       "TestEvolveAutoCommitRuntimeExclusion",
       "TestRetryOrFailTask",
       "TestMaybeRetryTask",
-      "TestReplenishBacklog"
+      "TestReplenishBacklog",
+      "TestRunCompletionSummary",
+      "test_per_task_timeout_short_task",
+      "test_per_task_timeout_long_task_clamped",
+      "test_reap_uses_per_session_timeout"
     ],
     "imports": [
       "__future__",
@@ -2129,7 +2134,7 @@
       "time",
       "unittest"
     ],
-    "last_modified": "2026-03-28T05:45:30.079050"
+    "last_modified": "2026-03-28T06:04:20.170484"
   },
   "tests/unit/test_policy.py": {
     "summary": "Tests for the policy engine \u2014 policy loading, evaluation, and management.",
@@ -2305,6 +2310,8 @@
       "test_all_six_signal_types_accepted",
       "test_empty_completion_signals_backward_compat",
       "test_invalid_signal_type_rejected",
+      "test_progress_updates_stored_and_retrievable",
+      "test_progress_on_missing_task_returns_404",
       "test_completion_signals_preserved_after_complete",
       "test_list_tasks_returns_completion_signals",
       "test_complete_task_writes_archive",
@@ -2363,7 +2370,7 @@
       "pathlib",
       "pytest"
     ],
-    "last_modified": "2026-03-28T04:35:10.464597"
+    "last_modified": "2026-03-28T06:02:35.516294"
   },
   "tests/unit/test_spawner.py": {
     "summary": "Tests for AgentSpawner \u2014 adapter is always mocked.",

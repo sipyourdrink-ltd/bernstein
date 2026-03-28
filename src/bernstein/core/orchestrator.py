@@ -217,6 +217,38 @@ def group_by_role(tasks: list[Task], max_per_batch: int) -> list[list[Task]]:
     return batches
 
 
+def _compute_total_spent(workdir: "Path") -> float:
+    """Sum cost_efficiency metric values recorded for individual tasks.
+
+    Reads all cost_efficiency_*.jsonl files in .sdd/metrics/ and returns the
+    total cost in USD for entries that have a ``task_id`` label, avoiding
+    double-counting the per-agent average entries that lack that label.
+
+    Args:
+        workdir: Project root directory.
+
+    Returns:
+        Total USD spent as recorded in metrics files.
+    """
+    metrics_dir = workdir / ".sdd" / "metrics"
+    total = 0.0
+    for jsonl_file in metrics_dir.glob("cost_efficiency_*.jsonl"):
+        try:
+            for line in jsonl_file.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    point = json.loads(line)
+                    if "task_id" in point.get("labels", {}):
+                        total += point.get("value", 0.0)
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            continue
+    return total
+
+
 class Orchestrator:
     """The main loop: watch tasks, spawn agents, verify completion, repeat.
 
@@ -261,6 +293,9 @@ class Orchestrator:
         self._spawn_failures: dict[frozenset[str], tuple[int, float]] = {}
         # Track last backlog replenishment timestamp
         self._last_replenish_ts: float = 0.0
+        # Run completion summary state
+        self._summary_written: bool = False
+        self._run_start_ts: float = time.time()
         # Background thread pool for non-blocking ruff/pytest runs
         self._executor: concurrent.futures.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self._pending_ruff_future: concurrent.futures.Future[list[dict[str, Any]]] | None = None
@@ -349,8 +384,19 @@ class Orchestrator:
             if agent.status != "dead":
                 assigned_task_ids.update(agent.task_ids)
 
-        # 3b. Claim tasks and spawn agents for ready batches
-        self._claim_and_spawn_batches(batches, alive_count, assigned_task_ids, done_ids, result)
+        # 3b. Claim tasks and spawn agents for ready batches (skip if budget is exhausted)
+        if self._config.budget_usd > 0:
+            total_spent = _compute_total_spent(self._workdir)
+            if total_spent >= self._config.budget_usd:
+                logger.warning(
+                    "Budget cap ($%.2f) reached ($%.2f spent), skipping agent spawning",
+                    self._config.budget_usd,
+                    total_spent,
+                )
+            else:
+                self._claim_and_spawn_batches(batches, alive_count, assigned_task_ids, done_ids, result)
+        else:
+            self._claim_and_spawn_batches(batches, alive_count, assigned_task_ids, done_ids, result)
 
         # 4. Check done tasks, run janitor, record evolution metrics
         self._process_completed_tasks(done_tasks, result)
@@ -384,6 +430,20 @@ class Orchestrator:
 
         # 8. Replenish backlog in evolve mode when tasks run out
         self._replenish_backlog(result)
+
+        # 8b. Generate run completion summary for non-evolve runs
+        if (
+            not self._config.evolve_mode
+            and result.open_tasks == 0
+            and result.active_agents == 0
+            and not self._summary_written
+        ):
+            try:
+                done_tasks_for_summary = _fetch_tasks(self._client, base, "done")
+                failed_tasks_for_summary = _fetch_tasks(self._client, base, "failed")
+                self._generate_run_summary(done_tasks_for_summary, failed_tasks_for_summary)
+            except httpx.HTTPError as exc:
+                logger.warning("Failed to fetch tasks for summary: %s", exc)
 
         # 9. Log summary
         self._log_summary(result)
@@ -1513,8 +1573,15 @@ class Orchestrator:
             if claim_failed:
                 continue
 
+            # Per-batch timeout: max(estimated_minutes) * 60 * 1.5, clamped [120s, max_agent_runtime_s]
+            max_estimated_s = max((t.estimated_minutes for t in batch), default=30) * 60
+            batch_timeout_s = int(
+                max(120, min(int(max_estimated_s * 1.5), self._config.max_agent_runtime_s))
+            )
+
             try:
                 session = self._spawner.spawn_for_tasks(batch)
+                session.timeout_s = batch_timeout_s
                 self._agents[session.id] = session
                 self._claim_file_ownership(session.id, batch)
                 alive_count += 1
@@ -1640,12 +1707,13 @@ class Orchestrator:
             if session.status == "dead":
                 continue
 
-            # Wall-clock timeout: kill agents running longer than max_agent_runtime_s
+            # Wall-clock timeout: use per-session timeout if set, else global config
+            timeout_s = session.timeout_s if session.timeout_s is not None else self._config.max_agent_runtime_s
             runtime = now - session.spawn_ts
-            if runtime > self._config.max_agent_runtime_s:
+            if runtime > timeout_s:
                 logger.warning(
-                    "Reaping agent %s (exceeded max runtime %.0fs)",
-                    session.id, runtime,
+                    "Reaping agent %s (exceeded timeout %.0fs, runtime %.0fs)",
+                    session.id, timeout_s, runtime,
                 )
                 self._spawner.kill(session)
                 result.reaped.append(session.id)
@@ -1786,6 +1854,71 @@ class Orchestrator:
         # Split on non-alphanumeric
         tokens = re.split(r"[^a-zA-Z0-9]+", expanded.lower())
         return {w for w in tokens if len(w) >= 4}
+
+    def _generate_run_summary(
+        self,
+        done_tasks: list[Task],
+        failed_tasks: list[Task],
+    ) -> None:
+        """Write a run completion summary to .sdd/runtime/summary.md.
+
+        Called once when open_tasks == 0, active_agents == 0, and evolve_mode
+        is False. Idempotent: sets _summary_written to prevent duplicate writes.
+
+        Args:
+            done_tasks: Tasks with status 'done'.
+            failed_tasks: Tasks with status 'failed'.
+        """
+        runtime_dir = self._workdir / ".sdd" / "runtime"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        summary_path = runtime_dir / "summary.md"
+
+        total_completed = len(done_tasks)
+        total_failed = len(failed_tasks)
+        wall_clock_s = time.time() - self._run_start_ts
+
+        # Collect files-modified count and cost from metrics
+        collector = get_collector(self._workdir / ".sdd" / "metrics")
+        total_cost = collector.get_total_cost()
+        files_modified: int = sum(
+            getattr(m, "files_modified", 0)
+            for m in collector._task_metrics.values()
+        )
+
+        # Build task list section
+        task_lines: list[str] = []
+        for task in sorted(done_tasks, key=lambda t: t.title):
+            task_lines.append(f"- [x] {task.title}")
+        for task in sorted(failed_tasks, key=lambda t: t.title):
+            task_lines.append(f"- [ ] {task.title} *(failed)*")
+
+        hours, rem = divmod(int(wall_clock_s), 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours:
+            duration_str = f"{hours}h {minutes}m {seconds}s"
+        elif minutes:
+            duration_str = f"{minutes}m {seconds}s"
+        else:
+            duration_str = f"{seconds}s"
+
+        lines = [
+            "# Run Summary",
+            "",
+            f"**Total completed:** {total_completed}",
+            f"**Total failed:** {total_failed}",
+            f"**Files modified:** {files_modified}",
+            f"**Estimated cost:** ${total_cost:.4f}",
+            f"**Wall-clock duration:** {duration_str}",
+            "",
+            "## Tasks",
+            "",
+        ]
+        lines.extend(task_lines)
+        lines.append("")
+
+        summary_path.write_text("\n".join(lines))
+        self._summary_written = True
+        logger.info("Run complete. Summary at .sdd/runtime/summary.md")
 
     def _log_summary(self, result: TickResult) -> None:
         """Write a one-line summary and agent state snapshot each tick.
@@ -1934,7 +2067,20 @@ if __name__ == "__main__":
             agency_catalog=agency_catalog,
             catalog=seed.catalogs if seed else None,
         )
-        config = OrchestratorConfig(server_url=f"http://127.0.0.1:{args.port}", max_agents=6)
+        budget_usd = 0.0
+        run_config_path = workdir / ".sdd" / "runtime" / "run_config.json"
+        if run_config_path.exists():
+            try:
+                run_cfg = json.loads(run_config_path.read_text())
+                budget_usd = float(run_cfg.get("budget_usd", 0.0))
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        config = OrchestratorConfig(
+            server_url=f"http://127.0.0.1:{args.port}",
+            max_agents=6,
+            budget_usd=budget_usd,
+        )
 
         orchestrator = Orchestrator(config=config, spawner=spawner, workdir=workdir, router=router)
         orchestrator.run()

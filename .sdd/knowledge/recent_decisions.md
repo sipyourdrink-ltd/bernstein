@@ -2,24 +2,6 @@
 
 No decisions recorded yet.
 
-## [2026-03-28 05:48] [RETRY 1] 413 -- GitHub Pages documentation site (53c3dfc23ce5)
-Completed: [RETRY 1] 413 -- GitHub Pages documentation site
-
-## [2026-03-28 05:48] [RETRY 2] 413 -- GitHub Pages documentation site (85931a0f4ddc)
-Completed: [RETRY 2] 413 -- GitHub Pages documentation site. All 6 files in docs/ (index.html, getting-started.html, concepts.html, api.html, style.css, script.js) are complete with responsive design, dark mode toggle, scroll animations, syntax highlighting, and mobile nav. Fixed license text (MIT→PolyForm Noncommercial) and install instructions to match README. Total size: ~81KB under 100KB limit.
-
-## [2026-03-28 05:48] Evolve cycle 4: performance (a0b48ea54186)
-Created 4 performance tasks: (1) batch git cochanged lookups to reduce 63+ subprocess calls to 3 per task [0903852f182f], (2) run ruff/pytest in background threads to unblock orchestrator loop [1816acadd8c0], (3) add TTL cache to file_tree() [7105f868a014], (4) increase registry auto-reload from 5s to 30s [7a3027dbe870]
-
-## [2026-03-28 05:48] Add TTL cache to file_tree() in context builder (7105f868a014)
-Completed: Add TTL cache to file_tree() in context builder
-
-## [2026-03-28 05:48] [RETRY 1] 500 -- Idle agent detection: kill finished agents when open tasks exist (fbcb6b4f7ea0)
-Completed: [RETRY 1] 500 -- Idle agent detection: kill finished agents when open tasks exist
-
-## [2026-03-28 05:48] Increase agent registry auto-reload interval to 30s (7a3027dbe870)
-Completed: Increase agent registry auto-reload interval to 30s
-
 ## [2026-03-28 05:48] Batch git cochanged lookups in context builder (0903852f182f)
 Completed: Batch git cochanged lookups in context builder
 
@@ -46,3 +28,21 @@ Completed: Add role template authoring guide to CONTRIBUTING.md
 
 ## [2026-03-28 05:54] Fix GETTING_STARTED.md inaccuracies: monitoring, CLI commands, status (1e78663e8cd2)
 Completed: Fix GETTING_STARTED.md inaccuracies: monitoring, CLI commands, status
+
+## [2026-03-28 06:01] Evolve cycle 6: new features (2e7d4c73ddc4)
+Completed: Evolve cycle 6 planning. Created 5 tasks: (1) budget enforcement for regular runs [P1], (2) task progress reporting endpoint [P1], (3) per-task timeout based on estimated_minutes [P2], (4) run completion summary generation [P2], (5) README update [P3].
+
+## [2026-03-28 06:01] Update README.md with current feature state and CLI usage (7531cc788b2b)
+Completed: Update README.md with current feature state and CLI usage
+
+## [2026-03-28 06:01] Add POST /tasks/{id}/progress endpoint for intermediate agent status (485a3c56a8a7)
+Completed: Add POST /tasks/{id}/progress endpoint for intermediate agent status
+
+## [2026-03-28 06:03] Use estimated_minutes for per-task agent timeout instead of global 600s (41b698dafffe)
+Completed: Use estimated_minutes for per-task agent timeout instead of global 600s
+
+## [2026-03-28 06:04] Generate run completion summary when all tasks finish (399d6727364f)
+Completed: Generate run completion summary when all tasks finish
+
+## [2026-03-28 06:07] Add budget enforcement for regular (non-evolve) runs (ad074e325db9)
+Completed: Add budget enforcement for regular (non-evolve) runs
