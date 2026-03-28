@@ -13,11 +13,13 @@ import os
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from textual import events
 
 import httpx
 from rich.text import Text
-from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -182,7 +184,7 @@ class BigStats(Static):
 class ChatInput(Input):
     """Input that yields focus on Escape."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("escape", "unfocus", "Back", show=False),
     ]
 
@@ -341,9 +343,7 @@ class BernsteinApp(App):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Disable single-char bindings when typing in chat input."""
-        if isinstance(self.focused, ChatInput) and action != "focus_chat":
-            return False
-        return True
+        return not (isinstance(self.focused, ChatInput) and action != "focus_chat")
 
     def on_key(self, event: events.Key) -> None:
         """Prevent single-char keys from reaching app bindings while Input is focused."""
@@ -383,10 +383,8 @@ class BernsteinApp(App):
         focused = self.focused
         self._apply_data(data)
         if focused is not None and self.focused is not focused:
-            try:
+            with contextlib.suppress(Exception):
                 focused.focus()
-            except Exception:
-                pass
 
     def _apply_data(self, data: dict[str, Any]) -> None:
         """Apply fetched data to widgets (main thread, non-blocking)."""

@@ -1,9 +1,7 @@
 """OpenAI Codex CLI adapter."""
 from __future__ import annotations
 
-import contextlib
 import os
-import signal
 import subprocess
 from typing import TYPE_CHECKING, Any
 
@@ -52,17 +50,6 @@ class CodexAdapter(CLIAdapter):
                 raise RuntimeError(f"Permission denied executing codex: {exc}") from exc
 
         return SpawnResult(pid=proc.pid, log_path=log_path)
-
-    def is_alive(self, pid: int) -> bool:
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
-
-    def kill(self, pid: int) -> None:
-        with contextlib.suppress(OSError):
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
 
     def name(self) -> str:
         return "Codex"

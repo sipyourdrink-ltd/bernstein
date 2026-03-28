@@ -217,7 +217,7 @@ def group_by_role(tasks: list[Task], max_per_batch: int) -> list[list[Task]]:
     return batches
 
 
-def _compute_total_spent(workdir: "Path") -> float:
+def _compute_total_spent(workdir: Path) -> float:
     """Sum cost_efficiency metric values recorded for individual tasks.
 
     Reads all cost_efficiency_*.jsonl files in .sdd/metrics/ and returns the
@@ -1503,7 +1503,7 @@ class Orchestrator:
         batches: list[list[Task]],
         alive_count: int,
         assigned_task_ids: set[str],
-        done_ids: set[str],  # noqa: ARG002 — passed for interface consistency
+        done_ids: set[str],
         result: TickResult,
     ) -> None:
         """Claim tasks and spawn agents for each ready batch.

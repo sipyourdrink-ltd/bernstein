@@ -82,24 +82,16 @@ class ClaudeCodeAdapter(CLIAdapter):
     _procs: ClassVar[dict[int, subprocess.Popen[bytes]]] = {}
     _wrapper_pids: ClassVar[dict[int, int]] = {}  # claude_pid → wrapper_pid
 
-    def spawn(
+    def _build_command(
         self,
-        *,
-        prompt: str,
-        workdir: Path,
         model_config: ModelConfig,
-        session_id: str,
-        mcp_config: dict[str, Any] | None = None,
-    ) -> SpawnResult:
-        log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-
+        mcp_config: dict[str, Any] | None,
+        prompt: str,
+    ) -> list[str]:
+        """Build the claude CLI command with effort mapping."""
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
-
-        # Map effort to max-turns and Claude --effort flag
         effort = getattr(model_config, "effort", "high")
         max_turns = {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
-        # Claude Code effort levels: low, medium, high, max
         effort_map = {"max": "max", "high": "high", "medium": "medium", "normal": "medium", "low": "low"}
         claude_effort = effort_map.get(effort, "high")
 
@@ -112,16 +104,15 @@ class ClaudeCodeAdapter(CLIAdapter):
             "--output-format", "stream-json",
             "--verbose",
         ]
-
-        # Pass MCP server config if provided
         if mcp_config:
             cmd.extend(["--mcp-config", json.dumps(mcp_config)])
-
         cmd.extend(["-p", prompt])
+        return cmd
 
-        # Wrapper: reads stream-json from stdin, writes human-readable log to stdout.
-        # Flushes after every line so the dashboard sees updates in real-time.
-        wrapper_script = (
+    @staticmethod
+    def _wrapper_script() -> str:
+        """Return the stream-json → human-readable log converter script."""
+        return (
             "import sys, json\n"
             "seen_text = set()\n"
             "for raw in sys.stdin:\n"
@@ -150,40 +141,76 @@ class ClaudeCodeAdapter(CLIAdapter):
             "            print(txt, flush=True)\n"
         )
 
+    def _launch_process(
+        self,
+        cmd: list[str],
+        wrapper: str,
+        workdir: Path,
+        log_path: Path,
+    ) -> tuple[subprocess.Popen[bytes], subprocess.Popen[bytes]]:
+        """Launch claude piped through wrapper, writing output to log_path.
+
+        Uses try/finally to guarantee log_file is closed even if the wrapper
+        Popen fails after claude has already started.
+        """
         log_file = log_path.open("w")
-        # Pipe: claude --stream-json | python wrapper > log_file
         try:
-            claude_proc = subprocess.Popen(
-                cmd,
-                cwd=workdir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except FileNotFoundError as exc:
+            try:
+                claude_proc = subprocess.Popen(
+                    cmd,
+                    cwd=workdir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    "claude not found in PATH. Install Claude Code: https://claude.ai/code"
+                ) from exc
+            except PermissionError as exc:
+                raise RuntimeError(f"Permission denied executing claude: {exc}") from exc
+
+            try:
+                wrapper_proc = subprocess.Popen(
+                    [sys.executable, "-c", wrapper],
+                    stdin=claude_proc.stdout,
+                    stdout=log_file,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                    cwd=workdir,
+                )
+            except Exception:
+                claude_proc.kill()
+                raise
+        finally:
             log_file.close()
-            raise RuntimeError(
-                "claude not found in PATH. Install Claude Code: https://claude.ai/code"
-            ) from exc
-        except PermissionError as exc:
-            log_file.close()
-            raise RuntimeError(f"Permission denied executing claude: {exc}") from exc
-        proc = subprocess.Popen(
-            [sys.executable, "-c", wrapper_script],
-            stdin=claude_proc.stdout,
-            stdout=log_file,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            cwd=workdir,
-        )
+
         # Allow claude_proc to receive SIGPIPE if wrapper dies
         if claude_proc.stdout:
             claude_proc.stdout.close()
-        log_file.close()
+
+        return claude_proc, wrapper_proc
+
+    def spawn(
+        self,
+        *,
+        prompt: str,
+        workdir: Path,
+        model_config: ModelConfig,
+        session_id: str,
+        mcp_config: dict[str, Any] | None = None,
+    ) -> SpawnResult:
+        log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        cmd = self._build_command(model_config, mcp_config, prompt)
+        wrapper = self._wrapper_script()
+        claude_proc, wrapper_proc = self._launch_process(cmd, wrapper, workdir, log_path)
+
         # Track the claude process (not the wrapper) for is_alive/kill
         self._procs[claude_proc.pid] = claude_proc
         # Also track wrapper so we can kill both
-        self._wrapper_pids[claude_proc.pid] = proc.pid
+        self._wrapper_pids[claude_proc.pid] = wrapper_proc.pid
 
         return SpawnResult(pid=claude_proc.pid, log_path=log_path, proc=claude_proc)
 

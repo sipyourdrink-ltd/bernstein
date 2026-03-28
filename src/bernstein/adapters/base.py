@@ -1,6 +1,9 @@
 """Base adapter for CLI coding agents."""
 from __future__ import annotations
 
+import contextlib
+import os
+import signal
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -38,15 +41,18 @@ class CLIAdapter(ABC):
         """Launch an agent process with the given prompt."""
         ...
 
-    @abstractmethod
     def is_alive(self, pid: int) -> bool:
         """Check if the agent process is still running."""
-        ...
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
 
-    @abstractmethod
     def kill(self, pid: int) -> None:
         """Terminate the agent process."""
-        ...
+        with contextlib.suppress(OSError):
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
 
     @abstractmethod
     def name(self) -> str:

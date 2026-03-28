@@ -281,7 +281,6 @@ def _find_importers(target_rel: str, workdir: Path) -> list[str]:
         List of relative paths that import the target module.
     """
     # Convert path to module-style name for grep: "bernstein.core.spawner"
-    stem = target_rel.replace("/", ".").removesuffix(".py")
     # Also try the last component for relative imports
     basename = Path(target_rel).stem
 
@@ -379,7 +378,8 @@ def _recent_git_changes(files: list[str], workdir: Path, max_entries: int = 5) -
         cmd = [
             "git", "log", "--pretty=format:%h: %s",
             f"-{max_entries}", "--",
-        ] + files
+            *files,
+        ]
         result = subprocess.run(
             cmd, cwd=workdir, capture_output=True, text=True, timeout=10,
         )
@@ -609,7 +609,7 @@ def build_file_index(workdir: Path) -> dict[str, dict[str, object]]:
             continue
 
         exports: list[str] = []
-        for cls_name, methods in summary.classes:
+        for cls_name, _methods in summary.classes:
             exports.append(cls_name)
         for func_name in summary.functions:
             if not func_name.startswith("_"):

@@ -1,6 +1,7 @@
 """Opportunity detection from aggregated metrics."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -518,10 +519,8 @@ class FeatureDiscovery:
         """Return tickets for common patterns not yet present in src/."""
         all_content = ""
         for py_file in src_dir.rglob("*.py"):
-            try:
+            with contextlib.suppress(OSError):
                 all_content += py_file.read_text(encoding="utf-8").lower()
-            except OSError:
-                pass
 
         tickets: list[FeatureTicket] = []
 

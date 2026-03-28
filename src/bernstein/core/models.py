@@ -214,7 +214,7 @@ class AgentSession:
     cell_id: str | None = None             # Which cell this agent belongs to
     provider: str | None = None            # Provider selected by TierAwareRouter
     agent_source: str = "built-in"         # "catalog", "agency", or "built-in"
-    timeout_s: int | None = None           # Per-agent wall-clock timeout; None = use OrchestratorConfig.max_agent_runtime_s
+    timeout_s: int | None = None           # Per-agent wall-clock timeout; None = use OrchestratorConfig default
 
 
 @dataclass

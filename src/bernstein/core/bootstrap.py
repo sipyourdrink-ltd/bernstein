@@ -169,7 +169,6 @@ def _discover_catalog(workdir: Path) -> None:
     Args:
         workdir: Project root directory.
     """
-    from pathlib import Path as _Path
 
     from bernstein.agents.catalog import CatalogRegistry
 

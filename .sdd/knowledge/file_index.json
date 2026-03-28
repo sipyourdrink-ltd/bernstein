@@ -20,10 +20,13 @@
     "imports": [
       "__future__",
       "abc",
+      "contextlib",
       "dataclasses",
+      "os",
+      "signal",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:04:29.669115"
+    "last_modified": "2026-03-28T06:21:43.311813"
   },
   "src/bernstein/adapters/claude.py": {
     "summary": "Claude Code CLI adapter.",
@@ -43,7 +46,7 @@
       "sys",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:03:45.364113"
+    "last_modified": "2026-03-28T06:21:43.312036"
   },
   "src/bernstein/adapters/codex.py": {
     "summary": "OpenAI Codex CLI adapter.",
@@ -53,13 +56,11 @@
     "imports": [
       "__future__",
       "bernstein",
-      "contextlib",
       "os",
-      "signal",
       "subprocess",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:04:43.406564"
+    "last_modified": "2026-03-28T06:21:43.312203"
   },
   "src/bernstein/adapters/gemini.py": {
     "summary": "Google Gemini CLI adapter.",
@@ -69,13 +70,11 @@
     "imports": [
       "__future__",
       "bernstein",
-      "contextlib",
       "os",
-      "signal",
       "subprocess",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:04:44.233339"
+    "last_modified": "2026-03-28T06:21:43.312345"
   },
   "src/bernstein/adapters/generic.py": {
     "summary": "Generic CLI adapter for arbitrary coding agent CLIs.",
@@ -85,13 +84,10 @@
     "imports": [
       "__future__",
       "bernstein",
-      "contextlib",
-      "os",
-      "signal",
       "subprocess",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:04:45.741234"
+    "last_modified": "2026-03-28T06:21:43.312477"
   },
   "src/bernstein/adapters/manager.py": {
     "summary": "",
@@ -118,13 +114,11 @@
     "imports": [
       "__future__",
       "bernstein",
-      "contextlib",
       "os",
-      "signal",
       "subprocess",
       "typing"
     ],
-    "last_modified": "2026-03-28T03:51:33.183252"
+    "last_modified": "2026-03-28T06:21:43.312633"
   },
   "src/bernstein/adapters/registry.py": {
     "summary": "Adapter registry \u2014 look up CLI adapters by name.",
@@ -153,12 +147,11 @@
       "__future__",
       "bernstein",
       "logging",
-      "pathlib",
       "re",
       "typing",
       "yaml"
     ],
-    "last_modified": "2026-03-28T04:54:36.100545"
+    "last_modified": "2026-03-28T06:21:43.312783"
   },
   "src/bernstein/agents/catalog.py": {
     "summary": "Agent catalog registry \u2014 loads agent definitions from external sources.",
@@ -177,7 +170,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:55:43.230291"
+    "last_modified": "2026-03-28T06:21:43.312948"
   },
   "src/bernstein/agents/registry.py": {
     "summary": "Dynamic agent registry with YAML-based definitions and hot-reload support.",
@@ -247,7 +240,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:53:45.073778"
+    "last_modified": "2026-03-28T06:22:19.259049"
   },
   "src/bernstein/cli/main.py": {
     "summary": "CLI entry point for Bernstein -- multi-agent orchestration.",
@@ -288,7 +281,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:46:32.071124"
+    "last_modified": "2026-03-28T06:21:43.313345"
   },
   "src/bernstein/core/__init__.py": {
     "summary": "Core: task server, spawner, scheduler.",
@@ -335,7 +328,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:56:16.030478"
+    "last_modified": "2026-03-28T06:21:43.313543"
   },
   "src/bernstein/core/bulletin.py": {
     "summary": "Append-only bulletin board for cross-agent communication.",
@@ -387,7 +380,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T05:41:59.846820"
+    "last_modified": "2026-03-28T06:22:37.118368"
   },
   "src/bernstein/core/evolution.py": {
     "summary": "Backward-compatibility shim \u2014 delegates to bernstein.evolution package.",
@@ -555,7 +548,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T06:03:53.696220"
+    "last_modified": "2026-03-28T06:22:40.902611"
   },
   "src/bernstein/core/multi_cell.py": {
     "summary": "Multi-cell orchestrator: coordinates multiple cells, each with its own manager + workers.",
@@ -597,7 +590,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T06:04:32.757247"
+    "last_modified": "2026-03-28T06:21:43.313851"
   },
   "src/bernstein/core/policy.py": {
     "summary": "Policy engine for tier optimization and provider routing.",
@@ -735,11 +728,10 @@
       "__future__",
       "bernstein",
       "logging",
-      "subprocess",
       "typing",
       "uuid"
     ],
-    "last_modified": "2026-03-28T05:32:00.983025"
+    "last_modified": "2026-03-28T06:21:43.314093"
   },
   "src/bernstein/core/sync.py": {
     "summary": "Sync .sdd/backlog/*.md files with the task server.",
@@ -929,6 +921,7 @@
     ],
     "imports": [
       "__future__",
+      "contextlib",
       "dataclasses",
       "enum",
       "json",
@@ -938,7 +931,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:55:51.371119"
+    "last_modified": "2026-03-28T06:22:48.531806"
   },
   "src/bernstein/evolution/gate.py": {
     "summary": "ApprovalGate \u2014 risk-stratified routing for evolution proposals.",
@@ -1236,6 +1229,27 @@
     ],
     "last_modified": "2026-03-28T03:51:33.183649"
   },
+  "tests/unit/test_adapter_manager.py": {
+    "summary": "Unit tests for ManagerAdapter (adapters/manager.py).",
+    "exports": [
+      "TestSpawn",
+      "TestIsAlive",
+      "TestKill",
+      "TestName"
+    ],
+    "imports": [
+      "__future__",
+      "bernstein",
+      "os",
+      "pathlib",
+      "pytest",
+      "signal",
+      "subprocess",
+      "sys",
+      "unittest"
+    ],
+    "last_modified": "2026-03-28T06:12:29.244342"
+  },
   "tests/unit/test_adapter_non_claude.py": {
     "summary": "Unit tests for Codex, Gemini, Qwen, and Generic adapter spawn/kill/is_alive.",
     "exports": [
@@ -1259,7 +1273,7 @@
       "subprocess",
       "unittest"
     ],
-    "last_modified": "2026-03-28T03:51:33.183885"
+    "last_modified": "2026-03-28T06:21:43.314279"
   },
   "tests/unit/test_adapter_registry.py": {
     "summary": "Unit tests for bernstein.adapters.registry.",
@@ -1555,6 +1569,24 @@
       "time"
     ],
     "last_modified": "2026-03-28T04:54:38.481995"
+  },
+  "tests/unit/test_catalog_discover.py": {
+    "summary": "Tests for CatalogRegistry._fetch_from_providers, _load_entry, _load_generic_entry,",
+    "exports": [
+      "TestFetchFromProviders",
+      "TestLoadEntry",
+      "TestLoadGenericEntry",
+      "TestParseCatalogEntry"
+    ],
+    "imports": [
+      "__future__",
+      "bernstein",
+      "pathlib",
+      "pytest",
+      "unittest",
+      "yaml"
+    ],
+    "last_modified": "2026-03-28T06:13:34.697949"
   },
   "tests/unit/test_catalog_matching.py": {
     "summary": "Tests for CatalogRegistry.match() \u2014 role matching with catalog fallback.",
@@ -1969,8 +2001,18 @@
       "TestRenderReviewPrompt",
       "TestManagerAgentPlan",
       "TestManagerAgentReview",
+      "TestParseCompletionSignal",
+      "TestParseUpgradeChanges",
+      "TestDetermineUpgradeType",
+      "TestRawDictsToTasksBranches",
+      "TestParseReviewResponseBranches",
+      "TestManagerAgentReviewFailure",
+      "TestExecuteUpgrade",
+      "TestGenerateUpgradeChanges",
+      "TestManagerAgentReplan",
       "templates_dir",
-      "sample_task"
+      "sample_task",
+      "manager_agent"
     ],
     "imports": [
       "__future__",
@@ -1980,7 +2022,7 @@
       "pytest",
       "unittest"
     ],
-    "last_modified": "2026-03-27T22:50:23.945873"
+    "last_modified": "2026-03-28T06:15:06.466310"
   },
   "tests/unit/test_mcp_config.py": {
     "summary": "Tests for MCP config loading, merging, and passing to spawned agents.",
@@ -2083,16 +2125,20 @@
       "TestRegisterRemoveCell",
       "TestMultiCellTick",
       "TestCheckRebalance",
-      "TestBulletinProperty"
+      "TestBulletinProperty",
+      "TestTickCell",
+      "TestReapDeadWorkers"
     ],
     "imports": [
       "__future__",
       "bernstein",
+      "httpx",
       "pathlib",
       "pytest",
+      "time",
       "unittest"
     ],
-    "last_modified": "2026-03-28T01:50:31.069823"
+    "last_modified": "2026-03-28T06:14:53.770260"
   },
   "tests/unit/test_orchestrator.py": {
     "summary": "Tests for the Orchestrator \u2014 httpx calls and spawner are always mocked.",

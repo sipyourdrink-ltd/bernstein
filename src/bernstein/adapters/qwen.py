@@ -1,9 +1,7 @@
 """Qwen CLI adapter for OpenAI compatible models."""
 from __future__ import annotations
 
-import contextlib
 import os
-import signal
 import subprocess
 from typing import TYPE_CHECKING, Any
 
@@ -14,8 +12,16 @@ from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderTyp
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.models import ModelConfig
 
+# Maps provider key → (tier, requests_per_minute, tokens_per_minute)
+_PROVIDER_TIERS: dict[str, tuple[ApiTier, int, int]] = {
+    "openrouter": (ApiTier.PRO, 200, 20000),
+    "openrouter_free": (ApiTier.FREE, 20, 2000),
+    "together": (ApiTier.PLUS, 60, 6000),
+    "oxen": (ApiTier.PRO, 100, 10000),
+    "g4f": (ApiTier.FREE, 10, 1000),
+    "default": (ApiTier.PLUS, 60, 5000),
+}
 
 
 class QwenAdapter(CLIAdapter):
@@ -25,57 +31,44 @@ class QwenAdapter(CLIAdapter):
     It passes the provider's base_url and api_key directly to Qwen CLI.
     """
 
-    def spawn(
-        self,
-        *,
-        prompt: str,
-        workdir: Path,
-        model_config: ModelConfig,
-        session_id: str,
-        mcp_config: dict[str, Any] | None = None,
-    ) -> SpawnResult:
-        log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
+    def _detect_provider(self, settings: LLMSettings) -> str:
+        """Select provider based on which API keys are configured."""
+        if settings.openrouter_api_key_paid:
+            return "openrouter"
+        if settings.openrouter_api_key_free:
+            return "openrouter_free"
+        if settings.togetherai_user_key:
+            return "together"
+        if settings.oxen_api_key:
+            return "oxen"
+        if settings.g4f_api_key:
+            return "g4f"
+        return "default"
 
-        settings = LLMSettings()
-
-        # Determine base url and api key based on provider
-        provider = getattr(model_config, "provider", None) or "default"
-
-        api_key = ""
-        base_url = ""
-
+    def _resolve_provider_config(
+        self, provider: str, settings: LLMSettings
+    ) -> tuple[str, str]:
+        """Return (api_key, base_url) for the given provider."""
         if provider == "openrouter":
-            api_key = settings.openrouter_api_key_paid or ""
-            base_url = "https://openrouter.ai/api/v1"
-        elif provider == "openrouter_free":
-            api_key = settings.openrouter_api_key_free or settings.openrouter_api_key_paid or ""
-            base_url = "https://openrouter.ai/api/v1"
-        elif provider == "oxen":
-            api_key = settings.oxen_api_key or ""
-            base_url = settings.oxen_base_url
-        elif provider == "together":
-            api_key = settings.togetherai_user_key or ""
-            base_url = "https://api.together.xyz/v1"
-        elif provider == "g4f":
-            api_key = settings.g4f_api_key or ""
-            base_url = settings.g4f_base_url
-        else:
-            api_key = settings.openai_api_key or ""
-            base_url = settings.openai_base_url or ""
+            return settings.openrouter_api_key_paid or "", "https://openrouter.ai/api/v1"
+        if provider == "openrouter_free":
+            key = settings.openrouter_api_key_free or settings.openrouter_api_key_paid or ""
+            return key, "https://openrouter.ai/api/v1"
+        if provider == "oxen":
+            return settings.oxen_api_key or "", settings.oxen_base_url
+        if provider == "together":
+            return settings.togetherai_user_key or "", "https://api.together.xyz/v1"
+        if provider == "g4f":
+            return settings.g4f_api_key or "", settings.g4f_base_url
+        # default / openai
+        return settings.openai_api_key or "", settings.openai_base_url or ""
 
-        env = os.environ.copy()
-        if api_key:
-            env["OPENAI_API_KEY"] = api_key
-        if base_url:
-            env["OPENAI_BASE_URL"] = base_url
+    def _build_command(
+        self, model_name: str, provider: str, settings: LLMSettings
+    ) -> list[str]:
+        """Build the qwen CLI command list (without the final prompt argument)."""
+        cmd: list[str] = ["qwen", "-y"]
 
-        cmd = [
-            "qwen",
-            "-y", # YOLO mode (auto-approve)
-        ]
-
-        model_name = model_config.model
         if provider == "default":
             # Map internal abstract models to native Qwen OAuth models
             if model_name == "opus":
@@ -91,10 +84,35 @@ class QwenAdapter(CLIAdapter):
         if settings.tavily_api_key:
             cmd.extend([
                 "--tavily-api-key", settings.tavily_api_key,
-                "--web-search-default", "tavily"
+                "--web-search-default", "tavily",
             ])
 
+        return cmd
+
+    def spawn(
+        self,
+        *,
+        prompt: str,
+        workdir: Path,
+        model_config: ModelConfig,
+        session_id: str,
+        mcp_config: dict[str, Any] | None = None,
+    ) -> SpawnResult:
+        log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        settings = LLMSettings()
+        provider = self._detect_provider(settings)
+        api_key, base_url = self._resolve_provider_config(provider, settings)
+
+        env = os.environ.copy()
+        if api_key:
+            env["OPENAI_API_KEY"] = api_key
+        if base_url:
+            env["OPENAI_BASE_URL"] = base_url
+
         # Pass the prompt as a positional argument (one-shot mode) instead of deprecated -p
+        cmd = self._build_command(model_config.model, provider, settings)
         cmd.append(prompt)
 
         with log_path.open("w") as log_file:
@@ -117,17 +135,6 @@ class QwenAdapter(CLIAdapter):
 
         return SpawnResult(pid=proc.pid, log_path=log_path)
 
-    def is_alive(self, pid: int) -> bool:
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
-
-    def kill(self, pid: int) -> None:
-        with contextlib.suppress(OSError):
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
-
     def name(self) -> str:
         return "Qwen CLI"
 
@@ -144,76 +151,15 @@ class QwenAdapter(CLIAdapter):
             ApiTierInfo with detected tier and rate limits.
         """
         settings = LLMSettings()
+        provider = self._detect_provider(settings)
 
-        # Check OpenRouter first
-        if settings.openrouter_api_key_paid:
-            return ApiTierInfo(
-                provider=ProviderType.QWEN,
-                tier=ApiTier.PRO,
-                rate_limit=RateLimit(
-                    requests_per_minute=200,
-                    tokens_per_minute=20000,
-                ),
-                is_active=True,
-            )
+        if provider == "default" and not settings.openai_api_key:
+            return None
 
-        if settings.openrouter_api_key_free:
-            return ApiTierInfo(
-                provider=ProviderType.QWEN,
-                tier=ApiTier.FREE,
-                rate_limit=RateLimit(
-                    requests_per_minute=20,
-                    tokens_per_minute=2000,
-                ),
-                is_active=True,
-            )
-
-        # Check Together.ai
-        if settings.togetherai_user_key:
-            return ApiTierInfo(
-                provider=ProviderType.QWEN,
-                tier=ApiTier.PLUS,
-                rate_limit=RateLimit(
-                    requests_per_minute=60,
-                    tokens_per_minute=6000,
-                ),
-                is_active=True,
-            )
-
-        # Check Oxen
-        if settings.oxen_api_key:
-            return ApiTierInfo(
-                provider=ProviderType.QWEN,
-                tier=ApiTier.PRO,
-                rate_limit=RateLimit(
-                    requests_per_minute=100,
-                    tokens_per_minute=10000,
-                ),
-                is_active=True,
-            )
-
-        # Check G4F
-        if settings.g4f_api_key:
-            return ApiTierInfo(
-                provider=ProviderType.QWEN,
-                tier=ApiTier.FREE,
-                rate_limit=RateLimit(
-                    requests_per_minute=10,
-                    tokens_per_minute=1000,
-                ),
-                is_active=True,
-            )
-
-        # Default OpenAI
-        if settings.openai_api_key:
-            return ApiTierInfo(
-                provider=ProviderType.QWEN,
-                tier=ApiTier.PLUS,
-                rate_limit=RateLimit(
-                    requests_per_minute=60,
-                    tokens_per_minute=5000,
-                ),
-                is_active=True,
-            )
-
-        return None
+        tier, rpm, tpm = _PROVIDER_TIERS.get(provider, (ApiTier.PLUS, 60, 5000))
+        return ApiTierInfo(
+            provider=ProviderType.QWEN,
+            tier=tier,
+            rate_limit=RateLimit(requests_per_minute=rpm, tokens_per_minute=tpm),
+            is_active=True,
+        )

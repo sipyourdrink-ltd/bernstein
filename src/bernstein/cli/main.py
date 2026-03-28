@@ -1146,7 +1146,7 @@ def agents_group() -> None:
 )
 def agents_sync(definitions_dir: str) -> None:
     """Force-refresh all agent catalogs and update cache."""
-    from bernstein.agents.registry import AgentRegistry, SchemaValidationError
+    from bernstein.agents.registry import AgentRegistry
 
     definitions_path = Path(definitions_dir)
 
@@ -1295,9 +1295,9 @@ def agents_validate(definitions_dir: str) -> None:
     agency_dir = Path(".sdd/agents/agency")
     console.print(f"\n[cyan]→ agency[/cyan] {agency_dir}")
     if not agency_dir.exists():
-        console.print(f"  [dim]Not configured — skipping[/dim]")
+        console.print("  [dim]Not configured — skipping[/dim]")
     else:
-        from bernstein.core.agency_loader import load_agency_catalog, parse_agency_agent
+        from bernstein.core.agency_loader import parse_agency_agent
         agency_files = [
             p for p in sorted(agency_dir.iterdir())
             if p.suffix in (".yaml", ".yml")

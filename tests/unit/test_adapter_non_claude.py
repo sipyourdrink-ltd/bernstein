@@ -591,16 +591,14 @@ class TestIsAlive:
 
     def test_true_when_process_exists(self, adapter_factory: object) -> None:
         adapter = adapter_factory()  # type: ignore[operator]
-        module = adapter.__class__.__module__
-        with patch(f"{module}.os.kill") as mock_kill:
+        with patch("bernstein.adapters.base.os.kill") as mock_kill:
             mock_kill.return_value = None
             assert adapter.is_alive(1234) is True
         mock_kill.assert_called_once_with(1234, 0)
 
     def test_false_when_oserror(self, adapter_factory: object) -> None:
         adapter = adapter_factory()  # type: ignore[operator]
-        module = adapter.__class__.__module__
-        with patch(f"{module}.os.kill", side_effect=OSError("no such process")):
+        with patch("bernstein.adapters.base.os.kill", side_effect=OSError("no such process")):
             assert adapter.is_alive(9999) is False
 
 
@@ -624,10 +622,9 @@ class TestKill:
 
     def test_calls_killpg(self, adapter_factory: object) -> None:
         adapter = adapter_factory()  # type: ignore[operator]
-        module = adapter.__class__.__module__
         with (
-            patch(f"{module}.os.getpgid", return_value=555) as mock_getpgid,
-            patch(f"{module}.os.killpg") as mock_killpg,
+            patch("bernstein.adapters.base.os.getpgid", return_value=555) as mock_getpgid,
+            patch("bernstein.adapters.base.os.killpg") as mock_killpg,
         ):
             adapter.kill(555)
         mock_getpgid.assert_called_once_with(555)
@@ -635,10 +632,9 @@ class TestKill:
 
     def test_does_not_raise_on_oserror(self, adapter_factory: object) -> None:
         adapter = adapter_factory()  # type: ignore[operator]
-        module = adapter.__class__.__module__
         with (
-            patch(f"{module}.os.getpgid", return_value=556),
-            patch(f"{module}.os.killpg", side_effect=OSError("no process")),
+            patch("bernstein.adapters.base.os.getpgid", return_value=556),
+            patch("bernstein.adapters.base.os.killpg", side_effect=OSError("no process")),
         ):
             adapter.kill(556)  # must not raise
 

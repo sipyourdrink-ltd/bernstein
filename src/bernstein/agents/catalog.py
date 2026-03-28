@@ -29,16 +29,16 @@ _LOCAL_TTL = 300     # 5 minutes — default TTL for local provider entries
 
 # Hardcoded fallback roles used when providers and cache both fail.
 _BUILTIN_AGENT_ENTRIES: list[dict[str, Any]] = [
-    {"role": "manager",     "description": "Plans and decomposes goals into tasks.", "model": "opus",   "effort": "max"},
-    {"role": "backend",     "description": "Backend engineer.",                       "model": "sonnet", "effort": "high"},
-    {"role": "frontend",    "description": "Frontend engineer.",                      "model": "sonnet", "effort": "high"},
-    {"role": "qa",          "description": "Quality assurance and test engineer.",    "model": "sonnet", "effort": "normal"},
-    {"role": "security",    "description": "Security engineer.",                      "model": "sonnet", "effort": "high"},
-    {"role": "devops",      "description": "DevOps / infrastructure engineer.",       "model": "sonnet", "effort": "normal"},
-    {"role": "architect",   "description": "System architect.",                       "model": "opus",   "effort": "high"},
-    {"role": "reviewer",    "description": "Code reviewer.",                          "model": "sonnet", "effort": "normal"},
-    {"role": "docs",        "description": "Documentation writer.",                   "model": "sonnet", "effort": "normal"},
-    {"role": "ml-engineer", "description": "Machine-learning engineer.",              "model": "sonnet", "effort": "high"},
+    {"role": "manager", "description": "Plans and decomposes goals into tasks.", "model": "opus", "effort": "max"},
+    {"role": "backend", "description": "Backend engineer.", "model": "sonnet", "effort": "high"},
+    {"role": "frontend", "description": "Frontend engineer.", "model": "sonnet", "effort": "high"},
+    {"role": "qa", "description": "Quality assurance and test engineer.", "model": "sonnet", "effort": "normal"},
+    {"role": "security", "description": "Security engineer.", "model": "sonnet", "effort": "high"},
+    {"role": "devops", "description": "DevOps / infrastructure engineer.", "model": "sonnet", "effort": "normal"},
+    {"role": "architect", "description": "System architect.", "model": "opus", "effort": "high"},
+    {"role": "reviewer", "description": "Code reviewer.", "model": "sonnet", "effort": "normal"},
+    {"role": "docs", "description": "Documentation writer.", "model": "sonnet", "effort": "normal"},
+    {"role": "ml-engineer", "description": "Machine-learning engineer.", "model": "sonnet", "effort": "high"},
 ]
 
 
@@ -394,6 +394,7 @@ class CatalogRegistry:
         """
         if entry.type == "agency" and entry.path:
             from pathlib import Path as _Path
+
             from bernstein.core.agency_loader import load_agency_catalog
             catalog_dir = _Path(entry.path)
             agents = load_agency_catalog(catalog_dir)
@@ -419,9 +420,9 @@ class CatalogRegistry:
             Mapping of role name → metadata dict.
         """
         import glob as _glob
-        import yaml
-
         from pathlib import Path as _Path
+
+        import yaml
 
         catalog_dir = _Path(entry.path)  # type: ignore[arg-type]
         pattern = entry.glob or "*.yaml"

@@ -2,17 +2,16 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    import subprocess
     from pathlib import Path
 
     from bernstein.adapters.base import CLIAdapter
+    from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
     from bernstein.core.agency_loader import AgencyAgent
-
-from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.models import AgentSession, ModelConfig, Task
