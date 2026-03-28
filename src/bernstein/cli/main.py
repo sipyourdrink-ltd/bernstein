@@ -199,6 +199,141 @@ def _kill_pid(path: str, label: str) -> None:
     Path(path).unlink(missing_ok=True)
 
 
+def _kill_pid_hard(path: str, label: str) -> None:
+    """Kill a process by PID file using SIGKILL (no grace period).
+
+    Unlike :func:`_kill_pid` which sends SIGTERM, this sends SIGKILL to
+    the entire process group for an immediate, non-catchable kill.
+
+    Args:
+        path: Path to the PID file.
+        label: Human-readable label for log messages.
+    """
+    pid = _read_pid(path)
+    if pid is None:
+        return
+    if _is_alive(pid):
+        try:
+            try:
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+            console.print(f"[red]Killed {label} (PID {pid}) with SIGKILL.[/red]")
+        except OSError:
+            pass
+    Path(path).unlink(missing_ok=True)
+
+
+def _write_shutdown_signals(reason: str = "User requested stop") -> list[str]:
+    """Write SHUTDOWN signal files for all active agents.
+
+    Creates a ``SHUTDOWN`` file in ``.sdd/runtime/signals/{session_id}/``
+    for each agent listed in ``agents.json``.  Agents that poll for signal
+    files will see this and save their work before exiting.
+
+    Args:
+        reason: Human-readable reason written into the signal file.
+
+    Returns:
+        List of session IDs that were signaled.
+    """
+    signals_dir = Path(".sdd/runtime/signals")
+    agents_json = Path(".sdd/runtime/agents.json")
+    signaled: list[str] = []
+    if not agents_json.exists():
+        return signaled
+    try:
+        agent_data = json.loads(agents_json.read_text())
+        for agent in agent_data.get("agents", []):
+            session_id: str = agent.get("id", "")
+            if session_id:
+                sig_dir = signals_dir / session_id
+                sig_dir.mkdir(parents=True, exist_ok=True)
+                (sig_dir / "SHUTDOWN").write_text(
+                    f"# SHUTDOWN\nReason: {reason}\nSave your work, commit WIP, and exit.\n"
+                )
+                signaled.append(session_id)
+    except (OSError, ValueError):
+        pass
+    return signaled
+
+
+def _return_claimed_to_open() -> int:
+    """Move all claimed backlog tickets back to open.
+
+    Files in ``.sdd/backlog/claimed/`` are moved to ``.sdd/backlog/open/``
+    so they can be picked up by the next run.  Files whose ticket number
+    already exists in ``backlog/closed/`` (i.e. duplicate of a completed
+    task) are silently deleted instead.
+
+    Returns:
+        Number of files moved back to open.
+    """
+    claimed_dir = Path(".sdd/backlog/claimed")
+    open_dir = Path(".sdd/backlog/open")
+    if not claimed_dir.exists():
+        return 0
+
+    open_dir.mkdir(parents=True, exist_ok=True)
+
+    closed_nums: set[str] = set()
+    closed_dir = Path(".sdd/backlog/closed")
+    if closed_dir.exists():
+        closed_nums = {f.name.split("-")[0] for f in closed_dir.glob("*.md")}
+    # Also check backlog/done/ which some codepaths use
+    done_dir = Path(".sdd/backlog/done")
+    if done_dir.exists():
+        closed_nums |= {f.name.split("-")[0] for f in done_dir.glob("*.md")}
+
+    count = 0
+    for f in claimed_dir.glob("*.md"):
+        num = f.name.split("-")[0]
+        if num in closed_nums:
+            f.unlink()  # already completed — remove duplicate
+        else:
+            f.rename(open_dir / f.name)
+            count += 1
+    return count
+
+
+def _save_session_on_stop(workdir: Path) -> None:
+    """Persist session state to disk so the next run can resume quickly.
+
+    Writes a ``session_state.json`` snapshot into ``.sdd/runtime/`` with
+    the current timestamp and the counts of open/claimed/done tasks based
+    on backlog directory contents.
+
+    Args:
+        workdir: Project root directory containing ``.sdd/``.
+    """
+    runtime_dir = workdir / ".sdd" / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    state: dict[str, Any] = {
+        "stopped_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "open_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "open").glob("*.md"))
+        if (workdir / ".sdd" / "backlog" / "open").exists()
+        else 0,
+        "claimed_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "claimed").glob("*.md"))
+        if (workdir / ".sdd" / "backlog" / "claimed").exists()
+        else 0,
+    }
+    (runtime_dir / "session_state.json").write_text(json.dumps(state, indent=2))
+
+
+def _recover_orphaned_claims() -> int:
+    """On startup, return claimed tickets from dead sessions to open.
+
+    Since we are starting a fresh run, any tickets still in
+    ``backlog/claimed/`` are orphaned from a previous session and should
+    be returned to ``backlog/open/`` so they can be picked up again.
+
+    Returns:
+        Number of tickets returned to open.
+    """
+    return _return_claimed_to_open()
+
+
 # ---------------------------------------------------------------------------
 # CLI group
 # ---------------------------------------------------------------------------
@@ -271,6 +406,11 @@ def cli(
     if dry_run:
         _print_dry_run_table(workdir)
         return
+
+    # Recover orphaned claimed tickets from any prior crashed/stopped session
+    recovered = _recover_orphaned_claims()
+    if recovered:
+        console.print(f"[yellow]Recovered {recovered} orphaned ticket(s) from a prior session.[/yellow]")
 
     # Evolve mode safety: require --budget or --max-cycles
     if evolve and budget <= 0 and max_cycles <= 0:
@@ -375,10 +515,41 @@ def cli(
         console.print("[bold green]Running headless.[/bold green] Check .sdd/runtime/ for logs.")
         return
 
+    # Register Ctrl+C handler so we save state before the dashboard exits
+    _register_sigint_handler()
+
     # Show live dashboard (blocks until Ctrl+C / q)
     from bernstein.cli.dashboard import run_dashboard
 
     run_dashboard()
+
+
+def _sigint_handler(signum: int, frame: Any) -> None:
+    """Handle Ctrl+C: save state, return claimed tickets, then exit.
+
+    This handler is installed while the dashboard is running so that an
+    interactive Ctrl+C still persists session state and avoids orphaning
+    claimed tickets.
+
+    Args:
+        signum: Signal number (always ``SIGINT``).
+        frame: Current stack frame (unused).
+    """
+    import contextlib
+
+    console.print("\n[yellow]Ctrl+C received — saving state…[/yellow]")
+    with contextlib.suppress(OSError):
+        _save_session_on_stop(Path.cwd())
+    moved = _return_claimed_to_open()
+    if moved:
+        console.print(f"[dim]Returned {moved} claimed ticket(s) to open.[/dim]")
+    console.print("[yellow]Use 'bernstein stop' for graceful shutdown.[/yellow]")
+    raise SystemExit(130)
+
+
+def _register_sigint_handler() -> None:
+    """Install :func:`_sigint_handler` for ``SIGINT``."""
+    signal.signal(signal.SIGINT, _sigint_handler)
 
 
 # ---------------------------------------------------------------------------
@@ -945,23 +1116,58 @@ def sync(port: int, workdir: str) -> None:
 @cli.command("stop")
 @click.option(
     "--timeout",
-    default=10,
+    default=30,
     show_default=True,
-    help="Seconds to wait for agents to finish before force-killing.",
+    help="Seconds to wait for agents (soft stop).",
 )
-def stop(timeout: int) -> None:
-    """Gracefully stop all agents and the task server."""
-    _print_banner()
-    console.print("[bold]Stopping Bernstein…[/bold]\n")
+@click.option(
+    "--force",
+    "--hard",
+    is_flag=True,
+    default=False,
+    help="Hard stop: kill immediately without waiting.",
+)
+def stop(timeout: int, force: bool) -> None:
+    """Stop all agents and the task server.
 
-    # 1. Ask the server to initiate graceful shutdown of all agents
+    Default (soft stop): writes SHUTDOWN signal files so agents can save
+    their work, waits up to ``--timeout`` seconds, saves session state,
+    returns claimed tickets to open, then kills remaining processes with
+    SIGTERM.
+
+    With ``--force`` / ``--hard``: skips signal files and waiting, kills
+    everything immediately with SIGKILL, then does best-effort session
+    save and ticket recovery.
+    """
+    _print_banner()
+
+    if force:
+        console.print("[bold red]Hard stop — killing everything immediately…[/bold red]\n")
+        _hard_stop()
+    else:
+        console.print("[bold]Soft stop — giving agents time to save…[/bold]\n")
+        _soft_stop(timeout)
+
+
+def _soft_stop(timeout: int) -> None:
+    """Soft stop: signal agents, wait, save state, return tickets, kill.
+
+    Args:
+        timeout: Maximum seconds to wait for agents to exit gracefully.
+    """
+    # 1. Write SHUTDOWN signal files for all active agents
+    signaled = _write_shutdown_signals(reason="User requested stop")
+    if signaled:
+        console.print(f"[dim]Wrote SHUTDOWN signals for {len(signaled)} agent(s).[/dim]")
+
+    # 2. Ask the server to initiate graceful shutdown
     data = _server_post("/shutdown", {})
     if data is not None:
         console.print("[dim]Shutdown signal sent to task server.[/dim]")
     else:
-        console.print("[dim]Task server not reachable — skipping graceful shutdown.[/dim]")
+        console.print("[dim]Task server not reachable — skipping server shutdown.[/dim]")
 
-    # 2. Wait briefly for agents to wind down
+    # 3. Wait for agents to wind down
     if timeout > 0:
         console.print(f"[dim]Waiting up to {timeout}s for agents…[/dim]")
         deadline = time.monotonic() + timeout
@@ -974,34 +1180,90 @@ def stop(timeout: int) -> None:
                 break
             time.sleep(1)
 
-    # 3. Kill watchdog first so it doesn't restart things we're stopping
+    # 4. Save session state
+    _save_session_on_stop(Path.cwd())
+    console.print("[dim]Session state saved.[/dim]")
+
+    # 5. Return claimed tickets to open
+    moved = _return_claimed_to_open()
+    if moved:
+        console.print(f"[dim]Returned {moved} claimed ticket(s) to open.[/dim]")
+
+    # 6. Kill watchdog first so it doesn't restart things we're stopping
     _kill_pid(SDD_PID_WATCHDOG, "Watchdog")
 
-    # 4. Kill spawner
+    # 7. Kill spawner
     _kill_pid(SDD_PID_SPAWNER, "Spawner")
 
-    # 5. Kill all spawned agents (they run in separate process groups)
+    # 8. Kill all spawned agents (they run in separate process groups)
     agents_json = Path(".sdd/runtime/agents.json")
     if agents_json.exists():
         try:
-            import json as _json
-
-            agent_data = _json.loads(agents_json.read_text())
+            agent_data = json.loads(agents_json.read_text())
             for agent in agent_data.get("agents", []):
                 pid = agent.get("pid")
                 if pid and _is_alive(pid):
                     try:
                         os.killpg(os.getpgid(pid), signal.SIGTERM)
-                        console.print(f"[dim]Killed agent {agent.get('id', '?')} (PID {pid})[/dim]")
+                        console.print(f"[dim]Sent SIGTERM to agent {agent.get('id', '?')} (PID {pid})[/dim]")
                     except OSError:
                         pass
         except (OSError, ValueError):
             pass
 
-    # 6. Kill server
+    # 9. Kill server
     _kill_pid(SDD_PID_SERVER, "Task server")
 
-    console.print("\n[green]Bernstein stopped.[/green]")
+    console.print("\n[green]Bernstein stopped (soft).[/green]")
+
+
+def _hard_stop() -> None:
+    """Hard stop: SIGKILL everything, best-effort save, return tickets."""
+    # 1. Kill watchdog immediately
+    _kill_pid_hard(SDD_PID_WATCHDOG, "Watchdog")
+
+    # 2. Kill spawner immediately
+    _kill_pid_hard(SDD_PID_SPAWNER, "Spawner")
+
+    # 3. Kill all spawned agents with SIGKILL
+    agents_json = Path(".sdd/runtime/agents.json")
+    if agents_json.exists():
+        try:
+            agent_data = json.loads(agents_json.read_text())
+            for agent in agent_data.get("agents", []):
+                pid = agent.get("pid")
+                if pid and _is_alive(pid):
+                    import contextlib
+
+                    try:
+                        pgid = os.getpgid(pid)
+                        os.killpg(pgid, signal.SIGKILL)
+                    except (OSError, ProcessLookupError):
+                        with contextlib.suppress(OSError):
+                            os.kill(pid, signal.SIGKILL)
+                    console.print(f"[red]Killed agent {agent.get('id', '?')} (PID {pid}) with SIGKILL[/red]")
+        except (OSError, ValueError):
+            pass
+
+    # 4. Kill server immediately
+    _kill_pid_hard(SDD_PID_SERVER, "Task server")
+
+    # 5. Best-effort session save
+    try:
+        _save_session_on_stop(Path.cwd())
+        console.print("[dim]Session state saved (best-effort).[/dim]")
+    except OSError:
+        console.print("[yellow]Could not save session state.[/yellow]")
+
+    # 6. Return claimed tickets to open
+    try:
+        moved = _return_claimed_to_open()
+        if moved:
+            console.print(f"[dim]Returned {moved} claimed ticket(s) to open.[/dim]")
+    except OSError:
+        console.print("[yellow]Could not return claimed tickets.[/yellow]")
+
+    console.print("\n[red]Bernstein stopped (hard).[/red]")
 
 
 # ---------------------------------------------------------------------------
