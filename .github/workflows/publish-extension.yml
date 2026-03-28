@@ -3,7 +3,7 @@ name: Publish VS Code Extension
 on:
   push:
     tags:
-      - 'vscode-v*'   # trigger: git tag vscode-v0.1.0 && git push --tags
+      - 'ext-v*'   # trigger: git tag ext-v0.1.0 && git push --tags
 
 jobs:
   publish:

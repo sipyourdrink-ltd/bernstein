@@ -16,19 +16,32 @@ function buildHtml(data: DashboardData | null): string {
     `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';`;
 
   const stats = data?.stats;
+  const total = stats ? stats.done + stats.open + stats.claimed + stats.failed : 0;
+  const successRate = total > 0 ? Math.round((stats!.done / total) * 100) : 0;
+
   const statsHtml = stats
     ? `
-      <div class="stat"><span class="label">Agents</span><span class="value">${stats.agent_count}</span></div>
-      <div class="stat"><span class="label">Open</span><span class="value open">${stats.open}</span></div>
-      <div class="stat"><span class="label">Running</span><span class="value running">${stats.claimed}</span></div>
-      <div class="stat"><span class="label">Done</span><span class="value done">${stats.done}</span></div>
-      <div class="stat"><span class="label">Failed</span><span class="value failed">${stats.failed}</span></div>
-      <div class="stat"><span class="label">Cost</span><span class="value">$${stats.total_cost_usd.toFixed(2)}</span></div>`
+      <div class="stat-card">
+        <div class="stat-value">${stats.agent_count}</div>
+        <div class="stat-label">Active Agents</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${stats.done}/${total}</div>
+        <div class="stat-label">Tasks Complete</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${successRate}%</div>
+        <div class="stat-label">Success Rate</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">$${stats.total_cost_usd.toFixed(2)}</div>
+        <div class="stat-label">Total Cost</div>
+      </div>`
     : '<div class="offline">Not connected to Bernstein</div>';
 
   const alertsHtml =
     (data?.alerts ?? [])
-      .map((a) => `<div class="alert ${a.level}">${a.message}</div>`)
+      .map((a) => `<div class="alert alert-${a.level}">${a.message}</div>`)
       .join('') || '';
 
   return `<!DOCTYPE html>
@@ -37,44 +50,92 @@ function buildHtml(data: DashboardData | null): string {
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="${csp}">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>Bernstein</title>
+  <title>Bernstein Dashboard</title>
   <style nonce="${nonce}">
+    * {
+      box-sizing: border-box;
+    }
     body {
-      font-family: var(--vscode-font-family);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
       color: var(--vscode-foreground);
       background: var(--vscode-sideBar-background);
-      margin: 0; padding: 8px;
+      margin: 0;
+      padding: 16px 12px;
     }
-    h3 {
-      font-size: 10px; text-transform: uppercase;
-      opacity: 0.6; margin: 8px 0 4px; letter-spacing: 0.5px;
+    h2 {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--vscode-descriptionForeground);
+      margin: 16px 0 8px 0;
     }
-    .stats {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px;
+    h2:first-child {
+      margin-top: 0;
     }
-    .stat {
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .stat-card {
       background: var(--vscode-editor-background);
-      border-radius: 4px; padding: 6px 8px;
+      border: 1px solid var(--vscode-editor-lineHighlightBorder);
+      border-radius: 6px;
+      padding: 12px;
+      text-align: center;
     }
-    .label { font-size: 10px; opacity: 0.7; display: block; }
-    .value { font-size: 18px; font-weight: 600; }
-    .open    { color: var(--vscode-charts-blue);   }
-    .running { color: var(--vscode-charts-yellow); }
-    .done    { color: var(--vscode-charts-green);  }
-    .failed  { color: var(--vscode-charts-red);    }
+    .stat-value {
+      font-size: 20px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 4px;
+    }
+    .stat-label {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.8;
+    }
+    .alerts {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
     .alert {
-      padding: 4px 8px; border-radius: 3px;
-      font-size: 11px; margin-bottom: 4px;
+      padding: 10px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      line-height: 1.4;
     }
-    .alert.warning { background: var(--vscode-inputValidation-warningBackground); }
-    .alert.error   { background: var(--vscode-inputValidation-errorBackground);   }
-    .offline { color: var(--vscode-disabledForeground); font-size: 12px; padding: 8px; }
+    .alert-warning {
+      background: var(--vscode-inputValidation-warningBackground);
+      border: 1px solid var(--vscode-inputValidation-warningBorder);
+      color: var(--vscode-inputValidation-warningForeground);
+    }
+    .alert-error {
+      background: var(--vscode-inputValidation-errorBackground);
+      border: 1px solid var(--vscode-inputValidation-errorBorder);
+      color: var(--vscode-inputValidation-errorForeground);
+    }
+    .alert-info {
+      background: var(--vscode-inputValidation-infoBorder);
+      border: 1px solid var(--vscode-inputValidation-infoBorder);
+      color: var(--vscode-foreground);
+      opacity: 0.8;
+    }
+    .offline {
+      color: var(--vscode-disabledForeground);
+      font-size: 13px;
+      padding: 12px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
-  <h3>Overview</h3>
-  <div class="stats">${statsHtml}</div>
-  ${alertsHtml ? `<h3>Alerts</h3>${alertsHtml}` : ''}
+  <h2>Overview</h2>
+  <div class="stats-grid">${statsHtml}</div>
+  ${alertsHtml ? `<h2>Alerts</h2><div class="alerts">${alertsHtml}</div>` : ''}
 </body>
 </html>`;
 }

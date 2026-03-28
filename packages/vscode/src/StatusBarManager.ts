@@ -10,8 +10,8 @@ export class StatusBarManager {
       100,
     );
     this.item.command = 'bernstein.showDashboard';
-    this.item.text = '$(music) Bernstein: connecting…';
-    this.item.tooltip = 'Bernstein Orchestrator — click to open dashboard';
+    this.item.text = '◌ Bernstein';
+    this.item.tooltip = 'Bernstein Orchestrator — click to open dashboard (connecting…)';
     this.item.show();
   }
 
@@ -21,13 +21,14 @@ export class StatusBarManager {
     const cost = `$${stats.total_cost_usd.toFixed(2)}`;
     const agents = stats.agent_count;
     const tasks = `${stats.done}/${total}`;
-    this.item.text = `$(music) ${agents} agents | ${tasks} tasks | ${cost}`;
+    const status = stats.claimed > 0 ? '●' : '○';
+    this.item.text = `${status} ${agents} agents · ${tasks} tasks · ${cost}`;
     this.item.tooltip =
-      `Bernstein — ${agents} active agents, ${tasks} tasks done, ${cost} total cost`;
+      `Bernstein — ${agents} active agents | ${tasks} tasks done | ${cost} total cost`;
   }
 
   setError(message: string): void {
-    this.item.text = '$(music) Bernstein: offline';
+    this.item.text = '○ Bernstein';
     this.item.tooltip = `Bernstein: ${message}`;
   }
 

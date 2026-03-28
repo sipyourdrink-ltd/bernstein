@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
+from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.models import AgentSession, ModelConfig, Task
 from bernstein.core.router import RouterError, TierAwareRouter
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
@@ -106,6 +107,36 @@ def _render_signal_check(session_id: str) -> str:
         "```\n"
         "If **WAKEUP** exists: read it, address the concern, then continue working.\n"
     )
+
+
+def _extract_tags_from_tasks(tasks: list[Task]) -> list[str]:
+    """Derive lesson-retrieval tags from a batch of tasks.
+
+    Uses the role and significant title words as tags.
+
+    Args:
+        tasks: Batch of tasks.
+
+    Returns:
+        List of lowercase tags for lesson lookup.
+    """
+    stop_words = {
+        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+        "has", "have", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "must", "shall", "can", "not", "no", "all",
+        "each", "every", "both", "few", "more", "most", "other", "some", "such",
+        "than", "too", "very", "just", "into", "out", "up", "down", "over",
+        "this", "that", "it", "its",
+    }
+    tags: set[str] = set()
+    for task in tasks:
+        tags.add(task.role.lower())
+        for word in task.title.lower().split():
+            cleaned = word.strip("—-_.,;:!?()[]{}\"'`#")
+            if len(cleaned) > 2 and cleaned not in stop_words:
+                tags.add(cleaned)
+    return sorted(tags)
 
 
 def _render_prompt(
@@ -223,11 +254,18 @@ def _render_prompt(
             logger.debug("Template render failed for role %s, using fallback: %s", role, exc)
             role_prompt = _render_fallback(role, templates_dir, agency_catalog)
 
+    # Inject prior agent lessons based on task tags
+    sdd_dir = workdir / ".sdd"
+    lesson_tags = _extract_tags_from_tasks(tasks)
+    lesson_context = gather_lessons_for_context(sdd_dir, lesson_tags)
+
     # Assemble final prompt
     sections = [role_prompt]
     if specialist_block:
         sections.append(specialist_block)
     sections.append(f"\n## Assigned tasks\n{task_block}")
+    if lesson_context:
+        sections.append(f"\n{lesson_context}\n")
     if rich_context:
         sections.append(f"\n{rich_context}\n")
     if bulletin_summary:

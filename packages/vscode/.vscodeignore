@@ -6,7 +6,11 @@
 **/.vscode/**
 **/node_modules/**
 **/src/**
+**/__tests__/**
+**/__mocks__/**
 **/esbuild.mjs
 **/jest.config.js
 **/tsconfig.json
 **/.vscodeignore
+**/PUBLISH.md
+**/package-lock.json

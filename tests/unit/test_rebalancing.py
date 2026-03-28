@@ -119,10 +119,7 @@ def test_rebalancing_task_completion_triggers_exit(tmp_path: Path) -> None:
     orch = _make_orch(tmp_path)
 
     # Create 5 agents for backend role, initially with tasks
-    agents = [
-        _make_session([f"T-be-{i:02d}"], role="backend", session_id=f"s-be-{i:02d}")
-        for i in range(5)
-    ]
+    agents = [_make_session([f"T-be-{i:02d}"], role="backend", session_id=f"s-be-{i:02d}") for i in range(5)]
     for agent in agents:
         orch._agents[agent.id] = agent
 
@@ -131,10 +128,7 @@ def test_rebalancing_task_completion_triggers_exit(tmp_path: Path) -> None:
         "done": [],
         "failed": [],
         "open": [],
-        "claimed": [
-            _make_task(id=f"T-be-{i:02d}", role="backend", status="claimed")
-            for i in range(5)
-        ],
+        "claimed": [_make_task(id=f"T-be-{i:02d}", role="backend", status="claimed") for i in range(5)],
         "in_progress": [],
         "blocked": [],
     }
@@ -145,14 +139,13 @@ def test_rebalancing_task_completion_triggers_exit(tmp_path: Path) -> None:
     orch._signal_mgr.reset_mock()
 
     # After work, 2 tasks complete — agents 0 and 1 no longer have active work
-    tasks_snapshot["done"].extend([
-        _make_task(id="T-be-00", role="backend", status="done"),
-        _make_task(id="T-be-01", role="backend", status="done"),
-    ])
-    tasks_snapshot["claimed"] = [
-        _make_task(id=f"T-be-{i:02d}", role="backend", status="claimed")
-        for i in range(2, 5)
-    ]
+    tasks_snapshot["done"].extend(
+        [
+            _make_task(id="T-be-00", role="backend", status="done"),
+            _make_task(id="T-be-01", role="backend", status="done"),
+        ]
+    )
+    tasks_snapshot["claimed"] = [_make_task(id=f"T-be-{i:02d}", role="backend", status="claimed") for i in range(2, 5)]
 
     recycle_idle_agents(orch, tasks_snapshot)
 
@@ -181,28 +174,16 @@ def test_rebalancing_spawn_excludes_recycling_agents(tmp_path: Path) -> None:
     orch = _make_orch(tmp_path)
 
     # Create 4 agents: 2 with done tasks, 2 with active tasks
-    active_agents = [
-        _make_session([f"T-active-{i:02d}"], role="qa", session_id=f"s-active-{i:02d}")
-        for i in range(2)
-    ]
-    recycling_agents = [
-        _make_session([f"T-done-{i:02d}"], role="qa", session_id=f"s-done-{i:02d}")
-        for i in range(2)
-    ]
+    active_agents = [_make_session([f"T-active-{i:02d}"], role="qa", session_id=f"s-active-{i:02d}") for i in range(2)]
+    recycling_agents = [_make_session([f"T-done-{i:02d}"], role="qa", session_id=f"s-done-{i:02d}") for i in range(2)]
     all_agents = active_agents + recycling_agents
     for agent in all_agents:
         orch._agents[agent.id] = agent
 
     tasks_snapshot = {
-        "done": [
-            _make_task(id=f"T-done-{i:02d}", role="qa", status="done")
-            for i in range(2)
-        ],
+        "done": [_make_task(id=f"T-done-{i:02d}", role="qa", status="done") for i in range(2)],
         "failed": [],
-        "open": [
-            _make_task(id=f"T-active-{i:02d}", role="qa", status="open")
-            for i in range(2)
-        ],
+        "open": [_make_task(id=f"T-active-{i:02d}", role="qa", status="open") for i in range(2)],
         "claimed": [],
         "in_progress": [],
         "blocked": [],
@@ -221,14 +202,10 @@ def test_rebalancing_spawn_excludes_recycling_agents(tmp_path: Path) -> None:
     alive_qa = sum(
         1
         for agent in orch._agents.values()
-        if agent.role == "qa"
-        and agent.status != "dead"
-        and agent.id not in orch._idle_shutdown_ts
+        if agent.role == "qa" and agent.status != "dead" and agent.id not in orch._idle_shutdown_ts
     )
     assert alive_qa == 2, f"Expected 2 non-recycling agents, got {alive_qa}"
     assert alive_qa == len(active_agents)
-
-
 
 
 def test_rebalancing_graceful_exit_grace_period(tmp_path: Path) -> None:
@@ -242,18 +219,12 @@ def test_rebalancing_graceful_exit_grace_period(tmp_path: Path) -> None:
     orch = _make_orch(tmp_path)
 
     # Create 3 agents with done tasks
-    agents = [
-        _make_session([f"T-done-{i:02d}"], role="backend", session_id=f"s-done-{i:02d}")
-        for i in range(3)
-    ]
+    agents = [_make_session([f"T-done-{i:02d}"], role="backend", session_id=f"s-done-{i:02d}") for i in range(3)]
     for agent in agents:
         orch._agents[agent.id] = agent
 
     tasks_snapshot = {
-        "done": [
-            _make_task(id=f"T-done-{i:02d}", role="backend", status="done")
-            for i in range(3)
-        ],
+        "done": [_make_task(id=f"T-done-{i:02d}", role="backend", status="done") for i in range(3)],
         "failed": [],
         "open": [],
         "claimed": [],
@@ -294,29 +265,19 @@ def test_rebalancing_preserves_active_agents(tmp_path: Path) -> None:
 
     # 2 agents with active tasks
     active_agents = [
-        _make_session([f"T-active-{i:02d}"], role="backend", session_id=f"s-active-{i:02d}")
-        for i in range(2)
+        _make_session([f"T-active-{i:02d}"], role="backend", session_id=f"s-active-{i:02d}") for i in range(2)
     ]
     # 3 agents with done tasks
-    idle_agents = [
-        _make_session([f"T-done-{i:02d}"], role="backend", session_id=f"s-idle-{i:02d}")
-        for i in range(3)
-    ]
+    idle_agents = [_make_session([f"T-done-{i:02d}"], role="backend", session_id=f"s-idle-{i:02d}") for i in range(3)]
 
     all_agents = active_agents + idle_agents
     for agent in all_agents:
         orch._agents[agent.id] = agent
 
     tasks_snapshot = {
-        "done": [
-            _make_task(id=f"T-done-{i:02d}", role="backend", status="done")
-            for i in range(3)
-        ],
+        "done": [_make_task(id=f"T-done-{i:02d}", role="backend", status="done") for i in range(3)],
         "failed": [],
-        "open": [
-            _make_task(id=f"T-active-{i:02d}", role="backend", status="open")
-            for i in range(2)
-        ],
+        "open": [_make_task(id=f"T-active-{i:02d}", role="backend", status="open") for i in range(2)],
         "claimed": [],
         "in_progress": [],
         "blocked": [],
@@ -344,10 +305,7 @@ def test_rebalancing_empty_role_all_agents_exit(tmp_path: Path) -> None:
     """
     orch = _make_orch(tmp_path)
 
-    agents = [
-        _make_session([], role="backend", session_id=f"s-empty-{i:02d}")
-        for i in range(3)
-    ]
+    agents = [_make_session([], role="backend", session_id=f"s-empty-{i:02d}") for i in range(3)]
     for agent in agents:
         orch._agents[agent.id] = agent
 

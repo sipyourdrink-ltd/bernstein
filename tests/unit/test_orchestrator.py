@@ -938,9 +938,7 @@ class TestAgentRebalancing:
         )
 
         new_task = _make_task(id="T-new", role="backend", title="New backend task")
-        transport = _mock_transport(
-            {"GET /tasks": httpx.Response(200, json=[_task_as_dict(new_task)])}
-        )
+        transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[_task_as_dict(new_task)])})
         adapter = _mock_adapter()
         adapter.is_alive.return_value = True
 
@@ -963,8 +961,7 @@ class TestAgentRebalancing:
 
         # Verify the newly spawned agent is for backend role
         spawned_backends = [
-            sid for sid in result.spawned
-            if sid in orch._agents and orch._agents[sid].role == "backend"
+            sid for sid in result.spawned if sid in orch._agents and orch._agents[sid].role == "backend"
         ]
         assert len(spawned_backends) >= 1, "new backend agent must be spawned"
 

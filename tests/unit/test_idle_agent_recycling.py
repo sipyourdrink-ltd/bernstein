@@ -560,9 +560,7 @@ def test_multiple_agents_same_drained_role_all_exit(tmp_path: Path) -> None:
     recycle_idle_agents(orch, tasks_snapshot)
 
     assert orch._signal_mgr.write_shutdown.call_count == 2
-    shutdown_sessions = {
-        call.args[0] for call in orch._signal_mgr.write_shutdown.call_args_list
-    }
+    shutdown_sessions = {call.args[0] for call in orch._signal_mgr.write_shutdown.call_args_list}
     assert shutdown_sessions == {"s-multi-01", "s-multi-02"}
 
 

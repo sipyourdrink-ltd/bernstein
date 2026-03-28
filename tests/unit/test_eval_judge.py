@@ -385,9 +385,7 @@ class TestEvalJudgeReviewGitDiff:
         judge = EvalJudge()
         mock_llm = AsyncMock(return_value=_GOOD_JSON)
         with patch("bernstein.core.llm.call_llm", mock_llm):
-            verdict = asyncio.run(
-                judge.review_git_diff(task_description="fix bug", git_diff="diff --git a/b")
-            )
+            verdict = asyncio.run(judge.review_git_diff(task_description="fix bug", git_diff="diff --git a/b"))
         assert verdict.verdict == "PASS"
         assert judge.consecutive_failures == 0
 
@@ -395,9 +393,7 @@ class TestEvalJudgeReviewGitDiff:
         judge = EvalJudge(backoff_schedule=(0.0, 0.0, 0.0, 0.0))
         mock_llm = AsyncMock(side_effect=[RuntimeError("timeout"), _GOOD_JSON])
         with patch("bernstein.core.llm.call_llm", mock_llm):
-            verdict = asyncio.run(
-                judge.review_git_diff(task_description="fix bug", git_diff="diff")
-            )
+            verdict = asyncio.run(judge.review_git_diff(task_description="fix bug", git_diff="diff"))
         assert verdict.verdict == "PASS"
         assert judge.consecutive_failures == 0
 
@@ -409,9 +405,7 @@ class TestEvalJudgeReviewGitDiff:
         mock_llm = AsyncMock(side_effect=RuntimeError("down"))
         with patch("bernstein.core.llm.call_llm", mock_llm):
             with pytest.raises(CircuitBreakerTripped):
-                asyncio.run(
-                    judge.review_git_diff(task_description="fix bug", git_diff="diff")
-                )
+                asyncio.run(judge.review_git_diff(task_description="fix bug", git_diff="diff"))
         assert judge.consecutive_failures >= 3
 
     def test_resets_failures_on_success(self) -> None:
@@ -419,9 +413,7 @@ class TestEvalJudgeReviewGitDiff:
         judge._consecutive_failures = 2
         mock_llm = AsyncMock(return_value=_GOOD_JSON)
         with patch("bernstein.core.llm.call_llm", mock_llm):
-            verdict = asyncio.run(
-                judge.review_git_diff(task_description="fix bug", git_diff="diff")
-            )
+            verdict = asyncio.run(judge.review_git_diff(task_description="fix bug", git_diff="diff"))
         assert verdict.verdict == "PASS"
         assert judge.consecutive_failures == 0
 
@@ -430,9 +422,7 @@ class TestEvalJudgeReviewGitDiff:
         large_diff = "x" * 20000
         mock_llm = AsyncMock(return_value=_GOOD_JSON)
         with patch("bernstein.core.llm.call_llm", mock_llm) as m:
-            asyncio.run(
-                judge.review_git_diff(task_description="task", git_diff=large_diff)
-            )
+            asyncio.run(judge.review_git_diff(task_description="task", git_diff=large_diff))
         # The prompt should have truncated the diff to 8000 chars
         call_prompt = m.call_args[0][0]
         assert "x" * 8000 in call_prompt
@@ -446,8 +436,6 @@ class TestEvalJudgeReviewGitDiff:
         )
         mock_llm = AsyncMock(return_value="not json")
         with patch("bernstein.core.llm.call_llm", mock_llm):
-            verdict = asyncio.run(
-                judge.review_git_diff(task_description="fix bug", git_diff="diff")
-            )
+            verdict = asyncio.run(judge.review_git_diff(task_description="fix bug", git_diff="diff"))
         assert verdict.verdict == "FAIL"
         assert "exhausted" in verdict.issues[0].lower()
