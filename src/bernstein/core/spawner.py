@@ -12,7 +12,7 @@ from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
 from bernstein.core.models import AgentSession, ModelConfig, Task
 from bernstein.core.router import RouterError, TierAwareRouter
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
-from bernstein.core.worktree import WorktreeError, WorktreeManager
+from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
 from bernstein.templates.renderer import TemplateError, render_role_prompt
 
 if TYPE_CHECKING:
@@ -308,6 +308,7 @@ class AgentSpawner:
         mcp_manager: MCPManager | None = None,
         catalog: CatalogRegistry | None = None,
         use_worktrees: bool = False,
+        worktree_setup_config: WorktreeSetupConfig | None = None,
         workspace: Workspace | None = None,
         bulletin: BulletinBoard | None = None,
     ) -> None:
@@ -329,7 +330,9 @@ class AgentSpawner:
         self._context_builder = TaskContextBuilder(workdir)
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
         self._use_worktrees = use_worktrees
-        self._worktree_mgr: WorktreeManager | None = WorktreeManager(workdir) if use_worktrees else None
+        self._worktree_mgr: WorktreeManager | None = (
+            WorktreeManager(workdir, setup_config=worktree_setup_config) if use_worktrees else None
+        )
         self._worktree_paths: dict[str, Path] = {}
         self._traces: dict[str, AgentTrace] = {}
         self._trace_store = TraceStore(workdir / ".sdd" / "traces")

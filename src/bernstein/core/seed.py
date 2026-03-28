@@ -14,6 +14,8 @@ import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
+from bernstein.core.quality_gates import QualityGatesConfig
+from bernstein.core.worktree import WorktreeSetupConfig
 from bernstein.core.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -87,6 +89,8 @@ class SeedConfig:
         mcp_servers: MCP server definitions to pass to spawned agents.
         notify: Optional webhook notification configuration.
         cells: Number of parallel orchestration cells (1 = single-cell).
+        quality_gates: Optional quality gate configuration. When set, lint/type/test
+            checks run after each task completes and before the approval gate.
     """
 
     goal: str
@@ -106,6 +110,8 @@ class SeedConfig:
     cluster: ClusterConfig | None = None
     workspace: Workspace | None = None
     session: SessionConfig = field(default_factory=SessionConfig)
+    worktree_setup: WorktreeSetupConfig | None = None
+    quality_gates: QualityGatesConfig | None = None
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -360,6 +366,61 @@ def parse_seed(path: Path) -> SeedConfig:
         except ValueError as exc:
             raise SeedError(f"Invalid workspace configuration: {exc}") from exc
 
+    worktree_setup_raw: object = data.get("worktree_setup")
+    worktree_setup: WorktreeSetupConfig | None = None
+    if worktree_setup_raw is not None:
+        if not isinstance(worktree_setup_raw, dict):
+            raise SeedError(f"worktree_setup must be a mapping, got: {type(worktree_setup_raw).__name__}")
+        ws_dict: dict[str, object] = cast("dict[str, object]", worktree_setup_raw)
+        symlink_dirs = _parse_string_list(ws_dict.get("symlink_dirs"), "worktree_setup.symlink_dirs")
+        copy_files = _parse_string_list(ws_dict.get("copy_files"), "worktree_setup.copy_files")
+        setup_cmd_raw: object = ws_dict.get("setup_command")
+        if setup_cmd_raw is not None and not isinstance(setup_cmd_raw, str):
+            raise SeedError(
+                f"worktree_setup.setup_command must be a string, got: {type(setup_cmd_raw).__name__}"
+            )
+        worktree_setup = WorktreeSetupConfig(
+            symlink_dirs=symlink_dirs,
+            copy_files=copy_files,
+            setup_command=setup_cmd_raw if isinstance(setup_cmd_raw, str) else None,
+        )
+
+    quality_gates_raw: object = data.get("quality_gates")
+    quality_gates: QualityGatesConfig | None = None
+    if quality_gates_raw is not None:
+        if not isinstance(quality_gates_raw, dict):
+            raise SeedError(f"quality_gates must be a mapping, got: {type(quality_gates_raw).__name__}")
+        qg_dict: dict[str, object] = cast("dict[str, object]", quality_gates_raw)
+
+        def _qg_bool(key: str, default: bool) -> bool:
+            val = qg_dict.get(key, default)
+            if not isinstance(val, bool):
+                raise SeedError(f"quality_gates.{key} must be a bool, got: {type(val).__name__}")
+            return val
+
+        def _qg_str(key: str, default: str) -> str:
+            val = qg_dict.get(key, default)
+            if not isinstance(val, str):
+                raise SeedError(f"quality_gates.{key} must be a string, got: {type(val).__name__}")
+            return val
+
+        def _qg_int(key: str, default: int) -> int:
+            val = qg_dict.get(key, default)
+            if not isinstance(val, int):
+                raise SeedError(f"quality_gates.{key} must be an integer, got: {type(val).__name__}")
+            return val
+
+        quality_gates = QualityGatesConfig(
+            enabled=_qg_bool("enabled", True),
+            lint=_qg_bool("lint", True),
+            lint_command=_qg_str("lint_command", "ruff check ."),
+            type_check=_qg_bool("type_check", False),
+            type_check_command=_qg_str("type_check_command", "pyright"),
+            tests=_qg_bool("tests", False),
+            test_command=_qg_str("test_command", "uv run python scripts/run_tests.py -x"),
+            timeout_s=_qg_int("timeout_s", 120),
+        )
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -378,6 +439,8 @@ def parse_seed(path: Path) -> SeedConfig:
         cluster=cluster,
         workspace=workspace,
         session=session_cfg,
+        worktree_setup=worktree_setup,
+        quality_gates=quality_gates,
     )
 
 

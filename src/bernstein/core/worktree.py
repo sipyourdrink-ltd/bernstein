@@ -15,6 +15,9 @@ Usage::
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from bernstein.core.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
@@ -22,6 +25,115 @@ from bernstein.core.git_ops import branch_delete, worktree_add, worktree_list, w
 logger = logging.getLogger(__name__)
 
 _WORKTREE_BASE = ".sdd/worktrees"
+_SETUP_COMMAND_TIMEOUT_S = 300  # 5 minutes max for setup commands
+
+
+@dataclass(frozen=True)
+class WorktreeSetupConfig:
+    """Configuration for environment setup after worktree creation.
+
+    Applied immediately after ``git worktree add`` so the agent process
+    finds a fully-provisioned checkout instead of a bare tree.
+
+    Attributes:
+        symlink_dirs: Directory names to symlink from repo_root into the
+            worktree.  Useful for large build artefacts like ``node_modules``
+            or ``.venv`` that are expensive to recreate per worktree.
+        copy_files: File names (relative to repo root) to copy into the
+            worktree.  Suitable for ``.env`` files that should not be shared
+            via symlink (each agent may write its own port/secret overrides).
+        setup_command: Optional shell command to run *inside* the worktree
+            after symlinking and copying.  Examples: ``"npm install"``,
+            ``"uv sync"``, ``"make setup"``.
+    """
+
+    symlink_dirs: tuple[str, ...] = field(default_factory=tuple)
+    copy_files: tuple[str, ...] = field(default_factory=tuple)
+    setup_command: str | None = None
+
+
+def setup_worktree_env(
+    repo_root: Path,
+    worktree_path: Path,
+    config: WorktreeSetupConfig,
+) -> None:
+    """Set up the environment inside a newly-created worktree.
+
+    1. Symlinks large shared directories so the agent doesn't need to
+       reinstall dependencies.
+    2. Copies per-worktree files (e.g. ``.env``) so each agent has its
+       own editable copy.
+    3. Optionally runs a setup command (e.g. ``npm install``) inside the
+       worktree when symlinks are insufficient.
+
+    Failures are logged as warnings but never propagate — a partially-set-up
+    worktree is better than a hard spawn failure.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+        worktree_path: Path to the newly-created worktree directory.
+        config: Environment setup configuration.
+    """
+    # --- Symlink shared directories -------------------------------------------
+    for dir_name in config.symlink_dirs:
+        source = repo_root / dir_name
+        target = worktree_path / dir_name
+        if not source.exists():
+            logger.debug("Skipping symlink for %r: source does not exist", dir_name)
+            continue
+        if target.exists() or target.is_symlink():
+            logger.debug("Skipping symlink for %r: target already exists", dir_name)
+            continue
+        try:
+            target.symlink_to(source)
+            logger.info("Symlinked worktree/%s -> %s", dir_name, source)
+        except OSError as exc:
+            logger.warning("Failed to symlink %r into worktree: %s", dir_name, exc)
+
+    # --- Copy environment files -----------------------------------------------
+    for file_name in config.copy_files:
+        source = repo_root / file_name
+        target = worktree_path / file_name
+        if not source.is_file():
+            logger.debug("Skipping copy of %r: source missing or not a file", file_name)
+            continue
+        if target.exists():
+            logger.debug("Skipping copy of %r: target already exists", file_name)
+            continue
+        try:
+            # Ensure parent directory exists (for nested paths like .env.d/local)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            logger.info("Copied %s into worktree", file_name)
+        except OSError as exc:
+            logger.warning("Failed to copy %r into worktree: %s", file_name, exc)
+
+    # --- Run optional setup command -------------------------------------------
+    if config.setup_command:
+        logger.info("Running worktree setup command: %s", config.setup_command)
+        try:
+            result = subprocess.run(
+                config.setup_command,
+                shell=True,
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=_SETUP_COMMAND_TIMEOUT_S,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "Worktree setup command exited %d: %s",
+                    result.returncode,
+                    result.stderr[:500],
+                )
+            else:
+                logger.info("Worktree setup command succeeded")
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "Worktree setup command timed out after %ds", _SETUP_COMMAND_TIMEOUT_S
+            )
+        except OSError as exc:
+            logger.warning("Failed to run worktree setup command: %s", exc)
 
 
 class WorktreeError(Exception):
@@ -38,11 +150,18 @@ class WorktreeManager:
 
     Args:
         repo_root: Absolute path to the repository root.
+        setup_config: Optional environment setup applied after each worktree is
+            created (symlinks, file copies, setup command).
     """
 
-    def __init__(self, repo_root: Path) -> None:
+    def __init__(
+        self,
+        repo_root: Path,
+        setup_config: WorktreeSetupConfig | None = None,
+    ) -> None:
         self.repo_root = repo_root.resolve()
         self._base_dir = self.repo_root / _WORKTREE_BASE
+        self._setup_config = setup_config
 
     # ------------------------------------------------------------------
     # Public API
@@ -87,6 +206,10 @@ class WorktreeManager:
             raise WorktreeError(f"git worktree add failed for session '{session_id}': {stderr}")
 
         logger.info("Created worktree %s (branch %s)", worktree_path, branch_name)
+
+        if self._setup_config is not None:
+            setup_worktree_env(self.repo_root, worktree_path, self._setup_config)
+
         return worktree_path
 
     def cleanup(self, session_id: str) -> None:
