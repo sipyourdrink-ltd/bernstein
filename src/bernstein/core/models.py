@@ -235,10 +235,10 @@ class OrchestratorConfig:
         max_tasks_per_agent: Maximum tasks batched into one agent spawn.
         server_url: Base URL of the Bernstein task server.
         evolution_enabled: Whether the self-evolution feedback loop is active.
-        evolution_tick_interval: Run evolution analysis every N ticks (~5 min at 10s poll).
+        evolution_tick_interval: Run evolution analysis every N ticks (~1.5 min at 3s poll).
     """
     max_agents: int = 6
-    poll_interval_s: int = 10
+    poll_interval_s: int = 3
     heartbeat_timeout_s: int = 900  # effectively disabled — agents can't heartbeat
     max_agent_runtime_s: int = 600  # 10 min wall-clock kill
     max_tasks_per_agent: int = 1  # one task per agent = focused, fast
