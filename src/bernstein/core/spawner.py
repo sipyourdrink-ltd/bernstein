@@ -5,6 +5,20 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from bernstein.agents.registry import AgentRegistry, get_registry
+from bernstein.core.context import TaskContextBuilder
+from bernstein.core.models import AgentSession, ModelConfig, Task
+from bernstein.core.router import RouterError, TierAwareRouter
+from bernstein.templates.renderer import TemplateError, render_role_prompt
+
+if TYPE_CHECKING:
+    import subprocess
+    from pathlib import Path
+
+    from bernstein.adapters.base import CLIAdapter
+    from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
+    from bernstein.core.agency_loader import AgencyAgent
+
 # ---------------------------------------------------------------------------
 # Module-level file cache (mtime-keyed, automatically invalidates on change)
 # ---------------------------------------------------------------------------
@@ -12,7 +26,7 @@ _FILE_CACHE: dict[str, tuple[float, str]] = {}
 _DIR_CACHE: dict[str, tuple[float, list[str]]] = {}
 
 
-def _read_cached(path: "Path") -> str:
+def _read_cached(path: Path) -> str:
     """Return file contents, re-reading only when mtime changes.
 
     Args:
@@ -35,7 +49,7 @@ def _read_cached(path: "Path") -> str:
     return content
 
 
-def _list_subdirs_cached(path: "Path") -> list[str]:
+def _list_subdirs_cached(path: Path) -> list[str]:
     """Return sorted list of immediate subdirectory names, cached by mtime.
 
     Args:
@@ -56,20 +70,6 @@ def _list_subdirs_cached(path: "Path") -> list[str]:
     names = sorted(d.name for d in path.iterdir() if d.is_dir())
     _DIR_CACHE[key] = (mtime, names)
     return names
-
-
-if TYPE_CHECKING:
-    import subprocess
-    from pathlib import Path
-
-    from bernstein.adapters.base import CLIAdapter
-    from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
-    from bernstein.core.agency_loader import AgencyAgent
-from bernstein.agents.registry import AgentRegistry, get_registry
-from bernstein.core.context import TaskContextBuilder
-from bernstein.core.models import AgentSession, ModelConfig, Task
-from bernstein.core.router import RouterError, TierAwareRouter
-from bernstein.templates.renderer import TemplateError, render_role_prompt
 
 logger = logging.getLogger(__name__)
 
