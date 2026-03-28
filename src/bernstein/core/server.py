@@ -19,21 +19,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import StreamingResponse
 
 from bernstein.core.a2a import A2AHandler
-from bernstein.core.bulletin import BulletinBoard, BulletinMessage, MessageType
+from bernstein.core.bulletin import BulletinBoard, MessageType
 from bernstein.core.cluster import NodeRegistry
 from bernstein.core.models import (
     AgentSession,
     ClusterConfig,
     CompletionSignal,
-    NodeCapacity,
     NodeInfo,
-    NodeStatus,
     RiskAssessment,
     RollbackPlan,
     Task,
@@ -41,7 +38,6 @@ from bernstein.core.models import (
     TaskType,
     UpgradeProposalDetails,
 )
-from bernstein.core.prometheus import generate_latest, registry, update_metrics_from_status
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -1065,11 +1061,11 @@ class TaskStore:
             if not line:
                 continue
             try:
-                record: dict[str, Any] = json.loads(line)
+                record_data: dict[str, Any] = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            role = record.get("role", "")
-            cost = record.get("cost_usd")
+            role = record_data.get("role", "")
+            cost = record_data.get("cost_usd")
             if role and isinstance(cost, (int, float)):
                 self._cost_cache[role] = self._cost_cache.get(role, 0.0) + float(cost)
         self._cost_cache_offset = new_offset
@@ -1097,6 +1093,7 @@ class TaskStore:
 
         cost_by_role = self._read_cost_by_role()
         total_cost_usd = sum(cost_by_role.values())
+
         per_role = [
             RoleCounts(role=r, cost_usd=cost_by_role.get(r, 0.0), **counts) for r, counts in sorted(roles.items())
         ]
@@ -1330,11 +1327,11 @@ async def _reaper_loop(store: TaskStore, interval_s: float = 30.0) -> None:
         store.mark_stale_dead()
 
 
-async def _node_reaper_loop(registry: NodeRegistry, interval_s: float = 15.0) -> None:
+async def _node_reaper_loop(node_reg: NodeRegistry, interval_s: float = 15.0) -> None:
     """Periodically mark stale cluster nodes as offline."""
     while True:
         await asyncio.sleep(interval_s)
-        registry.mark_stale()
+        node_reg.mark_stale()
 
 
 async def _sse_heartbeat_loop(bus: SSEBus, interval_s: float = 15.0) -> None:
@@ -1345,7 +1342,7 @@ async def _sse_heartbeat_loop(bus: SSEBus, interval_s: float = 15.0) -> None:
 
 
 # ---------------------------------------------------------------------------
-# App factory
+# Helpers used by route modules
 # ---------------------------------------------------------------------------
 
 DEFAULT_JSONL_PATH = Path(".sdd/runtime/tasks.jsonl")
@@ -1384,6 +1381,11 @@ def _read_log_tail(path: Path, offset: int = 0) -> str:
     return text
 
 
+# ---------------------------------------------------------------------------
+# App factory
+# ---------------------------------------------------------------------------
+
+
 def create_app(
     jsonl_path: Path = DEFAULT_JSONL_PATH,
     metrics_jsonl_path: Path | None = None,
@@ -1409,6 +1411,11 @@ def create_app(
     Returns:
         Configured FastAPI app with all routes registered.
     """
+    from bernstein.core.routes.costs import router as costs_router
+    from bernstein.core.routes.status import router as status_router
+    from bernstein.core.routes.tasks import router as tasks_router
+    from bernstein.core.routes.webhooks import router as webhooks_router
+
     # Resolve auth token: explicit arg > env var > None
     effective_token = auth_token or os.environ.get("BERNSTEIN_AUTH_TOKEN")
 
@@ -1456,784 +1463,23 @@ def create_app(
     # Auth middleware — only enforced when a token is configured
     application.add_middleware(BearerAuthMiddleware, auth_token=effective_token)
 
-    # -- routes -------------------------------------------------------------
-
-    @application.post("/tasks", response_model=TaskResponse, status_code=201)
-    async def create_task(body: TaskCreate) -> TaskResponse:
-        """Create a new task."""
-        task = await store.create(body)
-        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
-        return _task_to_response(task)
-
-    @application.get("/tasks/next/{role}", response_model=TaskResponse)
-    async def next_task(role: str) -> TaskResponse:
-        """Claim the next available task for *role*."""
-        task = await store.claim_next(role)
-        if task is None:
-            raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
-        return _task_to_response(task)
-
-    @application.post("/tasks/claim-batch", response_model=BatchClaimResponse)
-    async def claim_batch(body: BatchClaimRequest) -> BatchClaimResponse:
-        """Atomically claim multiple tasks by ID for an agent."""
-        claimed, failed = await store.claim_batch(body.task_ids, body.agent_id)
-        return BatchClaimResponse(claimed=claimed, failed=failed)
-
-    @application.post("/tasks/{task_id}/claim", response_model=TaskResponse)
-    async def claim_task(task_id: str, expected_version: int | None = None) -> TaskResponse:
-        """Claim a specific task by ID.
-
-        Pass ``expected_version`` as a query param for optimistic locking
-        (CAS). If the task's version doesn't match, returns 409 Conflict.
-        """
-        try:
-            task = await store.claim_by_id(task_id, expected_version=expected_version)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
-        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "claimed"}))
-        return _task_to_response(task)
-
-    @application.post("/tasks/{task_id}/complete", response_model=TaskResponse)
-    async def complete_task(task_id: str, body: TaskCompleteRequest) -> TaskResponse:
-        """Mark a task as done with a result summary."""
-        try:
-            task = await store.complete(task_id, body.result_summary)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
-        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))
-        return _task_to_response(task)
-
-    @application.post("/tasks/{task_id}/fail", response_model=TaskResponse)
-    async def fail_task(task_id: str, body: TaskFailRequest) -> TaskResponse:
-        """Mark a task as failed."""
-        try:
-            task = await store.fail(task_id, body.reason)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
-        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "failed"}))
-        return _task_to_response(task)
-
-    @application.post("/tasks/{task_id}/cancel", response_model=TaskResponse)
-    async def cancel_task(task_id: str, body: TaskCancelRequest) -> TaskResponse:
-        """Cancel a task that has not yet finished."""
-        try:
-            task = await store.cancel(task_id, body.reason)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
-        return _task_to_response(task)
-
-    @application.post("/tasks/{task_id}/block", response_model=TaskResponse)
-    async def block_task(task_id: str, body: TaskBlockRequest) -> TaskResponse:  # pyright: ignore[reportUnusedFunction]
-        """Mark a task as blocked — requires human intervention to unblock."""
-        try:
-            task = await store.block(task_id, body.reason)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
-        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "blocked"}))
-        return _task_to_response(task)
-
-    @application.post("/tasks/{task_id}/progress", response_model=TaskResponse)
-    async def progress_task(task_id: str, body: TaskProgressRequest) -> TaskResponse:
-        """Append an intermediate progress update to a task."""
-        try:
-            task = await store.add_progress(task_id, body.message, body.percent)
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
-        sse_bus.publish(
-            "task_progress",
-            json.dumps({"id": task.id, "message": body.message, "percent": body.percent}),
-        )
-        return _task_to_response(task)
-
-    @application.get("/tasks", response_model=list[TaskResponse])
-    async def list_tasks(
-        status: str | None = None,
-        cell_id: str | None = None,
-    ) -> list[TaskResponse]:
-        """List all tasks, optionally filtered by status and/or cell_id."""
-        return [_task_to_response(t) for t in store.list_tasks(status, cell_id)]
-
-    @application.get("/tasks/archive", response_model=list[ArchiveRecord])
-    async def get_archive(limit: int = 50) -> list[ArchiveRecord]:
-        """Return the last N archived (done/failed) task records."""
-        return store.read_archive(limit=limit)
-
-    @application.get("/tasks/{task_id}", response_model=TaskResponse)
-    async def get_task(task_id: str) -> TaskResponse:
-        """Get a single task by ID."""
-        task = store.get_task(task_id)
-        if task is None:
-            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
-        return _task_to_response(task)
-
-    @application.get("/status", response_model=StatusResponse)
-    async def status_dashboard() -> StatusResponse:
-        """Dashboard summary of task counts."""
-        return store.status_summary()
-
-    @application.post("/agents/{agent_id}/heartbeat", response_model=HeartbeatResponse)
-    async def agent_heartbeat(agent_id: str, body: HeartbeatRequest) -> HeartbeatResponse:
-        """Register an agent heartbeat."""
-        ts = store.heartbeat(agent_id, body.role, body.status)
-        sse_bus.publish("agent_update", json.dumps({"agent_id": agent_id, "status": body.status}))
-        return HeartbeatResponse(agent_id=agent_id, acknowledged=True, server_ts=ts)
-
-    @application.get("/health", response_model=HealthResponse)
-    async def health_check() -> HealthResponse:
-        """Basic liveness check."""
-        return HealthResponse(
-            status="ok",
-            uptime_s=round(time.time() - store.start_ts, 2),
-            task_count=len(store.list_tasks()),
-            agent_count=store.agent_count,
-        )
-
-    @application.get("/metrics")
-    async def metrics_endpoint() -> PlainTextResponse:
-        """Prometheus metrics scrape endpoint.
-
-        Updates all gauges from the current task store state, then
-        returns the full metric exposition in Prometheus text format.
-        """
-        status_dict = store.status_summary().model_dump()
-        update_metrics_from_status(status_dict)
-        payload = generate_latest(registry)
-        return PlainTextResponse(
-            content=payload.decode("utf-8"),
-            media_type="text/plain; version=0.0.4; charset=utf-8",
-        )
-
-    # -- cost budget routes ----------------------------------------------------
-
-    @application.get("/costs/{run_id}")
-    async def get_cost_budget(run_id: str) -> JSONResponse:
-        """Return budget status for a specific run.
-
-        Loads the persisted cost tracker from ``.sdd/runtime/costs/{run_id}.json``
-        and returns its ``BudgetStatus`` as JSON.
-        """
-        from bernstein.core.cost_tracker import CostTracker
-
-        sdd_dir = jsonl_path.parent.parent  # .sdd
-        tracker = CostTracker.load(sdd_dir, run_id)
-        if tracker is None:
-            raise HTTPException(status_code=404, detail=f"No cost data for run '{run_id}'")
-        return JSONResponse(content=tracker.status().to_dict())
-
-    # -- dashboard routes -------------------------------------------------------
-
-    @application.get("/dashboard", response_class=HTMLResponse)
-    async def dashboard_page() -> HTMLResponse:
-        """Serve the single-page web dashboard."""
-        from bernstein.dashboard import TEMPLATE_DIR
-
-        html_path = TEMPLATE_DIR / "index.html"
-        html = html_path.read_text(encoding="utf-8")
-        return HTMLResponse(content=html)
-
-    @application.get("/dashboard/data")
-    async def dashboard_data() -> JSONResponse:
-        """Return all dashboard data as JSON for HTMX partial updates.
-
-        The response embeds pre-rendered HTML fragments that HTMX swaps
-        directly into the page, alongside raw JSON for stats.
-        """
-        summary = store.status_summary()
-        tasks = store.list_tasks()
-        agents = store.agents
-
-        # Build task rows as HTML for HTMX swap
-        status_colors: dict[str, str] = {
-            "done": "bg-green-900/50 text-green-400",
-            "in_progress": "bg-yellow-900/50 text-yellow-400",
-            "failed": "bg-red-900/50 text-red-400",
-            "claimed": "bg-cyan-900/50 text-cyan-400",
-            "open": "bg-gray-800 text-white",
-            "blocked": "bg-purple-900/50 text-purple-400",
-            "cancelled": "bg-red-900/50 text-red-400",
-        }
-
-        def _task_row(t: Task) -> str:
-            badge_cls = status_colors.get(t.status.value, "bg-gray-800 text-white")
-            agent_display = t.assigned_agent or "-"
-            title_display = t.title[:60] + "..." if len(t.title) > 60 else t.title
-            return (
-                f'<tr data-task-id="{t.id}" data-id="{t.id}" data-title="{t.title}" '
-                f'data-role="{t.role}" data-status="{t.status.value}" '
-                f'data-priority="{t.priority}" data-agent="{agent_display}">'
-                f'<td class="px-4 py-2 font-mono text-xs text-muted">{t.id}</td>'
-                f'<td class="px-4 py-2 text-text">{title_display}</td>'
-                f'<td class="px-4 py-2"><span class="text-accent">{t.role}</span></td>'
-                f'<td class="px-4 py-2"><span class="px-2 py-0.5 rounded text-xs font-medium {badge_cls}">'
-                f"{t.status.value}</span></td>"
-                f'<td class="px-4 py-2 font-mono">{t.priority}</td>'
-                f'<td class="px-4 py-2 font-mono text-xs text-muted">{agent_display}</td>'
-                f"</tr>"
-            )
-
-        task_rows_html = (
-            "\n".join(_task_row(t) for t in tasks)
-            if tasks
-            else ('<tr><td colspan="6" class="px-4 py-8 text-center text-muted">No tasks yet</td></tr>')
-        )
-
-        # Build agent cards HTML
-        alive_agents = [a for a in agents.values() if a.status != "dead"]
-        if alive_agents:
-            agent_cards: list[str] = []
-            for a in alive_agents:
-                runtime_s = int(time.time() - a.spawn_ts)
-                runtime_m = runtime_s // 60
-                model_name = a.model_config.model if hasattr(a.model_config, "model") else "sonnet"
-                agent_cards.append(
-                    f'<div class="bg-bg border border-border rounded-lg p-3">'
-                    f'<div class="flex items-center gap-2 mb-1">'
-                    f'<span class="inline-block w-2 h-2 rounded-full bg-green-500 pulse-dot"></span>'
-                    f'<span class="font-mono text-xs text-text">{a.id[:12]}</span>'
-                    f"</div>"
-                    f'<div class="text-xs text-muted space-y-0.5">'
-                    f'<div>Role: <span class="text-accent">{a.role}</span></div>'
-                    f'<div>Model: <span class="text-text">{model_name}</span></div>'
-                    f'<div>Status: <span class="text-text">{a.status}</span></div>'
-                    f'<div>Runtime: <span class="text-text">{runtime_m}m</span></div>'
-                    f"</div></div>"
-                )
-            agents_html = "\n".join(agent_cards)
-        else:
-            agents_html = '<p class="text-sm text-muted">No active agents</p>'
-
-        # Build cost breakdown HTML
-        cost_by_role = store.cost_by_role()
-        total_cost = sum(cost_by_role.values())
-        if cost_by_role:
-            cost_rows: list[str] = []
-            cost_rows.append(
-                f'<div class="flex justify-between text-sm font-semibold border-b border-border pb-2 mb-2">'
-                f'<span class="text-text">Total</span>'
-                f'<span class="text-green-400">${total_cost:.2f}</span>'
-                f"</div>"
-            )
-            for role, cost in sorted(cost_by_role.items()):
-                cost_rows.append(
-                    f'<div class="flex justify-between text-xs">'
-                    f'<span class="text-muted">{role}</span>'
-                    f'<span class="text-text font-mono">${cost:.2f}</span>'
-                    f"</div>"
-                )
-            cost_html = "\n".join(cost_rows)
-        else:
-            cost_html = '<p class="text-sm text-muted">No cost data</p>'
-
-        # Build the full HTML response with all fragments
-        # HTMX uses hx-select to pick the right fragments
-        agent_count = len(alive_agents)
-        html = (
-            f'<div id="stats-inner" class="bg-surface border-b border-border px-6 py-3">'
-            f'<div class="flex items-center gap-6 flex-wrap">'
-            f'<div class="flex items-center gap-2">'
-            f'<span class="text-xs text-muted uppercase tracking-wider">Total</span>'
-            f'<span class="text-lg font-semibold font-mono text-text" id="stat-total">{summary.total}</span>'
-            f"</div>"
-            f'<div class="flex items-center gap-2">'
-            f'<span class="inline-block w-2 h-2 rounded-full bg-green-500"></span>'
-            f'<span class="text-xs text-muted">Done</span>'
-            f'<span class="text-lg font-semibold font-mono text-green-400" id="stat-done">{summary.done}</span>'
-            f"</div>"
-            f'<div class="flex items-center gap-2">'
-            f'<span class="inline-block w-2 h-2 rounded-full bg-yellow-500"></span>'
-            f'<span class="text-xs text-muted">In Progress</span>'
-            f'<span class="text-lg font-semibold font-mono text-yellow-400" id="stat-claimed">{summary.claimed}</span>'
-            f"</div>"
-            f'<div class="flex items-center gap-2">'
-            f'<span class="inline-block w-2 h-2 rounded-full bg-red-500"></span>'
-            f'<span class="text-xs text-muted">Failed</span>'
-            f'<span class="text-lg font-semibold font-mono text-red-400" id="stat-failed">{summary.failed}</span>'
-            f"</div>"
-            f'<div class="flex items-center gap-2">'
-            f'<span class="inline-block w-2 h-2 rounded-full bg-white"></span>'
-            f'<span class="text-xs text-muted">Open</span>'
-            f'<span class="text-lg font-semibold font-mono text-white" id="stat-open">{summary.open}</span>'
-            f"</div>"
-            f'<div class="border-l border-border h-6 mx-2"></div>'
-            f'<div class="flex items-center gap-2">'
-            f'<span class="text-xs text-muted">Agents</span>'
-            f'<span class="text-lg font-semibold font-mono text-accent"'
-            f' id="stat-agents">{agent_count}</span>'
-            f"</div>"
-            f'<div class="border-l border-border h-6 mx-2"></div>'
-            f'<div class="flex items-center gap-2">'
-            f'<span class="text-xs text-muted">Cost</span>'
-            f'<span class="text-lg font-semibold font-mono text-green-400"'
-            f' id="stat-cost">${total_cost:.2f}</span>'
-            f"</div>"
-            f"</div></div>"
-            f'<tbody id="task-table-content" class="divide-y divide-border">{task_rows_html}</tbody>'
-            f'<div id="agents-content" class="space-y-3">{agents_html}</div>'
-            f'<div id="cost-content" class="space-y-2">{cost_html}</div>'
-        )
-
-        return JSONResponse(
-            content={
-                "stats": {
-                    "total": summary.total,
-                    "open": summary.open,
-                    "claimed": summary.claimed,
-                    "done": summary.done,
-                    "failed": summary.failed,
-                    "agents": agent_count,
-                    "cost_usd": round(total_cost, 4),
-                },
-                "tasks": [
-                    {
-                        "id": t.id,
-                        "title": t.title,
-                        "role": t.role,
-                        "status": t.status.value,
-                        "priority": t.priority,
-                        "assigned_agent": t.assigned_agent,
-                    }
-                    for t in tasks
-                ],
-                "agents": [
-                    {
-                        "id": a.id,
-                        "role": a.role,
-                        "status": a.status,
-                        "spawn_ts": a.spawn_ts,
-                    }
-                    for a in alive_agents
-                ],
-                "cost_by_role": cost_by_role,
-                "_html": html,
-            },
-            headers={"Content-Type": "application/json"},
-        )
-
-    @application.get("/events")
-    async def sse_events() -> StreamingResponse:
-        """Server-Sent Events stream for real-time dashboard updates."""
-        queue = sse_bus.subscribe()
-
-        async def event_generator() -> AsyncGenerator[str, None]:
-            try:
-                # Send initial connection event
-                yield 'event: heartbeat\ndata: {"connected": true}\n\n'
-                while True:
-                    message = await queue.get()
-                    yield message
-            except asyncio.CancelledError:
-                return
-            finally:
-                sse_bus.unsubscribe(queue)
-
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    # -- bulletin board routes -------------------------------------------------
-
+    # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()
-
-    @application.post("/bulletin", response_model=BulletinMessageResponse, status_code=201)
-    async def post_bulletin(body: BulletinPostRequest) -> BulletinMessageResponse:
-        """Append a message to the bulletin board."""
-        msg = BulletinMessage(
-            agent_id=body.agent_id,
-            type=body.type,
-            content=body.content,
-            cell_id=body.cell_id,
-        )
-        stored = bulletin.post(msg)
-        return BulletinMessageResponse(
-            agent_id=stored.agent_id,
-            type=stored.type,
-            content=stored.content,
-            timestamp=stored.timestamp,
-            cell_id=stored.cell_id,
-        )
-
-    @application.get("/bulletin", response_model=list[BulletinMessageResponse])
-    async def get_bulletin(since: float = 0.0) -> list[BulletinMessageResponse]:
-        """Get bulletin messages since a given timestamp."""
-        messages = bulletin.read_since(since)
-        return [
-            BulletinMessageResponse(
-                agent_id=m.agent_id,
-                type=m.type,
-                content=m.content,
-                timestamp=m.timestamp,
-                cell_id=m.cell_id,
-            )
-            for m in messages
-        ]
-
-    # -- A2A protocol routes ---------------------------------------------------
-
     a2a_handler = A2AHandler(server_url="http://localhost:8052")
 
-    @application.get("/.well-known/agent.json", response_model=A2AAgentCardResponse)
-    async def agent_card() -> A2AAgentCardResponse:
-        """Publish the Bernstein orchestrator Agent Card (A2A spec)."""
-        card = a2a_handler.orchestrator_card()
-        d = card.to_dict()
-        return A2AAgentCardResponse(**d)
-
-    @application.post("/a2a/tasks/send", response_model=A2ATaskResponse, status_code=201)
-    async def a2a_send_task(body: A2ATaskSendRequest) -> A2ATaskResponse:
-        """Receive a task from an external A2A agent.
-
-        Creates both an A2A task record and a corresponding Bernstein task,
-        linking them together for lifecycle synchronisation.
-        """
-        a2a_task = a2a_handler.create_task(
-            sender=body.sender,
-            message=body.message,
-            role=body.role,
-        )
-        # Create the corresponding Bernstein task.
-        bernstein_task = await store.create(
-            TaskCreate(
-                title=f"[A2A] {body.message[:80]}",
-                description=body.message,
-                role=body.role,
-            )
-        )
-        a2a_handler.link_bernstein_task(a2a_task.id, bernstein_task.id)
-        return _a2a_task_to_response(a2a_task)
-
-    @application.get("/a2a/tasks/{a2a_task_id}", response_model=A2ATaskResponse)
-    async def a2a_get_task(a2a_task_id: str) -> A2ATaskResponse:
-        """Get an A2A task by ID, syncing status from the Bernstein task."""
-        a2a_task = a2a_handler.get_task(a2a_task_id)
-        if a2a_task is None:
-            raise HTTPException(status_code=404, detail=f"A2A task '{a2a_task_id}' not found")
-        # Sync status from the underlying Bernstein task.
-        if a2a_task.bernstein_task_id is not None:
-            bt = store.get_task(a2a_task.bernstein_task_id)
-            if bt is not None:
-                a2a_handler.sync_status(a2a_task.id, bt.status.value)
-        return _a2a_task_to_response(a2a_task)
-
-    @application.post(
-        "/a2a/tasks/{a2a_task_id}/artifacts",
-        response_model=A2AArtifactResponse,
-        status_code=201,
-    )
-    async def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest) -> A2AArtifactResponse:
-        """Attach an artifact to an A2A task."""
-        try:
-            artifact = a2a_handler.add_artifact(
-                a2a_task_id=a2a_task_id,
-                name=body.name,
-                data=body.data,
-                content_type=body.content_type,
-            )
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"A2A task '{a2a_task_id}' not found") from None
-        return A2AArtifactResponse(
-            name=artifact.name,
-            content_type=artifact.content_type,
-            data=artifact.data,
-            created_at=artifact.created_at,
-        )
-
-    # -- Cluster routes --------------------------------------------------------
-
-    @application.post("/cluster/nodes", response_model=NodeResponse, status_code=201)
-    async def register_node(body: NodeRegisterRequest) -> NodeResponse:
-        """Register a new node in the cluster."""
-        capacity = NodeCapacity(
-            max_agents=body.capacity.max_agents,
-            available_slots=body.capacity.available_slots,
-            active_agents=body.capacity.active_agents,
-            gpu_available=body.capacity.gpu_available,
-            supported_models=body.capacity.supported_models,
-        )
-        node = NodeInfo(
-            name=body.name,
-            url=body.url,
-            capacity=capacity,
-            labels=body.labels,
-            cell_ids=body.cell_ids,
-        )
-        registered = node_registry.register(node)
-        return _node_to_response(registered)
-
-    @application.post("/cluster/nodes/{node_id}/heartbeat", response_model=NodeResponse)
-    async def node_heartbeat(node_id: str, body: NodeHeartbeatRequest) -> NodeResponse:
-        """Record a heartbeat from a cluster node."""
-        capacity: NodeCapacity | None = None
-        if body.capacity is not None:
-            capacity = NodeCapacity(
-                max_agents=body.capacity.max_agents,
-                available_slots=body.capacity.available_slots,
-                active_agents=body.capacity.active_agents,
-                gpu_available=body.capacity.gpu_available,
-                supported_models=body.capacity.supported_models,
-            )
-        node = node_registry.heartbeat(node_id, capacity)
-        if node is None:
-            raise HTTPException(status_code=404, detail=f"Node '{node_id}' not registered")
-        return _node_to_response(node)
-
-    @application.delete("/cluster/nodes/{node_id}", status_code=204)
-    async def unregister_node(node_id: str) -> None:
-        """Remove a node from the cluster."""
-        if not node_registry.unregister(node_id):
-            raise HTTPException(status_code=404, detail=f"Node '{node_id}' not found")
-
-    @application.get("/cluster/nodes", response_model=list[NodeResponse])
-    async def list_nodes(status: str | None = None) -> list[NodeResponse]:
-        """List all cluster nodes, optionally filtered by status."""
-        node_status: NodeStatus | None = None
-        if status is not None:
-            try:
-                node_status = NodeStatus(status)
-            except ValueError:
-                raise HTTPException(status_code=400, detail=f"Invalid node status: {status}") from None
-        return [_node_to_response(n) for n in node_registry.list_nodes(node_status)]
-
-    @application.get("/cluster/status", response_model=ClusterStatusResponse)
-    async def cluster_status() -> ClusterStatusResponse:
-        """Get cluster status summary."""
-        summary = node_registry.cluster_summary()
-        return ClusterStatusResponse(
-            topology=summary["topology"],
-            total_nodes=summary["total_nodes"],
-            online_nodes=summary["online_nodes"],
-            offline_nodes=summary["offline_nodes"],
-            total_capacity=summary["total_capacity"],
-            available_slots=summary["available_slots"],
-            active_agents=summary["active_agents"],
-            nodes=[NodeResponse(**n) for n in summary["nodes"]],
-        )
-
-    # -- GitHub webhook route ---------------------------------------------------
-
-    _gh_webhook_secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-
-    @application.post("/webhooks/github", status_code=200)
-    async def github_webhook(request: Request) -> JSONResponse:
-        """Receive a GitHub App webhook, verify signature, and create tasks.
-
-        Reads ``GITHUB_WEBHOOK_SECRET`` from environment for HMAC verification.
-        Returns 200 on success, 401 on bad/missing signature, 400 on parse error.
-        """
-        from bernstein.github_app.mapper import (
-            issue_to_tasks,
-            label_to_action,
-            pr_review_to_task,
-            push_to_tasks,
-        )
-        from bernstein.github_app.webhooks import parse_webhook, verify_signature
-
-        body = await request.body()
-
-        # Verify HMAC signature if a webhook secret is configured
-        if _gh_webhook_secret:
-            signature = request.headers.get("x-hub-signature-256", "")
-            if not signature or not verify_signature(body, signature, _gh_webhook_secret):
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "Invalid webhook signature"},
-                )
-
-        # Parse the webhook event
-        headers = dict(request.headers)
-        try:
-            event = parse_webhook(headers, body)
-        except ValueError as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"detail": f"Bad webhook payload: {exc}"},
-            )
-
-        # Map event to tasks based on event type
-        task_payloads: list[dict[str, Any]] = []
-
-        if event.event_type == "issues" and event.action == "opened":
-            task_payloads.extend(issue_to_tasks(event))
-        elif event.event_type == "issues" and event.action == "labeled":
-            action_task = label_to_action(event)
-            if action_task is not None:
-                task_payloads.append(action_task)
-        elif event.event_type in ("pull_request_review_comment", "issue_comment"):
-            review_task = pr_review_to_task(event)
-            if review_task is not None:
-                task_payloads.append(review_task)
-        elif event.event_type == "push":
-            task_payloads.extend(push_to_tasks(event))
-
-        # Create tasks in the store
-        created_ids: list[str] = []
-        for payload in task_payloads:
-            task = await store.create(TaskCreate(**payload))
-            created_ids.append(task.id)
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "event_type": event.event_type,
-                "action": event.action,
-                "tasks_created": len(created_ids),
-                "task_ids": created_ids,
-            },
-        )
-
-    # -- agent session streaming routes ----------------------------------------
-
-    # Runtime directory containing per-session .log and .kill files.
-    _runtime_dir = jsonl_path.parent  # .sdd/runtime/
-
-    @application.get("/agents/{session_id}/logs")
-    async def agent_logs(session_id: str, tail_bytes: int = 0) -> JSONResponse:
-        """Return log file content for a session.
-
-        Args:
-            session_id: Agent session ID.
-            tail_bytes: If > 0, return only the last N bytes of the log.
-        """
-        log_path = _runtime_dir / f"{session_id}.log"
-        if not log_path.exists():
-            raise HTTPException(status_code=404, detail=f"No log file for session '{session_id}'")
-        size = log_path.stat().st_size
-        offset = max(0, size - tail_bytes) if tail_bytes > 0 else 0
-        content = _read_log_tail(log_path, offset)
-        return JSONResponse(
-            content={
-                "session_id": session_id,
-                "content": content,
-                "size": size,
-            }
-        )
-
-    @application.post("/agents/{session_id}/kill")
-    async def agent_kill(session_id: str) -> JSONResponse:
-        """Request that an agent session be killed.
-
-        Writes a ``.kill`` signal file that the orchestrator picks up on
-        its next tick.
-        """
-        _runtime_dir.mkdir(parents=True, exist_ok=True)
-        kill_path = _runtime_dir / f"{session_id}.kill"
-        kill_path.write_text(str(time.time()))
-        sse_bus.publish(
-            "session_kill",
-            json.dumps({"session_id": session_id}),
-        )
-        return JSONResponse(
-            content={
-                "session_id": session_id,
-                "kill_requested": True,
-            }
-        )
-
-    @application.get("/agents/{session_id}/stream")
-    async def agent_stream(session_id: str) -> StreamingResponse:
-        """SSE stream of live log output for a session."""
-        log_path = _runtime_dir / f"{session_id}.log"
-
-        async def _generate() -> AsyncGenerator[str, None]:
-            # Initial connection event
-            yield f"data: {json.dumps({'connected': True, 'session_id': session_id})}\n\n"
-
-            offset = 0
-            idle_ticks = 0
-            max_idle = 60  # stop after ~30s of no file
-
-            while True:
-                if not log_path.exists():
-                    idle_ticks += 1
-                    if idle_ticks >= max_idle:
-                        yield f"data: {json.dumps({'done': True, 'reason': 'no_log_file'})}\n\n"
-                        return
-                    await asyncio.sleep(0.5)
-                    continue
-
-                size = log_path.stat().st_size
-                if size > offset:
-                    chunk = _read_log_tail(log_path, offset)
-                    offset = size
-                    idle_ticks = 0
-                    for line in chunk.splitlines():
-                        if line.strip():
-                            yield f"data: {json.dumps({'line': line})}\n\n"
-                else:
-                    idle_ticks += 1
-                    if idle_ticks >= max_idle:
-                        yield f"data: {json.dumps({'done': True, 'reason': 'idle'})}\n\n"
-                        return
-
-                await asyncio.sleep(0.5)
-
-        return StreamingResponse(
-            _generate(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    # Attach store, bulletin, and cluster registry for testing access.
-    # FastAPI's `state` is a plain object with no predefined attributes;
-    # type: ignore[attr-defined] is the standard pattern here.
     application.state.store = store  # type: ignore[attr-defined]
     application.state.bulletin = bulletin  # type: ignore[attr-defined]
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
     application.state.node_registry = node_registry  # type: ignore[attr-defined]
     application.state.sse_bus = sse_bus  # type: ignore[attr-defined]
+    application.state.runtime_dir = jsonl_path.parent  # type: ignore[attr-defined]  # .sdd/runtime/
+    application.state.sdd_dir = jsonl_path.parent.parent  # type: ignore[attr-defined]  # .sdd/
 
-    # Reference all route handlers so pyright does not flag them as unused.
-    # They are registered with FastAPI via decorators above.
-    _routes = (
-        create_task,
-        next_task,
-        claim_batch,
-        claim_task,
-        complete_task,
-        fail_task,
-        cancel_task,
-        progress_task,
-        list_tasks,
-        get_archive,
-        get_task,
-        status_dashboard,
-        agent_heartbeat,
-        health_check,
-        metrics_endpoint,
-        get_cost_budget,
-        dashboard_page,
-        dashboard_data,
-        sse_events,
-        post_bulletin,
-        get_bulletin,
-        agent_card,
-        a2a_send_task,
-        a2a_get_task,
-        a2a_add_artifact,
-        register_node,
-        node_heartbeat,
-        unregister_node,
-        list_nodes,
-        cluster_status,
-        github_webhook,
-        agent_logs,
-        agent_kill,
-        agent_stream,
-    )
-    del _routes
+    # Mount routers
+    application.include_router(tasks_router)
+    application.include_router(status_router)
+    application.include_router(webhooks_router)
+    application.include_router(costs_router)
 
     return application
 
