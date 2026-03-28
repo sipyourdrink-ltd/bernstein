@@ -81,6 +81,8 @@ def _task_from_dict(raw: dict[str, Any]) -> Task:
         owned_files=raw.get("owned_files", []),
         assigned_agent=raw.get("assigned_agent"),
         result_summary=raw.get("result_summary"),
+        model=raw.get("model"),
+        effort=raw.get("effort"),
     )
 
 
@@ -184,10 +186,13 @@ class Orchestrator:
         self._agents: dict[str, AgentSession] = {}
         self._file_ownership: dict[str, str] = {}  # filepath → agent_id
         self._processed_done_tasks: set[str] = set()  # avoid re-processing done tasks
+        self._retried_task_ids: set[str] = set()  # tasks that already have a retry queued
         self._running = False
         self._tick_count = 0
         # Track spawn failures per batch for backoff: task_ids → (fail_count, last_fail_ts)
         self._spawn_failures: dict[frozenset[str], tuple[int, float]] = {}
+        # Track last backlog replenishment timestamp
+        self._last_replenish_ts: float = 0.0
 
         # Provider-aware routing and health tracking
         self._router = router
@@ -413,6 +418,16 @@ class Orchestrator:
                 except Exception as exc:
                     logger.warning("Evolution record_task_completion failed: %s", exc)
 
+        # 4b. Fetch failed tasks and maybe retry with escalation
+        try:
+            failed_tasks = _fetch_tasks(self._client, base, "failed")
+        except httpx.HTTPError:
+            failed_tasks = []
+
+        for task in failed_tasks:
+            if self._maybe_retry_task(task):
+                result.retried.append(task.id)
+
         # 5. Reap stale agents
         self._reap_stale(result)
 
@@ -423,7 +438,10 @@ class Orchestrator:
         # 7. Check evolve mode: if all tasks done and no agents alive, trigger new cycle
         self._check_evolve(result)
 
-        # 8. Log summary
+        # 8. Replenish backlog in evolve mode when tasks run out
+        self._replenish_backlog(result)
+
+        # 9. Log summary
         self._log_summary(result)
 
         return result
@@ -614,6 +632,91 @@ class Orchestrator:
             "consecutive_empty": evolve_cfg.get("_consecutive_empty", 0),
             "duration_s": round(now - cycle_start, 2),
         })
+
+    _REPLENISH_COOLDOWN_S: float = 60.0
+    _REPLENISH_MAX_TASKS: int = 5
+
+    def _replenish_backlog(self, result: TickResult) -> None:
+        """Create fix tasks from ruff lint violations when evolve mode is idle.
+
+        Only runs when:
+        - evolve_mode is enabled in config
+        - open_tasks == 0
+        - At least 60 seconds since last replenishment
+
+        Caps at 5 tasks per cycle to avoid flooding the task server.
+
+        Args:
+            result: Current tick result (used to read open_tasks count).
+        """
+        import subprocess
+
+        if not self._config.evolve_mode:
+            return
+        if result.open_tasks > 0:
+            return
+
+        now = time.time()
+        if now - self._last_replenish_ts < self._REPLENISH_COOLDOWN_S:
+            return
+
+        self._last_replenish_ts = now
+
+        # Run ruff and collect violations
+        try:
+            proc = subprocess.run(
+                ["uv", "run", "ruff", "check", ".", "--output-format", "json"],
+                capture_output=True,
+                text=True,
+                cwd=self._workdir,
+                timeout=60,
+            )
+            violations: list[dict[str, Any]] = json.loads(proc.stdout) if proc.stdout.strip() else []
+        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
+            logger.warning("Replenish: ruff check failed: %s", exc)
+            return
+
+        if not violations:
+            logger.debug("Replenish: no ruff violations found, backlog is clean")
+            return
+
+        # Group by rule code; pick one representative violation per rule
+        by_rule: dict[str, dict[str, Any]] = {}
+        for v in violations:
+            code = (v.get("code") or "unknown").strip()
+            if code not in by_rule:
+                by_rule[code] = v
+
+        base = self._config.server_url
+        created = 0
+        for code, v in by_rule.items():
+            if created >= self._REPLENISH_MAX_TASKS:
+                break
+            filename = v.get("filename", "")
+            message = v.get("message", "")
+            row = v.get("location", {}).get("row", "?")
+            task_payload = {
+                "title": f"Fix ruff violation {code}",
+                "description": (
+                    f"Fix all occurrences of ruff rule {code}.\n"
+                    f"Example: {filename}:{row} — {message}\n"
+                    f"Run `uv run ruff check . --select {code}` to find all instances."
+                ),
+                "role": "backend",
+                "priority": 3,
+                "model": "sonnet",
+                "effort": "low",
+            }
+            try:
+                resp = self._client.post(f"{base}/tasks", json=task_payload)
+                resp.raise_for_status()
+                created += 1
+                logger.info("Replenish: created task for ruff rule %s", code)
+            except httpx.HTTPError as exc:
+                logger.warning("Replenish: failed to create task for %s: %s", code, exc)
+
+        if created:
+            logger.info("Replenish: created %d lint-fix task(s)", created)
 
     def _evolve_run_tests(self) -> dict[str, Any]:
         """Run test suite and return parsed results.
@@ -1177,6 +1280,86 @@ class Orchestrator:
         for fp in to_remove:
             del self._file_ownership[fp]
 
+    def _maybe_retry_task(self, task: Task) -> bool:
+        """Queue a retry for a failed task with model/effort escalation.
+
+        First retry bumps effort one level (low→medium→high→max), keeps model.
+        Second retry escalates model (haiku→sonnet→opus) and resets effort to high.
+
+        Args:
+            task: The failed task to potentially retry.
+
+        Returns:
+            True if a retry task was created, False otherwise.
+        """
+        if task.id in self._retried_task_ids:
+            return False
+
+        # Determine current retry count from title prefix [RETRY N]
+        retry_count = 0
+        m = re.match(r"^\[RETRY (\d+)\] ", task.title)
+        if m:
+            retry_count = int(m.group(1))
+
+        if retry_count >= self._config.max_task_retries:
+            return False
+
+        next_retry = retry_count + 1
+
+        current_model = task.model or "sonnet"
+        current_effort = task.effort or "high"
+
+        effort_ladder = ["low", "medium", "high", "max"]
+        model_ladder = ["haiku", "sonnet", "opus"]
+
+        if next_retry == 1:
+            # First retry: bump effort one level, keep model
+            idx = effort_ladder.index(current_effort) if current_effort in effort_ladder else 2
+            new_effort = effort_ladder[min(idx + 1, len(effort_ladder) - 1)]
+            new_model = current_model
+        else:
+            # Second+ retry: escalate model, reset effort to high
+            model_lower = current_model.lower()
+            model_idx = 1  # default to sonnet position
+            for i, name in enumerate(model_ladder):
+                if name in model_lower:
+                    model_idx = i
+                    break
+            new_model = model_ladder[min(model_idx + 1, len(model_ladder) - 1)]
+            new_effort = "high"
+
+        base_title = re.sub(r"^\[RETRY \d+\] ", "", task.title)
+        new_title = f"[RETRY {next_retry}] {base_title}"
+        new_description = f"[RETRY {next_retry}] {task.description}"
+
+        payload: dict[str, Any] = {
+            "title": new_title,
+            "description": new_description,
+            "role": task.role,
+            "priority": task.priority,
+            "scope": task.scope.value,
+            "complexity": task.complexity.value,
+            "estimated_minutes": task.estimated_minutes,
+            "model": new_model,
+            "effort": new_effort,
+        }
+
+        try:
+            resp = self._client.post(
+                f"{self._config.server_url}/tasks", json=payload
+            )
+            resp.raise_for_status()
+            new_task_id = resp.json().get("id", "?")
+            self._retried_task_ids.add(task.id)
+            logger.info(
+                "Retry %d queued for failed task %s → %s (model=%s effort=%s)",
+                next_retry, task.id, new_task_id, new_model, new_effort,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("Failed to queue retry for task %s: %s", task.id, exc)
+            return False
+
     def _find_session_for_task(self, task_id: str) -> AgentSession | None:
         """Return the agent session that owns *task_id*, or None.
 
@@ -1451,6 +1634,7 @@ class TickResult:
         self.reaped: list[str] = []
         self.verified: list[str] = []
         self.verification_failures: list[tuple[str, list[str]]] = []
+        self.retried: list[str] = []
         self.errors: list[str] = []
 
 if __name__ == "__main__":

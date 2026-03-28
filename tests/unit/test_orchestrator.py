@@ -926,12 +926,14 @@ class TestAgentCompletionProtocol:
                 return httpx.Response(200, json=[])
             if key == "GET /tasks?status=done":
                 return httpx.Response(200, json=[])
+            if key == "GET /tasks?status=failed":
+                return httpx.Response(200, json=[])
             if key == "GET /tasks/T-done":
                 return httpx.Response(200, json=task_dict)
             if "complete" in key:
                 complete_called = True
                 return httpx.Response(200, json={})
-            if "fail" in key:
+            if key.endswith("/fail"):
                 fail_called = True
                 return httpx.Response(200, json={})
             return httpx.Response(404)
@@ -2333,3 +2335,377 @@ class TestRetryOrFailTask:
         assert body["scope"] == "large"
         assert body["complexity"] == "high"
         assert body["title"] == task.title
+
+
+# --- _maybe_retry_task ---
+
+
+class TestMaybeRetryTask:
+    """Unit tests for Orchestrator._maybe_retry_task."""
+
+    def _build(
+        self,
+        tmp_path: Path,
+        *,
+        max_retries: int = 2,
+    ) -> tuple[Orchestrator, list[dict]]:
+        """Return (orchestrator, captured_post_bodies) with POST /tasks mocked."""
+        posted: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "POST" and request.url.path == "/tasks":
+                posted.append(__import__("json").loads(request.content))
+                return httpx.Response(201, json={"id": "NEW-RETRY"})
+            return httpx.Response(404, json={"detail": "no mock"})
+
+        transport = httpx.MockTransport(handler)
+        cfg = OrchestratorConfig(server_url="http://testserver", max_task_retries=max_retries)
+        orch = _build_orchestrator(tmp_path, transport, config=cfg)
+        return orch, posted
+
+    def test_first_retry_bumps_effort_keeps_model(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-fail",
+            title="Do work",
+            description="Do the thing.",
+            role="backend",
+            status=TaskStatus.FAILED,
+            model="sonnet",
+            effort="low",
+        )
+        orch, posted = self._build(tmp_path)
+
+        result = orch._maybe_retry_task(task)
+
+        assert result is True
+        assert len(posted) == 1
+        body = posted[0]
+        assert body["model"] == "sonnet"   # model unchanged
+        assert body["effort"] == "medium"   # low → medium
+
+    def test_first_retry_title_prefixed(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-fail",
+            title="Do work",
+            description="Do the thing.",
+            role="backend",
+            status=TaskStatus.FAILED,
+        )
+        orch, posted = self._build(tmp_path)
+
+        orch._maybe_retry_task(task)
+
+        assert posted[0]["title"] == "[RETRY 1] Do work"
+        assert posted[0]["description"].startswith("[RETRY 1]")
+
+    def test_second_retry_escalates_model(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-fail",
+            title="[RETRY 1] Do work",
+            description="[RETRY 1] Do the thing.",
+            role="backend",
+            status=TaskStatus.FAILED,
+            model="sonnet",
+            effort="medium",
+        )
+        orch, posted = self._build(tmp_path)
+
+        result = orch._maybe_retry_task(task)
+
+        assert result is True
+        body = posted[0]
+        assert body["model"] == "opus"     # sonnet → opus
+        assert body["effort"] == "high"    # reset to high
+
+    def test_max_retries_respected(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-fail",
+            title="[RETRY 2] Do work",
+            description="[RETRY 2] Do the thing.",
+            role="backend",
+            status=TaskStatus.FAILED,
+        )
+        orch, posted = self._build(tmp_path, max_retries=2)
+
+        result = orch._maybe_retry_task(task)
+
+        assert result is False
+        assert posted == []
+
+    def test_already_retried_task_not_retried_again(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-fail",
+            title="Do work",
+            description="Do the thing.",
+            role="backend",
+            status=TaskStatus.FAILED,
+        )
+        orch, posted = self._build(tmp_path)
+
+        orch._maybe_retry_task(task)
+        result = orch._maybe_retry_task(task)  # second call same task
+
+        assert result is False
+        assert len(posted) == 1  # only one POST made
+
+    def test_retry_records_task_id_in_retried_set(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-fail",
+            title="Do work",
+            description="Do the thing.",
+            role="backend",
+            status=TaskStatus.FAILED,
+        )
+        orch, _ = self._build(tmp_path)
+
+        orch._maybe_retry_task(task)
+
+        assert "T-fail" in orch._retried_task_ids
+
+    def test_effort_capped_at_max(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-fail",
+            title="Do work",
+            description="Do the thing.",
+            role="backend",
+            status=TaskStatus.FAILED,
+            model="sonnet",
+            effort="max",
+        )
+        orch, posted = self._build(tmp_path)
+
+        orch._maybe_retry_task(task)
+
+        assert posted[0]["effort"] == "max"  # already at max, stays max
+
+    def test_haiku_escalates_to_sonnet_on_second_retry(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-fail",
+            title="[RETRY 1] Do work",
+            description="[RETRY 1] Do the thing.",
+            role="backend",
+            status=TaskStatus.FAILED,
+            model="haiku",
+            effort="medium",
+        )
+        orch, posted = self._build(tmp_path)
+
+        orch._maybe_retry_task(task)
+
+        assert posted[0]["model"] == "sonnet"
+
+    def test_zero_max_retries_never_retries(self, tmp_path: Path) -> None:
+        task = Task(
+            id="T-fail",
+            title="Do work",
+            description="Do the thing.",
+            role="backend",
+            status=TaskStatus.FAILED,
+        )
+        orch, posted = self._build(tmp_path, max_retries=0)
+
+        result = orch._maybe_retry_task(task)
+
+        assert result is False
+        assert posted == []
+
+
+# --- _replenish_backlog ---
+
+
+class TestReplenishBacklog:
+    """Tests for Orchestrator._replenish_backlog()."""
+
+    _RUFF_VIOLATIONS = [
+        {
+            "filename": "src/foo.py",
+            "code": "E501",
+            "message": "Line too long (92 > 88 characters)",
+            "location": {"row": 10, "column": 1},
+        },
+        {
+            "filename": "src/bar.py",
+            "code": "F401",
+            "message": "`os` imported but unused",
+            "location": {"row": 1, "column": 1},
+        },
+        {
+            "filename": "src/baz.py",
+            "code": "E501",  # duplicate rule — should deduplicate
+            "message": "Line too long (99 > 88 characters)",
+            "location": {"row": 20, "column": 1},
+        },
+    ]
+
+    def _build_orch_evolve(
+        self,
+        tmp_path: Path,
+        *,
+        evolve_mode: bool = True,
+        open_tasks_json: list[object] | None = None,
+        done_tasks_json: list[object] | None = None,
+        post_handler: object = None,
+    ) -> tuple[Orchestrator, list[dict[str, object]]]:
+        """Build an orchestrator in evolve mode with mocked HTTP and collected POST /tasks bodies."""
+        if open_tasks_json is None:
+            open_tasks_json = []
+        if done_tasks_json is None:
+            done_tasks_json = []
+
+        posted: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            url = request.url
+            key = f"{request.method} {url.path}"
+            if url.query:
+                key += f"?{url.query.decode()}"
+            if key == "GET /tasks?status=open":
+                return httpx.Response(200, json=open_tasks_json)
+            if key == "GET /tasks?status=done":
+                return httpx.Response(200, json=done_tasks_json)
+            if key == "GET /tasks?status=claimed":
+                return httpx.Response(200, json=[])
+            if key == "POST /tasks":
+                body = json.loads(request.content)
+                posted.append(body)
+                return httpx.Response(201, json={"id": f"T-ruff-{len(posted)}"})
+            return httpx.Response(404)
+
+        cfg = OrchestratorConfig(
+            max_agents=4,
+            poll_interval_s=1,
+            server_url="http://testserver",
+            evolve_mode=evolve_mode,
+            evolution_enabled=False,
+        )
+        adp = _mock_adapter()
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adp, templates_dir, tmp_path)
+        client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
+        orch = Orchestrator(cfg, spawner, tmp_path, client=client)
+        return orch, posted
+
+    def test_creates_tasks_from_ruff_output(self, tmp_path: Path) -> None:
+        """Replenishment creates one task per unique ruff rule code."""
+        from unittest.mock import patch
+
+        orch, posted = self._build_orch_evolve(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout=json.dumps(self._RUFF_VIOLATIONS),
+                returncode=1,
+            )
+            result = MagicMock()
+            result.open_tasks = 0
+            orch._replenish_backlog(result)
+
+        # E501 appears twice but should produce only one task; F401 = one task
+        assert len(posted) == 2
+        codes = {p["title"].split()[-1] for p in posted}
+        assert codes == {"E501", "F401"}
+        # Verify required fields
+        for body in posted:
+            assert body["role"] == "backend"
+            assert body["priority"] == 3
+            assert body["model"] == "sonnet"
+            assert body["effort"] == "low"
+
+    def test_does_not_run_when_evolve_mode_false(self, tmp_path: Path) -> None:
+        """Replenishment is a no-op when evolve_mode=False."""
+        from unittest.mock import patch
+
+        orch, posted = self._build_orch_evolve(tmp_path, evolve_mode=False)
+
+        with patch("subprocess.run") as mock_run:
+            result = MagicMock()
+            result.open_tasks = 0
+            orch._replenish_backlog(result)
+            mock_run.assert_not_called()
+
+        assert posted == []
+
+    def test_does_not_run_when_open_tasks_present(self, tmp_path: Path) -> None:
+        """Replenishment is a no-op when there are open tasks."""
+        from unittest.mock import patch
+
+        orch, posted = self._build_orch_evolve(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            result = MagicMock()
+            result.open_tasks = 3
+            orch._replenish_backlog(result)
+            mock_run.assert_not_called()
+
+        assert posted == []
+
+    def test_caps_at_five_tasks(self, tmp_path: Path) -> None:
+        """At most 5 tasks are created per replenishment cycle."""
+        from unittest.mock import patch
+
+        many_violations = [
+            {
+                "filename": f"src/f{i}.py",
+                "code": f"E{100 + i}",
+                "message": "some issue",
+                "location": {"row": i, "column": 1},
+            }
+            for i in range(10)
+        ]
+        orch, posted = self._build_orch_evolve(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout=json.dumps(many_violations),
+                returncode=1,
+            )
+            result = MagicMock()
+            result.open_tasks = 0
+            orch._replenish_backlog(result)
+
+        assert len(posted) == 5
+
+    def test_respects_60s_cooldown(self, tmp_path: Path) -> None:
+        """Second call within 60s is a no-op."""
+        from unittest.mock import patch
+
+        orch, posted = self._build_orch_evolve(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout=json.dumps(self._RUFF_VIOLATIONS),
+                returncode=1,
+            )
+            result = MagicMock()
+            result.open_tasks = 0
+            # First call — should run
+            orch._replenish_backlog(result)
+            first_count = len(posted)
+            # Second immediate call — should be skipped due to cooldown
+            orch._replenish_backlog(result)
+
+        assert first_count == 2
+        assert len(posted) == 2  # no new tasks from the second call
+
+    def test_cooldown_resets_after_60s(self, tmp_path: Path) -> None:
+        """After 60s the replenishment runs again."""
+        from unittest.mock import patch
+
+        orch, posted = self._build_orch_evolve(tmp_path)
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                stdout=json.dumps(self._RUFF_VIOLATIONS),
+                returncode=1,
+            )
+            result = MagicMock()
+            result.open_tasks = 0
+            # First call
+            orch._replenish_backlog(result)
+            # Fake that 61 seconds have passed
+            orch._last_replenish_ts -= 61
+            # Second call — should run again
+            orch._replenish_backlog(result)
+
+        assert len(posted) == 4  # 2 unique rules × 2 cycles

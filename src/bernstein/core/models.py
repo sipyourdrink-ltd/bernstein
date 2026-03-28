@@ -248,3 +248,4 @@ class OrchestratorConfig:
     evolution_enabled: bool = True
     evolution_tick_interval: int = 30
     max_task_retries: int = 2
+    evolve_mode: bool = False

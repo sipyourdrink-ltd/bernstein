@@ -33,3 +33,9 @@ Bernstein uses hardcoded built-in roles from `templates/roles/`. To support exte
 - test_passes: uv run pytest tests/unit/test_catalog_model.py -x -q
 - file_contains: src/bernstein/agents/catalog.py :: CatalogAgent
 - file_contains: src/bernstein/agents/providers.py :: CatalogProvider
+
+
+---
+**completed**: 2026-03-28 04:30:50
+**task_id**: 559b23f1591d
+**result**: Completed: Add WorktreeManager for agent isolation

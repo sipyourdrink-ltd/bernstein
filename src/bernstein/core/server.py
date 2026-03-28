@@ -111,6 +111,20 @@ class TaskCancelRequest(BaseModel):
     reason: str = ""
 
 
+class BatchClaimRequest(BaseModel):
+    """Body for POST /tasks/claim-batch."""
+
+    task_ids: list[str]
+    agent_id: str
+
+
+class BatchClaimResponse(BaseModel):
+    """Response for POST /tasks/claim-batch."""
+
+    claimed: list[str]
+    failed: list[str]
+
+
 class RoleCounts(BaseModel):
     """Per-role open task counts."""
 
@@ -425,6 +439,34 @@ class TaskStore:
                 self._index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
             return task
+
+    async def claim_batch(self, task_ids: list[str], agent_id: str) -> tuple[list[str], list[str]]:
+        """Atomically claim multiple tasks by ID.
+
+        Tasks that are not in OPEN status are skipped and reported as failed.
+
+        Args:
+            task_ids: List of task identifiers to claim.
+            agent_id: The agent claiming the tasks.
+
+        Returns:
+            A tuple of (claimed_ids, failed_ids).
+        """
+        claimed: list[str] = []
+        failed: list[str] = []
+        async with self._lock:
+            for task_id in task_ids:
+                task = self._tasks.get(task_id)
+                if task is None or task.status != TaskStatus.OPEN:
+                    failed.append(task_id)
+                    continue
+                self._index_remove(task)
+                task.status = TaskStatus.CLAIMED
+                task.assigned_agent = agent_id
+                self._index_add(task)
+                await self._append_jsonl(self._task_to_record(task))
+                claimed.append(task_id)
+        return claimed, failed
 
     async def complete(self, task_id: str, result_summary: str) -> Task:
         """Mark a task as done.
@@ -846,6 +888,12 @@ def create_app(
         if task is None:
             raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
         return _task_to_response(task)
+
+    @application.post("/tasks/claim-batch", response_model=BatchClaimResponse)
+    async def claim_batch(body: BatchClaimRequest) -> BatchClaimResponse:
+        """Atomically claim multiple tasks by ID for an agent."""
+        claimed, failed = await store.claim_batch(body.task_ids, body.agent_id)
+        return BatchClaimResponse(claimed=claimed, failed=failed)
 
     @application.post("/tasks/{task_id}/claim", response_model=TaskResponse)
     async def claim_task(task_id: str) -> TaskResponse:

@@ -33,3 +33,9 @@ After 13 evolution cycles the backlog is empty and the system spins idle. The ev
 ## Completion signals
 - test_passes: uv run pytest tests/unit/test_backlog_replenishment.py -x -q
 - file_contains: src/bernstein/evolution/detector.py :: impact_score
+
+
+---
+**completed**: 2026-03-28 04:32:12
+**task_id**: 4b80492d2651
+**result**: Completed: Add auto backlog replenishment to orchestrator

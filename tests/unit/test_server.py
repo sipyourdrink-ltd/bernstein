@@ -1048,6 +1048,75 @@ async def test_claim_by_id_already_claimed(client: AsyncClient) -> None:
     assert data["status"] == "claimed"
 
 
+# -- POST /tasks/claim-batch ------------------------------------------------
+
+@pytest.mark.anyio
+async def test_claim_batch_all_succeed(client: AsyncClient) -> None:
+    """POST /tasks/claim-batch claims all listed open tasks."""
+    r1 = await client.post("/tasks", json=TASK_PAYLOAD)
+    r2 = await client.post("/tasks", json={**TASK_PAYLOAD, "title": "Task B"})
+    id1 = r1.json()["id"]
+    id2 = r2.json()["id"]
+
+    resp = await client.post(
+        "/tasks/claim-batch",
+        json={"task_ids": [id1, id2], "agent_id": "agent-42"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert sorted(data["claimed"]) == sorted([id1, id2])
+    assert data["failed"] == []
+
+
+@pytest.mark.anyio
+async def test_claim_batch_partial_failure(client: AsyncClient) -> None:
+    """POST /tasks/claim-batch skips already-claimed tasks."""
+    r1 = await client.post("/tasks", json=TASK_PAYLOAD)
+    r2 = await client.post("/tasks", json={**TASK_PAYLOAD, "title": "Task B"})
+    id1 = r1.json()["id"]
+    id2 = r2.json()["id"]
+
+    # Pre-claim id2
+    await client.post(f"/tasks/{id2}/claim")
+
+    resp = await client.post(
+        "/tasks/claim-batch",
+        json={"task_ids": [id1, id2], "agent_id": "agent-42"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["claimed"] == [id1]
+    assert data["failed"] == [id2]
+
+
+@pytest.mark.anyio
+async def test_claim_batch_unknown_ids(client: AsyncClient) -> None:
+    """POST /tasks/claim-batch reports unknown IDs as failed."""
+    resp = await client.post(
+        "/tasks/claim-batch",
+        json={"task_ids": ["no-such-id"], "agent_id": "agent-99"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["claimed"] == []
+    assert data["failed"] == ["no-such-id"]
+
+
+@pytest.mark.anyio
+async def test_claim_batch_sets_agent_id(client: AsyncClient) -> None:
+    """POST /tasks/claim-batch stores the agent_id on claimed tasks."""
+    r1 = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = r1.json()["id"]
+
+    await client.post(
+        "/tasks/claim-batch",
+        json={"task_ids": [task_id], "agent_id": "agent-xyz"},
+    )
+
+    task_resp = await client.get(f"/tasks/{task_id}")
+    assert task_resp.json()["assigned_agent"] == "agent-xyz"
+
+
 # -- GET /tasks/{id} --------------------------------------------------------
 
 @pytest.mark.anyio

@@ -28,3 +28,9 @@ Orchestrator claims tasks one-by-one via `POST /tasks/{id}/claim`. With 10+ task
 ## Completion signals
 - test_passes: uv run pytest tests/unit/test_server.py -x -q -k batch
 - file_contains: src/bernstein/core/server.py :: claim-batch
+
+
+---
+**completed**: 2026-03-28 04:30:50
+**task_id**: 95287e860380
+**result**: Completed: Add batch task claim endpoint to server
