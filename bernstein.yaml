@@ -39,6 +39,13 @@ constraints:
   - "Move completed tickets to .sdd/backlog/closed/"
   - "Default branch is main — never push to master"
 
+quality_gates:
+  enabled: true
+  lint: true
+  lint_command: "ruff check ."
+  type_check: false        # slow; enable if you want pyright gate
+  tests: false             # enable if you want tests to run as a merge gate
+
 context_files:
   - docs/DESIGN.md
   - CLAUDE.md

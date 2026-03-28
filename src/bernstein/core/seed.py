@@ -15,8 +15,8 @@ import yaml
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
 from bernstein.core.quality_gates import QualityGatesConfig
-from bernstein.core.worktree import WorktreeSetupConfig
 from bernstein.core.workspace import Workspace
+from bernstein.core.worktree import WorktreeSetupConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -96,7 +96,7 @@ class SeedConfig:
     goal: str
     budget_usd: float | None = None
     team: Literal["auto"] | list[str] = "auto"
-    cli: Literal["claude", "codex", "gemini", "qwen", "auto"] = "claude"
+    cli: Literal["claude", "codex", "gemini", "qwen", "auto"] = "auto"
     max_agents: int = 6
     model: str | None = None
     constraints: tuple[str, ...] = ()
@@ -232,7 +232,7 @@ def parse_seed(path: Path) -> SeedConfig:
     budget_usd = _parse_budget(cast("str | int | float | None", data.get("budget")))
     team = _parse_team(data.get("team"))
 
-    cli_raw: object = data.get("cli", "claude")
+    cli_raw: object = data.get("cli", "auto")
     if cli_raw not in _VALID_CLIS:
         raise SeedError(f"cli must be one of {sorted(_VALID_CLIS)}, got: {cli_raw!r}")
     cli = cast("Literal['claude', 'codex', 'gemini', 'qwen', 'auto']", cli_raw)

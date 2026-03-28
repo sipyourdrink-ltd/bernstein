@@ -45,7 +45,9 @@ from bernstein.core.fast_path import (
     load_fast_path_config,
 )
 from bernstein.core.graph import TaskGraph
+from bernstein.core.merge_queue import MergeQueue
 from bernstein.core.metrics import get_collector
+from bernstein.core.quality_gates import QualityGatesConfig
 from bernstein.core.models import (
     AgentSession,
     ClusterConfig,
@@ -150,6 +152,7 @@ class Orchestrator:
         bulletin: BulletinBoard | None = None,
         cluster_config: ClusterConfig | None = None,
         notifier: NotificationManager | None = None,
+        quality_gate_config: QualityGatesConfig | None = None,
     ) -> None:
         self._config = config
         self._spawner = spawner
@@ -157,6 +160,7 @@ class Orchestrator:
         self._bulletin: BulletinBoard | None = bulletin
         self._notifier: NotificationManager | None = notifier
         self._cluster_config = cluster_config
+        self._quality_gate_config: QualityGatesConfig | None = quality_gate_config
         _headers: dict[str, str] = {}
         if config.auth_token:
             _headers["Authorization"] = f"Bearer {config.auth_token}"
@@ -271,6 +275,11 @@ class Orchestrator:
         # Agent signal manager: writes WAKEUP/SHUTDOWN files into
         # .sdd/runtime/signals/{session_id}/ for stale agent detection.
         self._signal_mgr = AgentSignalManager(self._workdir)
+
+        # FIFO merge queue: serializes branch merges so only one runs at a time.
+        # Conflict resolution tasks are created by process_completed_tasks when
+        # a MergeResult reports conflicting_files.
+        self._merge_queue = MergeQueue()
 
         # Progress-snapshot stall detection state (see check_stalled_tasks).
         # Tracks how many consecutive identical snapshots each task has had.
@@ -2099,6 +2108,7 @@ if __name__ == "__main__":
                 workdir=workdir,
                 router=router,
                 cluster_config=cluster_cfg,
+                quality_gate_config=seed.quality_gates if seed else None,
             )
 
             def _signal_handler(signum: int, _frame: object) -> None:

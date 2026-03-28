@@ -30,6 +30,7 @@ from bernstein.core.models import (
     AgentSession,
     Task,
 )
+from bernstein.core.quality_gates import run_quality_gates
 from bernstein.core.tick_pipeline import (
     CompletionData,
     fail_task,
@@ -38,6 +39,8 @@ from bernstein.core.tick_pipeline import (
 if TYPE_CHECKING:
     import concurrent.futures
     from pathlib import Path
+
+    from bernstein.core.git_ops import MergeResult
 
 logger = logging.getLogger(__name__)
 
@@ -398,6 +401,73 @@ def should_auto_decompose(task: Task, decomposed_task_ids: set[str]) -> bool:
         return int(retry_match.group(1)) >= 2
     # Fresh tasks: only decompose scope=LARGE
     return task.scope == Scope.LARGE
+
+
+def create_conflict_resolution_task(
+    conflicting_task: Task,
+    conflicting_files: list[str],
+    *,
+    client: httpx.Client,
+    server_url: str,
+    session_id: str,
+) -> str | None:
+    """Create a resolver task when a merge conflict is detected.
+
+    Called by the orchestrator immediately after a failed merge so a
+    dedicated ``resolver`` agent can resolve conflicts and commit.
+
+    Args:
+        conflicting_task: The original task whose agent branch conflicted.
+        conflicting_files: File paths with merge conflicts.
+        client: httpx client for task server requests.
+        server_url: Task server base URL.
+        session_id: Agent session whose branch conflicted (for context).
+
+    Returns:
+        The new resolver task ID, or None if creation failed.
+    """
+    files_list = "\n".join(f"- {f}" for f in conflicting_files)
+    description = (
+        f"A merge conflict was detected when merging the work of agent session "
+        f"`{session_id}` (task: {conflicting_task.id} — {conflicting_task.title!r}).\n\n"
+        f"## Conflicting files\n{files_list}\n\n"
+        f"## Your job\n"
+        f"1. For each conflicting file, read the conflict markers and understand both sides\n"
+        f"2. Resolve each conflict — preserve intent from both sides where possible\n"
+        f"3. After resolving all conflicts, run tests to verify correctness\n"
+        f"4. Stage all resolved files and commit with a message explaining what was kept\n\n"
+        f"Original task description:\n{conflicting_task.description}\n"
+    )
+
+    resolver_task_body: dict[str, Any] = {
+        "title": f"[CONFLICT] {conflicting_task.title[:80]}",
+        "description": description,
+        "role": "resolver",
+        "priority": max(1, conflicting_task.priority - 1),  # Higher priority
+        "scope": "small",
+        "complexity": "medium",
+        "owned_files": conflicting_files,
+    }
+
+    try:
+        resp = client.post(f"{server_url}/tasks", json=resolver_task_body)
+        resp.raise_for_status()
+        resolver_id: str = resp.json().get("id", "?")
+        logger.info(
+            "Conflict resolution task %s created for session %s (%d files: %s)",
+            resolver_id,
+            session_id,
+            len(conflicting_files),
+            ", ".join(conflicting_files),
+        )
+        return resolver_id
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "Failed to create conflict resolution task for session %s: %s",
+            session_id,
+            exc,
+        )
+        return None
 
 
 def auto_decompose_task(
@@ -838,6 +908,28 @@ def process_completed_tasks(
         # an agent owns multiple tasks that all complete in the same tick.
         _agent_just_reaped = session is not None and session.status != "dead"
         if session is not None:
+            # Quality gates: lint/type/test checks run after janitor, before approval.
+            _qg_config = getattr(orch, "_quality_gate_config", None)
+            if janitor_passed and _qg_config is not None:
+                _worktree_for_gates = orch._spawner.get_worktree_path(session.id)
+                _gate_run_dir = _worktree_for_gates if _worktree_for_gates is not None else orch._workdir
+                _qg_result = run_quality_gates(task, _gate_run_dir, orch._workdir, _qg_config)
+                if not _qg_result.passed:
+                    janitor_passed = False
+                    _qg_failed = [
+                        f"quality_gate:{r.gate}"
+                        for r in _qg_result.gate_results
+                        if r.blocked and not r.passed
+                    ]
+                    with contextlib.suppress(ValueError):
+                        result.verified.remove(task.id)
+                    result.verification_failures.append((task.id, _qg_failed))
+                    logger.info(
+                        "Quality gates blocked merge for task %s: %s",
+                        task.id,
+                        ", ".join(_qg_failed),
+                    )
+
             orch._record_provider_health(session, success=janitor_passed)
             _skip_merge = False
             if janitor_passed and orch._approval_gate is not None:
@@ -884,9 +976,29 @@ def process_completed_tasks(
                             "Approval gate PR mode: no worktree for agent %s -- cannot create PR",
                             session.id,
                         )
-            orch._spawner.reap_completed_agent(session, skip_merge=_skip_merge)
+            _merge_result: MergeResult | None = orch._spawner.reap_completed_agent(session, skip_merge=_skip_merge)
             session.status = "dead"
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
+
+            # Route merge conflicts to a dedicated resolver agent.
+            if (
+                _merge_result is not None
+                and not _merge_result.success
+                and _merge_result.conflicting_files
+                and not _skip_merge
+            ):
+                create_conflict_resolution_task(
+                    task,
+                    _merge_result.conflicting_files,
+                    client=orch._client,
+                    server_url=orch._config.server_url,
+                    session_id=session.id,
+                )
+                orch._post_bulletin(
+                    "alert",
+                    f"merge conflict in {len(_merge_result.conflicting_files)} files — "
+                    f"resolver task created (task {task.id})",
+                )
 
         # Record task completion in the operational metrics collector so
         # run summaries and evolution analysis see real duration/success data.
