@@ -3574,6 +3574,49 @@ def install_hooks(force: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# plugins — list discovered plugins and their hooks
+# ---------------------------------------------------------------------------
+
+
+@cli.command("plugins")
+@click.option("--workdir", default=".", show_default=True, help="Project root to read bernstein.yaml from.")
+def plugins_cmd(workdir: str) -> None:
+    """List discovered plugins and the hooks they implement.
+
+    \b
+      bernstein plugins                 # discover plugins in current project
+      bernstein plugins --workdir /srv  # use a different project root
+    """
+    from rich.table import Table
+
+    from bernstein.plugins.manager import PluginManager
+
+    pm = PluginManager()
+    pm.load_from_workdir(Path(workdir))
+
+    names = pm.registered_names
+    if not names:
+        console.print("[dim]No plugins discovered.[/dim]")
+        console.print(
+            "[dim]Register plugins via entry_points([/dim][cyan]'bernstein.plugins'[/cyan][dim]) "
+            "or add a [/dim][cyan]plugins:[/cyan][dim] list to bernstein.yaml.[/dim]"
+        )
+        return
+
+    table = Table(show_header=True, header_style="bold magenta", title="Bernstein Plugins")
+    table.add_column("Plugin", style="cyan")
+    table.add_column("Hooks implemented")
+
+    for name in names:
+        hooks = pm.plugin_hooks(name)
+        hook_str = ", ".join(hooks) if hooks else "[dim]none[/dim]"
+        table.add_row(name, hook_str)
+
+    console.print(table)
+    console.print(f"\n[dim]Total: {len(names)} plugin(s)[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # recap — post-run summary
 # ---------------------------------------------------------------------------
 
