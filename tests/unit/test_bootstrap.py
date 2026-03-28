@@ -14,10 +14,12 @@ from bernstein.core.bootstrap import (
     _ensure_sdd,
     _is_alive,
     _read_pid,
+    _send_webhook,
     _start_server,
     _start_spawner,
     _wait_for_server,
 )
+from bernstein.core.seed import NotifyConfig
 
 
 # ---------------------------------------------------------------------------
@@ -288,3 +290,41 @@ class TestStartSpawner:
 
         pid_file = tmp_path / ".sdd" / "runtime" / "spawner.pid"
         assert pid_file.read_text() == "555"
+
+
+# ---------------------------------------------------------------------------
+# _send_webhook
+# ---------------------------------------------------------------------------
+
+class TestSendWebhook:
+    def test_posts_json_to_webhook_url(self) -> None:
+        config = NotifyConfig(webhook_url="https://hooks.example.com/notify")
+        payload = {"event": "complete", "goal": "Build a REST API"}
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        with patch("httpx.post", return_value=mock_resp) as mock_post:
+            _send_webhook(config, payload)
+
+        mock_post.assert_called_once_with(
+            "https://hooks.example.com/notify",
+            json=payload,
+            timeout=10.0,
+        )
+
+    def test_no_op_when_webhook_url_is_none(self) -> None:
+        config = NotifyConfig(webhook_url=None)
+        with patch("httpx.post") as mock_post:
+            _send_webhook(config, {"event": "complete"})
+        mock_post.assert_not_called()
+
+    def test_swallows_http_errors(self) -> None:
+        config = NotifyConfig(webhook_url="https://hooks.example.com/notify")
+        with patch("httpx.post", side_effect=httpx.ConnectError("refused")):
+            # Must not raise
+            _send_webhook(config, {"event": "complete"})
+
+    def test_swallows_unexpected_exceptions(self) -> None:
+        config = NotifyConfig(webhook_url="https://hooks.example.com/notify")
+        with patch("httpx.post", side_effect=RuntimeError("boom")):
+            _send_webhook(config, {"event": "complete"})

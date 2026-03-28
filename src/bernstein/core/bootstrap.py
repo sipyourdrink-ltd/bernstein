@@ -19,7 +19,7 @@ import httpx
 from rich.console import Console
 
 from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
-from bernstein.core.seed import SeedConfig, parse_seed, seed_to_initial_task
+from bernstein.core.seed import NotifyConfig, SeedConfig, parse_seed, seed_to_initial_task
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,24 @@ _SERVER_READY_TIMEOUT_S = 10.0
 _SERVER_POLL_INTERVAL_S = 0.25
 
 console = Console()
+
+
+def _send_webhook(config: NotifyConfig, payload: dict[str, Any]) -> None:
+    """POST a JSON payload to the configured webhook URL.
+
+    Errors are logged but never propagate — this must never crash the run.
+
+    Args:
+        config: Notification configuration containing the webhook URL.
+        payload: JSON-serialisable dict to POST.
+    """
+    if not config.webhook_url:
+        return
+    try:
+        resp = httpx.post(config.webhook_url, json=payload, timeout=10.0)
+        logger.info("Webhook POST %s -> %d", config.webhook_url, resp.status_code)
+    except Exception:
+        logger.exception("Webhook POST to %s failed (ignored)", config.webhook_url)
 
 
 @dataclass
@@ -402,12 +420,26 @@ def bootstrap_from_seed(
         "Use [bold]bernstein stop[/bold] to stop."
     )
 
-    return BootstrapResult(
+    result = BootstrapResult(
         seed=seed,
         server_pid=server_pid,
         spawner_pid=spawner_pid,
         manager_task_id=manager_task_id,
     )
+
+    if seed.notify is not None and seed.notify.on_complete:
+        _send_webhook(
+            seed.notify,
+            {
+                "event": "complete",
+                "goal": seed.goal,
+                "manager_task_id": manager_task_id,
+                "server_pid": server_pid,
+                "spawner_pid": spawner_pid,
+            },
+        )
+
+    return result
 
 
 def _start_watchdog(workdir: Path, port: int) -> int:

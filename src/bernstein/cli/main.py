@@ -49,6 +49,7 @@ STATUS_COLORS: dict[str, str] = {
     "done": "green",
     "failed": "red",
     "blocked": "magenta",
+    "cancelled": "red",
 }
 
 console = Console()
@@ -716,6 +717,24 @@ def stop(timeout: int) -> None:
     _kill_pid(SDD_PID_SERVER, "Task server")
 
     console.print("\n[green]Bernstein stopped.[/green]")
+
+
+# ---------------------------------------------------------------------------
+# cancel
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.argument("task_id")
+@click.option("--reason", "-r", default="Cancelled by user", help="Cancellation reason")
+def cancel(task_id: str, reason: str) -> None:
+    """Cancel a running or queued task."""
+    data = _server_post(f"/tasks/{task_id}/cancel", {"reason": reason})
+    if data is None:
+        console.print("[red]Server not reachable.[/red]")
+        raise SystemExit(1)
+    console.print(f"[green]Cancelled:[/green] {data['title']}")
+    console.print(f"[dim]Status: {data['status']}[/dim]")
 
 
 # ---------------------------------------------------------------------------

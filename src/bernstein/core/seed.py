@@ -20,6 +20,21 @@ class SeedError(Exception):
 
 
 @dataclass(frozen=True)
+class NotifyConfig:
+    """Webhook notification configuration.
+
+    Attributes:
+        webhook_url: URL to POST to on run events.
+        on_complete: Send notification when run completes successfully.
+        on_failure: Send notification when run fails.
+    """
+
+    webhook_url: str | None = None
+    on_complete: bool = True
+    on_failure: bool = True
+
+
+@dataclass(frozen=True)
 class SeedConfig:
     """Validated configuration from bernstein.yaml.
 
@@ -34,6 +49,7 @@ class SeedConfig:
         context_files: Additional file paths to include in manager context.
         agent_catalog: Optional path to an Agency agent catalog directory.
         mcp_servers: MCP server definitions to pass to spawned agents.
+        notify: Optional webhook notification configuration.
     """
 
     goal: str
@@ -46,6 +62,7 @@ class SeedConfig:
     context_files: tuple[str, ...] = ()
     agent_catalog: str | None = None
     mcp_servers: dict[str, dict[str, Any]] | None = None
+    notify: NotifyConfig | None = None
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -187,6 +204,26 @@ def parse_seed(path: Path) -> SeedConfig:
     if mcp_servers_raw is not None and not isinstance(mcp_servers_raw, dict):
         raise SeedError(f"mcp_servers must be a mapping, got: {type(mcp_servers_raw).__name__}")
 
+    notify_raw = data.get("notify")
+    notify: NotifyConfig | None = None
+    if notify_raw is not None:
+        if not isinstance(notify_raw, dict):
+            raise SeedError(f"notify must be a mapping, got: {type(notify_raw).__name__}")
+        webhook_url = notify_raw.get("webhook")
+        if webhook_url is not None and not isinstance(webhook_url, str):
+            raise SeedError(f"notify.webhook must be a string, got: {type(webhook_url).__name__}")
+        on_complete = notify_raw.get("on_complete", True)
+        on_failure = notify_raw.get("on_failure", True)
+        if not isinstance(on_complete, bool):
+            raise SeedError(f"notify.on_complete must be a bool, got: {type(on_complete).__name__}")
+        if not isinstance(on_failure, bool):
+            raise SeedError(f"notify.on_failure must be a bool, got: {type(on_failure).__name__}")
+        notify = NotifyConfig(
+            webhook_url=webhook_url,
+            on_complete=on_complete,
+            on_failure=on_failure,
+        )
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -198,6 +235,7 @@ def parse_seed(path: Path) -> SeedConfig:
         context_files=context_files,
         agent_catalog=agent_catalog_raw,
         mcp_servers=mcp_servers_raw,
+        notify=notify,
     )
 
 

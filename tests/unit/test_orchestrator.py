@@ -501,6 +501,10 @@ class TestReaping:
                 return httpx.Response(200, json=[])
             if key == "GET /tasks?status=done":
                 return httpx.Response(200, json=[])
+            if key == "GET /tasks/T-stale":
+                return httpx.Response(200, json=_task_as_dict(_make_task(id="T-stale")))
+            if key == "POST /tasks":
+                return httpx.Response(201, json={"id": "T-stale-retry"})
             if key == "POST /tasks/T-stale/fail":
                 fail_called = True
                 return httpx.Response(200, json=_task_as_dict(
@@ -1992,6 +1996,10 @@ class TestStaleHeartbeatReapingDefault:
                 return httpx.Response(200, json=[])
             if key == "GET /tasks?status=done":
                 return httpx.Response(200, json=[])
+            if key == "GET /tasks/T-stale":
+                return httpx.Response(200, json=_task_as_dict(_make_task(id="T-stale")))
+            if key == "POST /tasks":
+                return httpx.Response(201, json={"id": "T-stale-retry"})
             if key == "POST /tasks/T-stale/fail":
                 fail_called = True
                 return httpx.Response(200, json={})
@@ -2110,3 +2118,101 @@ class TestEvolveAutoCommitRuntimeExclusion:
         add_idx = cmds.index(["git", "add", "-A"])
         reset_idx = cmds.index(reset_cmd)
         assert reset_idx > add_idx
+
+
+# --- _retry_or_fail_task ---
+
+
+class TestRetryOrFailTask:
+    """Unit tests for Orchestrator._retry_or_fail_task."""
+
+    def _build(
+        self,
+        tmp_path: Path,
+        task: Task,
+        *,
+        max_retries: int = 2,
+    ) -> tuple[Orchestrator, list[dict]]:
+        """Return (orchestrator, captured_post_bodies).
+
+        The mock transport:
+        - GET /tasks/{id} → returns task JSON
+        - POST /tasks       → records body, returns 201
+        - POST /tasks/{id}/fail → returns 200
+        """
+        posted: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if request.method == "GET" and path == f"/tasks/{task.id}":
+                return httpx.Response(200, json=_task_as_dict(task))
+            if request.method == "POST" and path == "/tasks":
+                posted.append(request.read() and __import__("json").loads(request.content))
+                return httpx.Response(201, json={"id": "NEW-001"})
+            if request.method == "POST" and path.endswith("/fail"):
+                return httpx.Response(200, json={})
+            return httpx.Response(404, json={"detail": f"No mock for {request.method} {path}"})
+
+        transport = httpx.MockTransport(handler)
+        cfg = OrchestratorConfig(
+            server_url="http://testserver",
+            max_task_retries=max_retries,
+        )
+        orch = _build_orchestrator(tmp_path, transport, config=cfg)
+        return orch, posted
+
+    def test_first_retry_creates_new_task(self, tmp_path: Path) -> None:
+        task = _make_task(id="T-retry", description="Do the thing.")
+        orch, posted = self._build(tmp_path, task, max_retries=2)
+
+        orch._retry_or_fail_task("T-retry", "agent crashed")
+
+        assert len(posted) == 1
+        assert posted[0]["description"] == "[retry:1] Do the thing."
+
+    def test_second_retry_increments_counter(self, tmp_path: Path) -> None:
+        task = _make_task(id="T-retry", description="[retry:1] Do the thing.")
+        orch, posted = self._build(tmp_path, task, max_retries=2)
+
+        orch._retry_or_fail_task("T-retry", "agent crashed again")
+
+        assert len(posted) == 1
+        assert posted[0]["description"] == "[retry:2] Do the thing."
+
+    def test_max_retries_exceeded_does_not_create_new_task(self, tmp_path: Path) -> None:
+        task = _make_task(id="T-retry", description="[retry:2] Do the thing.")
+        orch, posted = self._build(tmp_path, task, max_retries=2)
+
+        orch._retry_or_fail_task("T-retry", "agent crashed yet again")
+
+        # No new task should be created
+        assert posted == []
+
+    def test_zero_max_retries_always_fails(self, tmp_path: Path) -> None:
+        task = _make_task(id="T-retry", description="Do the thing.")
+        orch, posted = self._build(tmp_path, task, max_retries=0)
+
+        orch._retry_or_fail_task("T-retry", "agent crashed")
+
+        assert posted == []
+
+    def test_retry_preserves_task_fields(self, tmp_path: Path) -> None:
+        task = _make_task(
+            id="T-retry",
+            role="security",
+            priority=1,
+            scope="large",
+            complexity="high",
+            description="Fix the vuln.",
+        )
+        orch, posted = self._build(tmp_path, task, max_retries=2)
+
+        orch._retry_or_fail_task("T-retry", "agent crashed")
+
+        assert len(posted) == 1
+        body = posted[0]
+        assert body["role"] == "security"
+        assert body["priority"] == 1
+        assert body["scope"] == "large"
+        assert body["complexity"] == "high"
+        assert body["title"] == task.title

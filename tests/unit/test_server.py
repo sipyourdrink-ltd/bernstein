@@ -175,6 +175,65 @@ async def test_fail_unknown_task(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+# -- POST /tasks/{task_id}/cancel ------------------------------------------
+
+@pytest.mark.anyio
+async def test_cancel_open_task(client: AsyncClient) -> None:
+    """POST /tasks/{id}/cancel cancels an open task."""
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"/tasks/{task_id}/cancel",
+        json={"reason": "no longer needed"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "cancelled"
+    assert data["result_summary"] == "no longer needed"
+
+
+@pytest.mark.anyio
+async def test_cancel_claimed_task(client: AsyncClient) -> None:
+    """POST /tasks/{id}/cancel cancels a claimed task."""
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = create_resp.json()["id"]
+    await client.get(f"/tasks/next/backend")  # claim it
+
+    resp = await client.post(f"/tasks/{task_id}/cancel", json={"reason": "abort"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+
+
+@pytest.mark.anyio
+async def test_cancel_done_task_returns_409(client: AsyncClient) -> None:
+    """POST /tasks/{id}/cancel returns 409 if task is already done."""
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = create_resp.json()["id"]
+    await client.post(f"/tasks/{task_id}/complete", json={"result_summary": "done"})
+
+    resp = await client.post(f"/tasks/{task_id}/cancel", json={"reason": "too late"})
+    assert resp.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_cancel_unknown_task_returns_404(client: AsyncClient) -> None:
+    """POST /tasks/{id}/cancel returns 404 for unknown task id."""
+    resp = await client.post("/tasks/nonexistent/cancel", json={"reason": "nope"})
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_cancel_no_reason(client: AsyncClient) -> None:
+    """POST /tasks/{id}/cancel works without a reason body."""
+    create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    task_id = create_resp.json()["id"]
+
+    resp = await client.post(f"/tasks/{task_id}/cancel", json={})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "cancelled"
+
+
 # -- GET /tasks -------------------------------------------------------------
 
 @pytest.mark.anyio

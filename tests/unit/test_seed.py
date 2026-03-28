@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.models import Scope, Complexity, TaskStatus
-from bernstein.core.seed import SeedConfig, SeedError, parse_seed, seed_to_initial_task
+from bernstein.core.seed import NotifyConfig, SeedConfig, SeedError, parse_seed, seed_to_initial_task
 
 
 # ---------------------------------------------------------------------------
@@ -203,3 +203,67 @@ class TestSeedConfig:
         cfg = SeedConfig(goal="Test")
         with pytest.raises(AttributeError):
             cfg.goal = "Changed"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# NotifyConfig parsing
+# ---------------------------------------------------------------------------
+
+NOTIFY_YAML = """\
+goal: "Build a REST API"
+notify:
+  webhook: https://hooks.slack.com/services/T.../B.../xxx
+  on_complete: true
+  on_failure: false
+"""
+
+NOTIFY_WEBHOOK_ONLY_YAML = """\
+goal: "Build a REST API"
+notify:
+  webhook: https://hooks.example.com/notify
+"""
+
+
+class TestNotifyConfig:
+    """Tests for NotifyConfig parsing."""
+
+    def test_notify_parsed_with_all_fields(self, seed_file: Path) -> None:
+        seed_file.write_text(NOTIFY_YAML)
+        cfg = parse_seed(seed_file)
+        assert cfg.notify is not None
+        assert cfg.notify.webhook_url == "https://hooks.slack.com/services/T.../B.../xxx"
+        assert cfg.notify.on_complete is True
+        assert cfg.notify.on_failure is False
+
+    def test_notify_webhook_only_defaults(self, seed_file: Path) -> None:
+        seed_file.write_text(NOTIFY_WEBHOOK_ONLY_YAML)
+        cfg = parse_seed(seed_file)
+        assert cfg.notify is not None
+        assert cfg.notify.webhook_url == "https://hooks.example.com/notify"
+        assert cfg.notify.on_complete is True
+        assert cfg.notify.on_failure is True
+
+    def test_notify_absent_is_none(self, seed_file: Path) -> None:
+        seed_file.write_text(MINIMAL_YAML)
+        cfg = parse_seed(seed_file)
+        assert cfg.notify is None
+
+    def test_notify_not_a_mapping_raises(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nnotify: "https://example.com"\n')
+        with pytest.raises(SeedError, match="notify must be a mapping"):
+            parse_seed(seed_file)
+
+    def test_notify_webhook_not_string_raises(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nnotify:\n  webhook: 123\n')
+        with pytest.raises(SeedError, match="notify.webhook must be a string"):
+            parse_seed(seed_file)
+
+    def test_notify_config_defaults(self) -> None:
+        nc = NotifyConfig(webhook_url="https://example.com")
+        assert nc.on_complete is True
+        assert nc.on_failure is True
+
+    def test_notify_config_frozen(self) -> None:
+        nc = NotifyConfig(webhook_url="https://example.com")
+        with pytest.raises(AttributeError):
+            nc.webhook_url = "changed"  # type: ignore[misc]
