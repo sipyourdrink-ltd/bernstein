@@ -193,6 +193,7 @@ class TaskStore:
         self._start_ts: float = time.time()
         self._cost_cache: dict[str, float] = {}
         self._cost_cache_mtime: float = 0.0
+        self._cost_cache_offset: int = 0
 
     # -- index helpers -------------------------------------------------------
 
@@ -539,19 +540,28 @@ class TaskStore:
     # -- status summary -----------------------------------------------------
 
     def _read_cost_by_role(self) -> dict[str, float]:
-        """Return cost_usd summed per role, using an mtime-based cache.
+        """Return cost_usd summed per role, using an mtime+offset-based cache.
 
-        The metrics JSONL is only re-read when the file has changed since the
-        last call.  On a busy system this makes /status O(1) instead of
-        O(lines-in-file).
+        The metrics JSONL is append-only, so when the file changes we only
+        read bytes beyond the last known offset.  This makes the hot path
+        O(new_lines) instead of O(all_lines).
         """
         if not self._metrics_jsonl_path.exists():
             return dict(self._cost_cache)
-        mtime = self._metrics_jsonl_path.stat().st_mtime
+        stat = self._metrics_jsonl_path.stat()
+        mtime = stat.st_mtime
         if mtime == self._cost_cache_mtime:
             return dict(self._cost_cache)
-        cost_by_role: dict[str, float] = {}
-        for raw_line in self._metrics_jsonl_path.read_text().splitlines():
+        file_size = stat.st_size
+        # Handle truncation: if offset is past end of file, reset.
+        if self._cost_cache_offset > file_size:
+            self._cost_cache_offset = 0
+            self._cost_cache = {}
+        with self._metrics_jsonl_path.open("rb") as fh:
+            fh.seek(self._cost_cache_offset)
+            new_bytes = fh.read()
+            new_offset = self._cost_cache_offset + len(new_bytes)
+        for raw_line in new_bytes.decode(errors="replace").splitlines():
             line = raw_line.strip()
             if not line:
                 continue
@@ -562,8 +572,8 @@ class TaskStore:
             role = record.get("role", "")
             cost = record.get("cost_usd")
             if role and isinstance(cost, (int, float)):
-                cost_by_role[role] = cost_by_role.get(role, 0.0) + float(cost)
-        self._cost_cache = cost_by_role
+                self._cost_cache[role] = self._cost_cache.get(role, 0.0) + float(cost)
+        self._cost_cache_offset = new_offset
         self._cost_cache_mtime = mtime
         return dict(self._cost_cache)
 
@@ -606,6 +616,9 @@ class TaskStore:
     def read_archive(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the last *limit* records from the archive JSONL.
 
+        Uses reverse file seeking (tail-style) so only O(limit) bytes are
+        read regardless of archive size.
+
         Args:
             limit: Maximum number of records to return (default 50).
 
@@ -614,16 +627,44 @@ class TaskStore:
         """
         if not self._archive_path.exists():
             return []
-        lines = [
-            line.strip()
-            for line in self._archive_path.read_text().splitlines()
-            if line.strip()
-        ]
-        tail = lines[-limit:] if limit > 0 else lines
+
+        chunk_size = 8192
+        raw_lines: list[bytes] = []
+
+        with self._archive_path.open("rb") as f:
+            f.seek(0, 2)  # seek to end
+            file_size = f.tell()
+            if file_size == 0:
+                return []
+
+            pos = file_size
+            buf = b""
+            while pos > 0 and (limit <= 0 or len(raw_lines) < limit):
+                read_size = min(chunk_size, pos)
+                pos -= read_size
+                f.seek(pos)
+                chunk = f.read(read_size)
+                buf = chunk + buf
+                parts = buf.split(b"\n")
+                # Keep the leftmost partial line in buf for the next iteration.
+                buf = parts[0]
+                # parts[1:] are complete lines; iterate newest-first.
+                for part in reversed(parts[1:]):
+                    stripped = part.strip()
+                    if stripped:
+                        raw_lines.append(stripped)
+                    if limit > 0 and len(raw_lines) >= limit:
+                        break
+            # Process any remaining buffered content.
+            if (limit <= 0 or len(raw_lines) < limit) and buf.strip():
+                raw_lines.append(buf.strip())
+
+        # raw_lines is newest-first; take up to limit, then reverse to oldest-first.
+        tail = raw_lines[:limit] if limit > 0 else raw_lines
         records: list[dict[str, Any]] = []
-        for line in tail:
+        for raw in reversed(tail):
             try:
-                records.append(json.loads(line))
+                records.append(json.loads(raw))
             except json.JSONDecodeError:
                 continue
         return records

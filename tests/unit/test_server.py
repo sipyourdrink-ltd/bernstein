@@ -683,6 +683,85 @@ async def test_replay_nonexistent_file(tmp_path: Path) -> None:
     assert store.list_tasks() == []
 
 
+# -- read_archive reverse-seek ------------------------------------------------
+
+
+def _make_archive(path: Path, count: int) -> list[dict[str, Any]]:
+    """Write *count* archive records to *path*, return the list."""
+    import time
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = [
+        {
+            "task_id": f"task-{i:04d}",
+            "title": f"Task {i}",
+            "role": "backend",
+            "status": "done",
+            "result_summary": f"result {i}",
+            "completed_at": time.time() + i,
+            "duration_seconds": float(i),
+        }
+        for i in range(count)
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    return records
+
+
+def test_read_archive_large_file_returns_limit(tmp_path: Path) -> None:
+    """read_archive(limit=10) on a 500-entry file returns exactly 10 records."""
+    archive_path = tmp_path / "archive" / "tasks.jsonl"
+    all_records = _make_archive(archive_path, 500)
+
+    store = TaskStore(tmp_path / "tasks.jsonl")
+    store._archive_path = archive_path
+
+    result = store.read_archive(limit=10)
+
+    assert len(result) == 10
+    # Should be the last 10 (oldest-first ordering preserved)
+    expected_ids = [f"task-{i:04d}" for i in range(490, 500)]
+    assert [r["task_id"] for r in result] == expected_ids
+
+
+def test_read_archive_empty_file(tmp_path: Path) -> None:
+    """read_archive on an empty file returns []."""
+    archive_path = tmp_path / "archive" / "tasks.jsonl"
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    archive_path.write_text("")
+
+    store = TaskStore(tmp_path / "tasks.jsonl")
+    store._archive_path = archive_path
+
+    assert store.read_archive(limit=10) == []
+
+
+def test_read_archive_fewer_lines_than_limit(tmp_path: Path) -> None:
+    """read_archive returns all lines when fewer than limit exist."""
+    archive_path = tmp_path / "archive" / "tasks.jsonl"
+    _make_archive(archive_path, 5)
+
+    store = TaskStore(tmp_path / "tasks.jsonl")
+    store._archive_path = archive_path
+
+    result = store.read_archive(limit=50)
+    assert len(result) == 5
+
+
+def test_read_archive_malformed_lines_skipped(tmp_path: Path) -> None:
+    """read_archive skips malformed JSON lines and continues."""
+    archive_path = tmp_path / "archive" / "tasks.jsonl"
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    good = json.dumps({"task_id": "t1", "status": "done"})
+    archive_path.write_text(f"{good}\nnot-json\n{good}\n")
+
+    store = TaskStore(tmp_path / "tasks.jsonl")
+    store._archive_path = archive_path
+
+    result = store.read_archive(limit=10)
+    assert len(result) == 2
+    assert all(r["task_id"] == "t1" for r in result)
+
+
 @pytest.mark.anyio
 async def test_status_cost_skips_malformed_metrics_lines(
     client_with_metrics: AsyncClient, metrics_jsonl_path: Path
@@ -962,3 +1041,227 @@ async def test_dependency_blocks_open_listing(client: AsyncClient) -> None:
     resp2 = await client.get("/tasks", params={"status": "open"})
     open_ids2 = {t["id"] for t in resp2.json()}
     assert task_b_id in open_ids2
+
+
+# -- Incremental metrics parsing (byte offset) --------------------------------
+
+
+def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
+    """_read_cost_by_role() only parses new lines on the second call."""
+    jsonl = tmp_path / "tasks.jsonl"
+    jsonl.touch()
+    metrics_jsonl = tmp_path / "metrics.jsonl"
+    metrics_jsonl.touch()
+
+    store = TaskStore(jsonl_path=jsonl, metrics_jsonl_path=metrics_jsonl)
+
+    # First append: one record for 'backend'
+    record1 = json.dumps({"role": "backend", "cost_usd": 0.10}) + "\n"
+    metrics_jsonl.write_bytes(record1.encode())
+
+    # Bust the mtime cache by advancing mtime
+    import os, time as _time
+    mtime1 = metrics_jsonl.stat().st_mtime + 1
+    os.utime(metrics_jsonl, (mtime1, mtime1))
+    store._cost_cache_mtime = 0.0  # force miss
+
+    result1 = store._read_cost_by_role()
+    assert result1 == {"backend": pytest.approx(0.10)}
+    offset_after_first = store._cost_cache_offset
+    assert offset_after_first == len(record1.encode())
+
+    # Second append: another record for 'qa'
+    record2 = json.dumps({"role": "qa", "cost_usd": 0.05}) + "\n"
+    with metrics_jsonl.open("ab") as fh:
+        fh.write(record2.encode())
+
+    # Track seek position by spying on file.seek via monkeypatching open
+    seek_calls: list[int] = []
+    original_open = open
+
+    import builtins
+    real_open = builtins.open
+
+    def patched_open(path, mode="r", **kwargs):  # type: ignore[no-untyped-def]
+        fh = real_open(path, mode, **kwargs)
+        if "b" in mode and str(path) == str(metrics_jsonl):
+            original_seek = fh.seek
+
+            def tracking_seek(offset: int, *args: object) -> int:  # type: ignore[no-untyped-def]
+                seek_calls.append(offset)
+                return original_seek(offset, *args)
+
+            fh.seek = tracking_seek  # type: ignore[method-assign]
+        return fh
+
+    builtins.open = patched_open  # type: ignore[assignment]
+    try:
+        mtime2 = metrics_jsonl.stat().st_mtime + 1
+        os.utime(metrics_jsonl, (mtime2, mtime2))
+        store._cost_cache_mtime = mtime1  # simulate prior cached mtime
+
+        result2 = store._read_cost_by_role()
+    finally:
+        builtins.open = real_open  # type: ignore[assignment]
+
+    # Both roles should now be in the cache
+    assert result2["backend"] == pytest.approx(0.10)
+    assert result2["qa"] == pytest.approx(0.05)
+
+    # The second call must have seeked to the offset from the first call,
+    # not to 0 (which would re-read everything).
+    assert seek_calls, "expected at least one seek call"
+    assert seek_calls[0] == offset_after_first, (
+        f"expected seek to {offset_after_first}, got {seek_calls[0]}"
+    )
+
+
+def test_read_cost_by_role_truncation_reset(tmp_path: Path) -> None:
+    """When the metrics file is truncated, offset resets and cache clears."""
+    jsonl = tmp_path / "tasks.jsonl"
+    jsonl.touch()
+    metrics_jsonl = tmp_path / "metrics.jsonl"
+
+    store = TaskStore(jsonl_path=jsonl, metrics_jsonl_path=metrics_jsonl)
+
+    # Write initial data and prime the cache
+    record = json.dumps({"role": "backend", "cost_usd": 1.00}) + "\n"
+    metrics_jsonl.write_bytes(record.encode())
+
+    import os
+    mtime1 = metrics_jsonl.stat().st_mtime + 1
+    os.utime(metrics_jsonl, (mtime1, mtime1))
+    store._cost_cache_mtime = 0.0
+
+    store._read_cost_by_role()
+    assert store._cost_cache_offset > 0
+
+    # Simulate truncation: offset is now beyond file size
+    store._cost_cache_offset = 99999
+    store._cost_cache_mtime = 0.0  # force re-read
+
+    # Write a smaller replacement file
+    new_record = json.dumps({"role": "qa", "cost_usd": 0.25}) + "\n"
+    metrics_jsonl.write_bytes(new_record.encode())
+    mtime2 = metrics_jsonl.stat().st_mtime + 2
+    os.utime(metrics_jsonl, (mtime2, mtime2))
+
+    result = store._read_cost_by_role()
+    # Cache should have been reset; old 'backend' cost gone, only new 'qa'
+    assert "backend" not in result
+    assert result.get("qa") == pytest.approx(0.25)
+    assert store._cost_cache_offset == len(new_record.encode())
+
+
+# -- Incremental metrics parsing (byte offset) --------------------------------
+
+
+def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
+    """_read_cost_by_role() only parses new lines on the second call.
+
+    We verify seek-position behaviour by inspecting _cost_cache_offset:
+    after each call the offset must equal the cumulative byte length of all
+    records seen so far, proving only new bytes were consumed.
+    """
+    import os
+    import pathlib
+    from unittest.mock import patch
+
+    jsonl = tmp_path / "tasks.jsonl"
+    jsonl.touch()
+    metrics_jsonl = tmp_path / "metrics.jsonl"
+    metrics_jsonl.touch()
+
+    store = TaskStore(jsonl_path=jsonl, metrics_jsonl_path=metrics_jsonl)
+
+    # First append: one record for 'backend'
+    record1 = json.dumps({"role": "backend", "cost_usd": 0.10}) + "\n"
+    metrics_jsonl.write_bytes(record1.encode())
+
+    mtime1 = metrics_jsonl.stat().st_mtime + 1
+    os.utime(metrics_jsonl, (mtime1, mtime1))
+    store._cost_cache_mtime = 0.0  # force miss
+
+    result1 = store._read_cost_by_role()
+    assert result1 == {"backend": pytest.approx(0.10)}
+    offset_after_first = store._cost_cache_offset
+    assert offset_after_first == len(record1.encode())
+
+    # Second append: another record for 'qa'
+    record2 = json.dumps({"role": "qa", "cost_usd": 0.05}) + "\n"
+    with metrics_jsonl.open("ab") as fh:
+        fh.write(record2.encode())
+
+    mtime2 = metrics_jsonl.stat().st_mtime + 1
+    os.utime(metrics_jsonl, (mtime2, mtime2))
+    store._cost_cache_mtime = mtime1  # simulate prior cached mtime
+
+    # Spy on Path.open to capture the seek offset used on the second call
+    _real_path_open = pathlib.Path.open
+    seek_positions: list[int] = []
+
+    def _spy_path_open(self: pathlib.Path, mode: str = "r", **kwargs):  # type: ignore[no-untyped-def]
+        fh = _real_path_open(self, mode, **kwargs)
+        if "b" in mode and self == metrics_jsonl:
+            _real_seek = fh.seek
+
+            def _tracking_seek(pos: int, *args: object) -> int:  # type: ignore[no-untyped-def]
+                seek_positions.append(pos)
+                return _real_seek(pos, *args)
+
+            fh.seek = _tracking_seek  # type: ignore[method-assign]
+        return fh
+
+    with patch.object(pathlib.Path, "open", _spy_path_open):
+        result2 = store._read_cost_by_role()
+
+    # Both roles should now be in the merged cache
+    assert result2["backend"] == pytest.approx(0.10)
+    assert result2["qa"] == pytest.approx(0.05)
+
+    # The offset must have advanced by exactly len(record2)
+    expected_final_offset = len(record1.encode()) + len(record2.encode())
+    assert store._cost_cache_offset == expected_final_offset
+
+    # The spy must have captured a seek to the post-first-record offset,
+    # proving we did NOT re-read from the beginning.
+    assert seek_positions, "expected Path.open().seek() to be called"
+    assert seek_positions[0] == offset_after_first
+
+
+def test_read_cost_by_role_truncation_reset(tmp_path: Path) -> None:
+    """When the metrics file is truncated, offset resets and cache clears."""
+    import os
+
+    jsonl = tmp_path / "tasks.jsonl"
+    jsonl.touch()
+    metrics_jsonl = tmp_path / "metrics.jsonl"
+
+    store = TaskStore(jsonl_path=jsonl, metrics_jsonl_path=metrics_jsonl)
+
+    # Write initial data and prime the cache
+    record = json.dumps({"role": "backend", "cost_usd": 1.00}) + "\n"
+    metrics_jsonl.write_bytes(record.encode())
+
+    mtime1 = metrics_jsonl.stat().st_mtime + 1
+    os.utime(metrics_jsonl, (mtime1, mtime1))
+    store._cost_cache_mtime = 0.0
+
+    store._read_cost_by_role()
+    assert store._cost_cache_offset > 0
+
+    # Simulate truncation: offset is now beyond file size
+    store._cost_cache_offset = 99999
+    store._cost_cache_mtime = 0.0  # force re-read
+
+    # Write a smaller replacement file
+    new_record = json.dumps({"role": "qa", "cost_usd": 0.25}) + "\n"
+    metrics_jsonl.write_bytes(new_record.encode())
+    mtime2 = metrics_jsonl.stat().st_mtime + 2
+    os.utime(metrics_jsonl, (mtime2, mtime2))
+
+    result = store._read_cost_by_role()
+    # Cache should have been reset; old 'backend' cost gone, only new 'qa'
+    assert "backend" not in result
+    assert result.get("qa") == pytest.approx(0.25)
+    assert store._cost_cache_offset == len(new_record.encode())
