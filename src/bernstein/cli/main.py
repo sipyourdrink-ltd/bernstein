@@ -8,7 +8,7 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 import httpx
@@ -80,10 +80,10 @@ def _print_dry_run_table(workdir: Path) -> None:
     """
     from rich.table import Table
 
-    from bernstein.core.sync import parse_backlog_file
+    from bernstein.core.sync import BacklogTask, parse_backlog_file
 
     backlog_dir = workdir / ".sdd" / "backlog" / "open"
-    tasks = []
+    tasks: list[BacklogTask] = []
     if backlog_dir.exists():
         for md_file in sorted(backlog_dir.glob("*.md")):
             bt = parse_backlog_file(md_file)
@@ -164,7 +164,7 @@ def _read_pid(path: str) -> int | None:
     return None
 
 
-def _write_pid(path: str, pid: int) -> None:
+def _write_pid(path: str, pid: int) -> None:  # type: ignore[reportUnusedFunction]
     Path(path).write_text(str(pid))
 
 
@@ -436,7 +436,7 @@ def init(target_dir: str) -> None:
     if not templates_dst.exists():
         import shutil
 
-        from bernstein import _BUNDLED_TEMPLATES_DIR
+        from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
 
         if _BUNDLED_TEMPLATES_DIR.is_dir():
             shutil.copytree(_BUNDLED_TEMPLATES_DIR, templates_dst)
@@ -1444,7 +1444,7 @@ def plan(export_file: str | None, status_filter: str | None) -> None:
         console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
         raise SystemExit(1)
 
-    tasks: list[dict[str, Any]] = raw if isinstance(raw, list) else []
+    tasks: list[dict[str, Any]] = cast("list[dict[str, Any]]", raw) if isinstance(raw, list) else []
 
     if export_file:
         out = Path(export_file)
@@ -1466,17 +1466,17 @@ def plan(export_file: str | None, status_filter: str | None) -> None:
     table.add_column("Effort", min_width=8)
 
     for t in tasks:
-        raw_status = t.get("status", "open")
+        raw_status: str = t.get("status", "open")
         color = STATUS_COLORS.get(raw_status, "white")
-        depends = ", ".join(d[:8] for d in t.get("depends_on", [])) or "—"
+        depends = ", ".join(d[:8] for d in cast("list[str]", t.get("depends_on", []))) or "—"
         table.add_row(
-            t.get("id", "—")[:8],
+            str(t.get("id", "—"))[:8],
             f"[{color}]{raw_status}[/{color}]",
-            t.get("role", "—"),
-            t.get("title", "—"),
+            str(t.get("role", "—")),
+            str(t.get("title", "—")),
             depends,
-            t.get("model") or "—",
-            t.get("effort") or "—",
+            str(t.get("model") or "—"),
+            str(t.get("effort") or "—"),
         )
 
     console.print(table)
@@ -1760,7 +1760,7 @@ def live(interval: float) -> None:
         if status is None:
             return {}
         tasks_raw = _server_get("/tasks")
-        tasks = tasks_raw if isinstance(tasks_raw, list) else []
+        tasks: list[dict[str, Any]] = cast("list[dict[str, Any]]", tasks_raw) if isinstance(tasks_raw, list) else []
 
         # Read agent state from orchestrator's agents.json (written each tick)
         agents: list[dict[str, Any]] = []
@@ -1858,7 +1858,7 @@ def benchmark_swe_bench(
     """
     from rich.table import Table
 
-    from bernstein.benchmark.swe_bench import SWEBenchRunner, compute_report, save_results
+    from bernstein.benchmark.swe_bench import InstanceResult, SWEBenchRunner, compute_report, save_results
 
     workdir = Path(".")
     runner = SWEBenchRunner(workdir=workdir, sample=sample, instance_id=instance_id)
@@ -1881,7 +1881,7 @@ def benchmark_swe_bench(
     table.add_column("Time (s)", justify="right", min_width=10)
     table.add_column("Agents", justify="right", min_width=8)
 
-    results = []
+    results: list[InstanceResult] = []
     for inst in instances:
         console.print(f"  Running [cyan]{inst.instance_id}[/cyan]…", end="")
         result = runner.run_instance(inst)
@@ -2060,7 +2060,7 @@ def config_list(project_dir: str) -> None:
     """List all config keys with their effective values and sources."""
     from rich.table import Table
 
-    from bernstein.core.home import _DEFAULTS, BernsteinHome, resolve_config
+    from bernstein.core.home import _DEFAULTS, BernsteinHome, resolve_config  # type: ignore[reportPrivateUsage]
 
     home = BernsteinHome.default()
     table = Table(show_header=True, header_style="bold magenta")
@@ -2197,12 +2197,12 @@ def _build_collector_from_archive(
             success=(status == "done"),
             cost_usd=cost_usd,
         )
-        collector._task_metrics[task_id] = tm
+        collector._task_metrics[task_id] = tm  # type: ignore[reportPrivateUsage]
 
     # Enrich with token data from .sdd/metrics/tasks.jsonl if available
     metrics_path = archive_path.parent.parent / "metrics" / "tasks.jsonl"
     if metrics_path.exists():
-        metrics_by_task: dict[str, dict[str, object]] = {}
+        metrics_by_task: dict[str, dict[str, Any]] = {}
         for line in metrics_path.read_text().splitlines():
             line = line.strip()
             if not line:
@@ -2215,7 +2215,7 @@ def _build_collector_from_archive(
             if tid:
                 metrics_by_task[str(tid)] = rec
 
-        for task_id, tm in collector._task_metrics.items():
+        for task_id, tm in collector._task_metrics.items():  # type: ignore[reportPrivateUsage]
             if task_id in metrics_by_task:
                 rec = metrics_by_task[task_id]
                 tm.tokens_prompt = int(rec.get("tokens_prompt", 0) or 0)
@@ -2502,7 +2502,7 @@ def agents_validate(definitions_dir: str) -> None:
                 from bernstein.agents.registry import AgentRegistry
 
                 registry = AgentRegistry(definitions_dir=definitions_path)
-                registry._validate_schema(data, yaml_file)
+                registry._validate_schema(cast("dict[str, Any]", data), yaml_file)  # type: ignore[reportPrivateUsage]
                 console.print(f"  [green]✓[/green] {yaml_file.name}")
             except SchemaValidationError as exc:
                 issues.append(f"local/{yaml_file.name}: {exc}")
@@ -2594,7 +2594,7 @@ def agents_showcase(definitions_dir: str) -> None:
             rows.append((name, agent.role, agent.description[:60], "agency", assigned, rate))
 
     # Built-in roles (fallback)
-    from bernstein.agents.catalog import _BUILTIN_AGENT_ENTRIES
+    from bernstein.agents.catalog import _BUILTIN_AGENT_ENTRIES  # type: ignore[reportPrivateUsage]
 
     builtin_names = {r[0] for r in rows}
     for entry in _BUILTIN_AGENT_ENTRIES:
@@ -2918,12 +2918,14 @@ def evolve_run(
 
                 _seed_raw = _yaml.safe_load(_seed_path.read_text(encoding="utf-8"))
                 if isinstance(_seed_raw, dict):
-                    _evolve_cfg = _seed_raw.get("evolve", {})
+                    _seed_dict = cast("dict[str, Any]", _seed_raw)
+                    _evolve_cfg = _seed_dict.get("evolve", {})
                     if isinstance(_evolve_cfg, dict):
-                        if not github_sync and _evolve_cfg.get("github_sync"):
+                        _evolve_dict = cast("dict[str, Any]", _evolve_cfg)
+                        if not github_sync and _evolve_dict.get("github_sync"):
                             github_sync = True
-                        if github_repo is None and _evolve_cfg.get("github_repo"):
-                            github_repo = str(_evolve_cfg["github_repo"])
+                        if github_repo is None and _evolve_dict.get("github_repo"):
+                            github_repo = str(_evolve_dict["github_repo"])
             except Exception:
                 pass  # YAML parse errors are non-fatal here
             break
@@ -2968,7 +2970,7 @@ def evolve_run(
         # Pass the explicit repo slug to the lazily-created GitHubClient.
         from bernstein.core.github import GitHubClient
 
-        loop._github = GitHubClient(repo=github_repo)
+        loop._github = GitHubClient(repo=github_repo)  # type: ignore[reportPrivateUsage]
 
     try:
         results = loop.run(
@@ -2977,7 +2979,7 @@ def evolve_run(
         )
     except KeyboardInterrupt:
         loop.stop()
-        results = loop._experiments
+        results = loop._experiments  # type: ignore[reportPrivateUsage]
         console.print("\n[dim]Evolution loop interrupted.[/dim]")
 
     # Print summary.
@@ -3428,7 +3430,7 @@ def doctor(as_json: bool) -> None:
         status = "set" if set_val else "not set"
         if var == "ANTHROPIC_API_KEY" and not set_val:
             # Check for OAuth session
-            from bernstein.core.bootstrap import _claude_has_oauth_session
+            from bernstein.core.bootstrap import _claude_has_oauth_session  # type: ignore[reportPrivateUsage]
 
             if _claude_has_oauth_session():
                 status = "not set (OAuth active — OK)"
@@ -3648,18 +3650,25 @@ def recap(archive: str, as_json: bool) -> None:
                 continue
 
     # Time range
-    timestamps = [
-        r.get("created_at") or r.get("completed_at") for r in records if r.get("created_at") or r.get("completed_at")
-    ]
+    timestamps: list[float] = []
+    for r in records:
+        _ts = r.get("created_at") or r.get("completed_at")
+        if _ts is not None:
+            timestamps.append(float(_ts))
     start_ts: float | None = min(timestamps) if timestamps else None
-    end_ts: float | None = max(r.get("completed_at") for r in records if r.get("completed_at")) if records else None
+    _completed_ts: list[float] = []
+    for r in records:
+        _ct = r.get("completed_at")
+        if _ct is not None:
+            _completed_ts.append(float(_ct))
+    end_ts: float | None = max(_completed_ts) if _completed_ts else None
 
     duration_s: float | None = None
     if start_ts is not None and end_ts is not None:
         duration_s = end_ts - start_ts
 
     if as_json:
-        output = {
+        output: dict[str, Any] = {
             "tasks": total,
             "done": len(done),
             "failed": len(failed),
@@ -3675,18 +3684,18 @@ def recap(archive: str, as_json: bool) -> None:
     start_str = ""
     end_str = ""
     if start_ts:
-        start_str = datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M")
+        start_str = datetime.datetime.fromtimestamp(float(start_ts)).strftime("%H:%M")
     if end_ts:
-        end_str = datetime.datetime.fromtimestamp(end_ts).strftime("%H:%M")
+        end_str = datetime.datetime.fromtimestamp(float(end_ts)).strftime("%H:%M")
 
     dur_str = ""
     if duration_s is not None:
-        m, s = divmod(int(duration_s), 60)
+        m, s = divmod(int(float(duration_s)), 60)
         dur_str = f" in {m}m{s:02d}s" if m else f" in {s}s"
 
     cost_str = f"${cost_usd:.2f}" if cost_usd > 0 else "$0.00"
 
-    parts = []
+    parts: list[str] = []
     if start_str and end_str:
         parts.append(f"{start_str} → {end_str}")
     parts.append(f"{total} task(s) total")
