@@ -2,47 +2,47 @@
 
 No decisions recorded yet.
 
-## [2026-03-28 07:13] [RETRY 1] Add --dry-run flag to orchestrator that previews task plan without spawning agents (25507b48fd90)
-Completed: [RETRY 1] Add --dry-run flag to orchestrator that previews task plan without spawning agents
-
-## [2026-03-28 07:13] [RETRY 2] 413 -- GitHub Pages documentation site (77be6161ad92)
-Completed: [RETRY 2] 413 -- GitHub Pages documentation site. All 6 files exist (index.html, getting-started.html, concepts.html, api.html, style.css, script.js). Total size 81KB (<100KB). All completion signals verified: Bernstein and viewport present in index.html.
-
-## [2026-03-28 07:14] [RETRY 1] Fix all 31 ruff linting errors across src/bernstein/ (080dad2b57a6)
-Completed: [RETRY 1] Fix all 31 ruff linting errors across src/bernstein/ — ruff check already returns 0 errors, all 1772 tests pass
-
-## [2026-03-28 07:14] [RETRY 2] Fix all 31 ruff linting errors across src/bernstein/ (ba06002eacb6)
-Completed: All ruff linting errors already fixed. Verified: 0 ruff errors, 1772 tests passing.
-
-## [2026-03-28 07:14] [RETRY 1] Reduce HTTP round-trips in orchestrator tick loop (8184b626407a)
-Completed: [RETRY 1] Reduce HTTP round-trips in orchestrator tick loop - refactoring was already applied in commit e900573: _fetch_all_tasks() fetches all tasks in one round-trip, tick passes tasks_by_status to all consumers, debug log counts HTTP reads per tick (should stay at 1).
-
-## [2026-03-28 07:15] Evolve cycle 13: code quality (a86132e7fc17)
-Cycle 13 (code quality): Created 4 tasks targeting dict[str,Any] soup (148 occurrences violating project standards) and broad exception handling (66 catches). Tasks: (1) TypedDicts in orchestrator.py, (2) narrow except Exception in orchestrator.py, (3) TypedDicts in server.py, (4) Task.from_dict classmethod to replace fragile manual deserialization.
-
-## [2026-03-28 07:15] [RETRY 1] Lazy-import Rich dashboard components in CLI modules (05acde34d787)
+## [2026-03-28 07:25] [RETRY 1] Lazy-import Rich dashboard components in CLI modules (09f944f46aed)
 Completed: [RETRY 1] Lazy-import Rich dashboard components in CLI modules
 
-## [2026-03-28 07:15] [RETRY 1] Reduce HTTP round-trips in orchestrator tick loop (bd4b905f4e22)
-Completed: [RETRY 1] Reduce HTTP round-trips in orchestrator tick loop - optimization already fully implemented: _fetch_all_tasks called once per tick, tasks_by_status passed to all consumers (_check_evolve, _reap_dead_agents, _refresh_agent_states), debug log counts HTTP reads per tick, fallback individual GETs only for edge cases.
+## [2026-03-28 07:27] Evolve cycle 14: performance (0416d00fa3d3)
+Created 4 performance tasks: (1) mtime-cached _compute_total_spent to avoid re-reading JSONL files every tick, (2) server-side status filtering in _fetch_all_tasks to reduce JSON payload, (3) parallel done-task verification using existing ThreadPoolExecutor, (4) write buffering for JSONL appends in TaskStore to reduce file I/O.
 
-## [2026-03-28 07:16] [RETRY 1] Reduce HTTP round-trips in orchestrator tick loop (daf62bcbc557)
-Completed: [RETRY 1] Reduce HTTP round-trips in orchestrator tick loop. The optimization was already implemented: _fetch_all_tasks() is called once per tick, tasks_by_status dict is passed to all consumers (_check_evolve, _reap_dead_agents, _refresh_agent_states, _process_completed_tasks). _retry_or_fail_task accepts optional snapshot. Debug log counts HTTP reads per tick. HTTP reads per tick = 1.
-
-## [2026-03-28 07:16] [RETRY 1] Lazy-import Rich dashboard components in CLI modules (2cbb63ecdb31)
-Completed: [RETRY 1] Lazy-import Rich dashboard components in CLI modules
-
-## [2026-03-28 07:19] Replace dict[str, Any] with TypedDicts in server.py (fcdd6a0bcb01)
-Completed: Replace dict[str, Any] with TypedDicts in server.py
-
-## [2026-03-28 07:20] Narrow except Exception catches in orchestrator.py (64252d0fd764)
-Completed: All except Exception catches in orchestrator.py are already narrowed - OSError for KB refresh, CancelledError|RuntimeError for ruff/pytest futures, OSError|ValueError|RuntimeError for evolution cycle, Exception kept for top-level run loop guard.
-
-## [2026-03-28 07:20] Move _task_from_dict into Task.from_dict classmethod (7aead781408e)
-Completed: Move _task_from_dict into Task.from_dict classmethod
-
-## [2026-03-28 07:20] [RETRY 1] Narrow except Exception catches in orchestrator.py (6fd32c193066)
+## [2026-03-28 07:27] [RETRY 1] Narrow except Exception catches in orchestrator.py (6d360c0b7fcd)
 Completed: [RETRY 1] Narrow except Exception catches in orchestrator.py
 
-## [2026-03-28 07:22] Replace dict[str, Any] with TypedDicts in orchestrator.py (2baaf513f669)
-Completed: Replace dict[str, Any] with TypedDicts in orchestrator.py
+## [2026-03-28 07:30] Cache _compute_total_spent with mtime-based invalidation (56cd38abae9b)
+Completed: Cache _compute_total_spent with mtime-based invalidation
+
+## [2026-03-28 07:33] Add write buffering for JSONL appends in TaskStore (b6491f934ea3)
+Completed: Add write buffering for JSONL appends in TaskStore
+
+## [2026-03-28 07:43] [RETRY 2] Use server-side status filtering instead of fetching all tasks (c1d31998811e)
+Completed: _fetch_all_tasks already uses server-side status filtering with per-status GET /tasks?status=X calls. All 140 orchestrator tests and 84 server tests pass.
+
+## [2026-03-28 07:44] [RETRY 1] Use server-side status filtering instead of fetching all tasks (4f5bcc17065f)
+Completed: [RETRY 1] Use server-side status filtering instead of fetching all tasks
+
+## [2026-03-28 07:44] [RETRY 1] Parallelize done-task verification in _process_completed_tasks (6a82ecdf4607)
+Completed: [RETRY 1] Parallelize done-task verification in _process_completed_tasks
+
+## [2026-03-28 07:45] [RETRY 1] Parallelize done-task verification in _process_completed_tasks (2645bc46794c)
+Completed: [RETRY 1] Parallelize done-task verification in _process_completed_tasks
+
+## [2026-03-28 07:45] [RETRY 1] Parallelize done-task verification in _process_completed_tasks (f47349d4c1f6)
+Completed: [RETRY 1] Parallelize done-task verification in _process_completed_tasks
+
+## [2026-03-28 07:45] [RETRY 1] Use server-side status filtering instead of fetching all tasks (2c72d5e52a56)
+Completed: [RETRY 1] Use server-side status filtering instead of fetching all tasks
+
+## [2026-03-28 07:45] [RETRY 2] Parallelize done-task verification in _process_completed_tasks (d75f22ece52f)
+Completed: [RETRY 2] Parallelize done-task verification in _process_completed_tasks — verified existing implementation: verify_task() calls fan out via self._executor (ThreadPoolExecutor max_workers=4), results collected after all complete. Two parallel verification tests pass. All 140 tests pass.
+
+## [2026-03-28 07:45] [RETRY 2] Use server-side status filtering instead of fetching all tasks (acc75ae24b88)
+Completed: Server-side status filtering already implemented. _fetch_all_tasks() makes per-status filtered GET /tasks?status=X calls (line 168) instead of unfiltered fetch. Defaults to [open, claimed, done, failed]. All 224 tests pass.
+
+## [2026-03-28 07:48] [RETRY 1] Use server-side status filtering instead of fetching all tasks (04ca90131cad)
+Completed: [RETRY 1] Use server-side status filtering instead of fetching all tasks
+
+## [2026-03-28 07:48] [RETRY 2] Use server-side status filtering instead of fetching all tasks (1b9da3b00886)
+Completed: [RETRY 2] Use server-side status filtering instead of fetching all tasks. Implementation already in place: _fetch_all_tasks accepts optional statuses list, makes one GET /tasks?status=X per status (defaulting to open,claimed,done,failed). All 224 tests pass.

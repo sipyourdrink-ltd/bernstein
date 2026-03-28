@@ -284,6 +284,7 @@ class TaskStore:
             else jsonl_path.parent.parent / "metrics" / "tasks.jsonl"
         )
         self._lock: asyncio.Lock = asyncio.Lock()
+        self._write_buffer: list[str] = []
         self._dirty: bool = False
         self._start_ts: float = time.time()
         self._cost_cache: dict[str, float] = {}
@@ -344,16 +345,38 @@ class TaskStore:
                 self._tasks[task_id] = task
                 self._index_add(task)
 
-    async def _append_jsonl(self, record: TaskRecord) -> None:
-        """Append a single JSON record to the JSONL log."""
+    _BUFFER_MAX: int = 10
+
+    async def _flush_buffer_unlocked(self) -> None:
+        """Write buffered JSONL records to disk. Caller must hold self._lock."""
+        if not self._write_buffer:
+            return
         self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(record, default=str) + "\n"
+        data = "".join(self._write_buffer)
+        self._write_buffer.clear()
 
         def _write() -> None:
             with self._jsonl_path.open("a") as f:
-                f.write(line)
+                f.write(data)
 
         await asyncio.to_thread(_write)
+
+    async def _append_jsonl(self, record: TaskRecord) -> None:
+        """Buffer a JSON record for batch JSONL writing.
+
+        Records accumulate until the buffer reaches _BUFFER_MAX entries, then
+        flush to disk in a single write.  Callers must eventually call
+        flush_buffer() (e.g. on shutdown) to drain any remaining records.
+        """
+        line = json.dumps(record, default=str) + "\n"
+        self._write_buffer.append(line)
+        if len(self._write_buffer) >= self._BUFFER_MAX:
+            await self._flush_buffer_unlocked()
+
+    async def flush_buffer(self) -> None:
+        """Flush any buffered JSONL records to disk (acquires the store lock)."""
+        async with self._lock:
+            await self._flush_buffer_unlocked()
 
     async def _append_archive(self, task: Task, completed_at: float) -> None:
         """Append a completed/failed task record to the archive JSONL."""
@@ -997,6 +1020,7 @@ def create_app(
         reaper.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await reaper
+        await store.flush_buffer()
 
     application = FastAPI(title="Bernstein Task Server", version="0.1.0", lifespan=lifespan)
 

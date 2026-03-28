@@ -9,6 +9,7 @@ import concurrent.futures
 import contextlib
 import json
 import logging
+import os
 import re
 import time
 from collections import defaultdict
@@ -136,29 +137,40 @@ def _parse_backlog_file(filename: str, content: str) -> dict[str, Any]:
     }
 
 
-def _fetch_all_tasks(client: httpx.Client, base_url: str) -> dict[str, list[Task]]:
-    """GET /tasks (no filter) and bucket results by status in one round-trip.
+def _fetch_all_tasks(
+    client: httpx.Client,
+    base_url: str,
+    statuses: list[str] | None = None,
+) -> dict[str, list[Task]]:
+    """Fetch tasks from the server filtered by status.
+
+    Makes one GET /tasks?status=X request per requested status rather than
+    fetching all tasks and bucketing client-side.  This dramatically reduces
+    JSON payload size as task history grows.
 
     Args:
         client: httpx client.
         base_url: Server base URL.
+        statuses: List of status strings to fetch.  Defaults to
+            ["open", "claimed", "done", "failed"] — the statuses needed in
+            the hot path.
 
     Returns:
-        Dict mapping status string → list of Tasks.  Always includes keys
-        "open", "claimed", "done", "failed", "cancelled" even if empty.
+        Dict mapping status string → list of Tasks.  Always includes keys for
+        every requested status even if the list is empty.
         NOTE: "open" here includes tasks with unmet dependencies; callers
         that need the server-filtered view should apply their own dep check.
     """
-    resp = client.get(f"{base_url}/tasks")
-    resp.raise_for_status()
-    by_status: dict[str, list[Task]] = defaultdict(list)
-    for raw in resp.json():
-        task = Task.from_dict(raw)
-        by_status[task.status.value].append(task)
-    # Ensure standard keys are always present
-    for key in ("open", "claimed", "done", "failed", "cancelled"):
-        by_status.setdefault(key, [])
-    return dict(by_status)
+    if statuses is None:
+        statuses = ["open", "claimed", "done", "failed"]
+    by_status: dict[str, list[Task]] = {s: [] for s in statuses}
+    for status in statuses:
+        resp = client.get(f"{base_url}/tasks", params={"status": status})
+        resp.raise_for_status()
+        for raw in resp.json():
+            task = Task.from_dict(raw)
+            by_status[task.status.value].append(task)
+    return by_status
 
 
 def _fail_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -> None:
@@ -211,12 +223,40 @@ def group_by_role(tasks: list[Task], max_per_batch: int) -> list[list[Task]]:
     return batches
 
 
+# Cache for _compute_total_spent: maps absolute metrics_dir path ->
+# (cached_total, {file_path_str: mtime_ns}).
+_total_spent_cache: dict[str, tuple[float, dict[str, int]]] = {}
+
+
+def _parse_file_total(jsonl_file: Path) -> float:
+    """Parse cost contributions from a single cost_efficiency JSONL file."""
+    file_total = 0.0
+    try:
+        for line in jsonl_file.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                point = json.loads(line)
+                if "task_id" in point.get("labels", {}):
+                    file_total += point.get("value", 0.0)
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        pass
+    return file_total
+
+
 def _compute_total_spent(workdir: Path) -> float:
     """Sum cost_efficiency metric values recorded for individual tasks.
 
     Reads all cost_efficiency_*.jsonl files in .sdd/metrics/ and returns the
     total cost in USD for entries that have a ``task_id`` label, avoiding
     double-counting the per-agent average entries that lack that label.
+
+    Results are mtime-cached: files that have not changed since the last call
+    are not re-read, making repeated calls on an unchanged metrics directory
+    effectively free.
 
     Args:
         workdir: Project root directory.
@@ -225,21 +265,48 @@ def _compute_total_spent(workdir: Path) -> float:
         Total USD spent as recorded in metrics files.
     """
     metrics_dir = workdir / ".sdd" / "metrics"
-    total = 0.0
-    for jsonl_file in metrics_dir.glob("cost_efficiency_*.jsonl"):
+    cache_key = str(metrics_dir)
+    cached_total, cached_mtimes = _total_spent_cache.get(cache_key, (0.0, {}))
+
+    try:
+        current_files = list(metrics_dir.glob("cost_efficiency_*.jsonl"))
+    except OSError:
+        return cached_total
+
+    current_paths = {str(f) for f in current_files}
+    cached_paths = set(cached_mtimes.keys())
+
+    # If any previously-seen file was removed we cannot subtract its
+    # contribution from the cached total, so recompute from scratch.
+    if cached_paths - current_paths:
+        cached_total = 0.0
+        cached_mtimes = {}
+
+    new_mtimes: dict[str, int] = dict(cached_mtimes)
+    total = cached_total
+    any_changed = False
+
+    for jsonl_file in current_files:
+        path_str = str(jsonl_file)
         try:
-            for line in jsonl_file.read_text().splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    point = json.loads(line)
-                    if "task_id" in point.get("labels", {}):
-                        total += point.get("value", 0.0)
-                except json.JSONDecodeError:
-                    continue
+            mtime_ns = os.stat(jsonl_file).st_mtime_ns
         except OSError:
             continue
+
+        if new_mtimes.get(path_str) == mtime_ns:
+            # File unchanged - skip re-parsing.
+            continue
+
+        any_changed = True
+        new_mtimes[path_str] = mtime_ns
+
+    if any_changed:
+        # One or more files changed; reparse all files to get a correct total.
+        total = 0.0
+        for jsonl_file in current_files:
+            total += _parse_file_total(jsonl_file)
+
+    _total_spent_cache[cache_key] = (total, new_mtimes)
     return total
 
 
@@ -291,7 +358,7 @@ class Orchestrator:
         self._summary_written: bool = False
         self._run_start_ts: float = time.time()
         # Background thread pool for non-blocking ruff/pytest runs
-        self._executor: concurrent.futures.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self._executor: concurrent.futures.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self._pending_ruff_future: concurrent.futures.Future[list[RuffViolation]] | None = None
         self._pending_test_future: concurrent.futures.Future[TestResults] | None = None
 
@@ -321,7 +388,7 @@ class Orchestrator:
         """Execute one orchestrator cycle.
 
         Steps:
-            1. Fetch ALL tasks in one HTTP call and split by status.
+            1. Fetch tasks by status (open/claimed/done/failed) via filtered queries.
             2. Group open tasks into role-based batches.
             3. Spawn agents if capacity allows.
             4. Check done tasks and run janitor.
@@ -341,10 +408,10 @@ class Orchestrator:
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             logger.warning("ingest_backlog failed: %s", exc)
 
-        # 1. Fetch ALL tasks in a single round-trip and split by status.
+        # 1. Fetch tasks by status via targeted filtered queries (one call per status).
         try:
             tasks_by_status = _fetch_all_tasks(self._client, base)
-            _tick_http_reads += 1
+            _tick_http_reads += 4  # one GET /tasks?status=X per status
         except httpx.HTTPError as exc:
             logger.error("Failed to fetch tasks: %s", exc)
             result.errors.append(f"fetch_all: {exc}")
@@ -1678,26 +1745,42 @@ class Orchestrator:
         """Run janitor verification and record evolution metrics for done tasks.
 
         Skips tasks already processed in a prior tick. For each new done task,
-        verifies completion signals, syncs the backlog file, appends the result
-        to the knowledge base, and feeds the outcome to the evolution coordinator.
+        submits verify_task() calls in parallel via self._executor, then
+        processes post-verification steps (sync backlog, append decision,
+        record evolution) after all verifications complete.
 
         Args:
             done_tasks: Tasks with status "done" fetched from the server.
             result: TickResult accumulator for verified/verification_failures lists.
         """
+        # Filter to only new tasks and mark them all processed upfront.
+        new_tasks: list[Task] = []
         for task in done_tasks:
             if task.id in self._processed_done_tasks:
                 continue
             self._processed_done_tasks.add(task.id)
+            new_tasks.append(task)
 
-            janitor_passed = True
+        if not new_tasks:
+            return
+
+        # Fan-out: submit all verify_task() calls in parallel.
+        verify_futures: dict[str, concurrent.futures.Future[tuple[bool, list[str]]]] = {}
+        for task in new_tasks:
             if task.completion_signals:
-                passed, failed_signals = verify_task(task, self._workdir)
+                verify_futures[task.id] = self._executor.submit(verify_task, task, self._workdir)
+
+        # Fan-in: collect results then run sequential post-verification steps.
+        for task in new_tasks:
+            if task.id in verify_futures:
+                passed, failed_signals = verify_futures[task.id].result()
                 janitor_passed = passed
                 if passed:
                     result.verified.append(task.id)
                 else:
                     result.verification_failures.append((task.id, failed_signals))
+            else:
+                janitor_passed = True
 
             session = self._find_session_for_task(task.id)
             if session is not None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -454,11 +455,21 @@ async def test_health_reflects_counts(client: AsyncClient) -> None:
 # -- JSONL persistence ------------------------------------------------------
 
 @pytest.mark.anyio
-async def test_jsonl_written(client: AsyncClient, jsonl_path: Path) -> None:
-    """Creating a task writes a JSONL line to disk."""
-    await client.post("/tasks", json=TASK_PAYLOAD)
+async def test_jsonl_written(jsonl_path: Path) -> None:
+    """Task records land on disk after flush_buffer()."""
+    from bernstein.core.server import TaskCreate
+
+    store = TaskStore(jsonl_path=jsonl_path)
+    req = TaskCreate(
+        title="Implement parser",
+        description="Write the YAML parser module",
+        role="backend",
+        priority=2,
+    )
+    await store.create(req)
+    await store.flush_buffer()
     assert jsonl_path.exists()
-    lines = [l for l in jsonl_path.read_text().splitlines() if l.strip()]
+    lines = [ln for ln in jsonl_path.read_text().splitlines() if ln.strip()]
     assert len(lines) >= 1
     record = json.loads(lines[0])
     assert record["title"] == "Implement parser"
@@ -1661,3 +1672,38 @@ def test_read_cost_by_role_truncation_reset(tmp_path: Path) -> None:
     assert "backend" not in result
     assert result.get("qa") == pytest.approx(0.25)
     assert store._cost_cache_offset == len(new_record.encode())
+
+# -- write buffering -----------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_jsonl_write_buffering(tmp_path: Path) -> None:
+    """Creating 20 tasks must produce fewer than 20 file-open operations.
+
+    With a buffer of 10, 20 creates trigger exactly 2 batch flushes plus at
+    most 1 final flush — well under 20 individual file opens.
+    """
+    jsonl = tmp_path / "tasks.jsonl"
+    store = TaskStore(jsonl_path=jsonl)
+
+    open_count = 0
+    real_open = Path.open
+
+    def counting_open(self: Path, mode: str = "r", **kwargs):  # type: ignore[override]
+        nonlocal open_count
+        if self == jsonl and "a" in mode:
+            open_count += 1
+        return real_open(self, mode, **kwargs)
+
+    with patch.object(Path, "open", counting_open):
+        from bernstein.core.server import TaskCreate
+
+        for i in range(20):
+            req = TaskCreate(title=f"Task {i}", description="d", role="backend")
+            await store.create(req)
+        await store.flush_buffer()
+
+    assert open_count < 20, f"Expected fewer than 20 file opens, got {open_count}"
+    # All 20 records must be on disk after the flush
+    lines = [ln for ln in jsonl.read_text().splitlines() if ln.strip()]
+    assert len(lines) == 20

@@ -592,11 +592,12 @@
       "httpx",
       "json",
       "logging",
+      "os",
       "re",
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T07:19:20.258473"
+    "last_modified": "2026-03-28T07:39:24.321473"
   },
   "src/bernstein/core/policy.py": {
     "summary": "Policy engine for tier optimization and provider routing.",
@@ -727,7 +728,7 @@
       "typing",
       "uuid"
     ],
-    "last_modified": "2026-03-28T07:18:57.419513"
+    "last_modified": "2026-03-28T07:39:24.321711"
   },
   "src/bernstein/core/spawner.py": {
     "summary": "Spawn short-lived CLI agents for task batches.",
@@ -2206,6 +2207,9 @@
       "TestRunEvolutionCycle",
       "TestExtractFromAgentLog",
       "TestCheckEvolve",
+      "TestParallelVerification",
+      "TestProcessCompletedTasksParallel",
+      "TestComputeTotalSpentCache",
       "test_per_task_timeout_short_task",
       "test_per_task_timeout_long_task_clamped",
       "test_reap_uses_per_session_timeout"
@@ -2219,7 +2223,7 @@
       "time",
       "unittest"
     ],
-    "last_modified": "2026-03-28T07:19:28.931858"
+    "last_modified": "2026-03-28T07:42:56.999701"
   },
   "tests/unit/test_plan_cmd.py": {
     "summary": "Tests for the `bernstein plan` CLI command.",
@@ -2471,7 +2475,8 @@
       "test_read_cost_by_role_incremental_offset",
       "test_read_cost_by_role_truncation_reset",
       "test_read_cost_by_role_incremental_offset",
-      "test_read_cost_by_role_truncation_reset"
+      "test_read_cost_by_role_truncation_reset",
+      "test_jsonl_write_buffering"
     ],
     "imports": [
       "__future__",
@@ -2479,9 +2484,10 @@
       "httpx",
       "json",
       "pathlib",
-      "pytest"
+      "pytest",
+      "unittest"
     ],
-    "last_modified": "2026-03-28T06:56:59.980376"
+    "last_modified": "2026-03-28T07:39:24.322385"
   },
   "tests/unit/test_spawner.py": {
     "summary": "Tests for AgentSpawner \u2014 adapter is always mocked.",

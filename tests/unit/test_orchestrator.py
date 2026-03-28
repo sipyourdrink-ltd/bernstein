@@ -83,6 +83,18 @@ def _task_as_dict(task: Task) -> dict[str, object]:
     return result
 
 
+def _tasks_response(url: httpx.URL, tasks: list[dict]) -> httpx.Response:
+    """Return tasks, filtered by ?status= query param when present.
+
+    Used in inline mock handlers so they handle both GET /tasks and
+    GET /tasks?status=X correctly.
+    """
+    status = url.params.get("status")
+    if status is not None:
+        tasks = [t for t in tasks if t.get("status") == status]
+    return httpx.Response(200, json=tasks)
+
+
 def _mock_adapter(pid: int = 42) -> CLIAdapter:
     adapter = MagicMock(spec=CLIAdapter)
     adapter.spawn.return_value = SpawnResult(pid=pid, log_path=Path("/tmp/test.log"))
@@ -111,7 +123,18 @@ def _mock_transport(responses: dict[str, httpx.Response]) -> httpx.MockTransport
             key += f"?{url.query.decode()}"
         if key in responses:
             return responses[key]
-        # Auto-aggregate for the new bulk-fetch path ──────────────────────────
+        # Auto-filter: "GET /tasks?status=X" falls back to bulk "GET /tasks" ──
+        if key.startswith("GET /tasks?status=") and "GET /tasks" in responses:
+            bulk_resp = responses["GET /tasks"]
+            if bulk_resp.status_code != 200:
+                return bulk_resp
+            status_val = url.params.get("status", "")
+            filtered = [t for t in bulk_resp.json() if t.get("status") == status_val]
+            return httpx.Response(200, json=filtered)
+        # Auto-empty: unregistered status filters return [] (not 404) ──────────
+        if key.startswith("GET /tasks?status="):
+            return httpx.Response(200, json=[])
+        # Auto-aggregate for legacy bulk-fetch path ────────────────────────────
         if key == "GET /tasks":
             aggregated: list[object] = []
             for resp_key, resp in responses.items():
@@ -396,19 +419,18 @@ class TestOrchestratorTick:
         tasks_tick1 = [_make_task(id="T-1")]
         tasks_tick2 = [_make_task(id="T-2", role="qa")]
 
-        call_count = 0
+        tick_count = 0
         def handler(request: httpx.Request) -> httpx.Response:
-            nonlocal call_count
+            nonlocal tick_count
             url = request.url
-            key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            # Orchestrator uses bulk GET /tasks; return different tasks per tick
-            if key == "GET /tasks":
-                call_count += 1
-                if call_count == 1:
-                    return httpx.Response(200, json=[_task_as_dict(t) for t in tasks_tick1])
-                return httpx.Response(200, json=[_task_as_dict(t) for t in tasks_tick2])
+            if request.method == "GET" and url.path == "/tasks":
+                status_filter = url.params.get("status")
+                # Advance tick on first status query ("open") of each tick
+                if status_filter == "open":
+                    tick_count += 1
+                tasks = tasks_tick1 if tick_count <= 1 else tasks_tick2
+                filtered = [_task_as_dict(t) for t in tasks if status_filter is None or t.status.value == status_filter]
+                return httpx.Response(200, json=filtered)
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -588,10 +610,9 @@ class TestSpawnResiliency:
 
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
-            key = f"{request.method} {url.path}"
-            if key == "GET /tasks":
-                return httpx.Response(200, json=[_task_as_dict(task)])
-            if key == "POST /tasks/T-claim-500/claim":
+            if request.method == "GET" and url.path == "/tasks":
+                return _tasks_response(url, [_task_as_dict(task)])
+            if request.method == "POST" and url.path == "/tasks/T-claim-500/claim":
                 return httpx.Response(500, json={"detail": "internal server error"})
             return httpx.Response(404)
 
@@ -610,10 +631,9 @@ class TestSpawnResiliency:
 
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
-            key = f"{request.method} {url.path}"
-            if key == "GET /tasks":
-                return httpx.Response(200, json=[_task_as_dict(task)])
-            if key == "POST /tasks/T-claim-conn/claim":
+            if request.method == "GET" and url.path == "/tasks":
+                return _tasks_response(url, [_task_as_dict(task)])
+            if request.method == "POST" and url.path == "/tasks/T-claim-conn/claim":
                 raise httpx.ConnectError("Connection refused")
             return httpx.Response(404)
 
@@ -655,10 +675,12 @@ class TestSpawnResiliency:
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal fail_called
             url = request.url
-            key = f"{request.method} {url.path}"
-            if key == "GET /tasks":
-                return httpx.Response(200, json=[_task_as_dict(task)])
-            if key == "POST /tasks/T-maxfail/fail":
+            if request.method == "GET" and url.path == "/tasks":
+                status_filter = url.params.get("status")
+                all_tasks = [_task_as_dict(task)]
+                filtered = [t for t in all_tasks if status_filter is None or t.get("status") == status_filter]
+                return httpx.Response(200, json=filtered)
+            if request.method == "POST" and url.path == "/tasks/T-maxfail/fail":
                 fail_called = True
                 return httpx.Response(200, json={"status": "failed"})
             return httpx.Response(404)
@@ -886,7 +908,8 @@ class TestAgentCompletionProtocol:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks":
+            if key in ("GET /tasks", "GET /tasks?status=open", "GET /tasks?status=claimed",
+                       "GET /tasks?status=done", "GET /tasks?status=failed"):
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-orphan":
                 return httpx.Response(200, json=task_dict)
@@ -930,7 +953,8 @@ class TestAgentCompletionProtocol:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks":
+            if key in ("GET /tasks", "GET /tasks?status=open", "GET /tasks?status=claimed",
+                       "GET /tasks?status=done", "GET /tasks?status=failed"):
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-orphan-fail":
                 return httpx.Response(200, json=task_dict)
@@ -971,7 +995,7 @@ class TestAgentCompletionProtocol:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks":
+            if request.method == "GET" and url.path == "/tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-nosig":
                 return httpx.Response(200, json=task_dict)
@@ -1061,12 +1085,11 @@ class TestFileOwnership:
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             url = request.url
-            key = f"{request.method} {url.path}"
-            if key == "GET /tasks":
+            if request.method == "GET" and url.path == "/tasks":
                 call_count += 1
                 if call_count == 1:
-                    return httpx.Response(200, json=[_task_as_dict(task1)])
-                return httpx.Response(200, json=[_task_as_dict(task2)])
+                    return _tasks_response(url, [_task_as_dict(task1)])
+                return _tasks_response(url, [_task_as_dict(task2)])
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -1118,12 +1141,11 @@ class TestFileOwnership:
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             url = request.url
-            key = f"{request.method} {url.path}"
-            if key == "GET /tasks":
+            if request.method == "GET" and url.path == "/tasks":
                 call_count += 1
                 if call_count == 1:
-                    return httpx.Response(200, json=[_task_as_dict(task1)])
-                return httpx.Response(200, json=[_task_as_dict(task2)])
+                    return _tasks_response(url, [_task_as_dict(task1)])
+                return _tasks_response(url, [_task_as_dict(task2)])
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -1166,7 +1188,7 @@ class TestFileOwnership:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks":
+            if request.method == "GET" and url.path == "/tasks":
                 return httpx.Response(200, json=[])
             if key == "POST /tasks/T-stale/fail":
                 return httpx.Response(200, json={})
@@ -1200,7 +1222,7 @@ class TestOrphanMetrics:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks":
+            if request.method == "GET" and url.path == "/tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-met":
                 return httpx.Response(200, json=task_dict)
@@ -1253,7 +1275,7 @@ class TestOrphanMetrics:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks":
+            if request.method == "GET" and url.path == "/tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-fail-met":
                 return httpx.Response(200, json=task_dict)
@@ -1602,10 +1624,9 @@ def _evolve_handler(
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = request.url
-        key = f"{request.method} {url.path}"
-        if key == "GET /tasks":
-            return httpx.Response(200, json=_open + _claimed + _done)
-        if key == "POST /tasks":
+        if request.method == "GET" and url.path == "/tasks":
+            return _tasks_response(url, _open + _claimed + _done)
+        if request.method == "POST" and url.path == "/tasks":
             body = json.loads(request.content)
             created.append(body)
             return httpx.Response(200, json={"id": "T-evolve-mgr"})
@@ -2109,11 +2130,11 @@ class TestDeadAgentFileOwnershipEdgeCases:
             nonlocal tick
             url = request.url
             key = f"{request.method} {url.path}"
-            if key == "GET /tasks":
+            if request.method == "GET" and url.path == "/tasks":
                 tick += 1
                 if tick == 1:
-                    return httpx.Response(200, json=[_task_as_dict(task1)])
-                return httpx.Response(200, json=[_task_as_dict(task2)])
+                    return _tasks_response(url, [_task_as_dict(task1)])
+                return _tasks_response(url, [_task_as_dict(task2)])
             if key == "GET /tasks/T-owner":
                 # Orphan handler fetches the task; return it as in_progress (no signals → fail)
                 return httpx.Response(200, json=_task_as_dict(task1_inprog))
@@ -2170,7 +2191,7 @@ class TestStaleHeartbeatReapingDefault:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks":
+            if request.method == "GET" and url.path == "/tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-stale":
                 return httpx.Response(200, json=_task_as_dict(_make_task(id="T-stale")))
@@ -2215,13 +2236,10 @@ class TestAssignedTaskIdDoubleSpawn:
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             url = request.url
-            key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks":
+            if request.method == "GET" and url.path == "/tasks":
                 call_count += 1
                 # Same task returned on every tick (simulate server not yet updated)
-                return httpx.Response(200, json=[_task_as_dict(task)])
+                return _tasks_response(url, [_task_as_dict(task)])
             # claim / other endpoints
             return httpx.Response(200, json={})
 
@@ -2611,10 +2629,9 @@ class TestReplenishBacklog:
 
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
-            key = f"{request.method} {url.path}"
-            if key == "GET /tasks":
-                return httpx.Response(200, json=open_tasks_json + done_tasks_json)
-            if key == "POST /tasks":
+            if request.method == "GET" and url.path == "/tasks":
+                return _tasks_response(url, list(open_tasks_json) + list(done_tasks_json))
+            if request.method == "POST" and url.path == "/tasks":
                 body = json.loads(request.content)
                 posted.append(body)
                 return httpx.Response(201, json={"id": f"T-ruff-{len(posted)}"})
@@ -2966,9 +2983,8 @@ class TestRunCompletionSummary:
 
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
-            key = f"{request.method} {url.path}"
-            if key == "GET /tasks":
-                return httpx.Response(200, json=_done + _failed)
+            if request.method == "GET" and url.path == "/tasks":
+                return _tasks_response(url, _done + _failed)
             return httpx.Response(200, json={})
 
         transport = httpx.MockTransport(handler)
@@ -3030,9 +3046,8 @@ class TestRunCompletionSummary:
         """summary.md is NOT created when evolve_mode=True."""
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
-            key = f"{request.method} {url.path}"
-            if key == "GET /tasks":
-                return httpx.Response(200, json=[_task_as_dict(_make_task(id="T-1", status="done"))])
+            if request.method == "GET" and url.path == "/tasks":
+                return _tasks_response(url, [_task_as_dict(_make_task(id="T-1", status="done"))])
             return httpx.Response(200, json={})
 
         transport = httpx.MockTransport(handler)
@@ -3559,3 +3574,179 @@ class TestCheckEvolve:
 
         updated = json.loads(evolve_path.read_text())
         assert updated["_consecutive_empty"] == 3
+
+
+# --- Parallel verification ---
+
+
+class TestParallelVerification:
+    """verify_task() calls for multiple done tasks run concurrently."""
+
+    def test_multiple_done_tasks_verified_concurrently(self, tmp_path: Path) -> None:
+        """Multiple done tasks with signals are verified in parallel.
+
+        Mocks verify_task with a 0.2s sleep. With 4 tasks running serially
+        this would take ~0.8s; in parallel it should finish in ~0.2s.
+        """
+        import threading
+        from unittest.mock import patch
+
+        call_times: list[float] = []
+        lock = threading.Lock()
+
+        def slow_verify(task: object, workdir: object) -> tuple[bool, list[str]]:
+            start = time.time()
+            time.sleep(0.15)
+            with lock:
+                call_times.append(start)
+            return (True, [])
+
+        task_dicts = []
+        for i in range(4):
+            t = _make_task(id=f"T-par-{i}", status="done")
+            td = _task_as_dict(t)
+            td["completion_signals"] = [{"type": "path_exists", "value": "x"}]
+            task_dicts.append(td)
+        tasks_with_signals = [Task.from_dict(td) for td in task_dicts]
+
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=task_dicts),
+        })
+        orch = _build_orchestrator(tmp_path, transport)
+
+        with patch("bernstein.core.orchestrator.verify_task", side_effect=slow_verify):
+            t_start = time.time()
+            result = TickResult()
+            orch._process_completed_tasks(tasks_with_signals, result)
+            elapsed = time.time() - t_start
+
+        # All 4 tasks verified
+        assert len(result.verified) == 4
+        # Total wall time should be much less than 4 × 0.15s = 0.6s
+        assert elapsed < 0.5, f"Expected parallel execution but took {elapsed:.2f}s"
+        # All 4 verify calls started within ~0.15s of each other
+        assert len(call_times) == 4
+        spread = max(call_times) - min(call_times)
+        assert spread < 0.1, f"Calls spread too far apart: {spread:.3f}s"
+
+
+# --- Parallel verification ---
+
+
+class TestProcessCompletedTasksParallel:
+    """_process_completed_tasks runs verify_task() concurrently."""
+
+    def test_multiple_done_tasks_verified_concurrently(self, tmp_path: Path) -> None:
+        """verify_task() for N done tasks must run in parallel, not serially.
+
+        We mock verify_task to sleep 0.2 s per task.  With 4 tasks the serial
+        total would be >= 0.8 s; the parallel total (max_workers=4) should be
+        well under 0.5 s.
+        """
+        import time
+        from unittest.mock import patch
+
+        SLEEP = 0.2
+        N = 4
+
+        task_dicts = []
+        for i in range(N):
+            t = _make_task(id=f"T-par-{i}", status="done")
+            d = _task_as_dict(t)
+            d["status"] = "done"
+            d["completion_signals"] = [{"type": "path_exists", "value": "x.txt"}]
+            task_dicts.append(d)
+
+        transport = _mock_transport({
+            "GET /tasks?status=open": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=task_dicts),
+        })
+        orch = _build_orchestrator(tmp_path, transport)
+
+        def slow_verify(task: object, workdir: object) -> tuple[bool, list[str]]:
+            time.sleep(SLEEP)
+            return True, []
+
+        with patch(
+            "bernstein.core.orchestrator.verify_task", side_effect=slow_verify
+        ):
+            tick_result = TickResult()
+            start = time.monotonic()
+            orch._process_completed_tasks(
+                [Task.from_dict(d) for d in task_dicts], tick_result
+            )
+            elapsed = time.monotonic() - start
+
+        # All tasks verified successfully
+        assert len(tick_result.verified) == N
+        assert tick_result.verification_failures == []
+        # Parallel: total wall time should be much less than N * SLEEP
+        assert elapsed < SLEEP * N * 0.75, (
+            f"Expected parallel execution (<{SLEEP * N * 0.75:.2f}s), got {elapsed:.2f}s"
+        )
+
+
+class TestComputeTotalSpentCache:
+    """Tests for mtime-based caching in _compute_total_spent."""
+
+    def test_no_reparse_when_files_unchanged(self, tmp_path: Path) -> None:
+        """Second call with unchanged files must not re-parse them."""
+        import pytest
+        from unittest.mock import patch, call
+        from bernstein.core import orchestrator as orch_mod
+        from bernstein.core.orchestrator import _compute_total_spent, _total_spent_cache
+
+        metrics_dir = tmp_path / ".sdd" / "metrics"
+        metrics_dir.mkdir(parents=True)
+        jsonl = metrics_dir / "cost_efficiency_agent1.jsonl"
+        jsonl.write_text(
+            '{"value": 0.05, "labels": {"task_id": "t1"}}\n'
+            '{"value": 0.10, "labels": {"task_id": "t2"}}\n'
+        )
+
+        _total_spent_cache.clear()
+
+        first = _compute_total_spent(tmp_path)
+        assert first == pytest.approx(0.15)
+
+        # Second call: _parse_file_total should not be called at all.
+        with patch.object(orch_mod, "_parse_file_total", wraps=orch_mod._parse_file_total) as mock_parse:
+            second = _compute_total_spent(tmp_path)
+            assert second == pytest.approx(0.15)
+            mock_parse.assert_not_called()
+
+    def test_reparsed_after_modification(self, tmp_path: Path) -> None:
+        """Cache is invalidated when a file's mtime changes."""
+        import pytest
+        import time as _time
+        from bernstein.core.orchestrator import _compute_total_spent, _total_spent_cache
+
+        metrics_dir = tmp_path / ".sdd" / "metrics"
+        metrics_dir.mkdir(parents=True)
+        jsonl = metrics_dir / "cost_efficiency_agent1.jsonl"
+        jsonl.write_text('{"value": 0.05, "labels": {"task_id": "t1"}}\n')
+
+        _total_spent_cache.clear()
+
+        first = _compute_total_spent(tmp_path)
+        assert first == pytest.approx(0.05)
+
+        _time.sleep(0.01)
+        jsonl.write_text(
+            '{"value": 0.05, "labels": {"task_id": "t1"}}\n'
+            '{"value": 0.20, "labels": {"task_id": "t3"}}\n'
+        )
+
+        second = _compute_total_spent(tmp_path)
+        assert second == pytest.approx(0.25)
+
+    def test_empty_metrics_dir(self, tmp_path: Path) -> None:
+        """Returns 0.0 when no cost_efficiency files exist."""
+        from bernstein.core.orchestrator import _compute_total_spent, _total_spent_cache
+
+        metrics_dir = tmp_path / ".sdd" / "metrics"
+        metrics_dir.mkdir(parents=True)
+        _total_spent_cache.clear()
+
+        assert _compute_total_spent(tmp_path) == 0.0
