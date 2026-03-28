@@ -36,6 +36,7 @@ from bernstein.core.models import (
 )
 from bernstein.core.quality_gates import run_quality_gates
 from bernstein.core.router import RouterError
+from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.tick_pipeline import (
     CompletionData,
     fail_task,
@@ -378,15 +379,28 @@ def retry_or_fail_task(
 # ---------------------------------------------------------------------------
 
 
-def should_auto_decompose(task: Task, decomposed_task_ids: set[str]) -> bool:
+def should_auto_decompose(
+    task: Task,
+    decomposed_task_ids: set[str],
+    workdir: Path | None = None,
+    force_parallel: bool = False,
+) -> bool:
     """Return True if a large task should be decomposed into subtasks.
 
     Decomposition is triggered for scope=LARGE tasks that haven't been
     queued for decomposition yet in this orchestrator session.
 
+    Before decomposing, a :class:`~bernstein.core.complexity_advisor.ComplexityAdvisor`
+    check is performed.  If the advisor recommends single-agent mode (few,
+    tightly-coupled files), decomposition is skipped — a single agent is
+    faster and avoids coordination overhead.  Pass ``force_parallel=True``
+    (or set ``OrchestratorConfig.force_parallel``) to bypass this gate.
+
     Args:
         task: The task to check.
         decomposed_task_ids: Set of already-decomposed task IDs.
+        workdir: Repository root for coupling analysis (None = skip analysis).
+        force_parallel: If True, bypass the complexity advisor.
 
     Returns:
         True if the task should be auto-decomposed.
@@ -405,7 +419,24 @@ def should_auto_decompose(task: Task, decomposed_task_ids: set[str]) -> bool:
     if retry_match:
         return int(retry_match.group(1)) >= 2
     # Fresh tasks: only decompose scope=LARGE
-    return task.scope == Scope.LARGE
+    if task.scope != Scope.LARGE:
+        return False
+    # Complexity advisor gate: skip decomposition if single-agent is recommended.
+    if workdir is not None and not force_parallel:
+        try:
+            from bernstein.core.complexity_advisor import ComplexityAdvisor, ComplexityMode
+
+            advice = ComplexityAdvisor().advise(task, workdir=workdir, force_parallel=False)
+            if advice.mode == ComplexityMode.SINGLE_AGENT:
+                logger.info(
+                    "Complexity advisor: single-agent mode for task %s (%s) — skipping decomposition",
+                    task.id,
+                    advice.reason,
+                )
+                return False
+        except Exception as exc:
+            logger.debug("Complexity advisor failed, proceeding with decomposition: %s", exc)
+    return True
 
 
 def create_conflict_resolution_task(
@@ -713,7 +744,12 @@ def claim_and_spawn_batches(
         # Pre-flight: auto-decompose large tasks before claiming.
         # Creates a lightweight manager task that breaks the large task into
         # 3-5 atomic subtasks; the original stays open until subtasks complete.
-        if len(batch) == 1 and should_auto_decompose(batch[0], orch._decomposed_task_ids):
+        if len(batch) == 1 and should_auto_decompose(
+            batch[0],
+            orch._decomposed_task_ids,
+            workdir=orch._workdir,
+            force_parallel=orch._config.force_parallel,
+        ):
             auto_decompose_task(
                 batch[0],
                 client=orch._client,
@@ -960,6 +996,30 @@ def process_completed_tasks(
                         task.id,
                         ", ".join(_qg_failed),
                     )
+
+            # Organizational rule enforcement: .bernstein/rules.yaml checks.
+            # Runs after quality gates, before cross-model verification.
+            if janitor_passed:
+                _rules_config: RulesConfig | None = load_rules_config(orch._workdir)
+                if _rules_config is not None:
+                    _re_worktree = orch._spawner.get_worktree_path(session.id)
+                    _re_run_dir = _re_worktree if _re_worktree is not None else orch._workdir
+                    _re_result = run_rule_enforcement(task, _re_run_dir, orch._workdir, _rules_config)
+                    if not _re_result.passed:
+                        janitor_passed = False
+                        _re_failed = [
+                            f"rule:{v.rule_id}: {v.fix_hint}"
+                            for v in _re_result.violations
+                            if v.blocked
+                        ]
+                        with contextlib.suppress(ValueError):
+                            result.verified.remove(task.id)
+                        result.verification_failures.append((task.id, _re_failed))
+                        logger.info(
+                            "Rule enforcement blocked merge for task %s: %s",
+                            task.id,
+                            ", ".join(_re_failed),
+                        )
 
             # Cross-model verification: route diff to a different model for review.
             # Runs after quality gates, before the approval gate.
