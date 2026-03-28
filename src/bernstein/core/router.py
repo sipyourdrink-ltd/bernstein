@@ -731,3 +731,72 @@ def get_default_router() -> TierAwareRouter:
         )
 
     return _default_router
+
+
+# ---------------------------------------------------------------------------
+# Discovery-aware routing: pick agent + model per task based on auto-discovery
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AutoRouteDecision:
+    """Result of auto-routing a task to a discovered agent."""
+
+    agent_name: str  # e.g. "codex", "claude", "gemini"
+    model: str  # full model ID for the agent's CLI
+    effort: str  # effort level
+    reason: str  # human-readable explanation
+
+
+def auto_route_task(task: Task) -> AutoRouteDecision:
+    """Route a task to the best discovered agent based on role and capabilities.
+
+    Falls back to claude/sonnet if no agents are discovered or the role has
+    no explicit preference.
+
+    Args:
+        task: Task to route.
+
+    Returns:
+        AutoRouteDecision with selected agent, model, and reason.
+    """
+    from bernstein.core.agent_discovery import discover_agents_cached, recommend_routing
+
+    discovery = discover_agents_cached()
+    recs = recommend_routing(discovery)
+
+    # Build a lookup by role
+    rec_by_role = {r.role: r for r in recs}
+
+    rec = rec_by_role.get(task.role)
+    if rec is not None:
+        # Map effort from task metadata
+        effort = task.effort or "high"
+        return AutoRouteDecision(
+            agent_name=rec.agent_name,
+            model=rec.model,
+            effort=effort,
+            reason=rec.reason,
+        )
+
+    # Fallback: pick the first logged-in agent with strongest reasoning
+    for agent in sorted(
+        discovery.agents,
+        key=lambda a: {"very_high": 4, "high": 3, "medium": 2, "low": 1}.get(a.reasoning_strength, 0),
+        reverse=True,
+    ):
+        if agent.logged_in:
+            return AutoRouteDecision(
+                agent_name=agent.name,
+                model=agent.default_model,
+                effort=task.effort or "high",
+                reason="best available (no role preference)",
+            )
+
+    # No agents at all — default to claude
+    return AutoRouteDecision(
+        agent_name="claude",
+        model="sonnet",
+        effort=task.effort or "high",
+        reason="default (no agents discovered)",
+    )
