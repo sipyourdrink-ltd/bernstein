@@ -74,7 +74,8 @@ class AmpAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError("amp not found in PATH. Install it with: brew install amp or follow https://ampcode.com") from exc
+                msg = "amp not found in PATH. Install: brew install amp or see https://ampcode.com"
+                raise RuntimeError(msg) from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing amp: {exc}") from exc
 
