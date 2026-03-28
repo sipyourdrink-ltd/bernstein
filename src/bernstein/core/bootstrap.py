@@ -311,12 +311,13 @@ def _inject_manager_task(
     return str(data.get("id", "unknown"))
 
 
-def _start_spawner(workdir: Path, port: int) -> int:
+def _start_spawner(workdir: Path, port: int, cells: int = 1) -> int:
     """Launch the spawner process in the background.
 
     Args:
         workdir: Project root.
         port: Task server port.
+        cells: Number of parallel orchestration cells (1 = single-cell).
 
     Returns:
         PID of the spawner process.
@@ -332,6 +333,8 @@ def _start_spawner(workdir: Path, port: int) -> int:
             "bernstein.core.orchestrator",
             "--port",
             str(port),
+            "--cells",
+            str(cells),
         ],
         stdout=log_fh,
         stderr=subprocess.STDOUT,
@@ -347,6 +350,7 @@ def bootstrap_from_seed(
     seed_path: Path,
     workdir: Path,
     port: int = 8052,
+    cells: int | None = None,
 ) -> BootstrapResult:
     """Full bootstrap: parse seed -> init .sdd -> start server -> plan -> orchestrate.
 
@@ -362,6 +366,7 @@ def bootstrap_from_seed(
         seed_path: Path to the bernstein.yaml seed file.
         workdir: Project root directory.
         port: TCP port for the task server.
+        cells: Number of parallel cells. If None, reads from seed config.
 
     Returns:
         BootstrapResult with PIDs and task ID.
@@ -372,6 +377,7 @@ def bootstrap_from_seed(
     """
     # 1. Parse seed
     seed = parse_seed(seed_path)
+    effective_cells = cells if cells is not None else seed.cells
     console.print(f"[bold]Goal:[/bold] {seed.goal}")
     if seed.budget_usd is not None:
         console.print(f"[bold]Budget:[/bold] ${seed.budget_usd:.2f}")
@@ -436,7 +442,9 @@ def bootstrap_from_seed(
         console.print(f"[green]Manager task created:[/green] {manager_task_id}")
 
     # 6. Start spawner
-    spawner_pid = _start_spawner(workdir, port)
+    if effective_cells > 1:
+        console.print(f"[dim]Starting multi-cell orchestrator ({effective_cells} cells)...[/dim]")
+    spawner_pid = _start_spawner(workdir, port, cells=effective_cells)
     console.print(f"[green]Orchestrator started[/green] (PID {spawner_pid})")
 
     # 7. Start watchdog to auto-restart server/orchestrator if they die
@@ -559,6 +567,7 @@ def bootstrap_from_goal(
     workdir: Path,
     port: int = 8052,
     cli: str = "claude",
+    cells: int = 1,
 ) -> BootstrapResult:
     """Bootstrap from an inline goal string (no YAML file needed).
 
@@ -570,6 +579,7 @@ def bootstrap_from_goal(
         workdir: Project root directory.
         port: TCP port for the task server.
         cli: CLI backend to use.
+        cells: Number of parallel orchestration cells.
 
     Returns:
         BootstrapResult with PIDs and task ID.
@@ -628,7 +638,9 @@ def bootstrap_from_goal(
         manager_task_id = _inject_manager_task(seed, workdir, port)
         console.print(f"[green]Manager task created:[/green] {manager_task_id}")
 
-    spawner_pid = _start_spawner(workdir, port)
+    if cells > 1:
+        console.print(f"[dim]Starting multi-cell orchestrator ({cells} cells)...[/dim]")
+    spawner_pid = _start_spawner(workdir, port, cells=cells)
     console.print(f"[green]Orchestrator started[/green] (PID {spawner_pid})")
 
     _start_watchdog(workdir, port)

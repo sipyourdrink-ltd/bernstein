@@ -55,6 +55,7 @@ class SeedConfig:
             seed file.  Defaults to Agency-only remote mode when absent.
         mcp_servers: MCP server definitions to pass to spawned agents.
         notify: Optional webhook notification configuration.
+        cells: Number of parallel orchestration cells (1 = single-cell).
     """
 
     goal: str
@@ -69,6 +70,7 @@ class SeedConfig:
     catalogs: CatalogRegistry | None = None
     mcp_servers: dict[str, dict[str, Any]] | None = None
     notify: NotifyConfig | None = None
+    cells: int = 1
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -240,6 +242,10 @@ def parse_seed(path: Path) -> SeedConfig:
             on_failure=on_failure,
         )
 
+    cells_raw = data.get("cells", 1)
+    if not isinstance(cells_raw, int) or cells_raw < 1:
+        raise SeedError(f"cells must be a positive integer, got: {cells_raw!r}")
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -253,6 +259,7 @@ def parse_seed(path: Path) -> SeedConfig:
         catalogs=catalogs,
         mcp_servers=mcp_servers_raw,
         notify=notify,
+        cells=cells_raw,
     )
 
 

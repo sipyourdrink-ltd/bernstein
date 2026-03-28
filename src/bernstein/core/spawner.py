@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -9,10 +10,10 @@ from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.models import AgentSession, ModelConfig, Task
 from bernstein.core.router import RouterError, TierAwareRouter
+from bernstein.core.worktree import WorktreeError, WorktreeManager
 from bernstein.templates.renderer import TemplateError, render_role_prompt
 
 if TYPE_CHECKING:
-    import subprocess
     from pathlib import Path
 
     from bernstein.adapters.base import CLIAdapter
@@ -250,6 +251,7 @@ class AgentSpawner:
         router: TierAwareRouter | None = None,
         mcp_config: dict[str, Any] | None = None,
         catalog: CatalogRegistry | None = None,
+        use_worktrees: bool = False,
     ) -> None:
         self._adapter = adapter
         self._templates_dir = templates_dir
@@ -264,6 +266,9 @@ class AgentSpawner:
         self._catalog = catalog
         self._context_builder = TaskContextBuilder(workdir)
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
+        self._use_worktrees = use_worktrees
+        self._worktree_mgr: WorktreeManager | None = WorktreeManager(workdir) if use_worktrees else None
+        self._worktree_paths: dict[str, Path] = {}
 
     def spawn_for_tasks(self, tasks: list[Task]) -> AgentSession:
         """Route, render prompt, and spawn an agent for a task batch.
@@ -340,10 +345,23 @@ class AgentSpawner:
         # in its role template and uses curl to POST tasks to the server.
         target_adapter = self._adapter
 
+        # Determine working directory: isolated worktree if enabled, else shared workdir
+        spawn_cwd = self._workdir
+        if self._use_worktrees and self._worktree_mgr is not None:
+            try:
+                spawn_cwd = self._worktree_mgr.create(session_id)
+                self._worktree_paths[session_id] = spawn_cwd
+            except WorktreeError as exc:
+                logger.warning(
+                    "Worktree creation failed for %s, falling back to workdir: %s",
+                    session_id,
+                    exc,
+                )
+
         # Spawn via adapter
         result = target_adapter.spawn(
             prompt=prompt,
-            workdir=self._workdir,
+            workdir=spawn_cwd,
             model_config=model_config,
             session_id=session_id,
             mcp_config=self._mcp_config,
@@ -385,6 +403,9 @@ class AgentSpawner:
         process. Safe to call when no proc is stored (pid-only spawns or
         unknown sessions). Idempotent: a second call is a no-op.
 
+        When worktrees are enabled, merges the agent branch back into the
+        current branch and removes the worktree after the process is reaped.
+
         Args:
             session: The AgentSession whose underlying process should be reaped.
         """
@@ -400,6 +421,40 @@ class AgentSpawner:
         except Exception as exc:
             logger.warning("reap_completed_agent: wait failed for %s: %s", session.id, exc)
         logger.info("Agent %s process reaped", session.id)
+
+        # Merge worktree branch back and clean up
+        worktree_path = self._worktree_paths.pop(session.id, None)
+        if worktree_path is not None and self._worktree_mgr is not None:
+            self._merge_worktree_branch(session.id)
+            self._worktree_mgr.cleanup(session.id)
+
+    def _merge_worktree_branch(self, session_id: str) -> None:
+        """Merge the agent's worktree branch back into the current branch.
+
+        Best-effort: logs warnings on failure but does not raise.
+
+        Args:
+            session_id: The session whose branch should be merged.
+        """
+        branch_name = f"agent/{session_id}"
+        try:
+            result = subprocess.run(
+                ["git", "merge", "--no-ff", branch_name, "-m", f"Merge {branch_name}"],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "git merge failed for %s: %s",
+                    session_id,
+                    result.stderr.strip(),
+                )
+            else:
+                logger.info("Merged worktree branch %s into current branch", branch_name)
+        except Exception as exc:
+            logger.warning("Merge failed for %s: %s", session_id, exc)
 
 
 def _load_role_config(role: str, templates_dir: Path) -> ModelConfig | None:

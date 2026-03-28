@@ -18,9 +18,12 @@ from bernstein.core.router import (
     Tier,
     TierAwareRouter,
 )
+from unittest.mock import MagicMock, patch
+
 from bernstein.core.agency_loader import AgencyAgent
 from bernstein.core.models import Task, TaskStatus, TaskType
 from bernstein.core.spawner import AgentSpawner, _load_role_config, _render_fallback, _render_prompt, _select_batch_config
+from bernstein.core.worktree import WorktreeError
 
 
 # --- spawn_for_tasks ---
@@ -548,3 +551,103 @@ class TestLoadRoleConfig:
         assert result is not None
         assert result.model == "sonnet"
         assert result.effort == "high"
+
+
+# --- WorktreeManager integration ---
+
+
+class TestWorktreeIntegration:
+    def test_worktrees_disabled_by_default(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory(pid=100)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+
+        assert spawner._use_worktrees is False
+        assert spawner._worktree_mgr is None
+
+    def test_worktrees_enabled_creates_manager(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=True)
+
+        assert spawner._use_worktrees is True
+        assert spawner._worktree_mgr is not None
+
+    def test_spawn_uses_worktree_path_as_cwd(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory(pid=200)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+
+        worktree_path = tmp_path / ".sdd" / "worktrees" / "session-abc"
+        worktree_path.mkdir(parents=True)
+
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        with patch.object(spawner._worktree_mgr, "create", return_value=worktree_path) as mock_create:
+            task = make_task()
+            session = spawner.spawn_for_tasks([task])
+
+            mock_create.assert_called_once_with(session.id)
+            call_kwargs = adapter.spawn.call_args.kwargs
+            assert call_kwargs["workdir"] == worktree_path
+
+    def test_spawn_falls_back_on_worktree_error(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory(pid=300)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
+        with patch.object(spawner._worktree_mgr, "create", side_effect=WorktreeError("git failed")):
+            task = make_task()
+            session = spawner.spawn_for_tasks([task])
+
+            # Should fall back to the main workdir
+            call_kwargs = adapter.spawn.call_args.kwargs
+            assert call_kwargs["workdir"] == tmp_path
+            assert session.pid == 300
+
+    def test_spawn_without_worktrees_uses_workdir(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory(pid=400)
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
+
+        task = make_task()
+        spawner.spawn_for_tasks([task])
+
+        call_kwargs = adapter.spawn.call_args.kwargs
+        assert call_kwargs["workdir"] == tmp_path
+
+    def test_reap_merges_and_cleans_up_worktree(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=True)
+
+        worktree_path = tmp_path / ".sdd" / "worktrees" / "sess"
+        session = AgentSession(id="backend-sess", role="backend", pid=42)
+        # Simulate a worktree path being tracked
+        spawner._worktree_paths[session.id] = worktree_path
+
+        mock_proc = MagicMock()
+        spawner._procs[session.id] = mock_proc
+
+        with (
+            patch.object(spawner, "_merge_worktree_branch") as mock_merge,
+            patch.object(spawner._worktree_mgr, "cleanup") as mock_cleanup,
+        ):
+            spawner.reap_completed_agent(session)
+
+            mock_merge.assert_called_once_with(session.id)
+            mock_cleanup.assert_called_once_with(session.id)
+
+        assert session.id not in spawner._worktree_paths
+
+    def test_reap_skips_merge_when_no_worktree(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=True)
+
+        session = AgentSession(id="backend-xyz", role="backend", pid=50)
+        mock_proc = MagicMock()
+        spawner._procs[session.id] = mock_proc
+
+        with patch.object(spawner, "_merge_worktree_branch") as mock_merge:
+            spawner.reap_completed_agent(session)
+            mock_merge.assert_not_called()

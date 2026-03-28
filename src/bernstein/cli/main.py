@@ -393,13 +393,20 @@ def init(target_dir: str) -> None:
     show_default=True,
     help="Port for the task server.",
 )
-def run(goal: str | None, seed_file: str | None, port: int) -> None:
+@click.option(
+    "--cells",
+    default=1,
+    show_default=True,
+    help="Number of parallel orchestration cells (1 = single-cell, >1 = MultiCellOrchestrator).",
+)
+def run(goal: str | None, seed_file: str | None, port: int, cells: int) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
     \b
       bernstein conduct                     # reads bernstein.yaml
       bernstein conduct --goal "Build X"    # inline goal
       bernstein conduct --seed custom.yaml  # custom seed file
+      bernstein conduct --cells 3           # 3 parallel cells (multi-cell mode)
     """
     _print_banner()
 
@@ -411,7 +418,7 @@ def run(goal: str | None, seed_file: str | None, port: int) -> None:
     if goal is not None:
         # Inline goal mode -- no YAML needed
         try:
-            bootstrap_from_goal(goal=goal, workdir=workdir, port=port)
+            bootstrap_from_goal(goal=goal, workdir=workdir, port=port, cells=cells)
         except RuntimeError as exc:
             console.print(f"[red]Bootstrap error:[/red] {exc}")
             raise SystemExit(1) from exc
@@ -433,7 +440,9 @@ def run(goal: str | None, seed_file: str | None, port: int) -> None:
 
     console.print(f"[dim]Using seed file:[/dim] {path}")
     try:
-        bootstrap_from_seed(seed_path=path, workdir=workdir, port=port)
+        # CLI --cells overrides seed file value when explicitly set (cells > 1)
+        cli_cells: int | None = cells if cells > 1 else None
+        bootstrap_from_seed(seed_path=path, workdir=workdir, port=port, cells=cli_cells)
     except SeedError as exc:
         console.print(f"[red]Seed error:[/red] {exc}")
         raise SystemExit(1) from exc
