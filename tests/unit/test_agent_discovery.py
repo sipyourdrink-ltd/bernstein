@@ -9,12 +9,14 @@ from unittest.mock import MagicMock, patch
 from bernstein.core.agent_discovery import (
     AgentCapabilities,
     DiscoveryResult,
+    _detect_aider,
     _detect_claude,
     _detect_codex,
     _detect_gemini,
     _detect_qwen,
     _extract_version,
-    _short_model,
+    detect_auth_status,
+    short_model,
     clear_discovery_cache,
     discover_agents,
     discover_agents_cached,
@@ -270,11 +272,63 @@ class TestDetectQwen:
 
 
 # ---------------------------------------------------------------------------
+# _detect_aider
+# ---------------------------------------------------------------------------
+
+
+class TestDetectAider:
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    def test_not_found(self, _which: Any) -> None:
+        agent, warnings = _detect_aider()
+        assert agent is None
+        assert warnings == []
+
+    @patch("bernstein.core.agent_discovery._run_probe")
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
+    def test_logged_in_via_api_key(self, _which: Any, mock_probe: MagicMock) -> None:
+        version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.15.0\n", stderr="")
+        mock_probe.return_value = version_result
+
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test"}, clear=True):
+            agent, _warnings = _detect_aider()
+
+        assert agent is not None
+        assert agent.name == "aider"
+        assert agent.logged_in is True
+        assert agent.login_method == "API key"
+
+    @patch("bernstein.core.agent_discovery._run_probe")
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
+    def test_logged_in_via_local(self, _which: Any, mock_probe: MagicMock) -> None:
+        version_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="0.15.0\n", stderr="")
+        mock_probe.return_value = version_result
+
+        with patch.dict("os.environ", {}, clear=True):
+            agent, _warnings = _detect_aider()
+
+        assert agent is not None
+        assert agent.logged_in is True
+        assert agent.login_method == "local"
+
+    @patch("bernstein.core.agent_discovery._run_probe", return_value=None)
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/aider")
+    def test_not_logged_in(self, _which: Any, mock_probe: MagicMock) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            agent, warnings = _detect_aider()
+
+        assert agent is not None
+        assert agent.logged_in is False
+        assert len(warnings) == 1
+        assert "not authenticated" in warnings[0]
+
+
+# ---------------------------------------------------------------------------
 # discover_agents (integration-level with full mocking)
 # ---------------------------------------------------------------------------
 
 
 class TestDiscoverAgents:
+    @patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_codex", return_value=(None, []))
@@ -310,6 +364,7 @@ class TestDiscoverAgents:
             ),
             patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
+            patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),
         ):
             result = discover_agents()
 
@@ -328,6 +383,7 @@ class TestDiscoverAgents:
             patch("bernstein.core.agent_discovery._detect_codex", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
+            patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),
         ):
             result = discover_agents()
 
@@ -455,18 +511,69 @@ class TestGenerateAutoRoutingYaml:
 
 
 # ---------------------------------------------------------------------------
-# _short_model
+# detect_auth_status
+# ---------------------------------------------------------------------------
+
+
+class TestDetectAuthStatus:
+    def test_all_agents_not_found(self) -> None:
+        discovery = DiscoveryResult(agents=[], warnings=[])
+
+        with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
+            result = detect_auth_status()
+
+        # Should include all known agents as (False, False)
+        assert result["claude"] == (False, False)
+        assert result["codex"] == (False, False)
+        assert result["gemini"] == (False, False)
+        assert result["qwen"] == (False, False)
+        assert result["aider"] == (False, False)
+
+    def test_mixed_installed_authenticated_status(self) -> None:
+        claude = _make_agent("claude", logged_in=True)
+        codex = _make_agent("codex", logged_in=False)
+        aider = _make_agent("aider", logged_in=True)
+        discovery = DiscoveryResult(agents=[claude, codex, aider], warnings=[])
+
+        with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
+            result = detect_auth_status()
+
+        assert result["claude"] == (True, True)  # installed, authenticated
+        assert result["codex"] == (True, False)  # installed, not authenticated
+        assert result["aider"] == (True, True)  # installed, authenticated
+        assert result["gemini"] == (False, False)  # not installed
+        assert result["qwen"] == (False, False)  # not installed
+
+    def test_all_agents_installed_authenticated(self) -> None:
+        agents = [
+            _make_agent("claude", logged_in=True),
+            _make_agent("codex", logged_in=True),
+            _make_agent("gemini", logged_in=True),
+            _make_agent("qwen", logged_in=True),
+            _make_agent("aider", logged_in=True),
+        ]
+        discovery = DiscoveryResult(agents=agents, warnings=[])
+
+        with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
+            result = detect_auth_status()
+
+        for agent_name in ["claude", "codex", "gemini", "qwen", "aider"]:
+            assert result[agent_name] == (True, True), f"{agent_name} should be installed and authenticated"
+
+
+# ---------------------------------------------------------------------------
+# short_model
 # ---------------------------------------------------------------------------
 
 
 class TestShortModel:
     def test_known_models(self) -> None:
-        assert _short_model("claude-opus-4-6") == "opus"
-        assert _short_model("gemini-2.5-flash") == "2.5-flash"
-        assert _short_model("o4-mini") == "o4-mini"
+        assert short_model("claude-opus-4-6") == "opus"
+        assert short_model("gemini-2.5-flash") == "2.5-flash"
+        assert short_model("o4-mini") == "o4-mini"
 
     def test_unknown_model_passthrough(self) -> None:
-        assert _short_model("unknown-model") == "unknown-model"
+        assert short_model("unknown-model") == "unknown-model"
 
 
 # ---------------------------------------------------------------------------

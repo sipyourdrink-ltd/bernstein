@@ -293,6 +293,49 @@ def _detect_qwen() -> tuple[AgentCapabilities | None, list[str]]:
     ), warnings
 
 
+def _detect_aider() -> tuple[AgentCapabilities | None, list[str]]:
+    """Detect Aider CLI."""
+    warnings: list[str] = []
+    binary = shutil.which("aider")
+    if binary is None:
+        return None, []
+
+    # Version
+    version = _extract_version(_run_probe(["aider", "--version"]))
+
+    # Login check: aider --version working is sufficient as auth indicator
+    # Aider can work with local models or via API keys (OpenAI, etc.)
+    logged_in = False
+    login_method = ""
+    if os.environ.get("OPENAI_API_KEY"):
+        logged_in = True
+        login_method = "API key"
+    elif _run_probe(["aider", "--version"]) is not None:
+        # If aider --version works, it's at least installed and functional
+        logged_in = True
+        login_method = "local"
+
+    if binary and not logged_in:
+        warnings.append("aider found but not authenticated — set OPENAI_API_KEY or configure local model")
+
+    return AgentCapabilities(
+        name="aider",
+        binary=binary,
+        version=version,
+        logged_in=logged_in,
+        login_method=login_method,
+        available_models=["gpt-4", "gpt-3.5-turbo", "claude-3-opus", "local"],
+        default_model="gpt-4",
+        supports_headless=True,
+        supports_sandbox=False,
+        supports_mcp=False,
+        max_context_tokens=128_000,
+        reasoning_strength="medium",
+        best_for=["interactive-editing", "code-modification"],
+        cost_tier="cheap",
+    ), warnings
+
+
 # ---------------------------------------------------------------------------
 # Main discovery entry point
 # ---------------------------------------------------------------------------
@@ -304,7 +347,7 @@ _DETECTORS: list[tuple[str, type[None]]] = []  # unused, kept for potential plug
 def discover_agents() -> DiscoveryResult:
     """Scan system for all available CLI coding agents.
 
-    Probes each known CLI binary (codex, gemini, claude, qwen), checks login
+    Probes each known CLI binary (codex, gemini, claude, qwen, aider), checks login
     status, and returns structured capabilities.  The entire scan targets < 2 s
     wall-clock time by using short subprocess timeouts.
 
@@ -315,7 +358,7 @@ def discover_agents() -> DiscoveryResult:
     agents: list[AgentCapabilities] = []
     warnings: list[str] = []
 
-    for detector in (_detect_claude, _detect_codex, _detect_gemini, _detect_qwen):
+    for detector in (_detect_claude, _detect_codex, _detect_gemini, _detect_qwen, _detect_aider):
         try:
             agent, agent_warnings = detector()
             if agent is not None:
@@ -353,6 +396,44 @@ def clear_discovery_cache() -> None:
     global _cached_result, _cached_at
     _cached_result = None
     _cached_at = 0.0
+
+
+def detect_auth_status() -> dict[str, tuple[bool, bool]]:
+    """Detect installation and authentication status for all agents.
+
+    Scans the system for installed CLI coding agents and checks their
+    authentication status.
+
+    Returns:
+        A dictionary mapping agent name to (installed, authenticated) tuple.
+        - installed: True if the CLI binary is found on PATH
+        - authenticated: True if the agent has valid credentials/auth configured
+
+    Example:
+        {
+            "claude": (True, True),     # installed and authenticated
+            "codex": (True, False),     # installed but not authenticated
+            "gemini": (False, False),   # not installed
+            "aider": (True, True),      # installed and authenticated
+        }
+    """
+    discovery = discover_agents_cached()
+
+    # All known agents to report on, even if not found
+    all_agents = {"claude", "codex", "gemini", "qwen", "aider"}
+
+    result: dict[str, tuple[bool, bool]] = {}
+
+    # Populate found agents
+    for agent in discovery.agents:
+        result[agent.name] = (True, agent.logged_in)
+
+    # Add missing agents as not installed
+    found_agents = {agent.name for agent in discovery.agents}
+    for agent_name in all_agents - found_agents:
+        result[agent_name] = (False, False)
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -476,12 +557,12 @@ def generate_auto_routing_yaml(discovery: DiscoveryResult | None = None) -> str:
     ]
     for rec in recs:
         # Produce short model aliases
-        short_model = _short_model(rec.model)
-        lines.append(f"  {rec.role}: {rec.agent_name}-{short_model}     # {rec.reason}")
+        model_alias: str = short_model(rec.model)
+        lines.append(f"  {rec.role}: {rec.agent_name}-{model_alias}     # {rec.reason}")
     return "\n".join(lines) + "\n"
 
 
-def _short_model(model: str) -> str:
+def short_model(model: str) -> str:
     """Convert full model ID to a short display name."""
     mapping: dict[str, str] = {
         "claude-opus-4-6": "opus",
