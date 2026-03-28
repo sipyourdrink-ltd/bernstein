@@ -442,6 +442,127 @@ def test_stale_agent_detection(tmp_path: Path) -> None:
     assert store._agents["old-agent"].status == "dead"
 
 
+# -- completion_signals API round-trip ----------------------------------------
+
+@pytest.mark.anyio
+async def test_create_task_with_completion_signals_stored(client: AsyncClient) -> None:
+    """POST /tasks with completion_signals stores them and returns them."""
+    payload = {
+        **TASK_PAYLOAD,
+        "completion_signals": [
+            {"type": "path_exists", "value": "src/foo.py"},
+            {"type": "file_contains", "value": "def main"},
+        ],
+    }
+    resp = await client.post("/tasks", json=payload)
+    assert resp.status_code == 201
+    data = resp.json()
+    signals = data["completion_signals"]
+    assert len(signals) == 2
+    assert signals[0] == {"type": "path_exists", "value": "src/foo.py"}
+    assert signals[1] == {"type": "file_contains", "value": "def main"}
+
+
+@pytest.mark.anyio
+async def test_get_task_returns_completion_signals(client: AsyncClient) -> None:
+    """GET /tasks/{id} returns completion_signals that were set on creation."""
+    payload = {
+        **TASK_PAYLOAD,
+        "completion_signals": [
+            {"type": "glob_exists", "value": "tests/**/*.py"},
+        ],
+    }
+    create_resp = await client.post("/tasks", json=payload)
+    task_id = create_resp.json()["id"]
+
+    resp = await client.get(f"/tasks/{task_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["completion_signals"] == [{"type": "glob_exists", "value": "tests/**/*.py"}]
+
+
+@pytest.mark.anyio
+async def test_all_six_signal_types_accepted(client: AsyncClient) -> None:
+    """POST /tasks accepts all 6 completion signal types."""
+    all_signals = [
+        {"type": "path_exists", "value": "src/main.py"},
+        {"type": "glob_exists", "value": "dist/**/*.js"},
+        {"type": "test_passes", "value": "uv run pytest tests/ -x -q"},
+        {"type": "file_contains", "value": "class MyClass"},
+        {"type": "llm_review", "value": "Verify the implementation is correct"},
+        {"type": "llm_judge", "value": "Does the output satisfy the requirements?"},
+    ]
+    payload = {**TASK_PAYLOAD, "completion_signals": all_signals}
+    resp = await client.post("/tasks", json=payload)
+    assert resp.status_code == 201
+    data = resp.json()
+    returned = data["completion_signals"]
+    assert len(returned) == 6
+    returned_by_type = {s["type"]: s["value"] for s in returned}
+    assert returned_by_type["path_exists"] == "src/main.py"
+    assert returned_by_type["glob_exists"] == "dist/**/*.js"
+    assert returned_by_type["test_passes"] == "uv run pytest tests/ -x -q"
+    assert returned_by_type["file_contains"] == "class MyClass"
+    assert returned_by_type["llm_review"] == "Verify the implementation is correct"
+    assert returned_by_type["llm_judge"] == "Does the output satisfy the requirements?"
+
+
+@pytest.mark.anyio
+async def test_empty_completion_signals_backward_compat(client: AsyncClient) -> None:
+    """POST /tasks without completion_signals defaults to empty list."""
+    resp = await client.post("/tasks", json=TASK_PAYLOAD)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["completion_signals"] == []
+
+
+@pytest.mark.anyio
+async def test_invalid_signal_type_rejected(client: AsyncClient) -> None:
+    """POST /tasks with an invalid signal type returns 422."""
+    payload = {
+        **TASK_PAYLOAD,
+        "completion_signals": [{"type": "not_a_real_signal", "value": "whatever"}],
+    }
+    resp = await client.post("/tasks", json=payload)
+    assert resp.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_completion_signals_preserved_after_complete(client: AsyncClient) -> None:
+    """Completing a task does not discard completion_signals."""
+    payload = {
+        **TASK_PAYLOAD,
+        "completion_signals": [{"type": "test_passes", "value": "pytest"}],
+    }
+    create_resp = await client.post("/tasks", json=payload)
+    task_id = create_resp.json()["id"]
+
+    complete_resp = await client.post(
+        f"/tasks/{task_id}/complete",
+        json={"result_summary": "done"},
+    )
+    assert complete_resp.status_code == 200
+    assert complete_resp.json()["completion_signals"] == [
+        {"type": "test_passes", "value": "pytest"}
+    ]
+
+
+@pytest.mark.anyio
+async def test_list_tasks_returns_completion_signals(client: AsyncClient) -> None:
+    """GET /tasks includes completion_signals for each task in the list."""
+    payload = {
+        **TASK_PAYLOAD,
+        "completion_signals": [{"type": "path_exists", "value": "README.md"}],
+    }
+    await client.post("/tasks", json=payload)
+
+    resp = await client.get("/tasks")
+    assert resp.status_code == 200
+    tasks = resp.json()
+    assert len(tasks) == 1
+    assert tasks[0]["completion_signals"] == [{"type": "path_exists", "value": "README.md"}]
+
+
 # -- GET /tasks/archive -------------------------------------------------------
 
 @pytest.mark.anyio

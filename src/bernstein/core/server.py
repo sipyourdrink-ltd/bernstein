@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage, MessageType
 from bernstein.core.models import (
     AgentSession,
+    CompletionSignal,
     RiskAssessment,
     RollbackPlan,
     Task,
@@ -36,6 +37,15 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
 # ---------------------------------------------------------------------------
+
+_SIGNAL_TYPE = Literal["path_exists", "glob_exists", "test_passes", "file_contains", "llm_review", "llm_judge"]
+
+
+class CompletionSignalSchema(BaseModel):
+    """Pydantic schema for a single completion signal in API requests."""
+
+    type: _SIGNAL_TYPE
+    value: str
 
 
 class TaskCreate(BaseModel):
@@ -55,6 +65,7 @@ class TaskCreate(BaseModel):
     upgrade_details: dict[str, Any] | None = None
     model: str | None = None       # Manager hint: "opus", "sonnet", "haiku"
     effort: str | None = None      # Manager hint: "max", "high", "medium", "low"
+    completion_signals: list[CompletionSignalSchema] = Field(default_factory=list)
 
 
 class TaskResponse(BaseModel):
@@ -78,6 +89,8 @@ class TaskResponse(BaseModel):
     upgrade_details: dict[str, Any] | None
     model: str | None
     effort: str | None
+    completion_signals: list[dict[str, str]] = Field(default_factory=list)
+    created_at: float
 
 
 class TaskCompleteRequest(BaseModel):
@@ -356,6 +369,10 @@ class TaskStore:
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),
             model=req.model,
             effort=req.effort,
+            completion_signals=[
+                CompletionSignal(type=s.type, value=s.value)
+                for s in req.completion_signals
+            ],
         )
         async with self._lock:
             self._tasks[task.id] = task
@@ -759,6 +776,8 @@ def _task_to_response(task: Task) -> TaskResponse:
         upgrade_details=asdict(task.upgrade_details) if task.upgrade_details else None,
         model=task.model,
         effort=task.effort,
+        completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
+        created_at=task.created_at,
     )
 
 
