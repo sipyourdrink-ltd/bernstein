@@ -84,7 +84,7 @@ class AgentRegistry:
         self,
         definitions_dir: Path | None = None,
         auto_reload: bool = False,
-        reload_interval_s: int = 5,
+        reload_interval_s: int = 30,
     ) -> None:
         self._definitions_dir = definitions_dir or AGENT_DEFINITIONS_DIR
         self._auto_reload = auto_reload

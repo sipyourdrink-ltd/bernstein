@@ -324,11 +324,9 @@
     </div>
     <div class="animate" style="max-width:640px;margin:24px auto 0;">
       <div class="code-block">
-        <pre><code class="language-bash"># Install (Python 3.12+)
-pip install bernstein
-
-# Initialise a project workspace
-cd my-project && bernstein init
+        <pre><code class="language-bash"># Clone and install (Python 3.12+)
+git clone https://github.com/chernistry/bernstein && cd bernstein
+uv venv && uv pip install -e .
 
 # Run with a plain-English goal
 bernstein -g "Add pagination to the users API endpoint"</code></pre>
@@ -356,7 +354,7 @@ bernstein -g "Add pagination to the users API endpoint"</code></pre>
 
 <footer>
   <div class="container">
-    <p>Bernstein · <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> · MIT License</p>
+    <p>Bernstein · <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> · PolyForm Noncommercial</p>
   </div>
 </footer>
 

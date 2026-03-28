@@ -66,13 +66,9 @@
     <h2 id="install">Installation</h2>
     <p>Requires Python 3.12+ and at least one CLI coding agent (Claude Code, Codex, or Gemini CLI).</p>
     <div class="code-block">
-      <pre><code class="language-bash"># From PyPI
-pip install bernstein
-
-# Or from source (editable install)
-git clone https://github.com/chernistry/bernstein.git
-cd bernstein
-pip install -e ".[dev]"
+      <pre><code class="language-bash"># Clone and install
+git clone https://github.com/chernistry/bernstein && cd bernstein
+uv venv && uv pip install -e .
 
 # Verify
 bernstein --version</code></pre>
@@ -270,7 +266,7 @@ bernstein evolve approve &lt;PROPOSAL_ID&gt;</code></pre>
 
 <footer>
   <div class="container">
-    <p>Bernstein · <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> · MIT License</p>
+    <p>Bernstein · <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> · PolyForm Noncommercial</p>
   </div>
 </footer>
 

@@ -199,7 +199,7 @@
       "typing",
       "yaml"
     ],
-    "last_modified": "2026-03-28T04:03:52.350185"
+    "last_modified": "2026-03-28T05:41:36.354924"
   },
   "src/bernstein/cli/__init__.py": {
     "summary": "CLI entry points.",
@@ -364,6 +364,7 @@
       "AgentSessionUsage",
       "TierConsumption",
       "ApiUsageTracker",
+      "clear_caches",
       "file_tree",
       "available_roles",
       "gather_project_context",
@@ -378,6 +379,7 @@
       "ast",
       "dataclasses",
       "datetime",
+      "functools",
       "json",
       "logging",
       "pathlib",
@@ -385,7 +387,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:56:41.059331"
+    "last_modified": "2026-03-28T05:41:59.846820"
   },
   "src/bernstein/core/evolution.py": {
     "summary": "Backward-compatibility shim \u2014 delegates to bernstein.evolution package.",
@@ -585,6 +587,7 @@
       "__future__",
       "bernstein",
       "collections",
+      "concurrent",
       "contextlib",
       "datetime",
       "httpx",
@@ -594,7 +597,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T05:35:04.895349"
+    "last_modified": "2026-03-28T05:43:25.840320"
   },
   "src/bernstein/core/policy.py": {
     "summary": "Policy engine for tier optimization and provider routing.",
@@ -1623,15 +1626,17 @@
       "TestReadIfExists",
       "TestAvailableRoles",
       "TestGatherProjectContext",
-      "TestApiUsageTracker"
+      "TestApiUsageTracker",
+      "TestGitCochangedFiles"
     ],
     "imports": [
       "__future__",
       "bernstein",
       "pathlib",
-      "pytest"
+      "pytest",
+      "unittest"
     ],
-    "last_modified": "2026-03-22T21:20:31.544838"
+    "last_modified": "2026-03-28T05:42:32.256821"
   },
   "tests/unit/test_context_builder.py": {
     "summary": "Tests for TaskContextBuilder and knowledge base utilities.",
@@ -2124,7 +2129,7 @@
       "time",
       "unittest"
     ],
-    "last_modified": "2026-03-28T04:35:51.514598"
+    "last_modified": "2026-03-28T05:45:30.079050"
   },
   "tests/unit/test_policy.py": {
     "summary": "Tests for the policy engine \u2014 policy loading, evaluation, and management.",
