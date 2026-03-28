@@ -366,3 +366,246 @@ class OpportunityDetector:
                 ))
 
         return opportunities
+
+
+# ---------------------------------------------------------------------------
+# Feature Discovery
+# ---------------------------------------------------------------------------
+
+# Keywords indicating retry logic is already present.
+_RETRY_KEYWORDS: tuple[str, ...] = ("tenacity", "retry", "backoff")
+# Keywords indicating caching is already present.
+_CACHE_KEYWORDS: tuple[str, ...] = ("lru_cache", "functools.cache", "cache")
+# Keywords indicating rate limiting is already present.
+_RATE_KEYWORDS: tuple[str, ...] = ("ratelimit", "rate_limit", "throttle", "limits")
+
+# Stop words excluded from keyword-overlap deduplication.
+_STOP_WORDS: frozenset[str] = frozenset({
+    "add", "the", "a", "an", "for", "to", "in", "of", "and", "or", "with",
+    "use", "using", "improve", "implement", "create",
+})
+
+
+@dataclass
+class FeatureTicket:
+    """A discovered feature opportunity written to the backlog."""
+
+    title: str
+    description: str
+    role: str = "backend"
+    priority: int = 2
+    scope: str = "small"
+    complexity: str = "medium"
+    source: str = "todo_fixme"  # "todo_fixme" | "missing_pattern"
+    ticket_id: str = ""
+    file_path: Path | None = None
+
+
+class FeatureDiscovery:
+    """Discovers feature opportunities from codebase analysis.
+
+    Scans ``src/`` for TODO/FIXME comments and detects common missing
+    patterns (retry logic, caching, rate limiting).  Deduplicates against
+    existing open/closed backlog tickets and caps output to avoid backlog
+    bloat.
+
+    Args:
+        repo_root: Repository root directory.
+        backlog_dir: Path to ``.sdd/backlog/``.
+    """
+
+    def __init__(self, repo_root: Path, backlog_dir: Path) -> None:
+        self._repo_root = repo_root
+        self._backlog_dir = backlog_dir
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def discover(self, max_tickets: int = 5) -> list[FeatureTicket]:
+        """Discover feature opportunities and write tickets to backlog/open/.
+
+        Args:
+            max_tickets: Maximum number of new tickets to generate per call.
+
+        Returns:
+            List of written FeatureTickets with ``ticket_id`` and
+            ``file_path`` populated.
+        """
+        src_dir = self._repo_root / "src"
+        if not src_dir.is_dir():
+            return []
+
+        existing_titles = self._load_existing_titles()
+        candidates: list[FeatureTicket] = []
+        candidates.extend(self._scan_todos(src_dir))
+        candidates.extend(self._detect_missing_patterns(src_dir))
+
+        # Deduplicate candidates against existing backlog and each other.
+        seen: set[str] = set()
+        filtered: list[FeatureTicket] = []
+        for ticket in candidates:
+            norm = _normalize(ticket.title)
+            if _is_duplicate(norm, existing_titles):
+                continue
+            if norm in seen:
+                continue
+            seen.add(norm)
+            filtered.append(ticket)
+
+        selected = filtered[:max_tickets]
+
+        next_id = self._next_ticket_id()
+        result: list[FeatureTicket] = []
+        for ticket in selected:
+            ticket.ticket_id = str(next_id)
+            ticket.file_path = self._write_ticket(ticket)
+            result.append(ticket)
+            next_id += 1
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _load_existing_titles(self) -> set[str]:
+        """Return normalized titles from all open and closed backlog tickets."""
+        titles: set[str] = set()
+        _heading = re.compile(r"^#\s+\d+\s+[—\-]\s+(.+)$", re.MULTILINE)
+        for subdir in ("open", "closed"):
+            d = self._backlog_dir / subdir
+            if not d.is_dir():
+                continue
+            for f in d.glob("*.md"):
+                try:
+                    content = f.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                m = _heading.search(content)
+                if m:
+                    titles.add(_normalize(m.group(1).strip()))
+        return titles
+
+    def _scan_todos(self, src_dir: Path) -> list[FeatureTicket]:
+        """Scan ``src/`` for TODO/FIXME comments and return candidate tickets."""
+        pattern = re.compile(r"#\s*(?:TODO|FIXME)[:\s]+(.+)", re.IGNORECASE)
+        tickets: list[FeatureTicket] = []
+        for py_file in sorted(src_dir.rglob("*.py")):
+            # Skip test files that happen to live under src/.
+            if any(part.startswith("test") for part in py_file.relative_to(src_dir).parts):
+                continue
+            try:
+                content = py_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for m in pattern.finditer(content):
+                text = m.group(1).strip()
+                if not text:
+                    continue
+                title = text[0].upper() + text[1:]
+                tickets.append(FeatureTicket(
+                    title=title,
+                    description=(
+                        f"Found in {py_file.relative_to(self._repo_root)}: "
+                        f"# {m.group(0).strip()}"
+                    ),
+                    source="todo_fixme",
+                ))
+        return tickets
+
+    def _detect_missing_patterns(self, src_dir: Path) -> list[FeatureTicket]:
+        """Return tickets for common patterns not yet present in src/."""
+        all_content = ""
+        for py_file in src_dir.rglob("*.py"):
+            try:
+                all_content += py_file.read_text(encoding="utf-8").lower()
+            except OSError:
+                pass
+
+        tickets: list[FeatureTicket] = []
+
+        if not any(kw in all_content for kw in _RETRY_KEYWORDS):
+            tickets.append(FeatureTicket(
+                title="Add retry logic for transient failures",
+                description=(
+                    "No retry logic detected in src/. "
+                    "Add tenacity (or equivalent) to harden API calls."
+                ),
+                source="missing_pattern",
+            ))
+
+        if not any(kw in all_content for kw in _CACHE_KEYWORDS):
+            tickets.append(FeatureTicket(
+                title="Add caching for expensive operations",
+                description=(
+                    "No caching pattern detected in src/. "
+                    "Use functools.lru_cache or similar to avoid redundant work."
+                ),
+                source="missing_pattern",
+            ))
+
+        if not any(kw in all_content for kw in _RATE_KEYWORDS):
+            tickets.append(FeatureTicket(
+                title="Add rate limiting for external API calls",
+                description=(
+                    "No rate-limiting pattern detected in src/. "
+                    "Add rate limiting to prevent quota exhaustion."
+                ),
+                source="missing_pattern",
+            ))
+
+        return tickets
+
+    def _next_ticket_id(self) -> int:
+        """Return the next available numeric ticket ID."""
+        max_id = 0
+        for subdir in ("open", "closed"):
+            d = self._backlog_dir / subdir
+            if not d.is_dir():
+                continue
+            for f in d.glob("*.md"):
+                m = re.match(r"(\d+)", f.name)
+                if m:
+                    max_id = max(max_id, int(m.group(1)))
+        return max_id + 1
+
+    def _write_ticket(self, ticket: FeatureTicket) -> Path:
+        """Serialize a ticket to backlog/open/ and return its path."""
+        open_dir = self._backlog_dir / "open"
+        open_dir.mkdir(parents=True, exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "-", ticket.title.lower()).strip("-")[:50]
+        filename = f"{ticket.ticket_id}-{slug}.md"
+        file_path = open_dir / filename
+        content = (
+            f"# {ticket.ticket_id} — {ticket.title}\n\n"
+            f"**Role:** {ticket.role}\n"
+            f"**Priority:** {ticket.priority}\n"
+            f"**Scope:** {ticket.scope}\n"
+            f"**Complexity:** {ticket.complexity}\n\n"
+            f"## Description\n\n"
+            f"{ticket.description}\n\n"
+            f"<!-- source: feature-discovery -->\n"
+        )
+        file_path.write_text(content, encoding="utf-8")
+        return file_path
+
+
+def _normalize(text: str) -> str:
+    """Lowercase and strip punctuation for fuzzy comparison."""
+    return re.sub(r"[^a-z0-9\s]", "", text.lower()).strip()
+
+
+def _is_duplicate(normalized: str, existing: set[str]) -> bool:
+    """Return True if *normalized* is semantically similar to any existing title."""
+    words = set(normalized.split()) - _STOP_WORDS
+    if not words:
+        return False
+    for existing_title in existing:
+        existing_words = set(existing_title.split()) - _STOP_WORDS
+        if not existing_words:
+            continue
+        overlap = len(words & existing_words) / min(len(words), len(existing_words))
+        if overlap >= 0.6:
+            return True
+    return False

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 
+from bernstein.core.context import append_decision, refresh_knowledge_base
 from bernstein.core.evolution import EvolutionCoordinator
 from bernstein.core.janitor import verify_task
 from bernstein.core.metrics import get_collector
@@ -353,6 +354,12 @@ class Orchestrator:
                     role=session.role,
                     model=session.model_config.model,
                     provider=session.provider or "default",
+                    agent_source=session.agent_source,
+                )
+                logger.info(
+                    "Agent '%s' using prompt source: %s",
+                    session.id,
+                    session.agent_source,
                 )
             except Exception as exc:
                 logger.error("Spawn failed for batch %s: %s", [t.id for t in batch], exc)
@@ -404,6 +411,15 @@ class Orchestrator:
             # Sync backlog: move matching .md file from open/ to closed/
             self._sync_backlog_file(task)
 
+            # Capture decision/findings in knowledge base for future agents
+            if task.result_summary:
+                try:
+                    append_decision(
+                        self._workdir, task.id, task.title, task.result_summary,
+                    )
+                except Exception as exc:
+                    logger.warning("append_decision failed for task %s: %s", task.id, exc)
+
             # Record task completion in evolution coordinator with real data
             if self._evolution is not None:
                 model = session.model_config.model if session else None
@@ -437,6 +453,13 @@ class Orchestrator:
         # 6. Run evolution analysis cycle every N ticks
         if self._evolution is not None and self._tick_count % self._config.evolution_tick_interval == 0:
             self._run_evolution_cycle(result)
+
+        # 6b. Refresh knowledge base every 5 evolution intervals
+        if self._tick_count % (self._config.evolution_tick_interval * 5) == 0:
+            try:
+                refresh_knowledge_base(self._workdir)
+            except Exception as exc:
+                logger.warning("Knowledge base refresh failed: %s", exc)
 
         # 7. Check evolve mode: if all tasks done and no agents alive, trigger new cycle
         self._check_evolve(result)
@@ -1727,6 +1750,7 @@ if __name__ == "__main__":
             router=router,
             mcp_config=mcp_config,
             agency_catalog=agency_catalog,
+            catalog=seed.catalogs if seed else None,
         )
         config = OrchestratorConfig(server_url=f"http://127.0.0.1:{args.port}", max_agents=6)
 

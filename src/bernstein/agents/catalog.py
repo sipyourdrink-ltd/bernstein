@@ -229,6 +229,225 @@ class CatalogRegistry:
         logger.info("Loaded %d agents from agency catalog", loaded)
         return loaded
 
+    # -- Cache management -----------------------------------------------------
+
+    def write_cache(self) -> None:
+        """Serialise ``_cached_roles`` to the JSON cache file.
+
+        Creates parent directories as needed.  Existing file is overwritten.
+        """
+        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        rows = [asdict(entry) for entry in self._cached_roles.values()]
+        self._cache_path.write_text(json.dumps(rows, indent=2))
+        logger.debug("Wrote %d cached role(s) to %s", len(rows), self._cache_path)
+
+    def load_cache(self) -> bool:
+        """Load fresh entries from the JSON cache file into ``_cached_roles``.
+
+        Entries whose TTL has expired are silently skipped.  If the file is
+        missing, corrupt, or contains no fresh entries the method returns
+        ``False`` so the caller knows a provider refresh is needed.
+
+        Returns:
+            ``True`` if at least one fresh entry was loaded, ``False`` otherwise.
+        """
+        if not self._cache_path.exists():
+            return False
+        try:
+            raw_list = json.loads(self._cache_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            logger.warning("Catalog cache at %s is unreadable", self._cache_path)
+            return False
+
+        loaded = 0
+        try:
+            for row in raw_list:
+                entry = CachedAgentEntry(
+                    role=row["role"],
+                    description=row["description"],
+                    model=row["model"],
+                    effort=row["effort"],
+                    source=row["source"],
+                    fetched_at=float(row["fetched_at"]),
+                    ttl_seconds=int(row["ttl_seconds"]),
+                    metadata=row.get("metadata", {}),
+                )
+                if entry.is_fresh:
+                    self._cached_roles[entry.role] = entry
+                    loaded += 1
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Catalog cache %s contains invalid entries", self._cache_path)
+            self._cached_roles.clear()
+            return False
+
+        logger.debug("Loaded %d fresh role(s) from cache %s", loaded, self._cache_path)
+        return loaded > 0
+
+    def discover(self, *, force: bool = False) -> None:
+        """Discover agents from providers, with TTL-based local cache.
+
+        On a normal (non-forced) call:
+        1. Try to load the local cache.  If fresh entries exist, return early.
+        2. Fetch from all enabled providers in priority order.
+        3. Fall back to built-in roles if all providers fail or none are
+           configured.  Built-in roles never overwrite higher-priority entries
+           already present in ``_cached_roles``.
+        4. Write the merged result to the cache file.
+
+        When *force* is ``True``:
+        - Skip the cache check and clear any existing ``_cached_roles``.
+        - Re-fetch from providers / builtins unconditionally.
+        - Write the refreshed cache.
+
+        Args:
+            force: If ``True``, bypass the TTL check and re-fetch everything.
+        """
+        if not force and self.load_cache():
+            logger.info("Catalog: using %d fresh cached role(s)", len(self._cached_roles))
+            return
+
+        if force:
+            self._cached_roles.clear()
+
+        # Attempt to fetch from configured providers.
+        # Providers are sorted descending by priority (done in from_config).
+        fetched_any = self._fetch_from_providers()
+
+        # Graceful degradation: load built-in roles for any role not yet
+        # covered (or for all roles when providers completely failed).
+        now = time.time()
+        ttl = _LOCAL_TTL
+        for raw in _BUILTIN_AGENT_ENTRIES:
+            role = raw["role"]
+            if role not in self._cached_roles:
+                self._cached_roles[role] = CachedAgentEntry(
+                    role=role,
+                    description=raw.get("description", ""),
+                    model=raw.get("model", "sonnet"),
+                    effort=raw.get("effort", "normal"),
+                    source="builtin",
+                    fetched_at=now,
+                    ttl_seconds=ttl,
+                )
+
+        if not fetched_any:
+            logger.info("Catalog: no providers available — using built-in roles")
+
+        self.write_cache()
+        logger.info(
+            "Catalog: discovered %d role(s) (%s)",
+            len(self._cached_roles),
+            "forced" if force else "refreshed",
+        )
+
+    def _fetch_from_providers(self) -> bool:
+        """Attempt to load agents from each configured CatalogEntry.
+
+        Iterates providers in their sorted priority order (highest first).
+        Higher-priority providers win on role conflicts — an entry already
+        present in ``_cached_roles`` is never overwritten.
+
+        Returns:
+            ``True`` if at least one provider loaded at least one entry.
+        """
+        if not self.entries:
+            return False
+
+        now = time.time()
+        fetched_any = False
+
+        for entry in self.entries:
+            if not entry.enabled:
+                continue
+            ttl = _LOCAL_TTL if entry.path else _REMOTE_TTL
+            try:
+                roles = self._load_entry(entry)
+            except Exception:
+                logger.warning("Provider '%s' failed to load", entry.name, exc_info=True)
+                continue
+
+            for role, meta in roles.items():
+                if role not in self._cached_roles:
+                    self._cached_roles[role] = CachedAgentEntry(
+                        role=role,
+                        description=meta.get("description", ""),
+                        model=meta.get("model", "sonnet"),
+                        effort=meta.get("effort", "normal"),
+                        source=entry.name,
+                        fetched_at=now,
+                        ttl_seconds=ttl,
+                        metadata={k: v for k, v in meta.items()
+                                  if k not in ("role", "description", "model", "effort")},
+                    )
+                    fetched_any = True
+
+        return fetched_any
+
+    def _load_entry(self, entry: CatalogEntry) -> dict[str, dict[str, Any]]:
+        """Load role metadata from a single CatalogEntry.
+
+        Args:
+            entry: The catalog source to load from.
+
+        Returns:
+            Mapping of role name → metadata dict.
+        """
+        if entry.type == "agency" and entry.path:
+            from pathlib import Path as _Path
+            from bernstein.core.agency_loader import load_agency_catalog
+            catalog_dir = _Path(entry.path)
+            agents = load_agency_catalog(catalog_dir)
+            return {
+                a.role: {"description": a.description, "model": "sonnet", "effort": "normal"}
+                for a in agents.values()
+            }
+
+        if entry.type == "generic" and entry.path:
+            return self._load_generic_entry(entry)
+
+        # Remote agency (no local path) — not fetched at discover time
+        logger.debug("Skipping remote provider '%s' (no local path configured)", entry.name)
+        return {}
+
+    def _load_generic_entry(self, entry: CatalogEntry) -> dict[str, dict[str, Any]]:
+        """Load role metadata from a generic local YAML catalog.
+
+        Args:
+            entry: A catalog entry with ``type="generic"``.
+
+        Returns:
+            Mapping of role name → metadata dict.
+        """
+        import glob as _glob
+        import yaml
+
+        from pathlib import Path as _Path
+
+        catalog_dir = _Path(entry.path)  # type: ignore[arg-type]
+        pattern = entry.glob or "*.yaml"
+        fm = entry.field_map
+
+        results: dict[str, dict[str, Any]] = {}
+        for file_path in _glob.glob(str(catalog_dir / pattern)):
+            try:
+                raw = yaml.safe_load(_Path(file_path).read_text(encoding="utf-8"))
+            except Exception:
+                logger.warning("Skipping unreadable generic catalog file: %s", file_path)
+                continue
+            if not isinstance(raw, dict):
+                continue
+            role = raw.get(fm.get("role", "role"), raw.get("role"))
+            if not role:
+                continue
+            results[str(role)] = {
+                "description": raw.get(fm.get("description", "description"), ""),
+                "model": raw.get(fm.get("model", "model"), "sonnet"),
+                "effort": raw.get(fm.get("effort", "effort"), "normal"),
+            }
+        return results
+
+    # -- Agent matching -------------------------------------------------------
+
     def match(self, role: str, task_description: str) -> CatalogAgent | None:
         """Find the best catalog agent for a role and task description.
 

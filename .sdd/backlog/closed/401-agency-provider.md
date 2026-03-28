@@ -26,3 +26,9 @@ Agency (`msitarzewski/agency-agents`) should be the default agent catalog. Need 
 ## Completion signals
 - test_passes: uv run pytest tests/unit/test_agency_provider.py -x -q
 - file_contains: src/bernstein/agents/agency_provider.py :: AgencyProvider
+
+
+---
+**completed**: 2026-03-28 04:54:46
+**task_id**: 93d0431a921b
+**result**: Completed: 401 — AgencyProvider for msitarzewski/agency-agents

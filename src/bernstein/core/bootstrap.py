@@ -160,6 +160,31 @@ def _is_alive(pid: int) -> bool:
         return False
 
 
+def _discover_catalog(workdir: Path) -> None:
+    """Run CatalogRegistry.discover() against the project workspace.
+
+    Loads the agent catalog from cache (if fresh) or re-fetches from providers.
+    On failure the error is logged and startup continues — catalog is optional.
+
+    Args:
+        workdir: Project root directory.
+    """
+    from pathlib import Path as _Path
+
+    from bernstein.agents.catalog import CatalogRegistry
+
+    cache_path = workdir / ".sdd" / "agents" / "catalog.json"
+    try:
+        registry = CatalogRegistry.default()
+        registry._cache_path = cache_path
+        registry.discover()
+        console.print(
+            f"[dim]Catalog: {len(registry._cached_roles)} role(s) ready[/dim]"
+        )
+    except Exception:
+        logger.warning("Catalog auto-discovery failed (non-fatal)", exc_info=True)
+
+
 def create_router(workdir: Path) -> TierAwareRouter | None:
     """Create a TierAwareRouter from providers.yaml if it exists.
 
@@ -369,6 +394,9 @@ def bootstrap_from_seed(
     _clean_stale_runtime(workdir)
     console.print("[dim]Cleaned stale runtime state[/dim]")
 
+    # 2c. Auto-discover agents from catalogs (loads cache or refreshes providers)
+    _discover_catalog(workdir)
+
     # Verify/write safety invariants
     from bernstein.evolution.invariants import verify_invariants, write_lockfile
     ok, violations = verify_invariants(workdir)
@@ -559,6 +587,9 @@ def bootstrap_from_goal(
     # Clean stale runtime from previous runs
     _clean_stale_runtime(workdir)
     console.print("[dim]Cleaned stale runtime state[/dim]")
+
+    # Auto-discover agents from catalogs
+    _discover_catalog(workdir)
 
     # Verify/write safety invariants
     from bernstein.evolution.invariants import verify_invariants, write_lockfile

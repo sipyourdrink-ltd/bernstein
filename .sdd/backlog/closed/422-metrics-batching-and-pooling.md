@@ -29,3 +29,9 @@ Metrics are written to JSONL files line-by-line on every event. Under high throu
 ## Completion signals
 - test_passes: uv run pytest tests/unit/test_metrics_batching.py -x -q
 - file_contains: src/bernstein/core/metrics.py :: flush
+
+
+---
+**completed**: 2026-03-28 04:53:55
+**task_id**: fdee9db5c276
+**result**: Completed: 422 — Metrics write batching and connection pooling

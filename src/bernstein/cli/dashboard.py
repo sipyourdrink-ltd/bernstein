@@ -208,8 +208,8 @@ class BernsteinApp(App):
         text-style: bold;
     }
 
-    #main {
-        height: 1fr;
+    #top-panels {
+        height: 2fr;
     }
 
     #col-agents {
@@ -221,12 +221,12 @@ class BernsteinApp(App):
 
     #col-tasks {
         width: 1fr;
-        border-right: heavy $border;
         padding: 0;
     }
 
-    #col-activity {
-        width: 1fr;
+    #activity-bar {
+        height: 1fr;
+        border-top: heavy $border;
         padding: 0 1;
     }
 
@@ -319,16 +319,16 @@ class BernsteinApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Horizontal(id="main"):
+        with Horizontal(id="top-panels"):
             with Vertical(id="col-agents"):
                 yield Static("AGENTS", classes="col-header")
                 yield Static("[dim]Waiting...[/]", id="no-agents")
             with Vertical(id="col-tasks"):
                 yield Static("TASKS", classes="col-header")
                 yield DataTable(id="tasks-table")
-            with Vertical(id="col-activity"):
-                yield Static("ACTIVITY", classes="col-header")
-                yield RichLog(id="activity-log", wrap=True, markup=True)
+        with Vertical(id="activity-bar"):
+            yield Static("ACTIVITY", classes="col-header")
+            yield RichLog(id="activity-log", wrap=True, markup=True)
         with Vertical(id="bottom-bar"):
             yield BigStats(id="stats-row")
             with Horizontal(id="spark-row"):
@@ -500,9 +500,9 @@ class BernsteinApp(App):
         self.query_one("#chat-input", ChatInput).focus()
 
     def action_toggle_activity(self) -> None:
-        col = self.query_one("#col-activity")
+        bar = self.query_one("#activity-bar")
         self._activity_visible = not self._activity_visible
-        col.display = self._activity_visible
+        bar.display = self._activity_visible
 
     def action_stop_bernstein(self) -> None:
         import signal

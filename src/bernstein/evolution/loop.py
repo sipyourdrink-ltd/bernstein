@@ -27,7 +27,11 @@ from bernstein.evolution.aggregator import (
 from bernstein.evolution.applicator import FileUpgradeExecutor
 from bernstein.evolution.benchmark import RunSummary, run_all, save_results
 from bernstein.evolution.circuit import CircuitBreaker
-from bernstein.evolution.detector import ImprovementOpportunity, OpportunityDetector
+from bernstein.evolution.detector import (
+    FeatureDiscovery,
+    ImprovementOpportunity,
+    OpportunityDetector,
+)
 from bernstein.evolution.gate import ApprovalGate, ApprovalOutcome
 from bernstein.evolution.proposals import (
     AnalysisTrigger,
@@ -139,6 +143,10 @@ class EvolutionLoop:
         self._collector = FileMetricsCollector(state_dir)
         self._aggregator = MetricsAggregator(self._collector, analysis_dir=self._analysis_dir)
         self._detector = OpportunityDetector(self._collector, analysis_dir=self._analysis_dir)
+        self._feature_discovery = FeatureDiscovery(
+            repo_root=self._repo_root,
+            backlog_dir=state_dir / "backlog",
+        )
         self._proposal_generator = ProposalGenerator()
         self._sandbox = SandboxValidator(self._repo_root)
         self._evolution_dir = state_dir / "evolution"
@@ -241,9 +249,15 @@ class EvolutionLoop:
         """
         cycle_start = time.time()
 
-        # Step 1 — Gather metrics and detect opportunities.
+        # Step 1 — Gather metrics, detect opportunities, and run feature discovery.
         self._aggregator.run_full_analysis()
         opportunities = self._detector.identify_opportunities()
+        feature_tickets = self._feature_discovery.discover(max_tickets=5)
+        if feature_tickets:
+            logger.info(
+                "Feature discovery: %d new ticket(s) written to backlog",
+                len(feature_tickets),
+            )
 
         # Step 2 — Run baseline benchmark.
         baseline_score = self._run_baseline()
