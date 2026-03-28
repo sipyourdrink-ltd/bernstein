@@ -1,0 +1,348 @@
+# Bernstein Model Routing Configuration
+# Maps task scope/complexity/role to CLI agent + model + effort level.
+# Rules are evaluated top-to-bottom; first matching rule wins.
+#
+# Updated: 2026-03-28
+# Sources: SWE-bench Verified, Aider Polyglot, live CLI --help probes.
+#
+# Installed agents and available models:
+#
+#   Claude Code 2.1.86
+#     Models: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001
+#     Aliases: opus, sonnet, haiku
+#     Pricing (per 1M tokens): Opus $5/$25, Sonnet $3/$15, Haiku $1/$5
+#     Context: 200K (1M with extended), effort flag: --effort low|medium|high|max
+#     Strengths: tool use, file editing, complex refactoring, architecture
+#     SWE-bench Verified: Opus 80.8%, Sonnet 79.6%
+#
+#   Codex CLI 0.80.0
+#     Models: o3, o4-mini, codex-mini
+#     Default: o4-mini (codex-mini for Codex product)
+#     Pricing (per 1M tokens): o3 $2/$8, o4-mini $1.10/$4.40, codex-mini $1.50/$6
+#     Context: 200K, built-in chain-of-thought reasoning (no separate effort flag)
+#     Strengths: fast fixes, code review, test writing, reasoning-heavy tasks
+#     SWE-bench Verified: o3 ~78% (via scaffolds), o4-mini ~72%
+#
+#   Gemini CLI 0.35.3
+#     Models: gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash
+#     Default: gemini-2.5-pro
+#     Pricing (per 1M tokens): 2.5-pro $1.25/$10, 2.5-flash $0.30/$2.50
+#     Context: 1M tokens (largest of any CLI agent)
+#     Free tier: 1,000 requests/day on all models
+#     Strengths: long context, multimodal, frontend/UI, vision, free tier
+#     SWE-bench Verified: 2.5-pro ~76%
+#     Deprecation: 2.5-pro and 2.5-flash deprecated June 17 2026 (migrate to 3.x)
+#
+#   Qwen CLI (via OpenRouter/Together/local)
+#     Models: qwen-max, qwen-plus, qwen-turbo
+#     Context: 128K
+#     Strengths: cheap/free via OpenRouter, code generation, translation
+#     Best for: budget-constrained runs, L1 tasks
+
+# --------------------------------------------------------------------------
+# Fast-path: deterministic execution or cheapest model for trivial tasks.
+# Evaluated BEFORE model routing rules (see fast_path.py).
+# --------------------------------------------------------------------------
+fast_path:
+  enabled: true
+  # Estimated cost of a single LLM invocation (used for savings calculation)
+  estimated_llm_cost_usd: 0.15
+
+  # L0 -- deterministic execution, no LLM needed.
+  # Pattern matched against lowercased task title + description.
+  l0_patterns:
+    - pattern: "\\b(format|formatting|auto-?format|black|prettier)\\b"
+      action: ruff_format
+      label: formatting
+    - pattern: "\\b(lint|linting|ruff fix|fix lint|autofix)\\b"
+      action: ruff_fix
+      label: lint-fix
+    - pattern: "\\b(sort imports?|isort|import order|organiz\\w+ imports?)\\b"
+      action: sort_imports
+      label: import-sort
+    - pattern: "\\brename\\s+['\"]?\\w+['\"]?\\s+(?:to|->|=>)\\s+['\"]?\\w+['\"]?"
+      action: rename_symbol
+      label: rename
+
+  # L1 -- cheapest model (haiku/low effort or Gemini Flash free tier).
+  l1_patterns:
+    - pattern: "\\b(add docstring|update docstring|missing docstring)\\b"
+      label: docstring
+    - pattern: "\\b(add type hint|type annotation|add typing)\\b"
+      label: type-hint
+    - pattern: "\\b(fix typo|spelling|typo)\\b"
+      label: typo-fix
+    - pattern: "\\b(update readme|update changelog|release notes)\\b"
+      label: docs-update
+  l1_model: haiku
+  l1_effort: low
+
+  # Roles, scopes, and complexities that are never fast-pathed.
+  excluded_roles: ["manager", "architect", "security"]
+  excluded_complexity: "high"
+  excluded_scope: "large"
+
+# --------------------------------------------------------------------------
+# Multi-agent routing: maps role to preferred CLI agent + model.
+# When cli is set to "auto" in bernstein.yaml, the router uses this table.
+# Each entry is a prioritized fallback cascade.
+# --------------------------------------------------------------------------
+agent_routing:
+  # Planning & orchestration: needs strongest reasoning
+  manager:
+    - agent: claude
+      model: claude-opus-4-6
+      effort: max
+      reason: "strongest tool-use and planning (SWE-bench 80.8%)"
+    - agent: gemini
+      model: gemini-2.5-pro
+      effort: high
+      reason: "1M context, strong reasoning, free tier"
+    - agent: codex
+      model: o3
+      effort: high
+      reason: "strong chain-of-thought reasoning"
+
+  # Architecture: needs deep reasoning about system design
+  architect:
+    - agent: claude
+      model: claude-opus-4-6
+      effort: max
+      reason: "best at complex refactoring and system design"
+    - agent: codex
+      model: o3
+      effort: high
+      reason: "extended thinking excels at architecture"
+    - agent: gemini
+      model: gemini-2.5-pro
+      effort: high
+      reason: "1M context for large codebase analysis"
+
+  # Backend implementation: needs good code gen, speed matters
+  backend:
+    - agent: claude
+      model: claude-sonnet-4-6
+      effort: high
+      reason: "fast, strong tool-use, excellent code generation"
+    - agent: codex
+      model: o4-mini
+      effort: high
+      reason: "fast, cheap, good at focused implementation"
+    - agent: gemini
+      model: gemini-2.5-flash
+      effort: high
+      reason: "fast, free tier available"
+
+  # Frontend: UI code, CSS, JSX/TSX
+  frontend:
+    - agent: gemini
+      model: gemini-2.5-flash
+      effort: high
+      reason: "fast, multimodal (can read screenshots), free tier"
+    - agent: claude
+      model: claude-sonnet-4-6
+      effort: high
+      reason: "strong code generation for complex UI logic"
+    - agent: codex
+      model: o4-mini
+      effort: high
+      reason: "fast implementation"
+
+  # QA: test writing, validation -- thoroughness matters, can be cheaper
+  qa:
+    - agent: codex
+      model: o4-mini
+      effort: high
+      reason: "cheap, fast, good at test coverage and edge cases"
+    - agent: gemini
+      model: gemini-2.5-flash
+      effort: high
+      reason: "free tier, fast, good at test generation"
+    - agent: claude
+      model: claude-sonnet-4-6
+      effort: high
+      reason: "thorough test generation"
+
+  # Documentation: needs clarity, cheapest tier is fine
+  docs:
+    - agent: gemini
+      model: gemini-2.5-flash
+      effort: medium
+      reason: "free tier, fast, good writing quality"
+    - agent: claude
+      model: claude-haiku-4-5-20251001
+      effort: medium
+      reason: "cheapest Claude model, adequate for docs"
+    - agent: codex
+      model: o4-mini
+      effort: medium
+      reason: "cheap, fast"
+
+  # Security: needs deep analysis and reasoning
+  security:
+    - agent: claude
+      model: claude-opus-4-6
+      effort: max
+      reason: "deepest reasoning for vulnerability analysis"
+    - agent: codex
+      model: o3
+      effort: high
+      reason: "extended thinking for security analysis"
+    - agent: gemini
+      model: gemini-2.5-pro
+      effort: high
+      reason: "1M context for whole-codebase security scan"
+
+  # DevOps: CI/CD, Dockerfiles, infrastructure
+  devops:
+    - agent: codex
+      model: o4-mini
+      effort: high
+      reason: "fast, good at shell/infrastructure code"
+    - agent: claude
+      model: claude-sonnet-4-6
+      effort: high
+      reason: "strong at complex deployment configs"
+    - agent: gemini
+      model: gemini-2.5-flash
+      effort: high
+      reason: "free tier, adequate for infra tasks"
+
+  # Resolver: simple scaffolding, boilerplate
+  resolver:
+    - agent: gemini
+      model: gemini-2.5-flash
+      effort: medium
+      reason: "free tier, fast for simple tasks"
+    - agent: codex
+      model: o4-mini
+      effort: medium
+      reason: "cheap, fast"
+    - agent: claude
+      model: claude-haiku-4-5-20251001
+      effort: low
+      reason: "cheapest Claude option"
+
+# --------------------------------------------------------------------------
+# Model routing rules (for L2+ tasks, when using single-CLI mode).
+# Used when bernstein.yaml specifies a single cli adapter (e.g. cli: claude).
+# --------------------------------------------------------------------------
+rules:
+  # Manager always gets Opus max -- planning, decomposition, review
+  - id: "manager-opus-max"
+    description: "Manager role always uses Opus with max effort"
+    conditions:
+      role: "manager"
+    model: "opus"
+    effort: "max"
+
+  # Security review needs deep reasoning
+  - id: "security-opus-max"
+    description: "Security role always uses Opus with max effort"
+    conditions:
+      role: "security"
+    model: "opus"
+    effort: "max"
+
+  # Architect needs deep reasoning
+  - id: "architect-opus-max"
+    description: "Architect role uses Opus with max effort"
+    conditions:
+      role: "architect"
+    model: "opus"
+    effort: "max"
+
+  # Large scope + high complexity = Opus high
+  - id: "large-complex-opus"
+    description: "Large scope with high complexity uses Opus"
+    conditions:
+      scope: "large"
+      complexity: "high"
+    model: "opus"
+    effort: "high"
+
+  # QA role gets Sonnet high (testing, validation)
+  - id: "qa-sonnet-high"
+    description: "QA role uses Sonnet with high effort"
+    conditions:
+      role: "qa"
+    model: "sonnet"
+    effort: "high"
+
+  # Medium complexity = Sonnet high (feature implementation, tests)
+  - id: "medium-sonnet-high"
+    description: "Medium complexity tasks use Sonnet with high effort"
+    conditions:
+      complexity: "medium"
+    model: "sonnet"
+    effort: "high"
+
+  # Docs role uses Haiku for cost savings
+  - id: "docs-haiku-medium"
+    description: "Documentation tasks use Haiku to save cost"
+    conditions:
+      role: "docs"
+    model: "haiku"
+    effort: "medium"
+
+  # Default: small scope / low complexity = Sonnet normal
+  - id: "default-sonnet-normal"
+    description: "Simple tasks use Sonnet with normal effort (quick fixes, formatting)"
+    conditions: {}
+    model: "sonnet"
+    effort: "normal"
+
+# --------------------------------------------------------------------------
+# Budget-aware fallback cascade.
+# When budget is tight, the router downgrades models in this order.
+# --------------------------------------------------------------------------
+budget_cascade:
+  # Tier 1: Cheapest viable (target: $0/task via free tier)
+  - tier: "free"
+    agents:
+      - agent: gemini
+        model: gemini-2.5-flash
+        reason: "1000 free requests/day"
+      - agent: qwen
+        model: qwen/qwen-2.5-coder-32b-instruct
+        reason: "free via OpenRouter"
+    max_complexity: "medium"
+    max_scope: "medium"
+
+  # Tier 2: Cheap ($0.01-0.05/task)
+  - tier: "cheap"
+    agents:
+      - agent: claude
+        model: claude-haiku-4-5-20251001
+        reason: "$1/$5 per 1M tokens"
+      - agent: codex
+        model: o4-mini
+        reason: "$1.10/$4.40 per 1M tokens"
+      - agent: gemini
+        model: gemini-2.5-flash
+        reason: "$0.30/$2.50 per 1M tokens"
+    max_complexity: "high"
+    max_scope: "medium"
+
+  # Tier 3: Moderate ($0.05-0.30/task)
+  - tier: "moderate"
+    agents:
+      - agent: claude
+        model: claude-sonnet-4-6
+        reason: "$3/$15 per 1M tokens, best all-rounder"
+      - agent: codex
+        model: o3
+        reason: "$2/$8 per 1M tokens, strong reasoning"
+      - agent: gemini
+        model: gemini-2.5-pro
+        reason: "$1.25/$10 per 1M tokens, 1M context"
+    max_complexity: "high"
+    max_scope: "large"
+
+  # Tier 4: Premium ($0.30+/task)
+  - tier: "premium"
+    agents:
+      - agent: claude
+        model: claude-opus-4-6
+        reason: "$5/$25 per 1M tokens, strongest reasoning"
+    # No complexity/scope cap -- used for hardest tasks only

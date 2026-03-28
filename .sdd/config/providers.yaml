@@ -1,0 +1,181 @@
+# Bernstein Provider Configuration
+# Defines available LLM providers, their tiers, models, and cost.
+#
+# Updated: 2026-03-28
+# Pricing source: Official API docs (Anthropic, OpenAI, Google)
+# Benchmark source: SWE-bench Verified, Aider Polyglot leaderboard
+
+providers:
+  # ---------------------------------------------------------------------------
+  # Anthropic Claude (via Claude Code CLI)
+  # ---------------------------------------------------------------------------
+  claude_premium:
+    tier: "premium"
+    cost_per_1k_tokens: 0.015     # Opus blended (input $5 + output $25) / 2 / 1000
+    available: true
+    max_context_tokens: 200000    # 1M with extended context
+    supports_streaming: true
+    supports_vision: true
+    rate_limit_rpm: 1000          # Pro tier
+    models:
+      opus:
+        model: "opus"
+        effort: "max"
+        # SWE-bench Verified: 80.8%
+        # Aider Polyglot: top tier
+        # Best for: architecture, planning, security, complex refactoring
+
+  claude_standard:
+    tier: "standard"
+    cost_per_1k_tokens: 0.009     # Sonnet blended ($3 + $15) / 2 / 1000
+    available: true
+    max_context_tokens: 200000
+    supports_streaming: true
+    supports_vision: true
+    rate_limit_rpm: 1000
+    models:
+      sonnet:
+        model: "sonnet"
+        effort: "high"
+        # SWE-bench Verified: 79.6%
+        # Best for: implementation, code generation, tool-use
+
+  claude_cheap:
+    tier: "free"                   # "free" tier in router = cheapest available
+    cost_per_1k_tokens: 0.003     # Haiku blended ($1 + $5) / 2 / 1000
+    available: true
+    max_context_tokens: 200000
+    supports_streaming: true
+    supports_vision: true
+    rate_limit_rpm: 1000
+    models:
+      haiku:
+        model: "haiku"
+        effort: "medium"
+        # Best for: docs, type hints, simple fixes, L1 fast-path
+
+  # ---------------------------------------------------------------------------
+  # OpenAI (via Codex CLI)
+  # ---------------------------------------------------------------------------
+  codex_standard:
+    tier: "standard"
+    cost_per_1k_tokens: 0.005     # o3 blended ($2 + $8) / 2 / 1000
+    available: true
+    max_context_tokens: 200000
+    supports_streaming: true
+    supports_vision: false
+    rate_limit_rpm: 500           # Pro tier with org
+    models:
+      o3:
+        model: "o3"
+        effort: "high"
+        # SWE-bench Verified: ~78% (via scaffolds)
+        # Built-in chain-of-thought reasoning
+        # Best for: architecture, security analysis, reasoning-heavy
+
+  codex_cheap:
+    tier: "free"
+    cost_per_1k_tokens: 0.00275   # o4-mini blended ($1.10 + $4.40) / 2 / 1000
+    available: true
+    max_context_tokens: 200000
+    supports_streaming: true
+    supports_vision: false
+    rate_limit_rpm: 500
+    models:
+      o4-mini:
+        model: "o4-mini"
+        effort: "high"
+        # SWE-bench Verified: ~72%
+        # Best for: quick fixes, test writing, code review, CI tasks
+
+  codex_mini:
+    tier: "free"
+    cost_per_1k_tokens: 0.00375   # codex-mini blended ($1.50 + $6) / 2 / 1000
+    available: true
+    max_context_tokens: 200000
+    supports_streaming: true
+    supports_vision: false
+    rate_limit_rpm: 500
+    models:
+      codex-mini:
+        model: "codex-mini"
+        effort: "high"
+        # Optimized for Codex CLI workflows
+        # Best for: repo-scale reasoning
+
+  # ---------------------------------------------------------------------------
+  # Google Gemini (via Gemini CLI)
+  # Note: gemini-2.5-pro and 2.5-flash deprecated June 17, 2026.
+  # Plan migration to gemini-3.x when available.
+  # ---------------------------------------------------------------------------
+  gemini_standard:
+    tier: "standard"
+    cost_per_1k_tokens: 0.005625  # 2.5-pro blended ($1.25 + $10) / 2 / 1000
+    available: true
+    max_context_tokens: 1000000   # 1M tokens -- largest context window
+    supports_streaming: true
+    supports_vision: true
+    rate_limit_rpm: 1000
+    free_tier_limit: 1000         # 1000 requests/day free
+    free_tier_used: 0
+    models:
+      gemini-2.5-pro:
+        model: "gemini-2.5-pro"
+        effort: "high"
+        # SWE-bench Verified: ~76%
+        # 1M context window
+        # Best for: long-context analysis, multi-file refactoring, planning
+
+  gemini_cheap:
+    tier: "free"
+    cost_per_1k_tokens: 0.0014    # 2.5-flash blended ($0.30 + $2.50) / 2 / 1000
+    available: true
+    max_context_tokens: 1000000
+    supports_streaming: true
+    supports_vision: true
+    rate_limit_rpm: 1000
+    free_tier_limit: 1000         # 1000 requests/day free
+    free_tier_used: 0
+    models:
+      gemini-2.5-flash:
+        model: "gemini-2.5-flash"
+        effort: "high"
+        # Fast, cheap, free tier available
+        # Best for: frontend, docs, simple implementation, budget runs
+
+  gemini_legacy:
+    tier: "free"
+    cost_per_1k_tokens: 0.0005
+    available: true
+    max_context_tokens: 1000000
+    supports_streaming: true
+    supports_vision: true
+    rate_limit_rpm: 1000
+    free_tier_limit: 1000
+    free_tier_used: 0
+    models:
+      gemini-2.0-flash:
+        model: "gemini-2.0-flash"
+        effort: "medium"
+        # Legacy model, still free and fast
+        # Best for: L1 tasks, simple scaffolding
+
+  # ---------------------------------------------------------------------------
+  # OpenRouter free tier (via Qwen CLI)
+  # ---------------------------------------------------------------------------
+  openrouter_free:
+    tier: "free"
+    cost_per_1k_tokens: 0.0
+    available: true
+    free_tier_limit: 100          # ~100 requests per day on free models
+    free_tier_used: 0
+    max_context_tokens: 128000
+    supports_streaming: true
+    supports_vision: false
+    rate_limit_rpm: 20
+    models:
+      qwen-2.5-coder:
+        model: "qwen/qwen-2.5-coder-32b-instruct"
+        effort: "high"
+        # Free via OpenRouter
+        # Best for: budget-zero runs, simple code generation

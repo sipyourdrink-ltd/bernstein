@@ -144,8 +144,8 @@ def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
         supports_mcp=True,
         max_context_tokens=200_000,
         reasoning_strength="high",
-        best_for=["quick-fixes", "code-review", "test-writing"],
-        cost_tier="cheap",
+        best_for=["quick-fixes", "code-review", "test-writing", "reasoning-tasks"],
+        cost_tier="cheap",  # o4-mini $1.10/$4.40 per 1M; o3 $2/$8 per 1M
     ), warnings
 
 
@@ -191,8 +191,9 @@ def _detect_gemini() -> tuple[AgentCapabilities | None, list[str]]:
         supports_mcp=True,
         max_context_tokens=1_000_000,
         reasoning_strength="very_high",
-        best_for=["frontend", "long-context", "multimodal"],
-        cost_tier="free",
+        best_for=["frontend", "long-context", "multimodal", "free-tier"],
+        cost_tier="free",  # 1000 free requests/day; paid: 2.5-pro $1.25/$10, flash $0.30/$2.50
+        # NOTE: gemini-2.5-pro and 2.5-flash deprecated June 17, 2026
     ), warnings
 
 
@@ -233,15 +234,16 @@ def _detect_claude() -> tuple[AgentCapabilities | None, list[str]]:
         version=version,
         logged_in=logged_in,
         login_method=login_method,
-        available_models=["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5"],
+        available_models=["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"],
         default_model="claude-sonnet-4-6",
         supports_headless=True,
         supports_sandbox=False,
         supports_mcp=True,
-        max_context_tokens=200_000,
+        max_context_tokens=200_000,  # 1M with extended context on Opus/Sonnet 4.6
         reasoning_strength="very_high",
-        best_for=["architecture", "complex-refactoring", "security-review"],
-        cost_tier="moderate",
+        best_for=["architecture", "complex-refactoring", "security-review", "tool-use"],
+        cost_tier="moderate",  # Opus $5/$25, Sonnet $3/$15, Haiku $1/$5 per 1M
+        # SWE-bench Verified: Opus 80.8%, Sonnet 79.6%
     ), warnings
 
 
@@ -360,15 +362,24 @@ def clear_discovery_cache() -> None:
 
 # Default role preferences — maps role to a prioritized list of
 # (agent_name, model) tuples. The first available match wins.
+#
+# Rationale (2026-03-28 benchmark data):
+# - Claude Opus 4.6: SWE-bench 80.8%, best tool-use, best for architecture/security
+# - Claude Sonnet 4.6: SWE-bench 79.6%, best speed/quality ratio for implementation
+# - Codex o3: SWE-bench ~78%, strong chain-of-thought reasoning
+# - Codex o4-mini: SWE-bench ~72%, cheap+fast, good for focused tasks
+# - Gemini 2.5-pro: SWE-bench ~76%, 1M context, free tier (1000 req/day)
+# - Gemini 2.5-flash: fast, free tier, good for UI/docs/simple tasks
 _ROLE_PREFERENCES: dict[str, list[tuple[str, str]]] = {
-    "architect": [("claude", "claude-opus-4-6"), ("gemini", "gemini-2.5-pro")],
-    "backend": [("codex", "o4-mini"), ("claude", "claude-sonnet-4-6")],
-    "frontend": [("gemini", "gemini-2.5-flash"), ("claude", "claude-sonnet-4-6")],
-    "qa": [("codex", "o4-mini"), ("gemini", "gemini-2.5-flash")],
-    "security": [("claude", "claude-opus-4-6"), ("gemini", "gemini-2.5-pro")],
-    "docs": [("gemini", "gemini-2.5-flash"), ("codex", "o4-mini")],
-    "manager": [("claude", "claude-opus-4-6"), ("gemini", "gemini-2.5-pro")],
-    "devops": [("codex", "o4-mini"), ("claude", "claude-sonnet-4-6")],
+    "manager": [("claude", "claude-opus-4-6"), ("codex", "o3"), ("gemini", "gemini-2.5-pro")],
+    "architect": [("claude", "claude-opus-4-6"), ("codex", "o3"), ("gemini", "gemini-2.5-pro")],
+    "backend": [("claude", "claude-sonnet-4-6"), ("codex", "o4-mini"), ("gemini", "gemini-2.5-flash")],
+    "frontend": [("gemini", "gemini-2.5-flash"), ("claude", "claude-sonnet-4-6"), ("codex", "o4-mini")],
+    "qa": [("codex", "o4-mini"), ("gemini", "gemini-2.5-flash"), ("claude", "claude-sonnet-4-6")],
+    "security": [("claude", "claude-opus-4-6"), ("codex", "o3"), ("gemini", "gemini-2.5-pro")],
+    "docs": [("gemini", "gemini-2.5-flash"), ("claude", "claude-haiku-4-5-20251001"), ("codex", "o4-mini")],
+    "devops": [("codex", "o4-mini"), ("claude", "claude-sonnet-4-6"), ("gemini", "gemini-2.5-flash")],
+    "resolver": [("gemini", "gemini-2.5-flash"), ("codex", "o4-mini"), ("claude", "claude-haiku-4-5-20251001")],
 }
 
 
@@ -477,6 +488,7 @@ def _short_model(model: str) -> str:
         "claude-opus-4-6": "opus",
         "claude-sonnet-4-6": "sonnet",
         "claude-haiku-4-5": "haiku",
+        "claude-haiku-4-5-20251001": "haiku",
         "gemini-2.5-pro": "2.5-pro",
         "gemini-2.5-flash": "2.5-flash",
         "gemini-2.0-flash": "2.0-flash",
