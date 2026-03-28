@@ -148,6 +148,16 @@ class MetricsCollector:
         self._last_flush: float = time.time()
         self._lock: threading.Lock = threading.Lock()
 
+    @property
+    def task_metrics(self) -> dict[str, TaskMetrics]:
+        """Access per-task metrics."""
+        return self._task_metrics
+
+    @property
+    def agent_metrics(self) -> dict[str, AgentMetrics]:
+        """Access per-agent metrics."""
+        return self._agent_metrics
+
     # -- Task Metrics --------------------------------------------------------
 
     def start_task(self, task_id: str, role: str, model: str, provider: str) -> TaskMetrics:

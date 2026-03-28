@@ -36,7 +36,7 @@ class HijackOpportunity:
     description: str
     estimated_free_tokens: int
     expiry_timestamp: int | None = None  # Unix timestamp, None = no expiry
-    constraints: list[str] = field(default_factory=list)  # Usage constraints
+    constraints: list[str] = field(default_factory=list[str])  # Usage constraints
     confidence: float = 1.0  # 0.0-1.0 confidence in detection
 
 
@@ -175,7 +175,7 @@ class TierHijacker:
         Returns:
             List of detected opportunities, sorted by confidence.
         """
-        opportunities = []
+        opportunities: list[HijackOpportunity] = []
 
         # Run all detectors
         for detector in self.detectors:
@@ -202,7 +202,7 @@ class TierHijacker:
 
     def _scan_provider_quotas(self) -> list[HijackOpportunity]:
         """Scan registered providers for unused quotas."""
-        opportunities = []
+        opportunities: list[HijackOpportunity] = []
 
         for provider_name, provider in self.router.state.providers.items():
             if provider.tier == Tier.FREE and provider.quota_remaining and provider.quota_remaining > 0:
@@ -226,7 +226,7 @@ class TierHijacker:
 
     def _scan_open_source_alternatives(self) -> list[HijackOpportunity]:
         """Scan for open-source model alternatives."""
-        opportunities = []
+        opportunities: list[HijackOpportunity] = []
 
         # Check for Ollama
         if os.environ.get("OLLAMA_HOST") or self._check_ollama_available():
@@ -512,7 +512,7 @@ class QuotaSafetyCheck(SafetyCheck):
 
 def create_default_detectors() -> list[TierDetector]:
     """Create default tier detectors for common providers."""
-    detectors = []
+    detectors: list[TierDetector] = []
 
     # Anthropic environment detection
     detectors.append(

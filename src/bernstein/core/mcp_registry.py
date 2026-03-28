@@ -12,7 +12,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
@@ -103,37 +103,44 @@ class MCPRegistry:
             return
 
         try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            raw_data: object = yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as exc:
             logger.warning("Failed to load MCP server catalog: %s", exc)
             return
 
-        if not isinstance(raw, dict):
-            logger.warning("MCP server catalog must be a mapping, got %s", type(raw).__name__)
+        if not isinstance(raw_data, dict):
+            logger.warning("MCP server catalog must be a mapping, got %s", type(raw_data).__name__)
             return
 
-        entries = raw.get("servers", [])
-        if not isinstance(entries, list):
+        raw: dict[str, Any] = cast("dict[str, Any]", raw_data)
+
+        entries_raw: Any = raw.get("servers", [])
+        if not isinstance(entries_raw, list):
             logger.warning("MCP server catalog 'servers' must be a list")
             return
 
-        for entry_raw in entries:
+        entries_list: list[Any] = cast("list[Any]", entries_raw)
+        for entry_raw in entries_list:
             if not isinstance(entry_raw, dict):
                 continue
-            name = entry_raw.get("name")
-            package = entry_raw.get("package")
+            entry_dict: dict[str, Any] = cast("dict[str, Any]", entry_raw)
+            name: str | None = entry_dict.get("name")
+            package: str | None = entry_dict.get("package")
             if not name or not package:
-                logger.warning("MCP server entry missing name or package: %r", entry_raw)
+                logger.warning("MCP server entry missing name or package: %r", entry_dict)
                 continue
 
+            capabilities_raw: list[Any] = list(entry_dict.get("capabilities", []))
+            keywords_raw: list[Any] = list(entry_dict.get("keywords", []))
+            env_req_raw: list[Any] = list(entry_dict.get("env_required", []))
             entry = MCPServerEntry(
                 name=str(name),
                 package=str(package),
-                capabilities=tuple(str(c) for c in entry_raw.get("capabilities", [])),
-                keywords=tuple(str(k) for k in entry_raw.get("keywords", [])),
-                env_required=tuple(str(e) for e in entry_raw.get("env_required", [])),
-                command=str(entry_raw.get("command", "npx")),
-                args=tuple(str(a) for a in entry_raw["args"]) if "args" in entry_raw else None,
+                capabilities=tuple(str(c) for c in capabilities_raw),
+                keywords=tuple(str(k) for k in keywords_raw),
+                env_required=tuple(str(e) for e in env_req_raw),
+                command=str(entry_dict.get("command", "npx")),
+                args=tuple(str(a) for a in list(entry_dict["args"])) if "args" in entry_dict else None,
             )
             self._servers.append(entry)
 
@@ -202,7 +209,7 @@ class MCPRegistry:
         Returns:
             Subset of servers where all env_required vars are set.
         """
-        available = []
+        available: list[MCPServerEntry] = []
         for server in servers:
             if server.env_available():
                 available.append(server)

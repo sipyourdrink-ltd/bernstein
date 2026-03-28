@@ -87,7 +87,7 @@ class CompletionData(TypedDict):
     test_results: TestResults
 
 
-def _task_from_dict(raw: dict[str, Any]) -> Task:
+def _task_from_dict(raw: dict[str, Any]) -> Task:  # type: ignore[reportUnusedFunction]
     """Deserialise a server JSON response into a domain Task (delegates to Task.from_dict)."""
     return Task.from_dict(raw)
 
@@ -599,7 +599,7 @@ class Orchestrator:
         result.active_agents = alive_count
 
         # Track which task IDs are already assigned to active agents
-        assigned_task_ids = set()
+        assigned_task_ids: set[str] = set()
         for agent in self._agents.values():
             if agent.status != "dead":
                 assigned_task_ids.update(agent.task_ids)
@@ -865,7 +865,9 @@ class Orchestrator:
         committed = self._evolve_auto_commit()
 
         # Step 4: PLAN — spawn manager with priority rotation
-        focus = self._EVOLVE_FOCUS_AREAS[cycle_count % len(self._EVOLVE_FOCUS_AREAS)]
+        focus_areas: list[str] = list(self._EVOLVE_FOCUS_AREAS)
+        focus_idx: int = cycle_count % len(focus_areas)
+        focus: str = str(focus_areas[focus_idx])
         self._evolve_spawn_manager(
             cycle_number=cycle_number,
             focus_area=focus,
@@ -1232,10 +1234,9 @@ class Orchestrator:
             from bernstein.core.researcher import format_research_context, run_research_sync
 
             report = run_research_sync(self._workdir)
-            if report is not None:
-                research_context = format_research_context(report)
-                if research_context:
-                    logger.info("Evolve: research produced %d bytes of context", len(research_context))
+            research_context = format_research_context(report)
+            if research_context:
+                logger.info("Evolve: research produced %d bytes of context", len(research_context))
         except Exception as exc:
             logger.debug("Evolve: research unavailable: %s", exc)
 
@@ -2274,7 +2275,7 @@ class Orchestrator:
             # Record task completion in the operational metrics collector so
             # run summaries and evolution analysis see real duration/success data.
             _collector = get_collector(self._workdir / ".sdd" / "metrics")
-            _task_m = _collector._task_metrics.get(task.id)
+            _task_m = _collector.task_metrics.get(task.id)
             _cost_usd = _task_m.cost_usd if _task_m else 0.0
             _collector.complete_task(task.id, success=janitor_passed, janitor_passed=janitor_passed, cost_usd=_cost_usd)
             if session is not None:
@@ -2286,7 +2287,7 @@ class Orchestrator:
                 # Record agent lifetime to evolution collector (once per agent).
                 if self._evolution is not None and _agent_just_reaped:
                     try:
-                        _agent_m = _collector._agent_metrics.get(session.id)
+                        _agent_m = _collector.agent_metrics.get(session.id)
                         _lifetime = round(
                             (time.time() - session.spawn_ts) if session.spawn_ts > 0 else 0.0,
                             2,
@@ -2560,7 +2561,7 @@ class Orchestrator:
         # Collect files-modified count and cost from metrics
         collector = get_collector(self._workdir / ".sdd" / "metrics")
         total_cost = collector.get_total_cost()
-        files_modified: int = sum(getattr(m, "files_modified", 0) for m in collector._task_metrics.values())
+        files_modified: int = sum(getattr(m, "files_modified", 0) for m in collector.task_metrics.values())
 
         # Build task list section
         task_lines: list[str] = []
@@ -2819,8 +2820,7 @@ if __name__ == "__main__":
                 role = "vp" if i == 0 else "manager"
                 cell = Cell(
                     id=cell_id,
-                    name=f"Cell {i + 1}",
-                    role=role,
+                    name=f"Cell {i + 1} ({role})",
                     max_workers=config.max_agents,
                 )
                 multi_orchestrator.register_cell(cell)

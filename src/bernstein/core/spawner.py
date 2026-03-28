@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.core.context import TaskContextBuilder
@@ -387,24 +387,24 @@ class AgentSpawner:
         session.pid = result.pid
         session.status = "working"
         if result.proc is not None:
-            self._procs[session_id] = result.proc
+            self._procs[session_id] = result.proc  # type: ignore[assignment]
 
         # Create and persist the initial trace
         # Serialize task fields to JSON-safe types (convert Enums to their values)
         import dataclasses
 
-        def _task_to_dict(t: Task) -> dict:
-            d = {}
-            for f in dataclasses.fields(t):
-                val = getattr(t, f.name)
+        def _task_to_dict(t: Task) -> dict[str, Any]:
+            d: dict[str, Any] = {}
+            for fld in dataclasses.fields(t):
+                val: Any = getattr(t, fld.name)
                 if hasattr(val, "value"):  # Enum
                     val = val.value
                 elif isinstance(val, list):
-                    val = [v.value if hasattr(v, "value") else v for v in val]
-                d[f.name] = val
+                    val = [v.value if hasattr(v, "value") else v for v in cast("list[Any]", val)]
+                d[fld.name] = val
             return d
 
-        task_snapshots = [_task_to_dict(t) for t in tasks]
+        task_snapshots: list[dict[str, Any]] = [_task_to_dict(t) for t in tasks]
         trace = new_trace(
             session_id=session_id,
             task_ids=[t.id for t in tasks],
@@ -567,9 +567,10 @@ def _load_role_config(role: str, templates_dir: Path) -> ModelConfig | None:
     try:
         import yaml
 
-        data: object = yaml.safe_load(_read_cached(config_path))
-        if not isinstance(data, dict):
+        raw_data: object = yaml.safe_load(_read_cached(config_path))
+        if not isinstance(raw_data, dict):
             return None
+        data: dict[str, Any] = cast("dict[str, Any]", raw_data)
         model = str(data.get("default_model", "sonnet"))
         effort = str(data.get("default_effort", "high"))
         return ModelConfig(model=model, effort=effort)

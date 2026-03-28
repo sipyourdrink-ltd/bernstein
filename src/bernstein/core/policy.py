@@ -6,7 +6,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
@@ -221,7 +221,7 @@ class Policy:
 class PolicyEngine:
     """Engine for loading and evaluating policies."""
 
-    policies: list[Policy] = field(default_factory=list)
+    policies: list[Policy] = field(default_factory=list[Policy])
     policy_file: Path | None = None
 
     @classmethod
@@ -235,9 +235,11 @@ class PolicyEngine:
             A configured PolicyEngine instance.
         """
         with open(path) as f:
-            data = yaml.safe_load(f)
+            raw_data: object = yaml.safe_load(f)
 
-        policies = []
+        data: dict[str, Any] = cast("dict[str, Any]", raw_data) if isinstance(raw_data, dict) else {}
+
+        policies: list[Policy] = []
         for policy_data in data.get("policies", []):
             policy = cls._parse_policy(policy_data)
             policies.append(policy)
@@ -257,7 +259,7 @@ class PolicyEngine:
         Returns:
             A configured PolicyEngine instance.
         """
-        policies = []
+        policies: list[Policy] = []
         for policy_data in data.get("policies", []):
             policy = cls._parse_policy(policy_data)
             policies.append(policy)
@@ -349,7 +351,7 @@ class PolicyEngine:
         Returns:
             A Policy instance.
         """
-        conditions = []
+        conditions: list[Condition] = []
         for cond_data in data.get("conditions", []):
             condition = Condition(
                 field=cond_data["field"],
@@ -358,7 +360,7 @@ class PolicyEngine:
             )
             conditions.append(condition)
 
-        actions = []
+        actions: list[Action] = []
         for action_data in data.get("actions", []):
             action = Action(
                 action_type=ActionType(action_data["type"]),
@@ -408,7 +410,7 @@ class PolicyEngine:
         }
 
         # Evaluate policies in priority order
-        matched_policies = []
+        matched_policies: list[Policy] = []
         for policy in self.policies:
             if policy.matches(context):
                 matched_policies.append(policy)
@@ -552,9 +554,11 @@ class PolicyEngine:
 
         try:
             with open(self.policy_file) as f:
-                data = yaml.safe_load(f)
+                raw_data: object = yaml.safe_load(f)
 
-            new_policies = []
+            data: dict[str, Any] = cast("dict[str, Any]", raw_data) if isinstance(raw_data, dict) else {}
+
+            new_policies: list[Policy] = []
             for policy_data in data.get("policies", []):
                 policy = self._parse_policy(policy_data)
                 new_policies.append(policy)

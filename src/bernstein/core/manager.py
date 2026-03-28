@@ -340,9 +340,8 @@ def raw_dicts_to_tasks(raw_tasks: list[dict[str, Any]], id_prefix: str = "task")
                     logger.warning("Skipping invalid signal in task %d: %s", i, exc)
 
             # Parse depends_on — LLM may output titles instead of IDs.
-            depends_on = raw.get("depends_on", [])
-            if not isinstance(depends_on, list):
-                depends_on = []
+            depends_on_raw: Any = raw.get("depends_on", [])
+            depends_on: list[Any] = cast("list[Any]", depends_on_raw) if isinstance(depends_on_raw, list) else []
 
             # Parse task type
             task_type_raw = raw.get("task_type", "standard")
@@ -428,17 +427,18 @@ def parse_review_response(raw: str) -> dict[str, Any]:
     """
     cleaned = _extract_json(raw)
     try:
-        parsed = json.loads(cleaned)
+        parsed: Any = json.loads(cleaned)
     except json.JSONDecodeError as exc:
         raise ValueError(f"LLM review response is not valid JSON: {exc}") from exc
     if not isinstance(parsed, dict):
         raise ValueError(f"Expected a JSON object, got {type(parsed).__name__}")
 
-    verdict = parsed.get("verdict", "")
+    result: dict[str, Any] = cast("dict[str, Any]", parsed)
+    verdict: str = str(result.get("verdict", ""))
     if verdict not in _VALID_VERDICTS:
         raise ValueError(f"Invalid verdict: {verdict!r}. Must be one of {sorted(_VALID_VERDICTS)}")
 
-    return cast("dict[str, Any]", parsed)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -472,7 +472,7 @@ async def _post_task_to_server(
     if task.task_type == TaskType.UPGRADE_PROPOSAL:
         priority = max(1, task.priority - 1)
 
-    body = {
+    body: dict[str, Any] = {
         "title": task.title,
         "description": task.description,
         "role": task.role,
@@ -870,8 +870,8 @@ Be precise and complete. Include all necessary imports, tests, and documentation
                 text = text[: text.rfind("```")]
             text = text.strip()
 
-            changes_data = json.loads(text)
-            changes = []
+            changes_data: Any = json.loads(text)
+            changes: list[FileChange] = []
 
             for item in changes_data:
                 changes.append(

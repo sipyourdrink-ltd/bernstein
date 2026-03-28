@@ -14,7 +14,7 @@ import logging
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from bernstein.core.agency_loader import AgencyAgent
@@ -63,7 +63,7 @@ class CatalogAgent:
     description: str
     system_prompt: str
     id: str = ""
-    tools: list[str] = field(default_factory=list)
+    tools: list[str] = field(default_factory=list[str])
     priority: int = 100
     source: str = "catalog"
 
@@ -93,7 +93,7 @@ class CatalogEntry:
     path: str | None = None
     format: str | None = None
     glob: str | None = None
-    field_map: dict[str, str] = field(default_factory=dict)
+    field_map: dict[str, str] = field(default_factory=dict[str, str])
 
 
 @dataclass
@@ -120,7 +120,7 @@ class CachedAgentEntry:
     source: str
     fetched_at: float
     ttl_seconds: int
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
     @property
     def is_fresh(self) -> bool:
@@ -144,10 +144,12 @@ class CatalogRegistry:
             ``load_from_agency()`` or ``register_agent()``).
     """
 
-    entries: list[CatalogEntry] = field(default_factory=list)
-    loaded_agents: list[CatalogAgent] = field(default_factory=list, repr=False)
+    entries: list[CatalogEntry] = field(default_factory=list[CatalogEntry])
+    loaded_agents: list[CatalogAgent] = field(default_factory=list[CatalogAgent], repr=False)
     _cache_path: Path = field(default_factory=lambda: _CACHE_FILE, repr=False, compare=False)
-    _cached_roles: dict[str, CachedAgentEntry] = field(default_factory=dict, repr=False, compare=False)
+    _cached_roles: dict[str, CachedAgentEntry] = field(
+        default_factory=dict[str, CachedAgentEntry], repr=False, compare=False,
+    )
 
     @classmethod
     def from_config(cls, catalogs_config: list[dict[str, Any]]) -> CatalogRegistry:
@@ -431,19 +433,20 @@ class CatalogRegistry:
         results: dict[str, dict[str, Any]] = {}
         for file_path in _glob.glob(str(catalog_dir / pattern)):
             try:
-                raw = yaml.safe_load(_Path(file_path).read_text(encoding="utf-8"))
+                raw_data: object = yaml.safe_load(_Path(file_path).read_text(encoding="utf-8"))
             except Exception:
                 logger.warning("Skipping unreadable generic catalog file: %s", file_path)
                 continue
-            if not isinstance(raw, dict):
+            if not isinstance(raw_data, dict):
                 continue
-            role = raw.get(fm.get("role", "role"), raw.get("role"))
+            raw: dict[str, Any] = cast("dict[str, Any]", raw_data)
+            role: str | None = raw.get(fm.get("role", "role"), raw.get("role"))
             if not role:
                 continue
             results[str(role)] = {
-                "description": raw.get(fm.get("description", "description"), ""),
-                "model": raw.get(fm.get("model", "model"), "sonnet"),
-                "effort": raw.get(fm.get("effort", "effort"), "normal"),
+                "description": str(raw.get(fm.get("description", "description"), "")),
+                "model": str(raw.get(fm.get("model", "model"), "sonnet")),
+                "effort": str(raw.get(fm.get("effort", "effort"), "normal")),
             }
         return results
 
@@ -549,11 +552,14 @@ def _parse_catalog_entry(raw: dict[str, Any]) -> CatalogEntry:
     if glob_pattern is not None and not isinstance(glob_pattern, str):
         raise ValueError(f"catalog '{name}': glob must be a string")
 
-    field_map_raw = raw.get("field_map", {})
-    if not isinstance(field_map_raw, dict) or not all(
-        isinstance(k, str) and isinstance(v, str) for k, v in field_map_raw.items()
-    ):
+    field_map_raw: object = raw.get("field_map", {})
+    if not isinstance(field_map_raw, dict):
         raise ValueError(f"catalog '{name}': field_map must be a string-to-string mapping")
+    field_map_checked: dict[str, Any] = cast("dict[str, Any]", field_map_raw)
+    if not all(isinstance(v, str) for v in field_map_checked.values()):
+        raise ValueError(f"catalog '{name}': field_map must be a string-to-string mapping")
+
+    field_map_typed: dict[str, str] = {str(k): str(v) for k, v in field_map_checked.items()}
 
     return CatalogEntry(
         name=name,
@@ -564,5 +570,5 @@ def _parse_catalog_entry(raw: dict[str, Any]) -> CatalogEntry:
         path=path,
         format=fmt,
         glob=glob_pattern,
-        field_map=dict(field_map_raw),
+        field_map=field_map_typed,
     )
