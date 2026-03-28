@@ -8,12 +8,13 @@ Covers the full cycle:
   5. Evolution loop handles empty metrics gracefully
   6. Circuit breaker integration with the loop
 """
+
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -29,7 +30,6 @@ from bernstein.evolution.gate import ApprovalDecision, ApprovalGate, ApprovalOut
 from bernstein.evolution.loop import EvolutionLoop, ExperimentResult
 from bernstein.evolution.proposals import (
     AnalysisTrigger,
-    ApprovalMode,
     ProposalGenerator,
     UpgradeProposal,
     UpgradeStatus,
@@ -37,7 +37,6 @@ from bernstein.evolution.proposals import (
 from bernstein.evolution.types import CircuitState, RiskLevel
 from bernstein.evolution.types import SandboxResult as TypesSandboxResult
 from bernstein.evolution.types import UpgradeProposal as TypesUpgradeProposal
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -208,9 +207,7 @@ class TestMetricsCollectionToTrendDetection:
         aggregator = MetricsAggregator(collector)
         trends = aggregator.analyze_trends()
 
-        success_trend = next(
-            (t for t in trends if t.metric_name == "success_rate"), None
-        )
+        success_trend = next((t for t in trends if t.metric_name == "success_rate"), None)
         if success_trend is not None:
             assert success_trend.direction in ("decreasing", "stable")
 
@@ -246,9 +243,7 @@ class TestMetricsCollectionToTrendDetection:
 class TestOpportunityToProposal:
     """Validate the opportunity detection → proposal generation sub-pipeline."""
 
-    def test_detector_finds_opportunities_from_declining_metrics(
-        self, tmp_path: Path
-    ) -> None:
+    def test_detector_finds_opportunities_from_declining_metrics(self, tmp_path: Path) -> None:
         """OpportunityDetector identifies ≥1 opportunity from poor success rates."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()
@@ -441,9 +436,7 @@ class TestApprovalGateRouting:
 
         ids = ["UPG-A", "UPG-B", "UPG-C"]
         for pid in ids:
-            proposal = self._make_types_proposal(
-                pid, RiskLevel.L0_CONFIG, [".sdd/config/p.yaml"]
-            )
+            proposal = self._make_types_proposal(pid, RiskLevel.L0_CONFIG, [".sdd/config/p.yaml"])
             gate.route(proposal)
 
         log = decisions_dir / "decisions.jsonl"
@@ -472,18 +465,14 @@ class TestEvolutionLoopFullCycle:
             window_seconds=60,
         )
 
-    def test_run_cycle_returns_experiment_result_when_opportunity_found(
-        self, tmp_path: Path
-    ) -> None:
+    def test_run_cycle_returns_experiment_result_when_opportunity_found(self, tmp_path: Path) -> None:
         """run_cycle() returns ExperimentResult when an opportunity is available."""
         loop = self._make_loop(tmp_path)
 
         proposal = _make_proposal(id="UPG-0001", risk_level="low", confidence=0.95)
         opportunity = _make_opportunity(risk_level="low", confidence=0.95)
         sandbox_result = _make_sandbox_result(proposal_id="UPG-0001", passed=True, delta=0.05)
-        approval = _make_approval_decision(
-            proposal_id="UPG-0001", outcome=ApprovalOutcome.AUTO_APPROVED
-        )
+        approval = _make_approval_decision(proposal_id="UPG-0001", outcome=ApprovalOutcome.AUTO_APPROVED)
 
         with (
             patch.object(loop._aggregator, "run_full_analysis"),
@@ -510,9 +499,7 @@ class TestEvolutionLoopFullCycle:
         proposal = _make_proposal(id="UPG-0002", risk_level="low", confidence=0.90)
         opportunity = _make_opportunity(risk_level="low", confidence=0.90)
         sandbox_result = _make_sandbox_result(proposal_id="UPG-0002", passed=True)
-        approval = _make_approval_decision(
-            proposal_id="UPG-0002", outcome=ApprovalOutcome.AUTO_APPROVED
-        )
+        approval = _make_approval_decision(proposal_id="UPG-0002", outcome=ApprovalOutcome.AUTO_APPROVED)
 
         with (
             patch.object(loop._aggregator, "run_full_analysis"),
@@ -569,13 +556,9 @@ class TestEvolutionLoopFullCycle:
 
         proposal = _make_proposal(id="UPG-0004", risk_level="low", confidence=0.95)
         opportunity = _make_opportunity(risk_level="low", confidence=0.95)
-        sandbox_result = _make_sandbox_result(
-            proposal_id="UPG-0004", passed=False, delta=-0.1
-        )
+        sandbox_result = _make_sandbox_result(proposal_id="UPG-0004", passed=False, delta=-0.1)
         sandbox_result.error = "Tests failed"
-        approval = _make_approval_decision(
-            proposal_id="UPG-0004", outcome=ApprovalOutcome.AUTO_APPROVED
-        )
+        approval = _make_approval_decision(proposal_id="UPG-0004", outcome=ApprovalOutcome.AUTO_APPROVED)
 
         with (
             patch.object(loop._aggregator, "run_full_analysis"),
@@ -646,9 +629,7 @@ class TestEvolutionLoopEmptyMetrics:
 
         assert result is None
 
-    def test_run_cycle_returns_none_when_only_high_risk_opportunities(
-        self, tmp_path: Path
-    ) -> None:
+    def test_run_cycle_returns_none_when_only_high_risk_opportunities(self, tmp_path: Path) -> None:
         """run_cycle() returns None when all opportunities are high-risk (not eligible)."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()

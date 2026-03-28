@@ -1,13 +1,14 @@
 """Tests for the task dependency graph module."""
+
 from __future__ import annotations
 
-from bernstein.core.graph import Edge, GraphAnalysis, TaskGraph
+from bernstein.core.graph import GraphAnalysis, TaskGraph
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _t(
     *,
@@ -38,6 +39,7 @@ def _t(
 # Construction
 # ---------------------------------------------------------------------------
 
+
 class TestGraphConstruction:
     def test_empty_graph(self) -> None:
         g = TaskGraph([])
@@ -50,10 +52,12 @@ class TestGraphConstruction:
         assert g.edges == []
 
     def test_explicit_dependency_creates_edge(self) -> None:
-        g = TaskGraph([
-            _t(id="t1"),
-            _t(id="t2", depends_on=["t1"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1"),
+                _t(id="t2", depends_on=["t1"]),
+            ]
+        )
         assert len(g.edges) == 1
         assert g.edges[0].source == "t1"
         assert g.edges[0].target == "t2"
@@ -64,10 +68,12 @@ class TestGraphConstruction:
         assert g.edges == []
 
     def test_file_overlap_creates_edge(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", priority=1, owned_files=["src/app.py"]),
-            _t(id="t2", priority=2, owned_files=["src/app.py"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", priority=1, owned_files=["src/app.py"]),
+                _t(id="t2", priority=2, owned_files=["src/app.py"]),
+            ]
+        )
         assert len(g.edges) == 1
         assert g.edges[0].source == "t1"  # higher priority first
         assert g.edges[0].target == "t2"
@@ -75,10 +81,12 @@ class TestGraphConstruction:
 
     def test_file_overlap_not_duplicated_with_explicit_dep(self) -> None:
         """If explicit dep already exists, file overlap doesn't add another."""
-        g = TaskGraph([
-            _t(id="t1", priority=1, owned_files=["f.py"]),
-            _t(id="t2", priority=2, depends_on=["t1"], owned_files=["f.py"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", priority=1, owned_files=["f.py"]),
+                _t(id="t2", priority=2, depends_on=["t1"], owned_files=["f.py"]),
+            ]
+        )
         # One explicit dep edge, file overlap skipped because already connected
         assert len(g.edges) == 1
         assert g.edges[0].edge_type == "depends_on"
@@ -88,23 +96,28 @@ class TestGraphConstruction:
 # Topological sort
 # ---------------------------------------------------------------------------
 
+
 class TestTopologicalSort:
     def test_linear_chain(self) -> None:
-        g = TaskGraph([
-            _t(id="t1"),
-            _t(id="t2", depends_on=["t1"]),
-            _t(id="t3", depends_on=["t2"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1"),
+                _t(id="t2", depends_on=["t1"]),
+                _t(id="t3", depends_on=["t2"]),
+            ]
+        )
         order = g.topological_order()
         assert order.index("t1") < order.index("t2") < order.index("t3")
 
     def test_diamond_dag(self) -> None:
-        g = TaskGraph([
-            _t(id="t1"),
-            _t(id="t2", depends_on=["t1"]),
-            _t(id="t3", depends_on=["t1"]),
-            _t(id="t4", depends_on=["t2", "t3"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1"),
+                _t(id="t2", depends_on=["t1"]),
+                _t(id="t3", depends_on=["t1"]),
+                _t(id="t4", depends_on=["t2", "t3"]),
+            ]
+        )
         order = g.topological_order()
         assert order[0] == "t1"
         assert order[-1] == "t4"
@@ -120,6 +133,7 @@ class TestTopologicalSort:
 # Critical path
 # ---------------------------------------------------------------------------
 
+
 class TestCriticalPath:
     def test_single_task(self) -> None:
         g = TaskGraph([_t(id="t1", estimated_minutes=10)])
@@ -127,21 +141,25 @@ class TestCriticalPath:
         assert g.critical_path_minutes() == 10
 
     def test_linear_chain(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", estimated_minutes=10),
-            _t(id="t2", depends_on=["t1"], estimated_minutes=20),
-            _t(id="t3", depends_on=["t2"], estimated_minutes=5),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", estimated_minutes=10),
+                _t(id="t2", depends_on=["t1"], estimated_minutes=20),
+                _t(id="t3", depends_on=["t2"], estimated_minutes=5),
+            ]
+        )
         assert g.critical_path() == ["t1", "t2", "t3"]
         assert g.critical_path_minutes() == 35
 
     def test_diamond_picks_longer_path(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", estimated_minutes=10),
-            _t(id="t2", depends_on=["t1"], estimated_minutes=5),
-            _t(id="t3", depends_on=["t1"], estimated_minutes=30),
-            _t(id="t4", depends_on=["t2", "t3"], estimated_minutes=10),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", estimated_minutes=10),
+                _t(id="t2", depends_on=["t1"], estimated_minutes=5),
+                _t(id="t3", depends_on=["t1"], estimated_minutes=30),
+                _t(id="t4", depends_on=["t2", "t3"], estimated_minutes=10),
+            ]
+        )
         cp = g.critical_path()
         assert cp == ["t1", "t3", "t4"]
         assert g.critical_path_minutes() == 50
@@ -152,11 +170,13 @@ class TestCriticalPath:
         assert g.critical_path_minutes() == 0
 
     def test_independent_tasks_picks_longest(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", estimated_minutes=5),
-            _t(id="t2", estimated_minutes=60),
-            _t(id="t3", estimated_minutes=10),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", estimated_minutes=5),
+                _t(id="t2", estimated_minutes=60),
+                _t(id="t3", estimated_minutes=10),
+            ]
+        )
         assert g.critical_path() == ["t2"]
 
 
@@ -164,26 +184,31 @@ class TestCriticalPath:
 # Parallel width
 # ---------------------------------------------------------------------------
 
+
 class TestParallelWidth:
     def test_all_independent(self) -> None:
         g = TaskGraph([_t(id="t1"), _t(id="t2"), _t(id="t3")])
         assert g.parallel_width() == 3
 
     def test_linear_chain(self) -> None:
-        g = TaskGraph([
-            _t(id="t1"),
-            _t(id="t2", depends_on=["t1"]),
-            _t(id="t3", depends_on=["t2"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1"),
+                _t(id="t2", depends_on=["t1"]),
+                _t(id="t3", depends_on=["t2"]),
+            ]
+        )
         assert g.parallel_width() == 1
 
     def test_diamond(self) -> None:
-        g = TaskGraph([
-            _t(id="t1"),
-            _t(id="t2", depends_on=["t1"]),
-            _t(id="t3", depends_on=["t1"]),
-            _t(id="t4", depends_on=["t2", "t3"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1"),
+                _t(id="t2", depends_on=["t1"]),
+                _t(id="t3", depends_on=["t1"]),
+                _t(id="t4", depends_on=["t2", "t3"]),
+            ]
+        )
         assert g.parallel_width() == 2  # t2 and t3 at same level
 
     def test_empty(self) -> None:
@@ -201,27 +226,34 @@ class TestParallelWidth:
 # Bottleneck detection
 # ---------------------------------------------------------------------------
 
+
 class TestBottlenecks:
     def test_no_bottleneck_when_all_done(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", status="done"),
-            _t(id="t2", depends_on=["t1"], status="done"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", status="done"),
+                _t(id="t2", depends_on=["t1"], status="done"),
+            ]
+        )
         assert g.bottlenecks() == []
 
     def test_single_bottleneck(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", status="in_progress"),
-            _t(id="t2", depends_on=["t1"]),
-            _t(id="t3", depends_on=["t1"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", status="in_progress"),
+                _t(id="t2", depends_on=["t1"]),
+                _t(id="t3", depends_on=["t1"]),
+            ]
+        )
         assert g.bottlenecks(threshold=2) == ["t1"]
 
     def test_threshold_filters(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", status="open"),
-            _t(id="t2", depends_on=["t1"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", status="open"),
+                _t(id="t2", depends_on=["t1"]),
+            ]
+        )
         assert g.bottlenecks(threshold=1) == ["t1"]
         assert g.bottlenecks(threshold=2) == []
 
@@ -230,23 +262,28 @@ class TestBottlenecks:
 # Ready tasks
 # ---------------------------------------------------------------------------
 
+
 class TestReadyTasks:
     def test_no_deps_are_ready(self) -> None:
         g = TaskGraph([_t(id="t1"), _t(id="t2")])
         assert set(g.ready_tasks()) == {"t1", "t2"}
 
     def test_unmet_dep_not_ready(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", status="open"),
-            _t(id="t2", depends_on=["t1"], status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", status="open"),
+                _t(id="t2", depends_on=["t1"], status="open"),
+            ]
+        )
         assert g.ready_tasks() == ["t1"]
 
     def test_met_dep_is_ready(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", status="done"),
-            _t(id="t2", depends_on=["t1"], status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", status="done"),
+                _t(id="t2", depends_on=["t1"], status="open"),
+            ]
+        )
         assert g.ready_tasks() == ["t2"]
 
     def test_done_tasks_not_listed(self) -> None:
@@ -258,12 +295,15 @@ class TestReadyTasks:
 # Analysis & serialisation
 # ---------------------------------------------------------------------------
 
+
 class TestAnalysis:
     def test_analyse_returns_graph_analysis(self) -> None:
-        g = TaskGraph([
-            _t(id="t1", estimated_minutes=10),
-            _t(id="t2", depends_on=["t1"], estimated_minutes=20),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", estimated_minutes=10),
+                _t(id="t2", depends_on=["t1"], estimated_minutes=20),
+            ]
+        )
         a = g.analyse()
         assert isinstance(a, GraphAnalysis)
         assert a.critical_path == ["t1", "t2"]
@@ -273,10 +313,12 @@ class TestAnalysis:
 
 class TestSerialisation:
     def test_to_dict_structure(self) -> None:
-        g = TaskGraph([
-            _t(id="t1"),
-            _t(id="t2", depends_on=["t1"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1"),
+                _t(id="t2", depends_on=["t1"]),
+            ]
+        )
         d = g.to_dict()
         assert "nodes" in d
         assert "edges" in d
@@ -288,17 +330,20 @@ class TestSerialisation:
 
     def test_save_creates_file(self, tmp_path: object) -> None:
         from pathlib import Path
+
         p = Path(str(tmp_path))
         g = TaskGraph([_t(id="t1")])
         g.save(p)
         assert (p / "task_graph.json").exists()
 
     def test_dependents_and_dependencies(self) -> None:
-        g = TaskGraph([
-            _t(id="t1"),
-            _t(id="t2", depends_on=["t1"]),
-            _t(id="t3", depends_on=["t1"]),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1"),
+                _t(id="t2", depends_on=["t1"]),
+                _t(id="t3", depends_on=["t1"]),
+            ]
+        )
         assert set(g.dependents("t1")) == {"t2", "t3"}
         assert g.dependencies("t2") == ["t1"]
         assert g.dependencies("t1") == []

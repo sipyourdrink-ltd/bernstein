@@ -30,6 +30,7 @@ from bernstein.core.server import (
     NodeHeartbeatRequest,
     NodeRegisterRequest,
     NodeResponse,
+    SnapshotEntry,
     SSEBus,
     TaskBlockRequest,
     TaskCancelRequest,
@@ -185,18 +186,48 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
 
 @router.post("/tasks/{task_id}/progress", response_model=TaskResponse)
 async def progress_task(task_id: str, body: TaskProgressRequest, request: Request) -> TaskResponse:
-    """Append an intermediate progress update to a task."""
+    """Append an intermediate progress update to a task.
+
+    Also stores a progress snapshot for stall detection when snapshot
+    fields (files_changed, tests_passing, errors) are provided.
+    """
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     try:
         task = await store.add_progress(task_id, body.message, body.percent)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    # Store structured snapshot for stall detection when snapshot fields present
+    if body.files_changed is not None or body.tests_passing is not None:
+        store.add_snapshot(
+            task_id,
+            files_changed=body.files_changed if body.files_changed is not None else 0,
+            tests_passing=body.tests_passing if body.tests_passing is not None else -1,
+            errors=body.errors if body.errors is not None else 0,
+            last_file=body.last_file,
+        )
     sse_bus.publish(
         "task_progress",
         json.dumps({"id": task.id, "message": body.message, "percent": body.percent}),
     )
     return task_to_response(task)
+
+
+@router.get("/tasks/{task_id}/snapshots", response_model=list[SnapshotEntry])
+async def get_task_snapshots(task_id: str, request: Request) -> list[SnapshotEntry]:
+    """Return stored progress snapshots for a task (oldest-first, up to 10)."""
+    store = _get_store(request)
+    snapshots = store.get_snapshots(task_id)
+    return [
+        SnapshotEntry(
+            timestamp=s.timestamp,
+            files_changed=s.files_changed,
+            tests_passing=s.tests_passing,
+            errors=s.errors,
+            last_file=s.last_file,
+        )
+        for s in snapshots
+    ]
 
 
 @router.get("/tasks", response_model=list[TaskResponse])

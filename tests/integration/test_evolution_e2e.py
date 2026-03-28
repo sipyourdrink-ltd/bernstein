@@ -10,30 +10,29 @@ Full pipeline:
   7. FileUpgradeExecutor → applies change, writes history.jsonl
   8. Verify change applied and history recorded
 """
+
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
 
-import pytest
-
 from bernstein.evolution.aggregator import (
     FileMetricsCollector,
     MetricsAggregator,
     TaskMetrics,
 )
+from bernstein.evolution.applicator import FileUpgradeExecutor
 from bernstein.evolution.detector import OpportunityDetector
 from bernstein.evolution.gate import ApprovalGate, ApprovalOutcome
 from bernstein.evolution.proposals import AnalysisTrigger, ProposalGenerator
 from bernstein.evolution.sandbox import SandboxValidator
-from bernstein.evolution.applicator import FileUpgradeExecutor
 from bernstein.evolution.types import (
     RiskLevel,
-    SandboxResult,
+)
+from bernstein.evolution.types import (
     UpgradeProposal as EvolutionUpgradeProposal,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -97,9 +96,7 @@ class TestEvolutionFeedbackLoopE2E:
         trends = aggregator.analyze_trends()
         # 25 records with a clear downward trend should produce ≥1 trend
         assert isinstance(trends, list)
-        success_trend = next(
-            (t for t in trends if t.metric_name == "success_rate"), None
-        )
+        success_trend = next((t for t in trends if t.metric_name == "success_rate"), None)
         # With 12 passing in first half and ~10 failing in second half, trend is decreasing
         if success_trend is not None:
             assert success_trend.direction in ("decreasing", "stable", "increasing")
@@ -237,10 +234,7 @@ class TestEvolutionFeedbackLoopE2E:
 
         decisions_log = decisions_dir / "decisions.jsonl"
         assert decisions_log.exists()
-        logged_ids = [
-            json.loads(line)["proposal_id"]
-            for line in decisions_log.read_text().strip().splitlines()
-        ]
+        logged_ids = [json.loads(line)["proposal_id"] for line in decisions_log.read_text().strip().splitlines()]
         for pid in proposal_ids:
             assert pid in logged_ids, f"decision for {pid} not logged"
 
@@ -290,10 +284,15 @@ class TestEvolutionFeedbackLoopE2E:
 
         # Find a MODEL_ROUTING or ROUTING_RULES opportunity
         routing_opp = next(
-            (o for o in opportunities if o.category in (
-                UpgradeCategory.MODEL_ROUTING,
-                UpgradeCategory.ROUTING_RULES,
-            )),
+            (
+                o
+                for o in opportunities
+                if o.category
+                in (
+                    UpgradeCategory.MODEL_ROUTING,
+                    UpgradeCategory.ROUTING_RULES,
+                )
+            ),
             opportunities[0],  # fallback to first
         )
 

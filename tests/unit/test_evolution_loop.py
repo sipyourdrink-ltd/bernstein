@@ -1,4 +1,5 @@
 """Tests for EvolutionLoop and ExperimentResult from bernstein.evolution.loop."""
+
 from __future__ import annotations
 
 import json
@@ -14,14 +15,10 @@ from bernstein.evolution.detector import ImprovementOpportunity, UpgradeCategory
 from bernstein.evolution.gate import ApprovalDecision, ApprovalOutcome
 from bernstein.evolution.loop import EvolutionLoop, ExperimentResult
 from bernstein.evolution.proposals import (
-    AnalysisTrigger,
-    ApprovalMode,
     UpgradeProposal,
-    UpgradeStatus,
 )
 from bernstein.evolution.types import RiskLevel
 from bernstein.evolution.types import SandboxResult as TypesSandboxResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -186,11 +183,15 @@ def test_run_cycle_with_opportunity_auto_approved(tmp_path: Path) -> None:
     with (
         patch.object(loop._aggregator, "run_full_analysis"),
         patch.object(
-            loop._detector, "identify_opportunities", return_value=[opportunity],
+            loop._detector,
+            "identify_opportunities",
+            return_value=[opportunity],
         ),
         patch.object(loop, "_run_baseline", return_value=1.0),
         patch.object(
-            loop._proposal_generator, "create_proposal", return_value=proposal,
+            loop._proposal_generator,
+            "create_proposal",
+            return_value=proposal,
         ),
         patch.object(loop._breaker, "can_evolve", return_value=(True, "ok")),
         patch.object(loop._gate, "route", return_value=decision),
@@ -224,14 +225,20 @@ def test_run_cycle_circuit_breaker_blocks(tmp_path: Path) -> None:
     with (
         patch.object(loop._aggregator, "run_full_analysis"),
         patch.object(
-            loop._detector, "identify_opportunities", return_value=[opportunity],
+            loop._detector,
+            "identify_opportunities",
+            return_value=[opportunity],
         ),
         patch.object(loop, "_run_baseline", return_value=1.0),
         patch.object(
-            loop._proposal_generator, "create_proposal", return_value=proposal,
+            loop._proposal_generator,
+            "create_proposal",
+            return_value=proposal,
         ),
         patch.object(
-            loop._breaker, "can_evolve", return_value=(False, "blocked"),
+            loop._breaker,
+            "can_evolve",
+            return_value=(False, "blocked"),
         ),
     ):
         result = loop.run_cycle()
@@ -261,11 +268,15 @@ def test_run_cycle_deferred_for_human_review(tmp_path: Path) -> None:
     with (
         patch.object(loop._aggregator, "run_full_analysis"),
         patch.object(
-            loop._detector, "identify_opportunities", return_value=[opportunity],
+            loop._detector,
+            "identify_opportunities",
+            return_value=[opportunity],
         ),
         patch.object(loop, "_run_baseline", return_value=1.0),
         patch.object(
-            loop._proposal_generator, "create_proposal", return_value=proposal,
+            loop._proposal_generator,
+            "create_proposal",
+            return_value=proposal,
         ),
         patch.object(loop._breaker, "can_evolve", return_value=(True, "ok")),
         patch.object(loop._gate, "route", return_value=decision),
@@ -304,16 +315,22 @@ def test_run_cycle_sandbox_failure(tmp_path: Path) -> None:
     with (
         patch.object(loop._aggregator, "run_full_analysis"),
         patch.object(
-            loop._detector, "identify_opportunities", return_value=[opportunity],
+            loop._detector,
+            "identify_opportunities",
+            return_value=[opportunity],
         ),
         patch.object(loop, "_run_baseline", return_value=1.0),
         patch.object(
-            loop._proposal_generator, "create_proposal", return_value=proposal,
+            loop._proposal_generator,
+            "create_proposal",
+            return_value=proposal,
         ),
         patch.object(loop._gate, "route", return_value=decision),
         patch.object(loop._sandbox, "validate", return_value=failed_sandbox),
         patch.object(
-            loop, "_breaker", breaker_mock,
+            loop,
+            "_breaker",
+            breaker_mock,
         ),
     ):
         result = loop.run_cycle()
@@ -329,7 +346,10 @@ def test_run_stops_at_max_proposals(tmp_path: Path) -> None:
     state_dir = tmp_path / ".sdd"
     state_dir.mkdir()
     loop = EvolutionLoop(
-        state_dir, repo_root=tmp_path, cycle_seconds=0, max_proposals=2,
+        state_dir,
+        repo_root=tmp_path,
+        cycle_seconds=0,
+        max_proposals=2,
     )
 
     call_count = 0
@@ -361,7 +381,9 @@ def test_stop_halts_loop(tmp_path: Path) -> None:
     state_dir = tmp_path / ".sdd"
     state_dir.mkdir()
     loop = EvolutionLoop(
-        state_dir, repo_root=tmp_path, cycle_seconds=0,
+        state_dir,
+        repo_root=tmp_path,
+        cycle_seconds=0,
     )
 
     def slow_cycle() -> None:
@@ -370,7 +392,8 @@ def test_stop_halts_loop(tmp_path: Path) -> None:
 
     with patch.object(loop, "run_cycle", side_effect=slow_cycle):
         t = threading.Thread(
-            target=loop.run, kwargs={"window_seconds": 300, "max_proposals": 100},
+            target=loop.run,
+            kwargs={"window_seconds": 300, "max_proposals": 100},
         )
         t.start()
         time.sleep(0.1)
@@ -469,11 +492,15 @@ def test_log_experiment_creates_file(tmp_path: Path) -> None:
     with (
         patch.object(loop._aggregator, "run_full_analysis"),
         patch.object(
-            loop._detector, "identify_opportunities", return_value=[opportunity],
+            loop._detector,
+            "identify_opportunities",
+            return_value=[opportunity],
         ),
         patch.object(loop, "_run_baseline", return_value=1.0),
         patch.object(
-            loop._proposal_generator, "create_proposal", return_value=proposal,
+            loop._proposal_generator,
+            "create_proposal",
+            return_value=proposal,
         ),
         patch.object(loop._breaker, "can_evolve", return_value=(True, "ok")),
         patch.object(loop._gate, "route", return_value=decision),
@@ -544,9 +571,9 @@ def test_run_cycle_proposal_generation_llm_timeout(tmp_path: Path) -> None:
             "create_proposal",
             side_effect=RuntimeError("LLM request timed out after 30s"),
         ),
+        pytest.raises(RuntimeError, match="LLM request timed out"),
     ):
-        with pytest.raises(RuntimeError, match="LLM request timed out"):
-            loop.run_cycle()
+        loop.run_cycle()
 
 
 def test_run_cycle_proposal_generation_malformed_response(tmp_path: Path) -> None:
@@ -565,9 +592,9 @@ def test_run_cycle_proposal_generation_malformed_response(tmp_path: Path) -> Non
             "create_proposal",
             side_effect=ValueError("Malformed LLM response: missing 'title' field"),
         ),
+        pytest.raises(ValueError, match="Malformed LLM response"),
     ):
-        with pytest.raises(ValueError, match="Malformed LLM response"):
-            loop.run_cycle()
+        loop.run_cycle()
 
 
 def test_run_logs_and_continues_after_run_cycle_exception(tmp_path: Path) -> None:
@@ -630,9 +657,9 @@ def test_run_cycle_sandbox_raises_worktree_error(tmp_path: Path) -> None:
             "validate",
             side_effect=RuntimeError("git worktree add failed: branch already exists"),
         ),
+        pytest.raises(RuntimeError, match="git worktree add failed"),
     ):
-        with pytest.raises(RuntimeError, match="git worktree add failed"):
-            loop.run_cycle()
+        loop.run_cycle()
 
 
 def test_run_cycle_sandbox_raises_test_crash(tmp_path: Path) -> None:
@@ -656,9 +683,9 @@ def test_run_cycle_sandbox_raises_test_crash(tmp_path: Path) -> None:
             "validate",
             side_effect=RuntimeError("Tests timed out after 300s"),
         ),
+        pytest.raises(RuntimeError, match="Tests timed out"),
     ):
-        with pytest.raises(RuntimeError, match="Tests timed out"):
-            loop.run_cycle()
+        loop.run_cycle()
 
 
 # ---------------------------------------------------------------------------
@@ -780,9 +807,7 @@ def test_run_cycle_selects_highest_confidence_opportunity(tmp_path: Path) -> Non
 
     selected_opportunity: list[ImprovementOpportunity] = []
 
-    def capture_create_proposal(
-        opp: ImprovementOpportunity, trigger: object
-    ) -> UpgradeProposal:
+    def capture_create_proposal(opp: ImprovementOpportunity, trigger: object) -> UpgradeProposal:
         selected_opportunity.append(opp)
         return _make_proposal()
 
@@ -794,9 +819,7 @@ def test_run_cycle_selects_highest_confidence_opportunity(tmp_path: Path) -> Non
             return_value=[low_conf, high_conf, med_conf],
         ),
         patch.object(loop, "_run_baseline", return_value=1.0),
-        patch.object(
-            loop._proposal_generator, "create_proposal", side_effect=capture_create_proposal
-        ),
+        patch.object(loop._proposal_generator, "create_proposal", side_effect=capture_create_proposal),
         patch.object(loop._breaker, "can_evolve", return_value=(False, "blocked")),
     ):
         loop.run_cycle()
@@ -821,7 +844,10 @@ def test_circuit_breaker_trips_after_sandbox_failure_blocks_next_cycle(
     proposal = _make_proposal()
     decision = _make_approval_decision(proposal_id=proposal.id)
     failed_sandbox = _make_sandbox_result(
-        proposal_id=proposal.id, passed=False, candidate_score=0.3, delta=-0.7,
+        proposal_id=proposal.id,
+        passed=False,
+        candidate_score=0.3,
+        delta=-0.7,
     )
 
     breaker_mock = MagicMock()
@@ -932,7 +958,10 @@ def test_run_cycle_partial_failure_proposal_applied_but_failed(tmp_path: Path) -
     proposal = _make_proposal()
     # Sandbox shows improvement
     sandbox_result = _make_sandbox_result(
-        proposal_id=proposal.id, passed=True, candidate_score=1.1, delta=0.1,
+        proposal_id=proposal.id,
+        passed=True,
+        candidate_score=1.1,
+        delta=0.1,
     )
     decision = _make_approval_decision(proposal_id=proposal.id)
 
@@ -979,7 +1008,10 @@ def test_run_cycle_full_state_transition_pending_to_applied(tmp_path: Path) -> N
     opportunity = _make_opportunity()
     proposal = _make_proposal()
     sandbox_result = _make_sandbox_result(
-        proposal_id=proposal.id, passed=True, candidate_score=1.05, delta=0.05,
+        proposal_id=proposal.id,
+        passed=True,
+        candidate_score=1.05,
+        delta=0.05,
     )
     decision = _make_approval_decision(proposal_id=proposal.id)
 

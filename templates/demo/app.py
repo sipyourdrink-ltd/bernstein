@@ -1,4 +1,5 @@
 """Simple Flask web application for the Bernstein demo."""
+
 from flask import Flask, jsonify
 
 app = Flask(__name__)

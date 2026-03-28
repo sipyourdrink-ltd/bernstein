@@ -1,22 +1,19 @@
 """Tests for AgentRegistry — dynamic agent registration with YAML hot-reload."""
+
 from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 import yaml
 
 from bernstein.agents.registry import (
     AgentDefinition,
     AgentInstance,
     AgentRegistry,
-    SchemaValidationError,
     get_registry,
 )
 from bernstein.core.models import ModelConfig
-
 
 # --- Fixtures ---
 
@@ -444,6 +441,7 @@ class TestGlobalRegistry:
 
         # Reset global registry
         import bernstein.agents.registry as reg_module
+
         original = reg_module._registry
         reg_module._registry = None
 
@@ -462,6 +460,7 @@ class TestGlobalRegistry:
         )
 
         import bernstein.agents.registry as reg_module
+
         original = reg_module._registry
         reg_module._registry = None
 

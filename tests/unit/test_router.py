@@ -1,4 +1,5 @@
 """Tests for TierAwareRouter — tier-based routing decisions."""
+
 from __future__ import annotations
 
 import pytest
@@ -13,7 +14,6 @@ from bernstein.core.router import (
     get_default_router,
     route_task,
 )
-
 
 # --- Helpers ---
 
@@ -205,11 +205,13 @@ class TestSelectProviderForTask:
         router.state.preferred_tier = Tier.FREE
         router.state.fallback_enabled = False
         # Provider only supports sonnet
-        router.register_provider(_make_provider(
-            name="limited",
-            tier=Tier.FREE,
-            models={"claude-sonnet": ModelConfig("sonnet", "high")},
-        ))
+        router.register_provider(
+            _make_provider(
+                name="limited",
+                tier=Tier.FREE,
+                models={"claude-sonnet": ModelConfig("sonnet", "high")},
+            )
+        )
 
         # Task requires opus (manager role)
         task = _make_task(role="manager")
@@ -237,16 +239,20 @@ class TestSelectProviderForTask:
         router = TierAwareRouter()
         router.state.preferred_tier = Tier.FREE
         # Provider with exhausted quota is still available (quota check is informational)
-        router.register_provider(_make_provider(
-            name="free-limited",
-            tier=Tier.FREE,
-            quota_remaining=0,
-        ))
-        router.register_provider(_make_provider(
-            name="free-unlimited",
-            tier=Tier.FREE,
-            quota_remaining=None,
-        ))
+        router.register_provider(
+            _make_provider(
+                name="free-limited",
+                tier=Tier.FREE,
+                quota_remaining=0,
+            )
+        )
+        router.register_provider(
+            _make_provider(
+                name="free-unlimited",
+                tier=Tier.FREE,
+                quota_remaining=None,
+            )
+        )
 
         task = _make_task()
         decision = router.select_provider_for_task(task)
@@ -261,10 +267,12 @@ class TestSelectProviderForTask:
 class TestModelMatching:
     def test_matches_model_case_insensitive(self) -> None:
         router = TierAwareRouter()
-        router.register_provider(_make_provider(
-            name="provider",
-            models={"Claude-Sonnet": ModelConfig("sonnet", "high")},
-        ))
+        router.register_provider(
+            _make_provider(
+                name="provider",
+                models={"Claude-Sonnet": ModelConfig("sonnet", "high")},
+            )
+        )
 
         task = _make_task()
         # route_task returns sonnet for medium complexity
@@ -274,10 +282,12 @@ class TestModelMatching:
 
     def test_matches_partial_model_name(self) -> None:
         router = TierAwareRouter()
-        router.register_provider(_make_provider(
-            name="provider",
-            models={"claude-opus-4": ModelConfig("opus", "max")},
-        ))
+        router.register_provider(
+            _make_provider(
+                name="provider",
+                models={"claude-opus-4": ModelConfig("opus", "max")},
+            )
+        )
 
         task = _make_task(role="manager")  # routes to opus
         decision = router.select_provider_for_task(task)
@@ -287,14 +297,16 @@ class TestModelMatching:
     def test_preserves_effort_level_from_base_config(self) -> None:
         router = TierAwareRouter()
         # Provider needs to support opus for large+high complexity task
-        router.register_provider(_make_provider(
-            name="provider",
-            tier=Tier.STANDARD,  # Use standard tier
-            models={
-                "claude-sonnet": ModelConfig("sonnet", "normal"),
-                "claude-opus": ModelConfig("opus", "normal"),
-            },
-        ))
+        router.register_provider(
+            _make_provider(
+                name="provider",
+                tier=Tier.STANDARD,  # Use standard tier
+                models={
+                    "claude-sonnet": ModelConfig("sonnet", "normal"),
+                    "claude-opus": ModelConfig("opus", "normal"),
+                },
+            )
+        )
 
         task = _make_task(complexity=Complexity.HIGH, scope=Scope.LARGE)
         decision = router.select_provider_for_task(task)
@@ -351,15 +363,17 @@ class TestBatchRouting:
     def test_batch_routing_preserves_task_order(self) -> None:
         router = TierAwareRouter()
         # Provider needs to support both sonnet and opus
-        router.register_provider(ProviderConfig(
-            name="provider",
-            models={
-                "claude-sonnet": ModelConfig("sonnet", "high"),
-                "claude-opus": ModelConfig("opus", "max"),
-            },
-            tier=Tier.STANDARD,
-            cost_per_1k_tokens=0.003,
-        ))
+        router.register_provider(
+            ProviderConfig(
+                name="provider",
+                models={
+                    "claude-sonnet": ModelConfig("sonnet", "high"),
+                    "claude-opus": ModelConfig("opus", "max"),
+                },
+                tier=Tier.STANDARD,
+                cost_per_1k_tokens=0.003,
+            )
+        )
 
         tasks = [
             _make_task(id="T-first", role="manager"),
@@ -505,32 +519,38 @@ class TestRoutingWithMockedTierStates:
         router = TierAwareRouter()
 
         # Set up a realistic provider mix
-        router.register_provider(ProviderConfig(
-            name="openrouter-free",
-            models={
-                "claude-sonnet": ModelConfig("sonnet", "high"),
-            },
-            tier=Tier.FREE,
-            cost_per_1k_tokens=0.0,
-            quota_remaining=50,
-        ))
-        router.register_provider(ProviderConfig(
-            name="anthropic-direct",
-            models={
-                "claude-sonnet": ModelConfig("sonnet", "high"),
-                "claude-opus": ModelConfig("opus", "max"),
-            },
-            tier=Tier.STANDARD,
-            cost_per_1k_tokens=0.003,
-        ))
-        router.register_provider(ProviderConfig(
-            name="openai-premium",
-            models={
-                "gpt-4": ModelConfig("gpt-4", "max"),
-            },
-            tier=Tier.PREMIUM,
-            cost_per_1k_tokens=0.03,
-        ))
+        router.register_provider(
+            ProviderConfig(
+                name="openrouter-free",
+                models={
+                    "claude-sonnet": ModelConfig("sonnet", "high"),
+                },
+                tier=Tier.FREE,
+                cost_per_1k_tokens=0.0,
+                quota_remaining=50,
+            )
+        )
+        router.register_provider(
+            ProviderConfig(
+                name="anthropic-direct",
+                models={
+                    "claude-sonnet": ModelConfig("sonnet", "high"),
+                    "claude-opus": ModelConfig("opus", "max"),
+                },
+                tier=Tier.STANDARD,
+                cost_per_1k_tokens=0.003,
+            )
+        )
+        router.register_provider(
+            ProviderConfig(
+                name="openai-premium",
+                models={
+                    "gpt-4": ModelConfig("gpt-4", "max"),
+                },
+                tier=Tier.PREMIUM,
+                cost_per_1k_tokens=0.03,
+            )
+        )
 
         # Simple task should use free tier
         simple_task = _make_task(complexity=Complexity.LOW)
@@ -549,20 +569,24 @@ class TestRoutingWithMockedTierStates:
         """Test fallback when free tier quota is exhausted."""
         router = TierAwareRouter()
 
-        router.register_provider(ProviderConfig(
-            name="free-exhausted",
-            models={"claude-sonnet": ModelConfig("sonnet", "high")},
-            tier=Tier.FREE,
-            cost_per_1k_tokens=0.0,
-            quota_remaining=0,  # Exhausted
-            available=True,  # Still marked available
-        ))
-        router.register_provider(ProviderConfig(
-            name="standard-fallback",
-            models={"claude-sonnet": ModelConfig("sonnet", "high")},
-            tier=Tier.STANDARD,
-            cost_per_1k_tokens=0.003,
-        ))
+        router.register_provider(
+            ProviderConfig(
+                name="free-exhausted",
+                models={"claude-sonnet": ModelConfig("sonnet", "high")},
+                tier=Tier.FREE,
+                cost_per_1k_tokens=0.0,
+                quota_remaining=0,  # Exhausted
+                available=True,  # Still marked available
+            )
+        )
+        router.register_provider(
+            ProviderConfig(
+                name="standard-fallback",
+                models={"claude-sonnet": ModelConfig("sonnet", "high")},
+                tier=Tier.STANDARD,
+                cost_per_1k_tokens=0.003,
+            )
+        )
 
         task = _make_task()
         decision = router.select_provider_for_task(task)
@@ -575,19 +599,23 @@ class TestRoutingWithMockedTierStates:
         """Test that unavailable providers are skipped."""
         router = TierAwareRouter()
 
-        router.register_provider(ProviderConfig(
-            name="free-down",
-            models={"claude-sonnet": ModelConfig("sonnet", "high")},
-            tier=Tier.FREE,
-            cost_per_1k_tokens=0.0,
-            available=False,  # Down for maintenance
-        ))
-        router.register_provider(ProviderConfig(
-            name="standard-available",
-            models={"claude-sonnet": ModelConfig("sonnet", "high")},
-            tier=Tier.STANDARD,
-            cost_per_1k_tokens=0.003,
-        ))
+        router.register_provider(
+            ProviderConfig(
+                name="free-down",
+                models={"claude-sonnet": ModelConfig("sonnet", "high")},
+                tier=Tier.FREE,
+                cost_per_1k_tokens=0.0,
+                available=False,  # Down for maintenance
+            )
+        )
+        router.register_provider(
+            ProviderConfig(
+                name="standard-available",
+                models={"claude-sonnet": ModelConfig("sonnet", "high")},
+                tier=Tier.STANDARD,
+                cost_per_1k_tokens=0.003,
+            )
+        )
 
         task = _make_task()
         decision = router.select_provider_for_task(task)

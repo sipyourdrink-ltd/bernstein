@@ -13,6 +13,7 @@ import json
 import os
 import time
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -31,6 +32,7 @@ from bernstein.core.models import (
     ClusterConfig,
     CompletionSignal,
     NodeInfo,
+    ProgressSnapshot,
     RiskAssessment,
     RollbackPlan,
     Task,
@@ -182,6 +184,16 @@ class ProgressEntry(TypedDict):
     percent: int
 
 
+class SnapshotEntry(TypedDict):
+    """A single machine-readable progress snapshot for stall detection."""
+
+    timestamp: float
+    files_changed: int
+    tests_passing: int
+    errors: int
+    last_file: str
+
+
 # ---------------------------------------------------------------------------
 # Pydantic request / response schemas
 # ---------------------------------------------------------------------------
@@ -270,8 +282,13 @@ class TaskBlockRequest(BaseModel):
 class TaskProgressRequest(BaseModel):
     """Body for POST /tasks/{task_id}/progress."""
 
-    message: str
+    message: str = ""
     percent: int = 0
+    # Structured snapshot fields for stall detection (optional)
+    files_changed: int | None = None
+    tests_passing: int | None = None
+    errors: int | None = None
+    last_file: str = ""
 
 
 class BatchClaimRequest(BaseModel):
@@ -504,6 +521,8 @@ class TaskStore:
         self._cost_cache: dict[str, float] = {}
         self._cost_cache_mtime: float = 0.0
         self._cost_cache_offset: int = 0
+        # In-memory progress snapshots for stall detection (last 10 per task)
+        self._progress_snapshots: dict[str, deque[ProgressSnapshot]] = {}
 
     # -- index helpers -------------------------------------------------------
 
@@ -922,6 +941,48 @@ class TaskStore:
             progress: list[ProgressEntry] = cast("list[ProgressEntry]", task.progress_log)  # type: ignore[reportUnknownMemberType]
             progress.append(entry)
             return task
+
+    def add_snapshot(
+        self,
+        task_id: str,
+        files_changed: int,
+        tests_passing: int,
+        errors: int,
+        last_file: str,
+    ) -> ProgressSnapshot:
+        """Store a progress snapshot for a task (last 10 kept).
+
+        Args:
+            task_id: Task identifier.
+            files_changed: Number of files modified since agent start.
+            tests_passing: Number of tests currently passing (-1 = unknown).
+            errors: Number of active errors / compilation failures.
+            last_file: Last file the agent was editing.
+
+        Returns:
+            The new ProgressSnapshot.
+        """
+        snap = ProgressSnapshot(
+            timestamp=time.time(),
+            files_changed=files_changed,
+            tests_passing=tests_passing,
+            errors=errors,
+            last_file=last_file,
+        )
+        q = self._progress_snapshots.setdefault(task_id, deque(maxlen=10))
+        q.append(snap)
+        return snap
+
+    def get_snapshots(self, task_id: str) -> list[ProgressSnapshot]:
+        """Return stored progress snapshots for a task, oldest-first.
+
+        Args:
+            task_id: Task identifier.
+
+        Returns:
+            List of ProgressSnapshot objects (up to 10), oldest-first.
+        """
+        return list(self._progress_snapshots.get(task_id, deque()))
 
     async def cancel(self, task_id: str, reason: str) -> Task:
         """Cancel a task that has not yet finished.
@@ -1411,6 +1472,7 @@ def create_app(
     Returns:
         Configured FastAPI app with all routes registered.
     """
+    from bernstein.core.routes.agents import router as agents_router
     from bernstein.core.routes.costs import router as costs_router
     from bernstein.core.routes.status import router as status_router
     from bernstein.core.routes.tasks import router as tasks_router
@@ -1476,6 +1538,7 @@ def create_app(
     application.state.sdd_dir = jsonl_path.parent.parent  # type: ignore[attr-defined]  # .sdd/
 
     # Mount routers
+    application.include_router(agents_router)
     application.include_router(tasks_router)
     application.include_router(status_router)
     application.include_router(webhooks_router)

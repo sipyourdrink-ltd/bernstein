@@ -1,8 +1,8 @@
 """Tests for CatalogRegistry._fetch_from_providers, _load_entry, _load_generic_entry,
 and _parse_catalog_entry (catalog.py coverage improvement)."""
+
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +13,6 @@ from bernstein.agents.catalog import (
     CatalogRegistry,
     _parse_catalog_entry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -233,12 +232,14 @@ class TestLoadGenericEntry:
     def test_loads_yaml_with_custom_field_map(self, tmp_path):
         """field_map remaps YAML keys to canonical names."""
         (tmp_path / "agent.yaml").write_text(
-            yaml.dump({
-                "agent_role": "security",
-                "summary": "Security specialist.",
-                "llm_model": "sonnet",
-                "work_level": "high",
-            })
+            yaml.dump(
+                {
+                    "agent_role": "security",
+                    "summary": "Security specialist.",
+                    "llm_model": "sonnet",
+                    "work_level": "high",
+                }
+            )
         )
 
         registry = CatalogRegistry()
@@ -263,7 +264,6 @@ class TestLoadGenericEntry:
     def test_skips_unreadable_file(self, tmp_path, caplog):
         """Unreadable files are logged as warnings and skipped."""
         import logging
-        import os
 
         bad_file = tmp_path / "bad.yaml"
         bad_file.write_text("role: something")
@@ -295,9 +295,7 @@ class TestLoadGenericEntry:
 
     def test_skips_yaml_without_role_field(self, tmp_path):
         """YAML files without a role field (or mapped role field) are skipped."""
-        (tmp_path / "no_role.yaml").write_text(
-            yaml.dump({"description": "No role here.", "model": "sonnet"})
-        )
+        (tmp_path / "no_role.yaml").write_text(yaml.dump({"description": "No role here.", "model": "sonnet"}))
 
         registry = CatalogRegistry()
         entry = _make_entry(name="generic", type_="generic", path=str(tmp_path))

@@ -1,25 +1,20 @@
 """Tests for the evolve mode cycle flow in the orchestrator."""
+
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import (
-    AgentSession,
-    Complexity,
-    ModelConfig,
     OrchestratorConfig,
-    Scope,
-    Task,
-    TaskStatus,
 )
-from bernstein.core.orchestrator import Orchestrator, TickResult
+from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
 
 
@@ -31,11 +26,13 @@ def _no_subprocess_in_evolve(monkeypatch: pytest.MonkeyPatch) -> None:
     recursively, eating 50+ GB of RAM.
     """
     monkeypatch.setattr(
-        Orchestrator, "_evolve_run_tests",
+        Orchestrator,
+        "_evolve_run_tests",
         lambda self: {"passed": 0, "failed": 0, "summary": "mocked"},
     )
     monkeypatch.setattr(
-        Orchestrator, "_evolve_auto_commit",
+        Orchestrator,
+        "_evolve_auto_commit",
         lambda self: False,
     )
     # Prevent Tavily API calls from _evolve_spawn_manager
@@ -183,10 +180,9 @@ class TestEvolveBudgetCap:
 
         # Should NOT have posted a new evolve manager task
         evolve_posts = [
-            c for c in client.post.call_args_list
-            if c.args and "/tasks" in c.args[0]
-            and "json" in c.kwargs
-            and "Evolve" in c.kwargs["json"].get("title", "")
+            c
+            for c in client.post.call_args_list
+            if c.args and "/tasks" in c.args[0] and "json" in c.kwargs and "Evolve" in c.kwargs["json"].get("title", "")
         ]
         assert len(evolve_posts) == 0
 
@@ -201,10 +197,9 @@ class TestEvolveBudgetCap:
 
         # Should have posted an evolve task
         evolve_posts = [
-            c for c in client.post.call_args_list
-            if c.args and "/tasks" in c.args[0]
-            and "json" in c.kwargs
-            and "Evolve" in c.kwargs["json"].get("title", "")
+            c
+            for c in client.post.call_args_list
+            if c.args and "/tasks" in c.args[0] and "json" in c.kwargs and "Evolve" in c.kwargs["json"].get("title", "")
         ]
         assert len(evolve_posts) == 1
 
@@ -227,10 +222,9 @@ class TestEvolveMaxCycles:
         orch.tick()
 
         evolve_posts = [
-            c for c in client.post.call_args_list
-            if c.args and "/tasks" in c.args[0]
-            and "json" in c.kwargs
-            and "Evolve" in c.kwargs["json"].get("title", "")
+            c
+            for c in client.post.call_args_list
+            if c.args and "/tasks" in c.args[0] and "json" in c.kwargs and "Evolve" in c.kwargs["json"].get("title", "")
         ]
         assert len(evolve_posts) == 0
 
@@ -244,10 +238,9 @@ class TestEvolveMaxCycles:
         orch.tick()
 
         evolve_posts = [
-            c for c in client.post.call_args_list
-            if c.args and "/tasks" in c.args[0]
-            and "json" in c.kwargs
-            and "Evolve" in c.kwargs["json"].get("title", "")
+            c
+            for c in client.post.call_args_list
+            if c.args and "/tasks" in c.args[0] and "json" in c.kwargs and "Evolve" in c.kwargs["json"].get("title", "")
         ]
         assert len(evolve_posts) == 1
 
@@ -271,10 +264,9 @@ class TestEvolveDiminishingReturns:
         orch.tick()
 
         evolve_posts = [
-            c for c in client.post.call_args_list
-            if c.args and "/tasks" in c.args[0]
-            and "json" in c.kwargs
-            and "Evolve" in c.kwargs["json"].get("title", "")
+            c
+            for c in client.post.call_args_list
+            if c.args and "/tasks" in c.args[0] and "json" in c.kwargs and "Evolve" in c.kwargs["json"].get("title", "")
         ]
         assert len(evolve_posts) == 1
 
@@ -297,10 +289,9 @@ class TestEvolveDiminishingReturns:
         orch.tick()
 
         evolve_posts = [
-            c for c in client.post.call_args_list
-            if c.args and "/tasks" in c.args[0]
-            and "json" in c.kwargs
-            and "Evolve" in c.kwargs["json"].get("title", "")
+            c
+            for c in client.post.call_args_list
+            if c.args and "/tasks" in c.args[0] and "json" in c.kwargs and "Evolve" in c.kwargs["json"].get("title", "")
         ]
         assert len(evolve_posts) == 0  # Backoff prevents triggering
 
@@ -323,10 +314,9 @@ class TestEvolveDiminishingReturns:
         orch.tick()
 
         evolve_posts = [
-            c for c in client.post.call_args_list
-            if c.args and "/tasks" in c.args[0]
-            and "json" in c.kwargs
-            and "Evolve" in c.kwargs["json"].get("title", "")
+            c
+            for c in client.post.call_args_list
+            if c.args and "/tasks" in c.args[0] and "json" in c.kwargs and "Evolve" in c.kwargs["json"].get("title", "")
         ]
         assert len(evolve_posts) == 1
 
@@ -451,7 +441,9 @@ class TestEvolveStateUpdates:
             resp = MagicMock()
             resp.status_code = 200
             if url.endswith("/tasks"):
-                resp.json.return_value = [{"id": "t1", "title": "Done", "description": "d", "role": "backend", "status": "done"}]
+                resp.json.return_value = [
+                    {"id": "t1", "title": "Done", "description": "d", "role": "backend", "status": "done"}
+                ]
             else:
                 resp.json.return_value = []
             resp.raise_for_status.return_value = None
@@ -459,7 +451,9 @@ class TestEvolveStateUpdates:
 
         client = MagicMock(spec=httpx.Client)
         client.get.side_effect = _get
-        client.post.side_effect = lambda *a, **kw: MagicMock(status_code=201, json=MagicMock(return_value={"id": "x"}), raise_for_status=MagicMock())
+        client.post.side_effect = lambda *a, **kw: MagicMock(
+            status_code=201, json=MagicMock(return_value={"id": "x"}), raise_for_status=MagicMock()
+        )
 
         orch = Orchestrator(config, spawner, tmp_path, client=client)
 

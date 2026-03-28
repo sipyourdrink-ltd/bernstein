@@ -1,4 +1,5 @@
 """Tests for metrics write batching in MetricsCollector."""
+
 from __future__ import annotations
 
 import json
@@ -8,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.core.metrics import MetricType, MetricsCollector
+from bernstein.core.metrics import MetricsCollector, MetricType
 
 
 @pytest.fixture
@@ -122,7 +123,7 @@ def test_concurrent_writes_are_thread_safe(collector: MetricsCollector) -> None:
         try:
             for i in range(20):
                 collector._write_metric_point(MetricType.API_USAGE, float(i), {"thread": "yes"})
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=write_many) for _ in range(5)]

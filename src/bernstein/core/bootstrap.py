@@ -315,9 +315,10 @@ def _is_alive(pid: int) -> bool:
 
 
 def _discover_catalog(workdir: Path) -> None:
-    """Run CatalogRegistry.discover() against the project workspace.
+    """Run CatalogRegistry.discover() and sync Agency catalog on startup.
 
     Loads the agent catalog from cache (if fresh) or re-fetches from providers.
+    Also attempts to sync the Agency GitHub catalog (TTL-protected, 24h).
     On failure the error is logged and startup continues — catalog is optional.
 
     Args:
@@ -334,6 +335,18 @@ def _discover_catalog(workdir: Path) -> None:
         console.print(f"[dim]Catalog: {len(registry._cached_roles)} role(s) ready[/dim]")  # type: ignore[reportPrivateUsage]
     except Exception:
         logger.warning("Catalog auto-discovery failed (non-fatal)", exc_info=True)
+
+    # Auto-sync Agency catalog (TTL = 24h — skipped if synced recently)
+    try:
+        from bernstein.agents.agency_provider import AgencyProvider
+
+        ok, msg = AgencyProvider.sync_catalog()
+        if ok:
+            logger.debug("Agency catalog sync: %s", msg)
+        else:
+            logger.debug("Agency catalog sync skipped or failed: %s", msg)
+    except Exception:
+        logger.debug("Agency catalog auto-sync failed (non-fatal)", exc_info=True)
 
 
 def _build_codebase_index(workdir: Path) -> None:

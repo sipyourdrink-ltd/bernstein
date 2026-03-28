@@ -1,4 +1,5 @@
 """Tests for MCP config loading, merging, and passing to spawned agents."""
+
 from __future__ import annotations
 
 import json
@@ -8,11 +9,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bernstein.adapters.claude import ClaudeCodeAdapter, load_mcp_config, _resolve_env_vars
+from bernstein.adapters.claude import ClaudeCodeAdapter, _resolve_env_vars, load_mcp_config
 from bernstein.core.models import ModelConfig
-from bernstein.core.seed import SeedConfig, parse_seed
+from bernstein.core.seed import parse_seed
 from bernstein.core.spawner import AgentSpawner
-
 
 # ---------------------------------------------------------------------------
 # load_mcp_config

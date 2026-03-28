@@ -1,7 +1,6 @@
 """Tests for CatalogRegistry.match() — role matching with catalog fallback."""
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
 
@@ -29,6 +28,7 @@ def _make_agent(
 # Empty registry
 # ---------------------------------------------------------------------------
 
+
 def test_match_empty_registry_returns_none() -> None:
     registry = CatalogRegistry()
     assert registry.match("backend", "Implement REST API") is None
@@ -37,6 +37,7 @@ def test_match_empty_registry_returns_none() -> None:
 # ---------------------------------------------------------------------------
 # Exact role match
 # ---------------------------------------------------------------------------
+
 
 def test_match_exact_role() -> None:
     registry = CatalogRegistry()
@@ -74,6 +75,7 @@ def test_match_exact_role_picks_lowest_priority() -> None:
 # Fuzzy match (no exact role, keyword overlap in description)
 # ---------------------------------------------------------------------------
 
+
 def test_match_fuzzy_by_description_keywords() -> None:
     registry = CatalogRegistry()
     agent = _make_agent(
@@ -101,9 +103,7 @@ def test_match_fuzzy_picks_highest_overlap() -> None:
     """When multiple agents have keyword overlap, the one with most shared words wins."""
     registry = CatalogRegistry()
     weak = _make_agent("WeakMatch", "other", "General backend service developer.")
-    strong = _make_agent(
-        "StrongMatch", "specialist", "Backend REST API service developer."
-    )
+    strong = _make_agent("StrongMatch", "specialist", "Backend REST API service developer.")
     registry.register_agent(weak)
     registry.register_agent(strong)
 
@@ -127,6 +127,7 @@ def test_match_fuzzy_ignores_short_words() -> None:
 # system_prompt usage
 # ---------------------------------------------------------------------------
 
+
 def test_matched_agent_has_system_prompt() -> None:
     registry = CatalogRegistry()
     agent = _make_agent(
@@ -146,6 +147,7 @@ def test_matched_agent_has_system_prompt() -> None:
 # Source / priority ordering
 # ---------------------------------------------------------------------------
 
+
 def test_match_returns_catalog_source() -> None:
     registry = CatalogRegistry()
     registry.register_agent(_make_agent("AgencyAgent", "backend", "Backend.", source="agency"))
@@ -159,9 +161,7 @@ def test_match_exact_beats_fuzzy() -> None:
     """Exact role match should win over a fuzzy match even if fuzzy has more keyword overlap."""
     registry = CatalogRegistry()
     exact = _make_agent("ExactBackend", "backend", "Simple backend.", priority=100)
-    fuzzy = _make_agent(
-        "FuzzyBackend", "other", "Backend REST API developer build anything.", priority=1
-    )
+    fuzzy = _make_agent("FuzzyBackend", "other", "Backend REST API developer build anything.", priority=1)
     registry.register_agent(exact)
     registry.register_agent(fuzzy)
 
@@ -173,6 +173,7 @@ def test_match_exact_beats_fuzzy() -> None:
 # ---------------------------------------------------------------------------
 # load_from_agency integration
 # ---------------------------------------------------------------------------
+
 
 def test_load_from_agency_and_match() -> None:
     """Agents loaded via load_from_agency() should be matchable."""

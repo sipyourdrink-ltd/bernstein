@@ -9,8 +9,6 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from bernstein.core.models import (
     Complexity,
     OrchestratorConfig,
@@ -188,7 +186,7 @@ class TestApprovalGateReview:
 
 class TestApprovalGateReviewFilePoll:
     def test_default_poller_reads_approved_decision_file(self, tmp_path: Path) -> None:
-        from bernstein.core.approval import ApprovalGate, ApprovalMode, _default_poll_decision
+        from bernstein.core.approval import _default_poll_decision
 
         approvals_dir = tmp_path / ".sdd" / "runtime" / "approvals"
         approvals_dir.mkdir(parents=True)
@@ -381,9 +379,9 @@ class TestApprovalResult:
 class TestSpawnerSkipMerge:
     def test_reap_completed_agent_skip_merge_does_not_merge(self, tmp_path: Path) -> None:
         """When skip_merge=True, worktree cleanup happens but no merge is attempted."""
+        from bernstein.adapters.base import CLIAdapter
         from bernstein.core.models import AgentSession, ModelConfig
         from bernstein.core.spawner import AgentSpawner
-        from bernstein.adapters.base import CLIAdapter
 
         mock_adapter = MagicMock(spec=CLIAdapter)
 
@@ -409,9 +407,9 @@ class TestSpawnerSkipMerge:
 
     def test_reap_completed_agent_default_behavior_unchanged(self, tmp_path: Path) -> None:
         """When skip_merge=False (default), behavior is unchanged from before."""
+        from bernstein.adapters.base import CLIAdapter
         from bernstein.core.models import AgentSession, ModelConfig
         from bernstein.core.spawner import AgentSpawner
-        from bernstein.adapters.base import CLIAdapter
 
         mock_adapter = MagicMock(spec=CLIAdapter)
 
@@ -443,9 +441,7 @@ class TestApprovalGateAutoMerge:
         from bernstein.core.git_ops import GitResult, PullRequestResult
 
         mock_push = MagicMock(return_value=MagicMock(ok=True))
-        mock_create_pr = MagicMock(
-            return_value=PullRequestResult(success=True, pr_url="https://github.com/x/y/pull/1")
-        )
+        mock_create_pr = MagicMock(return_value=PullRequestResult(success=True, pr_url="https://github.com/x/y/pull/1"))
         mock_enable_auto_merge = MagicMock(return_value=GitResult(returncode=0, stdout="", stderr=""))
 
         with patch("bernstein.core.git_ops.enable_pr_auto_merge", mock_enable_auto_merge):
@@ -471,9 +467,7 @@ class TestApprovalGateAutoMerge:
         from bernstein.core.git_ops import PullRequestResult
 
         mock_push = MagicMock(return_value=MagicMock(ok=True))
-        mock_create_pr = MagicMock(
-            return_value=PullRequestResult(success=True, pr_url="https://github.com/x/y/pull/2")
-        )
+        mock_create_pr = MagicMock(return_value=PullRequestResult(success=True, pr_url="https://github.com/x/y/pull/2"))
         mock_enable_auto_merge = MagicMock()
 
         with patch("bernstein.core.git_ops.enable_pr_auto_merge", mock_enable_auto_merge):
@@ -579,8 +573,8 @@ class TestOrchestratorConfigMergeStrategy:
 
 class TestSpawnerGetWorktreePath:
     def test_get_worktree_path_returns_none_when_no_worktree(self, tmp_path: Path) -> None:
-        from bernstein.core.spawner import AgentSpawner
         from bernstein.adapters.base import CLIAdapter
+        from bernstein.core.spawner import AgentSpawner
 
         mock_adapter = MagicMock(spec=CLIAdapter)
         templates_dir = tmp_path / "templates" / "roles"
@@ -590,8 +584,8 @@ class TestSpawnerGetWorktreePath:
         assert spawner.get_worktree_path("agent-xyz") is None
 
     def test_get_worktree_path_returns_path_when_registered(self, tmp_path: Path) -> None:
-        from bernstein.core.spawner import AgentSpawner
         from bernstein.adapters.base import CLIAdapter
+        from bernstein.core.spawner import AgentSpawner
 
         mock_adapter = MagicMock(spec=CLIAdapter)
         templates_dir = tmp_path / "templates" / "roles"

@@ -1,4 +1,5 @@
 """Unit tests for AiderAdapter spawn/kill/is_alive."""
+
 from __future__ import annotations
 
 import signal
@@ -11,7 +12,6 @@ import pytest
 
 from bernstein.adapters.aider import AiderAdapter
 from bernstein.core.models import ModelConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,7 +27,7 @@ def _make_popen_mock(pid: int) -> MagicMock:
 def _inner_cmd(full_cmd: list[str]) -> list[str]:
     """Extract the actual CLI command after the '--' worker separator."""
     sep = full_cmd.index("--")
-    return full_cmd[sep + 1:]
+    return full_cmd[sep + 1 :]
 
 
 # ---------------------------------------------------------------------------
@@ -190,31 +190,35 @@ class TestAiderAdapterName:
 class TestAiderSpawnMissingBinary:
     def test_file_not_found_raises_runtime_error(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
-        with patch(
-            "bernstein.adapters.aider.subprocess.Popen",
-            side_effect=FileNotFoundError("No such file"),
+        with (
+            patch(
+                "bernstein.adapters.aider.subprocess.Popen",
+                side_effect=FileNotFoundError("No such file"),
+            ),
+            pytest.raises(RuntimeError, match="not found in PATH"),
         ):
-            with pytest.raises(RuntimeError, match="not found in PATH"):
-                adapter.spawn(
-                    prompt="hello",
-                    workdir=tmp_path,
-                    model_config=ModelConfig(model="gpt-4o", effort="high"),
-                    session_id="missing",
-                )
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                session_id="missing",
+            )
 
     def test_permission_error_raises_runtime_error(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
-        with patch(
-            "bernstein.adapters.aider.subprocess.Popen",
-            side_effect=PermissionError("Permission denied"),
+        with (
+            patch(
+                "bernstein.adapters.aider.subprocess.Popen",
+                side_effect=PermissionError("Permission denied"),
+            ),
+            pytest.raises(RuntimeError, match="[Pp]ermission"),
         ):
-            with pytest.raises(RuntimeError, match="[Pp]ermission"):
-                adapter.spawn(
-                    prompt="hello",
-                    workdir=tmp_path,
-                    model_config=ModelConfig(model="gpt-4o", effort="high"),
-                    session_id="perm-denied",
-                )
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                session_id="perm-denied",
+            )
 
 
 # ---------------------------------------------------------------------------

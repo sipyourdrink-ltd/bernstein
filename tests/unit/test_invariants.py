@@ -1,10 +1,12 @@
 """Tests for InvariantsGuard."""
-import json
-from pathlib import Path
-import pytest
+
 from bernstein.evolution.invariants import (
-    compute_invariants, verify_invariants, write_lockfile, check_proposal_targets, LOCKED_FILES,
+    check_proposal_targets,
+    compute_invariants,
+    verify_invariants,
+    write_lockfile,
 )
+
 
 class TestComputeInvariants:
     def test_computes_hashes_for_existing_files(self, tmp_path):
@@ -18,6 +20,7 @@ class TestComputeInvariants:
     def test_skips_missing_files(self, tmp_path):
         hashes = compute_invariants(tmp_path)
         assert len(hashes) == 0
+
 
 class TestVerifyInvariants:
     def test_passes_when_unchanged(self, tmp_path):
@@ -46,6 +49,7 @@ class TestVerifyInvariants:
         ok, violations = verify_invariants(tmp_path)
         assert ok
         assert (tmp_path / ".sdd" / "invariants.lock").exists()
+
 
 class TestCheckProposalTargets:
     def test_rejects_locked(self):

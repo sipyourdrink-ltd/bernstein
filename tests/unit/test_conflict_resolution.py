@@ -1,4 +1,5 @@
 """Tests for automated conflict resolution and merge strategy."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -94,9 +95,9 @@ class TestMergeWithConflictDetection:
     @patch("bernstein.core.git_ops.run_git")
     def test_clean_merge(self, mock: MagicMock) -> None:
         mock.side_effect = [
-            GitResult(0, "", ""),                          # merge --no-commit
-            GitResult(0, "", ""),                          # commit
-            GitResult(0, "1 file changed\n", ""),          # diff --stat
+            GitResult(0, "", ""),  # merge --no-commit
+            GitResult(0, "", ""),  # commit
+            GitResult(0, "1 file changed\n", ""),  # diff --stat
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert result.success
@@ -106,9 +107,9 @@ class TestMergeWithConflictDetection:
     @patch("bernstein.core.git_ops.run_git")
     def test_clean_merge_custom_message(self, mock: MagicMock) -> None:
         mock.side_effect = [
-            GitResult(0, "", ""),                          # merge --no-commit
-            GitResult(0, "", ""),                          # commit
-            GitResult(0, "", ""),                          # diff --stat
+            GitResult(0, "", ""),  # merge --no-commit
+            GitResult(0, "", ""),  # commit
+            GitResult(0, "", ""),  # diff --stat
         ]
         merge_with_conflict_detection(REPO, "feature/x", message="Custom merge msg")
         # Verify the commit used the custom message
@@ -119,8 +120,8 @@ class TestMergeWithConflictDetection:
     def test_conflict_detected(self, mock: MagicMock) -> None:
         mock.side_effect = [
             GitResult(1, "", "CONFLICT (content): Merge conflict in src/a.py"),  # merge fails
-            GitResult(0, "UU src/a.py\nUU src/b.py\n", ""),                     # status
-            GitResult(0, "", ""),                                                 # merge --abort
+            GitResult(0, "UU src/a.py\nUU src/b.py\n", ""),  # status
+            GitResult(0, "", ""),  # merge --abort
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert not result.success
@@ -133,8 +134,8 @@ class TestMergeWithConflictDetection:
     def test_non_conflict_failure(self, mock: MagicMock) -> None:
         mock.side_effect = [
             GitResult(128, "", "fatal: 'agent/bad' is not a commit"),  # merge fails
-            GitResult(0, "", ""),                                       # status (no conflicts)
-            GitResult(0, "", ""),                                       # merge --abort
+            GitResult(0, "", ""),  # status (no conflicts)
+            GitResult(0, "", ""),  # merge --abort
         ]
         result = merge_with_conflict_detection(REPO, "agent/bad")
         assert not result.success
@@ -145,9 +146,9 @@ class TestMergeWithConflictDetection:
     def test_nothing_to_commit_after_merge(self, mock: MagicMock) -> None:
         """Branches are identical — merge succeeds but nothing to commit."""
         mock.side_effect = [
-            GitResult(0, "", ""),                                  # merge --no-commit
-            GitResult(1, "", "nothing to commit"),                 # commit fails
-            GitResult(0, "", ""),                                  # merge --abort
+            GitResult(0, "", ""),  # merge --no-commit
+            GitResult(1, "", "nothing to commit"),  # commit fails
+            GitResult(0, "", ""),  # merge --abort
         ]
         result = merge_with_conflict_detection(REPO, "agent/session-1")
         assert result.success
@@ -160,18 +161,17 @@ class TestMergeWithConflictDetection:
 
 
 class TestSpawnerConflictResolution:
-    def _make_spawner(
-        self, tmp_path: Path, mock_adapter: MagicMock, *, use_worktrees: bool = True
-    ) -> AgentSpawner:
+    def _make_spawner(self, tmp_path: Path, mock_adapter: MagicMock, *, use_worktrees: bool = True) -> AgentSpawner:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         return AgentSpawner(
-            mock_adapter, templates_dir, tmp_path, use_worktrees=use_worktrees,
+            mock_adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=use_worktrees,
         )
 
-    def test_reap_returns_merge_result_on_success(
-        self, tmp_path: Path, make_task, mock_adapter_factory
-    ) -> None:
+    def test_reap_returns_merge_result_on_success(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=100)
         spawner = self._make_spawner(tmp_path, adapter)
 
@@ -191,9 +191,7 @@ class TestSpawnerConflictResolution:
         assert result is not None
         assert result.success
 
-    def test_reap_returns_merge_result_on_conflict(
-        self, tmp_path: Path, make_task, mock_adapter_factory
-    ) -> None:
+    def test_reap_returns_merge_result_on_conflict(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=100)
         spawner = self._make_spawner(tmp_path, adapter)
 
@@ -206,7 +204,8 @@ class TestSpawnerConflictResolution:
         spawner._worktree_paths[session.id] = tmp_path / ".sdd" / "worktrees" / session.id
 
         conflict_result = MergeResult(
-            success=False, conflicting_files=["src/a.py"],
+            success=False,
+            conflicting_files=["src/a.py"],
         )
         with patch.object(spawner, "_merge_worktree_branch", return_value=conflict_result):
             result = spawner.reap_completed_agent(session)
@@ -215,9 +214,7 @@ class TestSpawnerConflictResolution:
         assert not result.success
         assert result.conflicting_files == ["src/a.py"]
 
-    def test_reap_returns_none_without_worktree(
-        self, tmp_path: Path, mock_adapter_factory
-    ) -> None:
+    def test_reap_returns_none_without_worktree(self, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=100)
         spawner = self._make_spawner(tmp_path, adapter, use_worktrees=False)
 
@@ -231,9 +228,7 @@ class TestSpawnerConflictResolution:
         result = spawner.reap_completed_agent(session)
         assert result is None
 
-    def test_reap_returns_none_when_no_proc(
-        self, tmp_path: Path, mock_adapter_factory
-    ) -> None:
+    def test_reap_returns_none_when_no_proc(self, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=100)
         spawner = self._make_spawner(tmp_path, adapter)
 
@@ -244,14 +239,14 @@ class TestSpawnerConflictResolution:
         assert result is None
 
     @patch("bernstein.core.spawner.merge_with_conflict_detection")
-    def test_merge_worktree_branch_delegates(
-        self, mock_merge: MagicMock, tmp_path: Path, mock_adapter_factory
-    ) -> None:
+    def test_merge_worktree_branch_delegates(self, mock_merge: MagicMock, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=100)
         spawner = self._make_spawner(tmp_path, adapter)
 
         mock_merge.return_value = MergeResult(
-            success=True, conflicting_files=[], merge_diff="ok",
+            success=True,
+            conflicting_files=[],
+            merge_diff="ok",
         )
         result = spawner._merge_worktree_branch("backend-abc12345")
         mock_merge.assert_called_once_with(

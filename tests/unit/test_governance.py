@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 import pytest
@@ -15,7 +14,6 @@ from bernstein.evolution.governance import (
     ProjectContext,
 )
 
-
 # ---------------------------------------------------------------------------
 # EvolutionWeights
 # ---------------------------------------------------------------------------
@@ -24,14 +22,7 @@ from bernstein.evolution.governance import (
 def test_evolution_weights_default_sum_to_one() -> None:
     """Default weights must sum to 1.0 (within float tolerance)."""
     w = EvolutionWeights()
-    total = (
-        w.test_coverage
-        + w.lint_score
-        + w.type_safety
-        + w.performance
-        + w.security
-        + w.maintainability
-    )
+    total = w.test_coverage + w.lint_score + w.type_safety + w.performance + w.security + w.maintainability
     assert abs(total - 1.0) < 1e-9
 
 
@@ -46,14 +37,7 @@ def test_evolution_weights_normalized_sums_to_one() -> None:
         maintainability=0.6,
     )
     n = w.normalized()
-    total = (
-        n.test_coverage
-        + n.lint_score
-        + n.type_safety
-        + n.performance
-        + n.security
-        + n.maintainability
-    )
+    total = n.test_coverage + n.lint_score + n.type_safety + n.performance + n.security + n.maintainability
     assert abs(total - 1.0) < 1e-9
 
 

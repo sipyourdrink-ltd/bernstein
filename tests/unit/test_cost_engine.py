@@ -6,6 +6,7 @@ Covers:
 - get_cascade_model: escalation by retry count
 - compute_savings_vs_opus / project_monthly_cost / compute_daily_cost
 """
+
 from __future__ import annotations
 
 import json
@@ -16,8 +17,8 @@ from unittest.mock import patch
 import pytest
 
 from bernstein.core.cost import (
-    BanditArm,
     CASCADE,
+    BanditArm,
     EpsilonGreedyBandit,
     compute_daily_cost,
     compute_savings_vs_opus,
@@ -26,7 +27,6 @@ from bernstein.core.cost import (
     project_monthly_cost,
 )
 from bernstein.core.models import Complexity, Scope, Task
-
 
 # ---------------------------------------------------------------------------
 # Helpers

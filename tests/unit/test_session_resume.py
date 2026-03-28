@@ -17,7 +17,6 @@ from bernstein.core.session import (
     save_session,
 )
 
-
 # ---------------------------------------------------------------------------
 # SessionState unit tests
 # ---------------------------------------------------------------------------
@@ -225,8 +224,7 @@ def test_orchestrator_save_session_state(tmp_path: Path) -> None:
     mock_client.get.return_value = mock_response
 
     # Patch evolution/metrics to avoid side effects
-    with patch("bernstein.core.orchestrator.EvolutionCoordinator"), \
-         patch("bernstein.core.orchestrator.get_collector"):
+    with patch("bernstein.core.orchestrator.EvolutionCoordinator"), patch("bernstein.core.orchestrator.get_collector"):
         orch = Orchestrator(
             config=config,
             spawner=mock_spawner,
@@ -254,8 +252,7 @@ def test_orchestrator_save_session_state_server_down(tmp_path: Path) -> None:
     mock_client = MagicMock()
     mock_client.get.side_effect = Exception("Connection refused")
 
-    with patch("bernstein.core.orchestrator.EvolutionCoordinator"), \
-         patch("bernstein.core.orchestrator.get_collector"):
+    with patch("bernstein.core.orchestrator.EvolutionCoordinator"), patch("bernstein.core.orchestrator.get_collector"):
         orch = Orchestrator(
             config=config,
             spawner=mock_spawner,

@@ -41,17 +41,17 @@ fenced ```diff block that we extract as the patch.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import time
-from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from benchmarks.swe_bench.metrics import (
     AgentTrace,
@@ -61,7 +61,9 @@ from benchmarks.swe_bench.metrics import (
     ScenarioSummary,
     aggregate,
 )
-from benchmarks.swe_bench.scenarios import AgentRole, Scenario
+
+if TYPE_CHECKING:
+    from benchmarks.swe_bench.scenarios import AgentRole, Scenario
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +158,7 @@ One line only.
 # Harness configuration
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class HarnessConfig:
     """Runtime configuration for the evaluation harness."""
@@ -170,12 +173,13 @@ class HarnessConfig:
     # Path to ``claude`` binary; None = resolve from PATH
     claude_bin: str | None = None
     # Additional env vars forwarded to agent subprocesses
-    extra_env: dict[str, str] = field(default_factory=dict)
+    extra_env: dict[str, str] = field(default_factory=lambda: dict[str, str]())
 
 
 # ---------------------------------------------------------------------------
 # Agent runner
 # ---------------------------------------------------------------------------
+
 
 class AgentRunner:
     """Invokes a single Claude agent subprocess and captures output."""
@@ -209,9 +213,11 @@ class AgentRunner:
 
         cmd = [
             self._claude,
-            "--model", model_id,
+            "--model",
+            model_id,
             "--print",
-            "--output-format", "json",
+            "--output-format",
+            "json",
             "--dangerously-skip-permissions",
             prompt,
         ]
@@ -242,8 +248,7 @@ class AgentRunner:
             )
         except FileNotFoundError:
             raise RuntimeError(
-                f"claude binary not found at '{self._claude}'. "
-                "Ensure the Claude Code CLI is installed and on PATH."
+                f"claude binary not found at '{self._claude}'. Ensure the Claude Code CLI is installed and on PATH."
             ) from None
 
         # Parse JSON output for cost/token metadata
@@ -292,9 +297,11 @@ class AgentRunner:
 
         cmd = [
             self._claude,
-            "--model", model_id,
+            "--model",
+            model_id,
             "--print",
-            "--output-format", "json",
+            "--output-format",
+            "json",
             "--dangerously-skip-permissions",
             prompt,
         ]
@@ -325,9 +332,7 @@ class AgentRunner:
             )
             return trace, ""
         except FileNotFoundError:
-            raise RuntimeError(
-                f"claude binary not found at '{self._claude}'."
-            ) from None
+            raise RuntimeError(f"claude binary not found at '{self._claude}'.") from None
 
         tokens_used = 0
         cost_usd = 0.0
@@ -371,6 +376,7 @@ def _extract_patch(text: str) -> str:
 # SWE-Bench integration helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_lite_instances(dataset: str, split: str, limit: int | None) -> list[dict[str, Any]]:
     """Load SWE-Bench Lite instances via HuggingFace datasets.
 
@@ -379,13 +385,10 @@ def _load_lite_instances(dataset: str, split: str, limit: int | None) -> list[di
     try:
         from datasets import load_dataset  # type: ignore[import]
     except ImportError as exc:
-        raise ImportError(
-            "The 'datasets' package is required. "
-            "Install it with: uv add datasets swebench"
-        ) from exc
+        raise ImportError("The 'datasets' package is required. Install it with: uv add datasets swebench") from exc
 
-    ds = load_dataset(dataset, split=split)
-    instances: list[dict[str, Any]] = list(ds)  # type: ignore[arg-type]
+    ds = load_dataset(dataset, split=split)  # pyright: ignore[reportUnknownVariableType]
+    instances: list[dict[str, Any]] = list(ds)  # pyright: ignore[reportUnknownArgumentType]
     if limit is not None:
         instances = instances[:limit]
     return instances
@@ -443,9 +446,7 @@ def _run_tests_via_swebench(
     try:
         from swebench.harness.run_evaluation import main as swe_eval  # type: ignore[import]
     except ImportError as exc:
-        raise ImportError(
-            "The 'swebench' package is required. Install it with: uv add swebench"
-        ) from exc
+        raise ImportError("The 'swebench' package is required. Install it with: uv add swebench") from exc
 
     # swebench evaluation works by re-running the test command inside Docker.
     # We collect results via a temporary predictions file.
@@ -466,7 +467,7 @@ def _run_tests_via_swebench(
         results_path = Path(tmpdir) / "results"
         results_path.mkdir()
 
-        try:
+        with contextlib.suppress(SystemExit):
             swe_eval(
                 dataset_name=instance.get("_dataset", "princeton-nlp/SWE-bench_Lite"),
                 split="test",
@@ -476,8 +477,6 @@ def _run_tests_via_swebench(
                 cache_level="env",
                 run_id="bernstein-eval",
             )
-        except SystemExit:
-            pass  # swebench calls sys.exit; catch it
 
         # Parse results
         result_file = results_path / "results.json"
@@ -503,6 +502,7 @@ def _read_diff(workdir: Path) -> str:
 # ---------------------------------------------------------------------------
 # Per-instance evaluation
 # ---------------------------------------------------------------------------
+
 
 def _run_solo_instance(
     instance: dict[str, Any],
@@ -580,6 +580,7 @@ def _run_bernstein_instance(
 # Main Harness
 # ---------------------------------------------------------------------------
 
+
 class Harness:
     """Orchestrates the full SWE-Bench evaluation loop."""
 
@@ -610,9 +611,7 @@ class Harness:
         elif limit is not None:
             instances = instances[:limit]
 
-        logger.info(
-            "Running scenario '%s' on %d instances", scenario.name, len(instances)
-        )
+        logger.info("Running scenario '%s' on %d instances", scenario.name, len(instances))
 
         results: list[InstanceResult] = []
         for idx, instance in enumerate(instances, 1):
@@ -667,28 +666,53 @@ class Harness:
 
         _MOCK_PARAMS: dict[str, dict[str, float]] = {
             "solo-sonnet": dict(
-                resolve_rate=0.230, cost_mean=0.14, cost_std=0.05,
-                time_mean=95.0, time_std=20.0, tokens_mean=9_500, tokens_std=2_000,
+                resolve_rate=0.230,
+                cost_mean=0.14,
+                cost_std=0.05,
+                time_mean=95.0,
+                time_std=20.0,
+                tokens_mean=9_500,
+                tokens_std=2_000,
             ),
             "solo-opus": dict(
-                resolve_rate=0.350, cost_mean=1.20, cost_std=0.40,
-                time_mean=110.0, time_std=25.0, tokens_mean=16_000, tokens_std=3_500,
+                resolve_rate=0.350,
+                cost_mean=1.20,
+                cost_std=0.40,
+                time_mean=110.0,
+                time_std=25.0,
+                tokens_mean=16_000,
+                tokens_std=3_500,
             ),
             "bernstein-sonnet": dict(
-                resolve_rate=0.383, cost_mean=0.42, cost_std=0.12,
-                time_mean=195.0, time_std=40.0, tokens_mean=28_000, tokens_std=5_000,
+                resolve_rate=0.383,
+                cost_mean=0.42,
+                cost_std=0.12,
+                time_mean=195.0,
+                time_std=40.0,
+                tokens_mean=28_000,
+                tokens_std=5_000,
             ),
             "bernstein-mixed": dict(
-                resolve_rate=0.360, cost_mean=0.16, cost_std=0.05,
-                time_mean=175.0, time_std=35.0, tokens_mean=22_000, tokens_std=4_000,
+                resolve_rate=0.360,
+                cost_mean=0.16,
+                cost_std=0.05,
+                time_mean=175.0,
+                time_std=35.0,
+                tokens_mean=22_000,
+                tokens_std=4_000,
             ),
         }
 
         params = _MOCK_PARAMS.get(
             scenario.name,
             dict(
-                resolve_rate=0.25, cost_mean=0.20, cost_std=0.08,
-                time_mean=120.0, time_std=25.0, tokens_mean=12_000, tokens_std=2_500,
+                resolve_rate=0.25,
+                cost_mean=0.20,
+                cost_std=0.08,
+                time_mean=120.0,
+                time_std=25.0,
+                tokens_mean=12_000,
+                tokens_std=2_500,
             ),
         )
 
@@ -764,7 +788,7 @@ class Harness:
                     traces, patch = _run_solo_instance(instance, scenario, self.runner, workdir)
                 else:
                     traces, patch = _run_bernstein_instance(instance, scenario, self.runner, workdir)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 wall = time.monotonic() - t0
                 logger.exception("Pipeline error on %s/%s", scenario.name, iid)
                 return InstanceResult(
@@ -833,7 +857,7 @@ class Harness:
                     patch=patch,
                     error_message="swebench not installed",
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception:
                 logger.exception("Test eval error on %s/%s", scenario.name, iid)
                 resolved = False
 

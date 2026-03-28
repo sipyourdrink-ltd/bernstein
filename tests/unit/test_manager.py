@@ -2,6 +2,7 @@
 
 LLM calls are mocked; these tests verify prompt rendering and response parsing.
 """
+
 from __future__ import annotations
 
 import json
@@ -10,20 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bernstein.core.models import (
-    Complexity,
-    CompletionSignal,
-    Scope,
-    Task,
-    TaskStatus,
-    TaskType,
-    UpgradeProposalDetails,
-    RiskAssessment,
-    RollbackPlan,
-)
 from bernstein.core.manager import (
     ManagerAgent,
-    ReviewResult,
     _extract_json,
     _format_existing_tasks,
     _format_roles,
@@ -36,12 +25,23 @@ from bernstein.core.manager import (
     render_plan_prompt,
     render_review_prompt,
 )
+from bernstein.core.models import (
+    CompletionSignal,
+    Complexity,
+    RiskAssessment,
+    RollbackPlan,
+    Scope,
+    Task,
+    TaskStatus,
+    TaskType,
+    UpgradeProposalDetails,
+)
 from bernstein.core.upgrade_executor import FileChange, UpgradeType
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def templates_dir(tmp_path: Path) -> Path:
@@ -50,8 +50,7 @@ def templates_dir(tmp_path: Path) -> Path:
     prompts.mkdir()
 
     (prompts / "plan.md").write_text(
-        "Goal: {{GOAL}}\nContext: {{CONTEXT}}\n"
-        "Roles: {{AVAILABLE_ROLES}}\nExisting: {{EXISTING_TASKS}}"
+        "Goal: {{GOAL}}\nContext: {{CONTEXT}}\nRoles: {{AVAILABLE_ROLES}}\nExisting: {{EXISTING_TASKS}}"
     )
     (prompts / "review.md").write_text(
         "Task: {{TASK_TITLE}}\nRole: {{TASK_ROLE}}\n"
@@ -87,63 +86,68 @@ def sample_task() -> Task:
     )
 
 
-VALID_PLAN_RESPONSE = json.dumps([
-    {
-        "title": "Set up project structure",
-        "description": "Create src/ and tests/ directories with __init__.py files",
-        "role": "backend",
-        "priority": 1,
-        "scope": "small",
-        "complexity": "low",
-        "estimated_minutes": 15,
-        "depends_on": [],
-        "owned_files": ["src/__init__.py", "tests/__init__.py"],
-        "completion_signals": [
-            {"type": "path_exists", "value": "src/__init__.py"},
-        ],
-    },
-    {
-        "title": "Implement REST API",
-        "description": "Create FastAPI server with CRUD endpoints",
-        "role": "backend",
-        "priority": 2,
-        "scope": "medium",
-        "complexity": "medium",
-        "estimated_minutes": 90,
-        "depends_on": ["Set up project structure"],
-        "owned_files": ["src/server.py"],
-        "completion_signals": [
-            {"type": "path_exists", "value": "src/server.py"},
-            {"type": "test_passes", "value": "pytest tests/test_server.py"},
-        ],
-    },
-    {
-        "title": "Write API tests",
-        "description": "Write integration tests for the REST API",
-        "role": "qa",
-        "priority": 2,
-        "scope": "small",
-        "complexity": "medium",
-        "estimated_minutes": 45,
-        "depends_on": ["Implement REST API"],
-        "owned_files": ["tests/test_server.py"],
-        "completion_signals": [
-            {"type": "path_exists", "value": "tests/test_server.py"},
-        ],
-    },
-])
+VALID_PLAN_RESPONSE = json.dumps(
+    [
+        {
+            "title": "Set up project structure",
+            "description": "Create src/ and tests/ directories with __init__.py files",
+            "role": "backend",
+            "priority": 1,
+            "scope": "small",
+            "complexity": "low",
+            "estimated_minutes": 15,
+            "depends_on": [],
+            "owned_files": ["src/__init__.py", "tests/__init__.py"],
+            "completion_signals": [
+                {"type": "path_exists", "value": "src/__init__.py"},
+            ],
+        },
+        {
+            "title": "Implement REST API",
+            "description": "Create FastAPI server with CRUD endpoints",
+            "role": "backend",
+            "priority": 2,
+            "scope": "medium",
+            "complexity": "medium",
+            "estimated_minutes": 90,
+            "depends_on": ["Set up project structure"],
+            "owned_files": ["src/server.py"],
+            "completion_signals": [
+                {"type": "path_exists", "value": "src/server.py"},
+                {"type": "test_passes", "value": "pytest tests/test_server.py"},
+            ],
+        },
+        {
+            "title": "Write API tests",
+            "description": "Write integration tests for the REST API",
+            "role": "qa",
+            "priority": 2,
+            "scope": "small",
+            "complexity": "medium",
+            "estimated_minutes": 45,
+            "depends_on": ["Implement REST API"],
+            "owned_files": ["tests/test_server.py"],
+            "completion_signals": [
+                {"type": "path_exists", "value": "tests/test_server.py"},
+            ],
+        },
+    ]
+)
 
-VALID_REVIEW_RESPONSE = json.dumps({
-    "verdict": "approve",
-    "reasoning": "All acceptance criteria met. Tests pass.",
-    "feedback": "",
-    "follow_up_tasks": [],
-})
+VALID_REVIEW_RESPONSE = json.dumps(
+    {
+        "verdict": "approve",
+        "reasoning": "All acceptance criteria met. Tests pass.",
+        "feedback": "",
+        "follow_up_tasks": [],
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # _extract_json
 # ---------------------------------------------------------------------------
+
 
 class TestExtractJson:
     """Tests for JSON extraction from LLM output."""
@@ -167,6 +171,7 @@ class TestExtractJson:
 # _format_roles
 # ---------------------------------------------------------------------------
 
+
 class TestFormatRoles:
     """Tests for role list formatting."""
 
@@ -183,6 +188,7 @@ class TestFormatRoles:
 # ---------------------------------------------------------------------------
 # _format_existing_tasks
 # ---------------------------------------------------------------------------
+
 
 class TestFormatExistingTasks:
     """Tests for existing task formatting."""
@@ -206,6 +212,7 @@ class TestFormatExistingTasks:
 # ---------------------------------------------------------------------------
 # parse_tasks_response
 # ---------------------------------------------------------------------------
+
 
 class TestParseTasksResponse:
     """Tests for LLM plan output parsing."""
@@ -232,6 +239,7 @@ class TestParseTasksResponse:
 # ---------------------------------------------------------------------------
 # raw_dicts_to_tasks
 # ---------------------------------------------------------------------------
+
 
 class TestRawDictsToTasks:
     """Tests for converting raw dicts to Task objects."""
@@ -274,42 +282,46 @@ class TestRawDictsToTasks:
         assert tasks[1].id == "plan-002"
 
     def test_invalid_signal_skipped(self) -> None:
-        raw = [{
-            "title": "Task with bad signal",
-            "completion_signals": [
-                {"type": "path_exists", "value": "ok.py"},
-                {"type": "INVALID_TYPE", "value": "bad"},
-            ],
-        }]
+        raw = [
+            {
+                "title": "Task with bad signal",
+                "completion_signals": [
+                    {"type": "path_exists", "value": "ok.py"},
+                    {"type": "INVALID_TYPE", "value": "bad"},
+                ],
+            }
+        ]
         tasks = raw_dicts_to_tasks(raw)
         assert len(tasks) == 1
         assert len(tasks[0].completion_signals) == 1
 
     def test_upgrade_proposal_task_type(self) -> None:
         """Test parsing of upgrade proposal task type."""
-        raw = [{
-            "title": "Refactor authentication module",
-            "description": "Upgrade from JWT v1 to v2",
-            "role": "backend",
-            "task_type": "upgrade_proposal",
-            "upgrade_details": {
-                "current_state": "Using JWT v1 for authentication",
-                "proposed_change": "Migrate to JWT v2 with improved security",
-                "benefits": ["Better security", "Improved performance"],
-                "risk_assessment": {
-                    "level": "medium",
-                    "breaking_changes": True,
-                    "affected_components": ["auth.py", "middleware.py"],
-                    "mitigation": "Gradual rollout with feature flag",
+        raw = [
+            {
+                "title": "Refactor authentication module",
+                "description": "Upgrade from JWT v1 to v2",
+                "role": "backend",
+                "task_type": "upgrade_proposal",
+                "upgrade_details": {
+                    "current_state": "Using JWT v1 for authentication",
+                    "proposed_change": "Migrate to JWT v2 with improved security",
+                    "benefits": ["Better security", "Improved performance"],
+                    "risk_assessment": {
+                        "level": "medium",
+                        "breaking_changes": True,
+                        "affected_components": ["auth.py", "middleware.py"],
+                        "mitigation": "Gradual rollout with feature flag",
+                    },
+                    "rollback_plan": {
+                        "steps": ["Disable feature flag", "Revert deployment"],
+                        "estimated_rollback_minutes": 15,
+                    },
+                    "cost_estimate_usd": 0.50,
+                    "performance_impact": "Expected 20% improvement in auth latency",
                 },
-                "rollback_plan": {
-                    "steps": ["Disable feature flag", "Revert deployment"],
-                    "estimated_rollback_minutes": 15,
-                },
-                "cost_estimate_usd": 0.50,
-                "performance_impact": "Expected 20% improvement in auth latency",
-            },
-        }]
+            }
+        ]
         tasks = raw_dicts_to_tasks(raw)
         assert len(tasks) == 1
         task = tasks[0]
@@ -322,21 +334,25 @@ class TestRawDictsToTasks:
 
     def test_invalid_task_type_defaults_to_standard(self) -> None:
         """Invalid task_type should default to STANDARD."""
-        raw = [{
-            "title": "Task with invalid type",
-            "task_type": "invalid_type_xyz",
-        }]
+        raw = [
+            {
+                "title": "Task with invalid type",
+                "task_type": "invalid_type_xyz",
+            }
+        ]
         tasks = raw_dicts_to_tasks(raw)
         assert len(tasks) == 1
         assert tasks[0].task_type == TaskType.STANDARD
 
     def test_upgrade_proposal_missing_details(self) -> None:
         """Upgrade proposal without details should still parse but have None details."""
-        raw = [{
-            "title": "Upgrade something",
-            "task_type": "upgrade_proposal",
-            # No upgrade_details provided
-        }]
+        raw = [
+            {
+                "title": "Upgrade something",
+                "task_type": "upgrade_proposal",
+                # No upgrade_details provided
+            }
+        ]
         tasks = raw_dicts_to_tasks(raw)
         assert len(tasks) == 1
         assert tasks[0].task_type == TaskType.UPGRADE_PROPOSAL
@@ -346,6 +362,7 @@ class TestRawDictsToTasks:
 # ---------------------------------------------------------------------------
 # _parse_upgrade_details
 # ---------------------------------------------------------------------------
+
 
 class TestParseUpgradeDetails:
     """Tests for upgrade details parsing."""
@@ -394,6 +411,7 @@ class TestParseUpgradeDetails:
 # _resolve_depends_on
 # ---------------------------------------------------------------------------
 
+
 class TestResolveDependsOn:
     """Tests for dependency resolution from titles to IDs."""
 
@@ -432,6 +450,7 @@ class TestResolveDependsOn:
 # parse_review_response
 # ---------------------------------------------------------------------------
 
+
 class TestParseReviewResponse:
     """Tests for LLM review output parsing."""
 
@@ -441,22 +460,26 @@ class TestParseReviewResponse:
         assert result["reasoning"] == "All acceptance criteria met. Tests pass."
 
     def test_request_changes(self) -> None:
-        raw = json.dumps({
-            "verdict": "request_changes",
-            "reasoning": "Missing error handling",
-            "feedback": "Add try/except around DB calls",
-            "follow_up_tasks": [],
-        })
+        raw = json.dumps(
+            {
+                "verdict": "request_changes",
+                "reasoning": "Missing error handling",
+                "feedback": "Add try/except around DB calls",
+                "follow_up_tasks": [],
+            }
+        )
         result = parse_review_response(raw)
         assert result["verdict"] == "request_changes"
 
     def test_reject(self) -> None:
-        raw = json.dumps({
-            "verdict": "reject",
-            "reasoning": "Wrong approach entirely",
-            "feedback": "Start over with a different architecture",
-            "follow_up_tasks": [],
-        })
+        raw = json.dumps(
+            {
+                "verdict": "reject",
+                "reasoning": "Wrong approach entirely",
+                "feedback": "Start over with a different architecture",
+                "follow_up_tasks": [],
+            }
+        )
         result = parse_review_response(raw)
         assert result["verdict"] == "reject"
 
@@ -478,6 +501,7 @@ class TestParseReviewResponse:
 # ---------------------------------------------------------------------------
 # render_plan_prompt
 # ---------------------------------------------------------------------------
+
 
 class TestRenderPlanPrompt:
     """Tests for plan prompt rendering."""
@@ -516,6 +540,7 @@ class TestRenderPlanPrompt:
 # render_review_prompt
 # ---------------------------------------------------------------------------
 
+
 class TestRenderReviewPrompt:
     """Tests for review prompt rendering."""
 
@@ -547,6 +572,7 @@ class TestRenderReviewPrompt:
 # ---------------------------------------------------------------------------
 # ManagerAgent.plan (mocked LLM)
 # ---------------------------------------------------------------------------
+
 
 class TestManagerAgentPlan:
     """Integration tests for plan() with mocked LLM and server."""
@@ -599,6 +625,7 @@ class TestManagerAgentPlan:
 # ManagerAgent.review (mocked LLM)
 # ---------------------------------------------------------------------------
 
+
 class TestManagerAgentReview:
     """Integration tests for review() with mocked LLM."""
 
@@ -626,21 +653,23 @@ class TestManagerAgentReview:
         workdir = tmp_path / "project"
         workdir.mkdir()
 
-        response = json.dumps({
-            "verdict": "request_changes",
-            "reasoning": "Missing edge case handling",
-            "feedback": "Add validation for empty input",
-            "follow_up_tasks": [
-                {
-                    "title": "Add input validation",
-                    "description": "Validate all API inputs",
-                    "role": "backend",
-                    "completion_signals": [
-                        {"type": "test_passes", "value": "pytest tests/test_validation.py"},
-                    ],
-                }
-            ],
-        })
+        response = json.dumps(
+            {
+                "verdict": "request_changes",
+                "reasoning": "Missing edge case handling",
+                "feedback": "Add validation for empty input",
+                "follow_up_tasks": [
+                    {
+                        "title": "Add input validation",
+                        "description": "Validate all API inputs",
+                        "role": "backend",
+                        "completion_signals": [
+                            {"type": "test_passes", "value": "pytest tests/test_validation.py"},
+                        ],
+                    }
+                ],
+            }
+        )
 
         manager = ManagerAgent(
             server_url="http://localhost:9999",
@@ -659,6 +688,7 @@ class TestManagerAgentReview:
 # ---------------------------------------------------------------------------
 # _parse_completion_signal
 # ---------------------------------------------------------------------------
+
 
 class TestParseCompletionSignal:
     """Tests for completion signal parsing."""
@@ -706,6 +736,7 @@ class TestParseCompletionSignal:
 # ManagerAgent._parse_upgrade_changes
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def manager_agent(tmp_path: Path) -> ManagerAgent:
     """A ManagerAgent instance for unit testing instance methods."""
@@ -720,10 +751,12 @@ class TestParseUpgradeChanges:
     """Tests for ManagerAgent._parse_upgrade_changes."""
 
     def test_valid_json_array(self, manager_agent: ManagerAgent) -> None:
-        response = json.dumps([
-            {"path": "src/foo.py", "operation": "modify", "new_content": "# updated"},
-            {"path": "src/bar.py", "operation": "create", "new_content": "# new file"},
-        ])
+        response = json.dumps(
+            [
+                {"path": "src/foo.py", "operation": "modify", "new_content": "# updated"},
+                {"path": "src/bar.py", "operation": "create", "new_content": "# new file"},
+            ]
+        )
         changes = manager_agent._parse_upgrade_changes(response)
         assert len(changes) == 2
         assert changes[0].path == "src/foo.py"
@@ -761,9 +794,11 @@ class TestParseUpgradeChanges:
         assert changes[0].old_content is None
 
     def test_old_content_parsed(self, manager_agent: ManagerAgent) -> None:
-        response = json.dumps([
-            {"path": "x.py", "operation": "modify", "old_content": "old", "new_content": "new"},
-        ])
+        response = json.dumps(
+            [
+                {"path": "x.py", "operation": "modify", "old_content": "old", "new_content": "new"},
+            ]
+        )
         changes = manager_agent._parse_upgrade_changes(response)
         assert changes[0].old_content == "old"
         assert changes[0].new_content == "new"
@@ -773,9 +808,9 @@ class TestParseUpgradeChanges:
 # ManagerAgent._determine_upgrade_type
 # ---------------------------------------------------------------------------
 
+
 def _make_task_with_proposed(proposed: str) -> Task:
     """Helper to build a task with a specific proposed_change."""
-    from bernstein.core.models import RiskAssessment, RollbackPlan, UpgradeProposalDetails
     details = UpgradeProposalDetails(
         current_state="current",
         proposed_change=proposed,
@@ -851,6 +886,7 @@ class TestDetermineUpgradeType:
 # raw_dicts_to_tasks — additional branch coverage
 # ---------------------------------------------------------------------------
 
+
 class TestRawDictsToTasksBranches:
     """Additional branch tests for raw_dicts_to_tasks."""
 
@@ -870,11 +906,14 @@ class TestRawDictsToTasksBranches:
     def test_upgrade_details_parse_error_yields_none_details(self) -> None:
         """If upgrade_details raises during parsing, task still created with None details."""
         from unittest.mock import patch
-        raw = [{
-            "title": "Upgrade task",
-            "task_type": "upgrade_proposal",
-            "upgrade_details": {"bad": "data"},
-        }]
+
+        raw = [
+            {
+                "title": "Upgrade task",
+                "task_type": "upgrade_proposal",
+                "upgrade_details": {"bad": "data"},
+            }
+        ]
         # Force _parse_upgrade_details to raise
         with patch("bernstein.core.manager._parse_upgrade_details", side_effect=ValueError("bad")):
             tasks = raw_dicts_to_tasks(raw)
@@ -885,6 +924,7 @@ class TestRawDictsToTasksBranches:
 # ---------------------------------------------------------------------------
 # parse_review_response — non-dict branch
 # ---------------------------------------------------------------------------
+
 
 class TestParseReviewResponseBranches:
     """Additional branch tests for parse_review_response."""
@@ -898,6 +938,7 @@ class TestParseReviewResponseBranches:
 # ---------------------------------------------------------------------------
 # ManagerAgent.review — LLM failure
 # ---------------------------------------------------------------------------
+
 
 class TestManagerAgentReviewFailure:
     """Tests for review() LLM failure path."""
@@ -922,6 +963,7 @@ class TestManagerAgentReviewFailure:
 # ManagerAgent.execute_upgrade
 # ---------------------------------------------------------------------------
 
+
 class TestExecuteUpgrade:
     """Tests for ManagerAgent.execute_upgrade."""
 
@@ -934,7 +976,10 @@ class TestExecuteUpgrade:
     @pytest.mark.asyncio()
     async def test_returns_none_for_upgrade_without_details(self, manager_agent: ManagerAgent) -> None:
         task = Task(
-            id="t-001", title="Upgrade", description="desc", role="backend",
+            id="t-001",
+            title="Upgrade",
+            description="desc",
+            role="backend",
             task_type=TaskType.UPGRADE_PROPOSAL,
             upgrade_details=None,
         )
@@ -945,7 +990,9 @@ class TestExecuteUpgrade:
     async def test_returns_none_on_exception(self, manager_agent: ManagerAgent) -> None:
         """If _generate_upgrade_changes raises, execute_upgrade returns None."""
         task = _make_task_with_proposed("Update some code")
-        with patch.object(manager_agent, "_generate_upgrade_changes", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+        with patch.object(
+            manager_agent, "_generate_upgrade_changes", new_callable=AsyncMock, side_effect=RuntimeError("boom")
+        ):
             result = await manager_agent.execute_upgrade(task)
         assert result is None
 
@@ -960,7 +1007,8 @@ class TestExecuteUpgrade:
     @pytest.mark.asyncio()
     async def test_successful_upgrade_returns_transaction(self, manager_agent: ManagerAgent) -> None:
         """Successful upgrade execution returns an UpgradeTransaction."""
-        from bernstein.core.upgrade_executor import UpgradeStatus, UpgradeTransaction
+        from bernstein.core.upgrade_executor import UpgradeStatus
+
         task = _make_task_with_proposed("Modify config setting")
         changes = [FileChange(path="config.py", operation="modify", new_content="x = 1")]
 
@@ -982,6 +1030,7 @@ class TestExecuteUpgrade:
 # ManagerAgent._generate_upgrade_changes
 # ---------------------------------------------------------------------------
 
+
 class TestGenerateUpgradeChanges:
     """Tests for ManagerAgent._generate_upgrade_changes."""
 
@@ -994,9 +1043,11 @@ class TestGenerateUpgradeChanges:
     @pytest.mark.asyncio()
     async def test_returns_file_changes_on_success(self, manager_agent: ManagerAgent) -> None:
         task = _make_task_with_proposed("Add new feature")
-        llm_response = json.dumps([
-            {"path": "src/feature.py", "operation": "create", "new_content": "def feature(): pass"},
-        ])
+        llm_response = json.dumps(
+            [
+                {"path": "src/feature.py", "operation": "create", "new_content": "def feature(): pass"},
+            ]
+        )
         with patch("bernstein.core.manager.call_llm", new_callable=AsyncMock, return_value=llm_response):
             result = await manager_agent._generate_upgrade_changes(task)
         assert len(result) == 1
@@ -1013,6 +1064,7 @@ class TestGenerateUpgradeChanges:
 # ---------------------------------------------------------------------------
 # ManagerAgent.replan
 # ---------------------------------------------------------------------------
+
 
 class TestManagerAgentReplan:
     """Tests for ManagerAgent.replan."""

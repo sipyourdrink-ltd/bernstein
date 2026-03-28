@@ -19,8 +19,7 @@ Cost estimates (USD per 1 k output tokens, 2025 rack rates):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
+from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # Model cost constants (USD / 1 k tokens, blended input+output at ~1:3 ratio)
@@ -124,10 +123,7 @@ BERNSTEIN_SONNET = Scenario(
 
 BERNSTEIN_MIXED = Scenario(
     name="bernstein-mixed",
-    description=(
-        "Bernstein 3-agent pipeline, cost-optimised: Haiku analyst, "
-        "Sonnet implementer, Haiku QA."
-    ),
+    description=("Bernstein 3-agent pipeline, cost-optimised: Haiku analyst, Sonnet implementer, Haiku QA."),
     agents=[
         AgentRole(
             role="analyst",

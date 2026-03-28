@@ -1,4 +1,5 @@
 """Tests for AgencyProvider — parses msitarzewski/agency-agents format."""
+
 from __future__ import annotations
 
 import asyncio
@@ -305,3 +306,99 @@ class TestSyncCatalog:
         ok, _msg = AgencyProvider.sync_catalog(target=target, force=True)
         assert ok is True
         assert any("pull" in c for c in calls)
+
+
+# ---------------------------------------------------------------------------
+# Integration: loaded agents feed CatalogRegistry.match()
+# ---------------------------------------------------------------------------
+
+
+class TestCatalogRegistryIntegration:
+    """Verify Agency agents flow from provider → CatalogRegistry.match()."""
+
+    def test_fetched_agents_matchable_by_role(self, tmp_path: Path) -> None:
+        """Agents fetched from AgencyProvider can be matched via CatalogRegistry."""
+        from bernstein.agents.catalog import CatalogRegistry
+
+        eng = tmp_path / "engineering"
+        eng.mkdir()
+        (eng / "code-reviewer.md").write_text(FULL_AGENT_MD)
+
+        provider = AgencyProvider(local_path=tmp_path)
+        agents = asyncio.run(provider.fetch_agents())
+
+        registry = CatalogRegistry()
+        for a in agents:
+            registry.register_agent(a)
+
+        match = registry.match("backend", "review code quality")
+        assert match is not None
+        assert match.name == "Code Reviewer"
+
+    def test_fetched_agents_system_prompt_populated(self, tmp_path: Path) -> None:
+        """Matched agent carries the full markdown body as system_prompt."""
+        from bernstein.agents.catalog import CatalogRegistry
+
+        eng = tmp_path / "engineering"
+        eng.mkdir()
+        (eng / "code-reviewer.md").write_text(FULL_AGENT_MD)
+
+        provider = AgencyProvider(local_path=tmp_path)
+        agents = asyncio.run(provider.fetch_agents())
+
+        registry = CatalogRegistry()
+        for a in agents:
+            registry.register_agent(a)
+
+        match = registry.match("backend", "review code")
+        assert match is not None
+        assert "Code Reviewer" in match.system_prompt
+
+    def test_fetched_agents_capabilities_drive_matching(self, tmp_path: Path) -> None:
+        """Capability keywords in the task description break ties between agents."""
+        from bernstein.agents.catalog import CatalogRegistry
+
+        eng = tmp_path / "engineering"
+        eng.mkdir()
+
+        security_md = FULL_AGENT_MD.replace(
+            "capabilities: [code-review, security-analysis, static-analysis]",
+            "capabilities: [authentication, jwt, oauth]",
+        ).replace("name: Code Reviewer", "name: Auth Specialist")
+        (eng / "auth-specialist.md").write_text(security_md)
+
+        generic_md = FULL_AGENT_MD.replace(
+            "capabilities: [code-review, security-analysis, static-analysis]",
+            "capabilities: [refactoring, cleanup]",
+        ).replace("name: Code Reviewer", "name: Refactorer")
+        (eng / "refactorer.md").write_text(generic_md)
+
+        provider = AgencyProvider(local_path=tmp_path)
+        agents = asyncio.run(provider.fetch_agents())
+
+        registry = CatalogRegistry()
+        for a in agents:
+            registry.register_agent(a)
+
+        match = registry.match("backend", "implement JWT authentication and oauth flow")
+        assert match is not None
+        assert match.name == "Auth Specialist"
+
+    def test_fetched_agents_tools_in_catalog_agent(self, tmp_path: Path) -> None:
+        """Tools parsed from frontmatter are accessible on the CatalogAgent."""
+        from bernstein.agents.catalog import CatalogRegistry
+
+        eng = tmp_path / "engineering"
+        eng.mkdir()
+        (eng / "code-reviewer.md").write_text(FULL_AGENT_MD)
+
+        provider = AgencyProvider(local_path=tmp_path)
+        agents = asyncio.run(provider.fetch_agents())
+
+        registry = CatalogRegistry()
+        for a in agents:
+            registry.register_agent(a)
+
+        match = registry.match("backend", "review code")
+        assert match is not None
+        assert match.tools == ["ruff", "mypy", "pytest"]

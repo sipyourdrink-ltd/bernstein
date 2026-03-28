@@ -1,22 +1,20 @@
 """Unit tests for bernstein.core.github — GitHub Issues integration."""
+
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from bernstein.core.github import (
+    _HASH_LABEL_PREFIX,
+    _LABEL_AUTO,
+    _LABEL_CLAIMED,
+    _LABEL_EVOLVE,
     GitHubClient,
     GitHubIssue,
     _hash_title,
     _label_color,
-    _LABEL_AUTO,
-    _LABEL_CLAIMED,
-    _LABEL_EVOLVE,
-    _HASH_LABEL_PREFIX,
 )
-
 
 # ---------------------------------------------------------------------------
 # _hash_title
@@ -250,15 +248,24 @@ def test_find_unclaimed_filters_claimed() -> None:
 
     raw = [
         {
-            "number": 1, "title": "A", "url": "", "state": "open",
+            "number": 1,
+            "title": "A",
+            "url": "",
+            "state": "open",
             "labels": [{"name": _LABEL_EVOLVE}],
         },
         {
-            "number": 2, "title": "B", "url": "", "state": "open",
+            "number": 2,
+            "title": "B",
+            "url": "",
+            "state": "open",
             "labels": [{"name": _LABEL_EVOLVE}, {"name": _LABEL_CLAIMED}],
         },
         {
-            "number": 3, "title": "C", "url": "", "state": "open",
+            "number": 3,
+            "title": "C",
+            "url": "",
+            "state": "open",
             "labels": [{"name": _LABEL_EVOLVE}],
         },
     ]
@@ -287,11 +294,17 @@ def test_find_by_hash_matches_correct_issue() -> None:
 
     raw = [
         {
-            "number": 5, "title": "Unrelated", "url": "", "state": "open",
+            "number": 5,
+            "title": "Unrelated",
+            "url": "",
+            "state": "open",
             "labels": [{"name": _LABEL_EVOLVE}],
         },
         {
-            "number": 6, "title": title, "url": "", "state": "open",
+            "number": 6,
+            "title": title,
+            "url": "",
+            "state": "open",
             "labels": [{"name": _LABEL_EVOLVE}, {"name": hash_label}],
         },
     ]
@@ -307,8 +320,7 @@ def test_find_by_hash_returns_none_when_no_match() -> None:
     client._available = True
 
     raw = [
-        {"number": 1, "title": "Other", "url": "", "state": "open",
-         "labels": [{"name": _LABEL_EVOLVE}]},
+        {"number": 1, "title": "Other", "url": "", "state": "open", "labels": [{"name": _LABEL_EVOLVE}]},
     ]
     with patch("bernstein.core.github.subprocess.run", return_value=_mock_run_ok(raw)):
         found = client.find_by_hash("Non-existent proposal")
@@ -419,12 +431,8 @@ def test_close_issue_posts_comment_then_closes() -> None:
 
     assert result is True
     # Should have called: gh issue comment, then gh issue close
-    comment_call = next(
-        (c for c in calls_made if "comment" in c), None
-    )
-    close_call = next(
-        (c for c in calls_made if "close" in c), None
-    )
+    comment_call = next((c for c in calls_made if "comment" in c), None)
+    close_call = next((c for c in calls_made if "close" in c), None)
     assert comment_call is not None
     assert close_call is not None
 

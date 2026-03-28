@@ -1,4 +1,5 @@
 """Tests for MetricsAggregator — EWMA, CUSUM, BOCPD, Mann-Kendall, posteriors, Goodhart."""
+
 from __future__ import annotations
 
 import json
@@ -8,27 +9,21 @@ from pathlib import Path
 import pytest
 
 from bernstein.evolution.aggregator import (
-    AgentMetrics,
-    AnomalyDetection,
-    BetaBinomialPosterior,
-    Changepoint,
-    CompositeScore,
-    CostMetrics,
-    CUSUMState,
-    EWMAState,
-    FileMetricsCollector,
-    MetricsAggregator,
-    NormalInverseGammaPosterior,
-    QualityMetrics,
-    TaskMetrics,
-    TrendAnalysis,
-    MIN_SAMPLES_ALERTING,
     MIN_SAMPLES_AB,
+    MIN_SAMPLES_ALERTING,
     MIN_SAMPLES_BOCPD,
     MIN_SAMPLES_CUSUM,
     MIN_SAMPLES_EWMA,
     MIN_SAMPLES_MANN_KENDALL,
     MIN_SAMPLES_TREND,
+    AgentMetrics,
+    Changepoint,
+    CompositeScore,
+    CostMetrics,
+    FileMetricsCollector,
+    MetricsAggregator,
+    QualityMetrics,
+    TaskMetrics,
     _cusum_update,
     _ewma_control_limits,
     _ewma_update,
@@ -37,7 +32,6 @@ from bernstein.evolution.aggregator import (
     _std,
     _student_t_pdf,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -481,22 +475,26 @@ def test_composite_divergence_detection(tmp_path: Path) -> None:
 
     # Build a 3-window history with low values
     for _ in range(3):
-        agg.compute_composite_score({
-            "success_rate": 0.5,
-            "cost_efficiency": 0.5,
-            "duration_efficiency": 0.5,
-            "code_quality": 0.5,
-            "retry_rate_inv": 0.5,
-        })
+        agg.compute_composite_score(
+            {
+                "success_rate": 0.5,
+                "cost_efficiency": 0.5,
+                "duration_efficiency": 0.5,
+                "code_quality": 0.5,
+                "retry_rate_inv": 0.5,
+            }
+        )
 
     # Now: success_rate jumps up while code_quality drops
-    result = agg.compute_composite_score({
-        "success_rate": 0.7,       # +0.2 from avg of 0.5
-        "cost_efficiency": 0.5,
-        "duration_efficiency": 0.5,
-        "code_quality": 0.3,       # -0.2 from avg of 0.5
-        "retry_rate_inv": 0.5,
-    })
+    result = agg.compute_composite_score(
+        {
+            "success_rate": 0.7,  # +0.2 from avg of 0.5
+            "cost_efficiency": 0.5,
+            "duration_efficiency": 0.5,
+            "code_quality": 0.3,  # -0.2 from avg of 0.5
+            "retry_rate_inv": 0.5,
+        }
+    )
     assert len(result.divergence_flags) > 0
     # One of the flagged pairs should mention success_rate and code_quality
     joined = " ".join(result.divergence_flags)
@@ -509,22 +507,26 @@ def test_composite_trip_wire_100_percent_success(tmp_path: Path) -> None:
 
     # Feed 6 windows with 100% success rate to exceed the 5-consecutive threshold
     for _ in range(6):
-        agg.compute_composite_score({
+        agg.compute_composite_score(
+            {
+                "success_rate": 1.0,
+                "cost_efficiency": 0.5,
+                "duration_efficiency": 0.5,
+                "code_quality": 0.5,
+                "retry_rate_inv": 0.5,
+            }
+        )
+
+    # The 7th call should trigger the trip wire (5+ consecutive 100% already in history)
+    result = agg.compute_composite_score(
+        {
             "success_rate": 1.0,
             "cost_efficiency": 0.5,
             "duration_efficiency": 0.5,
             "code_quality": 0.5,
             "retry_rate_inv": 0.5,
-        })
-
-    # The 7th call should trigger the trip wire (5+ consecutive 100% already in history)
-    result = agg.compute_composite_score({
-        "success_rate": 1.0,
-        "cost_efficiency": 0.5,
-        "duration_efficiency": 0.5,
-        "code_quality": 0.5,
-        "retry_rate_inv": 0.5,
-    })
+        }
+    )
     assert len(result.trip_wire_flags) > 0
     assert "100%" in result.trip_wire_flags[0]
 
@@ -533,13 +535,15 @@ def test_composite_no_trip_wire_below_threshold(tmp_path: Path) -> None:
     agg, _ = _make_aggregator(tmp_path)
     # Only 3 calls with 100% — not enough for trip wire
     for _ in range(3):
-        result = agg.compute_composite_score({
-            "success_rate": 1.0,
-            "cost_efficiency": 0.5,
-            "duration_efficiency": 0.5,
-            "code_quality": 0.5,
-            "retry_rate_inv": 0.5,
-        })
+        result = agg.compute_composite_score(
+            {
+                "success_rate": 1.0,
+                "cost_efficiency": 0.5,
+                "duration_efficiency": 0.5,
+                "code_quality": 0.5,
+                "retry_rate_inv": 0.5,
+            }
+        )
     assert result.trip_wire_flags == []
 
 
@@ -646,9 +650,7 @@ def test_collector_load_from_files(tmp_path: Path) -> None:
 def test_collector_multiple_records_persist(tmp_path: Path) -> None:
     collector = _make_collector(tmp_path)
     for i in range(5):
-        collector.record_task_metrics(
-            _make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}")
-        )
+        collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}"))
 
     tasks_file = tmp_path / "metrics" / "tasks.jsonl"
     lines = tasks_file.read_text().strip().splitlines()
@@ -708,9 +710,7 @@ def test_analyze_trends_detects_cost_increase(tmp_path: Path) -> None:
     # First half: low cost, second half: high cost
     for i in range(10):
         cost = 0.01 if i < 5 else 0.50
-        collector.record_task_metrics(
-            _make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), cost=cost)
-        )
+        collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), cost=cost))
     trends = agg.analyze_trends()
     assert len(trends) > 0
     cost_trends = [t for t in trends if t.metric_name == "cost_per_task"]
@@ -742,12 +742,8 @@ def test_detect_anomalies_finds_cost_spike(tmp_path: Path) -> None:
     agg, collector = _make_aggregator(tmp_path)
     # Many normal costs, then one extreme outlier
     for i in range(20):
-        collector.record_task_metrics(
-            _make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), cost=0.05)
-        )
-    collector.record_task_metrics(
-        _make_task_metrics(ts=_recent_ts(offset_seconds=21.0), cost=5.0)
-    )
+        collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), cost=0.05))
+    collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=21.0), cost=5.0))
     anomalies = agg.detect_anomalies()
     assert len(anomalies) >= 1
     spike = [a for a in anomalies if a.anomaly_type == "spike"]
@@ -758,9 +754,7 @@ def test_detect_anomalies_finds_cost_spike(tmp_path: Path) -> None:
 def test_detect_anomalies_no_anomalies_for_uniform_data(tmp_path: Path) -> None:
     agg, collector = _make_aggregator(tmp_path)
     for i in range(20):
-        collector.record_task_metrics(
-            _make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), cost=0.05)
-        )
+        collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), cost=0.05))
     anomalies = agg.detect_anomalies()
     # All identical => std=0, method returns []
     assert anomalies == []
@@ -816,9 +810,7 @@ def test_run_full_analysis_with_bocpd_data(tmp_path: Path) -> None:
     agg, collector = _make_aggregator(tmp_path)
     # >= MIN_SAMPLES_BOCPD records to trigger changepoint detection
     for i in range(MIN_SAMPLES_BOCPD + 10):
-        collector.record_task_metrics(
-            _make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}")
-        )
+        collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}"))
 
     result = agg.run_full_analysis(hours=168)
     # changepoints dict should have entries (may be empty lists but keys should exist)
@@ -847,27 +839,21 @@ def test_has_enough_data_for_alerting_false_when_empty(tmp_path: Path) -> None:
 def test_has_enough_data_for_alerting_true_at_threshold(tmp_path: Path) -> None:
     agg, collector = _make_aggregator(tmp_path)
     for i in range(MIN_SAMPLES_ALERTING):
-        collector.record_task_metrics(
-            _make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}")
-        )
+        collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}"))
     assert agg.has_enough_data_for_alerting() is True
 
 
 def test_has_enough_data_for_ab_false_when_insufficient(tmp_path: Path) -> None:
     agg, collector = _make_aggregator(tmp_path)
     for i in range(MIN_SAMPLES_AB - 1):
-        collector.record_task_metrics(
-            _make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}")
-        )
+        collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}"))
     assert agg.has_enough_data_for_ab() is False
 
 
 def test_has_enough_data_for_ab_true_at_threshold(tmp_path: Path) -> None:
     agg, collector = _make_aggregator(tmp_path)
     for i in range(MIN_SAMPLES_AB):
-        collector.record_task_metrics(
-            _make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}")
-        )
+        collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}"))
     assert agg.has_enough_data_for_ab() is True
 
 
@@ -879,9 +865,7 @@ def test_has_enough_data_for_trends_false_when_insufficient(tmp_path: Path) -> N
 def test_has_enough_data_for_trends_true_at_threshold(tmp_path: Path) -> None:
     agg, collector = _make_aggregator(tmp_path)
     for i in range(MIN_SAMPLES_TREND):
-        collector.record_task_metrics(
-            _make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}")
-        )
+        collector.record_task_metrics(_make_task_metrics(ts=_recent_ts(offset_seconds=float(i)), task_id=f"t-{i}"))
     assert agg.has_enough_data_for_trends() is True
 
 

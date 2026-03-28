@@ -8,6 +8,7 @@ Covers:
 - Invalid signal type is rejected (422)
 - Signals visible in GET /tasks list
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -51,12 +52,15 @@ BASE_TASK = {
 @pytest.mark.anyio
 async def test_post_task_with_path_exists_signal_stored(client: AsyncClient) -> None:
     """POST /tasks with path_exists signal stores it and returns it."""
-    resp = await client.post("/tasks", json={
-        **BASE_TASK,
-        "completion_signals": [
-            {"type": "path_exists", "value": "src/foo.py"},
-        ],
-    })
+    resp = await client.post(
+        "/tasks",
+        json={
+            **BASE_TASK,
+            "completion_signals": [
+                {"type": "path_exists", "value": "src/foo.py"},
+            ],
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["completion_signals"] == [{"type": "path_exists", "value": "src/foo.py"}]
@@ -80,12 +84,15 @@ async def test_post_task_multiple_signals_stored(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_get_task_returns_completion_signals(client: AsyncClient) -> None:
     """GET /tasks/{id} returns the stored completion_signals."""
-    create_resp = await client.post("/tasks", json={
-        **BASE_TASK,
-        "completion_signals": [
-            {"type": "test_passes", "value": "pytest tests/ -x"},
-        ],
-    })
+    create_resp = await client.post(
+        "/tasks",
+        json={
+            **BASE_TASK,
+            "completion_signals": [
+                {"type": "test_passes", "value": "pytest tests/ -x"},
+            ],
+        },
+    )
     assert create_resp.status_code == 201
     task_id = create_resp.json()["id"]
 
@@ -205,24 +212,30 @@ async def test_get_task_with_no_signals_returns_empty_list(client: AsyncClient) 
 @pytest.mark.anyio
 async def test_invalid_signal_type_rejected_with_422(client: AsyncClient) -> None:
     """POST /tasks with an unknown signal type returns 422 Unprocessable Entity."""
-    resp = await client.post("/tasks", json={
-        **BASE_TASK,
-        "completion_signals": [
-            {"type": "invalid_type", "value": "something"},
-        ],
-    })
+    resp = await client.post(
+        "/tasks",
+        json={
+            **BASE_TASK,
+            "completion_signals": [
+                {"type": "invalid_type", "value": "something"},
+            ],
+        },
+    )
     assert resp.status_code == 422
 
 
 @pytest.mark.anyio
 async def test_missing_signal_value_rejected_with_422(client: AsyncClient) -> None:
     """POST /tasks with a signal missing 'value' returns 422."""
-    resp = await client.post("/tasks", json={
-        **BASE_TASK,
-        "completion_signals": [
-            {"type": "path_exists"},
-        ],
-    })
+    resp = await client.post(
+        "/tasks",
+        json={
+            **BASE_TASK,
+            "completion_signals": [
+                {"type": "path_exists"},
+            ],
+        },
+    )
     assert resp.status_code == 422
 
 
@@ -232,10 +245,13 @@ async def test_missing_signal_value_rejected_with_422(client: AsyncClient) -> No
 @pytest.mark.anyio
 async def test_list_tasks_includes_completion_signals(client: AsyncClient) -> None:
     """GET /tasks returns completion_signals for each task."""
-    await client.post("/tasks", json={
-        **BASE_TASK,
-        "completion_signals": [{"type": "path_exists", "value": "output.txt"}],
-    })
+    await client.post(
+        "/tasks",
+        json={
+            **BASE_TASK,
+            "completion_signals": [{"type": "path_exists", "value": "output.txt"}],
+        },
+    )
     resp = await client.get("/tasks")
     assert resp.status_code == 200
     tasks = resp.json()
@@ -246,10 +262,13 @@ async def test_list_tasks_includes_completion_signals(client: AsyncClient) -> No
 @pytest.mark.anyio
 async def test_list_tasks_filtered_by_status_includes_signals(client: AsyncClient) -> None:
     """GET /tasks?status=open preserves completion_signals in filtered results."""
-    await client.post("/tasks", json={
-        **BASE_TASK,
-        "completion_signals": [{"type": "test_passes", "value": "make test"}],
-    })
+    await client.post(
+        "/tasks",
+        json={
+            **BASE_TASK,
+            "completion_signals": [{"type": "test_passes", "value": "make test"}],
+        },
+    )
     resp = await client.get("/tasks?status=open")
     assert resp.status_code == 200
     tasks = resp.json()

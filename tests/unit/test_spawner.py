@@ -1,30 +1,37 @@
 """Tests for AgentSpawner — adapter is always mocked."""
+
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from bernstein.core.agency_loader import AgencyAgent
 from bernstein.core.models import (
     AgentSession,
     Complexity,
     Scope,
+    Task,
+    TaskStatus,
+    TaskType,
 )
 from bernstein.core.router import (
     ModelConfig as RouterModelConfig,
+)
+from bernstein.core.router import (
     ProviderConfig,
-    RoutingDecision,
-    ProviderHealthStatus,
     Tier,
     TierAwareRouter,
 )
-from unittest.mock import MagicMock, patch
-
-from bernstein.core.agency_loader import AgencyAgent
-from bernstein.core.models import Task, TaskStatus, TaskType
-from bernstein.core.spawner import AgentSpawner, _load_role_config, _render_fallback, _render_prompt, _select_batch_config
+from bernstein.core.spawner import (
+    AgentSpawner,
+    _load_role_config,
+    _render_fallback,
+    _render_prompt,
+    _select_batch_config,
+)
 from bernstein.core.worktree import WorktreeError
-
 
 # --- spawn_for_tasks ---
 
@@ -277,15 +284,17 @@ class TestSelectBatchConfig:
 def _make_router() -> TierAwareRouter:
     """Create a TierAwareRouter with a test provider."""
     router = TierAwareRouter()
-    router.register_provider(ProviderConfig(
-        name="test_provider",
-        models={
-            "sonnet": RouterModelConfig("sonnet", "high"),
-            "opus": RouterModelConfig("opus", "max"),
-        },
-        tier=Tier.STANDARD,
-        cost_per_1k_tokens=0.003,
-    ))
+    router.register_provider(
+        ProviderConfig(
+            name="test_provider",
+            models={
+                "sonnet": RouterModelConfig("sonnet", "high"),
+                "opus": RouterModelConfig("opus", "max"),
+            },
+            tier=Tier.STANDARD,
+            cost_per_1k_tokens=0.003,
+        )
+    )
     return router
 
 
@@ -552,7 +561,6 @@ class TestLoadRoleConfig:
         assert result is not None
         assert result.model == "sonnet"
         assert result.effort == "high"
-
 
 
 # --- WorktreeManager integration ---

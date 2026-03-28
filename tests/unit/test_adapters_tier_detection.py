@@ -1,17 +1,15 @@
 """Tests for adapter tier detection — mocks provider responses."""
+
 from __future__ import annotations
 
 import os
 from unittest.mock import patch
-
-import pytest
 
 from bernstein.adapters.claude import ClaudeCodeAdapter
 from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.core.models import ApiTier, ProviderType
-
 
 # --- Claude Adapter Tests ---
 

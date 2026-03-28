@@ -1,13 +1,20 @@
 """Tests for bernstein.core.seed."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
-from bernstein.core.models import Scope, Complexity, TaskStatus
-from bernstein.core.seed import NotifyConfig, SeedConfig, SeedError, _build_manager_description, parse_seed, seed_to_initial_task
-
+from bernstein.core.models import Complexity, Scope, TaskStatus
+from bernstein.core.seed import (
+    NotifyConfig,
+    SeedConfig,
+    SeedError,
+    _build_manager_description,
+    parse_seed,
+    seed_to_initial_task,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -44,6 +51,7 @@ def seed_file(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # parse_seed — valid inputs
 # ---------------------------------------------------------------------------
+
 
 class TestParseSeedValid:
     """Tests for valid seed file parsing."""
@@ -103,6 +111,7 @@ class TestParseSeedValid:
 # parse_seed — invalid inputs
 # ---------------------------------------------------------------------------
 
+
 class TestParseSeedInvalid:
     """Tests for seed file validation errors."""
 
@@ -155,6 +164,7 @@ class TestParseSeedInvalid:
 # seed_to_initial_task
 # ---------------------------------------------------------------------------
 
+
 class TestSeedToInitialTask:
     """Tests for initial task creation from seed config."""
 
@@ -187,6 +197,7 @@ class TestSeedToInitialTask:
 # ---------------------------------------------------------------------------
 # SeedConfig dataclass
 # ---------------------------------------------------------------------------
+
 
 class TestSeedConfig:
     """Tests for SeedConfig defaults and immutability."""
@@ -272,6 +283,7 @@ class TestNotifyConfig:
 # ---------------------------------------------------------------------------
 # _build_manager_description
 # ---------------------------------------------------------------------------
+
 
 class TestBuildManagerDescription:
     """Tests for _build_manager_description()."""

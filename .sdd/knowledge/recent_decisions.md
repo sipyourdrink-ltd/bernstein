@@ -2,47 +2,47 @@
 
 No decisions recorded yet.
 
-## [2026-03-28 19:19] 703 — Slack/Discord/Telegram Notifications (979234f7c3b1)
-Completed: 703 — Slack/Discord/Telegram Notifications
+## [2026-03-28 21:07] 343a — Approval Gates Before Merge (f0f30a9a19b2)
+Completed: 343a — Approval Gates Before Merge
 
-## [2026-03-28 19:20] 702 — Approval Gates Before Merge (d8c76ee70289)
-Completed: 702 — Approval Gates Before Merge
+## [2026-03-28 21:08] 335 — Crash Recovery / Orphan Agent Resume (89df314c9acf)
+Completed: 335 — Crash Recovery / Orphan Agent Resume
 
-## [2026-03-28 19:21] 704 — Aider CLI Adapter (c61b039c5cc6)
-Completed: 704 — Aider CLI Adapter
+## [2026-03-28 21:08] 343b — Slack/Discord/Telegram Notifications (355b43ff0e9c)
+Completed: 343b — Slack/Discord/Telegram Notifications
 
-## [2026-03-28 19:21] 707 — Bernstein as MCP Server (652c5d741da4)
-Completed: 707 — Bernstein as MCP Server
-
-## [2026-03-28 19:22] 711 — Public Web Dashboard Demo Instance (be04c3e84db7)
-Completed: 711 — Public Web Dashboard Demo Instance
-
-## [2026-03-28 19:23] 718 — SWE-Bench Evaluation with Scaffolding Thesis (4cbc37c8ffb9)
-Completed: 718 — SWE-Bench Evaluation with Scaffolding Thesis
-
-## [2026-03-28 19:24] 730 — Output Guardrails: Secret Detection + Scope Enforcement (3d383ef2c67b)
-Completed: 730 — Output Guardrails: Secret Detection + Scope Enforcement
-
-## [2026-03-28 19:25] 725 — Fast Session Resume (Skip Re-Planning) (e2e617d0e110)
-Completed: 725 — Fast Session Resume (Skip Re-Planning). All components already implemented: session.py with SessionState/save_session/load_session/check_resume_session, orchestrator._save_session_state() called on cleanup, bootstrap_from_seed/bootstrap_from_goal both detect prior sessions and skip manager re-planning, --fresh CLI flag, SessionConfig in seed.yaml, comprehensive tests in test_session_resume.py (19 tests all passing).
-
-## [2026-03-28 19:33] 338 — HN Show Launch Package (3b04aca12fa5)
-Completed: 338 — HN Show Launch Package
-
-## [2026-03-28 19:34] 339 — Technical Content Strategy (9b1d340c8b8e)
-Completed: 339 — Technical Content Strategy. All 5 content pieces verified: 2 Twitter threads (47-seconds benchmark, deterministic orchestration), architecture blog post (zero-llm-coordination), Reddit r/LocalLLaMA post, and Show HN post with response strategy. Content calendar covers Week 1 launch burst through Month 2 with platform strategy for Twitter, HN, Reddit, Dev.to/Hashnode, and YouTube.
-
-## [2026-03-28 19:34] 340 — Benchmark vs GitHub Agent HQ (5661c8a1ffae)
-Completed: 340 — Benchmark vs GitHub Agent HQ
-
-## [2026-03-28 19:35] 341 — SWE-Bench Evaluation with Scaffolding Thesis (c13f82ea5e4b)
-Completed: 341 — SWE-Bench Evaluation with Scaffolding Thesis
-
-## [2026-03-28 19:35] 337a — Killer Demo GIF + Video (a8ea1f95da4b)
-Completed: 337a — Killer Demo GIF + Video
-
-## [2026-03-28 19:35] 337b — Benchmark: Single Agent vs Bernstein Multi-Agent (6690b0ece4a8)
+## [2026-03-28 21:09] 337b — Benchmark: Single Agent vs Bernstein Multi-Agent (d16d0ffb2fde)
 Completed: 337b — Benchmark: Single Agent vs Bernstein Multi-Agent
 
-## [2026-03-28 19:36] 334 — Agent Signal Files (WAKEUP / SHUTDOWN / HEARTBEAT) (9fae67070859)
-Completed: 334 — Agent Signal Files (WAKEUP / SHUTDOWN / HEARTBEAT)
+## [2026-03-28 21:10] 344 — Bernstein as MCP Server (77aea6cc6129)
+Completed: 344 — Bernstein as MCP Server
+
+## [2026-03-28 21:11] [RETRY 1] 341 — SWE-Bench Evaluation with Scaffolding Thesis (d464ba67f84e)
+Completed: [RETRY 1] 341 — SWE-Bench Evaluation with Scaffolding Thesis
+
+## [2026-03-28 21:12] 346a — Aider CLI Adapter (bcb0338740c4)
+Completed: 346a — Aider CLI Adapter
+
+## [2026-03-28 21:13] 347 — Output Guardrails: Secret Detection + Scope Enforcement (949ad7006b53)
+Completed: 347 — Output Guardrails: Secret Detection + Scope Enforcement
+
+## [2026-03-28 21:15] 341 — SWE-Bench Evaluation with Scaffolding Thesis (e91dea3a3208)
+Completed: 341 — SWE-Bench Evaluation with Scaffolding Thesis
+
+## [2026-03-28 21:16] 345 — Interactive Session Streaming (Crystal-killer) (93e509ab6d93)
+Completed: 345 — Interactive Session Streaming (Crystal-killer)
+
+## [2026-03-28 21:16] 349 — Agents Create PRs Instead of Direct Push (51b839559ea0)
+Completed: 349 — Agents Create PRs Instead of Direct Push
+
+## [2026-03-28 21:17] 359 — Fix critical UX blockers: broken aliases, missing pre-flight checks (4277f33fa61d)
+Completed: 359 — Fix critical UX blockers: broken aliases, missing pre-flight checks
+
+## [2026-03-28 21:17] 353 — Team Coordination Patterns (9814fc79d1d7)
+Completed: 353 — Team Coordination Patterns
+
+## [2026-03-28 21:18] 333b — Agent Progress Checkpoints (Stuck Detection) (1e7733dc3265)
+Completed: 333b — Agent Progress Checkpoints (Stuck Detection)
+
+## [2026-03-28 21:19] 358 — Apple-like UX overhaul: zero-friction first run, progressive disclosure (8f576aa85e68)
+Completed: 358 — Apple-like UX overhaul: zero-friction first run, progressive disclosure

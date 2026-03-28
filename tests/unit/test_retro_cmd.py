@@ -1,4 +1,5 @@
 """Unit tests for bernstein retro CLI command."""
+
 from __future__ import annotations
 
 import json
@@ -9,7 +10,6 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import _build_collector_from_archive, _load_archive_tasks, cli
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -94,7 +94,9 @@ def test_load_archive_tasks_missing_file(tmp_path: Path) -> None:
 
 def test_load_archive_tasks_skips_invalid_json(tmp_path: Path) -> None:
     archive = tmp_path / "tasks.jsonl"
-    archive.write_text('{"task_id":"x","status":"done","role":"r","title":"t","created_at":1.0,"completed_at":2.0}\nnot-json\n')
+    archive.write_text(
+        '{"task_id":"x","status":"done","role":"r","title":"t","created_at":1.0,"completed_at":2.0}\nnot-json\n'
+    )
     done, failed = _load_archive_tasks(archive, since_ts=None)
     assert len(done) == 1
 
@@ -124,7 +126,7 @@ def test_build_collector_from_archive(tmp_path: Path) -> None:
     collector = _build_collector_from_archive(archive, since_ts=None)
 
     # All 4 records should be in task_metrics
-    assert len(collector._task_metrics) == 4  # noqa: SLF001
+    assert len(collector._task_metrics) == 4
 
 
 def test_build_collector_since_filter(tmp_path: Path) -> None:
@@ -134,8 +136,8 @@ def test_build_collector_since_filter(tmp_path: Path) -> None:
     since_ts = NOW - 24 * 3600
     collector = _build_collector_from_archive(archive, since_ts=since_ts)
 
-    assert len(collector._task_metrics) == 3  # noqa: SLF001
-    assert "ddd444" not in collector._task_metrics  # noqa: SLF001
+    assert len(collector._task_metrics) == 3
+    assert "ddd444" not in collector._task_metrics
 
 
 def test_build_collector_cost_populated(tmp_path: Path) -> None:
@@ -144,7 +146,7 @@ def test_build_collector_cost_populated(tmp_path: Path) -> None:
 
     collector = _build_collector_from_archive(archive, since_ts=None)
     # get_total_cost sums agent_metrics; verify task_metrics has cost set
-    total = sum(tm.cost_usd for tm in collector._task_metrics.values())  # noqa: SLF001
+    total = sum(tm.cost_usd for tm in collector._task_metrics.values())
     assert total == pytest.approx(0.03)
 
 

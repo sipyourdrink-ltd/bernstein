@@ -1,12 +1,11 @@
 """Tests for the backlog-to-server sync module."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import httpx
-import pytest
 
 from bernstein.core.sync import (
     BacklogTask,
@@ -17,7 +16,6 @@ from bernstein.core.sync import (
     parse_backlog_file,
     sync_backlog_to_server,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -257,13 +255,15 @@ def _make_mock_transport(
 
 def _empty_server_transport() -> httpx.MockTransport:
     """Server with no existing tasks."""
-    return _make_mock_transport({
-        "GET /tasks?status=open": httpx.Response(200, json=[]),
-        "GET /tasks?status=claimed": httpx.Response(200, json=[]),
-        "GET /tasks?status=in_progress": httpx.Response(200, json=[]),
-        "GET /tasks?status=done": httpx.Response(200, json=[]),
-        "GET /tasks?status=failed": httpx.Response(200, json=[]),
-    })
+    return _make_mock_transport(
+        {
+            "GET /tasks?status=open": httpx.Response(200, json=[]),
+            "GET /tasks?status=claimed": httpx.Response(200, json=[]),
+            "GET /tasks?status=in_progress": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks?status=failed": httpx.Response(200, json=[]),
+        }
+    )
 
 
 def _server_with_done_task(title: str) -> httpx.MockTransport:
@@ -286,13 +286,15 @@ def _server_with_done_task(title: str) -> httpx.MockTransport:
         "task_type": "standard",
         "upgrade_details": None,
     }
-    return _make_mock_transport({
-        "GET /tasks?status=open": httpx.Response(200, json=[]),
-        "GET /tasks?status=claimed": httpx.Response(200, json=[]),
-        "GET /tasks?status=in_progress": httpx.Response(200, json=[]),
-        "GET /tasks?status=done": httpx.Response(200, json=[done_task]),
-        "GET /tasks?status=failed": httpx.Response(200, json=[]),
-    })
+    return _make_mock_transport(
+        {
+            "GET /tasks?status=open": httpx.Response(200, json=[]),
+            "GET /tasks?status=claimed": httpx.Response(200, json=[]),
+            "GET /tasks?status=in_progress": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=[done_task]),
+            "GET /tasks?status=failed": httpx.Response(200, json=[]),
+        }
+    )
 
 
 def _server_with_existing_task(title: str) -> httpx.MockTransport:
@@ -302,13 +304,15 @@ def _server_with_existing_task(title: str) -> httpx.MockTransport:
         "title": title,
         "status": "open",
     }
-    return _make_mock_transport({
-        "GET /tasks?status=open": httpx.Response(200, json=[existing]),
-        "GET /tasks?status=claimed": httpx.Response(200, json=[]),
-        "GET /tasks?status=in_progress": httpx.Response(200, json=[]),
-        "GET /tasks?status=done": httpx.Response(200, json=[]),
-        "GET /tasks?status=failed": httpx.Response(200, json=[]),
-    })
+    return _make_mock_transport(
+        {
+            "GET /tasks?status=open": httpx.Response(200, json=[existing]),
+            "GET /tasks?status=claimed": httpx.Response(200, json=[]),
+            "GET /tasks?status=in_progress": httpx.Response(200, json=[]),
+            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks?status=failed": httpx.Response(200, json=[]),
+        }
+    )
 
 
 class TestSyncBacklogToServer:

@@ -1,7 +1,7 @@
 """Unit tests for Codex, Gemini, Qwen, and Generic adapter spawn/kill/is_alive."""
+
 from __future__ import annotations
 
-import os
 import signal
 import subprocess
 import sys
@@ -15,7 +15,6 @@ from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.core.models import ModelConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -709,14 +708,14 @@ class TestQwenSpawnMissingBinary:
                 "bernstein.adapters.qwen.subprocess.Popen",
                 side_effect=FileNotFoundError("No such file"),
             ),
+            pytest.raises(RuntimeError, match="not found in PATH"),
         ):
-            with pytest.raises(RuntimeError, match="not found in PATH"):
-                adapter.spawn(
-                    prompt="hello",
-                    workdir=tmp_path,
-                    model_config=ModelConfig(model="sonnet", effort="high"),
-                    session_id="qwen-missing",
-                )
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="qwen-missing",
+            )
 
     def test_permission_error_raises_runtime_error(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
@@ -727,11 +726,11 @@ class TestQwenSpawnMissingBinary:
                 "bernstein.adapters.qwen.subprocess.Popen",
                 side_effect=PermissionError("Permission denied"),
             ),
+            pytest.raises(RuntimeError, match="[Pp]ermission"),
         ):
-            with pytest.raises(RuntimeError, match="[Pp]ermission"):
-                adapter.spawn(
-                    prompt="hello",
-                    workdir=tmp_path,
-                    model_config=ModelConfig(model="sonnet", effort="high"),
-                    session_id="qwen-perm",
-                )
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="qwen-perm",
+            )

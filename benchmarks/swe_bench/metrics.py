@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import statistics
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 InstanceStatus = Literal["resolved", "failed", "error", "skipped"]
 
@@ -36,7 +37,7 @@ class InstanceResult:
     wall_time_s: float  # Total wall-clock time for the full pipeline
     total_tokens: int
     total_cost_usd: float
-    agent_traces: list[AgentTrace] = field(default_factory=list)
+    agent_traces: list[AgentTrace] = field(default_factory=lambda: list[AgentTrace]())
     error_message: str = ""
     patch: str = ""  # Final unified diff applied to the repo
 
@@ -44,7 +45,7 @@ class InstanceResult:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "InstanceResult":
+    def from_dict(cls, data: dict[str, object]) -> InstanceResult:
         traces = [AgentTrace(**t) for t in data.pop("agent_traces", [])]  # type: ignore[arg-type]
         return cls(**data, agent_traces=traces)  # type: ignore[arg-type]
 
@@ -152,10 +153,7 @@ class ResultStore:
 
     def already_evaluated(self, scenario_name: str, instance_id: str) -> bool:
         """Check whether an instance has already been evaluated (for resumption)."""
-        for result in self.load(scenario_name):
-            if result.instance_id == instance_id:
-                return True
-        return False
+        return any(result.instance_id == instance_id for result in self.load(scenario_name))
 
     def save_summary(self, summary: ScenarioSummary) -> Path:
         """Write scenario summary to a JSON file and return the path."""

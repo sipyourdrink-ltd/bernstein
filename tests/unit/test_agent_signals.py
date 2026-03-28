@@ -1,4 +1,5 @@
 """Tests for AgentSignalManager — WAKEUP / SHUTDOWN / HEARTBEAT signal files."""
+
 from __future__ import annotations
 
 import json
@@ -9,7 +10,6 @@ import pytest
 
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.models import AgentHeartbeat
-
 
 # ---------------------------------------------------------------------------
 # AgentHeartbeat model

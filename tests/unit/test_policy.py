@@ -1,4 +1,5 @@
 """Tests for the policy engine — policy loading, evaluation, and management."""
+
 from __future__ import annotations
 
 import tempfile
@@ -380,23 +381,25 @@ class TestPolicyEngine:
         assert priorities == sorted(priorities, reverse=True)
 
     def test_evaluate_with_matching_policy(self) -> None:
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "test-free-tier",
-                    "name": "Free Tier Test",
-                    "description": "Test free tier routing",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [
-                        {"field": "task.complexity", "operator": "in", "value": ["low", "medium"]},
-                    ],
-                    "actions": [
-                        {"type": "require_free_tier", "value": True},
-                    ],
-                }
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "test-free-tier",
+                        "name": "Free Tier Test",
+                        "description": "Test free tier routing",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [
+                            {"field": "task.complexity", "operator": "in", "value": ["low", "medium"]},
+                        ],
+                        "actions": [
+                            {"type": "require_free_tier", "value": True},
+                        ],
+                    }
+                ]
+            }
+        )
 
         context = create_context(
             task={"complexity": "low"},
@@ -406,23 +409,25 @@ class TestPolicyEngine:
         assert decision.get("require_free_tier") is True
 
     def test_evaluate_with_no_matching_policies(self) -> None:
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "test-no-match",
-                    "name": "No Match Test",
-                    "description": "Test no matching",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [
-                        {"field": "task.role", "operator": "equals", "value": "backend"},
-                    ],
-                    "actions": [
-                        {"type": "set_provider", "value": "oxen"},
-                    ],
-                }
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "test-no-match",
+                        "name": "No Match Test",
+                        "description": "Test no matching",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [
+                            {"field": "task.role", "operator": "equals", "value": "backend"},
+                        ],
+                        "actions": [
+                            {"type": "set_provider", "value": "oxen"},
+                        ],
+                    }
+                ]
+            }
+        )
 
         context = create_context(
             task={"role": "manager"},  # Doesn't match
@@ -432,36 +437,38 @@ class TestPolicyEngine:
         assert decision == {"fallback": []}
 
     def test_evaluate_multiple_policies_merge_actions(self) -> None:
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "policy-1",
-                    "name": "Policy 1",
-                    "description": "First policy",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [
-                        {"field": "task.complexity", "operator": "equals", "value": "medium"},
-                    ],
-                    "actions": [
-                        {"type": "set_provider", "value": "oxen"},
-                    ],
-                },
-                {
-                    "id": "policy-2",
-                    "name": "Policy 2",
-                    "description": "Second policy",
-                    "priority": 90,
-                    "enabled": True,
-                    "conditions": [
-                        {"field": "task.complexity", "operator": "equals", "value": "medium"},
-                    ],
-                    "actions": [
-                        {"type": "set_max_tokens", "value": 50000},
-                    ],
-                },
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "policy-1",
+                        "name": "Policy 1",
+                        "description": "First policy",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [
+                            {"field": "task.complexity", "operator": "equals", "value": "medium"},
+                        ],
+                        "actions": [
+                            {"type": "set_provider", "value": "oxen"},
+                        ],
+                    },
+                    {
+                        "id": "policy-2",
+                        "name": "Policy 2",
+                        "description": "Second policy",
+                        "priority": 90,
+                        "enabled": True,
+                        "conditions": [
+                            {"field": "task.complexity", "operator": "equals", "value": "medium"},
+                        ],
+                        "actions": [
+                            {"type": "set_max_tokens", "value": 50000},
+                        ],
+                    },
+                ]
+            }
+        )
 
         context = create_context(
             task={"complexity": "medium"},
@@ -473,36 +480,38 @@ class TestPolicyEngine:
         assert decision["max_tokens"] == 50000
 
     def test_evaluate_higher_priority_overrides_lower(self) -> None:
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "policy-high",
-                    "name": "High Priority",
-                    "description": "Higher priority",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [
-                        {"field": "task.role", "operator": "always", "value": None},
-                    ],
-                    "actions": [
-                        {"type": "set_provider", "value": "oxen"},
-                    ],
-                },
-                {
-                    "id": "policy-low",
-                    "name": "Low Priority",
-                    "description": "Lower priority",
-                    "priority": 50,
-                    "enabled": True,
-                    "conditions": [
-                        {"field": "task.role", "operator": "always", "value": None},
-                    ],
-                    "actions": [
-                        {"type": "set_provider", "value": "openrouter"},
-                    ],
-                },
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "policy-high",
+                        "name": "High Priority",
+                        "description": "Higher priority",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [
+                            {"field": "task.role", "operator": "always", "value": None},
+                        ],
+                        "actions": [
+                            {"type": "set_provider", "value": "oxen"},
+                        ],
+                    },
+                    {
+                        "id": "policy-low",
+                        "name": "Low Priority",
+                        "description": "Lower priority",
+                        "priority": 50,
+                        "enabled": True,
+                        "conditions": [
+                            {"field": "task.role", "operator": "always", "value": None},
+                        ],
+                        "actions": [
+                            {"type": "set_provider", "value": "openrouter"},
+                        ],
+                    },
+                ]
+            }
+        )
 
         context = create_context(task={"role": "backend"})
         decision = engine.evaluate(context["task"])
@@ -562,28 +571,30 @@ policies:
         assert engine.policies[0].id == "new-policy"
 
     def test_remove_policy(self) -> None:
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "to-remove",
-                    "name": "To Remove",
-                    "description": "Will be removed",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [],
-                    "actions": [],
-                },
-                {
-                    "id": "to-keep",
-                    "name": "To Keep",
-                    "description": "Will be kept",
-                    "priority": 90,
-                    "enabled": True,
-                    "conditions": [],
-                    "actions": [],
-                },
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "to-remove",
+                        "name": "To Remove",
+                        "description": "Will be removed",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [],
+                        "actions": [],
+                    },
+                    {
+                        "id": "to-keep",
+                        "name": "To Keep",
+                        "description": "Will be kept",
+                        "priority": 90,
+                        "enabled": True,
+                        "conditions": [],
+                        "actions": [],
+                    },
+                ]
+            }
+        )
 
         result = engine.remove_policy("to-remove")
 
@@ -599,19 +610,21 @@ policies:
         assert result is False
 
     def test_enable_policy(self) -> None:
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "disabled-policy",
-                    "name": "Disabled",
-                    "description": "Initially disabled",
-                    "priority": 100,
-                    "enabled": False,
-                    "conditions": [],
-                    "actions": [],
-                }
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "disabled-policy",
+                        "name": "Disabled",
+                        "description": "Initially disabled",
+                        "priority": 100,
+                        "enabled": False,
+                        "conditions": [],
+                        "actions": [],
+                    }
+                ]
+            }
+        )
 
         result = engine.enable_policy("disabled-policy")
 
@@ -619,19 +632,21 @@ policies:
         assert engine.policies[0].enabled is True
 
     def test_disable_policy(self) -> None:
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "enabled-policy",
-                    "name": "Enabled",
-                    "description": "Initially enabled",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [],
-                    "actions": [],
-                }
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "enabled-policy",
+                        "name": "Enabled",
+                        "description": "Initially enabled",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [],
+                        "actions": [],
+                    }
+                ]
+            }
+        )
 
         result = engine.disable_policy("enabled-policy")
 
@@ -639,19 +654,21 @@ policies:
         assert engine.policies[0].enabled is False
 
     def test_get_policy(self) -> None:
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "test-policy",
-                    "name": "Test",
-                    "description": "Test policy",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [],
-                    "actions": [],
-                }
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "test-policy",
+                        "name": "Test",
+                        "description": "Test policy",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [],
+                        "actions": [],
+                    }
+                ]
+            }
+        )
 
         policy = engine.get_policy("test-policy")
 
@@ -666,28 +683,30 @@ policies:
         assert policy is None
 
     def test_list_policies(self) -> None:
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "policy-1",
-                    "name": "Policy One",
-                    "description": "First",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [{"field": "task.role", "operator": "always", "value": None}],
-                    "actions": [{"type": "set_provider", "value": "oxen"}],
-                },
-                {
-                    "id": "policy-2",
-                    "name": "Policy Two",
-                    "description": "Second",
-                    "priority": 90,
-                    "enabled": False,
-                    "conditions": [],
-                    "actions": [],
-                },
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "policy-1",
+                        "name": "Policy One",
+                        "description": "First",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [{"field": "task.role", "operator": "always", "value": None}],
+                        "actions": [{"type": "set_provider", "value": "oxen"}],
+                    },
+                    {
+                        "id": "policy-2",
+                        "name": "Policy Two",
+                        "description": "Second",
+                        "priority": 90,
+                        "enabled": False,
+                        "conditions": [],
+                        "actions": [],
+                    },
+                ]
+            }
+        )
 
         policies = engine.list_policies()
 
@@ -920,25 +939,27 @@ class TestPolicyEngineIntegration:
 
     def test_budget_conservation_scenario(self) -> None:
         """Test budget conservation when budget is running low."""
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "budget-conservation",
-                    "name": "Budget Conservation",
-                    "description": "Switch to free tiers when budget is low",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [
-                        {"field": "budget.percent_used", "operator": "greater_than", "value": 80},
-                        {"field": "task.priority", "operator": "greater_than", "value": 1},
-                    ],
-                    "actions": [
-                        {"type": "require_free_tier", "value": True},
-                        {"type": "set_max_cost", "value": 0.01},
-                    ],
-                }
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "budget-conservation",
+                        "name": "Budget Conservation",
+                        "description": "Switch to free tiers when budget is low",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [
+                            {"field": "budget.percent_used", "operator": "greater_than", "value": 80},
+                            {"field": "task.priority", "operator": "greater_than", "value": 1},
+                        ],
+                        "actions": [
+                            {"type": "require_free_tier", "value": True},
+                            {"type": "set_max_cost", "value": 0.01},
+                        ],
+                    }
+                ]
+            }
+        )
 
         context = create_context(
             task={"priority": 2},  # Not critical
@@ -951,24 +972,26 @@ class TestPolicyEngineIntegration:
 
     def test_rate_limit_avoidance_scenario(self) -> None:
         """Test provider switching when approaching rate limits."""
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "rate-limit-avoidance",
-                    "name": "Rate Limit Avoidance",
-                    "description": "Switch when approaching rate limit",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [
-                        {"field": "provider.rate_limit_remaining_percent", "operator": "less_than", "value": 20},
-                    ],
-                    "actions": [
-                        {"type": "switch_provider", "value": "next_best_available"},
-                        {"type": "add_cooldown", "value": 60},
-                    ],
-                }
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "rate-limit-avoidance",
+                        "name": "Rate Limit Avoidance",
+                        "description": "Switch when approaching rate limit",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [
+                            {"field": "provider.rate_limit_remaining_percent", "operator": "less_than", "value": 20},
+                        ],
+                        "actions": [
+                            {"type": "switch_provider", "value": "next_best_available"},
+                            {"type": "add_cooldown", "value": 60},
+                        ],
+                    }
+                ]
+            }
+        )
 
         context = create_context(
             task={"role": "backend"},
@@ -981,25 +1004,27 @@ class TestPolicyEngineIntegration:
 
     def test_batch_small_tasks_scenario(self) -> None:
         """Test batching of small tasks."""
-        engine = PolicyEngine.from_dict({
-            "policies": [
-                {
-                    "id": "batch-small-tasks",
-                    "name": "Batch Small Tasks",
-                    "description": "Combine small tasks",
-                    "priority": 100,
-                    "enabled": True,
-                    "conditions": [
-                        {"field": "task.estimated_minutes", "operator": "less_than", "value": 15},
-                        {"field": "queue.similar_tasks_count", "operator": "greater_than", "value": 2},
-                    ],
-                    "actions": [
-                        {"type": "set_batch_size", "value": 3},
-                        {"type": "set_batch_timeout", "value": 300},
-                    ],
-                }
-            ]
-        })
+        engine = PolicyEngine.from_dict(
+            {
+                "policies": [
+                    {
+                        "id": "batch-small-tasks",
+                        "name": "Batch Small Tasks",
+                        "description": "Combine small tasks",
+                        "priority": 100,
+                        "enabled": True,
+                        "conditions": [
+                            {"field": "task.estimated_minutes", "operator": "less_than", "value": 15},
+                            {"field": "queue.similar_tasks_count", "operator": "greater_than", "value": 2},
+                        ],
+                        "actions": [
+                            {"type": "set_batch_size", "value": 3},
+                            {"type": "set_batch_timeout", "value": 300},
+                        ],
+                    }
+                ]
+            }
+        )
 
         context = create_context(
             task={"estimated_minutes": 10},

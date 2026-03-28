@@ -10,7 +10,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from bernstein.core.notifications import (
     NotificationManager,
@@ -21,7 +20,6 @@ from bernstein.core.notifications import (
     format_telegram,
     format_webhook,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

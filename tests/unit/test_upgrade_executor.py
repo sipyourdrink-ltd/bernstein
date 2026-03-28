@@ -1,4 +1,5 @@
 """Tests for FileUpgradeExecutor — YAML read-modify-write and rollback."""
+
 from __future__ import annotations
 
 import asyncio
@@ -18,17 +19,18 @@ from bernstein.core.evolution import (
     FileUpgradeExecutor,
     UpgradeCategory,
     UpgradeProposal,
-    UpgradeStatus,
 )
 from bernstein.core.models import RiskAssessment, RollbackPlan, Task, TaskStatus, TaskType
 from bernstein.core.upgrade_executor import (
     FileChange,
     UpgradeExecutor,
     UpgradeReviewer,
-    UpgradeStatus as ExecutorUpgradeStatus,
     UpgradeTransaction,
     UpgradeType,
     create_upgrade_from_task,
+)
+from bernstein.core.upgrade_executor import (
+    UpgradeStatus as ExecutorUpgradeStatus,
 )
 
 
@@ -97,9 +99,7 @@ class TestFileUpgradeExecutorPolicyUpdate:
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir) / "config"
             config_dir.mkdir(parents=True)
-            existing_policies: dict[str, Any] = {
-                "policies": [{"id": "existing-policy", "name": "Existing"}]
-            }
+            existing_policies: dict[str, Any] = {"policies": [{"id": "existing-policy", "name": "Existing"}]}
             with (config_dir / "policies.yaml").open("w") as f:
                 yaml.dump(existing_policies, f)
 
@@ -152,9 +152,7 @@ class TestFileUpgradeExecutorRoutingRules:
             executor = FileUpgradeExecutor(Path(tmpdir))
 
             for i in range(3):
-                executor.execute_upgrade(
-                    _make_proposal(UpgradeCategory.ROUTING_RULES, proposal_id=f"RT-{i:03d}")
-                )
+                executor.execute_upgrade(_make_proposal(UpgradeCategory.ROUTING_RULES, proposal_id=f"RT-{i:03d}"))
 
             config_file = Path(tmpdir) / "config" / "routing.yaml"
             with config_file.open() as f:
@@ -178,11 +176,7 @@ class TestFileUpgradeExecutorProviderConfig:
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir) / "config"
             config_dir.mkdir(parents=True)
-            existing: dict[str, Any] = {
-                "providers": {
-                    "openrouter_free": {"tier": "free", "cost_per_1k_tokens": 0.0}
-                }
-            }
+            existing: dict[str, Any] = {"providers": {"openrouter_free": {"tier": "free", "cost_per_1k_tokens": 0.0}}}
             with (config_dir / "providers.yaml").open("w") as f:
                 yaml.dump(existing, f)
 
@@ -393,9 +387,7 @@ class TestUpgradeExecutorCreateBackups:
         target = tmp_path / "target.py"
         target.write_text("original content")
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="target.py", operation="modify", new_content="new")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="target.py", operation="modify", new_content="new")])
         asyncio.run(executor._create_backups(txn))
         assert txn.file_changes[0].backup_path is not None
         assert Path(txn.file_changes[0].backup_path).read_text() == "original content"
@@ -404,25 +396,19 @@ class TestUpgradeExecutorCreateBackups:
         target = tmp_path / "delete_me.py"
         target.write_text("to be deleted")
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="delete_me.py", operation="delete")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="delete_me.py", operation="delete")])
         asyncio.run(executor._create_backups(txn))
         assert txn.file_changes[0].backup_path is not None
 
     def test_no_backup_for_create(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="new_file.py", operation="create", new_content="x")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="new_file.py", operation="create", new_content="x")])
         asyncio.run(executor._create_backups(txn))
         assert txn.file_changes[0].backup_path is None
 
     def test_backup_skipped_when_file_missing(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="nonexistent.py", operation="modify", new_content="x")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="nonexistent.py", operation="modify", new_content="x")])
         asyncio.run(executor._create_backups(txn))
         # No backup since the source file doesn't exist
         assert txn.file_changes[0].backup_path is None
@@ -433,17 +419,13 @@ class TestUpgradeExecutorApplyChanges:
 
     def test_create_writes_new_file(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="sub/new.py", operation="create", new_content="hello")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="sub/new.py", operation="create", new_content="hello")])
         asyncio.run(executor._apply_changes(txn))
         assert (tmp_path / "sub" / "new.py").read_text() == "hello"
 
     def test_create_with_empty_content(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="empty.py", operation="create")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="empty.py", operation="create")])
         asyncio.run(executor._apply_changes(txn))
         assert (tmp_path / "empty.py").exists()
         assert (tmp_path / "empty.py").read_text() == ""
@@ -452,9 +434,7 @@ class TestUpgradeExecutorApplyChanges:
         target = tmp_path / "mod.py"
         target.write_text("old content")
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="mod.py", operation="modify", new_content="new content")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="mod.py", operation="modify", new_content="new content")])
         asyncio.run(executor._apply_changes(txn))
         assert target.read_text() == "new content"
 
@@ -462,9 +442,7 @@ class TestUpgradeExecutorApplyChanges:
         target = tmp_path / "unchanged.py"
         target.write_text("original")
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="unchanged.py", operation="modify", new_content=None)]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="unchanged.py", operation="modify", new_content=None)])
         asyncio.run(executor._apply_changes(txn))
         assert target.read_text() == "original"
 
@@ -472,17 +450,13 @@ class TestUpgradeExecutorApplyChanges:
         target = tmp_path / "bye.py"
         target.write_text("goodbye")
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="bye.py", operation="delete")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="bye.py", operation="delete")])
         asyncio.run(executor._apply_changes(txn))
         assert not target.exists()
 
     def test_delete_nonexistent_file_is_noop(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="ghost.py", operation="delete")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="ghost.py", operation="delete")])
         asyncio.run(executor._apply_changes(txn))  # Should not raise
 
 
@@ -493,16 +467,12 @@ class TestUpgradeExecutorVerifyChanges:
         target = tmp_path / "created.py"
         target.write_text("x")
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="created.py", operation="create", new_content="x")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="created.py", operation="create", new_content="x")])
         asyncio.run(executor._verify_changes(txn))  # Should not raise
 
     def test_verify_create_raises_when_file_missing(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="missing.py", operation="create", new_content="x")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="missing.py", operation="create", new_content="x")])
         with pytest.raises(ValueError, match="missing.py"):
             asyncio.run(executor._verify_changes(txn))
 
@@ -510,9 +480,7 @@ class TestUpgradeExecutorVerifyChanges:
         target = tmp_path / "mod.py"
         target.write_text("wrong content")
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="mod.py", operation="modify", new_content="expected")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="mod.py", operation="modify", new_content="expected")])
         with pytest.raises(ValueError, match="content mismatch"):
             asyncio.run(executor._verify_changes(txn))
 
@@ -520,9 +488,7 @@ class TestUpgradeExecutorVerifyChanges:
         target = tmp_path / "zombie.py"
         target.write_text("still here")
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="zombie.py", operation="delete")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="zombie.py", operation="delete")])
         with pytest.raises(ValueError, match="zombie.py"):
             asyncio.run(executor._verify_changes(txn))
 
@@ -534,9 +500,7 @@ class TestUpgradeExecutorRollbackFromBackups:
         target = tmp_path / "restored.py"
         target.write_text("new content — bad")
         executor = _make_executor(tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="restored.py", operation="modify", new_content="new")]
-        )
+        txn = _make_transaction(file_changes=[FileChange(path="restored.py", operation="modify", new_content="new")])
         # Create a manual backup
         backup = tmp_path / ".sdd" / "upgrades" / "backups" / "txn-test-001" / "restored.py"
         backup.parent.mkdir(parents=True, exist_ok=True)
@@ -561,16 +525,16 @@ class TestUpgradeReviewer:
 
     def test_approve_verdict_parsed_correctly(self, tmp_path: Path) -> None:
         reviewer = UpgradeReviewer(workdir=tmp_path)
-        txn = _make_transaction(
-            file_changes=[FileChange(path="x.py", operation="create", new_content="x")]
+        txn = _make_transaction(file_changes=[FileChange(path="x.py", operation="create", new_content="x")])
+        approve_json = json.dumps(
+            {
+                "verdict": "approve",
+                "reasoning": "Looks good",
+                "feedback": "No issues",
+                "risk_level": "low",
+                "suggested_improvements": [],
+            }
         )
-        approve_json = json.dumps({
-            "verdict": "approve",
-            "reasoning": "Looks good",
-            "feedback": "No issues",
-            "risk_level": "low",
-            "suggested_improvements": [],
-        })
 
         async def run() -> Any:
             with patch("bernstein.core.upgrade_executor.call_llm", new=AsyncMock(return_value=approve_json)):
@@ -583,11 +547,13 @@ class TestUpgradeReviewer:
     def test_reject_verdict_parsed_correctly(self, tmp_path: Path) -> None:
         reviewer = UpgradeReviewer(workdir=tmp_path)
         txn = _make_transaction()
-        reject_json = json.dumps({
-            "verdict": "reject",
-            "reasoning": "Too risky",
-            "feedback": "Do not proceed",
-        })
+        reject_json = json.dumps(
+            {
+                "verdict": "reject",
+                "reasoning": "Too risky",
+                "feedback": "Do not proceed",
+            }
+        )
 
         async def run() -> Any:
             with patch("bernstein.core.upgrade_executor.call_llm", new=AsyncMock(return_value=reject_json)):
@@ -653,11 +619,15 @@ class TestSubmitUpgradeFlow:
         async def run() -> UpgradeTransaction:
             mock_reviewer = AsyncMock()
             mock_reviewer.review_upgrade = AsyncMock(
-                return_value=type("R", (), {
-                    "verdict": "approve",
-                    "feedback": "ok",
-                    "reasoning": "good",
-                })()
+                return_value=type(
+                    "R",
+                    (),
+                    {
+                        "verdict": "approve",
+                        "feedback": "ok",
+                        "reasoning": "good",
+                    },
+                )()
             )
             executor._reviewer = mock_reviewer
             return await executor.submit_upgrade(
@@ -677,11 +647,15 @@ class TestSubmitUpgradeFlow:
         async def run() -> UpgradeTransaction:
             mock_reviewer = AsyncMock()
             mock_reviewer.review_upgrade = AsyncMock(
-                return_value=type("R", (), {
-                    "verdict": "reject",
-                    "feedback": "Nope",
-                    "reasoning": "Bad idea",
-                })()
+                return_value=type(
+                    "R",
+                    (),
+                    {
+                        "verdict": "reject",
+                        "feedback": "Nope",
+                        "reasoning": "Bad idea",
+                    },
+                )()
             )
             executor._reviewer = mock_reviewer
             return await executor.submit_upgrade(
@@ -701,11 +675,15 @@ class TestSubmitUpgradeFlow:
         async def run() -> UpgradeTransaction:
             mock_reviewer = AsyncMock()
             mock_reviewer.review_upgrade = AsyncMock(
-                return_value=type("R", (), {
-                    "verdict": "reject",
-                    "feedback": "",
-                    "reasoning": "skip",
-                })()
+                return_value=type(
+                    "R",
+                    (),
+                    {
+                        "verdict": "reject",
+                        "feedback": "",
+                        "reasoning": "skip",
+                    },
+                )()
             )
             executor._reviewer = mock_reviewer
             return await executor.submit_upgrade(

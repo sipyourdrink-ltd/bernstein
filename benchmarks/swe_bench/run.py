@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -42,7 +43,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from benchmarks.swe_bench.harness import Harness, HarnessConfig  # noqa: E402
-from benchmarks.swe_bench.metrics import ResultStore, aggregate  # noqa: E402
+from benchmarks.swe_bench.metrics import ResultStore, ScenarioSummary  # noqa: E402
 from benchmarks.swe_bench.report import generate_from_results_dir  # noqa: E402
 from benchmarks.swe_bench.scenarios import ALL_SCENARIOS, SCENARIO_BY_NAME  # noqa: E402
 
@@ -104,7 +105,7 @@ def cli() -> None:
     default=False,
     help="Skip generating the markdown report after evaluation.",
 )
-def eval(  # noqa: A001
+def eval(
     scenarios: tuple[str, ...],
     limit: int | None,
     results_dir: Path,
@@ -130,19 +131,19 @@ def eval(  # noqa: A001
     # Load instances once to share across scenarios
     try:
         from datasets import load_dataset  # type: ignore[import]
+
         click.echo("Loading dataset…")
-        ds = load_dataset(dataset, split="test")
-        instances = list(ds)  # type: ignore[arg-type]
+        ds = load_dataset(dataset, split="test")  # pyright: ignore[reportUnknownVariableType]
+        instances: list[Any] = list(ds)  # pyright: ignore[reportUnknownArgumentType]
         click.echo(f"Loaded {len(instances)} instances.\n")
     except ImportError:
         click.echo(
-            "ERROR: 'datasets' package not installed.\n"
-            "Install it with: uv add datasets swebench\n",
+            "ERROR: 'datasets' package not installed.\nInstall it with: uv add datasets swebench\n",
             err=True,
         )
         sys.exit(1)
 
-    summaries = {}
+    eval_summaries: dict[str, ScenarioSummary] = {}
     for scenario in selected:
         click.echo(f"{'─' * 60}")
         click.echo(f"Scenario: {scenario.name}")
@@ -151,7 +152,7 @@ def eval(  # noqa: A001
         click.echo()
 
         summary = harness.run_scenario(scenario, instances=instances, limit=limit)
-        summaries[scenario.name] = summary
+        eval_summaries[scenario.name] = summary
 
         click.echo(
             f"  Done. Resolve rate: {summary.resolve_rate * 100:.1f}% "
@@ -163,7 +164,7 @@ def eval(  # noqa: A001
     click.echo(f"\n{'═' * 60}")
     click.echo("SUMMARY")
     click.echo(f"{'═' * 60}")
-    _print_summary_table(list(summaries.values()))
+    _print_summary_table(list(eval_summaries.values()))
 
     if not no_report:
         report_path = generate_from_results_dir(results_dir)
@@ -211,9 +212,7 @@ def list_scenarios() -> None:
         click.echo(f"  {s.name}")
         click.echo(f"    {s.description}")
         click.echo(f"    Agents: {', '.join(f'{a.role}({a.model})' for a in s.agents)}")
-        click.echo(
-            f"    Estimated cost/instance: ${s.estimated_cost_per_instance:.4f}"
-        )
+        click.echo(f"    Estimated cost/instance: ${s.estimated_cost_per_instance:.4f}")
         click.echo()
 
 
@@ -273,14 +272,13 @@ def mock(
     harness = Harness(cfg)
 
     click.echo(
-        f"\nGenerating mock results for {len(selected)} scenario(s), "
-        f"{instances} instances each  (seed={seed})\n"
+        f"\nGenerating mock results for {len(selected)} scenario(s), {instances} instances each  (seed={seed})\n"
     )
 
-    summaries = {}
+    mock_summaries: dict[str, ScenarioSummary] = {}
     for scenario in selected:
         summary = harness.mock_scenario(scenario, n_instances=instances, seed=seed)
-        summaries[scenario.name] = summary
+        mock_summaries[scenario.name] = summary
         click.echo(
             f"  {scenario.name:<22}  "
             f"{summary.resolve_rate * 100:.1f}%  "
@@ -291,7 +289,7 @@ def mock(
     click.echo(f"\n{'═' * 60}")
     click.echo("MOCK SUMMARY")
     click.echo(f"{'═' * 60}")
-    _print_summary_table(list(summaries.values()))
+    _print_summary_table(list(mock_summaries.values()))
 
     if not no_report:
         report_path = generate_from_results_dir(results_dir)
@@ -331,18 +329,14 @@ def status(results_dir: Path) -> None:
         )
 
 
-def _print_summary_table(summaries: list) -> None:  # type: ignore[type-arg]
-    from benchmarks.swe_bench.metrics import ScenarioSummary
-
+def _print_summary_table(summaries: list[ScenarioSummary]) -> None:
     col_w = [20, 14, 12, 18, 12]
     headers = ["Scenario", "Resolve rate", "Mean time", "Cost/issue", "Total cost"]
-    header_line = "  ".join(h.ljust(w) for h, w in zip(headers, col_w))
+    header_line = "  ".join(h.ljust(w) for h, w in zip(headers, col_w, strict=True))
     click.echo(header_line)
     click.echo("─" * len(header_line))
 
     for s in summaries:
-        if not isinstance(s, ScenarioSummary):
-            continue
         cols = [
             s.scenario_name,
             f"{s.resolve_rate * 100:.1f}% ({s.resolved}/{s.total_instances - s.skipped})",
@@ -350,7 +344,7 @@ def _print_summary_table(summaries: list) -> None:  # type: ignore[type-arg]
             f"${s.mean_cost_per_instance_usd:.4f}",
             f"${s.total_cost_usd:.2f}",
         ]
-        click.echo("  ".join(c.ljust(w) for c, w in zip(cols, col_w)))
+        click.echo("  ".join(c.ljust(w) for c, w in zip(cols, col_w, strict=True)))
 
 
 if __name__ == "__main__":

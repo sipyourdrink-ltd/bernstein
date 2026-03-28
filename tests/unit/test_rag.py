@@ -4,6 +4,7 @@ NOTE: FTS5 indexer leaks memory during repeated build() calls in tests.
 Skipped in CI by default; run with: pytest -m "not slow" to exclude,
 or pytest tests/unit/test_rag.py to run explicitly.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,10 +25,10 @@ from bernstein.core.rag import (
     build_or_update_index,
 )
 
-
 # ---------------------------------------------------------------------------
 # _should_skip_path
 # ---------------------------------------------------------------------------
+
 
 class TestShouldSkipPath:
     def test_skips_git(self) -> None:
@@ -56,17 +57,10 @@ class TestShouldSkipPath:
 # _extract_python_chunks
 # ---------------------------------------------------------------------------
 
+
 class TestExtractPythonChunks:
     def test_splits_functions(self) -> None:
-        source = (
-            "import os\n"
-            "\n"
-            "def foo():\n"
-            "    return 1\n"
-            "\n"
-            "def bar():\n"
-            "    return 2\n"
-        )
+        source = "import os\n\ndef foo():\n    return 1\n\ndef bar():\n    return 2\n"
         chunks = _extract_python_chunks(source, "test.py")
         symbols = [c["symbols"] for c in chunks]
         assert "<module>" in symbols
@@ -74,11 +68,7 @@ class TestExtractPythonChunks:
         assert "bar" in symbols
 
     def test_splits_classes(self) -> None:
-        source = (
-            "class MyClass:\n"
-            "    def method(self):\n"
-            "        pass\n"
-        )
+        source = "class MyClass:\n    def method(self):\n        pass\n"
         chunks = _extract_python_chunks(source, "test.py")
         symbols = [c["symbols"] for c in chunks]
         assert "MyClass" in symbols
@@ -94,13 +84,7 @@ class TestExtractPythonChunks:
         assert chunks == []
 
     def test_line_numbers_are_correct(self) -> None:
-        source = (
-            "# preamble\n"
-            "import os\n"
-            "\n"
-            "def foo():\n"
-            "    return 1\n"
-        )
+        source = "# preamble\nimport os\n\ndef foo():\n    return 1\n"
         chunks = _extract_python_chunks(source, "test.py")
         foo_chunk = next(c for c in chunks if c["symbols"] == "foo")
         assert foo_chunk["line_start"] == 4
@@ -116,6 +100,7 @@ class TestExtractPythonChunks:
 # ---------------------------------------------------------------------------
 # _line_chunks
 # ---------------------------------------------------------------------------
+
 
 class TestLineChunks:
     def test_single_chunk(self) -> None:
@@ -137,6 +122,7 @@ class TestLineChunks:
 # ---------------------------------------------------------------------------
 # CodebaseIndexer
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def project(tmp_path: Path) -> Path:
@@ -183,10 +169,9 @@ class TestCodebaseIndexer:
 
         # Modify a file (bump mtime).
         import time
+
         time.sleep(0.05)
-        (project / "src" / "main.py").write_text(
-            "def hello():\n    return 'updated'\n"
-        )
+        (project / "src" / "main.py").write_text("def hello():\n    return 'updated'\n")
 
         count = indexer.build()
         assert count == 1
@@ -285,6 +270,7 @@ class TestCodebaseIndexer:
         indexer.build()
 
         import time
+
         time.sleep(0.05)
         (project / "src" / "main.py").write_text("changed = True\n")
 
@@ -317,6 +303,7 @@ class TestCodebaseIndexer:
 # ---------------------------------------------------------------------------
 # build_or_update_index convenience
 # ---------------------------------------------------------------------------
+
 
 class TestBuildOrUpdateIndex:
     def test_returns_indexer(self, project: Path) -> None:

@@ -1,4 +1,5 @@
 """Tests for bernstein.core.bulletin — BulletinBoard."""
+
 from __future__ import annotations
 
 import json
@@ -6,14 +7,12 @@ import threading
 import time
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _msg(
     agent_id: str = "agent-1",
@@ -34,6 +33,7 @@ def _msg(
 # ---------------------------------------------------------------------------
 # post / append
 # ---------------------------------------------------------------------------
+
 
 class TestPost:
     def test_auto_timestamp_filled_in(self) -> None:
@@ -67,6 +67,7 @@ class TestPost:
 # read_since
 # ---------------------------------------------------------------------------
 
+
 class TestReadSince:
     def test_empty_board(self) -> None:
         board = BulletinBoard()
@@ -93,6 +94,7 @@ class TestReadSince:
 # ---------------------------------------------------------------------------
 # read_by_type
 # ---------------------------------------------------------------------------
+
 
 class TestReadByType:
     def test_filters_by_type(self) -> None:
@@ -122,6 +124,7 @@ class TestReadByType:
 # read_by_cell
 # ---------------------------------------------------------------------------
 
+
 class TestReadByCell:
     def test_filters_by_cell_id(self) -> None:
         board = BulletinBoard()
@@ -148,6 +151,7 @@ class TestReadByCell:
 # ---------------------------------------------------------------------------
 # flush_to_disk / load_from_disk
 # ---------------------------------------------------------------------------
+
 
 class TestDiskPersistence:
     def test_flush_writes_jsonl(self, tmp_path: Path) -> None:
@@ -195,9 +199,7 @@ class TestDiskPersistence:
 
     def test_load_skips_duplicates(self, tmp_path: Path) -> None:
         path = tmp_path / "board.jsonl"
-        path.write_text(
-            '{"agent_id": "a1", "type": "status", "content": "x", "timestamp": 1.0, "cell_id": null}\n'
-        )
+        path.write_text('{"agent_id": "a1", "type": "status", "content": "x", "timestamp": 1.0, "cell_id": null}\n')
         board = BulletinBoard()
         board.post(_msg(timestamp=1.0))  # same timestamp
         n = board.load_from_disk(path)
@@ -214,6 +216,7 @@ class TestDiskPersistence:
 # Thread safety
 # ---------------------------------------------------------------------------
 
+
 class TestThreadSafety:
     def test_concurrent_posts_no_corruption(self) -> None:
         board = BulletinBoard()
@@ -222,11 +225,13 @@ class TestThreadSafety:
 
         def post_many(thread_id: int) -> None:
             for i in range(n_per_thread):
-                board.post(_msg(
-                    agent_id=f"agent-{thread_id}",
-                    content=f"msg-{i}",
-                    timestamp=float(thread_id * 1000 + i) + 0.001,
-                ))
+                board.post(
+                    _msg(
+                        agent_id=f"agent-{thread_id}",
+                        content=f"msg-{i}",
+                        timestamp=float(thread_id * 1000 + i) + 0.001,
+                    )
+                )
 
         threads = [threading.Thread(target=post_many, args=(i,)) for i in range(n_threads)]
         for t in threads:

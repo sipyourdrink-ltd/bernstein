@@ -1,4 +1,5 @@
 """Tests for the `bernstein cost` CLI command."""
+
 from __future__ import annotations
 
 import json
@@ -138,24 +139,24 @@ def metrics_dir_with_timestamps(tmp_path: Path) -> Path:
     tasks = []
     for i in range(7):
         ts = now - i * 86400
-        tasks.append({
-            "task_id": f"task-{i}",
-            "role": "backend",
-            "model": "haiku",
-            "timestamp": ts,
-            "tokens_prompt": 500,
-            "tokens_completion": 500,
-            "cost_usd": 0.50,
-        })
+        tasks.append(
+            {
+                "task_id": f"task-{i}",
+                "role": "backend",
+                "model": "haiku",
+                "timestamp": ts,
+                "tokens_prompt": 500,
+                "tokens_completion": 500,
+                "cost_usd": 0.50,
+            }
+        )
     (mdir / "tasks.jsonl").write_text("\n".join(json.dumps(r) for r in tasks))
     return mdir
 
 
 def test_cost_json_includes_savings_vs_opus(metrics_dir_with_timestamps: Path) -> None:
     runner = CliRunner()
-    result = runner.invoke(
-        cost_cmd, ["--metrics-dir", str(metrics_dir_with_timestamps), "--json"]
-    )
+    result = runner.invoke(cost_cmd, ["--metrics-dir", str(metrics_dir_with_timestamps), "--json"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert "savings_vs_opus_usd" in data
@@ -164,9 +165,7 @@ def test_cost_json_includes_savings_vs_opus(metrics_dir_with_timestamps: Path) -
 
 def test_cost_json_includes_daily_costs(metrics_dir_with_timestamps: Path) -> None:
     runner = CliRunner()
-    result = runner.invoke(
-        cost_cmd, ["--metrics-dir", str(metrics_dir_with_timestamps), "--json"]
-    )
+    result = runner.invoke(cost_cmd, ["--metrics-dir", str(metrics_dir_with_timestamps), "--json"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert "daily_costs" in data
@@ -181,9 +180,7 @@ def test_cost_json_includes_daily_costs(metrics_dir_with_timestamps: Path) -> No
 
 def test_cost_json_includes_projected_monthly(metrics_dir_with_timestamps: Path) -> None:
     runner = CliRunner()
-    result = runner.invoke(
-        cost_cmd, ["--metrics-dir", str(metrics_dir_with_timestamps), "--json"]
-    )
+    result = runner.invoke(cost_cmd, ["--metrics-dir", str(metrics_dir_with_timestamps), "--json"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert "projected_monthly_usd" in data

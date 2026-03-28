@@ -18,8 +18,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from bernstein.core.server import read_log_tail, create_app
-
+from bernstein.core.server import create_app, read_log_tail
 
 # ---------------------------------------------------------------------------
 # Fixtures

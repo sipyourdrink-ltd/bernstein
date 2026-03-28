@@ -1,23 +1,16 @@
 """Tests for the risk-stratified ApprovalGate."""
+
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
-import pytest
-
 from bernstein.evolution.gate import (
-    CONFIDENCE_AUTO,
-    CONFIDENCE_AUTO_AUDIT,
-    CONFIDENCE_HUMAN_4H,
-    ApprovalDecision,
     ApprovalGate,
     ApprovalOutcome,
     RiskClassifier,
 )
 from bernstein.evolution.types import RiskLevel, UpgradeProposal
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -189,17 +182,13 @@ class TestApprovalGateRoute:
 
     def test_l2_low_confidence_immediate_review(self, tmp_path: Path) -> None:
         gate = self._gate(tmp_path)
-        proposal = _make_proposal(
-            target_files=[".sdd/config/routing.yaml"], confidence=0.5
-        )
+        proposal = _make_proposal(target_files=[".sdd/config/routing.yaml"], confidence=0.5)
         decision = gate.route(proposal)
         assert decision.outcome == ApprovalOutcome.HUMAN_REVIEW_IMMEDIATE
 
     def test_l3_always_blocked(self, tmp_path: Path) -> None:
         gate = self._gate(tmp_path)
-        proposal = _make_proposal(
-            target_files=["src/bernstein/core/models.py"], confidence=0.99
-        )
+        proposal = _make_proposal(target_files=["src/bernstein/core/models.py"], confidence=0.99)
         decision = gate.route(proposal)
         assert decision.outcome == ApprovalOutcome.BLOCKED
         assert decision.requires_human

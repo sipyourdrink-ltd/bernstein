@@ -1,4 +1,5 @@
 """Tests for bernstein.core.agency_loader."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,11 +8,10 @@ import pytest
 
 from bernstein.core.agency_loader import (
     AgencyAgent,
+    _map_division,
     load_agency_catalog,
     parse_agency_agent,
-    _map_division,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -50,6 +50,7 @@ def catalog_dir(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # _map_division
 # ---------------------------------------------------------------------------
+
 
 class TestMapDivision:
     """Tests for division-to-role mapping."""
@@ -101,6 +102,7 @@ class TestMapDivision:
 # parse_agency_agent — valid inputs
 # ---------------------------------------------------------------------------
 
+
 class TestParseAgencyAgentValid:
     """Tests for valid Agency persona parsing."""
 
@@ -144,6 +146,7 @@ class TestParseAgencyAgentValid:
 # parse_agency_agent — invalid inputs
 # ---------------------------------------------------------------------------
 
+
 class TestParseAgencyAgentInvalid:
     """Tests for Agency persona parsing errors."""
 
@@ -173,6 +176,7 @@ class TestParseAgencyAgentInvalid:
 # ---------------------------------------------------------------------------
 # load_agency_catalog
 # ---------------------------------------------------------------------------
+
 
 class TestLoadAgencyCatalog:
     """Tests for catalog directory loading."""
@@ -222,6 +226,7 @@ class TestLoadAgencyCatalog:
 # ---------------------------------------------------------------------------
 # Integration: spawner fallback uses agency catalog
 # ---------------------------------------------------------------------------
+
 
 class TestSpawnerAgencyCatalogIntegration:
     """Tests that the spawner _render_fallback uses agency catalog."""
@@ -298,16 +303,19 @@ class TestSpawnerAgencyCatalogIntegration:
 # SeedConfig agent_catalog field
 # ---------------------------------------------------------------------------
 
+
 class TestSeedConfigAgentCatalog:
     """Tests for the agent_catalog field in SeedConfig."""
 
     def test_default_is_none(self) -> None:
         from bernstein.core.seed import SeedConfig
+
         cfg = SeedConfig(goal="Test")
         assert cfg.agent_catalog is None
 
     def test_parses_agent_catalog_path(self, tmp_path: Path) -> None:
         from bernstein.core.seed import parse_seed
+
         seed_file = tmp_path / "bernstein.yaml"
         seed_file.write_text('goal: "Test"\nagent_catalog: "./agency_agents"\n')
         cfg = parse_seed(seed_file)
@@ -315,6 +323,7 @@ class TestSeedConfigAgentCatalog:
 
     def test_invalid_agent_catalog_type(self, tmp_path: Path) -> None:
         from bernstein.core.seed import SeedError, parse_seed
+
         seed_file = tmp_path / "bernstein.yaml"
         seed_file.write_text('goal: "Test"\nagent_catalog: [1, 2]\n')
         with pytest.raises(SeedError, match="agent_catalog must be a string"):

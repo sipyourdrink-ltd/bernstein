@@ -28,7 +28,6 @@ from bernstein.evolution.gate import (
 )
 from bernstein.evolution.types import RiskLevel, UpgradeProposal
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

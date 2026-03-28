@@ -27,6 +27,7 @@ import httpx
 from bernstein.core.agent_lifecycle import (
     check_kill_signals,
     check_stale_agents,
+    check_stalled_tasks,
     reap_dead_agents,
     refresh_agent_states,
     send_shutdown_signals,
@@ -50,6 +51,7 @@ from bernstein.core.models import (
     ClusterTopology,
     NodeCapacity,
     OrchestratorConfig,
+    ProgressSnapshot,
     Task,
     TaskType,
 )
@@ -256,6 +258,12 @@ class Orchestrator:
         # Agent signal manager: writes WAKEUP/SHUTDOWN files into
         # .sdd/runtime/signals/{session_id}/ for stale agent detection.
         self._signal_mgr = AgentSignalManager(self._workdir)
+
+        # Progress-snapshot stall detection state (see check_stalled_tasks).
+        # Tracks how many consecutive identical snapshots each task has had.
+        self._stall_counts: dict[str, int] = {}  # task_id -> consecutive identical count
+        self._last_snapshot: dict[str, ProgressSnapshot | None] = {}  # task_id -> last snapshot
+        self._last_snapshot_ts: dict[str, float] = {}  # task_id -> last snapshot timestamp
 
         # Cluster heartbeat client: when cluster mode is enabled and this node
         # is a worker (server_url points to a remote central server), send
@@ -512,6 +520,9 @@ class Orchestrator:
 
         # 4c. Check heartbeat-based staleness; send WAKEUP/SHUTDOWN as needed
         check_stale_agents(self)
+
+        # 4d. Check progress-snapshot-based stalls; send WAKEUP/SHUTDOWN/kill
+        check_stalled_tasks(self)
 
         # 5. Reap dead/stale agents and fail their tasks
         reap_dead_agents(self, result, tasks_by_status)
@@ -1762,6 +1773,31 @@ if __name__ == "__main__":
             if agency_catalog:
                 logger.info("Loaded %d agency agents from %s", len(agency_catalog), catalog_path)
 
+        # Build catalog registry and populate loaded_agents from Agency cache
+        import asyncio as _asyncio
+
+        from bernstein.agents.agency_provider import AgencyProvider as _AgencyProvider
+        from bernstein.agents.catalog import CatalogRegistry as _CatalogRegistry
+
+        catalog_registry: _CatalogRegistry | None = seed.catalogs if seed else None
+        if catalog_registry is None:
+            catalog_registry = _CatalogRegistry.default()
+
+        agency_cache_path = _AgencyProvider.default_cache_path()
+        if agency_cache_path.exists():
+            try:
+                _provider = _AgencyProvider(local_path=agency_cache_path)
+                _agency_agents = _asyncio.run(_provider.fetch_agents())
+                for _a in _agency_agents:
+                    catalog_registry.register_agent(_a)
+                logger.info(
+                    "Loaded %d Agency specialist(s) into catalog from %s",
+                    len(_agency_agents),
+                    agency_cache_path,
+                )
+            except Exception as _exc:
+                logger.warning("Failed to load Agency agents into catalog: %s", _exc)
+
         from bernstein import get_templates_dir
 
         spawner = AgentSpawner(
@@ -1772,7 +1808,7 @@ if __name__ == "__main__":
             mcp_config=mcp_config,
             mcp_manager=mcp_manager,
             agency_catalog=agency_catalog,
-            catalog=seed.catalogs if seed else None,
+            catalog=catalog_registry,
         )
         budget_usd = 0.0
         dry_run = False

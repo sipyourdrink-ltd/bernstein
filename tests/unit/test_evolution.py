@@ -1,12 +1,11 @@
 """Tests for EvolutionCoordinator — self-evolution feedback loop."""
+
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 from bernstein.core.evolution import (
     AgentMetrics,
@@ -22,7 +21,6 @@ from bernstein.core.evolution import (
     TaskMetrics,
     TrendAnalysis,
     UpgradeCategory,
-    UpgradeExecutor,
     UpgradeProposal,
     UpgradeStatus,
     get_default_coordinator,
@@ -35,7 +33,6 @@ from bernstein.core.models import (
     Task,
     TaskType,
 )
-
 
 # --- Helpers ---
 
@@ -216,8 +213,7 @@ class TestAnalysisEngine:
     def test_run_analysis(self) -> None:
         collector = MagicMock()
         collector.get_recent_task_metrics.return_value = [
-            _make_task_metrics(cost_usd=0.01 * (i + 1))
-            for i in range(20)
+            _make_task_metrics(cost_usd=0.01 * (i + 1)) for i in range(20)
         ]
         collector.get_recent_cost_metrics.return_value = []
         engine = AnalysisEngine(collector)
@@ -229,9 +225,7 @@ class TestAnalysisEngine:
 
     def test_analyze_trends_insufficient_data(self) -> None:
         collector = MagicMock()
-        collector.get_recent_task_metrics.return_value = [
-            _make_task_metrics()
-        ]  # Only 1 data point
+        collector.get_recent_task_metrics.return_value = [_make_task_metrics()]  # Only 1 data point
         engine = AnalysisEngine(collector)
 
         engine._analyze_trends()
@@ -285,10 +279,7 @@ class TestAnalysisEngine:
         collector = MagicMock()
         # Create metrics with an anomaly
         base_time = time.time()
-        metrics = [
-            _make_task_metrics(cost_usd=0.01, timestamp=base_time + i)
-            for i in range(10)
-        ]
+        metrics = [_make_task_metrics(cost_usd=0.01, timestamp=base_time + i) for i in range(10)]
         # Add one expensive outlier
         metrics.append(_make_task_metrics(cost_usd=1.0, timestamp=base_time + 11))
         collector.get_recent_task_metrics.return_value = metrics
@@ -317,7 +308,10 @@ class TestAnalysisEngine:
         engine._identify_opportunities()
 
         assert len(engine._opportunities) >= 1
-        assert "free tier" in engine._opportunities[0].title.lower() or "optimization" in engine._opportunities[0].title.lower()
+        assert (
+            "free tier" in engine._opportunities[0].title.lower()
+            or "optimization" in engine._opportunities[0].title.lower()
+        )
 
     def test_identify_opportunities_success_rate(self) -> None:
         collector = MagicMock()
@@ -573,9 +567,7 @@ class TestEvolutionCoordinator:
 
         # Add metrics that should trigger opportunities
         for _ in range(20):
-            coordinator.collector.record_task_metrics(
-                _make_task_metrics(cost_usd=0.5, janitor_passed=False)
-            )
+            coordinator.collector.record_task_metrics(_make_task_metrics(cost_usd=0.5, janitor_passed=False))
 
         proposals = coordinator.run_analysis_cycle()
 
@@ -795,8 +787,12 @@ class TestEvolutionCoordinator:
         coordinator1 = EvolutionCoordinator(tmp_path)
         task = _make_task()
         coordinator1.record_task_completion(
-            task=task, duration_seconds=45.0, cost_usd=0.02,
-            janitor_passed=True, model="sonnet", provider="anthropic",
+            task=task,
+            duration_seconds=45.0,
+            cost_usd=0.02,
+            janitor_passed=True,
+            model="sonnet",
+            provider="anthropic",
         )
 
         # Second coordinator (fresh start, simulating a process restart) should
@@ -845,6 +841,7 @@ class TestGetDefaultCoordinator:
     def test_returns_singleton(self, tmp_path: Path) -> None:
         # Reset singleton
         import bernstein.core.evolution as ev
+
         ev._default_coordinator = None
 
         coord1 = get_default_coordinator(tmp_path)
@@ -854,6 +851,7 @@ class TestGetDefaultCoordinator:
 
     def test_default_analysis_interval(self, tmp_path: Path) -> None:
         import bernstein.core.evolution as ev
+
         ev._default_coordinator = None
 
         coordinator = get_default_coordinator(tmp_path)
@@ -862,6 +860,7 @@ class TestGetDefaultCoordinator:
 
     def test_custom_analysis_interval(self, tmp_path: Path) -> None:
         import bernstein.core.evolution as ev
+
         ev._default_coordinator = None
 
         coordinator = get_default_coordinator(tmp_path, analysis_interval_minutes=30)

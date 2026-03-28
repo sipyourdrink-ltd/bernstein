@@ -156,7 +156,7 @@ class TestAppInstantiation:
 
     def test_app_custom_interval(self) -> None:
         app = BernsteinApp(poll_interval=5.0)
-        assert app._poll_interval == 5.0  # noqa: SLF001
+        assert app._poll_interval == 5.0
 
     def test_app_has_bindings(self) -> None:
         app = BernsteinApp()
@@ -170,7 +170,7 @@ class TestAppInstantiation:
     def test_count_active_agents_no_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Returns 0 when agents.json does not exist."""
         monkeypatch.chdir(tmp_path)
-        count = BernsteinApp._count_active_agents()  # noqa: SLF001
+        count = BernsteinApp._count_active_agents()
         assert count == 0
 
 

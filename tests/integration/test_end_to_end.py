@@ -4,12 +4,12 @@ Wires the real FastAPI task server (in-process via ASGI transport) together
 with the Orchestrator, exercises one full cycle:
   task create → orchestrator tick → spawn (mock adapter) → complete via API
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from starlette.testclient import TestClient
 
 from bernstein.core.models import (
@@ -20,7 +20,6 @@ from bernstein.core.models import (
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,6 +79,7 @@ def _make_orchestrator(
 # ---------------------------------------------------------------------------
 # Integration tests
 # ---------------------------------------------------------------------------
+
 
 def test_task_create_visible_to_orchestrator(tmp_path: Path) -> None:
     """Tasks created via the API are fetched by the orchestrator on the next tick."""

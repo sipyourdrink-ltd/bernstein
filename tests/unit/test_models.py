@@ -1,4 +1,5 @@
 """Tests for API tier configuration models and schema."""
+
 from __future__ import annotations
 
 import pytest
@@ -10,7 +11,6 @@ from bernstein.core.models import (
     ProviderType,
     RateLimit,
 )
-
 
 # --- ProviderType Tests ---
 
@@ -262,6 +262,7 @@ class TestSerialization:
         )
         # Dataclass can be converted to dict via __dict__ or asdict
         from dataclasses import asdict
+
         data = asdict(rate_limit)
         assert data["requests_per_minute"] == 100
         assert data["tokens_per_minute"] == 10_000
@@ -272,6 +273,7 @@ class TestSerialization:
             output_cost_per_1k_tokens=0.015,
         )
         from dataclasses import asdict
+
         data = asdict(cost)
         assert data["input_cost_per_1k_tokens"] == 0.005
         assert data["output_cost_per_1k_tokens"] == 0.015
@@ -283,6 +285,7 @@ class TestSerialization:
             remaining_requests=1000,
         )
         from dataclasses import asdict
+
         data = asdict(info)
         # ProviderType and ApiTier are enums, they serialize to their enum objects
         assert data["provider"] == ProviderType.GEMINI

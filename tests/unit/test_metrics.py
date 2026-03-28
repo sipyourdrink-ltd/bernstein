@@ -1,25 +1,23 @@
 """Dedicated tests for MetricsCollector in src/bernstein/core/metrics.py."""
+
 from __future__ import annotations
 
 import json
 import time
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from bernstein.core.metrics import (
     AgentMetrics,
-    MetricType,
     MetricsCollector,
+    MetricType,
     ProviderHealth,
     ProviderStatus,
     TaskMetrics,
-    UsageQuota,
     get_collector,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -143,8 +141,12 @@ class TestCompleteTask:
     def test_janitor_fields(self, collector: MetricsCollector) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")
         m = collector.complete_task(
-            "t1", success=True, janitor_passed=True, files_modified=3,
-            lines_added=20, lines_deleted=5,
+            "t1",
+            success=True,
+            janitor_passed=True,
+            files_modified=3,
+            lines_added=20,
+            lines_deleted=5,
         )
         assert m is not None
         assert m.janitor_passed is True
@@ -351,9 +353,12 @@ class TestQualityAndErrors:
 
     def test_record_free_tier_usage(self, collector: MetricsCollector) -> None:
         collector.record_free_tier_usage(
-            "claude", "sonnet",
-            requests_used=50, requests_limit=100,
-            tokens_used=1000, tokens_limit=10000,
+            "claude",
+            "sonnet",
+            requests_used=50,
+            requests_limit=100,
+            tokens_used=1000,
+            tokens_limit=10000,
         )
         today = datetime.now().strftime("%Y-%m-%d")
         f = collector._metrics_dir / f"free_tier_usage_{today}.jsonl"
@@ -375,9 +380,7 @@ class TestQualityAndErrors:
 
 class TestJsonlFileWriting:
     def test_metric_point_structure(self, collector: MetricsCollector) -> None:
-        collector._write_metric_point(
-            MetricType.ERROR_RATE, 1.0, {"key": "val"}
-        )
+        collector._write_metric_point(MetricType.ERROR_RATE, 1.0, {"key": "val"})
         collector.flush()
         today = datetime.now().strftime("%Y-%m-%d")
         f = collector._metrics_dir / f"error_rate_{today}.jsonl"
@@ -561,12 +564,14 @@ class TestExportMetrics:
 class TestGetCollector:
     def test_returns_metrics_collector(self, tmp_path: Path) -> None:
         import bernstein.core.metrics as metrics_module
+
         metrics_module._default_collector = None
         c = get_collector(tmp_path / "metrics")
         assert isinstance(c, MetricsCollector)
 
     def test_returns_same_instance(self, tmp_path: Path) -> None:
         import bernstein.core.metrics as metrics_module
+
         metrics_module._default_collector = None
         c1 = get_collector(tmp_path / "metrics")
         c2 = get_collector()
@@ -574,6 +579,7 @@ class TestGetCollector:
 
     def test_reset_allows_new_instance(self, tmp_path: Path) -> None:
         import bernstein.core.metrics as metrics_module
+
         metrics_module._default_collector = None
         c1 = get_collector(tmp_path / "m1")
         metrics_module._default_collector = None

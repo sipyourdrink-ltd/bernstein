@@ -1,9 +1,10 @@
 """Tests for the Bernstein task server."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -43,6 +44,7 @@ TASK_PAYLOAD = {
 
 # -- POST /tasks -----------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_create_task(client: AsyncClient) -> None:
     """POST /tasks creates a task and returns 201."""
@@ -58,11 +60,14 @@ async def test_create_task(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_create_task_defaults(client: AsyncClient) -> None:
     """POST /tasks applies correct defaults for optional fields."""
-    resp = await client.post("/tasks", json={
-        "title": "Minimal",
-        "description": "A bare-minimum task",
-        "role": "qa",
-    })
+    resp = await client.post(
+        "/tasks",
+        json={
+            "title": "Minimal",
+            "description": "A bare-minimum task",
+            "role": "qa",
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["priority"] == 2
@@ -73,6 +78,7 @@ async def test_create_task_defaults(client: AsyncClient) -> None:
 
 
 # -- GET /tasks/next/{role} -------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_claim_next_task(client: AsyncClient) -> None:
@@ -165,11 +171,18 @@ async def test_simple_cycle_rejected(client: AsyncClient) -> None:
     q_id = "q" * 12
 
     def _make(tid: str, deps: list[str]) -> Task:
-        return Task(id=tid, title="t", description="d", role="r", depends_on=deps,
-                    status=TaskStatus.OPEN, task_type=TaskType.STANDARD)
+        return Task(
+            id=tid,
+            title="t",
+            description="d",
+            role="r",
+            depends_on=deps,
+            status=TaskStatus.OPEN,
+            task_type=TaskType.STANDARD,
+        )
 
-    p = _make(p_id, [q_id])   # P depends on Q
-    q = _make(q_id, [p_id])   # Q depends on P  — cycle!
+    p = _make(p_id, [q_id])  # P depends on Q
+    q = _make(q_id, [p_id])  # Q depends on P  — cycle!
     existing = {p_id: p}
     cycle = TaskStore._detect_cycle(existing, q)
     assert cycle is not None
@@ -185,12 +198,19 @@ async def test_transitive_cycle_rejected(client: AsyncClient) -> None:
     a_id, b_id, c_id = "a" * 12, "b" * 12, "c" * 12
 
     def _make(tid: str, deps: list[str]) -> Task:
-        return Task(id=tid, title="t", description="d", role="r", depends_on=deps,
-                    status=TaskStatus.OPEN, task_type=TaskType.STANDARD)
+        return Task(
+            id=tid,
+            title="t",
+            description="d",
+            role="r",
+            depends_on=deps,
+            status=TaskStatus.OPEN,
+            task_type=TaskType.STANDARD,
+        )
 
-    a = _make(a_id, [c_id])   # A -> C
-    b = _make(b_id, [a_id])   # B -> A
-    c = _make(c_id, [b_id])   # C -> B  => A -> C -> B -> A
+    a = _make(a_id, [c_id])  # A -> C
+    b = _make(b_id, [a_id])  # B -> A
+    c = _make(c_id, [b_id])  # C -> B  => A -> C -> B -> A
 
     existing = {a_id: a, b_id: b}
     cycle = TaskStore._detect_cycle(existing, c)
@@ -208,8 +228,15 @@ async def test_no_cycle_for_valid_chain(client: AsyncClient) -> None:
     a_id, b_id, c_id = "aa" * 6, "bb" * 6, "cc" * 6
 
     def _make(tid: str, deps: list[str]) -> Task:
-        return Task(id=tid, title="t", description="d", role="r", depends_on=deps,
-                    status=TaskStatus.OPEN, task_type=TaskType.STANDARD)
+        return Task(
+            id=tid,
+            title="t",
+            description="d",
+            role="r",
+            depends_on=deps,
+            status=TaskStatus.OPEN,
+            task_type=TaskType.STANDARD,
+        )
 
     a = _make(a_id, [])
     b = _make(b_id, [a_id])
@@ -220,6 +247,7 @@ async def test_no_cycle_for_valid_chain(client: AsyncClient) -> None:
 
 
 # -- POST /tasks/{task_id}/complete -----------------------------------------
+
 
 @pytest.mark.anyio
 async def test_complete_task(client: AsyncClient) -> None:
@@ -249,6 +277,7 @@ async def test_complete_unknown_task(client: AsyncClient) -> None:
 
 # -- POST /tasks/{task_id}/fail ---------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_fail_task(client: AsyncClient) -> None:
     """POST /tasks/{id}/fail marks task as failed."""
@@ -277,6 +306,7 @@ async def test_fail_unknown_task(client: AsyncClient) -> None:
 
 # -- POST /tasks/{task_id}/cancel ------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_cancel_open_task(client: AsyncClient) -> None:
     """POST /tasks/{id}/cancel cancels an open task."""
@@ -298,7 +328,7 @@ async def test_cancel_claimed_task(client: AsyncClient) -> None:
     """POST /tasks/{id}/cancel cancels a claimed task."""
     create_resp = await client.post("/tasks", json=TASK_PAYLOAD)
     task_id = create_resp.json()["id"]
-    await client.get(f"/tasks/next/backend")  # claim it
+    await client.get("/tasks/next/backend")  # claim it
 
     resp = await client.post(f"/tasks/{task_id}/cancel", json={"reason": "abort"})
     assert resp.status_code == 200
@@ -336,6 +366,7 @@ async def test_cancel_no_reason(client: AsyncClient) -> None:
 
 # -- GET /tasks -------------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_list_all_tasks(client: AsyncClient) -> None:
     """GET /tasks returns all tasks."""
@@ -364,6 +395,7 @@ async def test_list_tasks_with_status_filter(client: AsyncClient) -> None:
 
 
 # -- GET /status ------------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_status_empty(client: AsyncClient) -> None:
@@ -404,6 +436,7 @@ async def test_status_counts(client: AsyncClient) -> None:
 
 # -- POST /agents/{agent_id}/heartbeat -------------------------------------
 
+
 @pytest.mark.anyio
 async def test_heartbeat(client: AsyncClient) -> None:
     """POST /agents/{id}/heartbeat returns acknowledged response."""
@@ -427,6 +460,7 @@ async def test_heartbeat_updates_existing(client: AsyncClient) -> None:
 
 
 # -- GET /health ------------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_health(client: AsyncClient) -> None:
@@ -453,6 +487,7 @@ async def test_health_reflects_counts(client: AsyncClient) -> None:
 
 
 # -- JSONL persistence ------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_jsonl_written(jsonl_path: Path) -> None:
@@ -535,13 +570,12 @@ async def test_jsonl_replay_status_update(jsonl_path: Path) -> None:
 
 # -- stale agent detection --------------------------------------------------
 
+
 def test_stale_agent_detection(tmp_path: Path) -> None:
     """Agents are marked dead after heartbeat timeout."""
     store = TaskStore(tmp_path / "tasks.jsonl")
     # Record heartbeat in the past
-    store._agents["old-agent"] = __import__(
-        "bernstein.core.models", fromlist=["AgentSession"]
-    ).AgentSession(
+    store._agents["old-agent"] = __import__("bernstein.core.models", fromlist=["AgentSession"]).AgentSession(
         id="old-agent",
         role="backend",
         heartbeat_ts=0.0,  # epoch — definitely stale
@@ -553,6 +587,7 @@ def test_stale_agent_detection(tmp_path: Path) -> None:
 
 
 # -- completion_signals API round-trip ----------------------------------------
+
 
 @pytest.mark.anyio
 async def test_create_task_with_completion_signals_stored(client: AsyncClient) -> None:
@@ -639,6 +674,7 @@ async def test_invalid_signal_type_rejected(client: AsyncClient) -> None:
 
 # -- POST /tasks/{id}/progress -------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_progress_updates_stored_and_retrievable(client: AsyncClient) -> None:
     """POST /tasks/{id}/progress stores entries that appear in GET /tasks/{id}."""
@@ -699,9 +735,7 @@ async def test_completion_signals_preserved_after_complete(client: AsyncClient) 
         json={"result_summary": "done"},
     )
     assert complete_resp.status_code == 200
-    assert complete_resp.json()["completion_signals"] == [
-        {"type": "test_passes", "value": "pytest"}
-    ]
+    assert complete_resp.json()["completion_signals"] == [{"type": "test_passes", "value": "pytest"}]
 
 
 @pytest.mark.anyio
@@ -721,6 +755,7 @@ async def test_list_tasks_returns_completion_signals(client: AsyncClient) -> Non
 
 
 # -- GET /tasks/archive -------------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_complete_task_writes_archive(client: AsyncClient, tmp_path: Path) -> None:
@@ -874,9 +909,7 @@ async def test_status_returns_total_cost_from_metrics(
 
 
 @pytest.mark.anyio
-async def test_status_cost_per_role_breakdown(
-    client_with_metrics: AsyncClient, metrics_jsonl_path: Path
-) -> None:
+async def test_status_cost_per_role_breakdown(client_with_metrics: AsyncClient, metrics_jsonl_path: Path) -> None:
     """GET /status returns per-role cost breakdown in per_role list."""
     metrics_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
     records = [
@@ -899,6 +932,7 @@ async def test_status_cost_per_role_breakdown(
 
 # -- upgrade task creation -------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_create_upgrade_task(client: AsyncClient) -> None:
     """POST /tasks with task_type=upgrade_proposal stores upgrade_details."""
@@ -907,15 +941,23 @@ async def test_create_upgrade_task(client: AsyncClient) -> None:
         "proposed_change": "new impl",
         "benefits": ["faster", "safer"],
         "risk_assessment": {"level": "low", "breaking_changes": False, "affected_components": [], "mitigation": ""},
-        "rollback_plan": {"steps": ["revert commit"], "revert_commit": None, "data_migration": "", "estimated_rollback_minutes": 30},
+        "rollback_plan": {
+            "steps": ["revert commit"],
+            "revert_commit": None,
+            "data_migration": "",
+            "estimated_rollback_minutes": 30,
+        },
         "cost_estimate_usd": 0.5,
         "performance_impact": "minor",
     }
-    resp = await client.post("/tasks", json={
-        **TASK_PAYLOAD,
-        "task_type": "upgrade_proposal",
-        "upgrade_details": upgrade_details,
-    })
+    resp = await client.post(
+        "/tasks",
+        json={
+            **TASK_PAYLOAD,
+            "task_type": "upgrade_proposal",
+            "upgrade_details": upgrade_details,
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["task_type"] == "upgrade_proposal"
@@ -928,11 +970,14 @@ async def test_create_upgrade_task(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_create_task_with_model_effort(client: AsyncClient) -> None:
     """POST /tasks with model and effort stores both fields."""
-    resp = await client.post("/tasks", json={
-        **TASK_PAYLOAD,
-        "model": "opus",
-        "effort": "max",
-    })
+    resp = await client.post(
+        "/tasks",
+        json={
+            **TASK_PAYLOAD,
+            "model": "opus",
+            "effort": "max",
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["model"] == "opus"
@@ -943,16 +988,20 @@ async def test_create_task_with_model_effort(client: AsyncClient) -> None:
 async def test_create_task_with_depends_on(client: AsyncClient) -> None:
     """POST /tasks with depends_on stores the dependency list."""
     dep = (await client.post("/tasks", json=TASK_PAYLOAD)).json()["id"]
-    resp = await client.post("/tasks", json={
-        **TASK_PAYLOAD,
-        "depends_on": [dep],
-    })
+    resp = await client.post(
+        "/tasks",
+        json={
+            **TASK_PAYLOAD,
+            "depends_on": [dep],
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["depends_on"] == [dep]
 
 
 # -- JSONL replay edge cases -----------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_replay_handles_empty_lines(jsonl_path: Path) -> None:
@@ -980,11 +1029,7 @@ async def test_replay_handles_malformed_json(jsonl_path: Path) -> None:
     """replay_jsonl skips corrupt lines and continues replaying the rest."""
     good = {"id": "t2", "title": "Good", "description": "d", "role": "backend", "status": "open"}
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
-    jsonl_path.write_text(
-        "not-valid-json\n"
-        + json.dumps(good) + "\n"
-        + "{broken\n"
-    )
+    jsonl_path.write_text("not-valid-json\n" + json.dumps(good) + "\n" + "{broken\n")
 
     store = TaskStore(jsonl_path)
     store.replay_jsonl()
@@ -1120,15 +1165,19 @@ async def test_status_cost_skips_malformed_metrics_lines(
 
 # -- POST /bulletin ---------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_post_bulletin_creates_message(client: AsyncClient) -> None:
     """POST /bulletin returns 201 with correct fields."""
-    resp = await client.post("/bulletin", json={
-        "agent_id": "agent-42",
-        "type": "finding",
-        "content": "Found a bug in the parser",
-        "cell_id": "cell-1",
-    })
+    resp = await client.post(
+        "/bulletin",
+        json={
+            "agent_id": "agent-42",
+            "type": "finding",
+            "content": "Found a bug in the parser",
+            "cell_id": "cell-1",
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["agent_id"] == "agent-42"
@@ -1141,18 +1190,24 @@ async def test_post_bulletin_creates_message(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_get_bulletin_since_filters(client: AsyncClient) -> None:
     """GET /bulletin?since=X only returns messages newer than X."""
-    r1 = await client.post("/bulletin", json={
-        "agent_id": "agent-1",
-        "type": "status",
-        "content": "First message",
-    })
+    r1 = await client.post(
+        "/bulletin",
+        json={
+            "agent_id": "agent-1",
+            "type": "status",
+            "content": "First message",
+        },
+    )
     ts_first = r1.json()["timestamp"]
 
-    await client.post("/bulletin", json={
-        "agent_id": "agent-2",
-        "type": "status",
-        "content": "Second message",
-    })
+    await client.post(
+        "/bulletin",
+        json={
+            "agent_id": "agent-2",
+            "type": "status",
+            "content": "Second message",
+        },
+    )
 
     resp = await client.get("/bulletin", params={"since": ts_first})
     assert resp.status_code == 200
@@ -1171,6 +1226,7 @@ async def test_get_bulletin_empty(client: AsyncClient) -> None:
 
 
 # -- POST /tasks/{id}/claim -------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_claim_by_id_sets_status(client: AsyncClient) -> None:
@@ -1207,6 +1263,7 @@ async def test_claim_by_id_already_claimed(client: AsyncClient) -> None:
 
 
 # -- POST /tasks/claim-batch ------------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_claim_batch_all_succeed(client: AsyncClient) -> None:
@@ -1277,6 +1334,7 @@ async def test_claim_batch_sets_agent_id(client: AsyncClient) -> None:
 
 # -- GET /tasks/{id} --------------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_get_task_by_id(client: AsyncClient) -> None:
     """GET /tasks/{id} returns the task."""
@@ -1299,6 +1357,7 @@ async def test_get_task_unknown(client: AsyncClient) -> None:
 
 
 # -- invalid payload handling -----------------------------------------------
+
 
 @pytest.mark.anyio
 async def test_create_task_with_invalid_scope(client: AsyncClient) -> None:
@@ -1361,11 +1420,14 @@ async def test_claim_next_skips_tasks_with_unmet_deps(client: AsyncClient) -> No
     dep_id = dep_resp.json()["id"]
 
     # Create a backend task that depends on the qa dep
-    blocked_resp = await client.post("/tasks", json={
-        **TASK_PAYLOAD,
-        "title": "Blocked task",
-        "depends_on": [dep_id],
-    })
+    blocked_resp = await client.post(
+        "/tasks",
+        json={
+            **TASK_PAYLOAD,
+            "title": "Blocked task",
+            "depends_on": [dep_id],
+        },
+    )
     blocked_id = blocked_resp.json()["id"]
 
     # Before dep is done: blocked task should NOT appear in the open listing
@@ -1414,6 +1476,7 @@ async def test_heartbeat_unknown_agent(client: AsyncClient) -> None:
 
 # -- dependency filtering ---------------------------------------------------
 
+
 @pytest.mark.anyio
 async def test_dependency_blocks_open_listing(client: AsyncClient) -> None:
     """Task B with depends_on=[A.id] is hidden from GET /tasks?status=open until A is done."""
@@ -1423,11 +1486,14 @@ async def test_dependency_blocks_open_listing(client: AsyncClient) -> None:
     task_a_id = resp_a.json()["id"]
 
     # Create task B that depends on A
-    resp_b = await client.post("/tasks", json={
-        **TASK_PAYLOAD,
-        "title": "Task B",
-        "depends_on": [task_a_id],
-    })
+    resp_b = await client.post(
+        "/tasks",
+        json={
+            **TASK_PAYLOAD,
+            "title": "Task B",
+            "depends_on": [task_a_id],
+        },
+    )
     assert resp_b.status_code == 201
     task_b_id = resp_b.json()["id"]
 
@@ -1467,7 +1533,8 @@ def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
     metrics_jsonl.write_bytes(record1.encode())
 
     # Bust the mtime cache by advancing mtime
-    import os, time as _time
+    import os
+
     mtime1 = metrics_jsonl.stat().st_mtime + 1
     os.utime(metrics_jsonl, (mtime1, mtime1))
     store._cost_cache_mtime = 0.0  # force miss
@@ -1487,6 +1554,7 @@ def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
     original_open = open
 
     import builtins
+
     real_open = builtins.open
 
     def patched_open(path, mode="r", **kwargs):  # type: ignore[no-untyped-def]
@@ -1518,9 +1586,7 @@ def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
     # The second call must have seeked to the offset from the first call,
     # not to 0 (which would re-read everything).
     assert seek_calls, "expected at least one seek call"
-    assert seek_calls[0] == offset_after_first, (
-        f"expected seek to {offset_after_first}, got {seek_calls[0]}"
-    )
+    assert seek_calls[0] == offset_after_first, f"expected seek to {offset_after_first}, got {seek_calls[0]}"
 
 
 def test_read_cost_by_role_truncation_reset(tmp_path: Path) -> None:
@@ -1536,6 +1602,7 @@ def test_read_cost_by_role_truncation_reset(tmp_path: Path) -> None:
     metrics_jsonl.write_bytes(record.encode())
 
     import os
+
     mtime1 = metrics_jsonl.stat().st_mtime + 1
     os.utime(metrics_jsonl, (mtime1, mtime1))
     store._cost_cache_mtime = 0.0
@@ -1673,6 +1740,7 @@ def test_read_cost_by_role_truncation_reset(tmp_path: Path) -> None:
     assert result.get("qa") == pytest.approx(0.25)
     assert store._cost_cache_offset == len(new_record.encode())
 
+
 # -- write buffering -----------------------------------------------------------
 
 
@@ -1713,7 +1781,7 @@ async def test_jsonl_write_buffering(tmp_path: Path) -> None:
 # Cluster API endpoint tests
 # ---------------------------------------------------------------------------
 
-from bernstein.core.models import ClusterConfig, ClusterTopology  # noqa: E402
+from bernstein.core.models import ClusterConfig  # noqa: E402
 
 
 @pytest.fixture()
@@ -1915,4 +1983,60 @@ async def test_auth_public_paths_bypass_auth(auth_client: AsyncClient) -> None:
 async def test_auth_agent_json_bypass(auth_client: AsyncClient) -> None:
     """/.well-known/agent.json bypasses auth."""
     resp = await auth_client.get("/.well-known/agent.json")
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Read-only middleware tests (public demo mode)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def readonly_app(tmp_path: Path):
+    """App with readonly mode enabled (demo deployment)."""
+    return create_app(
+        jsonl_path=tmp_path / "tasks.jsonl",
+        readonly=True,
+    )
+
+
+@pytest.fixture()
+async def readonly_client(readonly_app) -> AsyncClient:  # type: ignore[no-untyped-def]
+    transport = ASGITransport(app=readonly_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+@pytest.mark.anyio
+async def test_readonly_blocks_post(readonly_client: AsyncClient) -> None:
+    """POST is rejected with 405 in readonly mode."""
+    resp = await readonly_client.post("/tasks", json=TASK_PAYLOAD)
+    assert resp.status_code == 405
+
+
+@pytest.mark.anyio
+async def test_readonly_blocks_put(readonly_client: AsyncClient) -> None:
+    """PUT is rejected with 405 in readonly mode."""
+    resp = await readonly_client.put("/tasks/abc123", json={})
+    assert resp.status_code == 405
+
+
+@pytest.mark.anyio
+async def test_readonly_blocks_delete(readonly_client: AsyncClient) -> None:
+    """DELETE is rejected with 405 in readonly mode."""
+    resp = await readonly_client.delete("/tasks/abc123")
+    assert resp.status_code == 405
+
+
+@pytest.mark.anyio
+async def test_readonly_allows_get(readonly_client: AsyncClient) -> None:
+    """GET passes through in readonly mode."""
+    resp = await readonly_client.get("/health")
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_readonly_allows_status(readonly_client: AsyncClient) -> None:
+    """GET /status passes through in readonly mode."""
+    resp = await readonly_client.get("/status")
     assert resp.status_code == 200

@@ -1,13 +1,10 @@
 """Tests for bernstein.core.home — BernsteinHome global config."""
+
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from bernstein.core.home import BernsteinHome, resolve_config
-
 
 # ---------------------------------------------------------------------------
 # BernsteinHome.ensure()

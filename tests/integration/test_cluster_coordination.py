@@ -6,6 +6,7 @@ Simulates a star-topology cluster:
   - Verifies that tasks are distributed without double-claiming via CAS
   - Verifies the cluster status view shows all nodes
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +17,6 @@ from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.models import ClusterConfig, ClusterTopology
 from bernstein.core.server import create_app
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -168,8 +168,15 @@ async def test_node_heartbeat_keeps_node_online(central: AsyncClient) -> None:
     # Send a heartbeat with updated capacity
     hb = await central.post(
         f"/cluster/nodes/{node_id}/heartbeat",
-        json={"capacity": {"max_agents": 4, "available_slots": 3, "active_agents": 1,
-                           "gpu_available": False, "supported_models": ["sonnet"]}},
+        json={
+            "capacity": {
+                "max_agents": 4,
+                "available_slots": 3,
+                "active_agents": 1,
+                "gpu_available": False,
+                "supported_models": ["sonnet"],
+            }
+        },
     )
     assert hb.status_code == 200
     data = hb.json()

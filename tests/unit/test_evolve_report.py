@@ -1,4 +1,5 @@
 """Unit tests for bernstein.evolution.report."""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from bernstein.evolution.report import CycleRecord, EvolutionReport, ExperimentRecord
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -117,11 +117,13 @@ class TestCycleRecord:
         assert abs(rec.success_rate - 6 / 7) < 1e-6
 
     def test_success_rate_zero_tasks(self) -> None:
-        rec = CycleRecord.from_dict({
-            **SAMPLE_CYCLES[0],
-            "tasks_completed": 0,
-            "tasks_failed": 0,
-        })
+        rec = CycleRecord.from_dict(
+            {
+                **SAMPLE_CYCLES[0],
+                "tasks_completed": 0,
+                "tasks_failed": 0,
+            }
+        )
         assert rec.success_rate == 0.0
 
     def test_test_pass_rate(self) -> None:
@@ -130,11 +132,13 @@ class TestCycleRecord:
         assert abs(rec.test_pass_rate - 1137 / 1141) < 1e-6
 
     def test_test_pass_rate_zero(self) -> None:
-        rec = CycleRecord.from_dict({
-            **SAMPLE_CYCLES[0],
-            "tests_passed": 0,
-            "tests_failed": 0,
-        })
+        rec = CycleRecord.from_dict(
+            {
+                **SAMPLE_CYCLES[0],
+                "tests_passed": 0,
+                "tests_failed": 0,
+            }
+        )
         assert rec.test_pass_rate == 0.0
 
 
@@ -197,11 +201,7 @@ class TestEvolutionReportLoad:
         metrics_dir = state_dir / "metrics"
         metrics_dir.mkdir(parents=True)
         path = metrics_dir / "evolve_cycles.jsonl"
-        path.write_text(
-            json.dumps(SAMPLE_CYCLES[0]) + "\n"
-            "NOT VALID JSON\n"
-            + json.dumps(SAMPLE_CYCLES[1]) + "\n"
-        )
+        path.write_text(json.dumps(SAMPLE_CYCLES[0]) + "\nNOT VALID JSON\n" + json.dumps(SAMPLE_CYCLES[1]) + "\n")
 
         report = EvolutionReport(state_dir=state_dir)
         report.load()

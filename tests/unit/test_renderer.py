@@ -1,4 +1,5 @@
 """Tests for bernstein.templates.renderer."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,16 +7,15 @@ from pathlib import Path
 import pytest
 
 from bernstein.templates.renderer import (
-    TemplateError,
     _DEFAULT_TEMPLATES_DIR,
     render_role_prompt,
     render_template,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def templates_dir(tmp_path: Path) -> Path:
@@ -41,6 +41,7 @@ def simple_template(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Placeholder substitution
 # ---------------------------------------------------------------------------
+
 
 class TestPlaceholderSubstitution:
     """Tests for {{VAR}} placeholder replacement."""
@@ -68,6 +69,7 @@ class TestPlaceholderSubstitution:
 # ---------------------------------------------------------------------------
 # Conditional blocks
 # ---------------------------------------------------------------------------
+
 
 class TestConditionals:
     """Tests for {{#IF VAR}} and {{#IF_NOT VAR}} blocks."""
@@ -124,6 +126,7 @@ class TestConditionals:
 # File handling
 # ---------------------------------------------------------------------------
 
+
 class TestFileHandling:
     """Tests for file-not-found and read errors."""
 
@@ -135,6 +138,7 @@ class TestFileHandling:
 # ---------------------------------------------------------------------------
 # render_role_prompt
 # ---------------------------------------------------------------------------
+
 
 class TestRenderRolePrompt:
     """Tests for the role prompt convenience wrapper."""

@@ -27,8 +27,9 @@ from bernstein.core.orchestrator import (
 )
 from bernstein.core.router import (
     ModelConfig as RouterModelConfig,
+)
+from bernstein.core.router import (
     ProviderConfig,
-    ProviderHealthStatus,
     RouterState,
     Tier,
     TierAwareRouter,
@@ -509,7 +510,7 @@ class TestOrchestratorTick:
         orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=config)
 
         # Pre-seed the cost tracker with spend exceeding the budget
-        orch._cost_tracker.record(  # noqa: SLF001
+        orch._cost_tracker.record(
             agent_id="prev-agent",
             task_id="T-prev",
             model="sonnet",
@@ -541,7 +542,7 @@ class TestOrchestratorTick:
         orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=config)
 
         # Pre-seed with small spend under budget
-        orch._cost_tracker.record(  # noqa: SLF001
+        orch._cost_tracker.record(
             agent_id="prev-agent",
             task_id="T-prev",
             model="sonnet",
@@ -573,7 +574,7 @@ class TestOrchestratorTick:
         orch = _build_orchestrator(tmp_path, transport, adapter=adapter, config=config)
 
         # Even with huge recorded spend, budget=0 means unlimited
-        orch._cost_tracker.record(  # noqa: SLF001
+        orch._cost_tracker.record(
             agent_id="prev-agent",
             task_id="T-prev",
             model="sonnet",
@@ -1764,7 +1765,7 @@ class TestEvolveIdleDetection:
         orch.tick()
 
         assert len(created) == 1
-        assert "manager" == created[0]["role"]
+        assert created[0]["role"] == "manager"
         assert "Evolve cycle" in str(created[0]["title"])
 
     def test_evolve_does_not_trigger_when_tasks_open(self, tmp_path: Path) -> None:
@@ -2157,8 +2158,8 @@ class TestEvolutionMetricsRecording:
 
     def test_complete_agent_task_called_before_end_agent(self, tmp_path: Path) -> None:
         """complete_agent_task() is called before end_agent() so AGENT_SUCCESS metric is written."""
-        from bernstein.core.metrics import MetricsCollector, get_collector
         import bernstein.core.metrics as _metrics_mod
+        from bernstein.core.metrics import get_collector
 
         # Reset the global so we get a fresh collector for this test.
         _metrics_mod._default_collector = None
@@ -3830,7 +3831,6 @@ class TestCheckEvolve:
         test_info: dict[str, object] | None = None,
     ) -> tuple[MagicMock, MagicMock, MagicMock]:
         """Patch sub-methods to avoid subprocess/git calls; return mocks."""
-        from unittest.mock import patch
 
         _test_info = test_info or {"passed": 5, "failed": 0, "summary": "5 passed"}
         mock_run_tests = MagicMock(return_value=_test_info)
@@ -4102,8 +4102,10 @@ class TestComputeTotalSpentCache:
 
     def test_no_reparse_when_files_unchanged(self, tmp_path: Path) -> None:
         """Second call with unchanged files must not re-parse them."""
+        from unittest.mock import patch
+
         import pytest
-        from unittest.mock import patch, call
+
         from bernstein.core import tick_pipeline as pipeline_mod
         from bernstein.core.orchestrator import _compute_total_spent, _total_spent_cache
 
@@ -4125,8 +4127,10 @@ class TestComputeTotalSpentCache:
 
     def test_reparsed_after_modification(self, tmp_path: Path) -> None:
         """Cache is invalidated when a file's mtime changes."""
-        import pytest
         import time as _time
+
+        import pytest
+
         from bernstein.core.orchestrator import _compute_total_spent, _total_spent_cache
 
         metrics_dir = tmp_path / ".sdd" / "metrics"
@@ -4542,7 +4546,7 @@ class TestOrchestratorBulletinIntegration:
         self,
         tmp_path: Path,
         transport: httpx.MockTransport,
-    ) -> tuple[Orchestrator, "BulletinBoard"]:
+    ) -> tuple[Orchestrator, BulletinBoard]:
         from bernstein.core.bulletin import BulletinBoard
 
         board = BulletinBoard()
@@ -4563,7 +4567,6 @@ class TestOrchestratorBulletinIntegration:
 
     def test_bulletin_property_returns_board(self, tmp_path: Path) -> None:
         """Orchestrator.bulletin returns the injected BulletinBoard."""
-        from bernstein.core.bulletin import BulletinBoard
 
         transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
         orch, board = self._build_with_bulletin(tmp_path, transport)
@@ -4577,7 +4580,6 @@ class TestOrchestratorBulletinIntegration:
 
     def test_run_started_posted_on_run(self, tmp_path: Path) -> None:
         """run() posts 'run started' to the bulletin board before the loop."""
-        from bernstein.core.bulletin import BulletinBoard
 
         transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
         orch, board = self._build_with_bulletin(tmp_path, transport)
@@ -4598,8 +4600,6 @@ class TestOrchestratorBulletinIntegration:
 
     def test_task_completed_posted_to_bulletin(self, tmp_path: Path) -> None:
         """A done task that passes janitor verification posts a 'task completed' status."""
-        from bernstein.core.bulletin import BulletinBoard
-        from bernstein.core.models import CompletionSignal
 
         done_task = _make_task(id="T-bb1", title="BB task", status="done")
         transport = _mock_transport(
@@ -4618,8 +4618,6 @@ class TestOrchestratorBulletinIntegration:
 
     def test_task_failed_janitor_posts_alert(self, tmp_path: Path) -> None:
         """A done task that fails janitor verification posts an alert."""
-        from bernstein.core.bulletin import BulletinBoard
-        from bernstein.core.models import CompletionSignal
 
         done_task = _make_task(id="T-bb2", title="Fail task", status="done")
         # Add a completion signal that will fail (file does not exist)

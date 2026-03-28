@@ -1,15 +1,13 @@
 """Tests for SandboxValidator."""
+
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from bernstein.evolution.sandbox import SandboxValidator
 from bernstein.evolution.types import RiskLevel, SandboxResult, UpgradeProposal
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -311,8 +309,8 @@ class TestWorktreeValidation:
 
         assert result.passed
         assert test_commands_used, "at least one shell test command should be run"
-        assert any("unit" in cmd for cmd in test_commands_used), (
-            "L1 should run unit tests only, got: " + str(test_commands_used)
+        assert any("unit" in cmd for cmd in test_commands_used), "L1 should run unit tests only, got: " + str(
+            test_commands_used
         )
 
     def test_l2_uses_full_test_suite(self, tmp_path: Path) -> None:
@@ -337,8 +335,8 @@ class TestWorktreeValidation:
             result = validator.create_sandbox(proposal)
 
         assert result.passed
-        assert any(full_cmd in cmd for cmd in test_commands_used), (
-            "L2 should use full test command, got: " + str(test_commands_used)
+        assert any(full_cmd in cmd for cmd in test_commands_used), "L2 should use full test command, got: " + str(
+            test_commands_used
         )
 
 

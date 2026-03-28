@@ -1,10 +1,9 @@
 """Tests for bernstein.core.git_context — git read operations for agent context."""
+
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from bernstein.core.git_context import (
     _epoch_to_relative,
@@ -105,15 +104,7 @@ class TestHotFiles:
 
     @patch("bernstein.core.git_context._run_git")
     def test_basic_hot_files(self, mock: MagicMock) -> None:
-        mock.return_value = (
-            "src/a.py\n"
-            "src/b.py\n"
-            "\n"
-            "src/a.py\n"
-            "src/c.py\n"
-            "\n"
-            "src/a.py\n"
-        )
+        mock.return_value = "src/a.py\nsrc/b.py\n\nsrc/a.py\nsrc/c.py\n\nsrc/a.py\n"
         result = hot_files(REPO, days=14)
         assert result[0] == ("src/a.py", 3)
         assert ("src/b.py", 1) in result
@@ -136,16 +127,7 @@ class TestCochangeFiles:
 
     @patch("bernstein.core.git_context._run_git")
     def test_basic_cochange(self, mock: MagicMock) -> None:
-        mock.return_value = (
-            "abc1234\n"
-            "src/a.py\n"
-            "src/b.py\n"
-            "\n"
-            "def5678\n"
-            "src/a.py\n"
-            "src/b.py\n"
-            "src/c.py\n"
-        )
+        mock.return_value = "abc1234\nsrc/a.py\nsrc/b.py\n\ndef5678\nsrc/a.py\nsrc/b.py\nsrc/c.py\n"
         result = cochange_files(REPO, "src/a.py")
         assert result[0] == ("src/b.py", 2)
         assert ("src/c.py", 1) in result
@@ -173,10 +155,7 @@ class TestRecentChanges:
 
     @patch("bernstein.core.git_context._run_git")
     def test_basic_recent_changes(self, mock: MagicMock) -> None:
-        mock.return_value = (
-            "abc1234|Fix auth flow|2 days ago\n"
-            "def5678|Add token expiry|5 days ago"
-        )
+        mock.return_value = "abc1234|Fix auth flow|2 days ago\ndef5678|Add token expiry|5 days ago"
         result = recent_changes(REPO, "src/auth.py", n=5)
         assert len(result) == 2
         assert result[0]["hash"] == "abc1234"
@@ -270,18 +249,21 @@ class TestEpochToRelative:
 
     def test_recent(self) -> None:
         import time
+
         epoch = str(int(time.time()) - 120)  # 2 minutes ago
         result = _epoch_to_relative(epoch)
         assert "m ago" in result
 
     def test_hours_ago(self) -> None:
         import time
+
         epoch = str(int(time.time()) - 7200)  # 2 hours ago
         result = _epoch_to_relative(epoch)
         assert "h ago" in result
 
     def test_days_ago(self) -> None:
         import time
+
         epoch = str(int(time.time()) - 172800)  # 2 days ago
         result = _epoch_to_relative(epoch)
         assert "d ago" in result

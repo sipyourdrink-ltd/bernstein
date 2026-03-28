@@ -1,4 +1,5 @@
 """Tests for the `bernstein logs` CLI command."""
+
 from __future__ import annotations
 
 import time
@@ -8,7 +9,6 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import _find_agent_logs, logs_cmd
-
 
 # ---------------------------------------------------------------------------
 # _find_agent_logs helper
@@ -75,7 +75,7 @@ def test_logs_cmd_accepts_follow_flag(runtime_dir: Path) -> None:
     original_sleep = main_mod.time.sleep
     call_count = 0
 
-    def _fast_sleep(s: float) -> None:  # noqa: ARG001
+    def _fast_sleep(s: float) -> None:
         nonlocal call_count
         call_count += 1
         if call_count >= 1:

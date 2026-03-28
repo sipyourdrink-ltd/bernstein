@@ -1,7 +1,8 @@
 """Tests for CircuitBreaker."""
-from pathlib import Path
+
 from bernstein.evolution.circuit import CircuitBreaker
 from bernstein.evolution.types import CircuitState, RiskLevel
+
 
 class TestCircuitBreaker:
     def test_closed_allows_l0(self, tmp_path):

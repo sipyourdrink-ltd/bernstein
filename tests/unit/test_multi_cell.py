@@ -1,12 +1,12 @@
 """Tests for bernstein.core.multi_cell — CellStatus tracking, VP coordination, rebalancing."""
+
 from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import httpx
-import pytest
 
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.models import (
@@ -16,7 +16,6 @@ from bernstein.core.models import (
     OrchestratorConfig,
     Task,
     TaskStatus,
-    TaskType,
 )
 from bernstein.core.multi_cell import (
     CellStatus,
@@ -26,10 +25,10 @@ from bernstein.core.multi_cell import (
 from bernstein.core.orchestrator import TickResult
 from bernstein.core.spawner import AgentSpawner
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_session(*, id: str, status: str = "working") -> AgentSession:
     return AgentSession(
@@ -63,6 +62,7 @@ def _make_cell(
 # ---------------------------------------------------------------------------
 # cell_status
 # ---------------------------------------------------------------------------
+
 
 class TestCellStatus:
     def test_empty_cell_all_zeros(self) -> None:
@@ -117,6 +117,7 @@ class TestCellStatus:
 # MultiCellOrchestrator register / remove
 # ---------------------------------------------------------------------------
 
+
 class TestRegisterRemoveCell:
     def _make_orchestrator(self, tmp_path: Path) -> MultiCellOrchestrator:
         mock_spawner = MagicMock(spec=AgentSpawner)
@@ -158,6 +159,7 @@ class TestRegisterRemoveCell:
 # MultiCellOrchestrator.tick — bulletin board
 # ---------------------------------------------------------------------------
 
+
 class TestMultiCellTick:
     def _make_orchestrator(
         self,
@@ -184,24 +186,44 @@ class TestMultiCellTick:
 
     def test_tick_counts_bulletin_blockers(self, tmp_path: Path) -> None:
         board = BulletinBoard()
-        board.post(BulletinMessage(
-            agent_id="agent-1", type="blocker", content="DB is down", timestamp=1.0,
-        ))
-        board.post(BulletinMessage(
-            agent_id="agent-2", type="blocker", content="API unreachable", timestamp=2.0,
-        ))
-        board.post(BulletinMessage(
-            agent_id="agent-3", type="status", content="OK", timestamp=3.0,
-        ))
+        board.post(
+            BulletinMessage(
+                agent_id="agent-1",
+                type="blocker",
+                content="DB is down",
+                timestamp=1.0,
+            )
+        )
+        board.post(
+            BulletinMessage(
+                agent_id="agent-2",
+                type="blocker",
+                content="API unreachable",
+                timestamp=2.0,
+            )
+        )
+        board.post(
+            BulletinMessage(
+                agent_id="agent-3",
+                type="status",
+                content="OK",
+                timestamp=3.0,
+            )
+        )
         orch = self._make_orchestrator(tmp_path, bulletin=board)
         result = orch.tick()
         assert result.blockers_found == 2
 
     def test_tick_ignores_old_bulletin_messages(self, tmp_path: Path) -> None:
         board = BulletinBoard()
-        board.post(BulletinMessage(
-            agent_id="a1", type="blocker", content="old", timestamp=1.0,
-        ))
+        board.post(
+            BulletinMessage(
+                agent_id="a1",
+                type="blocker",
+                content="old",
+                timestamp=1.0,
+            )
+        )
         orch = self._make_orchestrator(tmp_path, bulletin=board)
 
         # First tick sees the blocker
@@ -228,6 +250,7 @@ class TestMultiCellTick:
 # ---------------------------------------------------------------------------
 # _check_rebalance
 # ---------------------------------------------------------------------------
+
 
 class TestCheckRebalance:
     def _make_orchestrator(self, tmp_path: Path) -> MultiCellOrchestrator:
@@ -301,6 +324,7 @@ class TestCheckRebalance:
 # bulletin property
 # ---------------------------------------------------------------------------
 
+
 class TestBulletinProperty:
     def test_bulletin_returns_board(self, tmp_path: Path) -> None:
         mock_spawner = MagicMock(spec=AgentSpawner)
@@ -318,6 +342,7 @@ class TestBulletinProperty:
 # ---------------------------------------------------------------------------
 # _tick_cell
 # ---------------------------------------------------------------------------
+
 
 def _task_json(
     *,
@@ -378,9 +403,7 @@ class TestTickCell:
         mock_client.get.return_value = _mock_response([_task_json(id="t1")])
 
         mock_spawner = MagicMock(spec=AgentSpawner)
-        spawned_session = AgentSession(
-            id="sess-1", role="backend", model_config=ModelConfig("sonnet", "high")
-        )
+        spawned_session = AgentSession(id="sess-1", role="backend", model_config=ModelConfig("sonnet", "high"))
         mock_spawner.spawn_for_tasks.return_value = spawned_session
         mock_spawner.check_alive.return_value = True
 
@@ -397,10 +420,12 @@ class TestTickCell:
     def test_groups_by_role_and_spawns_per_batch(self, tmp_path: Path) -> None:
         """Two different roles → two separate spawn calls."""
         mock_client = MagicMock()
-        mock_client.get.return_value = _mock_response([
-            _task_json(id="t1", role="backend"),
-            _task_json(id="t2", role="qa"),
-        ])
+        mock_client.get.return_value = _mock_response(
+            [
+                _task_json(id="t1", role="backend"),
+                _task_json(id="t2", role="qa"),
+            ]
+        )
 
         mock_spawner = MagicMock(spec=AgentSpawner)
         sess_be = AgentSession(id="sess-be", role="backend", model_config=ModelConfig("sonnet", "high"))
@@ -435,15 +460,15 @@ class TestTickCell:
     def test_spawn_exception_records_error_and_continues(self, tmp_path: Path) -> None:
         """First spawn fails, second succeeds — both are handled."""
         mock_client = MagicMock()
-        mock_client.get.return_value = _mock_response([
-            _task_json(id="t1", role="backend"),
-            _task_json(id="t2", role="qa"),
-        ])
+        mock_client.get.return_value = _mock_response(
+            [
+                _task_json(id="t1", role="backend"),
+                _task_json(id="t2", role="qa"),
+            ]
+        )
 
         mock_spawner = MagicMock(spec=AgentSpawner)
-        good_session = AgentSession(
-            id="sess-good", role="qa", model_config=ModelConfig("sonnet", "high")
-        )
+        good_session = AgentSession(id="sess-good", role="qa", model_config=ModelConfig("sonnet", "high"))
         mock_spawner.spawn_for_tasks.side_effect = [Exception("spawn failed"), good_session]
         mock_spawner.check_alive.return_value = True
 
@@ -482,6 +507,7 @@ class TestTickCell:
 # ---------------------------------------------------------------------------
 # _reap_dead_workers
 # ---------------------------------------------------------------------------
+
 
 class TestReapDeadWorkers:
     def _make_orchestrator(

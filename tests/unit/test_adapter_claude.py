@@ -1,4 +1,5 @@
 """Unit tests for ClaudeCodeAdapter spawn/kill/is_alive logic."""
+
 from __future__ import annotations
 
 import json
@@ -7,13 +8,12 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from bernstein.adapters.claude import ClaudeCodeAdapter, _resolve_env_vars, load_mcp_config
 from bernstein.core.models import ModelConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -423,9 +423,7 @@ class TestLoadMcpConfigMerge:
     def test_project_wins_on_name_conflict(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
-        (claude_dir / "mcp.json").write_text(
-            json.dumps({"mcpServers": {"tool": {"command": "old-command"}}})
-        )
+        (claude_dir / "mcp.json").write_text(json.dumps({"mcpServers": {"tool": {"command": "old-command"}}}))
 
         with patch("bernstein.adapters.claude.Path.home", return_value=tmp_path):
             result = load_mcp_config(project_servers={"tool": {"command": "new-command"}})
@@ -436,9 +434,7 @@ class TestLoadMcpConfigMerge:
     def test_both_sources_merged_without_conflict(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
-        (claude_dir / "mcp.json").write_text(
-            json.dumps({"mcpServers": {"global-tool": {"command": "g"}}})
-        )
+        (claude_dir / "mcp.json").write_text(json.dumps({"mcpServers": {"global-tool": {"command": "g"}}}))
 
         with patch("bernstein.adapters.claude.Path.home", return_value=tmp_path):
             result = load_mcp_config(project_servers={"project-tool": {"command": "p"}})
@@ -456,9 +452,7 @@ class TestLoadMcpConfigMerge:
             patch("bernstein.adapters.claude.Path.home", return_value=tmp_path),
             patch.dict(os.environ, {"MY_TOKEN": "tok-secret"}),
         ):
-            result = load_mcp_config(
-                project_servers={"srv": {"env": {"TOKEN": "${MY_TOKEN}"}}}
-            )
+            result = load_mcp_config(project_servers={"srv": {"env": {"TOKEN": "${MY_TOKEN}"}}})
 
         assert result is not None
         assert result["mcpServers"]["srv"]["env"]["TOKEN"] == "tok-secret"
@@ -509,28 +503,32 @@ class TestSpawnMissingBinary:
 
     def test_file_not_found_raises_runtime_error(self, tmp_path: Path) -> None:
         adapter = ClaudeCodeAdapter()
-        with patch(
-            "bernstein.adapters.claude.subprocess.Popen",
-            side_effect=FileNotFoundError("No such file or directory: 'claude'"),
+        with (
+            patch(
+                "bernstein.adapters.claude.subprocess.Popen",
+                side_effect=FileNotFoundError("No such file or directory: 'claude'"),
+            ),
+            pytest.raises(RuntimeError, match="not found in PATH"),
         ):
-            with pytest.raises(RuntimeError, match="not found in PATH"):
-                adapter.spawn(
-                    prompt="hello",
-                    workdir=tmp_path,
-                    model_config=ModelConfig(model="sonnet", effort="high"),
-                    session_id="claude-missing",
-                )
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="claude-missing",
+            )
 
     def test_permission_error_raises_runtime_error(self, tmp_path: Path) -> None:
         adapter = ClaudeCodeAdapter()
-        with patch(
-            "bernstein.adapters.claude.subprocess.Popen",
-            side_effect=PermissionError("Permission denied"),
+        with (
+            patch(
+                "bernstein.adapters.claude.subprocess.Popen",
+                side_effect=PermissionError("Permission denied"),
+            ),
+            pytest.raises(RuntimeError, match="[Pp]ermission"),
         ):
-            with pytest.raises(RuntimeError, match="[Pp]ermission"):
-                adapter.spawn(
-                    prompt="hello",
-                    workdir=tmp_path,
-                    model_config=ModelConfig(model="sonnet", effort="high"),
-                    session_id="claude-perm",
-                )
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="claude-perm",
+            )

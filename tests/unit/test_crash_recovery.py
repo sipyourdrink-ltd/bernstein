@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -21,7 +21,6 @@ from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import (
     AgentSession,
     Complexity,
-    ModelConfig,
     OrchestratorConfig,
     Scope,
     Task,
@@ -30,7 +29,6 @@ from bernstein.core.models import (
 )
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -139,8 +137,10 @@ def test_spawn_for_resume_uses_provided_worktree(tmp_path: Path):
 
     adapter.spawn.assert_called_once()
     call_kwargs = adapter.spawn.call_args
-    assert call_kwargs.kwargs["workdir"] == worktree_path or call_kwargs.args[1] == worktree_path or (
-        len(call_kwargs.args) > 1 and call_kwargs.args[1] == worktree_path
+    assert (
+        call_kwargs.kwargs["workdir"] == worktree_path
+        or call_kwargs.args[1] == worktree_path
+        or (len(call_kwargs.args) > 1 and call_kwargs.args[1] == worktree_path)
     )
 
 
@@ -223,7 +223,15 @@ def _make_orchestrator(
             return httpx.Response(404, json={"detail": "not found"})
         if request.method == "POST" and request.url.path == "/tasks":
             body = json.loads(request.content)
-            new_task = {**body, "id": f"retry-{len(task_store)}", "status": "open", "completion_signals": [], "progress_log": [], "version": 1, "mcp_servers": []}
+            new_task = {
+                **body,
+                "id": f"retry-{len(task_store)}",
+                "status": "open",
+                "completion_signals": [],
+                "progress_log": [],
+                "version": 1,
+                "mcp_servers": [],
+            }
             task_store.append(new_task)
             return httpx.Response(201, json=new_task)
         if request.method == "POST" and "/fail" in request.url.path:
@@ -341,9 +349,7 @@ def test_orchestrator_calls_spawn_for_resume_when_worktree_preserved(tmp_path: P
 
     # Patch spawn_for_resume so we can assert it's called
     orch._spawner.spawn_for_resume = MagicMock(  # type: ignore[method-assign]
-        return_value=AgentSession(
-            id="s-resume", role="backend", pid=123, task_ids=["T-resume"]
-        )
+        return_value=AgentSession(id="s-resume", role="backend", pid=123, task_ids=["T-resume"])
     )
 
     # Mock spawn_for_tasks to raise (should NOT be called in resume path)
@@ -420,9 +426,7 @@ def test_escalate_strategy_blocks_task_when_crash_limit_exceeded(tmp_path: Path)
 
     orch._spawner.check_alive = MagicMock(return_value=False)  # type: ignore[assignment]
 
-    orch._refresh_agent_states(
-        {"claimed": [Task.from_dict(task_dict)], "open": [], "done": [], "failed": []}
-    )
+    orch._refresh_agent_states({"claimed": [Task.from_dict(task_dict)], "open": [], "done": [], "failed": []})
 
     # Task should be BLOCKED, not failed
     statuses = {t["id"]: t["status"] for t in task_store}
@@ -449,9 +453,7 @@ def test_escalate_strategy_does_not_retry_when_limit_exceeded(tmp_path: Path):
     orch._spawner.check_alive = MagicMock(return_value=False)  # type: ignore[assignment]
 
     initial_count = len(task_store)
-    orch._refresh_agent_states(
-        {"claimed": [Task.from_dict(task_dict)], "open": [], "done": [], "failed": []}
-    )
+    orch._refresh_agent_states({"claimed": [Task.from_dict(task_dict)], "open": [], "done": [], "failed": []})
 
     # No new retry task should have been created
     assert len(task_store) == initial_count
@@ -461,8 +463,6 @@ def test_escalate_strategy_does_not_retry_when_limit_exceeded(tmp_path: Path):
 # 9. orphan worktree recovery on startup
 # ---------------------------------------------------------------------------
 
-
-import pytest
 
 @pytest.mark.skip(reason="Method _restore_orphaned_worktrees not yet implemented")
 def test_orchestrator_restores_preserved_worktree_from_metadata(tmp_path: Path):
@@ -501,7 +501,6 @@ def test_orchestrator_skips_worktrees_without_metadata(tmp_path: Path):
 def test_spawn_for_tasks_writes_task_metadata_to_worktree(tmp_path: Path):
     """After spawning with worktrees enabled, a .bernstein_task_ids.json file
     should exist in the created worktree so crash recovery can restore it."""
-    from unittest.mock import patch
 
     adapter = _mock_adapter()
     spawner = _make_spawner(tmp_path, adapter)

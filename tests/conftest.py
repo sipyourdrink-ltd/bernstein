@@ -1,4 +1,5 @@
 """Shared pytest fixtures for the bernstein test suite."""
+
 from __future__ import annotations
 
 import gc
@@ -9,7 +10,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Memory guard: prevent any single pytest run from eating >2 GB RAM.
@@ -52,6 +52,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     if hasattr(item, "_report_sections"):
         item._report_sections.clear()
     gc.collect()
+
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import (

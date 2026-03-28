@@ -1,15 +1,13 @@
 """Tests for bernstein.core.retrospective."""
+
 from __future__ import annotations
 
 import time
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.metrics import MetricsCollector
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.retrospective import _build_recommendations, _fmt_seconds, generate_retrospective
-
 
 # ---------------------------------------------------------------------------
 # Helpers

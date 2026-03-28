@@ -1,4 +1,5 @@
 """Tests for failure-driven evolution: FailureRecord, FailureAnalyzer, OpportunityDetector, MetricsAggregator."""
+
 from __future__ import annotations
 
 import json
@@ -15,11 +16,9 @@ from bernstein.evolution.aggregator import (
 from bernstein.evolution.detector import (
     FailureAnalyzer,
     FailureRecord,
-    ImprovementOpportunity,
     OpportunityDetector,
     UpgradeCategory,
 )
-
 
 # ---------------------------------------------------------------------------
 # FailureRecord
@@ -306,14 +305,16 @@ def test_analyze_failure_patterns_below_threshold(tmp_path: Path) -> None:
     """Fewer than 3 failures for a role yields no results."""
     collector = FileMetricsCollector(tmp_path)
     for i in range(2):
-        collector.record_task_metrics(TaskMetrics(
-            timestamp=time.time(),
-            task_id=f"t-{i}",
-            role="backend",
-            model="sonnet",
-            cost_usd=0.10,
-            janitor_passed=False,
-        ))
+        collector.record_task_metrics(
+            TaskMetrics(
+                timestamp=time.time(),
+                task_id=f"t-{i}",
+                role="backend",
+                model="sonnet",
+                cost_usd=0.10,
+                janitor_passed=False,
+            )
+        )
     agg = MetricsAggregator(collector)
     assert agg.analyze_failure_patterns(hours=24) == []
 
@@ -322,14 +323,16 @@ def test_analyze_failure_patterns_at_threshold(tmp_path: Path) -> None:
     """3 failures for 'backend' returns one entry with correct fields."""
     collector = FileMetricsCollector(tmp_path)
     for i in range(3):
-        collector.record_task_metrics(TaskMetrics(
-            timestamp=time.time(),
-            task_id=f"t-{i}",
-            role="backend",
-            model="sonnet",
-            cost_usd=0.10,
-            janitor_passed=False,
-        ))
+        collector.record_task_metrics(
+            TaskMetrics(
+                timestamp=time.time(),
+                task_id=f"t-{i}",
+                role="backend",
+                model="sonnet",
+                cost_usd=0.10,
+                janitor_passed=False,
+            )
+        )
     agg = MetricsAggregator(collector)
     results = agg.analyze_failure_patterns(hours=24)
     assert len(results) == 1
@@ -347,36 +350,42 @@ def test_analyze_failure_patterns_multiple_roles(tmp_path: Path) -> None:
 
     # 3 backend failures
     for i in range(3):
-        collector.record_task_metrics(TaskMetrics(
-            timestamp=time.time(),
-            task_id=f"b-{i}",
-            role="backend",
-            model="sonnet",
-            cost_usd=0.10,
-            janitor_passed=False,
-        ))
+        collector.record_task_metrics(
+            TaskMetrics(
+                timestamp=time.time(),
+                task_id=f"b-{i}",
+                role="backend",
+                model="sonnet",
+                cost_usd=0.10,
+                janitor_passed=False,
+            )
+        )
 
     # 2 qa failures — below threshold
     for i in range(2):
-        collector.record_task_metrics(TaskMetrics(
-            timestamp=time.time(),
-            task_id=f"q-{i}",
-            role="qa",
-            model="haiku",
-            cost_usd=0.05,
-            janitor_passed=False,
-        ))
+        collector.record_task_metrics(
+            TaskMetrics(
+                timestamp=time.time(),
+                task_id=f"q-{i}",
+                role="qa",
+                model="haiku",
+                cost_usd=0.05,
+                janitor_passed=False,
+            )
+        )
 
     # 3 security failures
     for i in range(3):
-        collector.record_task_metrics(TaskMetrics(
-            timestamp=time.time(),
-            task_id=f"s-{i}",
-            role="security",
-            model="opus",
-            cost_usd=0.20,
-            janitor_passed=False,
-        ))
+        collector.record_task_metrics(
+            TaskMetrics(
+                timestamp=time.time(),
+                task_id=f"s-{i}",
+                role="security",
+                model="opus",
+                cost_usd=0.20,
+                janitor_passed=False,
+            )
+        )
 
     agg = MetricsAggregator(collector)
     results = agg.analyze_failure_patterns(hours=24)
@@ -391,14 +400,16 @@ def test_analyze_failure_patterns_models_involved(tmp_path: Path) -> None:
     collector = FileMetricsCollector(tmp_path)
     models = ["sonnet", "haiku", "sonnet"]
     for i, model in enumerate(models):
-        collector.record_task_metrics(TaskMetrics(
-            timestamp=time.time(),
-            task_id=f"t-{i}",
-            role="backend",
-            model=model,
-            cost_usd=0.10,
-            janitor_passed=False,
-        ))
+        collector.record_task_metrics(
+            TaskMetrics(
+                timestamp=time.time(),
+                task_id=f"t-{i}",
+                role="backend",
+                model=model,
+                cost_usd=0.10,
+                janitor_passed=False,
+            )
+        )
 
     agg = MetricsAggregator(collector)
     results = agg.analyze_failure_patterns(hours=24)

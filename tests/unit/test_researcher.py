@@ -1,8 +1,7 @@
 """Tests for bernstein.core.researcher — web research for evolve mode."""
+
 from __future__ import annotations
 
-import asyncio
-import json
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -17,10 +16,10 @@ from bernstein.core.researcher import (
     run_research,
 )
 
-
 # ---------------------------------------------------------------------------
 # ResearchResult
 # ---------------------------------------------------------------------------
+
 
 class TestResearchResult:
     """Basic dataclass tests."""
@@ -35,6 +34,7 @@ class TestResearchResult:
 # ---------------------------------------------------------------------------
 # ResearchCache
 # ---------------------------------------------------------------------------
+
 
 class TestResearchCache:
     """Tests for file-based research cache."""
@@ -80,6 +80,7 @@ class TestResearchCache:
 # format_research_context
 # ---------------------------------------------------------------------------
 
+
 class TestFormatResearchContext:
     """Tests for formatting research into markdown."""
 
@@ -117,6 +118,7 @@ class TestFormatResearchContext:
 # ---------------------------------------------------------------------------
 # run_research (with mocked Tavily)
 # ---------------------------------------------------------------------------
+
 
 class TestRunResearch:
     """Tests for the research execution with mocked Tavily."""

@@ -1,20 +1,16 @@
 """Tests for CatalogRegistry cache and auto-discovery (task 403)."""
+
 from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
 
-import pytest
-
 from bernstein.agents.catalog import (
+    _REMOTE_TTL,
     CachedAgentEntry,
     CatalogRegistry,
-    _BUILTIN_AGENT_ENTRIES,
-    _LOCAL_TTL,
-    _REMOTE_TTL,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -148,18 +144,21 @@ class TestLoadCache:
 
     def test_returns_false_when_all_stale(self, tmp_path):
         cache_path = tmp_path / "catalog.json"
-        _write_json_cache(cache_path, [
-            {
-                "role": "backend",
-                "description": ".",
-                "model": "sonnet",
-                "effort": "high",
-                "source": "remote",
-                "fetched_at": time.time() - 7200,
-                "ttl_seconds": 3600,
-                "metadata": {},
-            }
-        ])
+        _write_json_cache(
+            cache_path,
+            [
+                {
+                    "role": "backend",
+                    "description": ".",
+                    "model": "sonnet",
+                    "effort": "high",
+                    "source": "remote",
+                    "fetched_at": time.time() - 7200,
+                    "ttl_seconds": 3600,
+                    "metadata": {},
+                }
+            ],
+        )
         registry = CatalogRegistry(_cache_path=cache_path)
         assert registry.load_cache() is False
         assert registry._cached_roles == {}
@@ -167,18 +166,21 @@ class TestLoadCache:
     def test_returns_true_and_populates_for_fresh_entries(self, tmp_path):
         cache_path = tmp_path / "catalog.json"
         now = time.time()
-        _write_json_cache(cache_path, [
-            {
-                "role": "backend",
-                "description": "Backend engineer.",
-                "model": "sonnet",
-                "effort": "high",
-                "source": "remote",
-                "fetched_at": now,
-                "ttl_seconds": 3600,
-                "metadata": {},
-            }
-        ])
+        _write_json_cache(
+            cache_path,
+            [
+                {
+                    "role": "backend",
+                    "description": "Backend engineer.",
+                    "model": "sonnet",
+                    "effort": "high",
+                    "source": "remote",
+                    "fetched_at": now,
+                    "ttl_seconds": 3600,
+                    "metadata": {},
+                }
+            ],
+        )
         registry = CatalogRegistry(_cache_path=cache_path)
         assert registry.load_cache() is True
         assert "backend" in registry._cached_roles
@@ -187,28 +189,31 @@ class TestLoadCache:
     def test_loads_only_fresh_entries_when_mixed(self, tmp_path):
         cache_path = tmp_path / "catalog.json"
         now = time.time()
-        _write_json_cache(cache_path, [
-            {
-                "role": "backend",
-                "description": ".",
-                "model": "sonnet",
-                "effort": "high",
-                "source": "remote",
-                "fetched_at": now,
-                "ttl_seconds": 3600,
-                "metadata": {},
-            },
-            {
-                "role": "qa",
-                "description": ".",
-                "model": "sonnet",
-                "effort": "normal",
-                "source": "remote",
-                "fetched_at": now - 7200,
-                "ttl_seconds": 3600,
-                "metadata": {},
-            },
-        ])
+        _write_json_cache(
+            cache_path,
+            [
+                {
+                    "role": "backend",
+                    "description": ".",
+                    "model": "sonnet",
+                    "effort": "high",
+                    "source": "remote",
+                    "fetched_at": now,
+                    "ttl_seconds": 3600,
+                    "metadata": {},
+                },
+                {
+                    "role": "qa",
+                    "description": ".",
+                    "model": "sonnet",
+                    "effort": "normal",
+                    "source": "remote",
+                    "fetched_at": now - 7200,
+                    "ttl_seconds": 3600,
+                    "metadata": {},
+                },
+            ],
+        )
         registry = CatalogRegistry(_cache_path=cache_path)
         result = registry.load_cache()
         # True because at least one fresh entry was loaded
@@ -261,18 +266,21 @@ class TestDiscover:
     def test_uses_fresh_cache_without_overwriting(self, tmp_path):
         cache_path = tmp_path / "catalog.json"
         now = time.time()
-        _write_json_cache(cache_path, [
-            {
-                "role": "custom-role",
-                "description": "Custom agent.",
-                "model": "opus",
-                "effort": "max",
-                "source": "remote",
-                "fetched_at": now,
-                "ttl_seconds": 3600,
-                "metadata": {},
-            }
-        ])
+        _write_json_cache(
+            cache_path,
+            [
+                {
+                    "role": "custom-role",
+                    "description": "Custom agent.",
+                    "model": "opus",
+                    "effort": "max",
+                    "source": "remote",
+                    "fetched_at": now,
+                    "ttl_seconds": 3600,
+                    "metadata": {},
+                }
+            ],
+        )
         registry = CatalogRegistry(_cache_path=cache_path)
         registry.discover()
         # Fresh cache used — custom-role persists, no builtin overwrite
@@ -282,18 +290,21 @@ class TestDiscover:
     def test_force_refresh_ignores_fresh_cache(self, tmp_path):
         cache_path = tmp_path / "catalog.json"
         now = time.time()
-        _write_json_cache(cache_path, [
-            {
-                "role": "custom-role",
-                "description": "Custom agent.",
-                "model": "opus",
-                "effort": "max",
-                "source": "remote",
-                "fetched_at": now,
-                "ttl_seconds": 3600,
-                "metadata": {},
-            }
-        ])
+        _write_json_cache(
+            cache_path,
+            [
+                {
+                    "role": "custom-role",
+                    "description": "Custom agent.",
+                    "model": "opus",
+                    "effort": "max",
+                    "source": "remote",
+                    "fetched_at": now,
+                    "ttl_seconds": 3600,
+                    "metadata": {},
+                }
+            ],
+        )
         registry = CatalogRegistry(_cache_path=cache_path)
         registry.discover(force=True)
         # Forced refresh — custom-role gone, builtins loaded
@@ -302,18 +313,21 @@ class TestDiscover:
 
     def test_stale_cache_triggers_refresh_to_builtins(self, tmp_path):
         cache_path = tmp_path / "catalog.json"
-        _write_json_cache(cache_path, [
-            {
-                "role": "custom-role",
-                "description": "Custom agent.",
-                "model": "opus",
-                "effort": "max",
-                "source": "remote",
-                "fetched_at": time.time() - 7200,
-                "ttl_seconds": 3600,
-                "metadata": {},
-            }
-        ])
+        _write_json_cache(
+            cache_path,
+            [
+                {
+                    "role": "custom-role",
+                    "description": "Custom agent.",
+                    "model": "opus",
+                    "effort": "max",
+                    "source": "remote",
+                    "fetched_at": time.time() - 7200,
+                    "ttl_seconds": 3600,
+                    "metadata": {},
+                }
+            ],
+        )
         registry = CatalogRegistry(_cache_path=cache_path)
         registry.discover()
         # Stale cache → refresh → builtins

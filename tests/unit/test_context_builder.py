@@ -1,24 +1,19 @@
 """Tests for TaskContextBuilder and knowledge base utilities."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.context import (
-    FileSummary,
     TaskContextBuilder,
-    _find_importers,
     _parse_python_file,
     _subsystem_context,
     append_decision,
-    build_architecture_md,
     build_file_index,
     refresh_knowledge_base,
 )
-from bernstein.core.models import Task, TaskStatus, TaskType, Scope, Complexity
-
+from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,12 +64,7 @@ class TestParsePythonFile:
 
     def test_extracts_classes_and_methods(self, tmp_path: Path) -> None:
         f = tmp_path / "mod.py"
-        _write_py(f, (
-            "class Foo:\n"
-            "    def bar(self): pass\n"
-            "    def baz(self): pass\n"
-            "    def _private(self): pass\n"
-        ))
+        _write_py(f, ("class Foo:\n    def bar(self): pass\n    def baz(self): pass\n    def _private(self): pass\n"))
         summary = _parse_python_file(f)
         assert summary is not None
         assert len(summary.classes) == 1
@@ -253,14 +243,21 @@ class TestBuildFileIndex:
     def test_indexes_python_files_in_git_repo(self, tmp_path: Path) -> None:
         # Set up a git repo
         import subprocess
+
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
         _write_py(tmp_path / "mod.py", '"""My module."""\nclass Foo:\n    def bar(self): pass\n')
         subprocess.run(["git", "add", "mod.py"], cwd=tmp_path, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "init", "--no-gpg-sign"],
-            cwd=tmp_path, capture_output=True,
-            env={**__import__("os").environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t",
-                 "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t"},
+            cwd=tmp_path,
+            capture_output=True,
+            env={
+                **__import__("os").environ,
+                "GIT_AUTHOR_NAME": "test",
+                "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "test",
+                "GIT_COMMITTER_EMAIL": "t@t",
+            },
         )
 
         index = build_file_index(tmp_path)
@@ -281,14 +278,21 @@ class TestRefreshKnowledgeBase:
     def test_creates_knowledge_directory_and_files(self, tmp_path: Path) -> None:
         # Set up a git repo
         import subprocess
+
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
         _write_py(tmp_path / "mod.py", '"""Hello."""\n')
         subprocess.run(["git", "add", "mod.py"], cwd=tmp_path, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "init", "--no-gpg-sign"],
-            cwd=tmp_path, capture_output=True,
-            env={**__import__("os").environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t",
-                 "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t"},
+            cwd=tmp_path,
+            capture_output=True,
+            env={
+                **__import__("os").environ,
+                "GIT_AUTHOR_NAME": "test",
+                "GIT_AUTHOR_EMAIL": "t@t",
+                "GIT_COMMITTER_NAME": "test",
+                "GIT_COMMITTER_EMAIL": "t@t",
+            },
         )
 
         refresh_knowledge_base(tmp_path)
@@ -304,6 +308,7 @@ class TestRefreshKnowledgeBase:
 
     def test_creates_recent_decisions_if_missing(self, tmp_path: Path) -> None:
         import subprocess
+
         subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
         refresh_knowledge_base(tmp_path)
         assert (tmp_path / ".sdd" / "knowledge" / "recent_decisions.md").is_file()

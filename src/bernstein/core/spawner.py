@@ -381,6 +381,16 @@ class AgentSpawner:
         # Build session ID early so we can inject it into the prompt for signal checks
         session_id = f"{role}-{uuid.uuid4().hex[:8]}"
 
+        # Build catalog system prompt, appending tool preferences when present
+        catalog_system_prompt: str | None = None
+        if catalog_agent and catalog_agent.system_prompt:
+            catalog_system_prompt = catalog_agent.system_prompt
+            if catalog_agent.tools:
+                tools_hint = "\n\n## Preferred tools\nUse these tools when available: " + ", ".join(
+                    f"`{t}`" for t in catalog_agent.tools
+                )
+                catalog_system_prompt = catalog_system_prompt + tools_hint
+
         # Render prompt (catalog system_prompt replaces role template when matched)
         bulletin_summary = self._bulletin.summary() if self._bulletin is not None else ""
         prompt = _render_prompt(
@@ -388,7 +398,7 @@ class AgentSpawner:
             self._templates_dir,
             self._workdir,
             self._agency_catalog,
-            catalog_system_prompt=catalog_agent.system_prompt if catalog_agent else None,
+            catalog_system_prompt=catalog_system_prompt,
             context_builder=self._context_builder,
             session_id=session_id,
             bulletin_summary=bulletin_summary,

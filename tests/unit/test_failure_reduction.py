@@ -15,22 +15,18 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.models import (
-    AgentSession,
     Complexity,
     OrchestratorConfig,
     Scope,
     Task,
     TaskStatus,
-    TaskType,
 )
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -161,9 +157,7 @@ class TestProgressiveTimeout:
         # retry_count=1, new retry_count=2 → multiplier = 1+2 = 3
         assert posted[0]["estimated_minutes"] == 90  # 30 * 3
 
-    def test_progressive_timeout_not_applied_when_max_retries_exceeded(
-        self, tmp_path: Path
-    ) -> None:
+    def test_progressive_timeout_not_applied_when_max_retries_exceeded(self, tmp_path: Path) -> None:
         task = _make_task(
             id="T-prog-3",
             description="[retry:2] Do the thing.",
@@ -227,9 +221,7 @@ class TestLargeScopeOpusMaxOnRetry:
         assert posted[0]["model"] == "opus"
         assert posted[0]["effort"] == "max"
 
-    def test_medium_scope_first_retry_does_not_use_max_effort(
-        self, tmp_path: Path
-    ) -> None:
+    def test_medium_scope_first_retry_does_not_use_max_effort(self, tmp_path: Path) -> None:
         """Medium scope backend task should NOT get opus/max on first retry."""
         task = _make_task(
             id="T-med-1",
@@ -281,9 +273,7 @@ class TestAutoDecomposeOnRepeatedFailure:
 
         assert result is True
 
-    def test_retry_1_task_does_not_trigger_auto_decompose(
-        self, tmp_path: Path
-    ) -> None:
+    def test_retry_1_task_does_not_trigger_auto_decompose(self, tmp_path: Path) -> None:
         """A task with [RETRY 1] should NOT be decomposed yet (give it one more try)."""
         orch = self._build_orch(tmp_path)
         task = _make_task(
@@ -296,9 +286,7 @@ class TestAutoDecomposeOnRepeatedFailure:
 
         assert result is False
 
-    def test_fresh_task_does_not_trigger_auto_decompose_for_medium_scope(
-        self, tmp_path: Path
-    ) -> None:
+    def test_fresh_task_does_not_trigger_auto_decompose_for_medium_scope(self, tmp_path: Path) -> None:
         """A fresh medium-scope task should not be decomposed."""
         orch = self._build_orch(tmp_path)
         task = _make_task(
@@ -324,9 +312,7 @@ class TestAutoDecomposeOnRepeatedFailure:
 
         assert result is True
 
-    def test_retry_2_task_already_decomposed_not_decomposed_again(
-        self, tmp_path: Path
-    ) -> None:
+    def test_retry_2_task_already_decomposed_not_decomposed_again(self, tmp_path: Path) -> None:
         """A [RETRY 2] task already decomposed should not be decomposed again."""
         orch = self._build_orch(tmp_path)
         task = _make_task(
@@ -378,9 +364,7 @@ class TestFileContextDiscovery:
             "README.md",
         ]
 
-        with patch(
-            "bernstein.core.context._gc_ls_files", return_value=fake_files
-        ):
+        with patch("bernstein.core.context._gc_ls_files", return_value=fake_files):
             result = builder._discover_relevant_files([task])
 
         # Should find orchestrator and spawner files based on keywords
@@ -400,17 +384,13 @@ class TestFileContextDiscovery:
             "src/bernstein/core/spawner.py",
         ]
 
-        with patch(
-            "bernstein.core.context._gc_ls_files", return_value=fake_files
-        ):
+        with patch("bernstein.core.context._gc_ls_files", return_value=fake_files):
             result = builder._discover_relevant_files([task])
 
         # "thing" and "work" are too generic / stop-wordy to match file paths
         assert result == []
 
-    def test_build_context_uses_discovery_when_no_owned_files(
-        self, tmp_path: Path
-    ) -> None:
+    def test_build_context_uses_discovery_when_no_owned_files(self, tmp_path: Path) -> None:
         """build_context calls _discover_relevant_files when owned_files empty."""
         builder = TaskContextBuilder(tmp_path)
         task = _make_task(
@@ -420,9 +400,7 @@ class TestFileContextDiscovery:
 
         fake_files = ["src/bernstein/core/router.py"]
 
-        with patch(
-            "bernstein.core.context._gc_ls_files", return_value=fake_files
-        ):
+        with patch("bernstein.core.context._gc_ls_files", return_value=fake_files):
             result = builder.build_context([task])
 
         assert "router.py" in result
@@ -437,9 +415,7 @@ class TestFileContextDiscovery:
 class TestMaybeRetryProgressiveTimeout:
     """_maybe_retry_task applies progressive timeout and high-stakes routing."""
 
-    def _build_orch_for_maybe_retry(
-        self, tmp_path: Path, task: Task
-    ) -> tuple[Orchestrator, list[dict]]:
+    def _build_orch_for_maybe_retry(self, tmp_path: Path, task: Task) -> tuple[Orchestrator, list[dict]]:
         """Build orchestrator that captures POSTed retry tasks."""
         posted: list[dict] = []
 

@@ -12,6 +12,7 @@ Full pipeline:
 
 No real LLM calls — ProposalGenerator and analysis pipeline are fully deterministic.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,6 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from starlette.testclient import TestClient
 
 from bernstein.core.models import AgentSession, ModelConfig, OrchestratorConfig
@@ -30,8 +30,8 @@ from bernstein.evolution import EvolutionCoordinator
 from bernstein.evolution.aggregator import FileMetricsCollector, TaskMetrics
 from bernstein.evolution.gate import ApprovalGate, ApprovalOutcome
 from bernstein.evolution.proposals import AnalysisTrigger, UpgradeStatus
-from bernstein.evolution.types import RiskLevel, UpgradeProposal as EvolutionUpgradeProposal
-
+from bernstein.evolution.types import RiskLevel
+from bernstein.evolution.types import UpgradeProposal as EvolutionUpgradeProposal
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -162,9 +162,7 @@ class TestEvolutionFeedbackLoop:
         lines = tasks_jsonl.read_text().strip().splitlines()
         assert len(lines) == 20
 
-    def test_evolution_cycle_generates_proposals_from_declining_metrics(
-        self, tmp_path: Path
-    ) -> None:
+    def test_evolution_cycle_generates_proposals_from_declining_metrics(self, tmp_path: Path) -> None:
         """run_analysis_cycle() returns proposals when success rate < 80 %."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()
@@ -180,9 +178,7 @@ class TestEvolutionFeedbackLoop:
 
         proposals = coordinator.run_analysis_cycle(trigger=AnalysisTrigger.SCHEDULED)
 
-        assert len(proposals) > 0, (
-            "Declining metrics (< 80 % success) must produce ≥ 1 upgrade proposal"
-        )
+        assert len(proposals) > 0, "Declining metrics (< 80 % success) must produce ≥ 1 upgrade proposal"
         for p in proposals:
             assert p.id.startswith("UPG-"), f"Unexpected proposal ID: {p.id}"
             assert p.title, "Proposal must have a non-empty title"
@@ -217,9 +213,7 @@ class TestEvolutionFeedbackLoop:
                 UpgradeStatus.IN_PROGRESS,
             ), f"Unexpected status {p.status} for proposal {p.id}"
 
-    def test_approval_gate_logs_decision_for_every_proposal(
-        self, tmp_path: Path
-    ) -> None:
+    def test_approval_gate_logs_decision_for_every_proposal(self, tmp_path: Path) -> None:
         """ApprovalGate writes a decisions.jsonl entry for each routed proposal."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()
@@ -267,16 +261,11 @@ class TestEvolutionFeedbackLoop:
         decisions_log = decisions_dir / "decisions.jsonl"
         assert decisions_log.exists(), "ApprovalGate must create decisions.jsonl"
 
-        logged = {
-            json.loads(line)["proposal_id"]
-            for line in decisions_log.read_text().strip().splitlines()
-        }
+        logged = {json.loads(line)["proposal_id"] for line in decisions_log.read_text().strip().splitlines()}
         for pid in routed_ids:
             assert pid in logged, f"No decision logged for proposal {pid}"
 
-    def test_orchestrator_tick_triggers_evolution_and_writes_pending_json(
-        self, tmp_path: Path
-    ) -> None:
+    def test_orchestrator_tick_triggers_evolution_and_writes_pending_json(self, tmp_path: Path) -> None:
         """Tick with evolution_tick_interval=1 fires the cycle and writes pending.json."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()
@@ -311,14 +300,10 @@ class TestEvolutionFeedbackLoop:
 
         # pending.json must exist with at least one entry
         pending_path = state_dir / "upgrades" / "pending.json"
-        assert pending_path.exists(), (
-            ".sdd/upgrades/pending.json must be written after the evolution cycle"
-        )
+        assert pending_path.exists(), ".sdd/upgrades/pending.json must be written after the evolution cycle"
         pending_data = json.loads(pending_path.read_text())
         assert isinstance(pending_data, list)
-        assert len(pending_data) > 0, (
-            "Declining metrics must produce at least one pending proposal"
-        )
+        assert len(pending_data) > 0, "Declining metrics must produce at least one pending proposal"
 
         # Each entry must carry the required fields
         for entry in pending_data:
@@ -326,9 +311,7 @@ class TestEvolutionFeedbackLoop:
             assert "title" in entry
             assert "status" in entry
 
-    def test_orchestrator_tick_interval_controls_when_cycle_fires(
-        self, tmp_path: Path
-    ) -> None:
+    def test_orchestrator_tick_interval_controls_when_cycle_fires(self, tmp_path: Path) -> None:
         """Evolution cycle fires only when tick_count % interval == 0."""
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()
@@ -363,9 +346,7 @@ class TestEvolutionFeedbackLoop:
             # If the file was written it must be empty or not exist
             if pending_path.exists():
                 data = json.loads(pending_path.read_text())
-                assert data == [], (
-                    "pending.json must be empty before evolution cycle fires"
-                )
+                assert data == [], "pending.json must be empty before evolution cycle fires"
 
             # Tick 3 fires the cycle
             orchestrator.tick()
@@ -429,9 +410,7 @@ class TestEvolutionFeedbackLoop:
 
         # ── Step 4: Verify evolution cycle ran (pending.json written) ─────────
         pending_path = state_dir / "upgrades" / "pending.json"
-        assert pending_path.exists(), (
-            ".sdd/upgrades/pending.json must be written by the evolution cycle"
-        )
+        assert pending_path.exists(), ".sdd/upgrades/pending.json must be written by the evolution cycle"
 
         # ── Step 5: Verify proposals were generated ───────────────────────────
         pending_data = json.loads(pending_path.read_text())
@@ -440,12 +419,12 @@ class TestEvolutionFeedbackLoop:
 
         # ── Step 6: Verify each proposal has a proper structure ───────────────
         for entry in pending_data:
-            assert entry.get("id", "").startswith("UPG-"), (
-                f"Proposal ID must start with 'UPG-': {entry.get('id')}"
-            )
+            assert entry.get("id", "").startswith("UPG-"), f"Proposal ID must start with 'UPG-': {entry.get('id')}"
             assert entry.get("title"), "Proposal must have a non-empty title"
             assert entry.get("status") in (
-                "pending", "approved", "in_progress",
+                "pending",
+                "approved",
+                "in_progress",
             ), f"Unexpected status: {entry.get('status')}"
 
         # ── Step 7: Verify no evolution errors occurred ────────────────────────
@@ -456,7 +435,4 @@ class TestEvolutionFeedbackLoop:
         pending_upgrades = coordinator.get_pending_upgrades()
         applied_upgrades = coordinator.get_applied_upgrades()
         total = len(pending_upgrades) + len(applied_upgrades)
-        assert total > 0, (
-            "After the evolution cycle, coordinator must hold at least one "
-            "proposal in pending or applied"
-        )
+        assert total > 0, "After the evolution cycle, coordinator must hold at least one proposal in pending or applied"

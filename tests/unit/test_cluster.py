@@ -1,11 +1,10 @@
 """Unit tests for NodeRegistry and cluster coordination."""
+
 from __future__ import annotations
 
 import time
 
-import pytest
-
-from bernstein.core.cluster import NodeRegistry, node_from_dict, _node_to_dict
+from bernstein.core.cluster import NodeRegistry, _node_to_dict, node_from_dict
 from bernstein.core.models import (
     ClusterConfig,
     ClusterTopology,
@@ -13,7 +12,6 @@ from bernstein.core.models import (
     NodeInfo,
     NodeStatus,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -176,14 +174,18 @@ def test_total_capacity_sums_online_nodes() -> None:
 
 def test_best_node_for_task_picks_most_available() -> None:
     registry = NodeRegistry(_make_config())
-    n_small = registry.register(NodeInfo(
-        name="small",
-        capacity=NodeCapacity(available_slots=1),
-    ))
-    n_big = registry.register(NodeInfo(
-        name="big",
-        capacity=NodeCapacity(available_slots=10),
-    ))
+    n_small = registry.register(
+        NodeInfo(
+            name="small",
+            capacity=NodeCapacity(available_slots=1),
+        )
+    )
+    n_big = registry.register(
+        NodeInfo(
+            name="big",
+            capacity=NodeCapacity(available_slots=10),
+        )
+    )
     best = registry.best_node_for_task()
     assert best is not None
     assert best.id == n_big.id
@@ -191,14 +193,18 @@ def test_best_node_for_task_picks_most_available() -> None:
 
 def test_best_node_filters_by_model() -> None:
     registry = NodeRegistry(_make_config())
-    registry.register(NodeInfo(
-        name="no-opus",
-        capacity=NodeCapacity(available_slots=10, supported_models=["sonnet", "haiku"]),
-    ))
-    gpu_node = registry.register(NodeInfo(
-        name="has-opus",
-        capacity=NodeCapacity(available_slots=5, supported_models=["sonnet", "opus"]),
-    ))
+    registry.register(
+        NodeInfo(
+            name="no-opus",
+            capacity=NodeCapacity(available_slots=10, supported_models=["sonnet", "haiku"]),
+        )
+    )
+    gpu_node = registry.register(
+        NodeInfo(
+            name="has-opus",
+            capacity=NodeCapacity(available_slots=5, supported_models=["sonnet", "opus"]),
+        )
+    )
     best = registry.best_node_for_task(required_model="opus")
     assert best is not None
     assert best.id == gpu_node.id
@@ -206,25 +212,31 @@ def test_best_node_filters_by_model() -> None:
 
 def test_best_node_returns_none_when_all_full() -> None:
     registry = NodeRegistry(_make_config())
-    registry.register(NodeInfo(
-        name="full",
-        capacity=NodeCapacity(available_slots=0),
-    ))
+    registry.register(
+        NodeInfo(
+            name="full",
+            capacity=NodeCapacity(available_slots=0),
+        )
+    )
     assert registry.best_node_for_task() is None
 
 
 def test_best_node_label_affinity() -> None:
     registry = NodeRegistry(_make_config())
-    generic = registry.register(NodeInfo(
-        name="generic",
-        capacity=NodeCapacity(available_slots=4),
-        labels={},
-    ))
-    gpu = registry.register(NodeInfo(
-        name="gpu-node",
-        capacity=NodeCapacity(available_slots=2),
-        labels={"gpu": "true"},
-    ))
+    generic = registry.register(
+        NodeInfo(
+            name="generic",
+            capacity=NodeCapacity(available_slots=4),
+            labels={},
+        )
+    )
+    gpu = registry.register(
+        NodeInfo(
+            name="gpu-node",
+            capacity=NodeCapacity(available_slots=2),
+            labels={"gpu": "true"},
+        )
+    )
     best = registry.best_node_for_task(preferred_labels={"gpu": "true"})
     # gpu-node matches preferred label — it wins despite fewer slots
     assert best is not None
@@ -238,10 +250,12 @@ def test_best_node_label_affinity() -> None:
 
 def test_cluster_summary_structure() -> None:
     registry = NodeRegistry(ClusterConfig(enabled=True, topology=ClusterTopology.STAR))
-    registry.register(NodeInfo(
-        name="w1",
-        capacity=NodeCapacity(max_agents=4, available_slots=2, active_agents=2),
-    ))
+    registry.register(
+        NodeInfo(
+            name="w1",
+            capacity=NodeCapacity(max_agents=4, available_slots=2, active_agents=2),
+        )
+    )
     summary = registry.cluster_summary()
 
     assert summary["topology"] == "star"

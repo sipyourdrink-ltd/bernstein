@@ -1,4 +1,5 @@
 """Tests for idle agent detection: backlog auto-ingestion and proc reaping."""
+
 from __future__ import annotations
 
 import json
@@ -6,7 +7,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import (
@@ -21,7 +21,6 @@ from bernstein.core.models import (
 )
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
-
 
 # --- Helpers ---
 
@@ -124,9 +123,7 @@ class TestIngestBacklog:
         open_dir = tmp_path / ".sdd" / "backlog" / "open"
         open_dir.mkdir(parents=True)
         backlog_file = open_dir / "101-add-feature.md"
-        backlog_file.write_text(
-            "# 101 -- Add feature\n\n**Role:** backend\n\nDo it.\n"
-        )
+        backlog_file.write_text("# 101 -- Add feature\n\n**Role:** backend\n\nDo it.\n")
 
         posts: list[dict] = []
         client = httpx.Client(transport=_tick_transport(posts), base_url="http://testserver")
@@ -184,9 +181,7 @@ class TestIngestBacklog:
         open_dir = tmp_path / ".sdd" / "backlog" / "open"
         open_dir.mkdir(parents=True)
         for i in range(3):
-            (open_dir / f"20{i}-task-{i}.md").write_text(
-                f"# 20{i} -- Task {i}\n\n**Role:** backend\n\nDo task {i}.\n"
-            )
+            (open_dir / f"20{i}-task-{i}.md").write_text(f"# 20{i} -- Task {i}\n\n**Role:** backend\n\nDo task {i}.\n")
 
         posts: list[dict] = []
         client = httpx.Client(transport=_tick_transport(posts), base_url="http://testserver")
@@ -266,7 +261,6 @@ class TestSpawnerReapCompletedAgent:
         spawner = AgentSpawner(adapter, templates_dir, tmp_path)
 
         # Build a session that was never spawned through this spawner
-        from bernstein.core.models import ModelConfig
         orphan_session = AgentSession(
             id="orphan-session",
             role="backend",

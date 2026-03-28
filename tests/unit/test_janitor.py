@@ -1,4 +1,5 @@
 """Tests for janitor -- completion signal verification."""
+
 from __future__ import annotations
 
 import subprocess
@@ -17,7 +18,7 @@ from bernstein.core.janitor import (
     run_janitor,
     verify_task,
 )
-from bernstein.core.models import CompletionSignal, JudgeVerdict, Task
+from bernstein.core.models import CompletionSignal, Task
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -111,7 +112,7 @@ class TestTestPasses:
     def test_passes_on_exit_zero(self, tmp_path: Path) -> None:
         signal = CompletionSignal(
             type="test_passes",
-            value=f"{sys.executable} -c \"raise SystemExit(0)\"",
+            value=f'{sys.executable} -c "raise SystemExit(0)"',
         )
         passed, _ = evaluate_signal(signal, tmp_path)
         assert passed is True
@@ -119,7 +120,7 @@ class TestTestPasses:
     def test_fails_on_nonzero_exit(self, tmp_path: Path) -> None:
         signal = CompletionSignal(
             type="test_passes",
-            value=f"{sys.executable} -c \"raise SystemExit(1)\"",
+            value=f'{sys.executable} -c "raise SystemExit(1)"',
         )
         passed, _ = evaluate_signal(signal, tmp_path)
         assert passed is False
@@ -194,7 +195,10 @@ class TestFileContains:
 class TestLlmReview:
     def test_passes_on_pass_output(self, tmp_path: Path) -> None:
         mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="PASS: All error handling looks good\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="PASS: All error handling looks good\n",
+            stderr="",
         )
         with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result):
             signal = CompletionSignal(type="llm_review", value="Check error handling")
@@ -204,7 +208,10 @@ class TestLlmReview:
 
     def test_fails_on_fail_output(self, tmp_path: Path) -> None:
         mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="FAIL: Missing input validation on POST endpoint\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="FAIL: Missing input validation on POST endpoint\n",
+            stderr="",
         )
         with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result):
             signal = CompletionSignal(type="llm_review", value="Check input validation")
@@ -214,7 +221,10 @@ class TestLlmReview:
 
     def test_fails_on_empty_output(self, tmp_path: Path) -> None:
         mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="", stderr="",
+            args=[],
+            returncode=0,
+            stdout="",
+            stderr="",
         )
         with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result):
             signal = CompletionSignal(type="llm_review", value="Check something")
@@ -224,7 +234,10 @@ class TestLlmReview:
 
     def test_fails_on_ambiguous_output(self, tmp_path: Path) -> None:
         mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="I think it looks okay maybe\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="I think it looks okay maybe\n",
+            stderr="",
         )
         with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result):
             signal = CompletionSignal(type="llm_review", value="Check something")
@@ -255,7 +268,10 @@ class TestLlmReview:
     def test_spawns_correct_command(self, tmp_path: Path) -> None:
         """Verify the exact CLI arguments passed to subprocess."""
         mock_result = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="PASS: looks good\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="PASS: looks good\n",
+            stderr="",
         )
         with patch("bernstein.core.janitor.subprocess.run", return_value=mock_result) as mock_run:
             signal = CompletionSignal(type="llm_review", value="Check error handling")
@@ -279,10 +295,12 @@ class TestLlmReview:
 class TestVerifyTask:
     def test_all_signals_pass(self, tmp_path: Path) -> None:
         (tmp_path / "a.py").write_text("class Impl:\n    pass")
-        task = _make_task(signals=[
-            CompletionSignal(type="path_exists", value="a.py"),
-            CompletionSignal(type="file_contains", value="a.py :: class Impl"),
-        ])
+        task = _make_task(
+            signals=[
+                CompletionSignal(type="path_exists", value="a.py"),
+                CompletionSignal(type="file_contains", value="a.py :: class Impl"),
+            ]
+        )
 
         passed, failed = verify_task(task, tmp_path)
         assert passed is True
@@ -290,10 +308,12 @@ class TestVerifyTask:
 
     def test_partial_failure(self, tmp_path: Path) -> None:
         (tmp_path / "a.py").write_text("class Impl:\n    pass")
-        task = _make_task(signals=[
-            CompletionSignal(type="path_exists", value="a.py"),
-            CompletionSignal(type="path_exists", value="b.py"),
-        ])
+        task = _make_task(
+            signals=[
+                CompletionSignal(type="path_exists", value="a.py"),
+                CompletionSignal(type="path_exists", value="b.py"),
+            ]
+        )
 
         passed, failed = verify_task(task, tmp_path)
         assert passed is False
@@ -569,8 +589,12 @@ class TestJudgeTask:
         )
 
         mock_diff = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff --git a/foo.py\n+pass\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="diff --git a/foo.py\n+pass\n",
+            stderr="",
         )
+
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
             return '{"verdict": "accept", "confidence": 0.95, "feedback": "All good."}'
 
@@ -592,8 +616,12 @@ class TestJudgeTask:
         )
 
         mock_diff = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="diff\n",
+            stderr="",
         )
+
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
             return '{"verdict": "retry", "confidence": 0.8, "feedback": "Missing unit tests."}'
 
@@ -611,8 +639,12 @@ class TestJudgeTask:
         task = _make_task(id="T-JUDGE-3", signals=[])
 
         mock_diff = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="diff\n",
+            stderr="",
         )
+
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
             return '{"verdict": "accept", "confidence": 0.4, "feedback": "Not sure."}'
 
@@ -631,7 +663,10 @@ class TestJudgeTask:
         task = _make_task(id="T-JUDGE-4", signals=[])
 
         mock_diff = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="diff\n",
+            stderr="",
         )
 
         with (
@@ -653,8 +688,12 @@ class TestJudgeTask:
         task = _make_task(id="T-JUDGE-5", signals=[])
 
         mock_diff = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="diff\n",
+            stderr="",
         )
+
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
             return ""
 
@@ -685,8 +724,12 @@ class TestRunJanitorWithJudge:
         )
 
         mock_diff = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="diff\n",
+            stderr="",
         )
+
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
             return '{"verdict": "accept", "confidence": 0.9, "feedback": "Good."}'
 
@@ -715,8 +758,12 @@ class TestRunJanitorWithJudge:
         )
 
         mock_diff = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="diff\n",
+            stderr="",
         )
+
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
             return '{"verdict": "retry", "confidence": 0.8, "feedback": "Missing error handling."}'
 
@@ -736,7 +783,9 @@ class TestRunJanitorWithJudge:
             patch.object(httpx.AsyncClient, "post", mock_post),
         ):
             results = await run_janitor(
-                [task], tmp_path, server_url="http://localhost:8052",
+                [task],
+                tmp_path,
+                server_url="http://localhost:8052",
             )
 
         assert len(results) == 1
@@ -761,9 +810,7 @@ class TestRunJanitorWithJudge:
         assert len(results) == 1
         assert results[0].passed is False
         # Judge should be in signal_results as skipped
-        judge_signals = [
-            sr for sr in results[0].signal_results if sr[0].startswith("llm_judge")
-        ]
+        judge_signals = [sr for sr in results[0].signal_results if sr[0].startswith("llm_judge")]
         assert len(judge_signals) == 1
         assert judge_signals[0][1] is False
         assert "skipped" in judge_signals[0][2]
@@ -786,8 +833,12 @@ class TestRunJanitorWithJudge:
         )
 
         mock_diff = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="diff\n",
+            stderr="",
         )
+
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
             return '{"verdict": "retry", "confidence": 0.8, "feedback": "Still broken."}'
 
@@ -796,7 +847,9 @@ class TestRunJanitorWithJudge:
             patch("bernstein.core.janitor.call_llm", side_effect=mock_call_llm),
         ):
             results = await run_janitor(
-                [task], tmp_path, server_url="http://localhost:8052",
+                [task],
+                tmp_path,
+                server_url="http://localhost:8052",
             )
 
         assert len(results) == 1
@@ -816,8 +869,12 @@ class TestRunJanitorWithJudge:
         )
 
         mock_diff = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="diff\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="diff\n",
+            stderr="",
         )
+
         async def mock_call_llm(**kwargs: object) -> str:  # type: ignore[override]
             return '{"verdict": "accept", "confidence": 0.5, "feedback": "Looks OK-ish."}'
 

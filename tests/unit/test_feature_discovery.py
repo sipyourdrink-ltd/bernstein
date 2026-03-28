@@ -1,12 +1,10 @@
 """Tests for FeatureDiscovery in bernstein.evolution.detector."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from bernstein.evolution.detector import FeatureDiscovery, FeatureTicket
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -21,9 +19,7 @@ def _make_src_file(tmp_path: Path, rel: str, content: str) -> Path:
     return p
 
 
-def _make_backlog_ticket(
-    tmp_path: Path, subdir: str, filename: str, title: str
-) -> Path:
+def _make_backlog_ticket(tmp_path: Path, subdir: str, filename: str, title: str) -> Path:
     """Write a minimal backlog ticket file."""
     d = tmp_path / ".sdd" / "backlog" / subdir
     d.mkdir(parents=True, exist_ok=True)
@@ -94,9 +90,7 @@ def test_discover_skips_test_files(tmp_path: Path) -> None:
 def test_discover_deduplicates_against_open_backlog(tmp_path: Path) -> None:
     """Tickets matching existing open-backlog titles are skipped."""
     _make_src_file(tmp_path, "foo.py", "# TODO: add retry logic\n")
-    _make_backlog_ticket(
-        tmp_path, "open", "500-add-retry-logic.md", "Add retry logic"
-    )
+    _make_backlog_ticket(tmp_path, "open", "500-add-retry-logic.md", "Add retry logic")
     fd = FeatureDiscovery(repo_root=tmp_path, backlog_dir=tmp_path / ".sdd" / "backlog")
 
     tickets = fd.discover(max_tickets=5)
@@ -107,9 +101,7 @@ def test_discover_deduplicates_against_open_backlog(tmp_path: Path) -> None:
 def test_discover_deduplicates_against_closed_backlog(tmp_path: Path) -> None:
     """Tickets matching existing closed-backlog titles are skipped."""
     _make_src_file(tmp_path, "foo.py", "# TODO: add rate limiting\n")
-    _make_backlog_ticket(
-        tmp_path, "closed", "300-add-rate-limiting.md", "Add rate limiting"
-    )
+    _make_backlog_ticket(tmp_path, "closed", "300-add-rate-limiting.md", "Add rate limiting")
     fd = FeatureDiscovery(repo_root=tmp_path, backlog_dir=tmp_path / ".sdd" / "backlog")
 
     tickets = fd.discover(max_tickets=5)
@@ -248,10 +240,7 @@ def test_discover_skips_missing_pattern_when_already_present(tmp_path: Path) -> 
 
     tickets = fd.discover(max_tickets=5)
 
-    retry_pattern_tickets = [
-        t for t in tickets
-        if t.source == "missing_pattern" and "retry" in t.title.lower()
-    ]
+    retry_pattern_tickets = [t for t in tickets if t.source == "missing_pattern" and "retry" in t.title.lower()]
     assert len(retry_pattern_tickets) == 0
 
 
@@ -265,11 +254,7 @@ def test_discover_returns_empty_for_clean_codebase(tmp_path: Path) -> None:
     _make_src_file(
         tmp_path,
         "utils.py",
-        (
-            "import tenacity\nfrom functools import lru_cache\n"
-            "from ratelimit import limits\n\n"
-            "def run(): pass\n"
-        ),
+        ("import tenacity\nfrom functools import lru_cache\nfrom ratelimit import limits\n\ndef run(): pass\n"),
     )
     fd = FeatureDiscovery(repo_root=tmp_path, backlog_dir=tmp_path / ".sdd" / "backlog")
 

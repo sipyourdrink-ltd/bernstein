@@ -5,12 +5,12 @@ Tests the end-to-end pipeline:
   agent completes tasks via API → orchestrator detects completion →
   summary.md written with correct counts.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from starlette.testclient import TestClient
 
 from bernstein.core.models import (
@@ -21,7 +21,6 @@ from bernstein.core.models import (
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -147,8 +146,7 @@ def test_lifecycle_spawn_execute_complete(tmp_path: Path) -> None:
         # Three tasks exist: 2 backend + 1 qa; with max_tasks_per_agent=2 and
         # max_agents=4 the orchestrator should spawn at least one agent.
         assert result1.open_tasks == 3 or len(result1.spawned) >= 1, (
-            f"Expected open tasks or spawned agents: open={result1.open_tasks}, "
-            f"spawned={result1.spawned}"
+            f"Expected open tasks or spawned agents: open={result1.open_tasks}, spawned={result1.spawned}"
         )
         assert mock_spawner.spawn_for_tasks.call_count >= 1
 
@@ -203,28 +201,23 @@ def test_lifecycle_spawn_execute_complete(tmp_path: Path) -> None:
         )
 
         # open_tasks should be 0 since all tasks are done
-        assert result2.open_tasks == 0, (
-            f"Expected 0 open tasks after completion, got {result2.open_tasks}"
-        )
+        assert result2.open_tasks == 0, f"Expected 0 open tasks after completion, got {result2.open_tasks}"
 
         # 6. Verify summary.md was written with correct counts
         summary_path = tmp_path / ".sdd" / "runtime" / "summary.md"
-        assert summary_path.exists(), (
-            "Expected .sdd/runtime/summary.md to be written after all tasks complete"
-        )
+        assert summary_path.exists(), "Expected .sdd/runtime/summary.md to be written after all tasks complete"
 
         summary_text = summary_path.read_text()
         assert "# Run Summary" in summary_text
 
         # Extract completed count from summary
         # Format: "**Total completed:** N"
-        assert "**Total completed:**" in summary_text, (
-            f"Summary missing 'Total completed' field:\n{summary_text}"
-        )
+        assert "**Total completed:**" in summary_text, f"Summary missing 'Total completed' field:\n{summary_text}"
         assert "**Total failed:**" in summary_text
 
         # At least 1 task should be shown as completed
         import re
+
         match = re.search(r"\*\*Total completed:\*\* (\d+)", summary_text)
         assert match is not None
         total_completed = int(match.group(1))
@@ -236,9 +229,7 @@ def test_lifecycle_spawn_execute_complete(tmp_path: Path) -> None:
         # (at least one of our task titles should appear)
         task_titles = {p["title"] for p in TASKS}
         found_any = any(title in summary_text for title in task_titles)
-        assert found_any, (
-            f"Expected at least one task title in summary:\n{summary_text}"
-        )
+        assert found_any, f"Expected at least one task title in summary:\n{summary_text}"
 
 
 def test_lifecycle_model_effort_routing_by_complexity(tmp_path: Path) -> None:

@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.guardrails import (
     GuardrailsConfig,
     check_dangerous_operations,
@@ -185,11 +183,10 @@ class TestCheckDangerousOperations:
     def test_flags_large_deletion(self) -> None:
         removed_lines = "".join(f"-line {i}\n" for i in range(8))
         diff = (
-            "diff --git a/src/foo.py b/src/foo.py\n"
-            "--- a/src/foo.py\n"
-            "+++ b/src/foo.py\n"
-            "@@ -1,10 +1,2 @@\n"
-        ) + removed_lines + "+keep1\n+keep2\n"
+            ("diff --git a/src/foo.py b/src/foo.py\n--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1,10 +1,2 @@\n")
+            + removed_lines
+            + "+keep1\n+keep2\n"
+        )
         results = check_dangerous_operations(diff, GuardrailsConfig(max_deletion_pct=50))
         assert not results[0].passed
 
@@ -224,11 +221,10 @@ class TestCheckDangerousOperations:
         """With max_deletion_pct=90, an 80% deletion should pass."""
         removed_lines = "".join(f"-line {i}\n" for i in range(8))
         diff = (
-            "diff --git a/src/foo.py b/src/foo.py\n"
-            "--- a/src/foo.py\n"
-            "+++ b/src/foo.py\n"
-            "@@ -1,10 +1,2 @@\n"
-        ) + removed_lines + "+keep1\n+keep2\n"
+            ("diff --git a/src/foo.py b/src/foo.py\n--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1,10 +1,2 @@\n")
+            + removed_lines
+            + "+keep1\n+keep2\n"
+        )
         results = check_dangerous_operations(diff, GuardrailsConfig(max_deletion_pct=90))
         assert results[0].passed
 
@@ -251,7 +247,10 @@ class TestRecordGuardrailEvent:
 
     def test_includes_files_when_provided(self, tmp_path: Path) -> None:
         record_guardrail_event(
-            "T-002", "scope_enforcement", "blocked", tmp_path,
+            "T-002",
+            "scope_enforcement",
+            "blocked",
+            tmp_path,
             files=["pyproject.toml"],
         )
         metrics_file = tmp_path / ".sdd" / "metrics" / "guardrails.jsonl"

@@ -3,16 +3,14 @@
 These tests drive out the helper functions used by the 'live' command to build
 the structured Rich display (agents table, events table, stats bar).
 """
+
 from __future__ import annotations
 
 from typing import Any
 
-import pytest
 from rich.table import Table
-from rich.text import Text
 
 from bernstein.cli.main import _build_agents_table, _build_events_table, _build_stats_bar
-
 
 # --- Helpers ---
 
@@ -83,10 +81,7 @@ class TestBuildAgentsTable:
         assert table.row_count == 1
 
     def test_multiple_agents_all_shown(self) -> None:
-        agents = [
-            _make_agent(id=f"a-{i:03d}", role="backend")
-            for i in range(5)
-        ]
+        agents = [_make_agent(id=f"a-{i:03d}", role="backend") for i in range(5)]
         table = _build_agents_table(agents)
         assert table.row_count == 5
 
@@ -168,12 +163,14 @@ class TestBuildStatsBar:
 class TestLiveCommandUsesRichLive:
     def test_rich_live_imported_in_main(self) -> None:
         """Verify the live command module uses Rich Live for display."""
-        import bernstein.cli.main as main_module
         import inspect
+
+        import bernstein.cli.main as main_module
 
         source = inspect.getsource(main_module)
         assert "Live" in source
 
     def test_live_function_exists(self) -> None:
         from bernstein.cli.main import live
+
         assert callable(live)

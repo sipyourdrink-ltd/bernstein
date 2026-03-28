@@ -31,13 +31,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
 
 import yaml
 
@@ -212,34 +210,19 @@ class BenchmarkSuite:
     @property
     def mean_speedup_3(self) -> float:
         """Average wall-clock speedup of multi-3 over single."""
-        speedups = [
-            r.speedup
-            for t in self.task_results
-            for r in t.results
-            if r.scenario == "multi-3"
-        ]
+        speedups = [r.speedup for t in self.task_results for r in t.results if r.scenario == "multi-3"]
         return sum(speedups) / len(speedups) if speedups else 1.0
 
     @property
     def mean_speedup_5(self) -> float:
         """Average wall-clock speedup of multi-5 over single."""
-        speedups = [
-            r.speedup
-            for t in self.task_results
-            for r in t.results
-            if r.scenario == "multi-5"
-        ]
+        speedups = [r.speedup for t in self.task_results for r in t.results if r.scenario == "multi-5"]
         return sum(speedups) / len(speedups) if speedups else 1.0
 
     @property
     def mean_cost_savings_3(self) -> float:
         """Average cost reduction (1 - cost_ratio) for multi-3."""
-        ratios = [
-            r.cost_ratio
-            for t in self.task_results
-            for r in t.results
-            if r.scenario == "multi-3"
-        ]
+        ratios = [r.cost_ratio for t in self.task_results for r in t.results if r.scenario == "multi-3"]
         return 1.0 - (sum(ratios) / len(ratios)) if ratios else 0.0
 
     def to_dict(self) -> dict[str, object]:
@@ -343,19 +326,11 @@ def simulate_schedule(task: BenchmarkTask, agents: int) -> float:
         current_time = min(agent_free_at)
 
         # Mark subtasks whose dependencies are now complete at current_time
-        newly_completed = {
-            sid
-            for sid, t in done_at.items()
-            if t <= current_time and sid not in completed
-        }
+        newly_completed = {sid for sid, t in done_at.items() if t <= current_time and sid not in completed}
         completed |= newly_completed
 
         # Find subtasks ready to run
-        ready = [
-            st
-            for st in pending
-            if all(dep in completed for dep in st.depends_on)
-        ]
+        ready = [st for st in pending if all(dep in completed for dep in st.depends_on)]
 
         if not ready:
             # No ready tasks — advance to next agent completion
@@ -968,7 +943,7 @@ def main() -> None:
 
     output_dir = Path(args.output) if args.output else RESULTS_DIR
     json_path, md_path = write_results(suite, output_dir)
-    print(f"Results written to:")
+    print("Results written to:")
     print(f"  JSON: {json_path}")
     print(f"  Markdown: {md_path}")
 

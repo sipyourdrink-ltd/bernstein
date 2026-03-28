@@ -1,19 +1,15 @@
 """Tests for TierHijacker — automatic free tier detection and routing."""
+
 from __future__ import annotations
 
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from bernstein.core.models import ApiTier, ModelConfig, ProviderType, RateLimit
-from bernstein.core.router import ProviderConfig, Tier, TierAwareRouter
 from bernstein.core.hijacker import (
     EnvVarConfig,
     EnvVarTierDetector,
     FreeTierSource,
     HijackOpportunity,
-    HijackResult,
     ModelSafetyCheck,
     QuotaSafetyCheck,
     QuotaTracker,
@@ -23,7 +19,8 @@ from bernstein.core.hijacker import (
     create_default_detectors,
     get_default_hijacker,
 )
-
+from bernstein.core.models import ApiTier, ModelConfig, ProviderType
+from bernstein.core.router import ProviderConfig, Tier, TierAwareRouter
 
 # --- Helpers ---
 
@@ -31,12 +28,14 @@ from bernstein.core.hijacker import (
 def _make_router() -> TierAwareRouter:
     """Create a router with basic providers."""
     router = TierAwareRouter()
-    router.register_provider(ProviderConfig(
-        name="standard-provider",
-        models={"claude-sonnet": ModelConfig("sonnet", "high")},
-        tier=Tier.STANDARD,
-        cost_per_1k_tokens=0.003,
-    ))
+    router.register_provider(
+        ProviderConfig(
+            name="standard-provider",
+            models={"claude-sonnet": ModelConfig("sonnet", "high")},
+            tier=Tier.STANDARD,
+            cost_per_1k_tokens=0.003,
+        )
+    )
     return router
 
 
@@ -61,13 +60,15 @@ def _make_opportunity(
 
 class TestEnvVarTierDetector:
     def test_detects_free_tier_from_env_var(self) -> None:
-        detector = EnvVarTierDetector([
-            EnvVarConfig(
-                env_var="TEST_API_KEY",
-                provider_type=ProviderType.CLAUDE,
-                tier=ApiTier.FREE,
-            ),
-        ])
+        detector = EnvVarTierDetector(
+            [
+                EnvVarConfig(
+                    env_var="TEST_API_KEY",
+                    provider_type=ProviderType.CLAUDE,
+                    tier=ApiTier.FREE,
+                ),
+            ]
+        )
 
         with patch.dict(os.environ, {"TEST_API_KEY": "sk-test-key"}):
             opportunity = detector.detect()
@@ -77,13 +78,15 @@ class TestEnvVarTierDetector:
             assert opportunity.provider_type == ProviderType.CLAUDE
 
     def test_returns_none_when_env_var_not_set(self) -> None:
-        detector = EnvVarTierDetector([
-            EnvVarConfig(
-                env_var="NONEXISTENT_API_KEY",
-                provider_type=ProviderType.CLAUDE,
-                tier=ApiTier.FREE,
-            ),
-        ])
+        detector = EnvVarTierDetector(
+            [
+                EnvVarConfig(
+                    env_var="NONEXISTENT_API_KEY",
+                    provider_type=ProviderType.CLAUDE,
+                    tier=ApiTier.FREE,
+                ),
+            ]
+        )
 
         with patch.dict(os.environ, {}, clear=False):
             if "NONEXISTENT_API_KEY" in os.environ:
@@ -93,13 +96,15 @@ class TestEnvVarTierDetector:
             assert opportunity is None
 
     def test_detects_trial_key_prefix(self) -> None:
-        detector = EnvVarTierDetector([
-            EnvVarConfig(
-                env_var="TRIAL_KEY",
-                provider_type=ProviderType.CLAUDE,
-                tier=ApiTier.PLUS,  # Non-free tier
-            ),
-        ])
+        detector = EnvVarTierDetector(
+            [
+                EnvVarConfig(
+                    env_var="TRIAL_KEY",
+                    provider_type=ProviderType.CLAUDE,
+                    tier=ApiTier.PLUS,  # Non-free tier
+                ),
+            ]
+        )
 
         with patch.dict(os.environ, {"TRIAL_KEY": "sk-trial-abc123"}):
             opportunity = detector.detect()
@@ -109,13 +114,15 @@ class TestEnvVarTierDetector:
 
     def test_estimates_tokens_based_on_tier(self) -> None:
         # FREE tier keys are always detected
-        detector = EnvVarTierDetector([
-            EnvVarConfig(
-                env_var="TEST_KEY",
-                provider_type=ProviderType.CLAUDE,
-                tier=ApiTier.FREE,
-            ),
-        ])
+        detector = EnvVarTierDetector(
+            [
+                EnvVarConfig(
+                    env_var="TEST_KEY",
+                    provider_type=ProviderType.CLAUDE,
+                    tier=ApiTier.FREE,
+                ),
+            ]
+        )
 
         with patch.dict(os.environ, {"TEST_KEY": "sk-free-key"}):
             opportunity = detector.detect()
@@ -257,13 +264,15 @@ class TestTierHijacker:
 
     def test_scan_provider_quotas(self) -> None:
         router = TierAwareRouter()
-        router.register_provider(ProviderConfig(
-            name="free-provider",
-            models={"claude-sonnet": ModelConfig("sonnet", "high")},
-            tier=Tier.FREE,
-            cost_per_1k_tokens=0.0,
-            quota_remaining=100,
-        ))
+        router.register_provider(
+            ProviderConfig(
+                name="free-provider",
+                models={"claude-sonnet": ModelConfig("sonnet", "high")},
+                tier=Tier.FREE,
+                cost_per_1k_tokens=0.0,
+                quota_remaining=100,
+            )
+        )
         hijacker = TierHijacker(router)
 
         opportunities = hijacker._scan_provider_quotas()
@@ -311,6 +320,7 @@ class TestTierHijacker:
         hijacker = TierHijacker(router)
 
         import time
+
         expired_opportunity = HijackOpportunity(
             source=FreeTierSource.NEW_PROVIDER_TRIAL,
             provider_name="expired-provider",
@@ -578,13 +588,15 @@ class TestHijackerIntegration:
         )
 
         # Add a free tier provider to router for quota detection
-        router.register_provider(ProviderConfig(
-            name="free-quota-provider",
-            models={"claude-sonnet": ModelConfig("sonnet", "high")},
-            tier=Tier.FREE,
-            cost_per_1k_tokens=0.0,
-            quota_remaining=100,
-        ))
+        router.register_provider(
+            ProviderConfig(
+                name="free-quota-provider",
+                models={"claude-sonnet": ModelConfig("sonnet", "high")},
+                tier=Tier.FREE,
+                cost_per_1k_tokens=0.0,
+                quota_remaining=100,
+            )
+        )
 
         hijacker.add_detector(detector1)
         hijacker.add_detector(detector2)
@@ -625,6 +637,7 @@ class TestHijackerIntegration:
 
         # Hijack for the task
         from bernstein.core.router import route_task
+
         model_config = route_task(test_task)
         result = hijacker.hijack_for_task(model_config)
 

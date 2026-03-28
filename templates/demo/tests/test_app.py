@@ -1,6 +1,6 @@
 """Basic tests for the demo Flask app."""
-import pytest
 
+import pytest
 from app import app as flask_app
 
 

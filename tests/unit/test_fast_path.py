@@ -1,14 +1,13 @@
 """Tests for fast-path task classification and deterministic executors."""
+
 from __future__ import annotations
 
-import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from bernstein.core.fast_path import (
-    ClassificationResult,
     FastPathAction,
     FastPathResult,
     FastPathStats,
@@ -19,7 +18,6 @@ from bernstein.core.fast_path import (
     try_fast_path_batch,
 )
 from bernstein.core.models import Complexity, Scope, Task
-
 
 # --- Helpers ---
 
@@ -355,12 +353,14 @@ class TestFastPathStats:
     def test_record_multiple(self) -> None:
         stats = FastPathStats()
         for _ in range(5):
-            stats.record(FastPathResult(
-                success=True,
-                action=FastPathAction.RUFF_FIX,
-                duration_s=0.2,
-                files_modified=1,
-            ))
+            stats.record(
+                FastPathResult(
+                    success=True,
+                    action=FastPathAction.RUFF_FIX,
+                    duration_s=0.2,
+                    files_modified=1,
+                )
+            )
         assert stats.tasks_bypassed == 5
         assert stats.estimated_cost_saved_usd == pytest.approx(0.75)
         assert stats.actions["ruff_fix"] == 5

@@ -1,10 +1,9 @@
 """Tests for `bernstein demo` CLI command."""
+
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import (
@@ -13,7 +12,6 @@ from bernstein.cli.main import (
     detect_available_adapter,
     setup_demo_project,
 )
-
 
 # ---------------------------------------------------------------------------
 # detect_available_adapter
@@ -36,6 +34,7 @@ def testdetect_available_adapter_returns_none_when_nothing_found():
 
 def testdetect_available_adapter_prefers_claude_over_codex():
     """claude is checked before codex in the discovery order."""
+
     def _which(cmd: str) -> str | None:
         return "/usr/bin/" + cmd if cmd in {"claude", "codex"} else None
 

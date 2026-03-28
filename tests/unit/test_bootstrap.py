@@ -1,9 +1,10 @@
 """Tests for bernstein.core.bootstrap."""
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -28,10 +29,10 @@ from bernstein.core.bootstrap import (
 )
 from bernstein.core.seed import NotifyConfig
 
-
 # ---------------------------------------------------------------------------
 # _read_pid
 # ---------------------------------------------------------------------------
+
 
 class TestReadPid:
     def test_returns_pid_from_file(self, tmp_path: Path) -> None:
@@ -57,6 +58,7 @@ class TestReadPid:
 # _is_alive
 # ---------------------------------------------------------------------------
 
+
 class TestIsAlive:
     def test_alive_process_returns_true(self) -> None:
         # os.getpid() is guaranteed to be alive
@@ -71,6 +73,7 @@ class TestIsAlive:
 # ---------------------------------------------------------------------------
 # _clean_stale_runtime
 # ---------------------------------------------------------------------------
+
 
 class TestCleanStaleRuntime:
     def test_no_runtime_dir_is_noop(self, tmp_path: Path) -> None:
@@ -135,6 +138,7 @@ class TestCleanStaleRuntime:
 # _ensure_sdd
 # ---------------------------------------------------------------------------
 
+
 class TestEnsureSdd:
     def test_creates_all_sdd_dirs(self, tmp_path: Path) -> None:
         _ensure_sdd(tmp_path)
@@ -171,6 +175,7 @@ class TestEnsureSdd:
 # ---------------------------------------------------------------------------
 # _start_server
 # ---------------------------------------------------------------------------
+
 
 class TestStartServer:
     def _setup_runtime(self, workdir: Path) -> None:
@@ -224,14 +229,14 @@ class TestStartServer:
 # _wait_for_server
 # ---------------------------------------------------------------------------
 
+
 class TestWaitForServer:
     def test_returns_true_when_server_responds(self) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
-        with patch("httpx.get", return_value=mock_resp):
-            with patch("time.sleep"):
-                result = _wait_for_server(8052)
+        with patch("httpx.get", return_value=mock_resp), patch("time.sleep"):
+            result = _wait_for_server(8052)
 
         assert result is True
 
@@ -245,10 +250,9 @@ class TestWaitForServer:
             # First call: deadline setup; subsequent calls: already past deadline
             return 0.0 if call_count == 1 else 999.0
 
-        with patch("httpx.get", side_effect=httpx.ConnectError("refused")):
-            with patch("time.sleep"):
-                with patch("time.monotonic", side_effect=fake_monotonic):
-                    result = _wait_for_server(8052)
+        with patch("httpx.get", side_effect=httpx.ConnectError("refused")), patch("time.sleep"):
+            with patch("time.monotonic", side_effect=fake_monotonic):
+                result = _wait_for_server(8052)
 
         assert result is False
 
@@ -259,10 +263,9 @@ class TestWaitForServer:
 
         monotonic_values = iter([0.0, 1.0, 2.0, 100.0])
 
-        with patch("httpx.get", side_effect=side_effects):
-            with patch("time.sleep"):
-                with patch("time.monotonic", side_effect=monotonic_values):
-                    result = _wait_for_server(8052)
+        with patch("httpx.get", side_effect=side_effects), patch("time.sleep"):
+            with patch("time.monotonic", side_effect=monotonic_values):
+                result = _wait_for_server(8052)
 
         assert result is True
 
@@ -270,6 +273,7 @@ class TestWaitForServer:
 # ---------------------------------------------------------------------------
 # _start_spawner
 # ---------------------------------------------------------------------------
+
 
 class TestStartSpawner:
     def _setup_runtime(self, workdir: Path) -> None:
@@ -302,6 +306,7 @@ class TestStartSpawner:
 # ---------------------------------------------------------------------------
 # _send_webhook
 # ---------------------------------------------------------------------------
+
 
 class TestSendWebhook:
     def test_posts_json_to_webhook_url(self) -> None:
@@ -348,24 +353,20 @@ class TestCheckBinary:
             _check_binary("claude")  # must not raise
 
     def test_exits_when_binary_missing(self) -> None:
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(SystemExit):
-                _check_binary("claude")
+        with patch("shutil.which", return_value=None), pytest.raises(SystemExit):
+            _check_binary("claude")
 
     def test_exits_for_unknown_cli(self) -> None:
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(SystemExit):
-                _check_binary("nonexistent-cli")
+        with patch("shutil.which", return_value=None), pytest.raises(SystemExit):
+            _check_binary("nonexistent-cli")
 
     def test_exit_for_codex_when_missing(self) -> None:
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(SystemExit):
-                _check_binary("codex")
+        with patch("shutil.which", return_value=None), pytest.raises(SystemExit):
+            _check_binary("codex")
 
     def test_exit_for_gemini_when_missing(self) -> None:
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(SystemExit):
-                _check_binary("gemini")
+        with patch("shutil.which", return_value=None), pytest.raises(SystemExit):
+            _check_binary("gemini")
 
 
 # ---------------------------------------------------------------------------
@@ -381,9 +382,8 @@ class TestCheckApiKey:
     @patch("bernstein.core.bootstrap._claude_has_oauth_session", return_value=False)
     def test_exits_when_claude_key_missing(self, _mock_oauth: MagicMock) -> None:
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(SystemExit):
-                _check_api_key("claude")
+        with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit):
+            _check_api_key("claude")
 
     def test_passes_when_codex_key_set(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
@@ -391,9 +391,8 @@ class TestCheckApiKey:
 
     def test_exits_when_codex_key_missing(self) -> None:
         env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(SystemExit):
-                _check_api_key("codex")
+        with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit):
+            _check_api_key("codex")
 
     def test_passes_when_gemini_key_set(self) -> None:
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "AIza-test"}):
@@ -401,9 +400,8 @@ class TestCheckApiKey:
 
     def test_exits_when_gemini_key_missing(self) -> None:
         env = {k: v for k, v in os.environ.items() if k != "GOOGLE_API_KEY"}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(SystemExit):
-                _check_api_key("gemini")
+        with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit):
+            _check_api_key("gemini")
 
     def test_qwen_passes_with_openai_key(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
@@ -423,9 +421,8 @@ class TestCheckApiKey:
             "G4F_API_KEY",
         )
         env = {k: v for k, v in os.environ.items() if k not in qwen_vars}
-        with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(SystemExit):
-                _check_api_key("qwen")
+        with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit):
+            _check_api_key("qwen")
 
 
 # ---------------------------------------------------------------------------
@@ -450,9 +447,8 @@ class TestCheckPortFree:
         mock_sock.__exit__ = MagicMock(return_value=False)
         mock_sock.bind = MagicMock(side_effect=OSError("address in use"))
 
-        with patch("socket.socket", return_value=mock_sock):
-            with pytest.raises(SystemExit):
-                _check_port_free(8052)
+        with patch("socket.socket", return_value=mock_sock), pytest.raises(SystemExit):
+            _check_port_free(8052)
 
 
 # ---------------------------------------------------------------------------
@@ -473,17 +469,15 @@ class TestPreflightChecks:
                     preflight_checks("claude", 8052)  # must not raise
 
     def test_fails_on_missing_binary(self) -> None:
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(SystemExit):
-                preflight_checks("claude", 8052)
+        with patch("shutil.which", return_value=None), pytest.raises(SystemExit):
+            preflight_checks("claude", 8052)
 
     @patch("bernstein.core.bootstrap._claude_has_oauth_session", return_value=False)
     def test_fails_on_missing_api_key(self, _mock_oauth: MagicMock) -> None:
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-        with patch("shutil.which", return_value="/usr/bin/claude"):
-            with patch.dict(os.environ, env, clear=True):
-                with pytest.raises(SystemExit):
-                    preflight_checks("claude", 8052)
+        with patch("shutil.which", return_value="/usr/bin/claude"), patch.dict(os.environ, env, clear=True):
+            with pytest.raises(SystemExit):
+                preflight_checks("claude", 8052)
 
     def test_fails_on_port_conflict(self) -> None:
         mock_sock = MagicMock()

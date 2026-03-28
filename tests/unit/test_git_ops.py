@@ -1,9 +1,10 @@
 """Tests for bernstein.core.git_ops — centralized git write operations."""
+
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -27,7 +28,6 @@ from bernstein.core.git_ops import (
     diff_cached_stat,
     diff_head,
     enable_pr_auto_merge,
-    fetch,
     is_git_repo,
     merge_branch,
     push_branch,
@@ -166,7 +166,9 @@ class TestQueries:
         mock.return_value = GitResult(0, "diff output", "")
         diff_head(REPO, files=["a.py", "b.py"], refs="HEAD~2")
         mock.assert_called_once_with(
-            ["diff", "HEAD~2", "--", "a.py", "b.py"], REPO, timeout=30,
+            ["diff", "HEAD~2", "--", "a.py", "b.py"],
+            REPO,
+            timeout=30,
         )
 
     @patch("bernstein.core.git_ops.run_git")
@@ -183,7 +185,8 @@ class TestStaging:
         mock.return_value = GitResult(0, "", "")
         stage_files(REPO, ["src/a.py", "src/b.py"])
         mock.assert_called_once_with(
-            ["add", "--", "src/a.py", "src/b.py"], REPO,
+            ["add", "--", "src/a.py", "src/b.py"],
+            REPO,
         )
 
     @patch("bernstein.core.git_ops.run_git")
@@ -220,7 +223,8 @@ class TestStaging:
         mock.return_value = GitResult(0, "", "")
         unstage_paths(REPO, [".sdd/runtime/", ".sdd/metrics/"])
         mock.assert_called_once_with(
-            ["reset", "HEAD", "--", ".sdd/runtime/", ".sdd/metrics/"], REPO,
+            ["reset", "HEAD", "--", ".sdd/runtime/", ".sdd/metrics/"],
+            REPO,
         )
 
     @patch("bernstein.core.git_ops.run_git")
@@ -342,7 +346,7 @@ class TestSafePush:
         mock_fetch.return_value = GitResult(0, "", "")
         mock_run.side_effect = [
             GitResult(0, "0\n", ""),  # rev-list --count
-            GitResult(0, "", ""),     # push
+            GitResult(0, "", ""),  # push
         ]
         result = safe_push(REPO, "main")
         assert result.ok
@@ -353,8 +357,8 @@ class TestSafePush:
         mock_fetch.return_value = GitResult(0, "", "")
         mock_run.side_effect = [
             GitResult(0, "3\n", ""),  # rev-list shows 3 behind
-            GitResult(0, "", ""),     # rebase succeeds
-            GitResult(0, "", ""),     # push
+            GitResult(0, "", ""),  # rebase succeeds
+            GitResult(0, "", ""),  # push
         ]
         result = safe_push(REPO, "main")
         assert result.ok
@@ -364,16 +368,14 @@ class TestSafePush:
 
     @patch("bernstein.core.git_ops.run_git")
     @patch("bernstein.core.git_ops.fetch")
-    def test_behind_rebase_fails_merge_fallback(
-        self, mock_fetch: MagicMock, mock_run: MagicMock
-    ) -> None:
+    def test_behind_rebase_fails_merge_fallback(self, mock_fetch: MagicMock, mock_run: MagicMock) -> None:
         mock_fetch.return_value = GitResult(0, "", "")
         mock_run.side_effect = [
-            GitResult(0, "2\n", ""),      # behind
-            GitResult(1, "", "conflict"), # rebase fails
-            GitResult(0, "", ""),          # rebase --abort
-            GitResult(0, "", ""),          # merge fallback
-            GitResult(0, "", ""),          # push
+            GitResult(0, "2\n", ""),  # behind
+            GitResult(1, "", "conflict"),  # rebase fails
+            GitResult(0, "", ""),  # rebase --abort
+            GitResult(0, "", ""),  # merge fallback
+            GitResult(0, "", ""),  # push
         ]
         result = safe_push(REPO, "main")
         assert result.ok
@@ -413,7 +415,9 @@ class TestBranching:
         mock.return_value = GitResult(0, "", "")
         revert_commit(REPO, "abc123")
         mock.assert_called_once_with(
-            ["revert", "--no-commit", "abc123"], REPO, timeout=30,
+            ["revert", "--no-commit", "abc123"],
+            REPO,
+            timeout=30,
         )
 
     @patch("bernstein.core.git_ops.run_git")
@@ -421,7 +425,9 @@ class TestBranching:
         mock.return_value = GitResult(0, "", "")
         revert_commit(REPO, "abc123", no_commit=False)
         mock.assert_called_once_with(
-            ["revert", "abc123"], REPO, timeout=30,
+            ["revert", "abc123"],
+            REPO,
+            timeout=30,
         )
 
     @patch("bernstein.core.git_ops.run_git")
@@ -482,9 +488,7 @@ class TestBisectRegression:
             GitResult(0, "", ""),  # bisect start
             GitResult(0, "", ""),  # bisect reset
         ]
-        mock_sub.return_value = _mock_run(
-            stdout="abc1234 is the first bad commit\ncommit abc1234\n"
-        )
+        mock_sub.return_value = _mock_run(stdout="abc1234 is the first bad commit\ncommit abc1234\n")
         result = bisect_regression(REPO, "uv run pytest tests/ -x")
         assert result == "abc1234"
 
@@ -525,7 +529,8 @@ class TestTag:
         mock.return_value = GitResult(0, "", "")
         tag(REPO, "v1.0.0", message="Release 1.0.0")
         mock.assert_called_once_with(
-            ["tag", "-a", "v1.0.0", "-m", "Release 1.0.0"], REPO,
+            ["tag", "-a", "v1.0.0", "-m", "Release 1.0.0"],
+            REPO,
         )
 
 
@@ -579,11 +584,7 @@ class TestConventionalCommitHelpers:
         assert "(+7 more)" in result
 
     def test_diff_stat_to_bullets(self) -> None:
-        stat = (
-            " src/a.py | 10 +++++\n"
-            " src/b.py |  5 +--\n"
-            " 2 files changed, 12 insertions(+), 3 deletions(-)\n"
-        )
+        stat = " src/a.py | 10 +++++\n src/b.py |  5 +--\n 2 files changed, 12 insertions(+), 3 deletions(-)\n"
         bullets = _diff_stat_to_bullets(stat)
         assert len(bullets) == 3
         assert "src/a.py" in bullets[0]
@@ -675,9 +676,7 @@ class TestCreateGithubPr:
 
     @patch("bernstein.core.git_ops.subprocess.run")
     def test_success(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = _mock_run(
-            returncode=0, stdout="https://github.com/owner/repo/pull/42\n"
-        )
+        mock_run.return_value = _mock_run(returncode=0, stdout="https://github.com/owner/repo/pull/42\n")
         result = create_github_pr(
             REPO,
             title="feat: add PR support",
@@ -697,9 +696,7 @@ class TestCreateGithubPr:
 
     @patch("bernstein.core.git_ops.subprocess.run")
     def test_with_labels(self, mock_run: MagicMock) -> None:
-        mock_run.return_value = _mock_run(
-            returncode=0, stdout="https://github.com/owner/repo/pull/5\n"
-        )
+        mock_run.return_value = _mock_run(returncode=0, stdout="https://github.com/owner/repo/pull/5\n")
         create_github_pr(
             REPO,
             title="task",

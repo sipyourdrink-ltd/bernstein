@@ -15,10 +15,7 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
-import pytest
-
-from bernstein.core.quarantine import QuarantineEntry, QuarantineStore, QUARANTINE_THRESHOLD
-
+from bernstein.core.quarantine import QUARANTINE_THRESHOLD, QuarantineEntry, QuarantineStore
 
 # ---------------------------------------------------------------------------
 # Helpers

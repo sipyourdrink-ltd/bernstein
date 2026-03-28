@@ -10,10 +10,8 @@ import pytest
 from bernstein.core.mcp_manager import (
     MCPManager,
     MCPServerConfig,
-    _ServerState,
     parse_server_configs,
 )
-
 
 # ---------------------------------------------------------------------------
 # MCPServerConfig

@@ -1,4 +1,5 @@
 """Tests for the A2A (Agent-to-Agent) protocol support."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +13,6 @@ from bernstein.core.a2a import (
     AgentCard,
 )
 from bernstein.core.server import create_app
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -148,11 +148,14 @@ async def test_agent_card_endpoint(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_a2a_send_task(client: AsyncClient) -> None:
     """POST /a2a/tasks/send creates an A2A task and a linked Bernstein task."""
-    resp = await client.post("/a2a/tasks/send", json={
-        "sender": "external-scanner",
-        "message": "Scan for vulnerabilities",
-        "role": "security",
-    })
+    resp = await client.post(
+        "/a2a/tasks/send",
+        json={
+            "sender": "external-scanner",
+            "message": "Scan for vulnerabilities",
+            "role": "security",
+        },
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["sender"] == "external-scanner"
@@ -168,10 +171,13 @@ async def test_a2a_send_task(client: AsyncClient) -> None:
 async def test_a2a_get_task_syncs_status(client: AsyncClient) -> None:
     """GET /a2a/tasks/{id} syncs status from the Bernstein task."""
     # Create an A2A task.
-    send_resp = await client.post("/a2a/tasks/send", json={
-        "sender": "ext",
-        "message": "Do work",
-    })
+    send_resp = await client.post(
+        "/a2a/tasks/send",
+        json={
+            "sender": "ext",
+            "message": "Do work",
+        },
+    )
     a2a_id = send_resp.json()["id"]
     bt_id = send_resp.json()["bernstein_task_id"]
     # Complete the underlying Bernstein task.
@@ -192,16 +198,22 @@ async def test_a2a_get_task_not_found(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_a2a_add_artifact(client: AsyncClient) -> None:
     """POST /a2a/tasks/{id}/artifacts attaches an artifact."""
-    send_resp = await client.post("/a2a/tasks/send", json={
-        "sender": "ext",
-        "message": "Review code",
-    })
+    send_resp = await client.post(
+        "/a2a/tasks/send",
+        json={
+            "sender": "ext",
+            "message": "Review code",
+        },
+    )
     a2a_id = send_resp.json()["id"]
-    art_resp = await client.post(f"/a2a/tasks/{a2a_id}/artifacts", json={
-        "name": "review.md",
-        "data": "# Review\nLooks good.",
-        "content_type": "text/markdown",
-    })
+    art_resp = await client.post(
+        f"/a2a/tasks/{a2a_id}/artifacts",
+        json={
+            "name": "review.md",
+            "data": "# Review\nLooks good.",
+            "content_type": "text/markdown",
+        },
+    )
     assert art_resp.status_code == 201
     data = art_resp.json()
     assert data["name"] == "review.md"
@@ -214,8 +226,11 @@ async def test_a2a_add_artifact(client: AsyncClient) -> None:
 @pytest.mark.anyio
 async def test_a2a_add_artifact_not_found(client: AsyncClient) -> None:
     """POST /a2a/tasks/{id}/artifacts returns 404 for unknown task."""
-    resp = await client.post("/a2a/tasks/nonexistent/artifacts", json={
-        "name": "x",
-        "data": "y",
-    })
+    resp = await client.post(
+        "/a2a/tasks/nonexistent/artifacts",
+        json={
+            "name": "x",
+            "data": "y",
+        },
+    )
     assert resp.status_code == 404

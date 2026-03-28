@@ -137,17 +137,14 @@ class TestCostTrackerRecording:
 
     def test_multiple_records_accumulate(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
-        tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                       input_tokens=0, output_tokens=0, cost_usd=1.0)
-        tracker.record(agent_id="a2", task_id="t2", model="opus",
-                       input_tokens=0, output_tokens=0, cost_usd=2.0)
+        tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=1.0)
+        tracker.record(agent_id="a2", task_id="t2", model="opus", input_tokens=0, output_tokens=0, cost_usd=2.0)
         assert tracker.spent_usd == pytest.approx(3.0)
         assert len(tracker.usages) == 2
 
     def test_usages_returns_copy(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
-        tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                       input_tokens=0, output_tokens=0, cost_usd=1.0)
+        tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=1.0)
         usages = tracker.usages
         usages.clear()  # mutate the copy
         assert len(tracker.usages) == 1  # original unchanged
@@ -162,8 +159,7 @@ class TestCostTrackerUnlimited:
     def test_unlimited_budget_never_warns_or_stops(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=0.0)
         for _ in range(100):
-            tracker.record(agent_id="a1", task_id="t1", model="opus",
-                           input_tokens=0, output_tokens=0, cost_usd=100.0)
+            tracker.record(agent_id="a1", task_id="t1", model="opus", input_tokens=0, output_tokens=0, cost_usd=100.0)
         status = tracker.status()
         assert status.should_warn is False
         assert status.should_stop is False
@@ -179,37 +175,42 @@ class TestCostTrackerUnlimited:
 class TestCostTrackerThresholds:
     def test_no_warning_below_80_pct(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
-        status = tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                                input_tokens=0, output_tokens=0, cost_usd=7.99)
+        status = tracker.record(
+            agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=7.99
+        )
         assert status.should_warn is False
         assert status.should_stop is False
 
     def test_warning_at_80_pct(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
-        status = tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                                input_tokens=0, output_tokens=0, cost_usd=8.0)
+        status = tracker.record(
+            agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=8.0
+        )
         assert status.should_warn is True
         assert status.should_stop is False
 
     def test_warning_at_95_pct(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
-        status = tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                                input_tokens=0, output_tokens=0, cost_usd=9.5)
+        status = tracker.record(
+            agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=9.5
+        )
         assert status.should_warn is True
         assert status.should_stop is False
         assert status.percentage_used == pytest.approx(0.95)
 
     def test_hard_stop_at_100_pct(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
-        status = tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                                input_tokens=0, output_tokens=0, cost_usd=10.0)
+        status = tracker.record(
+            agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=10.0
+        )
         assert status.should_stop is True
         assert status.remaining_usd == pytest.approx(0.0)
 
     def test_hard_stop_over_budget(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
-        status = tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                                input_tokens=0, output_tokens=0, cost_usd=15.0)
+        status = tracker.record(
+            agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=15.0
+        )
         assert status.should_stop is True
         assert status.remaining_usd == 0.0
         assert status.percentage_used == pytest.approx(1.5)
@@ -223,14 +224,16 @@ class TestCostTrackerThresholds:
             hard_stop_threshold=0.90,
         )
         # At 5.0 / 10.0 = 50% — should warn
-        status = tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                                input_tokens=0, output_tokens=0, cost_usd=5.0)
+        status = tracker.record(
+            agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=5.0
+        )
         assert status.should_warn is True
         assert status.should_stop is False
 
         # At 9.0 / 10.0 = 90% — should stop
-        status = tracker.record(agent_id="a2", task_id="t2", model="sonnet",
-                                input_tokens=0, output_tokens=0, cost_usd=4.0)
+        status = tracker.record(
+            agent_id="a2", task_id="t2", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=4.0
+        )
         assert status.should_stop is True
 
 
@@ -243,30 +246,24 @@ class TestCostTrackerLogging:
     def test_warn_logged_once(self, caplog: pytest.LogCaptureFixture) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
         with caplog.at_level("WARNING"):
-            tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                           input_tokens=0, output_tokens=0, cost_usd=8.5)
-            tracker.record(agent_id="a2", task_id="t2", model="sonnet",
-                           input_tokens=0, output_tokens=0, cost_usd=0.1)
+            tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=8.5)
+            tracker.record(agent_id="a2", task_id="t2", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=0.1)
         warn_messages = [r.message for r in caplog.records if "Budget warning" in r.message]
         assert len(warn_messages) == 1
 
     def test_critical_logged_once(self, caplog: pytest.LogCaptureFixture) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
         with caplog.at_level("WARNING"):
-            tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                           input_tokens=0, output_tokens=0, cost_usd=9.5)
-            tracker.record(agent_id="a2", task_id="t2", model="sonnet",
-                           input_tokens=0, output_tokens=0, cost_usd=0.01)
+            tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=9.5)
+            tracker.record(agent_id="a2", task_id="t2", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=0.01)
         critical_messages = [r.message for r in caplog.records if "BUDGET CRITICAL" in r.message]
         assert len(critical_messages) == 1
 
     def test_hard_stop_logged_every_time(self, caplog: pytest.LogCaptureFixture) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
         with caplog.at_level("WARNING"):
-            tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                           input_tokens=0, output_tokens=0, cost_usd=10.0)
-            tracker.record(agent_id="a2", task_id="t2", model="sonnet",
-                           input_tokens=0, output_tokens=0, cost_usd=1.0)
+            tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=10.0)
+            tracker.record(agent_id="a2", task_id="t2", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=1.0)
         exceeded_messages = [r.message for r in caplog.records if "BUDGET EXCEEDED" in r.message]
         assert len(exceeded_messages) == 2
 
@@ -279,10 +276,8 @@ class TestCostTrackerLogging:
 class TestCostTrackerPersistence:
     def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
         tracker = CostTracker(run_id="test-run", budget_usd=5.0)
-        tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                       input_tokens=500, output_tokens=500, cost_usd=0.003)
-        tracker.record(agent_id="a2", task_id="t2", model="opus",
-                       input_tokens=1000, output_tokens=1000, cost_usd=0.03)
+        tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=500, output_tokens=500, cost_usd=0.003)
+        tracker.record(agent_id="a2", task_id="t2", model="opus", input_tokens=1000, output_tokens=1000, cost_usd=0.03)
 
         saved_path = tracker.save(tmp_path)
         assert saved_path.exists()
@@ -313,8 +308,7 @@ class TestCostTrackerPersistence:
 
     def test_persisted_json_structure(self, tmp_path: Path) -> None:
         tracker = CostTracker(run_id="struct-test", budget_usd=10.0)
-        tracker.record(agent_id="a1", task_id="t1", model="haiku",
-                       input_tokens=100, output_tokens=50, cost_usd=0.001)
+        tracker.record(agent_id="a1", task_id="t1", model="haiku", input_tokens=100, output_tokens=50, cost_usd=0.001)
         path = tracker.save(tmp_path)
         data = json.loads(path.read_text())
         assert data["run_id"] == "struct-test"
@@ -356,16 +350,14 @@ class TestCostTrackerBudgetReport:
 
     def test_status_percentage_calculation(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
-        tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                       input_tokens=0, output_tokens=0, cost_usd=2.5)
+        tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=2.5)
         status = tracker.status()
         assert status.percentage_used == pytest.approx(0.25)
         assert status.remaining_usd == pytest.approx(7.5)
 
     def test_status_remaining_clamped_to_zero(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=5.0)
-        tracker.record(agent_id="a1", task_id="t1", model="sonnet",
-                       input_tokens=0, output_tokens=0, cost_usd=8.0)
+        tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=8.0)
         status = tracker.status()
         assert status.remaining_usd == 0.0
         assert status.percentage_used == pytest.approx(1.6)

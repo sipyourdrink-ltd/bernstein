@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from benchmarks.swe_bench.metrics import ScenarioSummary
-
 
 _TEMPLATE = """\
 # SWE-Bench Lite Evaluation: Bernstein Scaffolding Thesis
@@ -17,9 +19,9 @@ _TEMPLATE = """\
 
 ## TL;DR
 
-> Bernstein + 3× Sonnet resolves {bernstein_sonnet_resolve_pct}% of SWE-Bench Lite at
+> Bernstein + 3x Sonnet resolves {bernstein_sonnet_resolve_pct}% of SWE-Bench Lite at
 > ${bernstein_sonnet_cost}/issue — beating Solo Opus ({solo_opus_resolve_pct}%, ${solo_opus_cost}/issue)
-> at {cost_ratio}× lower cost.
+> at {cost_ratio}x lower cost.
 
 ## Results
 
@@ -43,7 +45,7 @@ Single `claude-sonnet-4-6` agent prompted to read the issue and produce a patch.
 #### Solo Opus (expensive baseline)
 Single `claude-opus-4-6` agent, same prompt.
 
-#### Bernstein 3× Sonnet (core thesis)
+#### Bernstein 3x Sonnet (core thesis)
 Three `claude-sonnet-4-6` agents in a sequential pipeline:
 1. **Analyst** — reads the issue, identifies affected files, writes a concise plan.
 2. **Implementer** — follows the plan to produce a patch.
@@ -128,15 +130,16 @@ def _generate_findings(summaries: dict[str, ScenarioSummary]) -> str:
         if bern_s.resolve_rate >= solo_o.resolve_rate:
             delta = (bern_s.resolve_rate - solo_o.resolve_rate) * 100
             lines.append(
-                f"- **Bernstein 3× Sonnet outperforms Solo Opus** by {delta:.1f} percentage "
+                f"- **Bernstein 3x Sonnet outperforms Solo Opus** by {delta:.1f} percentage "
                 f"points ({_pct(bern_s.resolve_rate)} vs {_pct(solo_o.resolve_rate)})."
             )
         else:
             delta = (solo_o.resolve_rate - bern_s.resolve_rate) * 100
+            ratio = bern_s.mean_cost_per_instance_usd / max(solo_o.mean_cost_per_instance_usd, 0.001)
             lines.append(
-                f"- Solo Opus leads Bernstein 3× Sonnet by {delta:.1f} pp "
+                f"- Solo Opus leads Bernstein 3x Sonnet by {delta:.1f} pp "
                 f"({_pct(solo_o.resolve_rate)} vs {_pct(bern_s.resolve_rate)}), "
-                f"but at {bern_s.mean_cost_per_instance_usd / max(solo_o.mean_cost_per_instance_usd, 0.001):.1f}× higher cost per issue."
+                f"but at {ratio:.1f}x higher cost per issue."
             )
 
     if bern_s and solo_s:
@@ -148,9 +151,7 @@ def _generate_findings(summaries: dict[str, ScenarioSummary]) -> str:
         )
 
     if bern_m and bern_s:
-        cost_reduction = (
-            1 - bern_m.mean_cost_per_instance_usd / max(bern_s.mean_cost_per_instance_usd, 0.0001)
-        ) * 100
+        cost_reduction = (1 - bern_m.mean_cost_per_instance_usd / max(bern_s.mean_cost_per_instance_usd, 0.0001)) * 100
         resolve_delta = (bern_m.resolve_rate - bern_s.resolve_rate) * 100
         sign = "+" if resolve_delta >= 0 else ""
         lines.append(
@@ -185,15 +186,9 @@ def generate(
     bern_s = summaries.get("bernstein-sonnet")
     solo_o = summaries.get("solo-opus")
 
-    bernstein_sonnet_resolve_pct = (
-        f"{bern_s.resolve_rate * 100:.1f}" if bern_s else "?"
-    )
-    bernstein_sonnet_cost = (
-        f"{bern_s.mean_cost_per_instance_usd:.2f}" if bern_s else "?"
-    )
-    solo_opus_resolve_pct = (
-        f"{solo_o.resolve_rate * 100:.1f}" if solo_o else "?"
-    )
+    bernstein_sonnet_resolve_pct = f"{bern_s.resolve_rate * 100:.1f}" if bern_s else "?"
+    bernstein_sonnet_cost = f"{bern_s.mean_cost_per_instance_usd:.2f}" if bern_s else "?"
+    solo_opus_resolve_pct = f"{solo_o.resolve_rate * 100:.1f}" if solo_o else "?"
     solo_opus_cost = f"{solo_o.mean_cost_per_instance_usd:.2f}" if solo_o else "?"
 
     if bern_s and solo_o and solo_o.mean_cost_per_instance_usd > 0:
@@ -260,7 +255,7 @@ def generate_from_results_dir(
         is_mock = False
         for jsonl_file in results_dir.glob("*.jsonl"):
             first_line = next(
-                (l for l in jsonl_file.read_text(encoding="utf-8").splitlines() if l.strip()),
+                (ln for ln in jsonl_file.read_text(encoding="utf-8").splitlines() if ln.strip()),
                 "",
             )
             if first_line:

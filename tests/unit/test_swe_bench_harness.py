@@ -1,24 +1,21 @@
 """Unit tests for bernstein.benchmark.swe_bench — SWE-Bench evaluation harness."""
+
 from __future__ import annotations
 
 import json
-import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from bernstein.benchmark.swe_bench import (
-    BenchmarkReport,
     InstanceResult,
     SWEBenchRunner,
     SWEInstance,
     compute_report,
     save_results,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -286,32 +283,25 @@ def test_swe_bench_runner_constructs_with_instance_id(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_filter_instances_returns_all_when_no_filter(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_filter_instances_returns_all_when_no_filter(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
-    instances = [sample_instance, SWEInstance(
-        "b__b-1", "b/b", "x", "bug", "", "", "", [], [], "x", "1", "2020", "1", [], []
-    )]
+    instances = [
+        sample_instance,
+        SWEInstance("b__b-1", "b/b", "x", "bug", "", "", "", [], [], "x", "1", "2020", "1", [], []),
+    ]
     filtered = runner.filter_instances(instances)
     assert len(filtered) == 2
 
 
-def test_filter_instances_by_instance_id(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_filter_instances_by_instance_id(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path, instance_id="django__django-11905")
-    other = SWEInstance(
-        "b__b-1", "b/b", "x", "bug", "", "", "", [], [], "x", "1", "2020", "1", [], []
-    )
+    other = SWEInstance("b__b-1", "b/b", "x", "bug", "", "", "", [], [], "x", "1", "2020", "1", [], [])
     filtered = runner.filter_instances([sample_instance, other])
     assert len(filtered) == 1
     assert filtered[0].instance_id == "django__django-11905"
 
 
-def test_filter_instances_by_sample(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_filter_instances_by_sample(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path, sample=1)
     instances = [
         sample_instance,
@@ -322,9 +312,7 @@ def test_filter_instances_by_sample(
     assert len(filtered) == 1
 
 
-def test_filter_instances_sample_larger_than_list(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_filter_instances_sample_larger_than_list(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path, sample=100)
     instances = [sample_instance]
     filtered = runner.filter_instances(instances)
@@ -336,25 +324,19 @@ def test_filter_instances_sample_larger_than_list(
 # ---------------------------------------------------------------------------
 
 
-def test_build_goal_contains_problem_statement(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_build_goal_contains_problem_statement(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
     goal = runner.build_goal(sample_instance)
     assert sample_instance.problem_statement in goal
 
 
-def test_build_goal_contains_repo(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_build_goal_contains_repo(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
     goal = runner.build_goal(sample_instance)
     assert sample_instance.repo in goal
 
 
-def test_build_goal_contains_failing_tests(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_build_goal_contains_failing_tests(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
     goal = runner.build_goal(sample_instance)
     for test in sample_instance.fail_to_pass:
@@ -366,9 +348,7 @@ def test_build_goal_contains_failing_tests(
 # ---------------------------------------------------------------------------
 
 
-def test_evaluate_patch_returns_true_for_matching_patch(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_evaluate_patch_returns_true_for_matching_patch(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
     # When the patch text matches the expected patch, resolved = True
     resolved = runner.evaluate_patch(
@@ -379,9 +359,7 @@ def test_evaluate_patch_returns_true_for_matching_patch(
     assert isinstance(resolved, bool)
 
 
-def test_evaluate_patch_returns_false_for_empty_patch(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_evaluate_patch_returns_false_for_empty_patch(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
     resolved = runner.evaluate_patch(instance=sample_instance, patch_text="")
     assert resolved is False
@@ -392,9 +370,7 @@ def test_evaluate_patch_returns_false_for_empty_patch(
 # ---------------------------------------------------------------------------
 
 
-def test_run_instance_returns_instance_result(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_run_instance_returns_instance_result(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
 
     # Mock _spawn_bernstein so no real subprocess is started
@@ -406,9 +382,7 @@ def test_run_instance_returns_instance_result(
     assert result.instance_id == sample_instance.instance_id
 
 
-def test_run_instance_marks_resolved_when_patch_matches(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_run_instance_marks_resolved_when_patch_matches(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
 
     with patch.object(runner, "_spawn_bernstein") as mock_spawn:
@@ -419,9 +393,7 @@ def test_run_instance_marks_resolved_when_patch_matches(
     assert result.resolved is True
 
 
-def test_run_instance_marks_unresolved_on_empty_patch(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_run_instance_marks_unresolved_on_empty_patch(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
 
     with patch.object(runner, "_spawn_bernstein") as mock_spawn:
@@ -431,9 +403,7 @@ def test_run_instance_marks_unresolved_on_empty_patch(
     assert result.resolved is False
 
 
-def test_run_instance_records_cost_and_duration(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_run_instance_records_cost_and_duration(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
 
     with patch.object(runner, "_spawn_bernstein") as mock_spawn:
@@ -445,9 +415,7 @@ def test_run_instance_records_cost_and_duration(
     assert result.agent_count == 3
 
 
-def test_run_instance_handles_spawn_exception(
-    tmp_path: Path, sample_instance: SWEInstance
-) -> None:
+def test_run_instance_handles_spawn_exception(tmp_path: Path, sample_instance: SWEInstance) -> None:
     runner = SWEBenchRunner(workdir=tmp_path)
 
     with patch.object(runner, "_spawn_bernstein", side_effect=RuntimeError("timeout")):

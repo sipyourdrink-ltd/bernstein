@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.models import (
@@ -19,7 +17,6 @@ from bernstein.core.models import (
     TaskType,
 )
 from bernstein.core.orchestrator import Orchestrator
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -115,7 +112,7 @@ def test_post_file_created_adds_message():
     assert len(msgs) == 1
     assert "src/auth.py" in msgs[0].content
     assert "AuthMiddleware" in msgs[0].content
-    assert "backend-xyz" == msgs[0].agent_id
+    assert msgs[0].agent_id == "backend-xyz"
 
 
 def test_post_file_created_no_classes():
@@ -140,7 +137,7 @@ def test_post_api_endpoint_adds_message():
     assert len(msgs) == 1
     assert "POST" in msgs[0].content
     assert "/auth/login" in msgs[0].content
-    assert "backend-xyz" == msgs[0].agent_id
+    assert msgs[0].agent_id == "backend-xyz"
 
 
 def test_post_api_endpoint_without_response():
@@ -246,8 +243,8 @@ def test_spawn_prompt_no_bulletin_section_with_empty_board(tmp_path: Path):
 
 def _make_orchestrator(tmp_path: Path) -> Orchestrator:
     """Create a minimal Orchestrator for testing conflict detection."""
-    from bernstein.core.spawner import AgentSpawner
     from bernstein.adapters.base import CLIAdapter, SpawnResult
+    from bernstein.core.spawner import AgentSpawner
 
     adapter = MagicMock(spec=CLIAdapter)
     adapter.spawn.return_value = SpawnResult(pid=999, log_path=tmp_path / "agent.log")

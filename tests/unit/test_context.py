@@ -1,17 +1,15 @@
 """Tests for bernstein.core.context."""
+
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
-
 from unittest.mock import MagicMock, patch
 
 from bernstein.core.context import (
+    ApiUsageTracker,
     _git_cochanged_files,
     _read_if_exists,
     _should_skip,
-    ApiUsageTracker,
     available_roles,
     clear_caches,
     file_tree,
@@ -20,10 +18,10 @@ from bernstein.core.context import (
 )
 from bernstein.core.models import ApiTier
 
-
 # ---------------------------------------------------------------------------
 # _should_skip
 # ---------------------------------------------------------------------------
+
 
 class TestShouldSkip:
     """Tests for the path-exclusion heuristic."""
@@ -50,6 +48,7 @@ class TestShouldSkip:
 # ---------------------------------------------------------------------------
 # file_tree
 # ---------------------------------------------------------------------------
+
 
 class TestFileTree:
     """Tests for file tree generation."""
@@ -88,6 +87,7 @@ class TestFileTree:
 # _read_if_exists
 # ---------------------------------------------------------------------------
 
+
 class TestReadIfExists:
     """Tests for the safe file reader."""
 
@@ -111,6 +111,7 @@ class TestReadIfExists:
 # ---------------------------------------------------------------------------
 # available_roles
 # ---------------------------------------------------------------------------
+
 
 class TestAvailableRoles:
     """Tests for role discovery."""
@@ -145,6 +146,7 @@ class TestAvailableRoles:
 # ---------------------------------------------------------------------------
 # gather_project_context
 # ---------------------------------------------------------------------------
+
 
 class TestGatherProjectContext:
     """Tests for the full context gatherer."""
@@ -184,6 +186,7 @@ class TestGatherProjectContext:
 # ApiUsageTracker
 # ---------------------------------------------------------------------------
 
+
 class TestApiUsageTracker:
     """Tests for API usage tracking."""
 
@@ -221,8 +224,12 @@ class TestApiUsageTracker:
 
     def test_provider_summary(self, tmp_path: Path) -> None:
         tracker = ApiUsageTracker(tmp_path)
-        tracker.record_call("openrouter", "claude-sonnet", "agent-001", tokens_input=100, tokens_output=50, cost_usd=0.001)
-        tracker.record_call("openrouter", "claude-opus", "agent-001", tokens_input=200, tokens_output=100, cost_usd=0.003)
+        tracker.record_call(
+            "openrouter", "claude-sonnet", "agent-001", tokens_input=100, tokens_output=50, cost_usd=0.001
+        )
+        tracker.record_call(
+            "openrouter", "claude-opus", "agent-001", tokens_input=200, tokens_output=100, cost_usd=0.003
+        )
         tracker.record_call("gemini", "gemini-pro", "agent-002", tokens_input=50, tokens_output=25, cost_usd=0.0005)
 
         summary = tracker.get_provider_summary("openrouter")
@@ -247,8 +254,18 @@ class TestApiUsageTracker:
 
     def test_global_summary(self, tmp_path: Path) -> None:
         tracker = ApiUsageTracker(tmp_path)
-        tracker.record_call("openrouter", "claude-sonnet", "agent-001", tokens_input=100, tokens_output=50, cost_usd=0.001)
-        tracker.record_call("openrouter", "claude-sonnet", "agent-001", tokens_input=200, tokens_output=100, cost_usd=0.002, success=False)
+        tracker.record_call(
+            "openrouter", "claude-sonnet", "agent-001", tokens_input=100, tokens_output=50, cost_usd=0.001
+        )
+        tracker.record_call(
+            "openrouter",
+            "claude-sonnet",
+            "agent-001",
+            tokens_input=200,
+            tokens_output=100,
+            cost_usd=0.002,
+            success=False,
+        )
 
         summary = tracker.get_global_summary()
         assert summary["total_api_calls"] == "2"
@@ -275,7 +292,9 @@ class TestApiUsageTracker:
 
     def test_summary_for_agent(self, tmp_path: Path) -> None:
         tracker = ApiUsageTracker(tmp_path)
-        tracker.record_call("openrouter", "claude-sonnet", "agent-001", tokens_input=100, tokens_output=50, cost_usd=0.0015)
+        tracker.record_call(
+            "openrouter", "claude-sonnet", "agent-001", tokens_input=100, tokens_output=50, cost_usd=0.0015
+        )
 
         summary = tracker.get_summary_for_agent("agent-001")
         assert summary["agent_session_id"] == "agent-001"
@@ -311,7 +330,9 @@ class TestApiUsageTracker:
 
     def test_export_summary(self, tmp_path: Path) -> None:
         tracker = ApiUsageTracker(tmp_path)
-        tracker.record_call("openrouter", "claude-sonnet", "agent-001", tokens_input=100, tokens_output=50, cost_usd=0.001)
+        tracker.record_call(
+            "openrouter", "claude-sonnet", "agent-001", tokens_input=100, tokens_output=50, cost_usd=0.001
+        )
         tracker.set_tier_consumption("openrouter", ApiTier.PRO, tokens_used=50000, tokens_limit=100000)
 
         output_path = tmp_path / "export.json"
@@ -319,6 +340,7 @@ class TestApiUsageTracker:
 
         assert output_path.exists()
         import json
+
         data = json.loads(output_path.read_text())
         assert "global_summary" in data
         assert "provider_summaries" in data
@@ -349,6 +371,7 @@ class TestApiUsageTracker:
 # _git_cochanged_files — batched subprocess + lru_cache
 # ---------------------------------------------------------------------------
 
+
 class TestGitCochangedFiles:
     """Tests for the batched git co-changed files lookup."""
 
@@ -363,10 +386,12 @@ class TestGitCochangedFiles:
     def test_second_call_uses_cache(self, tmp_path: Path) -> None:
         """Repeated calls with identical args must not spawn a second subprocess."""
         _git_cochanged_files.cache_clear()
-        fake_output = self._make_log_output([
-            ("abc123", ["src/a.py", "src/b.py"]),
-            ("def456", ["src/a.py", "src/c.py"]),
-        ])
+        fake_output = self._make_log_output(
+            [
+                ("abc123", ["src/a.py", "src/b.py"]),
+                ("def456", ["src/a.py", "src/c.py"]),
+            ]
+        )
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = fake_output
@@ -395,11 +420,13 @@ class TestGitCochangedFiles:
     def test_counts_cochanged_correctly(self, tmp_path: Path) -> None:
         """Most frequently co-changed file appears first."""
         _git_cochanged_files.cache_clear()
-        fake_output = self._make_log_output([
-            ("aaa", ["target.py", "src/frequent.py"]),
-            ("bbb", ["target.py", "src/frequent.py"]),
-            ("ccc", ["target.py", "src/rare.py"]),
-        ])
+        fake_output = self._make_log_output(
+            [
+                ("aaa", ["target.py", "src/frequent.py"]),
+                ("bbb", ["target.py", "src/frequent.py"]),
+                ("ccc", ["target.py", "src/rare.py"]),
+            ]
+        )
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = fake_output

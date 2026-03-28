@@ -7,6 +7,7 @@ Verifies the end-to-end data flow:
 4. Approved proposal → UpgradeExecutor.execute() applies change
 5. Failed execution → rollback
 """
+
 from __future__ import annotations
 
 import json
@@ -14,26 +15,13 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 from bernstein.core.evolution import (
-    AnalysisTrigger,
-    ApprovalMode,
     EvolutionCoordinator,
     FileMetricsCollector,
     FileUpgradeExecutor,
-    ImprovementOpportunity,
     TaskMetrics,
-    UpgradeCategory,
-    UpgradeProposal,
     UpgradeStatus,
 )
-from bernstein.core.models import (
-    RiskAssessment,
-    RollbackPlan,
-    TaskStatus,
-)
-
 
 # --- Helpers ---
 
@@ -162,9 +150,7 @@ class TestEvolutionEndToEnd:
         proposals = coordinator.run_analysis_cycle()
 
         # Should find at least the success rate improvement opportunity
-        has_success_rate_proposal = any(
-            "success rate" in p.title.lower() for p in proposals
-        )
+        has_success_rate_proposal = any("success rate" in p.title.lower() for p in proposals)
         assert has_success_rate_proposal
 
     def test_approved_proposal_gets_executed(self, tmp_path: Path) -> None:
@@ -268,10 +254,11 @@ class TestEvolutionEndToEnd:
     def test_pending_proposals_persisted_by_orchestrator(self, tmp_path: Path) -> None:
         """Verify _persist_pending_proposals writes to pending.json."""
         import httpx
+
+        from bernstein.adapters.base import CLIAdapter, SpawnResult
         from bernstein.core.models import OrchestratorConfig
         from bernstein.core.orchestrator import Orchestrator
         from bernstein.core.spawner import AgentSpawner
-        from bernstein.adapters.base import CLIAdapter, SpawnResult
 
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()
@@ -297,7 +284,11 @@ class TestEvolutionEndToEnd:
         transport = httpx.MockTransport(lambda r: httpx.Response(200, json=[]))
         client = httpx.Client(transport=transport, base_url="http://testserver")
         orch = Orchestrator(
-            cfg, spawner, tmp_path, client=client, evolution=coordinator,
+            cfg,
+            spawner,
+            tmp_path,
+            client=client,
+            evolution=coordinator,
         )
 
         # Call persist

@@ -1,4 +1,5 @@
 """Tests for `bernstein agents` CLI command group."""
+
 from __future__ import annotations
 
 import textwrap
@@ -8,7 +9,6 @@ import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -161,9 +161,7 @@ def test_agents_list_filter_by_source_local(tmp_path: Path) -> None:
     _write_valid_definition(defs, "local-only")
 
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["agents", "list", "--source", "local", "--dir", str(defs)]
-    )
+    result = runner.invoke(cli, ["agents", "list", "--source", "local", "--dir", str(defs)])
     assert result.exit_code == 0
     assert "local-only" in result.output
 
@@ -174,9 +172,7 @@ def test_agents_list_filter_by_source_agency_no_dir(tmp_path: Path) -> None:
     defs = tmp_path / "definitions"
     defs.mkdir()
     runner = CliRunner()
-    result = runner.invoke(
-        cli, ["agents", "list", "--source", "agency", "--dir", str(defs)]
-    )
+    result = runner.invoke(cli, ["agents", "list", "--source", "agency", "--dir", str(defs)])
     assert result.exit_code == 0
     assert "No agents found" in result.output
 

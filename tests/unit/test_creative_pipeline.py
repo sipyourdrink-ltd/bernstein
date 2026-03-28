@@ -1,4 +1,5 @@
 """Tests for the creative evolution pipeline (visionary → analyst → production gate)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,7 +12,6 @@ from bernstein.evolution.creative import (
     PipelineResult,
     VisionaryProposal,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -174,25 +174,33 @@ class TestAnalystVerdict:
 
     def test_compute_composite_high_feasibility_high_impact_low_risk(self) -> None:
         score = AnalystVerdict.compute_composite(
-            feasibility=9, impact=9, risk=2,
+            feasibility=9,
+            impact=9,
+            risk=2,
         )
         assert score == pytest.approx(8.5, abs=0.1)
 
     def test_compute_composite_low_scores(self) -> None:
         score = AnalystVerdict.compute_composite(
-            feasibility=2, impact=2, risk=9,
+            feasibility=2,
+            impact=2,
+            risk=9,
         )
         assert score == pytest.approx(0.0, abs=0.5)
 
     def test_compute_composite_clamped_to_zero(self) -> None:
         score = AnalystVerdict.compute_composite(
-            feasibility=1, impact=1, risk=10,
+            feasibility=1,
+            impact=1,
+            risk=10,
         )
         assert score >= 0.0
 
     def test_compute_composite_clamped_to_ten(self) -> None:
         score = AnalystVerdict.compute_composite(
-            feasibility=10, impact=10, risk=0,
+            feasibility=10,
+            impact=10,
+            risk=0,
         )
         assert score <= 10.0
 
