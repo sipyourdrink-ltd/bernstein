@@ -21,6 +21,7 @@
 [![Tests](https://img.shields.io/badge/tests-2500+-2ea44f)]()
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
 [![Benchmark](https://img.shields.io/badge/benchmark-1.78x_faster-brightgreen)](benchmarks/README.md)
+[![Sponsor](https://img.shields.io/badge/sponsor-GitHub%20%2F%20OpenCollective-ff69b4?logo=github&logoColor=white)](https://github.com/sponsors/chernistry)
 [![Discord](https://img.shields.io/discord/1234567890?logo=discord&logoColor=white&label=discord&color=5865F2)](https://discord.gg/bernstein)
 
 [Homepage](https://alexchernysh.com/bernstein) | [Documentation](https://chernistry.github.io/bernstein/)
