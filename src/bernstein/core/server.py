@@ -16,7 +16,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -44,6 +44,8 @@ from bernstein.core.models import (
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
 
+    from starlette.responses import Response as StarletteResponse
+
 
 # ---------------------------------------------------------------------------
 # Auth middleware — bearer token validation
@@ -65,13 +67,19 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._token = auth_token
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Any:  # type: ignore[type-arg]
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Any],
+    ) -> StarletteResponse:
         if self._token is None:
-            return await call_next(request)
+            response: StarletteResponse = await call_next(request)
+            return response
 
         path = request.url.path
         if path in _PUBLIC_PATHS:
-            return await call_next(request)
+            response = await call_next(request)
+            return response
 
         auth_header = request.headers.get("authorization", "")
         if not auth_header.startswith("Bearer "):
@@ -85,7 +93,8 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
                 status_code=403,
                 content={"detail": "Invalid auth token"},
             )
-        return await call_next(request)
+        response = await call_next(request)
+        return response
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +177,9 @@ class TaskCreate(BaseModel):
     upgrade_details: dict[str, Any] | None = None
     model: str | None = None  # Manager hint: "opus", "sonnet", "haiku"
     effort: str | None = None  # Manager hint: "max", "high", "medium", "low"
-    completion_signals: list[CompletionSignalSchema] = Field(default_factory=list)
+    completion_signals: list[CompletionSignalSchema] = Field(
+        default_factory=lambda: list[CompletionSignalSchema]()
+    )
 
 
 class TaskResponse(BaseModel):
@@ -192,9 +203,13 @@ class TaskResponse(BaseModel):
     upgrade_details: dict[str, Any] | None
     model: str | None
     effort: str | None
-    completion_signals: list[dict[str, str]] = Field(default_factory=list)
+    completion_signals: list[dict[str, str]] = Field(
+        default_factory=lambda: list[dict[str, str]]()
+    )
     created_at: float
-    progress_log: list[ProgressEntry] = Field(default_factory=list)
+    progress_log: list[ProgressEntry] = Field(
+        default_factory=lambda: list[ProgressEntry]()
+    )
     version: int = 1
 
 
@@ -504,7 +519,7 @@ class TaskStore:
                 task.result_summary = record.get("result_summary", task.result_summary)
                 self._index_add(task)
             else:
-                task = Task.from_dict(record)
+                task = Task.from_dict(cast("dict[str, Any]", record))
                 self._tasks[task_id] = task
                 self._index_add(task)
 
@@ -843,7 +858,8 @@ class TaskStore:
             if task is None:
                 raise KeyError(task_id)
             entry: ProgressEntry = {"timestamp": time.time(), "message": message, "percent": percent}
-            task.progress_log.append(entry)
+            progress: list[ProgressEntry] = cast("list[ProgressEntry]", task.progress_log)  # type: ignore[reportUnknownMemberType]
+            progress.append(entry)
             return task
 
     async def cancel(self, task_id: str, reason: str) -> Task:
@@ -1184,7 +1200,7 @@ def _task_to_response(task: Task) -> TaskResponse:
         effort=task.effort,
         completion_signals=[{"type": s.type, "value": s.value} for s in task.completion_signals],
         created_at=task.created_at,
-        progress_log=list(task.progress_log),
+        progress_log=list(cast("list[ProgressEntry]", task.progress_log)),  # type: ignore[reportUnknownMemberType]
         version=task.version,
     )
 
@@ -1574,6 +1590,37 @@ def create_app(
     application.state.bulletin = bulletin  # type: ignore[attr-defined]
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
     application.state.node_registry = node_registry  # type: ignore[attr-defined]
+
+    # Reference all route handlers so pyright does not flag them as unused.
+    # They are registered with FastAPI via decorators above.
+    _routes = (
+        create_task,
+        next_task,
+        claim_batch,
+        claim_task,
+        complete_task,
+        fail_task,
+        cancel_task,
+        progress_task,
+        list_tasks,
+        get_archive,
+        get_task,
+        status_dashboard,
+        agent_heartbeat,
+        health_check,
+        post_bulletin,
+        get_bulletin,
+        agent_card,
+        a2a_send_task,
+        a2a_get_task,
+        a2a_add_artifact,
+        register_node,
+        node_heartbeat,
+        unregister_node,
+        list_nodes,
+        cluster_status,
+    )
+    del _routes
 
     return application
 

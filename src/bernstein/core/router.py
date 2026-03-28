@@ -13,7 +13,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.core.models import Complexity, ModelConfig, Scope, Task
 
@@ -175,7 +175,9 @@ class RoutingDecision:
 class RouterState:
     """Current state of available providers and tiers."""
 
-    providers: dict[str, ProviderConfig] = field(default_factory=dict)
+    providers: dict[str, ProviderConfig] = field(
+        default_factory=lambda: dict[str, ProviderConfig]()
+    )
     preferred_tier: Tier = Tier.FREE
     fallback_enabled: bool = True
 
@@ -482,18 +484,18 @@ class TierAwareRouter:
         tasks: list[Task],
     ) -> list[RoutingDecision]:
         """Route a batch of tasks, returning decisions for each."""
-        decisions = []
+        decisions: list[RoutingDecision] = []
         for task in tasks:
             decisions.append(self.select_provider_for_task(task))
         return decisions
 
-    def get_provider_summary(self) -> dict[str, dict]:
+    def get_provider_summary(self) -> dict[str, dict[str, Any]]:
         """Get a summary of all registered providers.
 
         Returns:
             Dict mapping provider name to health, cost, and quota info.
         """
-        summary = {}
+        summary: dict[str, dict[str, Any]] = {}
         for name, provider in self.state.providers.items():
             summary[name] = {
                 "tier": provider.tier.value,
@@ -606,50 +608,59 @@ def load_providers_from_yaml(path: Path, router: TierAwareRouter) -> None:
     import yaml
 
     try:
-        data: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data_raw: object = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception as exc:
         logger.warning("Failed to load providers from %s: %s", path, exc)
         return
 
-    if not isinstance(data, dict) or "providers" not in data:
+    if not isinstance(data_raw, dict) or "providers" not in data_raw:
         logger.warning("providers.yaml at %s has no 'providers' key, skipping", path)
         return
 
-    providers_data: object = data["providers"]
+    data: dict[str, Any] = cast("dict[str, Any]", data_raw)
+    providers_data: Any = data["providers"]
     if not isinstance(providers_data, dict):
         return
 
-    for name, cfg in providers_data.items():
-        if not isinstance(cfg, dict):
+    providers_dict: dict[str, Any] = cast("dict[str, Any]", providers_data)
+    for name, cfg_raw in providers_dict.items():
+        if not isinstance(cfg_raw, dict):
             continue
+        cfg: dict[str, Any] = cast("dict[str, Any]", cfg_raw)
         try:
-            tier = Tier(cfg.get("tier", "standard"))
+            tier = Tier(str(cfg.get("tier", "standard")))
             raw_models: object = cfg.get("models", {})
             models: dict[str, ModelConfig] = {}
             if isinstance(raw_models, dict):
-                for model_id, mc in raw_models.items():
-                    if isinstance(mc, dict):
-                        models[model_id] = ModelConfig(
-                            model=mc.get("model", model_id),
-                            effort=mc.get("effort", "high"),
+                raw_models_dict: dict[str, Any] = cast("dict[str, Any]", raw_models)
+                for model_id, mc_raw in raw_models_dict.items():
+                    if isinstance(mc_raw, dict):
+                        mc: dict[str, Any] = cast("dict[str, Any]", mc_raw)
+                        models[str(model_id)] = ModelConfig(
+                            model=str(mc.get("model", model_id)),
+                            effort=str(mc.get("effort", "high")),
                         )
+            free_tier_limit_raw: Any = cfg.get("free_tier_limit")
+            free_tier_limit: int | None = int(free_tier_limit_raw) if free_tier_limit_raw is not None else None
+            rate_limit_raw: Any = cfg.get("rate_limit_rpm")
+            rate_limit_rpm: int | None = int(rate_limit_raw) if rate_limit_raw is not None else None
             provider = ProviderConfig(
-                name=name,
+                name=str(name),
                 models=models,
                 tier=tier,
                 cost_per_1k_tokens=float(cfg.get("cost_per_1k_tokens", 0.0)),
                 available=bool(cfg.get("available", True)),
-                free_tier_limit=cfg.get("free_tier_limit"),
+                free_tier_limit=free_tier_limit,
                 free_tier_used=int(cfg.get("free_tier_used", 0)),
                 max_context_tokens=int(cfg.get("max_context_tokens", 200_000)),
                 supports_streaming=bool(cfg.get("supports_streaming", True)),
                 supports_vision=bool(cfg.get("supports_vision", False)),
-                rate_limit_rpm=cfg.get("rate_limit_rpm"),
+                rate_limit_rpm=rate_limit_rpm,
             )
             router.register_provider(provider)
-            logger.debug("Registered provider '%s' (tier=%s) from %s", name, tier.value, path)
+            logger.debug("Registered provider '%s' (tier=%s) from %s", str(name), tier.value, path)
         except Exception as exc:
-            logger.warning("Skipping malformed provider '%s' in %s: %s", name, path, exc)
+            logger.warning("Skipping malformed provider '%s' in %s: %s", str(name), path, exc)
 
 
 # Default router instance for convenience
