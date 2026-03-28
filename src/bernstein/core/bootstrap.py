@@ -187,16 +187,28 @@ def preflight_checks(cli: str, port: int) -> None:
         SystemExit: On any pre-flight failure, with an actionable message.
     """
     if cli == "auto":
-        # Auto mode: check that at least one CLI agent is available
-        import shutil
+        # Auto mode: use agent_discovery for rich detection with auth + model info
+        from bernstein.core.agent_discovery import _short_model, discover_agents_cached
 
-        found = [name for name in ("claude", "codex", "gemini", "qwen") if shutil.which(name)]
-        if not found:
+        discovery = discover_agents_cached()
+        if not discovery.agents:
             console.print("[bold red]Error:[/bold red] No CLI agents found. Install at least one:")
             for name, hint in _CLI_INSTALL_HINT.items():
                 console.print(f"  {name}: {hint}")
             raise SystemExit(1)
-        console.print(f"[green]→[/green] Auto-detected agents: [bold]{', '.join(found)}[/bold]")
+
+        # Build "Claude (sonnet/opus), Codex (o4-mini)" description
+        agent_parts: list[str] = []
+        for agent in discovery.agents:
+            short_models = [_short_model(m) for m in agent.available_models[:2]]
+            auth_note = "" if agent.logged_in else " [dim](not authenticated)[/dim]"
+            agent_parts.append(f"{agent.name.capitalize()} ({'/'.join(short_models)}){auth_note}")
+        routing_note = "Using auto-routing." if len(discovery.agents) > 1 else "Using as primary."
+        console.print(f"[green]✓[/green] Found: {', '.join(agent_parts)}. {routing_note}")
+
+        # Surface any auth warnings as hints
+        for w in discovery.warnings:
+            console.print(f"  [yellow]↳[/yellow] {w}")
     else:
         _check_binary(cli)
         _check_api_key(cli)
@@ -929,33 +941,72 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
                     logger.exception("Failed to restart orchestrator")
 
 
+def _auto_write_bernstein_yaml(workdir: Path) -> None:
+    """Write a minimal bernstein.yaml with auto-routing to the project root.
+
+    Called on first ``bernstein -g`` when no bernstein.yaml exists so users
+    have a starting point they can customise later.
+
+    Args:
+        workdir: Project root directory.
+    """
+    from bernstein.core.agent_discovery import generate_auto_routing_yaml
+
+    routing_block = generate_auto_routing_yaml()
+    if routing_block:
+        # Extract just the "cli: auto" line + comment from the routing block
+        cli_line = next((ln for ln in routing_block.splitlines() if ln.startswith("cli:")), "cli: auto")
+    else:
+        cli_line = "cli: auto"
+
+    content = (
+        "# Bernstein orchestration config — auto-generated\n"
+        "# Uncomment 'goal' to run from this file: bernstein (without -g)\n"
+        "# goal: \"Describe what you want to build\"\n"
+        "\n"
+        f"{cli_line}\n"
+        "team: auto\n"
+        'budget: "$10"\n'
+    )
+    (workdir / "bernstein.yaml").write_text(content)
+    console.print("[green]✓[/green] Created bernstein.yaml")
+
+
 def bootstrap_from_goal(
     goal: str,
     workdir: Path,
     port: int = 8052,
-    cli: str = "claude",
+    cli: str = "auto",
     cells: int = 1,
     force_fresh: bool = False,
+    model: str | None = None,
 ) -> BootstrapResult:
     """Bootstrap from an inline goal string (no YAML file needed).
 
     Creates a minimal SeedConfig from the goal and delegates to the
-    standard bootstrap flow.
+    standard bootstrap flow.  When ``cli="auto"`` (the default), the best
+    available CLI agent is detected automatically — no configuration required.
 
     Args:
         goal: Plain-text project goal.
         workdir: Project root directory.
         port: TCP port for the task server.
-        cli: CLI backend to use.
+        cli: CLI backend to use, or "auto" to detect automatically.
         cells: Number of parallel orchestration cells.
         force_fresh: Ignore any saved session and start from scratch.
+        model: Optional model override (e.g. "opus", "sonnet").
 
     Returns:
         BootstrapResult with PIDs and task ID.
     """
     from rich.status import Status
 
-    seed = SeedConfig(goal=goal, cli=cli)  # type: ignore[arg-type]
+    seed = SeedConfig(goal=goal, cli=cli, model=model)  # type: ignore[arg-type]
+
+    # Detect first run: no .sdd/ and no bernstein.yaml yet
+    first_run = not (workdir / ".sdd").exists() and not (workdir / "bernstein.yaml").exists()
+    if first_run and cli == "auto":
+        console.print("[dim]No project setup found. Auto-detecting...[/dim]")
 
     console.print(f"[green]→[/green] Goal: [bold]{goal[:80]}[/bold]")
 
@@ -966,6 +1017,11 @@ def bootstrap_from_goal(
     # Initialise workspace
     with Status("[bold]Initialising workspace...[/bold]", console=console):
         created = _ensure_sdd(workdir)
+
+        # Auto-generate bernstein.yaml on first run so users can customise later
+        if first_run and not (workdir / "bernstein.yaml").exists():
+            _auto_write_bernstein_yaml(workdir)
+
         _clean_stale_runtime(workdir)
         _discover_catalog(workdir)
         _build_codebase_index(workdir)

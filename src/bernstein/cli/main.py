@@ -263,6 +263,20 @@ class _RichGroup(click.Group):
     show_default=True,
     help="Merge strategy: pr=create GitHub PR (default), direct=push directly to main branch.",
 )
+@click.option(
+    "--cli",
+    "cli_override",
+    type=click.Choice(["claude", "codex", "gemini", "qwen", "auto"]),
+    default=None,
+    help="Force a specific agent (overrides auto-detection).",
+)
+@click.option(
+    "--model",
+    "model_override",
+    default=None,
+    metavar="MODEL",
+    help="Force a specific model (e.g. opus, sonnet, o3).",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -278,6 +292,8 @@ def cli(
     force_fresh: bool,
     approval: str,
     merge_strategy: str,
+    cli_override: str | None,
+    model_override: str | None,
 ) -> None:
     """Multi-agent orchestration for CLI coding agents."""
     if ctx.invoked_subcommand is not None:
@@ -358,7 +374,14 @@ def cli(
             from bernstein.core.bootstrap import bootstrap_from_goal
 
             try:
-                bootstrap_from_goal(goal, workdir=workdir, port=port, force_fresh=force_fresh)
+                bootstrap_from_goal(
+                    goal,
+                    workdir=workdir,
+                    port=port,
+                    force_fresh=force_fresh,
+                    cli=cli_override or "auto",
+                    model=model_override,
+                )
             except RuntimeError as exc:
                 console.print(f"[red]Error:[/red] {exc}")
                 raise SystemExit(1) from exc

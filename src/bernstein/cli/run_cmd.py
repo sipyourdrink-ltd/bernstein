@@ -80,7 +80,7 @@ def _generate_default_yaml(project_type: str) -> str:
         "",
         '# goal: "Describe what you want the agents to build or improve"',
         "",
-        "cli: claude  # or codex, gemini, qwen",
+        "cli: auto  # Bernstein picks the best agent per task",
         "team: auto",
         'budget: "$10"',
     ]
