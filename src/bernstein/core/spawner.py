@@ -5,6 +5,59 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+# ---------------------------------------------------------------------------
+# Module-level file cache (mtime-keyed, automatically invalidates on change)
+# ---------------------------------------------------------------------------
+_FILE_CACHE: dict[str, tuple[float, str]] = {}
+_DIR_CACHE: dict[str, tuple[float, list[str]]] = {}
+
+
+def _read_cached(path: "Path") -> str:
+    """Return file contents, re-reading only when mtime changes.
+
+    Args:
+        path: File to read.
+
+    Returns:
+        File contents, or empty string if the file does not exist.
+    """
+    key = str(path)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        _FILE_CACHE.pop(key, None)
+        return ""
+    cached = _FILE_CACHE.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    content = path.read_text(encoding="utf-8")
+    _FILE_CACHE[key] = (mtime, content)
+    return content
+
+
+def _list_subdirs_cached(path: "Path") -> list[str]:
+    """Return sorted list of immediate subdirectory names, cached by mtime.
+
+    Args:
+        path: Directory to list.
+
+    Returns:
+        Sorted subdirectory names, or empty list if path is not a directory.
+    """
+    key = str(path)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        _DIR_CACHE.pop(key, None)
+        return []
+    cached = _DIR_CACHE.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    names = sorted(d.name for d in path.iterdir() if d.is_dir())
+    _DIR_CACHE[key] = (mtime, names)
+    return names
+
+
 if TYPE_CHECKING:
     import subprocess
     from pathlib import Path
@@ -65,7 +118,7 @@ def _render_prompt(
 
     # Project context from .sdd/project.md if it exists
     project_md = workdir / ".sdd" / "project.md"
-    project_context = project_md.read_text(encoding="utf-8") if project_md.exists() else ""
+    project_context = _read_cached(project_md)
 
     # Completion instructions with concrete curl commands
     completion_cmds = "\n".join(
@@ -83,9 +136,7 @@ def _render_prompt(
     # Available roles from templates directory
     available_roles = ""
     if templates_dir.is_dir():
-        available_roles = ", ".join(
-            d.name for d in sorted(templates_dir.iterdir()) if d.is_dir()
-        )
+        available_roles = ", ".join(_list_subdirs_cached(templates_dir))
 
     # Specialist agents from agency catalog
     specialist_block = ""
@@ -367,7 +418,7 @@ def _load_role_config(role: str, templates_dir: Path) -> ModelConfig | None:
     try:
         import yaml
 
-        data: object = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        data: object = yaml.safe_load(_read_cached(config_path))
         if not isinstance(data, dict):
             return None
         model = str(data.get("default_model", "sonnet"))

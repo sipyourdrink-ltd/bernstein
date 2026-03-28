@@ -9,7 +9,6 @@ from typing import Any
 
 import click
 from rich.console import Console
-from rich.table import Table
 
 console = Console()
 
@@ -186,6 +185,8 @@ def cost_cmd(metrics_dir: str, as_json: bool) -> None:
         }
         click.echo(json.dumps(output, indent=2))
         return
+
+    from rich.table import Table
 
     table = Table(title="Bernstein Cost Report", header_style="bold cyan", show_lines=False)
     table.add_column("Model", min_width=20)

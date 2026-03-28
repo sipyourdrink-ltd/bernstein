@@ -215,7 +215,7 @@
       "rich",
       "typing"
     ],
-    "last_modified": "2026-03-28T04:03:23.834136"
+    "last_modified": "2026-03-28T06:35:37.403647"
   },
   "src/bernstein/cli/dashboard.py": {
     "summary": "Bernstein TUI -- retro-futuristic agent orchestration dashboard.",
@@ -281,7 +281,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T06:21:43.313345"
+    "last_modified": "2026-03-28T06:35:39.512983"
   },
   "src/bernstein/core/__init__.py": {
     "summary": "Core: task server, spawner, scheduler.",
@@ -590,7 +590,7 @@
       "time",
       "typing"
     ],
-    "last_modified": "2026-03-28T06:21:43.313851"
+    "last_modified": "2026-03-28T06:35:37.404156"
   },
   "src/bernstein/core/policy.py": {
     "summary": "Policy engine for tier optimization and provider routing.",
@@ -710,6 +710,7 @@
       "contextlib",
       "dataclasses",
       "fastapi",
+      "heapq",
       "json",
       "pathlib",
       "pydantic",
@@ -717,7 +718,7 @@
       "typing",
       "uuid"
     ],
-    "last_modified": "2026-03-28T06:02:35.515777"
+    "last_modified": "2026-03-28T06:35:37.404350"
   },
   "src/bernstein/core/spawner.py": {
     "summary": "Spawn short-lived CLI agents for task batches.",
@@ -731,7 +732,7 @@
       "typing",
       "uuid"
     ],
-    "last_modified": "2026-03-28T06:21:43.314093"
+    "last_modified": "2026-03-28T06:35:37.404524"
   },
   "src/bernstein/core/sync.py": {
     "summary": "Sync .sdd/backlog/*.md files with the task server.",
@@ -2180,7 +2181,7 @@
       "time",
       "unittest"
     ],
-    "last_modified": "2026-03-28T06:04:20.170484"
+    "last_modified": "2026-03-28T06:41:29.543164"
   },
   "tests/unit/test_policy.py": {
     "summary": "Tests for the policy engine \u2014 policy loading, evaluation, and management.",

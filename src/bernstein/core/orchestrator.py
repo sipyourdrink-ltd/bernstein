@@ -167,6 +167,31 @@ def _fetch_tasks(client: httpx.Client, base_url: str, status: str) -> list[Task]
     return [_task_from_dict(t) for t in resp.json()]
 
 
+def _fetch_all_tasks(client: httpx.Client, base_url: str) -> dict[str, list[Task]]:
+    """GET /tasks (no filter) and bucket results by status in one round-trip.
+
+    Args:
+        client: httpx client.
+        base_url: Server base URL.
+
+    Returns:
+        Dict mapping status string → list of Tasks.  Always includes keys
+        "open", "claimed", "done", "failed", "cancelled" even if empty.
+        NOTE: "open" here includes tasks with unmet dependencies; callers
+        that need the server-filtered view should apply their own dep check.
+    """
+    resp = client.get(f"{base_url}/tasks")
+    resp.raise_for_status()
+    by_status: dict[str, list[Task]] = defaultdict(list)
+    for raw in resp.json():
+        task = _task_from_dict(raw)
+        by_status[task.status.value].append(task)
+    # Ensure standard keys are always present
+    for key in ("open", "claimed", "done", "failed", "cancelled"):
+        by_status.setdefault(key, [])
+    return dict(by_status)
+
+
 def _fail_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -> None:
     """POST /tasks/{task_id}/fail to mark a task as failed.
 
@@ -346,29 +371,27 @@ class Orchestrator:
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             logger.warning("ingest_backlog failed: %s", exc)
 
-        # 1. Fetch open tasks
+        # 1. Fetch ALL tasks in a single round-trip and split by status.
         try:
-            open_tasks = _fetch_tasks(self._client, base, "open")
+            tasks_by_status = _fetch_all_tasks(self._client, base)
         except httpx.HTTPError as exc:
-            logger.error("Failed to fetch open tasks: %s", exc)
-            result.errors.append(f"fetch_open: {exc}")
+            logger.error("Failed to fetch tasks: %s", exc)
+            result.errors.append(f"fetch_all: {exc}")
             return result
 
-        result.open_tasks = len(open_tasks)
+        logger.debug("tick #%d: 1 HTTP fetch covers open/claimed/done/failed", self._tick_count)
 
-        # 1b. Fetch done tasks (used both for depends_on filtering and janitor)
-        try:
-            done_tasks = _fetch_tasks(self._client, base, "done")
-        except httpx.HTTPError as exc:
-            logger.error("Failed to fetch done tasks: %s", exc)
-            result.errors.append(f"fetch_done: {exc}")
-            done_tasks = []
-
+        # Server-filtered open tasks already exclude unmet deps when queried with
+        # ?status=open, so replicate that filter client-side from the bulk fetch.
+        done_tasks = tasks_by_status["done"]
         done_ids = {t.id for t in done_tasks}
-        ready_tasks = [
-            t for t in open_tasks
+        open_tasks = [
+            t for t in tasks_by_status["open"]
             if all(dep in done_ids for dep in t.depends_on)
         ]
+        result.open_tasks = len(open_tasks)
+        # ready_tasks == open_tasks (dep filter already applied above)
+        ready_tasks = open_tasks
 
         # 2. Group into batches
         batches = group_by_role(ready_tasks, self._config.max_tasks_per_agent)
@@ -401,12 +424,8 @@ class Orchestrator:
         # 4. Check done tasks, run janitor, record evolution metrics
         self._process_completed_tasks(done_tasks, result)
 
-        # 4b. Fetch failed tasks and maybe retry with escalation
-        try:
-            failed_tasks = _fetch_tasks(self._client, base, "failed")
-        except httpx.HTTPError:
-            failed_tasks = []
-
+        # 4b. Use cached failed tasks and maybe retry with escalation
+        failed_tasks = tasks_by_status["failed"]
         for task in failed_tasks:
             if self._maybe_retry_task(task):
                 result.retried.append(task.id)
@@ -426,24 +445,19 @@ class Orchestrator:
                 logger.warning("Knowledge base refresh failed: %s", exc)
 
         # 7. Check evolve mode: if all tasks done and no agents alive, trigger new cycle
-        self._check_evolve(result)
+        self._check_evolve(result, tasks_by_status)
 
         # 8. Replenish backlog in evolve mode when tasks run out
         self._replenish_backlog(result)
 
-        # 8b. Generate run completion summary for non-evolve runs
+        # 8b. Generate run completion summary for non-evolve runs (reuse cached tasks)
         if (
             not self._config.evolve_mode
             and result.open_tasks == 0
             and result.active_agents == 0
             and not self._summary_written
         ):
-            try:
-                done_tasks_for_summary = _fetch_tasks(self._client, base, "done")
-                failed_tasks_for_summary = _fetch_tasks(self._client, base, "failed")
-                self._generate_run_summary(done_tasks_for_summary, failed_tasks_for_summary)
-            except httpx.HTTPError as exc:
-                logger.warning("Failed to fetch tasks for summary: %s", exc)
+            self._generate_run_summary(tasks_by_status["done"], tasks_by_status["failed"])
 
         # 9. Log summary
         self._log_summary(result)
@@ -523,11 +537,16 @@ class Orchestrator:
         "documentation",
     ]
 
-    def _check_evolve(self, result: TickResult) -> None:
+    def _check_evolve(self, result: TickResult, tasks_by_status: dict[str, list[Task]]) -> None:
         """If evolve mode is on and all tasks are done, trigger a new cycle.
 
         Full cycle: analyze → verify → commit → plan → execute.
         Tracks budget, detects diminishing returns with backoff, rotates priorities.
+
+        Args:
+            result: Current tick result (mutated in place).
+            tasks_by_status: Pre-fetched task snapshot keyed by status string,
+                produced by _fetch_all_tasks().  Avoids extra HTTP round-trips.
         """
         evolve_path = self._workdir / ".sdd" / "runtime" / "evolve.json"
         if not evolve_path.exists():
@@ -542,13 +561,8 @@ class Orchestrator:
             return
 
         # Only trigger when idle: no open/claimed tasks, no alive agents
-        base = self._config.server_url
-        try:
-            open_tasks = _fetch_tasks(self._client, base, "open")
-            claimed_tasks = _fetch_tasks(self._client, base, "claimed")
-        except httpx.HTTPError:
-            return
-
+        open_tasks = tasks_by_status.get("open", [])
+        claimed_tasks = tasks_by_status.get("claimed", [])
         alive = sum(1 for a in self._agents.values() if a.status != "dead")
         if open_tasks or claimed_tasks or alive > 0:
             return  # Still working
@@ -585,16 +599,9 @@ class Orchestrator:
             cycle_number, backoff_factor, effective_interval,
         )
 
-        # Step 1: ANALYZE — count results from last cycle
-        tasks_completed = 0
-        tasks_failed = 0
-        try:
-            done_tasks = _fetch_tasks(self._client, base, "done")
-            failed_tasks = _fetch_tasks(self._client, base, "failed")
-            tasks_completed = len(done_tasks)
-            tasks_failed = len(failed_tasks)
-        except httpx.HTTPError:
-            pass
+        # Step 1: ANALYZE — count results from last cycle (use cached snapshot)
+        tasks_completed = len(tasks_by_status.get("done", []))
+        tasks_failed = len(tasks_by_status.get("failed", []))
 
         # Step 2: VERIFY — run tests to get current state
         test_info = self._evolve_run_tests()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import heapq
 import json
 import time
 import uuid
@@ -224,6 +225,9 @@ class TaskStore:
         # Secondary indices for O(1) status/role lookups
         self._by_status: dict[TaskStatus, dict[str, Task]] = {s: {} for s in TaskStatus}
         self._by_role_status: dict[tuple[str, TaskStatus], list[str]] = {}
+        # Min-heaps keyed by (role, status) — entries are (priority, task_id)
+        # Uses lazy deletion: stale entries are discarded in claim_next()
+        self._priority_queues: dict[tuple[str, TaskStatus], list[tuple[int, str]]] = {}
         self._jsonl_path: Path = jsonl_path
         self._archive_path: Path = archive_path
         self._metrics_jsonl_path: Path = (
@@ -247,6 +251,9 @@ class TaskStore:
         ids = self._by_role_status.setdefault(key, [])
         if task.id not in ids:
             ids.append(task.id)
+        if task.status == TaskStatus.OPEN:
+            pq = self._priority_queues.setdefault(key, [])
+            heapq.heappush(pq, (task.priority, task.id))
 
     def _index_remove(self, task: Task) -> None:
         """Remove *task* from secondary indices at its current status."""
@@ -415,10 +422,18 @@ class TaskStore:
             The claimed Task, or None if nothing is available.
         """
         async with self._lock:
-            open_ids = self._by_role_status.get((role, TaskStatus.OPEN), [])
-            if not open_ids:
+            pq = self._priority_queues.get((role, TaskStatus.OPEN))
+            if not pq:
                 return None
-            task = min((self._tasks[tid] for tid in open_ids), key=lambda t: t.priority)
+            task: Task | None = None
+            while pq:
+                _priority, task_id = heapq.heappop(pq)
+                candidate = self._tasks.get(task_id)
+                if candidate is not None and candidate.status == TaskStatus.OPEN:
+                    task = candidate
+                    break
+            if task is None:
+                return None
             self._index_remove(task)
             task.status = TaskStatus.CLAIMED
             self._index_add(task)

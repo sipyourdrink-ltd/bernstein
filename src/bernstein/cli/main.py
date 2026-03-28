@@ -11,11 +11,6 @@ from typing import Any
 import click
 import httpx
 from rich.console import Console
-from rich.layout import Layout
-from rich.live import Live
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
 
 from bernstein.cli.cost import cost_cmd
 
@@ -63,6 +58,8 @@ console = Console()
 
 
 def _print_banner() -> None:
+    from rich.panel import Panel
+
     console.print(Panel(BANNER, border_style="blue", expand=False))
 
 
@@ -455,6 +452,8 @@ def status() -> None:
         raise SystemExit(1)
 
     # ---- Task table ----
+    from rich.table import Table
+
     tasks: list[dict[str, Any]] = data.get("tasks", [])
     task_table = Table(title="Tasks", show_lines=False, header_style="bold cyan")
     task_table.add_column("ID", style="dim", min_width=10)
@@ -778,6 +777,8 @@ def logs(lines: int, component: str) -> None:
         console.print(f"[red]Log file not found:[/red] {log_path}")
         raise SystemExit(1)
 
+    from rich.panel import Panel
+
     all_lines = log_path.read_text(errors="replace").splitlines()
     tail = all_lines[-lines:]
     console.print(
@@ -829,6 +830,8 @@ def list_tasks(status_filter: str | None, role: str | None, as_json: bool) -> No
         console.print("[dim]No tasks matching filters.[/dim]")
         return
 
+    from rich.table import Table
+
     table = Table(show_lines=False, header_style="bold cyan")
     table.add_column("ID", style="dim", min_width=10)
     table.add_column("Title", min_width=30)
@@ -856,6 +859,8 @@ def list_tasks(status_filter: str | None, role: str | None, as_json: bool) -> No
 
 def _build_agents_table(agents: list[dict[str, Any]]) -> Table:
     """Build a Rich Table showing active agents."""
+    from rich.table import Table
+
     table = Table(
         title="Agents",
         show_lines=False,
@@ -888,6 +893,8 @@ def _build_agents_table(agents: list[dict[str, Any]]) -> Table:
 
 def _build_events_table(tasks: list[dict[str, Any]]) -> Table:
     """Build a Rich Table showing tasks."""
+    from rich.table import Table
+
     table = Table(
         title="Tasks",
         show_lines=False,
@@ -912,6 +919,8 @@ def _build_events_table(tasks: list[dict[str, Any]]) -> Table:
 
 def _build_stats_bar(summary: dict[str, Any]) -> Text:
     """Build a Rich Text stats bar from a summary dict."""
+    from rich.text import Text
+
     total = summary.get("total", 0)
     done = summary.get("done", 0)
     in_prog = summary.get("in_progress", 0)
@@ -947,6 +956,10 @@ def _build_stats_bar(summary: dict[str, Any]) -> Text:
 )
 def live(interval: float) -> None:
     """Live dashboard: active agents, task events, and stats (Ctrl+C to exit)."""
+    from rich.layout import Layout
+    from rich.live import Live
+    from rich.panel import Panel
+
     _print_banner()
 
     def _fetch_dashboard() -> dict[str, Any]:
@@ -1225,6 +1238,8 @@ def agents_list(source: str, definitions_dir: str) -> None:
         console.print("[dim]No agents found. Run [bold]bernstein agents sync[/bold] first.[/dim]")
         return
 
+    from rich.table import Table
+
     table = Table(
         title="Available Agents",
         show_lines=False,
@@ -1454,6 +1469,8 @@ def evolve_run(window: str, max_proposals: int, cycle: int, workdir: str) -> Non
     )
 
     if results:
+        from rich.table import Table
+
         result_table = Table(
             title="Experiment Results",
             show_lines=False,
@@ -1521,6 +1538,8 @@ def evolve_review(workdir: str) -> None:
     if not pending:
         console.print("[dim]No proposals pending review.[/dim]")
         return
+
+    from rich.table import Table
 
     review_table = Table(title="Proposals Pending Review", show_lines=True, header_style="bold cyan")
     review_table.add_column("ID", style="dim", min_width=12)

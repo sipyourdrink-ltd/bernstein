@@ -99,6 +99,11 @@ def _mock_transport(responses: dict[str, httpx.Response]) -> httpx.MockTransport
     Args:
         responses: Mapping of "METHOD path?query" to httpx.Response.
                    e.g. {"GET /tasks?status=open": httpx.Response(200, json=[...])}
+                   Also supports "GET /tasks" directly.  If "GET /tasks" is not
+                   explicitly provided, it is auto-synthesised by aggregating all
+                   200-status "GET /tasks?status=X" entries so that existing tests
+                   do not need to be rewritten when the orchestrator switches to a
+                   single bulk fetch.
     """
     def handler(request: httpx.Request) -> httpx.Response:
         url = request.url
@@ -107,6 +112,16 @@ def _mock_transport(responses: dict[str, httpx.Response]) -> httpx.MockTransport
             key += f"?{url.query.decode()}"
         if key in responses:
             return responses[key]
+        # Auto-aggregate for the new bulk-fetch path ──────────────────────────
+        if key == "GET /tasks":
+            aggregated: list[object] = []
+            for resp_key, resp in responses.items():
+                if resp_key.startswith("GET /tasks?status=") and resp.status_code == 200:
+                    aggregated.extend(resp.json())
+            if aggregated or any(
+                k.startswith("GET /tasks?status=") for k in responses
+            ):
+                return httpx.Response(200, json=aggregated)
         return httpx.Response(404, json={"detail": f"No mock for {key}"})
 
     return httpx.MockTransport(handler)
@@ -281,8 +296,7 @@ class TestOrchestratorTick:
     def test_spawns_agent_for_open_tasks(self, tmp_path: Path) -> None:
         tasks = [_make_task(id="T-1"), _make_task(id="T-2")]
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(t) for t in tasks]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[_task_as_dict(t) for t in tasks]),
         })
         orch = _build_orchestrator(tmp_path, transport)
 
@@ -303,8 +317,7 @@ class TestOrchestratorTick:
             _make_task(id="T-6", role="devops"),
         ]
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(t) for t in tasks]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[_task_as_dict(t) for t in tasks]),
         })
         config = OrchestratorConfig(
             max_agents=2,
@@ -319,8 +332,7 @@ class TestOrchestratorTick:
 
     def test_no_spawn_when_no_open_tasks(self, tmp_path: Path) -> None:
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[]),
         })
         orch = _build_orchestrator(tmp_path, transport)
 
@@ -337,10 +349,9 @@ class TestOrchestratorTick:
 
         # Tick 1: A is open, B depends on A — only A should be scheduled
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(
+            "GET /tasks": httpx.Response(
                 200, json=[_task_as_dict(task_a), _task_as_dict(task_b)]
             ),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
         })
         orch = _build_orchestrator(tmp_path, transport)
 
@@ -360,8 +371,7 @@ class TestOrchestratorTick:
         task_a_done = _make_task(id="T-A", role="backend", status="done")
 
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(task_b)]),
-            "GET /tasks?status=done": httpx.Response(200, json=[_task_as_dict(task_a_done)]),
+            "GET /tasks": httpx.Response(200, json=[_task_as_dict(task_b), _task_as_dict(task_a_done)]),
         })
         orch = _build_orchestrator(tmp_path, transport)
 
@@ -372,28 +382,16 @@ class TestOrchestratorTick:
             spawned_task_ids.extend(session.task_ids)
         assert "T-B" in spawned_task_ids
 
-    def test_handles_server_error_on_open_fetch(self, tmp_path: Path) -> None:
+    def test_handles_server_error_on_fetch(self, tmp_path: Path) -> None:
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(500, text="Internal error"),
+            "GET /tasks": httpx.Response(500, text="Internal error"),
         })
         orch = _build_orchestrator(tmp_path, transport)
 
         result = orch.tick()
 
         assert len(result.errors) == 1
-        assert "fetch_open" in result.errors[0]
-
-    def test_handles_server_error_on_done_fetch(self, tmp_path: Path) -> None:
-        transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[]),
-            "GET /tasks?status=done": httpx.Response(500, text="Internal error"),
-        })
-        orch = _build_orchestrator(tmp_path, transport)
-
-        result = orch.tick()
-
-        assert len(result.errors) == 1
-        assert "fetch_done" in result.errors[0]
+        assert "fetch_all" in result.errors[0]
 
     def test_tracks_agents_across_ticks(self, tmp_path: Path) -> None:
         tasks_tick1 = [_make_task(id="T-1")]
@@ -406,9 +404,8 @@ class TestOrchestratorTick:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=open":
+            # Orchestrator uses bulk GET /tasks; return different tasks per tick
+            if key == "GET /tasks":
                 call_count += 1
                 if call_count == 1:
                     return httpx.Response(200, json=[_task_as_dict(t) for t in tasks_tick1])
@@ -429,8 +426,7 @@ class TestOrchestratorTick:
 
     def test_writes_log_file(self, tmp_path: Path) -> None:
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[]),
         })
         orch = _build_orchestrator(tmp_path, transport)
 
@@ -445,8 +441,7 @@ class TestOrchestratorTick:
     def test_spawn_failure_records_error(self, tmp_path: Path) -> None:
         tasks = [_make_task(id="T-1")]
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(t) for t in tasks]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[_task_as_dict(t) for t in tasks]),
         })
         adapter = _mock_adapter()
         adapter.spawn.side_effect = RuntimeError("process failed to start")
@@ -476,8 +471,7 @@ class TestOrchestratorTick:
 
         task = _make_task(id="T-001")
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(task)]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[_task_as_dict(task)]),
         })
         adapter = _mock_adapter()
         config = OrchestratorConfig(
@@ -510,8 +504,7 @@ class TestOrchestratorTick:
 
         task = _make_task(id="T-001")
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(task)]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[_task_as_dict(task)]),
         })
         adapter = _mock_adapter()
         config = OrchestratorConfig(
@@ -543,8 +536,7 @@ class TestOrchestratorTick:
 
         task = _make_task(id="T-001")
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(task)]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[_task_as_dict(task)]),
         })
         adapter = _mock_adapter()
         # Default config has budget_usd=0 (no cap)
@@ -574,12 +566,8 @@ class TestSpawnResiliency:
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[_task_as_dict(task)])
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=[])
             if key == "POST /tasks/T-claim-500/claim":
                 return httpx.Response(500, json={"detail": "internal server error"})
             return httpx.Response(404)
@@ -600,12 +588,8 @@ class TestSpawnResiliency:
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[_task_as_dict(task)])
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=[])
             if key == "POST /tasks/T-claim-conn/claim":
                 raise httpx.ConnectError("Connection refused")
             return httpx.Response(404)
@@ -623,8 +607,7 @@ class TestSpawnResiliency:
         """A batch that failed to spawn is not retried until the backoff window expires."""
         task = _make_task(id="T-backoff")
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[_task_as_dict(task)]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[_task_as_dict(task)]),
         })
         adapter = _mock_adapter()
         adapter.spawn.side_effect = RuntimeError("subprocess died")
@@ -650,12 +633,8 @@ class TestSpawnResiliency:
             nonlocal fail_called
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[_task_as_dict(task)])
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=[])
             if key == "POST /tasks/T-maxfail/fail":
                 fail_called = True
                 return httpx.Response(200, json={"status": "failed"})
@@ -684,8 +663,7 @@ class TestSpawnResiliency:
 class TestReaping:
     def test_reaps_stale_heartbeat(self, tmp_path: Path) -> None:
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[]),
         })
         adapter = _mock_adapter()
         adapter.is_alive.return_value = True  # process is alive but heartbeat stale
@@ -714,11 +692,7 @@ class TestReaping:
             nonlocal fail_called
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-stale":
                 return httpx.Response(200, json=_task_as_dict(_make_task(id="T-stale")))
@@ -744,8 +718,7 @@ class TestReaping:
 
     def test_does_not_reap_fresh_heartbeat(self, tmp_path: Path) -> None:
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[]),
         })
         adapter = _mock_adapter()
         adapter.is_alive.return_value = True
@@ -775,8 +748,7 @@ class TestReaping:
 
     def test_dead_process_marked_dead_on_refresh(self, tmp_path: Path) -> None:
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[]),
         })
         adapter = _mock_adapter()
         adapter.is_alive.return_value = False  # process exited
@@ -797,8 +769,7 @@ class TestReaping:
     def test_zero_heartbeat_not_reaped_if_alive(self, tmp_path: Path) -> None:
         """An agent that never heartbeated but whose process is alive is NOT reaped."""
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[]),
         })
         adapter = _mock_adapter()
         adapter.is_alive.return_value = True
@@ -829,8 +800,7 @@ class TestReaping:
 class TestRunStop:
     def test_stop_breaks_loop(self, tmp_path: Path) -> None:
         transport = _mock_transport({
-            "GET /tasks?status=open": httpx.Response(200, json=[]),
-            "GET /tasks?status=done": httpx.Response(200, json=[]),
+            "GET /tasks": httpx.Response(200, json=[]),
         })
         config = OrchestratorConfig(
             poll_interval_s=0,  # no sleep between ticks for test speed
@@ -893,9 +863,7 @@ class TestAgentCompletionProtocol:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-orphan":
                 return httpx.Response(200, json=task_dict)
@@ -939,9 +907,7 @@ class TestAgentCompletionProtocol:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-orphan-fail":
                 return httpx.Response(200, json=task_dict)
@@ -982,9 +948,7 @@ class TestAgentCompletionProtocol:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-nosig":
                 return httpx.Response(200, json=task_dict)
@@ -1024,11 +988,7 @@ class TestAgentCompletionProtocol:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=failed":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-done":
                 return httpx.Response(200, json=task_dict)
@@ -1079,15 +1039,11 @@ class TestFileOwnership:
             nonlocal call_count
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
+            if key == "GET /tasks":
                 call_count += 1
                 if call_count == 1:
                     return httpx.Response(200, json=[_task_as_dict(task1)])
                 return httpx.Response(200, json=[_task_as_dict(task2)])
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=[])
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -1140,15 +1096,11 @@ class TestFileOwnership:
             nonlocal call_count
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
+            if key == "GET /tasks":
                 call_count += 1
                 if call_count == 1:
                     return httpx.Response(200, json=[_task_as_dict(task1)])
                 return httpx.Response(200, json=[_task_as_dict(task2)])
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=[])
             return httpx.Response(404)
 
         transport = httpx.MockTransport(handler)
@@ -1191,9 +1143,7 @@ class TestFileOwnership:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[])
             if key == "POST /tasks/T-stale/fail":
                 return httpx.Response(200, json={})
@@ -1227,9 +1177,7 @@ class TestOrphanMetrics:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-met":
                 return httpx.Response(200, json=task_dict)
@@ -1282,9 +1230,7 @@ class TestOrphanMetrics:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-fail-met":
                 return httpx.Response(200, json=task_dict)
@@ -1634,16 +1580,8 @@ def _evolve_handler(
     def handler(request: httpx.Request) -> httpx.Response:
         url = request.url
         key = f"{request.method} {url.path}"
-        if url.query:
-            key += f"?{url.query.decode()}"
-        if key == "GET /tasks?status=open":
-            return httpx.Response(200, json=_open)
-        if key == "GET /tasks?status=claimed":
-            return httpx.Response(200, json=_claimed)
-        if key == "GET /tasks?status=done":
-            return httpx.Response(200, json=_done)
-        if key == "GET /tasks?status=failed":
-            return httpx.Response(200, json=[])
+        if key == "GET /tasks":
+            return httpx.Response(200, json=_open + _claimed + _done)
         if key == "POST /tasks":
             body = json.loads(request.content)
             created.append(body)
@@ -2148,11 +2086,7 @@ class TestDeadAgentFileOwnershipEdgeCases:
             nonlocal tick
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=open":
+            if key == "GET /tasks":
                 tick += 1
                 if tick == 1:
                     return httpx.Response(200, json=[_task_as_dict(task1)])
@@ -2213,9 +2147,7 @@ class TestStaleHeartbeatReapingDefault:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[])
             if key == "GET /tasks/T-stale":
                 return httpx.Response(200, json=_task_as_dict(_make_task(id="T-stale")))
@@ -2263,12 +2195,10 @@ class TestAssignedTaskIdDoubleSpawn:
             key = f"{request.method} {url.path}"
             if url.query:
                 key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
+            if key == "GET /tasks":
                 call_count += 1
                 # Same task returned on every tick (simulate server not yet updated)
                 return httpx.Response(200, json=[_task_as_dict(task)])
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=[])
             # claim / other endpoints
             return httpx.Response(200, json={})
 
@@ -2659,14 +2589,8 @@ class TestReplenishBacklog:
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=open_tasks_json)
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=done_tasks_json)
-            if key == "GET /tasks?status=claimed":
-                return httpx.Response(200, json=[])
+            if key == "GET /tasks":
+                return httpx.Response(200, json=open_tasks_json + done_tasks_json)
             if key == "POST /tasks":
                 body = json.loads(request.content)
                 posted.append(body)
@@ -3020,14 +2944,8 @@ class TestRunCompletionSummary:
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
-                return httpx.Response(200, json=_done)
-            if key == "GET /tasks?status=failed":
-                return httpx.Response(200, json=_failed)
+            if key == "GET /tasks":
+                return httpx.Response(200, json=_done + _failed)
             return httpx.Response(200, json={})
 
         transport = httpx.MockTransport(handler)
@@ -3090,16 +3008,8 @@ class TestRunCompletionSummary:
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
             key = f"{request.method} {url.path}"
-            if url.query:
-                key += f"?{url.query.decode()}"
-            if key == "GET /tasks?status=open":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=claimed":
-                return httpx.Response(200, json=[])
-            if key == "GET /tasks?status=done":
+            if key == "GET /tasks":
                 return httpx.Response(200, json=[_task_as_dict(_make_task(id="T-1", status="done"))])
-            if key == "GET /tasks?status=failed":
-                return httpx.Response(200, json=[])
             return httpx.Response(200, json={})
 
         transport = httpx.MockTransport(handler)
