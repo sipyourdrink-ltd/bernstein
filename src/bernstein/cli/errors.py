@@ -100,3 +100,35 @@ def server_error(exc: Exception) -> BernsteinError:
         why=str(exc),
         fix="Check if the server is running with 'bernstein status', or restart with 'bernstein stop && bernstein'",
     )
+
+
+def no_cli_agent_found() -> BernsteinError:
+    """Return a BernsteinError when no CLI agent binary is found in PATH."""
+    return BernsteinError(
+        what="No supported CLI agent found in PATH",
+        why="Bernstein requires at least one CLI agent to be installed",
+        fix=(
+            "Install one of:\n"
+            "    Claude Code  https://claude.ai/code\n"
+            "    Codex CLI    https://github.com/openai/codex-cli\n"
+            "    Gemini CLI   https://github.com/google-gemini/gemini-cli"
+        ),
+    )
+
+
+def no_seed_file(filename: str = "bernstein.yaml") -> BernsteinError:
+    """Return a BernsteinError when a seed file cannot be found."""
+    return BernsteinError(
+        what=f"No {filename} found",
+        why="Bernstein needs a seed file or a --goal to work from",
+        fix=f"Create {filename} or run 'bernstein -g \"your goal\"'",
+    )
+
+
+def no_replay_tasks() -> BernsteinError:
+    """Return a BernsteinError when a replay trace has no task IDs."""
+    return BernsteinError(
+        what="No task IDs found in trace",
+        why="Cannot replay without tasks to re-submit",
+        fix="Ensure the trace file was recorded from a valid run",
+    )

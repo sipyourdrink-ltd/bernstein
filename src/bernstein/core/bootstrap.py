@@ -783,6 +783,17 @@ def bootstrap_from_seed(
             )
         console.print("[green]→[/green] Planning tasks (manager agent will decompose goal)")
 
+    # Cost estimation — show before spawning agents
+    from bernstein.core.cost import estimate_run_cost
+
+    est_task_count = backlog_count if backlog_count > 0 else 5  # default estimate for manager-planned
+    est_model = seed.model or "sonnet"
+    low, high = estimate_run_cost(est_task_count, est_model)
+    console.print(
+        f"[bold yellow]Cost estimate:[/bold yellow] ${low:.2f}-${high:.2f} "
+        f"({est_task_count} task(s), {est_model} model)"
+    )
+
     # 5. Start spawner + watchdog
     cell_label = f"{effective_cells} cells" if effective_cells > 1 else "single cell"
     with Status(f"[bold]Spawning agents ({cell_label})...[/bold]", console=console):
@@ -1009,6 +1020,15 @@ def bootstrap_from_goal(
                 auth_token=auth_token,
             )
         console.print("[green]→[/green] Planning tasks (manager agent will decompose goal)")
+
+    # Cost estimation — show before spawning agents
+    from bernstein.core.cost import estimate_run_cost
+
+    est_task_count = backlog_count if backlog_count > 0 else 5  # default estimate for manager-planned
+    low, high = estimate_run_cost(est_task_count, "sonnet")
+    console.print(
+        f"[bold yellow]Cost estimate:[/bold yellow] ${low:.2f}-${high:.2f} ({est_task_count} task(s), sonnet model)"
+    )
 
     cell_label = f"{cells} cells" if cells > 1 else "single cell"
     with Status(f"[bold]Spawning agents ({cell_label})...[/bold]", console=console):

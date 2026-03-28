@@ -9,6 +9,9 @@ from bernstein.cli.errors import (
     BernsteinError,
     bootstrap_failed,
     missing_api_key,
+    no_cli_agent_found,
+    no_replay_tasks,
+    no_seed_file,
     no_seed_or_goal,
     port_in_use,
     seed_parse_error,
@@ -85,3 +88,22 @@ class TestErrorFactories:
         assert "server" in err.what.lower()
         assert "Connection refused" in err.why
         assert "status" in err.fix
+
+    def test_no_cli_agent_found(self) -> None:
+        err = no_cli_agent_found()
+        assert "CLI agent" in err.what or "PATH" in err.what
+        assert "Install" in err.fix
+
+    def test_no_seed_file(self) -> None:
+        err = no_seed_file("bernstein.yaml")
+        assert "bernstein.yaml" in err.what
+        assert "seed" in err.why.lower() or "goal" in err.why.lower()
+
+    def test_no_seed_file_custom_name(self) -> None:
+        err = no_seed_file("custom.yaml")
+        assert "custom.yaml" in err.what
+
+    def test_no_replay_tasks(self) -> None:
+        err = no_replay_tasks()
+        assert "task" in err.what.lower()
+        assert "replay" in err.why.lower() or "trace" in err.fix.lower()

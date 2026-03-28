@@ -236,7 +236,9 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
         try:
             bootstrap_from_goal(goal=goal, workdir=workdir, port=port, cells=cells)
         except RuntimeError as exc:
-            console.print(f"[red]Bootstrap error:[/red] {exc}")
+            from bernstein.cli.errors import bootstrap_failed
+
+            bootstrap_failed(exc).print()
             raise SystemExit(1) from exc
         return
 
@@ -248,10 +250,9 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
         if found is not None:
             path = found
         else:
-            console.print(
-                "[yellow]No seed file found and no --goal given.[/yellow]\n"
-                "Create bernstein.yaml or pass [bold]--goal 'your goal'[/bold]."
-            )
+            from bernstein.cli.errors import no_seed_or_goal
+
+            no_seed_or_goal().print()
             raise SystemExit(1)
 
     console.print(f"[dim]Using seed file:[/dim] {path}")
@@ -260,10 +261,14 @@ def run(goal: str | None, seed_file: str | None, port: int, cells: int, remote: 
         cli_cells: int | None = cells if cells > 1 else None
         bootstrap_from_seed(seed_path=path, workdir=workdir, port=port, cells=cli_cells, remote=remote)
     except SeedError as exc:
-        console.print(f"[red]Seed error:[/red] {exc}")
+        from bernstein.cli.errors import seed_parse_error
+
+        seed_parse_error(exc).print()
         raise SystemExit(1) from exc
     except RuntimeError as exc:
-        console.print(f"[red]Bootstrap error:[/red] {exc}")
+        from bernstein.cli.errors import bootstrap_failed
+
+        bootstrap_failed(exc).print()
         raise SystemExit(1) from exc
 
 
@@ -306,22 +311,28 @@ def start(goal: str | None, seed_file: str, port: int) -> None:
         try:
             bootstrap_from_goal(goal=goal, workdir=workdir, port=port)
         except RuntimeError as exc:
-            console.print(f"[red]Bootstrap error:[/red] {exc}")
+            from bernstein.cli.errors import bootstrap_failed
+
+            bootstrap_failed(exc).print()
             raise SystemExit(1) from exc
     else:
         path = Path(seed_file)
         if not path.exists():
-            console.print(
-                f"[yellow]No GOAL argument and no seed file found.[/yellow] Pass a goal or create {seed_file}."
-            )
+            from bernstein.cli.errors import no_seed_file
+
+            no_seed_file(seed_file).print()
             raise SystemExit(1)
         try:
             bootstrap_from_seed(seed_path=path, workdir=workdir, port=port)
         except SeedError as exc:
-            console.print(f"[red]Seed error:[/red] {exc}")
+            from bernstein.cli.errors import seed_parse_error
+
+            seed_parse_error(exc).print()
             raise SystemExit(1) from exc
         except RuntimeError as exc:
-            console.print(f"[red]Bootstrap error:[/red] {exc}")
+            from bernstein.cli.errors import bootstrap_failed
+
+            bootstrap_failed(exc).print()
             raise SystemExit(1) from exc
 
 
@@ -569,13 +580,9 @@ def demo(dry_run: bool, adapter: str | None, timeout: int) -> None:
     # Resolve adapter
     detected = adapter or detect_available_adapter()
     if detected is None:
-        console.print(
-            "[red]No supported CLI agent found in PATH.[/red]\n\n"
-            "Install one of:\n"
-            "  Claude Code  https://claude.ai/code\n"
-            "  Codex CLI    https://github.com/openai/codex-cli\n"
-            "  Gemini CLI   https://github.com/google-gemini/gemini-cli\n"
-        )
+        from bernstein.cli.errors import no_cli_agent_found
+
+        no_cli_agent_found().print()
         raise SystemExit(1)
 
     # Always print cost estimate before doing anything
@@ -675,7 +682,9 @@ def demo(dry_run: bool, adapter: str | None, timeout: int) -> None:
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted.[/yellow]")
     except RuntimeError as exc:
-        console.print(f"[red]Bootstrap error:[/red] {exc}")
+        from bernstein.cli.errors import bootstrap_failed
+
+        bootstrap_failed(exc).print()
     finally:
         _stop_demo_processes(project_dir)
 

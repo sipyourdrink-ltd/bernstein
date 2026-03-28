@@ -520,7 +520,9 @@ def add_task(
 
     result = server_post("/task", payload)
     if result is None:
-        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
+        from bernstein.cli.errors import server_unreachable
+
+        server_unreachable().print()
         raise SystemExit(1)
 
     task_id = result.get("id", "?")
@@ -593,7 +595,9 @@ def cancel(task_id: str, reason: str) -> None:
     """Cancel a running or queued task."""
     data = server_post(f"/tasks/{task_id}/cancel", {"reason": reason})
     if data is None:
-        console.print("[red]Server not reachable.[/red]")
+        from bernstein.cli.errors import server_unreachable
+
+        server_unreachable().print()
         raise SystemExit(1)
     console.print(f"[green]Cancelled:[/green] {data['title']}")
     console.print(f"[dim]Status: {data['status']}[/dim]")
@@ -720,7 +724,9 @@ def plan(export_file: str | None, status_filter: str | None) -> None:
 
     raw = server_get(path)
     if raw is None:
-        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
+        from bernstein.cli.errors import server_unreachable
+
+        server_unreachable().print()
         raise SystemExit(1)
 
     tasks: list[dict[str, Any]] = cast("list[dict[str, Any]]", raw) if isinstance(raw, list) else []
@@ -886,7 +892,9 @@ def list_tasks(status_filter: str | None, role: str | None, as_json: bool) -> No
     """List tasks with optional filters."""
     data = server_get("/status")
     if data is None:
-        console.print("[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start.")
+        from bernstein.cli.errors import server_unreachable
+
+        server_unreachable().print()
         raise SystemExit(1)
 
     tasks: list[dict[str, Any]] = data.get("tasks", [])
@@ -1557,7 +1565,9 @@ def workspace_group(ctx: click.Context) -> None:
         try:
             cfg = parse_seed(seed_path)
         except SeedError as exc:
-            console.print(f"[red]Error parsing seed file:[/red] {exc}")
+            from bernstein.cli.errors import seed_parse_error
+
+            seed_parse_error(exc).print()
             return
 
         if cfg.workspace is None:
@@ -1616,7 +1626,9 @@ def workspace_clone() -> None:
     """Clone all missing repos defined in the workspace."""
     seed_path = find_seed_file()
     if seed_path is None:
-        console.print("[red]No bernstein.yaml found.[/red]")
+        from bernstein.cli.errors import no_seed_file
+
+        no_seed_file().print()
         return
 
     from bernstein.core.seed import SeedError, parse_seed
@@ -1624,7 +1636,9 @@ def workspace_clone() -> None:
     try:
         cfg = parse_seed(seed_path)
     except SeedError as exc:
-        console.print(f"[red]Error parsing seed file:[/red] {exc}")
+        from bernstein.cli.errors import seed_parse_error
+
+        seed_parse_error(exc).print()
         return
 
     if cfg.workspace is None:
@@ -1644,7 +1658,9 @@ def workspace_validate() -> None:
     """Check workspace health -- all repos exist and are valid git repos."""
     seed_path = find_seed_file()
     if seed_path is None:
-        console.print("[red]No bernstein.yaml found.[/red]")
+        from bernstein.cli.errors import no_seed_file
+
+        no_seed_file().print()
         return
 
     from bernstein.core.seed import SeedError, parse_seed
@@ -1652,7 +1668,9 @@ def workspace_validate() -> None:
     try:
         cfg = parse_seed(seed_path)
     except SeedError as exc:
-        console.print(f"[red]Error parsing seed file:[/red] {exc}")
+        from bernstein.cli.errors import seed_parse_error
+
+        seed_parse_error(exc).print()
         return
 
     if cfg.workspace is None:
@@ -2590,7 +2608,9 @@ def replay_cmd(
     )
 
     if not trace.task_ids:
-        console.print("[red]No task IDs found in trace — cannot replay.[/red]")
+        from bernstein.cli.errors import no_replay_tasks
+
+        no_replay_tasks().print()
         raise SystemExit(1)
 
     if dry_run:
