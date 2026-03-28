@@ -50,6 +50,9 @@ docs/plans/
 # Failed/ephemeral research artifacts
 .sdd/research/auto/*.json
 
+# Git worktrees
+.worktrees/
+
 # Other
 node_modules/
 *.pid
