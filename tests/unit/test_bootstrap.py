@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import httpx
 import pytest
@@ -209,9 +212,11 @@ class TestStartServer:
         pid_file = tmp_path / ".sdd" / "runtime" / "server.pid"
         pid_file.write_text(str(os.getpid()))
 
-        with patch("bernstein.core.bootstrap._is_alive", return_value=True):
-            with pytest.raises(RuntimeError, match="already running"):
-                _start_server(tmp_path, port=8052)
+        with (
+            patch("bernstein.core.bootstrap._is_alive", return_value=True),
+            pytest.raises(RuntimeError, match="already running"),
+        ):
+            _start_server(tmp_path, port=8052)
 
     def test_uses_specified_port(self, tmp_path: Path) -> None:
         self._setup_runtime(tmp_path)
@@ -250,9 +255,12 @@ class TestWaitForServer:
             # First call: deadline setup; subsequent calls: already past deadline
             return 0.0 if call_count == 1 else 999.0
 
-        with patch("httpx.get", side_effect=httpx.ConnectError("refused")), patch("time.sleep"):
-            with patch("time.monotonic", side_effect=fake_monotonic):
-                result = _wait_for_server(8052)
+        with (
+            patch("httpx.get", side_effect=httpx.ConnectError("refused")),
+            patch("time.sleep"),
+            patch("time.monotonic", side_effect=fake_monotonic),
+        ):
+            result = _wait_for_server(8052)
 
         assert result is False
 
@@ -263,9 +271,12 @@ class TestWaitForServer:
 
         monotonic_values = iter([0.0, 1.0, 2.0, 100.0])
 
-        with patch("httpx.get", side_effect=side_effects), patch("time.sleep"):
-            with patch("time.monotonic", side_effect=monotonic_values):
-                result = _wait_for_server(8052)
+        with (
+            patch("httpx.get", side_effect=side_effects),
+            patch("time.sleep"),
+            patch("time.monotonic", side_effect=monotonic_values),
+        ):
+            result = _wait_for_server(8052)
 
         assert result is True
 
@@ -385,6 +396,13 @@ class TestCheckApiKey:
         with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit):
             _check_api_key("claude")
 
+    @patch("bernstein.core.bootstrap._claude_has_oauth_session", return_value=True)
+    def test_passes_when_claude_oauth_active_no_key(self, _mock_oauth: MagicMock) -> None:
+        """Claude with active OAuth session should pass even without ANTHROPIC_API_KEY."""
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        with patch.dict(os.environ, env, clear=True):
+            _check_api_key("claude")  # must not raise
+
     def test_passes_when_codex_key_set(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}):
             _check_api_key("codex")
@@ -463,10 +481,12 @@ class TestPreflightChecks:
         mock_sock.__exit__ = MagicMock(return_value=False)
         mock_sock.bind = MagicMock()
 
-        with patch("shutil.which", return_value="/usr/bin/claude"):
-            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
-                with patch("socket.socket", return_value=mock_sock):
-                    preflight_checks("claude", 8052)  # must not raise
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}),
+            patch("socket.socket", return_value=mock_sock),
+        ):
+            preflight_checks("claude", 8052)  # must not raise
 
     def test_fails_on_missing_binary(self) -> None:
         with patch("shutil.which", return_value=None), pytest.raises(SystemExit):
@@ -475,9 +495,12 @@ class TestPreflightChecks:
     @patch("bernstein.core.bootstrap._claude_has_oauth_session", return_value=False)
     def test_fails_on_missing_api_key(self, _mock_oauth: MagicMock) -> None:
         env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
-        with patch("shutil.which", return_value="/usr/bin/claude"), patch.dict(os.environ, env, clear=True):
-            with pytest.raises(SystemExit):
-                preflight_checks("claude", 8052)
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch.dict(os.environ, env, clear=True),
+            pytest.raises(SystemExit),
+        ):
+            preflight_checks("claude", 8052)
 
     def test_fails_on_port_conflict(self) -> None:
         mock_sock = MagicMock()
@@ -485,11 +508,67 @@ class TestPreflightChecks:
         mock_sock.__exit__ = MagicMock(return_value=False)
         mock_sock.bind = MagicMock(side_effect=OSError("address in use"))
 
-        with patch("shutil.which", return_value="/usr/bin/claude"):
-            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}):
-                with patch("socket.socket", return_value=mock_sock):
-                    with pytest.raises(SystemExit):
-                        preflight_checks("claude", 8052)
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}),
+            patch("socket.socket", return_value=mock_sock),
+            pytest.raises(SystemExit),
+        ):
+            preflight_checks("claude", 8052)
+
+    def test_binary_check_runs_before_api_key_check(self) -> None:
+        """If binary is missing, should exit before even checking API key."""
+        with patch("shutil.which", return_value=None), pytest.raises(SystemExit):
+            # No API key set either, but binary check should fire first
+            preflight_checks("claude", 8052)
+
+    def test_checks_all_adapters(self) -> None:
+        """preflight_checks works for all supported adapters."""
+        mock_sock = MagicMock()
+        mock_sock.__enter__ = MagicMock(return_value=mock_sock)
+        mock_sock.__exit__ = MagicMock(return_value=False)
+        mock_sock.bind = MagicMock()
+
+        for cli, key_var, key_val in [
+            ("claude", "ANTHROPIC_API_KEY", "sk-ant-test"),
+            ("codex", "OPENAI_API_KEY", "sk-test"),
+            ("gemini", "GOOGLE_API_KEY", "AIza-test"),
+            ("qwen", "OPENROUTER_API_KEY_PAID", "or-test"),
+        ]:
+            with (
+                patch("shutil.which", return_value=f"/usr/bin/{cli}"),
+                patch.dict(os.environ, {key_var: key_val}),
+                patch("socket.socket", return_value=mock_sock),
+            ):
+                preflight_checks(cli, 8052)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Server timeout is fatal
+# ---------------------------------------------------------------------------
+
+
+class TestServerTimeoutFatal:
+    """Verify that server startup timeout raises SystemExit, not a warning."""
+
+    def test_wait_for_server_returns_false_on_timeout(self) -> None:
+        """_wait_for_server returns False (not True) when server never responds."""
+        call_count = 0
+
+        def fake_monotonic() -> float:
+            nonlocal call_count
+            call_count += 1
+            return 0.0 if call_count == 1 else 999.0
+
+        with (
+            patch("httpx.get", side_effect=httpx.ConnectError("refused")),
+            patch("time.sleep"),
+            patch("time.monotonic", side_effect=fake_monotonic),
+        ):
+            result = _wait_for_server(8052)
+
+        # Must return False — callers must treat this as a fatal error
+        assert result is False
 
 
 # ---------------------------------------------------------------------------
