@@ -50,13 +50,14 @@ from bernstein.cli.helpers import (
 def live(interval: float, classic: bool) -> None:
     """Live dashboard: active agents, task events, and stats (Ctrl+C to exit).
 
-    Launches the interactive Textual TUI by default (mouse + keyboard).
-    Pass --classic for the simpler Rich Live display.
+    Launches the 3-column interactive Textual TUI by default:
+    Agents | Tasks | Activity feed + sparkline + chat input.
+    Mouse + keyboard. Pass --classic for the simpler Rich Live display.
     """
     if not classic:
-        from bernstein.tui.app import BernsteinApp
+        from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
-        app = BernsteinApp(poll_interval=interval)
+        app = DashboardApp()
         app.run()
         return
 
