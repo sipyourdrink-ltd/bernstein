@@ -506,9 +506,7 @@ class TaskContextBuilder:
 
         return "\n".join(lines)
 
-    def _discover_relevant_files(
-        self, tasks: list[Task], max_files: int = 8
-    ) -> list[str]:
+    def _discover_relevant_files(self, tasks: list[Task], max_files: int = 8) -> list[str]:
         """Discover relevant files from task title and description keywords.
 
         Extracts meaningful keywords from task text and matches them against
@@ -533,14 +531,58 @@ class TaskContextBuilder:
         import re as _re
 
         tokens = _re.findall(r"[a-z][a-z0-9_]{2,}", text)
-        _STOP_WORDS = frozenset({
-            "the", "and", "for", "that", "this", "with", "from", "are", "was",
-            "will", "have", "has", "not", "can", "but", "all", "each", "should",
-            "when", "task", "tasks", "implement", "create", "add", "update",
-            "fix", "make", "use", "using", "into", "file", "files", "code",
-            "new", "one", "two", "need", "also", "after", "before", "then",
-            "retry", "completed", "done", "write", "read", "check", "test",
-        })
+        _STOP_WORDS = frozenset(
+            {
+                "the",
+                "and",
+                "for",
+                "that",
+                "this",
+                "with",
+                "from",
+                "are",
+                "was",
+                "will",
+                "have",
+                "has",
+                "not",
+                "can",
+                "but",
+                "all",
+                "each",
+                "should",
+                "when",
+                "task",
+                "tasks",
+                "implement",
+                "create",
+                "add",
+                "update",
+                "fix",
+                "make",
+                "use",
+                "using",
+                "into",
+                "file",
+                "files",
+                "code",
+                "new",
+                "one",
+                "two",
+                "need",
+                "also",
+                "after",
+                "before",
+                "then",
+                "retry",
+                "completed",
+                "done",
+                "write",
+                "read",
+                "check",
+                "test",
+            }
+        )
         keywords = sorted(set(t for t in tokens if t not in _STOP_WORDS))
         if not keywords:
             return []

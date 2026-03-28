@@ -54,11 +54,11 @@ class ProposalRiskScore:
     """Risk assessment for a single evolution proposal.
 
     Attributes:
-        code_complexity_delta: Normalised complexity increase (0.0 – 1.0).
+        code_complexity_delta: Normalised complexity increase (0.0-1.0).
             Higher means the diff is larger / more structurally complex.
         test_coverage_delta: Signed coverage change (negative = regression).
             Raw value passed through from the sandbox metrics.
-        regression_potential: Probability (0.0 – 1.0) that the change will
+        regression_potential: Probability (0.0-1.0) that the change will
             break existing tests, based on which modules are touched.
         blast_radius: Raw count of files touched by the proposal.
         composite_risk: Weighted combination of all dimensions, clamped to
@@ -144,9 +144,7 @@ class RiskScorer:
         blast_factor = min(blast_radius / _BLAST_CAP, 1.0) * 0.30
         # Coverage regression raises the chance that tests break
         coverage_regression_factor = max(0.0, -test_coverage_delta) * 0.20
-        regression_potential = min(
-            base_regression + blast_factor + coverage_regression_factor, 1.0
-        )
+        regression_potential = min(base_regression + blast_factor + coverage_regression_factor, 1.0)
 
         # 3. Normalise blast radius for scoring
         blast_score = min(blast_radius / _BLAST_CAP, 1.0)

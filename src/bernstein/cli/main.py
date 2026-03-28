@@ -3062,7 +3062,9 @@ def agents_sync(definitions_dir: str, force: bool) -> None:
             console.print(f"    [dim]… and {len(agency_agents) - 5} more[/dim]")
     else:
         console.print(f"  [yellow]![/yellow] {msg}")
-        console.print(f"  [dim]Manual clone: git clone https://github.com/msitarzewski/agency-agents {default_agency_path}[/dim]")
+        console.print(
+            f"  [dim]Manual clone: git clone https://github.com/msitarzewski/agency-agents {default_agency_path}[/dim]"
+        )
 
     console.print("\n[green]Sync complete.[/green]")
 
@@ -3138,9 +3140,7 @@ def agents_list(source: str, definitions_dir: str) -> None:
     table.add_column("SOURCE", min_width=8)
 
     source_order = {"agency": 0, "local": 1}
-    for agent_id, name, role, caps, src in sorted(
-        rows, key=lambda r: (source_order.get(r[4], 9), r[1])
-    ):
+    for _agent_id, name, role, caps, src in sorted(rows, key=lambda r: (source_order.get(r[4], 9), r[1])):
         src_color = "cyan" if src == "local" else "magenta"
         table.add_row(
             name,

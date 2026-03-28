@@ -12,12 +12,10 @@ Three core responsibilities:
 from __future__ import annotations
 
 import json
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -101,7 +99,7 @@ class ProjectContext:
     """
 
     cycle_number: int
-    test_pass_rate: float  # 0.0 – 1.0
+    test_pass_rate: float  # 0.0-1.0
     lint_violations: int
     security_issues_last_5_cycles: int
     codebase_size_files: int
@@ -182,10 +180,7 @@ class AdaptiveGovernor:
             pf -= _REDUCE_PER_OTHER
             mt -= _REDUCE_PER_OTHER
             ts -= _REDUCE_PER_OTHER
-            reasons.append(
-                f"security: {context.security_issues_last_5_cycles} issues "
-                "found in last 5 cycles"
-            )
+            reasons.append(f"security: {context.security_issues_last_5_cycles} issues found in last 5 cycles")
 
         # Rule 2: poor test health — prioritise coverage
         if context.test_pass_rate < 0.70:
@@ -195,9 +190,7 @@ class AdaptiveGovernor:
             pf -= _REDUCE_PER_OTHER
             sec -= _REDUCE_PER_OTHER
             mt -= _REDUCE_PER_OTHER
-            reasons.append(
-                f"test coverage: pass rate {context.test_pass_rate:.0%} is below 70%"
-            )
+            reasons.append(f"test coverage: pass rate {context.test_pass_rate:.0%} is below 70%")
 
         # Rule 3: lint backlog is large
         if context.lint_violations > 10:
@@ -207,9 +200,7 @@ class AdaptiveGovernor:
             pf -= _REDUCE_PER_OTHER
             sec -= _REDUCE_PER_OTHER
             mt -= _REDUCE_PER_OTHER
-            reasons.append(
-                f"lint score: {context.lint_violations} violations detected"
-            )
+            reasons.append(f"lint score: {context.lint_violations} violations detected")
 
         # Clamp negatives to a floor of 0.02 before normalising
         def _floor(v: float) -> float:

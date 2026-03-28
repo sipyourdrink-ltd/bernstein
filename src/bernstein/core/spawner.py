@@ -516,7 +516,7 @@ class AgentSpawner:
         self,
         tasks: list[Task],
         *,
-        worktree_path: "Path",
+        worktree_path: Path,
         changed_files: list[str],
     ) -> AgentSession:
         """Spawn a new agent to resume work in a crashed agent's worktree.

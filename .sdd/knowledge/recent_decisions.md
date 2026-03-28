@@ -2,12 +2,6 @@
 
 No decisions recorded yet.
 
-## [2026-03-28 18:54] 707 — Bernstein as MCP Server (9afa5b33d4e3)
-Completed: 707 — Bernstein as MCP Server
-
-## [2026-03-28 18:55] 703 — Slack/Discord/Telegram Notifications (58d46212d599)
-Completed: 703 — Slack/Discord/Telegram Notifications
-
 ## [2026-03-28 18:58] 736 — Agent Signal Files (WAKEUP / SHUTDOWN / HEARTBEAT) (0a8efb1dbe6c)
 Completed: 736 — Agent Signal Files (WAKEUP / SHUTDOWN / HEARTBEAT)
 
@@ -46,3 +40,9 @@ Completed: [RETRY 1] 702 — Approval Gates Before Merge
 
 ## [2026-03-28 19:07] [RETRY 1] 722 — Crash Recovery / Orphan Agent Resume (0d64bf6ac638)
 Completed: [RETRY 1] 722 — Crash Recovery / Orphan Agent Resume
+
+## [2026-03-28 19:08] [RETRY 1] 730 — Output Guardrails: Secret Detection + Scope Enforcement (5b1ad3e0072b)
+Completed: [RETRY 1] 730 — Output Guardrails: Secret Detection + Scope Enforcement
+
+## [2026-03-28 19:08] [RETRY 1] 730 — Output Guardrails: Secret Detection + Scope Enforcement (18701ac142b5)
+Completed: [RETRY 1] 730 — Output Guardrails: Secret Detection + Scope Enforcement

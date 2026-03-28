@@ -52,7 +52,7 @@ class SessionState:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "SessionState":
+    def from_dict(cls, data: dict[str, object]) -> SessionState:
         """Deserialise from a JSON-parsed dict.
 
         Args:

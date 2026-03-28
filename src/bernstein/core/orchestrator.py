@@ -20,9 +20,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
 import httpx
 
+from bernstein.core.agent_signals import AgentSignalManager
+from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.cluster import NodeHeartbeatClient
-from bernstein.core.notifications import NotificationManager, NotificationPayload
 from bernstein.core.context import append_decision, refresh_knowledge_base
 from bernstein.core.cost_tracker import CostTracker
 from bernstein.core.evolution import EvolutionCoordinator, UpgradeStatus
@@ -34,10 +35,9 @@ from bernstein.core.fast_path import (
     load_fast_path_config,
     try_fast_path_batch,
 )
-from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.graph import TaskGraph
 from bernstein.core.janitor import verify_task
-from bernstein.core.agent_signals import AgentSignalManager
+from bernstein.core.quarantine import QuarantineStore
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
     AgentSession,
@@ -49,6 +49,7 @@ from bernstein.core.models import (
     TaskStatus,
     TaskType,
 )
+from bernstein.core.notifications import NotificationManager, NotificationPayload
 from bernstein.core.retrospective import generate_retrospective
 from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
 from bernstein.core.signals import read_unresolved_pivots
@@ -406,7 +407,7 @@ class Orchestrator:
         self._decomposed_task_ids: set[str] = set()  # large tasks queued for decomposition
         # Crash recovery: per-task crash count and preserved worktrees for resume
         self._crash_counts: dict[str, int] = {}  # task_id → crash count
-        self._preserved_worktrees: dict[str, "Path"] = {}  # task_id → worktree to reuse
+        self._preserved_worktrees: dict[str, Path] = {}  # task_id → worktree to reuse
         self._running = False
         self._tick_count = 0
         # Track spawn failures per batch for backoff: task_ids → (fail_count, last_fail_ts)
@@ -450,6 +451,10 @@ class Orchestrator:
         if routing_yaml.exists():
             load_fast_path_config(routing_yaml)
         self._fast_path_stats = FastPathStats()
+
+        # Cross-run task quarantine: skip repeatedly-failing tasks
+        self._quarantine = QuarantineStore(workdir / ".sdd" / "runtime" / "quarantine.json")
+
 
         # Adaptive polling backoff: multiplied by 2 each idle tick, reset on work.
         self._idle_multiplier: int = 1
@@ -988,10 +993,7 @@ class Orchestrator:
 
         # Step 3b: GOVERN — adaptively adjust metric weights for this cycle
         weights_before = self._governor.get_current_weights()
-        test_pass_rate = (
-            test_info.get("passed", 0)
-            / max(test_info.get("passed", 0) + test_info.get("failed", 0), 1)
-        )
+        test_pass_rate = test_info.get("passed", 0) / max(test_info.get("passed", 0) + test_info.get("failed", 0), 1)
         gov_context = ProjectContext(
             cycle_number=cycle_number,
             test_pass_rate=test_pass_rate,
@@ -1696,7 +1698,7 @@ class Orchestrator:
             crash_count,
         )
 
-    def _get_changed_files_in_worktree(self, worktree_path: "Path") -> list[str]:
+    def _get_changed_files_in_worktree(self, worktree_path: Path) -> list[str]:
         """Return the list of files changed in a worktree relative to HEAD.
 
         Args:

@@ -145,15 +145,11 @@ class AgencyProvider:
 
         # Extract capabilities list (e.g. [api-design, authentication, jwt])
         raw_caps: Any = fm.get("capabilities") or []
-        capabilities: list[str] = (
-            [str(c) for c in raw_caps] if isinstance(raw_caps, list) else []
-        )
+        capabilities: list[str] = [str(c) for c in raw_caps] if isinstance(raw_caps, list) else []
 
         # Extract preferred tools list (e.g. [pytest, ruff, mypy])
         raw_tools: Any = fm.get("tools") or []
-        tools: list[str] = (
-            [str(t) for t in raw_tools] if isinstance(raw_tools, list) else []
-        )
+        tools: list[str] = [str(t) for t in raw_tools] if isinstance(raw_tools, list) else []
 
         return [
             CatalogAgent(

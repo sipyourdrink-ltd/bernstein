@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -49,9 +49,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "generic_secret",
-        re.compile(
-            r"(?i)(?:password|passwd|secret|token|api_key)\s*=\s*['\"][^'\"]{8,}['\"]"
-        ),
+        re.compile(r"(?i)(?:password|passwd|secret|token|api_key)\s*=\s*['\"][^'\"]{8,}['\"]"),
     ),
 ]
 
@@ -116,7 +114,7 @@ def _parse_deletion_pct_per_file(diff: str) -> dict[str, int]:
     """Estimate deletion percentage per file from diff change lines.
 
     For each file, counts lines starting with '-' vs '+' (excluding headers)
-    and returns the fraction that are removals as an integer 0–100.
+    and returns the fraction that are removals as an integer 0-100.
     """
     pct: dict[str, int] = {}
     current_file: str | None = None
@@ -209,10 +207,7 @@ def check_scope(diff: str, task: Task) -> list[GuardrailResult]:
     out_of_scope = [
         f
         for f in changed_files
-        if not any(
-            f == owned or f.startswith(owned.rstrip("/") + "/")
-            for owned in task.owned_files
-        )
+        if not any(f == owned or f.startswith(owned.rstrip("/") + "/") for owned in task.owned_files)
     ]
 
     if out_of_scope:
@@ -269,9 +264,7 @@ def check_dangerous_operations(
     pct_by_file = _parse_deletion_pct_per_file(diff)
     for filepath, pct in pct_by_file.items():
         if pct > config.max_deletion_pct:
-            issues.append(
-                f"Large deletion in {filepath}: {pct}% of diff lines are removals"
-            )
+            issues.append(f"Large deletion in {filepath}: {pct}% of diff lines are removals")
 
     if issues:
         violated_files = [f for f in changed_files if any(f in issue for issue in issues)]
@@ -319,7 +312,7 @@ def record_guardrail_event(
     metrics_dir = workdir / ".sdd" / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     event: dict[str, Any] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "task_id": task_id,
         "check": check,
         "result": result,

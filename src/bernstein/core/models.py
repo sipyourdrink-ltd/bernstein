@@ -298,7 +298,9 @@ class JanitorResult:
     fix_tasks_created: list[str] = field(default_factory=list[str])  # IDs of created fix tasks
     judge_verdict: JudgeVerdict | None = None  # Set when llm_judge signal was evaluated
     pr_url: str | None = None  # PR URL if created after successful verification
-    guardrail_results: list[GuardrailResult] = field(default_factory=list[GuardrailResult])  # Pre-merge guardrail checks
+    guardrail_results: list[GuardrailResult] = field(
+        default_factory=list[GuardrailResult]
+    )  # Pre-merge guardrail checks
 
 
 @dataclass(frozen=True)

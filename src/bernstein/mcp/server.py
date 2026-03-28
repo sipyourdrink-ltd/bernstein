@@ -155,10 +155,7 @@ def create_mcp_server(
             data: dict[str, Any] = resp.json()
         cost_summary: dict[str, Any] = {
             "total_cost_usd": data.get("total_cost_usd", 0.0),
-            "per_role": [
-                {"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)}
-                for r in data.get("per_role", [])
-            ],
+            "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in data.get("per_role", [])],
         }
         return json.dumps(cost_summary, indent=2)
 

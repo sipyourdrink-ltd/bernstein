@@ -463,7 +463,7 @@ class CatalogRegistry:
         Matching strategy:
         1. Collect all agents whose ``role`` exactly matches *role*.
         2. Among those, rank by capability overlap with *task_description*
-           (capabilities weighted 2×), then by ``priority``.
+           (capabilities weighted 2x), then by ``priority``.
         3. If no exact role match, fall back to capability + description
            keyword matching across all agents.
 
@@ -485,9 +485,7 @@ class CatalogRegistry:
         exact: list[CatalogAgent] = [a for a in self.loaded_agents if a.role == role]
         if exact:
             if keywords:
-                scored_exact = [
-                    (_capability_score(a, desc_lower, keywords), a) for a in exact
-                ]
+                scored_exact = [(_capability_score(a, desc_lower, keywords), a) for a in exact]
                 scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
                 winner = scored_exact[0][1]
             else:
@@ -498,7 +496,7 @@ class CatalogRegistry:
         if not keywords:
             return None
 
-        # 2. Fuzzy match: capabilities (×2) + description keyword overlap
+        # 2. Fuzzy match: capabilities (x2) + description keyword overlap
         scored: list[tuple[int, CatalogAgent]] = []
         for agent in self.loaded_agents:
             cap_score = _capability_score(agent, desc_lower, keywords) * 2
