@@ -21,6 +21,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SKIP_DIRS = frozenset({
+    "__pycache__", ".venv", "venv", "node_modules",
+    ".mypy_cache", ".pytest_cache", "dist", "build",
+})
+
+
+def _should_skip(rel_parts: tuple[str, ...]) -> bool:
+    """Return True if any path component is a hidden dir or in _SKIP_DIRS."""
+    return any(part.startswith(".") or part in _SKIP_DIRS for part in rel_parts)
+
+
+def _iter_python_files(workdir: Path) -> list[Path]:
+    """Collect all .py files in workdir, skipping hidden/vendored dirs."""
+    result: list[Path] = []
+    for fpath in workdir.rglob("*.py"):
+        if not _should_skip(fpath.relative_to(workdir).parts):
+            result.append(fpath)
+    return result
+
 
 class DependencyGraph:
     """Builds and queries file-level dependency graph.
@@ -50,30 +69,7 @@ class DependencyGraph:
 
         The graph maps {file: [dependencies]}.
         """
-        # Collect all Python files, skipping hidden dirs / venv / pycache
-        _SKIP_DIRS = frozenset(
-            {
-                ".git",
-                "__pycache__",
-                ".venv",
-                "venv",
-                "node_modules",
-                ".mypy_cache",
-                ".pytest_cache",
-                "dist",
-                "build",
-            }
-        )
-
-        py_files: list[Path] = []
-        for fpath in self.workdir.rglob("*.py"):
-            skip = False
-            for part in fpath.relative_to(self.workdir).parts:
-                if part in _SKIP_DIRS:
-                    skip = True
-                    break
-            if not skip:
-                py_files.append(fpath)
+        py_files = _iter_python_files(self.workdir)
 
         # Build module → path index first (needed for resolution)
         self._module_index: dict[str, str] = {}
@@ -379,22 +375,12 @@ class ContextCompressor:
         self.graph = DependencyGraph(workdir)
         self.graph.build()
 
-        # Build BM25 index from all Python files
         file_contents: dict[str, str] = {}
-        _SKIP_DIRS = frozenset({".git", "__pycache__", ".venv", "venv", "node_modules", ".pytest_cache", "dist"})
         try:
-            for fpath in workdir.rglob("*.py"):
-                skip = False
-                for part in fpath.relative_to(workdir).parts:
-                    if part in _SKIP_DIRS:
-                        skip = True
-                        break
-                if skip:
-                    continue
+            for fpath in _iter_python_files(workdir):
                 try:
                     rel_path = fpath.relative_to(workdir).as_posix()
                     content = fpath.read_text(encoding="utf-8", errors="ignore")
-                    # Use first 500 chars + relative path for BM25 relevance signal
                     file_contents[rel_path] = content[:500] + " " + rel_path
                 except Exception:
                     pass
@@ -501,20 +487,10 @@ class ContextCompressor:
         Returns:
             CompressionResult with selected files, metrics, and token estimates.
         """
-        _SKIP_DIRS = frozenset({".git", "__pycache__", ".venv", "venv", "node_modules", ".pytest_cache", "dist"})
-        all_files: list[str] = []
-        try:
-            for fpath in self.workdir.rglob("*.py"):
-                skip = False
-                for part in fpath.relative_to(self.workdir).parts:
-                    if part in _SKIP_DIRS:
-                        skip = True
-                        break
-                if not skip:
-                    all_files.append(fpath.relative_to(self.workdir).as_posix())
-        except Exception:
-            pass
-        all_files = sorted(all_files)
+        all_files: list[str] = sorted(
+            fpath.relative_to(self.workdir).as_posix()
+            for fpath in _iter_python_files(self.workdir)
+        )
 
         original_tokens = self.estimate_tokens(all_files)
 

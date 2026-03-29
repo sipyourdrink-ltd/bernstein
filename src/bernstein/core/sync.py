@@ -167,10 +167,15 @@ def _parse_markdown_fields(text: str, filename: str) -> BacklogTask | None:
 
 
 def _extract_heading(text: str) -> str:
-    """Return the first ``# `` heading from markdown text."""
+    """Return the first ``# `` heading from markdown text.
+
+    Strips legacy numeric/hex ticket prefixes like ``521b —`` or ``800:``.
+    """
     for line in text.splitlines():
         if line.startswith("# "):
-            return line[2:].strip()
+            title = line[2:].strip()
+            title = re.sub(r"^[0-9a-fA-F]+\s*[—:\-]\s*", "", title)
+            return title.strip()
     return ""
 
 
