@@ -21,6 +21,8 @@
 [![Tests](https://img.shields.io/badge/tests-4250+-2ea44f)]()
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
 [![Benchmark](https://img.shields.io/badge/benchmark-1.78x_faster-brightgreen)](benchmarks/README.md)
+[![MCP Compatible](https://img.shields.io/badge/MCP-1.0%2C%201.1-blue)](docs/compatibility.md)
+[![A2A Compatible](https://img.shields.io/badge/A2A-0.2%2C%200.3-blue)](docs/compatibility.md)
 [![Sponsor](https://img.shields.io/badge/sponsor-GitHub%20%2F%20OpenCollective-ff69b4?logo=github&logoColor=white)](https://github.com/sponsors/chernistry)
 <!-- [![Discord](https://img.shields.io/discord/1234567890?logo=discord&logoColor=white&label=discord&color=5865F2)](https://discord.gg/bernstein) -->
 
@@ -53,6 +55,16 @@ The orchestrator is **deterministic Python** -- zero LLM tokens on coordination.
 
 > [!TIP]
 > Run `bernstein --headless` for CI pipelines and overnight runs. Add `--evolve` for continuous self-improvement.
+
+## Protocol Compatibility
+
+Bernstein is tested against multiple protocol versions to ensure reliability across ecosystems:
+
+- **MCP** (Model Context Protocol): [1.0, 1.1] ✅
+- **A2A** (Agent-to-Agent): [0.2, 0.3] ✅
+- **ACP** (Agent Communication Protocol): latest ✅
+
+See the [Protocol Compatibility Matrix](docs/compatibility.md) for detailed test results and version support.
 
 ## Quick start
 

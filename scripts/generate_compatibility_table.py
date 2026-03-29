@@ -19,8 +19,37 @@ from pathlib import Path
 
 def generate_table(results_data: dict) -> str:
     """Generate markdown compatibility table from test results."""
-    results = results_data.get("results", [])
-    summary = results_data.get("summary", {})
+    # Support both formats: CI results and baseline
+    results = []
+
+    if "results" in results_data:
+        # CI format with results array
+        results = results_data.get("results", [])
+        summary = results_data.get("summary", {})
+    elif "compatibility" in results_data:
+        # Baseline format with compatibility dict
+        compat_dict = results_data.get("compatibility", {})
+        for key, entry in compat_dict.items():
+            parts = key.split("+")
+            if len(parts) == 3:
+                python_ver = parts[0]
+                mcp_ver = parts[1].replace("mcp", "")
+                a2a_ver = parts[2].replace("a2a", "")
+                results.append({
+                    "python": python_ver,
+                    "mcp": mcp_ver,
+                    "a2a": a2a_ver,
+                    "status": entry.get("status", "unknown")
+                })
+        summary = {
+            "total_combinations": len(results),
+            "passed": sum(1 for r in results if r["status"] == "pass"),
+            "failed": sum(1 for r in results if r["status"] != "pass"),
+            "incompatible": 0,
+            "timeout": 0
+        }
+    else:
+        summary = {}
 
     # Group results by Python version for clarity
     table_rows = []
