@@ -289,7 +289,7 @@ Bernstein's roadmap is public. Near-term work focuses on adoption and the govern
 
 Distributed worker daemon, web dashboard, cluster federation, workflow DSL, agent marketplace.
 
-Track progress and full ticket details in [`.sdd/backlog/`](.sdd/backlog/).
+Track progress on [GitHub Issues](https://github.com/chernistry/bernstein/issues).
 
 ## Support Bernstein
 
