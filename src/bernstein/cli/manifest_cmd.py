@@ -74,8 +74,7 @@ def manifest_show(run_id: str) -> None:
     # Header
     console.print(
         Panel(
-            f"[bold]Run ID:[/bold] {m.run_id}\n"
-            f"[bold]Manifest Hash:[/bold] {m.manifest_hash}",
+            f"[bold]Run ID:[/bold] {m.run_id}\n[bold]Manifest Hash:[/bold] {m.manifest_hash}",
             title="Run Manifest",
             border_style="cyan",
         )
@@ -166,8 +165,7 @@ def manifest_diff(run_a: str, run_b: str) -> None:
 
     if not diffs:
         console.print(
-            f"[green]Runs [bold]{run_a}[/bold] and [bold]{run_b}[/bold] "
-            "have identical configurations.[/green]"
+            f"[green]Runs [bold]{run_a}[/bold] and [bold]{run_b}[/bold] have identical configurations.[/green]"
         )
         return
 
