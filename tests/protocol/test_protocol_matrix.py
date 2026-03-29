@@ -53,7 +53,7 @@ class TestBernsteinProtocolIntegration:
 
     def test_task_model_serialization(self):
         """Task models should serialize correctly."""
-        from bernstein.core.models import Task, TaskStatus, Complexity
+        from bernstein.core.models import Complexity, Task, TaskStatus
 
         task = Task(
             id="test-001",
