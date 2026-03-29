@@ -716,14 +716,10 @@ class Orchestrator:
             if agent.status != "dead":
                 assigned_task_ids.update(agent.task_ids)
 
-        # 3b. Error budget: temporarily reduce max_agents if budget is depleted
+        # 3b. Error budget tracking (informational only — does NOT throttle agents).
+        # Previously this reduced max_agents when error budget was depleted, but
+        # stale historical data caused permanent throttling across runs.
         _orig_max_agents = self._config.max_agents
-        if self._slo_tracker.error_budget.is_depleted:
-            _adj_max, _adj_model = apply_error_budget_adjustments(
-                self._config.max_agents,
-                self._slo_tracker,
-            )
-            self._config.max_agents = _adj_max
 
         # 3c. Claim tasks and spawn agents for ready batches (skip if budget is exhausted)
         if self._config.dry_run:
