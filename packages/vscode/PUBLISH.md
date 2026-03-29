@@ -87,8 +87,8 @@ The GitHub Actions workflow will automatically:
 2. Run type check and tests
 3. Build the extension
 4. Package as VSIX
-5. Publish to VS Code Marketplace (if `VSCE_PAT` is set)
-6. Publish to Open VSX (if `OVSX_PAT` is set)
+5. Publish to VS Code Marketplace (if `VS_MARKETPLACE_TOKEN` is set)
+6. Publish to Open VSX (if `OPEN_VSX_TOKEN` is set)
 7. Upload VSIX as release artifact
 
 Monitor the workflow in GitHub Actions tab.
@@ -107,10 +107,10 @@ npm run compile
 npm run package
 
 # Publish to VS Code Marketplace
-VSCE_PAT=YOUR_TOKEN npm run publish:vscode
+VS_MARKETPLACE_TOKEN=YOUR_TOKEN npm run publish:vscode
 
 # Publish to Open VSX
-OVSX_PAT=YOUR_TOKEN npm run publish:ovsx
+OPEN_VSX_TOKEN=YOUR_TOKEN npm run publish:ovsx
 ```
 
 ## Verification
