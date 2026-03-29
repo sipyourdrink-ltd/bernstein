@@ -333,6 +333,20 @@ def handle_orphaned_task(
                 logger.error("Failed to retry/fail orphaned task %s: %s", task_id, exc)
             error_type = "no_signals"
 
+    # WAL: record the orphaned-task outcome for audit trail
+    _wal = getattr(orch, "_wal_writer", None)
+    if _wal is not None:
+        _wal_dtype = "task_completed" if success else "task_failed"
+        try:
+            _wal.write_entry(
+                decision_type=_wal_dtype,
+                inputs={"task_id": task_id, "agent_id": session.id, "orphaned": True},
+                output={"success": success, "error_type": error_type or ""},
+                actor="agent_lifecycle",
+            )
+        except OSError:
+            logger.debug("WAL write failed for orphaned %s %s", _wal_dtype, task_id)
+
     emit_orphan_metrics(
         orch._workdir,
         task_id,
@@ -649,6 +663,18 @@ def reap_dead_agents(
                 orch._signal_mgr.clear_signals(session.id)
             # Retry or fail their tasks
             for task_id in session.task_ids:
+                # WAL: record heartbeat-reaped task failure
+                _wal_r = getattr(orch, "_wal_writer", None)
+                if _wal_r is not None:
+                    try:
+                        _wal_r.write_entry(
+                            decision_type="task_failed",
+                            inputs={"task_id": task_id, "agent_id": session.id},
+                            output={"reason": "heartbeat_timeout"},
+                            actor="agent_lifecycle",
+                        )
+                    except OSError:
+                        logger.debug("WAL write failed for heartbeat-reaped task %s", task_id)
                 try:
                     retry_or_fail_task(
                         task_id,

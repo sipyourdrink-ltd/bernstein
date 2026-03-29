@@ -1,0 +1,13 @@
+task_id: extract-function
+description: >
+  Refactor the monolithic process_request handler by extracting the
+  validation logic, authentication check, and response formatting
+  into separate well-named functions with proper type annotations.
+task_type: refactor
+files:
+  - src/api/handlers.py
+  - tests/test_handlers.py
+expected_outcome: >
+  The process_request function delegates to three extracted helpers:
+  validate_payload, check_auth, and format_response. All existing
+  handler tests continue to pass without modification.

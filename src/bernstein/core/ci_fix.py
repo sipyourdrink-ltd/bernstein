@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.ci_log_parser import CILogParser
+    from bernstein.core.ci_monitor import FailureContext
 
 logger = logging.getLogger(__name__)
 
@@ -648,3 +649,176 @@ class CIFixPipeline:
 
         logger.warning("Failed to post CI fix task to server; writing to fallback")
         return ""
+
+
+# ---------------------------------------------------------------------------
+# CI Autofix Pipeline — integrates CIMonitor with task creation and PR flow
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CIAutofixPipeline:
+    """End-to-end pipeline: ``FailureContext`` → Bernstein task → fix PR.
+
+    Takes a ``FailureContext`` from ``CIMonitor``, creates a Bernstein
+    task with the failure context embedded in the description, and
+    provides ``create_fix_pr`` to open a GitHub PR after the fix is
+    applied.
+
+    Usage::
+
+        from bernstein.core.ci_monitor import FailureContext
+        from bernstein.core.ci_fix import CIAutofixPipeline
+
+        pipeline = CIAutofixPipeline(server_url="http://127.0.0.1:8052")
+        task_id = pipeline.create_fix_task(failure_ctx)
+        pr_url = pipeline.create_fix_pr(task_id, failure_ctx, cwd=repo_root)
+
+    Attributes:
+        server_url: Base URL of the Bernstein task server.
+        repo_root: Path to the repository root (for git operations).
+    """
+
+    server_url: str = "http://127.0.0.1:8052"
+    repo_root: Path | None = None
+
+    def create_fix_task(
+        self,
+        failure: FailureContext,
+        *,
+        run_url: str = "",
+    ) -> str:
+        """Create a Bernstein task from a ``FailureContext``.
+
+        Args:
+            failure: Parsed failure context from CI logs.
+            run_url: Optional URL of the CI run for traceability.
+
+        Returns:
+            Task ID of the created task (empty string on failure).
+        """
+        import httpx
+
+        description = self._build_description(failure, run_url)
+        payload = {
+            "title": f"[ci-autofix] Fix: {failure.error_message[:80]}",
+            "description": description,
+            "role": "qa",
+            "priority": 1,
+            "scope": "small",
+            "task_type": "fix",
+        }
+
+        try:
+            r = httpx.post(
+                f"{self.server_url}/tasks",
+                json=payload,
+                timeout=10,
+            )
+            r.raise_for_status()
+            data = r.json()
+            task_id: str = data.get("id", f"ci-autofix-{int(time.time())}")
+            logger.info("CI autofix task created: %s", task_id)
+            return task_id
+        except Exception:
+            logger.exception("Failed to create CI autofix task")
+            return ""
+
+    def create_fix_pr(
+        self,
+        task_id: str,
+        failure: FailureContext,
+        *,
+        cwd: Path | None = None,
+        branch: str = "",
+        base: str = "main",
+    ) -> str:
+        """Create a GitHub PR for a completed CI fix task.
+
+        Delegates to ``git_pr.create_github_pr`` for the actual PR
+        creation via the ``gh`` CLI.
+
+        Args:
+            task_id: ID of the completed fix task.
+            failure: Original failure context (used for PR title/body).
+            cwd: Repository root override (falls back to ``self.repo_root``).
+            branch: Source branch name.  If empty, derived from task ID.
+            base: Target branch (default ``"main"``).
+
+        Returns:
+            PR URL on success, empty string on failure.
+        """
+        from bernstein.core.git_pr import create_github_pr
+
+        repo = cwd or self.repo_root
+        if repo is None:
+            logger.error("No repository root provided for PR creation")
+            return ""
+
+        head = branch or f"bernstein/ci-fix-{task_id}"
+        title = f"fix(ci): {failure.error_message[:72]}"
+        body = self._build_pr_body(failure, task_id)
+
+        result = create_github_pr(
+            repo,
+            title=title,
+            body=body,
+            head=head,
+            base=base,
+            labels=["ci-fix", "auto-generated"],
+        )
+        if result.success:
+            logger.info("CI fix PR created: %s", result.pr_url)
+            return result.pr_url
+
+        logger.warning("Failed to create CI fix PR: %s", result.error)
+        return ""
+
+    @staticmethod
+    def _build_description(failure: FailureContext, run_url: str) -> str:
+        """Build a task description from failure context.
+
+        Args:
+            failure: Parsed failure context.
+            run_url: CI run URL.
+
+        Returns:
+            Formatted task description string.
+        """
+        parts = [
+            "CI is failing. Auto-detected failure details:\n",
+            f"**Test:** {failure.test_name}" if failure.test_name else "",
+            f"**Error:** {failure.error_message}" if failure.error_message else "",
+            f"**File:** {failure.file_path}:{failure.line_number}" if failure.file_path else "",
+        ]
+        if failure.stack_trace:
+            parts.append(f"\n```\n{failure.stack_trace[:2000]}\n```")
+        if run_url:
+            parts.append(f"\nCI run: {run_url}")
+        parts.append(
+            "\n## Instructions\n"
+            "1. Read the error and traceback above.\n"
+            "2. Fix the root cause in the source file.\n"
+            "3. Run tests locally to verify.\n"
+            "4. Commit and push."
+        )
+        return "\n".join(p for p in parts if p)
+
+    @staticmethod
+    def _build_pr_body(failure: FailureContext, task_id: str) -> str:
+        """Build a PR body from failure context.
+
+        Args:
+            failure: Parsed failure context.
+            task_id: Bernstein task ID.
+
+        Returns:
+            Formatted PR body string.
+        """
+        parts = [
+            f"Fixes CI failure detected by Bernstein (task `{task_id}`).\n",
+            f"**Failed test:** {failure.test_name}" if failure.test_name else "",
+            f"**Error:** {failure.error_message}" if failure.error_message else "",
+            f"**Location:** `{failure.file_path}:{failure.line_number}`" if failure.file_path else "",
+        ]
+        return "\n".join(p for p in parts if p)

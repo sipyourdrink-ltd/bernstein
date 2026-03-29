@@ -1,0 +1,12 @@
+task_id: add-unit-tests
+description: >
+  Add comprehensive unit tests for the config loader module, covering
+  YAML parsing, environment variable interpolation, default values,
+  and error handling for malformed config files.
+task_type: test
+files:
+  - src/config/loader.py
+  - tests/test_config_loader.py
+expected_outcome: >
+  A new test file with at least 8 test cases covering happy paths,
+  edge cases, and error conditions. All tests pass when run with pytest.

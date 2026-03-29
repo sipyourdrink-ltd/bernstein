@@ -17,7 +17,26 @@ from bernstein.core.models import AgentSession, LifecycleEvent, Task, TaskStatus
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from bernstein.core.audit import AuditLog
+
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Audit log integration
+# ---------------------------------------------------------------------------
+
+_audit_log: AuditLog | None = None
+
+
+def set_audit_log(audit_log: AuditLog) -> None:
+    """Wire an AuditLog instance into the lifecycle module.
+
+    Once set, every task and agent transition is recorded as an HMAC-chained
+    audit event in addition to the normal LifecycleEvent dispatch.
+    """
+    global _audit_log
+    _audit_log = audit_log
+
 
 # ---------------------------------------------------------------------------
 # Exception
@@ -186,6 +205,20 @@ def transition_task(
         reason=reason,
     )
     _emit(event)
+
+    if _audit_log is not None:
+        _audit_log.log(
+            event_type="task.transition",
+            actor=actor,
+            resource_type="task",
+            resource_id=task.id,
+            details={
+                "from_status": old_status.value,
+                "to_status": new_status.value,
+                "reason": reason,
+            },
+        )
+
     return event
 
 
@@ -232,4 +265,18 @@ def transition_agent(
         reason=reason,
     )
     _emit(event)
+
+    if _audit_log is not None:
+        _audit_log.log(
+            event_type="agent.transition",
+            actor=actor,
+            resource_type="agent",
+            resource_id=agent.id,
+            details={
+                "from_status": old_status,
+                "to_status": new_status,
+                "reason": reason,
+            },
+        )
+
     return event

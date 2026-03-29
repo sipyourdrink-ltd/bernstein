@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.git_ops import MergeResult
+    from bernstein.core.wal import WALWriter
 
 logger = logging.getLogger(__name__)
 
@@ -801,6 +802,20 @@ def claim_and_spawn_batches(
         if claim_failed:
             continue
 
+        # WAL: record task claim decisions
+        _wal: WALWriter | None = getattr(orch, "_wal_writer", None)
+        if _wal is not None:
+            for task in batch:
+                try:
+                    _wal.write_entry(
+                        decision_type="task_claimed",
+                        inputs={"task_id": task.id, "role": task.role, "title": task.title},
+                        output={"batch_size": len(batch)},
+                        actor="task_lifecycle",
+                    )
+                except OSError:
+                    logger.debug("WAL write failed for task_claimed %s", task.id)
+
         # Response cache: if a functionally identical task was already completed,
         # return the cached result without spawning an agent (20-40% savings target).
         # Only applied to single-task batches — multi-task batches have complex
@@ -1006,6 +1021,20 @@ def process_completed_tasks(
                 result.verification_failures.append((task.id, failed_signals))
         else:
             janitor_passed = True
+
+        # WAL: record task completion/failure decision
+        _wal_c: WALWriter | None = getattr(orch, "_wal_writer", None)
+        if _wal_c is not None:
+            _wal_dtype = "task_completed" if janitor_passed else "task_failed"
+            try:
+                _wal_c.write_entry(
+                    decision_type=_wal_dtype,
+                    inputs={"task_id": task.id, "title": task.title, "role": task.role},
+                    output={"janitor_passed": janitor_passed},
+                    actor="task_lifecycle",
+                )
+            except OSError:
+                logger.debug("WAL write failed for %s %s", _wal_dtype, task.id)
 
         session = orch._find_session_for_task(task.id)
         # Track whether this is the first time we're reaping this session so

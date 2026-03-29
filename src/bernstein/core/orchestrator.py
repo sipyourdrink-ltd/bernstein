@@ -48,6 +48,7 @@ from bernstein.core.fast_path import (
 from bernstein.core.file_locks import FileLockManager
 from bernstein.core.graph import TaskGraph
 from bernstein.core.incident import IncidentManager
+from bernstein.core.manifest import build_manifest, save_manifest
 from bernstein.core.merge_queue import MergeQueue
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
@@ -64,7 +65,6 @@ from bernstein.core.models import (
 from bernstein.core.notifications import NotificationManager, NotificationPayload
 from bernstein.core.quarantine import QuarantineStore
 from bernstein.core.rate_limit_tracker import RateLimitTracker
-from bernstein.core.manifest import build_manifest, save_manifest
 from bernstein.core.recorder import RunRecorder
 from bernstein.core.retrospective import generate_retrospective
 from bernstein.core.router import TierAwareRouter, load_model_policy_from_yaml, load_providers_from_yaml
@@ -99,6 +99,7 @@ from bernstein.core.tick_pipeline import (
     total_spent_cache as total_spent_cache,
 )
 from bernstein.core.token_monitor import check_token_growth
+from bernstein.core.wal import WALWriter
 from bernstein.core.workflow import WorkflowExecutor, load_workflow
 from bernstein.evolution.governance import AdaptiveGovernor, GovernanceEntry, ProjectContext
 from bernstein.evolution.risk import RiskScorer
@@ -347,6 +348,11 @@ class Orchestrator:
         # Deterministic replay recorder: appends events to
         # .sdd/runs/{run_id}/replay.jsonl for post-hoc debugging.
         self._recorder = RunRecorder(run_id=run_id, sdd_dir=workdir / ".sdd")
+
+        # Write-Ahead Log: hash-chained JSONL for crash-safe durability
+        # and execution fingerprinting. WAL entries are written before
+        # actions execute so decisions survive crashes.
+        self._wal_writer = WALWriter(run_id=run_id, sdd_dir=workdir / ".sdd")
 
         # Approval gate: controls whether verified work is merged directly,
         # held for interactive review, or pushed as a GitHub PR.
@@ -614,6 +620,17 @@ class Orchestrator:
 
         # Record tick start for deterministic replay
         self._recorder.record("tick_start", tick=self._tick_count)
+
+        # WAL: record tick boundary for crash recovery and audit trail
+        try:
+            self._wal_writer.write_entry(
+                decision_type="tick_start",
+                inputs={"tick": self._tick_count},
+                output={},
+                actor="orchestrator",
+            )
+        except OSError:
+            logger.debug("WAL write failed for tick_start %d", self._tick_count)
 
         # 0. Ingest any new backlog files before fetching tasks
         try:

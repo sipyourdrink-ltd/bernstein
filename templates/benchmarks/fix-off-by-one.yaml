@@ -1,0 +1,11 @@
+task_id: fix-off-by-one
+description: >
+  Fix an off-by-one error in the pagination helper that causes the last page
+  to be skipped when the total item count is an exact multiple of the page size.
+task_type: bugfix
+files:
+  - src/utils/pagination.py
+  - tests/test_pagination.py
+expected_outcome: >
+  The pagination helper correctly returns the last page when total items
+  is divisible by page size, and all existing pagination tests still pass.

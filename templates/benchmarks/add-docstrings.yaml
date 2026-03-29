@@ -1,0 +1,12 @@
+task_id: add-docstrings
+description: >
+  Add Google-style docstrings to all public functions and classes in
+  the data_pipeline module that currently lack documentation.
+task_type: docs
+files:
+  - src/data_pipeline/transform.py
+  - src/data_pipeline/validate.py
+expected_outcome: >
+  Every public function and class in both files has a Google-style
+  docstring with Args, Returns, and Raises sections where applicable.
+  No functional code changes are made.

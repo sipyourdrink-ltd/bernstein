@@ -1,0 +1,13 @@
+task_id: fix-import-error
+description: >
+  Fix a circular import error between the models module and the
+  serializers module that causes an ImportError at startup when
+  the serializers module is loaded before models.
+task_type: bugfix
+files:
+  - src/core/models.py
+  - src/core/serializers.py
+expected_outcome: >
+  Both modules can be imported in any order without raising ImportError.
+  The fix uses TYPE_CHECKING guards or deferred imports as appropriate.
+  All existing tests pass.

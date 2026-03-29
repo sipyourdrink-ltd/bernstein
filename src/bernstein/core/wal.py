@@ -105,6 +105,23 @@ class WALWriter:
             logger.warning("WAL tail unreadable at %s; chain will continue from truncation point", self._path)
             return len(non_empty) - 1, GENESIS_HASH
 
+    def write_entry(
+        self,
+        decision_type: str,
+        inputs: dict[str, Any],
+        output: dict[str, Any],
+        actor: str,
+        committed: bool = True,
+    ) -> WALEntry:
+        """Convenience alias for :meth:`append`."""
+        return self.append(
+            decision_type=decision_type,
+            inputs=inputs,
+            output=output,
+            actor=actor,
+            committed=committed,
+        )
+
     def append(
         self,
         decision_type: str,
@@ -317,6 +334,15 @@ class ExecutionFingerprint:
     def __init__(self) -> None:
         self._state: bytes = b""
 
+    def add_decision(
+        self,
+        decision_type: str,
+        inputs: dict[str, Any],
+        output: dict[str, Any],
+    ) -> None:
+        """Convenience alias for :meth:`record`."""
+        self.record(decision_type, inputs, output)
+
     def record(
         self,
         decision_type: str,
@@ -332,6 +358,10 @@ class ExecutionFingerprint:
     def compute(self) -> str:
         """Return the current fingerprint as a 64-character hex string."""
         return hashlib.sha256(self._state).hexdigest()
+
+    def finalize(self) -> str:
+        """Convenience alias for :meth:`compute`."""
+        return self.compute()
 
     @classmethod
     def from_wal(cls, reader: WALReader) -> ExecutionFingerprint:

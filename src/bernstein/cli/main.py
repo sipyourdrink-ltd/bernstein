@@ -47,6 +47,7 @@ from bernstein.cli.agents_cmd import agents_group
 from bernstein.cli.audit_cmd import audit_group
 from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
+from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.cost import cost_cmd
 from bernstein.cli.eval_benchmark_cmd import (
     benchmark_group,
@@ -495,3 +496,4 @@ cli.add_command(audit_group, "audit")
 cli.add_command(verify_cmd, "verify")
 cli.add_command(chaos_group, "chaos")
 cli.add_command(manifest_group, "manifest")
+cli.add_command(ci_group, "ci")

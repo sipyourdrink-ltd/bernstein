@@ -138,7 +138,7 @@ def verify_cmd(merkle: bool) -> None:
     """
     if not merkle:
         console.print("[dim]Use --merkle to verify Merkle tree integrity.[/dim]")
-        console.print("[dim]HMAC chain verification coming with the base audit module.[/dim]")
+        console.print("[dim]Use 'bernstein audit verify-hmac' for HMAC chain verification.[/dim]")
         return
 
     from bernstein.core.merkle import verify_merkle
@@ -174,3 +174,81 @@ def verify_cmd(merkle: bool) -> None:
 
     console.print()
     raise SystemExit(0 if result.valid else 1)
+
+
+@audit_group.command("verify-hmac")
+def verify_hmac_cmd() -> None:
+    """Verify HMAC chain integrity across all audit log files."""
+    from bernstein.core.audit import AuditLog
+
+    if not AUDIT_DIR.is_dir():
+        console.print(f"[red]Audit directory not found:[/red] {AUDIT_DIR}")
+        raise SystemExit(1)
+
+    audit_log = AuditLog(AUDIT_DIR)
+    valid, errors = audit_log.verify()
+
+    console.print()
+    if valid:
+        console.print(
+            Panel(
+                "[bold green]HMAC Chain Verification Passed[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
+    else:
+        console.print(
+            Panel(
+                "[bold red]HMAC Chain Verification FAILED[/bold red]",
+                border_style="red",
+                expand=False,
+            )
+        )
+        for err in errors:
+            console.print(f"  [red]![/red] {err}")
+
+    console.print()
+    raise SystemExit(0 if valid else 1)
+
+
+@audit_group.command("query")
+@click.option("--event-type", default=None, help="Filter by event type.")
+@click.option("--actor", default=None, help="Filter by actor.")
+@click.option("--since", default=None, help="ISO 8601 lower bound (inclusive).")
+@click.option("--limit", default=50, show_default=True, help="Maximum number of events to return.")
+def query_cmd(event_type: str | None, actor: str | None, since: str | None, limit: int) -> None:
+    """Query audit log events with filters."""
+    from bernstein.core.audit import AuditLog
+
+    if not AUDIT_DIR.is_dir():
+        console.print(f"[red]Audit directory not found:[/red] {AUDIT_DIR}")
+        raise SystemExit(1)
+
+    audit_log = AuditLog(AUDIT_DIR)
+    events = audit_log.query(event_type=event_type, actor=actor, since=since)
+    events = events[:limit]
+
+    if not events:
+        console.print("[yellow]No matching audit events found.[/yellow]")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta", show_lines=False)
+    table.add_column("Timestamp", style="dim", no_wrap=True)
+    table.add_column("Event Type", style="bold")
+    table.add_column("Actor")
+    table.add_column("Resource")
+    table.add_column("HMAC", style="dim", no_wrap=True)
+
+    for ev in events:
+        table.add_row(
+            ev.timestamp[:19],
+            ev.event_type,
+            ev.actor,
+            f"{ev.resource_type}/{ev.resource_id}",
+            ev.hmac[:12] + "…",
+        )
+
+    console.print()
+    console.print(table)
+    console.print(f"\n[dim]Showing {len(events)} event(s)[/dim]\n")

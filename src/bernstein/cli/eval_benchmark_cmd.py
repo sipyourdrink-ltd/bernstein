@@ -1,7 +1,7 @@
 """Evaluation and benchmarking commands for Bernstein CLI.
 
 This module contains evaluation and benchmarking groups and commands:
-  benchmark_group (swe-bench, run)
+  benchmark_group (swe-bench, run, compare)
   eval_group (run, report, failures)
 
 All commands and groups are registered with the main CLI group in main.py.
@@ -192,6 +192,53 @@ def benchmark_run(tier: str, benchmarks_dir: str, save: bool) -> None:
 
     if summary.failed > 0:
         raise SystemExit(1)
+
+
+@benchmark_group.command("compare")
+@click.option(
+    "--tasks-dir",
+    default="templates/benchmarks",
+    show_default=True,
+    help="Directory containing benchmark task YAML files.",
+)
+@click.option(
+    "--mode",
+    "modes",
+    multiple=True,
+    type=click.Choice(["single", "orchestrated"]),
+    default=("single", "orchestrated"),
+    show_default=True,
+    help="Execution modes to include in comparison.",
+)
+def benchmark_compare(tasks_dir: str, modes: tuple[str, ...]) -> None:
+    """Run comparative benchmark: single-agent vs orchestrated.
+
+    \b
+      bernstein benchmark compare                                   # default tasks
+      bernstein benchmark compare --tasks-dir path/to/tasks         # custom tasks
+      bernstein benchmark compare --mode single --mode orchestrated # explicit modes
+    """
+    from bernstein.benchmark.comparative import ComparativeBenchmark, load_benchmark_tasks
+
+    tdir = Path(tasks_dir)
+    if not tdir.is_dir():
+        console.print(f"[red]Tasks directory not found:[/red] {tdir}")
+        raise SystemExit(1)
+
+    tasks = load_benchmark_tasks(tdir)
+    if not tasks:
+        console.print("[yellow]No benchmark tasks found in directory.[/yellow]")
+        raise SystemExit(1)
+
+    console.print(f"[bold]Comparative benchmark[/bold] — {len(tasks)} task(s), modes: {', '.join(modes)}")
+
+    suite = ComparativeBenchmark(tasks=tasks, workdir=Path("."))
+    report = suite.run_suite(modes=list(modes))  # type: ignore[arg-type]
+
+    md = suite.generate_markdown_report(report)
+    from rich.markdown import Markdown
+
+    console.print(Markdown(md))
 
 
 # ---------------------------------------------------------------------------
