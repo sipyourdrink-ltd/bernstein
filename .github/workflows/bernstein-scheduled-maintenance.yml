@@ -1,0 +1,49 @@
+name: "Bernstein Scheduled Maintenance"
+
+# Trigger: weekly codebase health sweep, plus manual dispatch.
+on:
+  schedule:
+    - cron: "0 3 * * 1"   # Every Monday at 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Override the default maintenance task"
+        required: false
+        default: ""
+      budget:
+        description: "Dollar cap for the run"
+        required: false
+        default: "8.00"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  maintenance:
+    name: Weekly maintenance with Bernstein
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run maintenance
+        uses: ./
+        with:
+          task: >
+            ${{ inputs.task != '' && inputs.task || '
+            Perform weekly codebase maintenance:
+            1. Update outdated dependencies (minor and patch versions only — no major bumps).
+            2. Fix any new ruff lint warnings introduced since last week.
+            3. Remove unused imports and obviously dead code.
+            4. Ensure test coverage has not regressed.
+            5. Commit any changes with clear messages and open a pull request titled
+               "[maintenance] Weekly automated cleanup".
+            ' }}
+          budget: "${{ inputs.budget != '' && inputs.budget || '8.00' }}"
+          post-comment: "false"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # For Codex:  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # For Gemini: GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}

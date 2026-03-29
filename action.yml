@@ -4,7 +4,7 @@ author: "Bernstein contributors"
 
 branding:
   icon: "cpu"
-  color: "blue"
+  color: "gray-dark"
 
 inputs:
   task:
@@ -28,6 +28,24 @@ inputs:
     description: "Python version to install."
     required: false
     default: "3.12"
+  post-comment:
+    description: "Post a PR comment with orchestration summary after the run (true/false)."
+    required: false
+    default: "true"
+
+outputs:
+  tasks-completed:
+    description: "Number of tasks Bernstein completed in this run."
+    value: ${{ steps.run-bernstein.outputs.tasks_completed }}
+  total-cost:
+    description: "Total API cost in USD for this run."
+    value: ${{ steps.run-bernstein.outputs.total_cost }}
+  pr-url:
+    description: "URL of a pull request created or updated by Bernstein (if any)."
+    value: ${{ steps.run-bernstein.outputs.pr_url }}
+  evidence-bundle-path:
+    description: "Workspace-relative path to the evidence bundle (test results, logs, cost report)."
+    value: ${{ steps.run-bernstein.outputs.evidence_bundle_path }}
 
 runs:
   using: "composite"
@@ -47,12 +65,14 @@ runs:
       run: uv tool install bernstein
 
     - name: Run Bernstein
+      id: run-bernstein
       shell: bash
       env:
         INPUT_TASK: ${{ inputs.task }}
         INPUT_BUDGET: ${{ inputs.budget }}
         INPUT_CLI: ${{ inputs.cli }}
         INPUT_MAX_RETRIES: ${{ inputs.max-retries }}
+        INPUT_POST_COMMENT: ${{ inputs.post-comment }}
         GITHUB_TOKEN: ${{ github.token }}
       run: bash "${{ github.action_path }}/action/entrypoint.sh"
 
