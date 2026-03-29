@@ -64,6 +64,7 @@ from bernstein.core.models import (
 from bernstein.core.notifications import NotificationManager, NotificationPayload
 from bernstein.core.quarantine import QuarantineStore
 from bernstein.core.rate_limit_tracker import RateLimitTracker
+from bernstein.core.manifest import build_manifest, save_manifest
 from bernstein.core.recorder import RunRecorder
 from bernstein.core.retrospective import generate_retrospective
 from bernstein.core.router import TierAwareRouter, load_model_policy_from_yaml, load_providers_from_yaml
@@ -416,6 +417,25 @@ class Orchestrator:
                 )
             else:
                 logger.warning("Unknown workflow %r — running in adaptive mode", config.workflow)
+
+        # Run manifest: hashable configuration record for compliance.
+        _wf_name = self._workflow_executor.definition.name if self._workflow_executor else ""
+        _wf_hash = self._workflow_executor.definition_hash if self._workflow_executor else ""
+        _cli_name = spawner._adapter.name() if hasattr(spawner, "_adapter") else "auto"
+        self._manifest = build_manifest(
+            run_id=run_id,
+            config=config,
+            cli=_cli_name,
+            model=None,
+            workflow_name=_wf_name,
+            workflow_definition_hash=_wf_hash,
+        )
+        save_manifest(self._manifest, workdir / ".sdd")
+        self._recorder.record(
+            "manifest_created",
+            manifest_hash=self._manifest.manifest_hash,
+            run_id=run_id,
+        )
 
         # Compliance mode: activate subsystems based on compliance config.
         self._compliance = config.compliance

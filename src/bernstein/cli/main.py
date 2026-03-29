@@ -53,6 +53,7 @@ from bernstein.cli.eval_benchmark_cmd import (
     eval_group,
 )
 from bernstein.cli.evolve_cmd import evolve
+from bernstein.cli.manifest_cmd import manifest_group
 from bernstein.cli.task_cmd import (
     add_task,
     approve,
@@ -493,3 +494,4 @@ cli.add_command(wrap_up, "wrap-up")
 cli.add_command(audit_group, "audit")
 cli.add_command(verify_cmd, "verify")
 cli.add_command(chaos_group, "chaos")
+cli.add_command(manifest_group, "manifest")
