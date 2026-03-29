@@ -54,7 +54,8 @@
       { "command": "bernstein.killAgent", "title": "Bernstein: Kill Agent", "icon": "$(stop)" },
       { "command": "bernstein.showAgentOutput", "title": "Bernstein: Show Agent Output", "icon": "$(output)" },
       { "command": "bernstein.cancelTask", "title": "Bernstein: Cancel Task", "icon": "$(x)" },
-      { "command": "bernstein.prioritizeTask", "title": "Bernstein: Prioritize Task", "icon": "$(arrow-up)" }
+      { "command": "bernstein.prioritizeTask", "title": "Bernstein: Prioritize Task", "icon": "$(arrow-up)" },
+      { "command": "bernstein.openTask", "title": "Bernstein: Open Task Output", "icon": "$(go-to-file)" }
     ],
     "menus": {
       "view/title": [
