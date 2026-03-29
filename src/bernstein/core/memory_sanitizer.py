@@ -80,9 +80,7 @@ _PII_RULES: list[tuple[str, re.Pattern[str], float]] = [
     ),
     (
         "phone_number",
-        re.compile(
-            r"\b(?:\+\d{1,3}[\s\-])?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b"
-        ),
+        re.compile(r"\b(?:\+\d{1,3}[\s\-])?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b"),
         0.20,
     ),
     (
@@ -105,9 +103,7 @@ _PII_RULES: list[tuple[str, re.Pattern[str], float]] = [
     (
         "national_id",
         # Generic patterns: "ID: 123456789" or "passport: AB123456"
-        re.compile(
-            r"(?i)\b(?:national[\s_]?id|passport[\s_]?(?:no|number|#))\s*[:\-]?\s*[A-Z0-9]{6,12}\b"
-        ),
+        re.compile(r"(?i)\b(?:national[\s_]?id|passport[\s_]?(?:no|number|#))\s*[:\-]?\s*[A-Z0-9]{6,12}\b"),
         0.40,
     ),
 ]
