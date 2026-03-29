@@ -2,6 +2,49 @@
 
 All notable documentation changes are tracked here.
 
+## [1.0.2] — 2026-03-28
+
+### Changed
+- Documentation audit: updated outdated model names, CLI references, API endpoints, and GitHub Action version tags
+- Default branch references updated from `master` to `main` across all docs
+
+## [1.0.0] — 2026-03-28
+
+### Added
+- ACP (Agent Communication Protocol) endpoints for agent interoperability
+- A2A (Agent-to-Agent) protocol support
+- Cluster mode with multi-node coordination (node registration, heartbeat, status)
+- Auth routes: OIDC, SAML, CLI device flow, group mappings, user management
+- Graduation system for agent promotion based on performance
+- Plans routes for plan listing, approval, and rejection
+- Slack integration (slash commands and events)
+- Quality dashboard with per-model quality metrics
+- Cost history, live cost tracking, and cost alerts endpoints
+- File lock tracking via dashboard routes
+- Task prioritization, force-claim, and progress reporting endpoints
+- Chaos testing CLI group
+- Audit CLI group
+- Verify CLI command
+
+### Changed
+- Version bumped to 1.0.0 (stable release)
+- Route modules expanded: acp.py, auth.py, graduation.py, plans.py, slack.py added to core/routes/
+
+## [0.3.0] — 2026-03-28
+
+### Added
+- Checkpoint and wrap-up CLI commands for session management
+- Task snapshots endpoint for viewing task state history
+- Webhook alerts endpoint
+- SSE event stream at `/events` for real-time dashboard updates
+- Prometheus `/metrics` endpoint for observability
+- Bandit-based model routing stats at `/routing/bandit`
+- Cache stats endpoint at `/cache-stats`
+
+### Changed
+- CLI decomposed further: audit_cmd.py, chaos_cmd.py, checkpoint_cmd.py, verify_cmd.py, wrap_up_cmd.py
+- Task server routes expanded with block, progress, and prioritize actions
+
 ## [0.2.0] — 2026-03-28
 
 ### Added

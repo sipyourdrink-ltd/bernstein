@@ -856,7 +856,7 @@ providers:
     cost_per_1k_tokens: 0.002
     models:
       gemini-pro:
-        model: gemini-2.0-pro
+        model: gemini-3-pro
         effort: high
     max_context_tokens: 128000
     supports_vision: true         # for tasks with image/diagram keywords
