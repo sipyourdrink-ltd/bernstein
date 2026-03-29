@@ -55,7 +55,8 @@
       { "command": "bernstein.showAgentOutput", "title": "Bernstein: Show Agent Output", "icon": "$(output)" },
       { "command": "bernstein.cancelTask", "title": "Bernstein: Cancel Task", "icon": "$(x)" },
       { "command": "bernstein.prioritizeTask", "title": "Bernstein: Prioritize Task", "icon": "$(arrow-up)" },
-      { "command": "bernstein.openTask", "title": "Bernstein: Open Task Output", "icon": "$(go-to-file)" }
+      { "command": "bernstein.openTask", "title": "Bernstein: Open Task Output", "icon": "$(go-to-file)" },
+      { "command": "bernstein.inspectAgent", "title": "Bernstein: Inspect Agent", "icon": "$(info)" }
     ],
     "menus": {
       "view/title": [
@@ -67,6 +68,7 @@
         { "command": "bernstein.showAgentOutput", "when": "view == bernstein.agents && viewItem == agent.active", "group": "inline" },
         { "command": "bernstein.killAgent", "when": "view == bernstein.agents && viewItem == agent.active", "group": "1_agent_actions@1" },
         { "command": "bernstein.showAgentOutput", "when": "view == bernstein.agents && viewItem == agent.active", "group": "1_agent_actions@2" },
+        { "command": "bernstein.inspectAgent", "when": "view == bernstein.agents", "group": "1_agent_actions@3" },
         { "command": "bernstein.prioritizeTask", "when": "view == bernstein.tasks && viewItem =~ /^task\\.(open|claimed|in_progress)$/", "group": "1_task_actions@1" },
         { "command": "bernstein.cancelTask", "when": "view == bernstein.tasks && viewItem =~ /^task\\.(open|claimed|in_progress)$/", "group": "1_task_actions@2" }
       ]
