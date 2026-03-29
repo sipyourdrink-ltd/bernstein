@@ -17,9 +17,7 @@ def project(tmp_path: Path) -> Path:
     src = tmp_path / "src" / "myapp"
     src.mkdir(parents=True)
     (src / "__init__.py").write_text("")
-    (src / "models.py").write_text(
-        "class User:\n    name: str\n\nclass Order:\n    user: User\n"
-    )
+    (src / "models.py").write_text("class User:\n    name: str\n\nclass Order:\n    user: User\n")
     (src / "service.py").write_text(
         "from myapp.models import User\n\ndef create_user(name: str) -> User:\n    return User()\n"
     )

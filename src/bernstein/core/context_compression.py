@@ -21,10 +21,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SKIP_DIRS = frozenset({
-    "__pycache__", ".venv", "venv", "node_modules",
-    ".mypy_cache", ".pytest_cache", "dist", "build",
-})
+_SKIP_DIRS = frozenset(
+    {
+        "__pycache__",
+        ".venv",
+        "venv",
+        "node_modules",
+        ".mypy_cache",
+        ".pytest_cache",
+        "dist",
+        "build",
+    }
+)
 
 
 def _should_skip(rel_parts: tuple[str, ...]) -> bool:
@@ -488,8 +496,7 @@ class ContextCompressor:
             CompressionResult with selected files, metrics, and token estimates.
         """
         all_files: list[str] = sorted(
-            fpath.relative_to(self.workdir).as_posix()
-            for fpath in _iter_python_files(self.workdir)
+            fpath.relative_to(self.workdir).as_posix() for fpath in _iter_python_files(self.workdir)
         )
 
         original_tokens = self.estimate_tokens(all_files)

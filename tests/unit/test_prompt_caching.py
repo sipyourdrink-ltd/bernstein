@@ -313,6 +313,7 @@ def test_backfill_token_estimates_on_load() -> None:
             "total_cached_requests": 5,
         }
         import json as _json
+
         manifest_path.write_text(_json.dumps(manifest_data))
 
         mgr = PromptCachingManager(workdir)
