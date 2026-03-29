@@ -45,6 +45,7 @@ from bernstein.cli.advanced_cmd import (
 # Subcommand imports from modules
 from bernstein.cli.agents_cmd import agents_group
 from bernstein.cli.audit_cmd import audit_group
+from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.cost import cost_cmd
 from bernstein.cli.eval_benchmark_cmd import (
@@ -64,6 +65,7 @@ from bernstein.cli.task_cmd import (
     review_cmd,
     sync,
 )
+from bernstein.cli.verify_cmd import verify_cmd
 from bernstein.cli.workspace_cmd import config_group, workspace_group
 from bernstein.cli.wrap_up_cmd import wrap_up
 
@@ -90,6 +92,7 @@ __all__ = [
     # Groups and commands from advanced_cmd
     "benchmark_group",
     "cancel",
+    "chaos_group",
     "checkpoint_cmd",
     "completions",
     # Groups and commands from workspace_cmd
@@ -348,6 +351,13 @@ class _RichGroup(click.Group):
     metavar="MODEL",
     help="Force a specific model (e.g. opus, sonnet, o3).",
 )
+@click.option(
+    "--workflow",
+    "workflow_mode",
+    type=click.Choice(["governed"], case_sensitive=False),
+    default=None,
+    help="Activate governed workflow mode (deterministic phase-based execution).",
+)
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -365,6 +375,7 @@ def cli(
     merge_strategy: str,
     cli_override: str | None,
     model_override: str | None,
+    workflow_mode: str | None,
 ) -> None:
     """Multi-agent orchestration for CLI coding agents."""
     if ctx.invoked_subcommand is not None:
@@ -419,6 +430,7 @@ def cli(
         remote=False,
         cli=cli_override,
         model=model_override,
+        workflow=workflow_mode,
     )
 
 
@@ -474,3 +486,5 @@ cli.add_command(demo)
 cli.add_command(checkpoint_cmd, "checkpoint")
 cli.add_command(wrap_up, "wrap-up")
 cli.add_command(audit_group, "audit")
+cli.add_command(verify_cmd, "verify")
+cli.add_command(chaos_group, "chaos")

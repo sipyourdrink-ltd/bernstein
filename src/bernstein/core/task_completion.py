@@ -21,6 +21,7 @@ from bernstein.core.cross_model_verifier import (
     run_cross_model_verification_sync,
 )
 from bernstein.core.janitor import verify_task
+from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
     AgentSession,
@@ -531,7 +532,8 @@ def process_completed_tasks(
                             session.id,
                         )
             _merge_result: MergeResult | None = orch._spawner.reap_completed_agent(session, skip_merge=_skip_merge)
-            session.status = "dead"
+            if session.status != "dead":
+                transition_agent(session, "dead", actor="task_completion", reason="task completed, process reaped")
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
 
             # Route merge conflicts to a dedicated resolver agent.

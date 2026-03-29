@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
+from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import (
     AgentSession,
     Cell,
@@ -342,7 +343,7 @@ class MultiCellOrchestrator:
             if worker.status == "dead":
                 continue
             if not self._spawner.check_alive(worker):
-                worker.status = "dead"
+                transition_agent(worker, "dead", actor="multi_cell", reason="process not alive")
                 result.reaped.append(worker.id)
                 logger.info("Reaped dead worker %s from cell %s", worker.id, cell.id)
                 continue

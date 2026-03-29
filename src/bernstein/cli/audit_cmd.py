@@ -1,6 +1,7 @@
 """Audit CLI — Merkle-tree integrity seal and verification.
 
 Commands:
+  bernstein audit show             Show recent audit log events.
   bernstein audit seal             Compute and store a Merkle root.
   bernstein audit seal --anchor-git  Also create a git tag.
   bernstein audit verify --merkle  Verify the Merkle tree against disk.
@@ -8,6 +9,7 @@ Commands:
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 
 import click
@@ -23,6 +25,57 @@ MERKLE_DIR = AUDIT_DIR / "merkle"
 @click.group("audit")
 def audit_group() -> None:
     """Audit log integrity tools."""
+
+
+@audit_group.command("show")
+@click.option("--limit", default=20, show_default=True, help="Maximum number of events to show.")
+def show_cmd(limit: int) -> None:
+    """Show recent audit log events from .sdd/audit/."""
+    import json as _json
+
+    if not AUDIT_DIR.is_dir():
+        console.print(
+            "[yellow]No audit log found.[/yellow]  Run [bold]bernstein run[/bold] first to generate audit events."
+        )
+        return
+
+    log_files = sorted(AUDIT_DIR.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not log_files:
+        console.print(
+            "[yellow]Audit directory exists but contains no log files.[/yellow]  "
+            "Run [bold]bernstein run[/bold] to generate audit events."
+        )
+        return
+
+    events: list[dict] = []
+    for lf in log_files:
+        try:
+            for line in lf.read_text().splitlines():
+                line = line.strip()
+                if line:
+                    with contextlib.suppress(_json.JSONDecodeError):
+                        events.append(_json.loads(line))
+        except OSError:
+            pass
+        if len(events) >= limit:
+            break
+
+    events = events[:limit]
+
+    table = Table(show_header=True, header_style="bold magenta", show_lines=False)
+    table.add_column("Timestamp", style="dim", no_wrap=True)
+    table.add_column("Event", style="bold")
+    table.add_column("Detail")
+
+    for ev in events:
+        ts = str(ev.get("timestamp", ev.get("ts", "—")))[:19]
+        event_type = str(ev.get("event", ev.get("type", "—")))
+        detail = str(ev.get("detail", ev.get("message", ev.get("msg", ""))))[:80]
+        table.add_row(ts, event_type, detail)
+
+    console.print()
+    console.print(table)
+    console.print(f"\n[dim]Showing {len(events)} event(s) from {AUDIT_DIR}[/dim]\n")
 
 
 @audit_group.command("seal")

@@ -38,11 +38,14 @@
     ::-webkit-scrollbar-thumb { background: #2a2a2d; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #3a3a3d; }
     .tabular { font-variant-numeric: tabular-nums; }
-    /* Status dot colors */
     .dot-done { color: #22c55e; }
     .dot-working { color: #eab308; }
     .dot-failed { color: #ef4444; }
     .dot-open { color: #737373; }
+    /* Tab underline */
+    .tab-active { border-bottom: 2px solid #4f46e5; color: #e5e5e5; }
+    .tab-inactive { border-bottom: 2px solid transparent; color: #737373; }
+    .tab-inactive:hover { color: #a3a3a3; }
   </style>
 </head>
 <body class="min-h-screen font-sans antialiased" x-data="dashboard()">
@@ -70,6 +73,20 @@
       <span class="text-muted/50 text-[10px]" x-text="lastUpdate"></span>
     </div>
   </header>
+
+  <!-- Alerts Banner -->
+  <template x-if="alerts.length > 0">
+    <div class="px-4 pt-3">
+      <template x-for="(alert, i) in alerts" :key="i">
+        <div class="mb-1.5 px-3 py-2 rounded-lg text-xs flex items-center gap-2 fade-in"
+             :class="alert.level === 'error' ? 'bg-red-900/20 border border-red-800/30 text-red-300' : 'bg-yellow-900/20 border border-yellow-800/30 text-yellow-300'">
+          <span class="text-sm" x-text="alert.level === 'error' ? '\u25CF' : '\u25B2'"></span>
+          <span class="font-medium" x-text="alert.message"></span>
+          <span class="text-[10px] opacity-70" x-text="alert.detail"></span>
+        </div>
+      </template>
+    </div>
+  </template>
 
   <!-- Stat Cards -->
   <div class="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -113,7 +130,7 @@
         <span class="text-[10px] text-muted tabular" x-text="progressPct + '% done'"></span>
       </div>
     </div>
-    <!-- Cost -->
+    <!-- Cost with budget bar -->
     <div class="bg-surface border border-border rounded-lg p-3">
       <div class="text-[10px] text-muted uppercase tracking-wider mb-1">Total Cost</div>
       <div class="text-2xl font-mono font-semibold tabular text-green-400" x-text="formatCost(totalCost)"></div>
@@ -123,22 +140,68 @@
           <span class="text-muted tabular" x-text="formatCost(budgetUsd) + ' budget'"></span>
         </template>
       </div>
+      <!-- Budget progress bar -->
+      <template x-if="budgetUsd > 0">
+        <div class="mt-1.5">
+          <div class="h-1 bg-border rounded-full overflow-hidden">
+            <div class="h-full rounded-full transition-all duration-500"
+                 :class="budgetPct >= 95 ? 'bg-red-500' : budgetPct >= 80 ? 'bg-yellow-500' : 'bg-green-500'"
+                 :style="'width:' + Math.min(budgetPct, 100) + '%'"></div>
+          </div>
+          <div class="text-[9px] text-muted tabular mt-0.5" x-text="budgetPct.toFixed(0) + '% of budget'"></div>
+        </div>
+      </template>
     </div>
   </div>
 
   <!-- Main Area: 2 columns -->
-  <div class="px-4 pb-4 grid grid-cols-1 lg:grid-cols-5 gap-3" style="height: calc(100vh - 195px);">
+  <div class="px-4 pb-3 grid grid-cols-1 lg:grid-cols-5 gap-3" style="min-height: calc(100vh - 280px);">
 
     <!-- Left: Task Table (60%) -->
-    <div class="lg:col-span-3 bg-surface border border-border rounded-lg flex flex-col overflow-hidden">
-      <!-- Table Header -->
-      <div class="px-3 py-2 border-b border-border flex items-center justify-between">
-        <h2 class="text-xs font-semibold text-text">Tasks</h2>
-        <div class="flex items-center gap-2 text-[10px] text-muted">
-          <span x-text="tasks.length + ' total'"></span>
-          <button @click="taskFilter = taskFilter === 'all' ? 'active' : (taskFilter === 'active' ? 'done' : 'all')"
-                  class="px-1.5 py-0.5 rounded bg-border/50 hover:bg-border text-muted hover:text-text transition-colors"
-                  x-text="'Show: ' + taskFilter"></button>
+    <div class="lg:col-span-3 bg-surface border border-border rounded-lg flex flex-col overflow-hidden" style="max-height: 60vh;">
+      <!-- Table Header with Filters -->
+      <div class="px-3 py-2 border-b border-border">
+        <div class="flex items-center justify-between mb-1.5">
+          <h2 class="text-xs font-semibold text-text">Tasks</h2>
+          <span class="text-[10px] text-muted tabular" x-text="filteredTasks.length + '/' + tasks.length"></span>
+        </div>
+        <!-- Filter bar -->
+        <div class="flex items-center gap-2 flex-wrap">
+          <!-- Status filter -->
+          <select x-model="taskFilter"
+                  class="text-[10px] bg-bg border border-border rounded px-1.5 py-0.5 text-muted focus:text-text focus:border-accent/50 outline-none">
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="done">Done</option>
+            <option value="failed">Failed</option>
+            <option value="open">Open</option>
+            <option value="blocked">Blocked</option>
+          </select>
+          <!-- Role filter -->
+          <select x-model="roleFilter"
+                  class="text-[10px] bg-bg border border-border rounded px-1.5 py-0.5 text-muted focus:text-text focus:border-accent/50 outline-none">
+            <option value="all">All roles</option>
+            <template x-for="role in uniqueRoles" :key="role">
+              <option :value="role" x-text="role"></option>
+            </template>
+          </select>
+          <!-- Priority filter -->
+          <select x-model="priorityFilter"
+                  class="text-[10px] bg-bg border border-border rounded px-1.5 py-0.5 text-muted focus:text-text focus:border-accent/50 outline-none">
+            <option value="all">All priorities</option>
+            <option value="1">P1 Critical</option>
+            <option value="2">P2 Normal</option>
+            <option value="3">P3 Nice-to-have</option>
+          </select>
+          <!-- Assignee filter -->
+          <select x-model="assigneeFilter"
+                  class="text-[10px] bg-bg border border-border rounded px-1.5 py-0.5 text-muted focus:text-text focus:border-accent/50 outline-none">
+            <option value="all">All agents</option>
+            <option value="unassigned">Unassigned</option>
+            <template x-for="agentId in uniqueAssignees" :key="agentId">
+              <option :value="agentId" x-text="agentId.slice(0, 12)"></option>
+            </template>
+          </select>
         </div>
       </div>
       <!-- Table -->
@@ -147,12 +210,16 @@
           <thead class="sticky top-0 bg-surface z-10">
             <tr class="border-b border-border">
               <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider w-8">St</th>
+              <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider w-6 cursor-pointer hover:text-text"
+                  @click="sortBy('priority')">P</th>
               <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider cursor-pointer hover:text-text"
                   @click="sortBy('role')">Role</th>
               <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider cursor-pointer hover:text-text"
                   @click="sortBy('title')">Title</th>
               <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider cursor-pointer hover:text-text"
                   @click="sortBy('assigned_agent')">Agent</th>
+              <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider cursor-pointer hover:text-text"
+                  @click="sortBy('created_at')">Created</th>
               <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider">Progress</th>
               <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider w-16">Actions</th>
             </tr>
@@ -160,22 +227,22 @@
           <tbody class="divide-y divide-border/50">
             <template x-for="task in filteredTasks" :key="task.id">
               <tr class="hover:bg-surface-2/30 transition-colors fade-in">
-                <!-- Status dot -->
                 <td class="px-3 py-1.5 text-center">
                   <span x-text="statusDot(task.status)"
                         :class="statusDotClass(task.status)"
                         class="text-sm"></span>
                 </td>
-                <!-- Role -->
+                <td class="px-3 py-1.5 font-mono text-[10px]"
+                    :class="task.priority === 1 ? 'text-red-400' : task.priority === 2 ? 'text-yellow-400' : 'text-muted'"
+                    x-text="'P' + task.priority"></td>
                 <td class="px-3 py-1.5">
                   <span class="text-accent-light text-[11px]" x-text="task.role"></span>
                 </td>
-                <!-- Title -->
-                <td class="px-3 py-1.5 text-text max-w-[280px] truncate" x-text="task.title"></td>
-                <!-- Agent -->
+                <td class="px-3 py-1.5 text-text max-w-[240px] truncate" x-text="task.title"></td>
                 <td class="px-3 py-1.5 font-mono text-[10px] text-muted"
                     x-text="task.assigned_agent ? task.assigned_agent.slice(0, 10) : '--'"></td>
-                <!-- Progress -->
+                <td class="px-3 py-1.5 font-mono text-[10px] text-muted"
+                    x-text="formatCreatedTime(task.created_at)"></td>
                 <td class="px-3 py-1.5">
                   <div class="flex items-center gap-1.5">
                     <div class="w-14 h-1 bg-border rounded-full overflow-hidden">
@@ -186,7 +253,6 @@
                     <span class="text-[10px] text-muted font-mono tabular w-7" x-text="task.progress + '%'"></span>
                   </div>
                 </td>
-                <!-- Actions -->
                 <td class="px-3 py-1.5">
                   <div class="flex items-center gap-1">
                     <button x-show="task.assigned_agent && ['claimed','in_progress'].includes(task.status)"
@@ -206,7 +272,7 @@
               </tr>
             </template>
             <template x-if="filteredTasks.length === 0">
-              <tr><td colspan="6" class="px-3 py-12 text-center text-muted text-xs">No tasks</td></tr>
+              <tr><td colspan="8" class="px-3 py-12 text-center text-muted text-xs">No tasks match filters</td></tr>
             </template>
           </tbody>
         </table>
@@ -214,7 +280,7 @@
     </div>
 
     <!-- Right: Agents + Activity Log (40%) -->
-    <div class="lg:col-span-2 flex flex-col gap-3 overflow-hidden">
+    <div class="lg:col-span-2 flex flex-col gap-3 overflow-hidden" style="max-height: 60vh;">
 
       <!-- Agent Cards -->
       <div class="bg-surface border border-border rounded-lg flex flex-col overflow-hidden" style="flex: 1 1 55%;">
@@ -242,7 +308,10 @@
                 <span class="text-muted" x-text="agentStatusLabel(agent.status)"></span>
                 <span class="font-mono tabular text-muted" x-text="fmtRuntime(agent.runtime_s)"></span>
               </div>
-              <!-- Agent tasks -->
+              <div class="flex items-center justify-between text-[10px] mt-0.5">
+                <span class="font-mono text-muted/60" x-text="agent.pid > 0 ? 'PID\u00a0' + agent.pid : ''"></span>
+                <span class="font-mono tabular text-muted/50" x-text="fmtSpawnTime(agent.spawn_ts)"></span>
+              </div>
               <template x-for="task in agent.tasks" :key="task.id">
                 <div class="mt-1.5">
                   <div class="flex items-center justify-between text-[10px] mb-0.5">
@@ -298,7 +367,6 @@
         <div class="flex-1 overflow-auto bg-bg p-2 font-mono text-[11px] leading-relaxed"
              x-ref="logContainer"
              @scroll="logAutoScroll = ($el.scrollHeight - $el.scrollTop) <= ($el.clientHeight + 40)">
-          <!-- Agent log lines (when agent selected) -->
           <template x-if="selectedAgent && logLines.length > 0">
             <div>
               <template x-for="(line, i) in logLines" :key="i">
@@ -306,7 +374,6 @@
               </template>
             </div>
           </template>
-          <!-- Activity feed (when no agent selected) -->
           <template x-if="!selectedAgent && activityLog.length > 0">
             <div>
               <template x-for="(entry, i) in activityLog" :key="i">
@@ -325,6 +392,154 @@
             <div class="text-center py-8 text-xs text-muted">No activity yet</div>
           </template>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Section: Cost Breakdown + Workers -->
+  <div class="px-4 pb-4 grid grid-cols-1 lg:grid-cols-3 gap-3">
+
+    <!-- Cost by Model -->
+    <div class="bg-surface border border-border rounded-lg p-3">
+      <h3 class="text-xs font-semibold text-text mb-3">Cost by Model</h3>
+      <template x-if="Object.keys(costByModel).length > 0">
+        <div class="space-y-2">
+          <template x-for="[model, cost] in sortedCostByModel" :key="model">
+            <div>
+              <div class="flex items-center justify-between text-[10px] mb-0.5">
+                <span class="font-mono text-text" x-text="model"></span>
+                <span class="font-mono tabular text-green-400" x-text="formatCost(cost)"></span>
+              </div>
+              <div class="h-2 bg-border rounded-full overflow-hidden">
+                <div class="h-full bg-accent rounded-full transition-all duration-500"
+                     :style="'width:' + (maxModelCost > 0 ? (cost / maxModelCost * 100) : 0) + '%'"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+      <template x-if="Object.keys(costByModel).length === 0">
+        <p class="text-[10px] text-muted text-center py-4">No cost data yet</p>
+      </template>
+    </div>
+
+    <!-- Cost by Agent / Daily (tabbed) -->
+    <div class="bg-surface border border-border rounded-lg p-3">
+      <div class="flex items-center gap-3 mb-3">
+        <button @click="costTab='agent'"
+                class="text-xs font-semibold pb-0.5 transition-colors"
+                :class="costTab==='agent' ? 'tab-active' : 'tab-inactive'">By Agent</button>
+        <button @click="costTab='daily'"
+                class="text-xs font-semibold pb-0.5 transition-colors"
+                :class="costTab==='daily' ? 'tab-active' : 'tab-inactive'">Daily</button>
+      </div>
+      <!-- By Agent tab -->
+      <div x-show="costTab === 'agent'">
+        <template x-if="Object.keys(costByAgent).length > 0">
+          <div class="space-y-2 max-h-48 overflow-auto">
+            <template x-for="[agentId, cost] in sortedCostByAgent" :key="agentId">
+              <div>
+                <div class="flex items-center justify-between text-[10px] mb-0.5">
+                  <span class="font-mono text-text" x-text="agentId.slice(0, 16)"></span>
+                  <span class="font-mono tabular text-green-400" x-text="formatCost(cost)"></span>
+                </div>
+                <div class="h-1.5 bg-border rounded-full overflow-hidden">
+                  <div class="h-full bg-accent-light/60 rounded-full transition-all duration-500"
+                       :style="'width:' + (maxAgentCost > 0 ? (cost / maxAgentCost * 100) : 0) + '%'"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+        <template x-if="Object.keys(costByAgent).length === 0">
+          <p class="text-[10px] text-muted text-center py-4">No cost data yet</p>
+        </template>
+      </div>
+      <!-- Daily tab -->
+      <div x-show="costTab === 'daily'">
+        <template x-if="sortedDailyCosts.length > 0">
+          <div class="space-y-2 max-h-48 overflow-auto">
+            <template x-for="[day, cost] in sortedDailyCosts" :key="day">
+              <div>
+                <div class="flex items-center justify-between text-[10px] mb-0.5">
+                  <span class="font-mono text-text" x-text="day"></span>
+                  <span class="font-mono tabular text-green-400" x-text="formatCost(cost)"></span>
+                </div>
+                <div class="h-1.5 bg-border rounded-full overflow-hidden">
+                  <div class="h-full bg-yellow-500/60 rounded-full transition-all duration-500"
+                       :style="'width:' + (maxDailyCost > 0 ? (cost / maxDailyCost * 100) : 0) + '%'"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+        <template x-if="sortedDailyCosts.length === 0">
+          <p class="text-[10px] text-muted text-center py-4">No cost data yet</p>
+        </template>
+      </div>
+    </div>
+
+    <!-- Burn Chart + Workers -->
+    <div class="flex flex-col gap-3">
+      <!-- Burn Chart -->
+      <div class="bg-surface border border-border rounded-lg p-3">
+        <h3 class="text-xs font-semibold text-text mb-2">Cost Over Time</h3>
+        <template x-if="costHistory.length >= 2">
+          <div class="h-24">
+            <svg width="100%" height="100%" viewBox="0 0 300 80" preserveAspectRatio="none" class="overflow-visible">
+              <!-- Grid lines -->
+              <line x1="0" y1="0" x2="300" y2="0" stroke="#2a2a2d" stroke-width="0.5"/>
+              <line x1="0" y1="40" x2="300" y2="40" stroke="#2a2a2d" stroke-width="0.5"/>
+              <line x1="0" y1="80" x2="300" y2="80" stroke="#2a2a2d" stroke-width="0.5"/>
+              <!-- Budget line -->
+              <template x-if="budgetUsd > 0">
+                <line x1="0" :y1="80 - (budgetUsd / maxChartCost * 80)" x2="300" :y1="80 - (budgetUsd / maxChartCost * 80)"
+                      stroke="#ef4444" stroke-width="0.5" stroke-dasharray="4,2"/>
+              </template>
+              <!-- Cost line -->
+              <polyline :points="burnChartPoints" fill="none" stroke="#4f46e5" stroke-width="1.5" stroke-linejoin="round"/>
+              <!-- Fill area -->
+              <polygon :points="burnChartFill" fill="#4f46e5" fill-opacity="0.1"/>
+            </svg>
+            <div class="flex justify-between text-[9px] text-muted mt-1">
+              <span>$0</span>
+              <span x-text="formatCost(maxChartCost)"></span>
+            </div>
+          </div>
+        </template>
+        <template x-if="costHistory.length < 2">
+          <p class="text-[10px] text-muted text-center py-3">Collecting data...</p>
+        </template>
+      </div>
+
+      <!-- Workers / Nodes -->
+      <div class="bg-surface border border-border rounded-lg p-3 flex-1">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xs font-semibold text-text">Workers</h3>
+          <span class="text-[10px] text-muted tabular" x-text="workers.length + ' registered'"></span>
+        </div>
+        <template x-if="workers.length > 0">
+          <div class="space-y-1.5 max-h-32 overflow-auto">
+            <template x-for="worker in workers" :key="worker.node_id || worker.id">
+              <div class="flex items-center justify-between text-[10px] px-2 py-1 rounded bg-bg border border-border/50">
+                <div class="flex items-center gap-1.5">
+                  <span class="inline-block w-1.5 h-1.5 rounded-full"
+                        :class="worker.status === 'healthy' || worker.status === 'active' ? 'bg-green-500' : worker.status === 'draining' ? 'bg-yellow-500' : 'bg-red-500'"></span>
+                  <span class="font-mono text-text" x-text="(worker.node_id || worker.id || '').slice(0, 16)"></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-muted" x-text="(worker.capabilities || []).join(', ') || worker.status || '--'"></span>
+                  <template x-if="worker.current_load !== undefined">
+                    <span class="font-mono tabular text-muted" x-text="worker.current_load + ' load'"></span>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+        <template x-if="workers.length === 0">
+          <p class="text-[10px] text-muted text-center py-3">Single-node mode</p>
+        </template>
       </div>
     </div>
   </div>
@@ -353,6 +568,7 @@
         fileLocks: {},
         mergeQueue: [],
         alerts: [],
+        workers: [],
 
         // UI state
         selectedAgent: '',
@@ -360,8 +576,12 @@
         logAutoScroll: true,
         activityLog: [],
         taskFilter: 'all',
+        roleFilter: 'all',
+        priorityFilter: 'all',
+        assigneeFilter: 'all',
         sortCol: 'priority',
         sortAsc: true,
+        costTab: 'agent',
         _agentEventSource: null,
         _logPollTimer: null,
 
@@ -376,19 +596,107 @@
           return Math.round(this.stats.failed / this.stats.total * 100);
         },
         get budgetUsd() { return this.liveCosts.budget_usd || 0; },
+        get budgetPct() {
+          if (this.budgetUsd <= 0) return 0;
+          return (this.totalCost / this.budgetUsd) * 100;
+        },
         get burnRate() {
           const elapsedS = (Date.now() - this.startTime) / 1000;
           if (elapsedS <= 0 || this.totalCost <= 0) return 0;
           return this.totalCost / (elapsedS / 3600);
         },
 
+        // Cost breakdowns from live_costs
+        get costByModel() { return this.liveCosts.per_model || {}; },
+        get costByAgent() { return this.liveCosts.per_agent || {}; },
+        get sortedCostByModel() {
+          return Object.entries(this.costByModel).sort((a, b) => b[1] - a[1]);
+        },
+        get sortedCostByAgent() {
+          return Object.entries(this.costByAgent).sort((a, b) => b[1] - a[1]);
+        },
+        get maxModelCost() {
+          const vals = Object.values(this.costByModel);
+          return vals.length > 0 ? Math.max(...vals) : 0;
+        },
+        get maxAgentCost() {
+          const vals = Object.values(this.costByAgent);
+          return vals.length > 0 ? Math.max(...vals) : 0;
+        },
+        get dailyCosts() { return this.liveCosts.daily_costs || {}; },
+        get sortedDailyCosts() {
+          return Object.entries(this.dailyCosts).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 14);
+        },
+        get maxDailyCost() {
+          const vals = Object.values(this.dailyCosts);
+          return vals.length > 0 ? Math.max(...vals) : 0;
+        },
+
+        // Burn chart
+        get maxChartCost() {
+          if (this.costHistory.length === 0) return 1;
+          const maxCost = Math.max(...this.costHistory.map(p => p.cost || 0));
+          return Math.max(maxCost, this.budgetUsd) || 1;
+        },
+        get burnChartPoints() {
+          const pts = this.costHistory;
+          if (pts.length < 2) return '';
+          const maxC = this.maxChartCost;
+          return pts.map((p, i) => {
+            const x = (i / (pts.length - 1)) * 300;
+            const y = 80 - ((p.cost || 0) / maxC * 80);
+            return x + ',' + y;
+          }).join(' ');
+        },
+        get burnChartFill() {
+          const pts = this.costHistory;
+          if (pts.length < 2) return '';
+          const maxC = this.maxChartCost;
+          const linePoints = pts.map((p, i) => {
+            const x = (i / (pts.length - 1)) * 300;
+            const y = 80 - ((p.cost || 0) / maxC * 80);
+            return x + ',' + y;
+          });
+          return linePoints.join(' ') + ' 300,80 0,80';
+        },
+
+        // Unique values for filters
+        get uniqueRoles() {
+          return [...new Set(this.tasks.map(t => t.role).filter(Boolean))].sort();
+        },
+        get uniqueAssignees() {
+          return [...new Set(this.tasks.map(t => t.assigned_agent).filter(Boolean))].sort();
+        },
+
         get filteredTasks() {
           let list = this.tasks;
+          // Status filter
           if (this.taskFilter === 'active') {
             list = list.filter(t => ['open', 'claimed', 'in_progress'].includes(t.status));
           } else if (this.taskFilter === 'done') {
-            list = list.filter(t => ['done', 'failed'].includes(t.status));
+            list = list.filter(t => t.status === 'done');
+          } else if (this.taskFilter === 'failed') {
+            list = list.filter(t => t.status === 'failed');
+          } else if (this.taskFilter === 'open') {
+            list = list.filter(t => t.status === 'open');
+          } else if (this.taskFilter === 'blocked') {
+            list = list.filter(t => t.status === 'blocked');
           }
+          // Role filter
+          if (this.roleFilter !== 'all') {
+            list = list.filter(t => t.role === this.roleFilter);
+          }
+          // Priority filter
+          if (this.priorityFilter !== 'all') {
+            list = list.filter(t => String(t.priority) === this.priorityFilter);
+          }
+          // Assignee filter
+          if (this.assigneeFilter === 'unassigned') {
+            list = list.filter(t => !t.assigned_agent);
+          } else if (this.assigneeFilter !== 'all') {
+            list = list.filter(t => t.assigned_agent === this.assigneeFilter);
+          }
+          // Sort
           const col = this.sortCol;
           const dir = this.sortAsc ? 1 : -1;
           return [...list].sort((a, b) => {
@@ -403,8 +711,11 @@
         // ---- Initialization ----
         init() {
           this.fetchData();
+          this.fetchWorkers();
           this.connectSSE();
           this.startTimer();
+          // Refresh workers every 30s
+          setInterval(() => this.fetchWorkers(), 30000);
         },
 
         // ---- Data fetching ----
@@ -414,7 +725,6 @@
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
 
-            // Diff for activity log
             this.diffAndLog(data);
 
             this.stats = data.stats || this.stats;
@@ -432,15 +742,24 @@
             if (!this.connected) this.connected = true;
           } catch (e) {
             this.connected = false;
-            // If SSE is down and we're not already polling, start polling
             if (!this.pollTimer) {
               this.startPolling();
             }
           }
         },
 
+        async fetchWorkers() {
+          try {
+            const resp = await fetch('/cluster/nodes');
+            if (!resp.ok) return;
+            const data = await resp.json();
+            this.workers = Array.isArray(data) ? data : (data.nodes || []);
+          } catch (e) {
+            // Cluster endpoints may not be available in single-node mode
+          }
+        },
+
         diffAndLog(newData) {
-          // Generate activity log entries from data changes
           const newTasks = newData.tasks || [];
           const oldMap = {};
           for (const t of this.tasks) oldMap[t.id] = t;
@@ -475,7 +794,6 @@
             this.eventSource.onopen = () => {
               this.connected = true;
               this.polling = false;
-              // Stop polling if SSE reconnected
               if (this.pollTimer) {
                 clearInterval(this.pollTimer);
                 this.pollTimer = null;
@@ -484,9 +802,7 @@
 
             this.eventSource.onerror = () => {
               this.connected = false;
-              // Start polling as fallback
               this.startPolling();
-              // Retry SSE after 5 seconds
               setTimeout(() => {
                 if (this.eventSource) {
                   this.eventSource.close();
@@ -496,18 +812,19 @@
               }, 5000);
             };
 
-            // Listen for named events
-            this.eventSource.addEventListener('task_update', (e) => {
+            this.eventSource.addEventListener('task_update', () => {
               this.fetchData();
             });
-            this.eventSource.addEventListener('agent_update', (e) => {
+            this.eventSource.addEventListener('task_progress', () => {
+              this.fetchData();
+            });
+            this.eventSource.addEventListener('agent_update', () => {
               this.fetchData();
             });
             this.eventSource.addEventListener('heartbeat', () => {
               this.connected = true;
             });
 
-            // Generic message handler
             this.eventSource.onmessage = (e) => {
               try {
                 const data = JSON.parse(e.data);
@@ -571,14 +888,12 @@
             es.onerror = () => {
               es.close();
               this._agentEventSource = null;
-              // Fall back to polling agent logs
               if (this.selectedAgent && !this._logPollTimer) {
                 this._logPollTimer = setInterval(() => this.fetchAgentLogs(), 3000);
                 this.fetchAgentLogs();
               }
             };
           } catch (e) {
-            // EventSource not supported, poll instead
             this._logPollTimer = setInterval(() => this.fetchAgentLogs(), 2000);
             this.fetchAgentLogs();
           }
@@ -673,11 +988,26 @@
           return '$' + cost.toFixed(2);
         },
 
+        formatCreatedTime(timestamp) {
+          if (!timestamp) return '--';
+          const now = Date.now() / 1000;
+          const diff = Math.floor(now - timestamp);
+          if (diff < 60) return 'now';
+          if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+          if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+          return Math.floor(diff / 86400) + 'd ago';
+        },
+
         fmtRuntime(s) {
           if (!s || s < 0) return '--';
           if (s < 60) return s + 's';
           if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
           return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+        },
+
+        fmtSpawnTime(ts) {
+          if (!ts) return '';
+          return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         },
 
         statusDot(status) {

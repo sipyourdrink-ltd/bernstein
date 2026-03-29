@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC
 from pathlib import Path  # noqa: TC003 — used at runtime in dashboard_data
 from typing import TYPE_CHECKING, Any, cast
 
@@ -44,6 +45,42 @@ async def status_dashboard(request: Request) -> JSONResponse:
     """Dashboard summary of task counts."""
     store = _get_store(request)
     return JSONResponse(content=store.status_summary())
+
+
+@router.get("/routing/bandit")
+async def bandit_routing_stats(request: Request) -> JSONResponse:
+    """Return contextual bandit routing statistics.
+
+    Reads persisted state from ``.sdd/routing/``.  Returns an empty dict
+    when bandit routing has not been activated (``--routing bandit`` not passed).
+    """
+    import json as _json
+
+    store = _get_store(request)
+    routing_dir = store.jsonl_path.parent.parent / "routing"
+    state_path = routing_dir / "bandit_state.json"
+    policy_path = routing_dir / "policy.json"
+
+    if not state_path.exists():
+        return JSONResponse(content={"mode": "static", "active": False})
+
+    try:
+        state = _json.loads(state_path.read_text())
+        total_updates = 0
+        if policy_path.exists():
+            policy = _json.loads(policy_path.read_text())
+            total_updates = int(policy.get("total_updates", 0))
+        return JSONResponse(
+            content={
+                "mode": "bandit",
+                "active": True,
+                "total_completions": state.get("total_completions", 0),
+                "total_policy_updates": total_updates,
+                "selection_frequency": state.get("selection_counts", {}),
+            }
+        )
+    except Exception as exc:
+        return JSONResponse(content={"mode": "bandit", "active": True, "error": str(exc)})
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -428,16 +465,23 @@ def _load_live_costs(request: Request) -> dict[str, Any]:
         tracker = CostTracker.load(sdd_dir, cost_files[-1].stem)
         if tracker is None:
             return _empty
+        from datetime import datetime
+
         per_model: dict[str, float] = {}
         per_agent: dict[str, float] = {}
+        daily: dict[str, float] = {}
         for usage in tracker.usages:
             per_model[usage.model] = per_model.get(usage.model, 0.0) + usage.cost_usd
             per_agent[usage.agent_id] = per_agent.get(usage.agent_id, 0.0) + usage.cost_usd
+            if usage.timestamp > 0:
+                day = datetime.fromtimestamp(usage.timestamp, tz=UTC).strftime("%Y-%m-%d")
+                daily[day] = daily.get(day, 0.0) + usage.cost_usd
         status = tracker.status()
         return {
             **status.to_dict(),
             "per_model": per_model,
             "per_agent": per_agent,
+            "daily_costs": daily,
         }
     except Exception:
         return _empty

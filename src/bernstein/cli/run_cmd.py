@@ -239,6 +239,31 @@ def _show_run_summary() -> None:
     default=None,
     help="Force specific model (e.g. opus, sonnet, o4-mini; overrides config file).",
 )
+@click.option(
+    "--workflow",
+    default=None,
+    type=click.Choice(["governed"], case_sensitive=False),
+    help="Activate a governed workflow mode (deterministic phase-based execution).",
+)
+@click.option(
+    "--routing",
+    default=None,
+    type=click.Choice(["static", "bandit"], case_sensitive=False),
+    help=(
+        "Model routing strategy: 'static' = fixed cascade heuristics (default), "
+        "'bandit' = contextual LinUCB bandit that learns cost-quality tradeoffs."
+    ),
+)
+@click.option(
+    "--compliance",
+    default=None,
+    type=click.Choice(["development", "standard", "regulated"], case_sensitive=False),
+    help=(
+        "Compliance preset: 'development' = audit + WAL + AI labels, "
+        "'standard' = + HMAC chain + governed workflow + approval gates, "
+        "'regulated' = + signed WAL + data residency + SBOM + evidence bundle."
+    ),
+)
 def run(
     goal: str | None,
     seed_file: str | None,
@@ -247,17 +272,23 @@ def run(
     remote: bool,
     cli: str | None,
     model: str | None,
+    workflow: str | None,
+    routing: str | None,
+    compliance: str | None,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
     \b
-      bernstein conduct                     # reads bernstein.yaml
-      bernstein conduct --goal "Build X"    # inline goal
-      bernstein conduct --seed custom.yaml  # custom seed file
-      bernstein conduct --cells 3           # 3 parallel cells (multi-cell mode)
-      bernstein conduct --remote            # bind to 0.0.0.0 for cluster access
-      bernstein conduct --cli claude        # force Claude Code agent
-      bernstein conduct --model opus        # force Opus model
+      bernstein conduct                        # reads bernstein.yaml
+      bernstein conduct --goal "Build X"       # inline goal
+      bernstein conduct --seed custom.yaml     # custom seed file
+      bernstein conduct --cells 3              # 3 parallel cells (multi-cell mode)
+      bernstein conduct --remote               # bind to 0.0.0.0 for cluster access
+      bernstein conduct --cli claude           # force Claude Code agent
+      bernstein conduct --model opus           # force Opus model
+      bernstein conduct --workflow governed    # governed workflow mode
+      bernstein conduct --routing bandit       # contextual bandit routing (learns over time)
+      bernstein conduct --compliance standard  # compliance mode (development/standard/regulated)
     """
     print_banner()
 
@@ -271,6 +302,18 @@ def run(
 
     from bernstein.core.bootstrap import bootstrap_from_goal, bootstrap_from_seed
     from bernstein.core.seed import SeedError
+
+    # Propagate workflow mode to orchestrator subprocess via env var
+    if workflow:
+        os.environ["BERNSTEIN_WORKFLOW"] = workflow
+
+    # Propagate routing mode so the orchestrator picks up bandit vs static
+    if routing:
+        os.environ["BERNSTEIN_ROUTING"] = routing
+
+    # Propagate compliance preset so the orchestrator subprocess picks it up
+    if compliance:
+        os.environ["BERNSTEIN_COMPLIANCE"] = compliance
 
     workdir = Path.cwd()
 
@@ -435,39 +478,55 @@ _ADAPTER_COMMANDS: dict[str, str] = {
 
 DEMO_TASKS: list[dict[str, str]] = [
     {
-        "filename": "1-health-check.md",
+        "filename": "1-fix-off-by-one.md",
         "content": (
-            "# Add health check endpoint\n\n"
+            "# Fix off-by-one in get_item route\n\n"
             "**Role:** backend\n"
             "**Priority:** 1\n"
             "**Scope:** small\n"
             "**Complexity:** low\n\n"
-            "Add a `/health` endpoint to `app.py` that returns "
-            '`{"status": "healthy", "version": "1.0.0"}` with HTTP 200.\n'
+            "BUG: `get_item(n)` in `app.py` accesses `ITEMS[n]` (zero-indexed) "
+            "but the `/items/<n>` route is 1-indexed. "
+            "Fix: use `ITEMS[n - 1]` and return 404 when `n` is out of range.\n"
         ),
     },
     {
-        "filename": "2-add-tests.md",
+        "filename": "2-fix-missing-import.md",
         "content": (
-            "# Add tests for app.py\n\n"
-            "**Role:** qa\n"
-            "**Priority:** 2\n"
+            "# Fix missing `request` import\n\n"
+            "**Role:** backend\n"
+            "**Priority:** 1\n"
             "**Scope:** small\n"
             "**Complexity:** low\n\n"
-            "Add pytest tests in `tests/test_app.py` covering all routes in "
-            "`app.py`, including the `/health` endpoint.\n"
+            "BUG: `app.py` uses `request.args` in the `/echo` endpoint but "
+            "`request` is not imported from flask. "
+            "Add `request` to the `from flask import ...` line.\n"
         ),
     },
     {
-        "filename": "3-error-handling.md",
+        "filename": "3-fix-health-status-code.md",
         "content": (
-            "# Add error handling middleware\n\n"
+            "# Fix health endpoint returns 201 instead of 200\n\n"
             "**Role:** backend\n"
             "**Priority:** 2\n"
             "**Scope:** small\n"
             "**Complexity:** low\n\n"
-            "Add 404 and 500 JSON error handlers to `app.py`. "
-            'Return `{"error": "Not found", "status": 404}` for missing routes.\n'
+            "BUG: the `/health` endpoint in `app.py` returns HTTP 201 (Created) "
+            "instead of 200 (OK). Remove the explicit status code so it defaults "
+            "to 200 and `test_health_returns_200` passes.\n"
+        ),
+    },
+    {
+        "filename": "4-fix-broken-test.md",
+        "content": (
+            "# Fix broken assertion in test_hello_returns_200\n\n"
+            "**Role:** qa\n"
+            "**Priority:** 2\n"
+            "**Scope:** small\n"
+            "**Complexity:** low\n\n"
+            "BUG: `tests/test_app.py::test_hello_returns_200` asserts "
+            "`resp.status_code == 404` — wrong, it should assert 200. "
+            "Fix the assertion so the test suite goes green.\n"
         ),
     },
 ]
@@ -503,14 +562,34 @@ def setup_demo_project(project_dir: Path, adapter: str) -> None:
     else:
         # Fallback: write minimal files inline so the command works even without
         # the templates/ directory being present on PYTHONPATH.
+        # Contains 4 intentional bugs matching the demo tasks.
         (project_dir / "app.py").write_text(
-            '"""Simple Flask web application."""\n'
-            "from flask import Flask, jsonify\n\n"
-            "app = Flask(__name__)\n\n\n"
+            '"""Simple Flask web application for the Bernstein demo.\n\n'
+            "Contains four intentional bugs for the demo to fix.\n"
+            '"""\n'
+            "from flask import Flask, jsonify  "
+            "# BUG 2: 'request' is missing from this import\n\n"
+            "app = Flask(__name__)\n\n"
+            'ITEMS = ["apple", "banana", "cherry", "date"]\n\n\n'
             '@app.route("/")\n'
             "def hello() -> object:\n"
             '    """Return a greeting."""\n'
             '    return jsonify({"message": "Hello, World!", "status": "ok"})\n\n\n'
+            '@app.route("/items/<int:n>")\n'
+            "def get_item(n: int) -> object:\n"
+            '    """Return the nth item (1-indexed). BUG 1: off-by-one."""\n'
+            '    return jsonify({"id": n, "item": ITEMS[n]})  # off-by-one\n\n\n'
+            '@app.route("/echo")\n'
+            "def echo() -> object:\n"
+            '    """Echo a query param. BUG 2: request not imported."""\n'
+            '    msg = request.args.get("msg", "")  '
+            "# type: ignore[name-defined]  # noqa: F821\n"
+            '    return jsonify({"echo": msg})\n\n\n'
+            '@app.route("/health")\n'
+            "def health() -> object:\n"
+            '    """Health check. BUG 3: returns 201 instead of 200."""\n'
+            '    return jsonify({"status": "healthy", "version": "1.0.0"}), 201  '
+            "# type: ignore[return-value]\n\n\n"
             'if __name__ == "__main__":\n'
             "    app.run(debug=True)\n"
         )
@@ -519,12 +598,30 @@ def setup_demo_project(project_dir: Path, adapter: str) -> None:
         tests_dir.mkdir(exist_ok=True)
         (tests_dir / "__init__.py").write_text("")
         (tests_dir / "test_app.py").write_text(
-            '"""Basic tests."""\nimport pytest\nfrom app import app\n\n\n'
-            "@pytest.fixture\ndef client():\n"
-            '    app.config["TESTING"] = True\n'
-            "    with app.test_client() as c:\n        yield c\n\n\n"
-            "def test_hello(client):\n"
+            '"""Tests for the demo Flask app. BUG 4: one broken assertion."""\n'
+            "import pytest\n"
+            "from app import app as flask_app\n\n\n"
+            "@pytest.fixture\n"
+            "def client():\n"
+            '    flask_app.config["TESTING"] = True\n'
+            "    with flask_app.test_client() as c:\n"
+            "        yield c\n\n\n"
+            "def test_hello_returns_200(client):\n"
+            '    """BUG 4: asserts 404 instead of 200."""\n'
             '    resp = client.get("/")\n'
+            "    assert resp.status_code == 404  # wrong — should be 200\n\n\n"
+            "def test_hello_json_structure(client):\n"
+            '    resp = client.get("/")\n'
+            "    data = resp.get_json()\n"
+            "    assert data is not None\n"
+            '    assert "message" in data\n'
+            '    assert data["status"] == "ok"\n\n\n'
+            "def test_get_item_first(client):\n"
+            '    resp = client.get("/items/1")\n'
+            "    assert resp.status_code == 200\n"
+            '    assert resp.get_json()["item"] == "apple"\n\n\n'
+            "def test_health_returns_200(client):\n"
+            '    resp = client.get("/health")\n'
             "    assert resp.status_code == 200\n"
         )
 
@@ -578,12 +675,13 @@ def _stop_demo_processes(project_dir: Path) -> None:
         pid_file.unlink(missing_ok=True)
 
 
-def _print_demo_summary(project_dir: Path, server_url: str) -> None:
-    """Print final demo summary: tasks done, files changed, cost.
+def _print_demo_summary(project_dir: Path, server_url: str, elapsed_secs: float = 0.0) -> None:
+    """Print final demo summary: bugs fixed, files changed, cost, next steps.
 
     Args:
         project_dir: Demo project root.
         server_url: Base URL of the demo task server.
+        elapsed_secs: Wall-clock seconds the orchestration took.
     """
     from rich.table import Table
 
@@ -602,27 +700,36 @@ def _print_demo_summary(project_dir: Path, server_url: str) -> None:
     failed = sum(1 for t in tasks_data if t.get("status") == "failed")
     total = len(tasks_data)
 
+    elapsed_str = f"{elapsed_secs:.0f}s" if elapsed_secs > 0 else "—"
+
     console.print("\n[bold cyan]── Demo Summary ──────────────────────────[/bold cyan]")
 
     table = Table(show_header=True, header_style="bold magenta", show_lines=False)
     table.add_column("Metric", style="bold")
     table.add_column("Value", justify="right")
-    table.add_row("Tasks completed", f"[green]{done}[/green] / {total}")
+    table.add_row("Bugs fixed", f"[green]{done}[/green] / {total}")
     if failed:
         table.add_row("Tasks failed", f"[red]{failed}[/red]")
+    table.add_row("Elapsed", elapsed_str)
 
     # Count Python files in the project dir (excluding .sdd/)
     py_files = [p for p in project_dir.glob("**/*.py") if ".sdd" not in p.parts]
-    table.add_row("Python files in project", str(len(py_files)))
+    table.add_row("Python files", str(len(py_files)))
     table.add_row("API cost", f"${total_cost:.4f}")
     console.print(table)
 
-    console.print(f"\n[dim]Project directory:[/dim] {project_dir}")
-    console.print("[dim]Inspect it to see what the agents changed.[/dim]")
-    console.print("\n[bold green]Try it yourself:[/bold green]")
-    console.print(f"  cd {project_dir}")
-    console.print("  pip install -r requirements.txt")
-    console.print("  pytest tests/ -q")
+    # Governance story
+    console.print(
+        "\n[dim]Every agent decision was logged. "
+        "Run [bold]bernstein audit verify --merkle[/bold] to inspect the audit trail.[/dim]"
+    )
+
+    # Primary CTA
+    console.print(f"\n[bold green]Fixed {done} bug{'s' if done != 1 else ''} in {elapsed_str}.[/bold green]")
+    console.print("Run [bold cyan]bernstein run[/bold cyan] in your own project to get started.\n")
+
+    console.print(f"[dim]Project left at:[/dim] {project_dir}")
+    console.print("[dim]  cd <dir> && pip install -r requirements.txt && pytest tests/ -q[/dim]")
 
 
 @click.command("demo")
@@ -651,22 +758,18 @@ def _print_demo_summary(project_dir: Path, server_url: str) -> None:
     help="Maximum seconds to wait for tasks to complete.",
 )
 def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
-    """Zero-to-running demo: spin up a Flask app and ship 3 tasks.
+    """Zero-config demo: fix 4 bugs in a Flask app in under 60 seconds.
 
     \b
-    By default, runs in mock mode (no API key needed, completes in ~30 seconds).
-    Use --real to run with actual agents (requires API key, costs ~$0.15).
+    Creates a temp Flask app with 4 intentional bugs, seeds fix tasks,
+    then runs agents to resolve them — all while showing live progress.
+    No API key required in mock mode.
 
     \b
-    Creates a temporary project directory with a Flask hello-world starter,
-    seeds 3 tasks into the backlog (health check, tests, error handling),
-    then runs agents to complete them while showing live progress.
-
-    \b
-      bernstein demo              # run with mock agents (no API key needed)
-      bernstein demo --real       # run with real agents (requires API key)
-      bernstein demo --dry-run    # preview the plan without spawning agents
-      bernstein demo --real --timeout 120 # use real agents with 2min timeout
+      bernstein demo              # mock agents (no API key, ~30 seconds)
+      bernstein demo --real       # real agents (requires API key, ~$0.15)
+      bernstein demo --dry-run    # preview the plan without spawning
+      bernstein demo --real --timeout 120
     """
     import tempfile
 
@@ -688,7 +791,7 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
     # Always print cost estimate before doing anything
     console.print(
         f"\n[bold yellow]Cost estimate:[/bold yellow] "
-        f"{cost_estimate} (3 small tasks)\n"
+        f"{cost_estimate} (4 bug-fix tasks)\n"
         f"[dim]Adapter: {detected}  |  Mode: {'real' if real else 'demo'}  |  Timeout: {timeout}s[/dim]"
     )
 
@@ -700,8 +803,8 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
         plan_table.add_column("Step")
         plan_table.add_column("Action")
         plan_table.add_column("Detail")
-        plan_table.add_row("1", "Create project", "Temp dir with Flask hello-world (5 files)")
-        plan_table.add_row("2", "Seed backlog", "3 tasks in .sdd/backlog/open/")
+        plan_table.add_row("1", "Create project", "Temp dir with buggy Flask app (4 intentional bugs)")
+        plan_table.add_row("2", "Seed backlog", f"{len(DEMO_TASKS)} bug-fix tasks in .sdd/backlog/open/")
         for i, t in enumerate(DEMO_TASKS, start=3):
             # Parse task inline to get title/role
             parts = t["content"].split("\n")
@@ -721,10 +824,13 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
     console.print(f"\n[dim]Creating demo project in {project_dir}…[/dim]")
 
     setup_demo_project(project_dir, detected)
-    console.print("[green]✓[/green] Flask starter project created (5 files)")
-    console.print("[green]✓[/green] 3 tasks seeded: health check, tests, error handling")
+    console.print("[green]✓[/green] Flask app with 4 intentional bugs created")
+    console.print(
+        "[green]✓[/green] 4 bug-fix tasks seeded: off-by-one · missing import · wrong status code · broken test"
+    )
 
     server_url = f"http://127.0.0.1:{_DEMO_PORT}"
+    orchestration_start = time.monotonic()
 
     try:
         # Bootstrap: start server + spawner in the demo project dir
@@ -732,17 +838,18 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
         from bernstein.core.bootstrap import bootstrap_from_goal
 
         bootstrap_from_goal(
-            goal="Complete the seeded backlog tasks for the demo Flask app.",
+            goal="Fix the four bugs in the demo Flask app.",
             workdir=project_dir,
             port=_DEMO_PORT,
             cli=detected,
         )
 
-        # Poll for completion with a live progress indicator
+        # Poll for completion with a live progress indicator and per-task events
         from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-        start_time = time.monotonic()
-        deadline = start_time + timeout
+        deadline = orchestration_start + timeout
+        seen_done: set[str] = set()
+        seen_failed: set[str] = set()
 
         console.print()
         with Progress(
@@ -750,7 +857,7 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
             TextColumn("[progress.description]{task.description}"),
             TimeElapsedColumn(),
             console=console,
-            transient=True,
+            transient=False,
         ) as progress:
             poll_task = progress.add_task("Agents working…", total=None)
 
@@ -763,11 +870,24 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
                         done_count = sum(1 for t in tasks_list if t.get("status") == "done")
                         failed_count = sum(1 for t in tasks_list if t.get("status") == "failed")
                         total_tasks = len(tasks_list)
+
+                        # Emit a line for each newly-completed task
+                        for t in tasks_list:
+                            tid = t.get("id", "")
+                            title = (t.get("title") or "")[:60]
+                            role = t.get("role", "agent")
+                            if t.get("status") == "done" and tid not in seen_done:
+                                seen_done.add(tid)
+                                progress.console.print(f"  [green]✓[/green] [{role}] {title}")
+                            elif t.get("status") == "failed" and tid not in seen_failed:
+                                seen_failed.add(tid)
+                                progress.console.print(f"  [red]✗[/red] [{role}] {title}")
+
                         progress.update(
                             poll_task,
                             description=(
                                 f"Agents working… "
-                                f"[green]{done_count}[/green]/{total_tasks} done"
+                                f"[green]{done_count}[/green]/{total_tasks} bugs fixed"
                                 + (f"  [red]{failed_count} failed[/red]" if failed_count else "")
                             ),
                         )
@@ -788,4 +908,5 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
     finally:
         _stop_demo_processes(project_dir)
 
-    _print_demo_summary(project_dir, server_url)
+    elapsed = time.monotonic() - orchestration_start
+    _print_demo_summary(project_dir, server_url, elapsed_secs=elapsed)

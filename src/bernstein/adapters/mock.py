@@ -20,7 +20,7 @@ class MockAgentAdapter(CLIAdapter):
     """Simulates an agent without making real API calls.
 
     Used for demos and testing. Spawns a subprocess that applies
-    pre-scripted changes to the project and exits successfully.
+    pre-scripted bug fixes to the demo project and exits successfully.
     """
 
     def spawn(
@@ -99,26 +99,55 @@ class MockAgentAdapter(CLIAdapter):
             prompt: Agent task description.
 
         Returns:
-            Task identifier: "health_check", "tests", "error_handling".
+            Task identifier matching one of the fix functions in the mock script.
         """
         prompt_lower = prompt.lower()
+        if (
+            "off-by-one" in prompt_lower
+            or "off_by_one" in prompt_lower
+            or (
+                "items" in prompt_lower
+                and (
+                    "index" in prompt_lower
+                    or "route" in prompt_lower
+                    or "n - 1" in prompt_lower
+                    or "1-indexed" in prompt_lower
+                )
+            )
+        ):
+            return "off_by_one"
+        if (
+            "missing import" in prompt_lower
+            or "missing `request`" in prompt_lower
+            or ("request" in prompt_lower and "import" in prompt_lower)
+        ):
+            return "missing_import"
+        if "201" in prompt_lower or ("health" in prompt_lower and ("status" in prompt_lower or "code" in prompt_lower)):
+            return "health_status"
+        if (
+            "broken" in prompt_lower
+            or "assertion" in prompt_lower
+            or ("test" in prompt_lower and ("404" in prompt_lower or "wrong" in prompt_lower))
+        ):
+            return "broken_test"
+        # Legacy / generic fallbacks
         if "health" in prompt_lower or "/health" in prompt_lower:
-            return "health_check"
+            return "health_status"
         if "test" in prompt_lower:
-            return "tests"
+            return "broken_test"
         if "error" in prompt_lower or "handler" in prompt_lower:
-            return "error_handling"
+            return "off_by_one"
         return "unknown"
 
     @staticmethod
     def _build_mock_script() -> str:
-        """Build a Python script that simulates agent work.
+        """Build a Python script that simulates agent bug-fix work.
 
         Returns:
-            Python script source code.
+            Python script source code (written to a temp file and executed).
         """
-        return '''#!/usr/bin/env python3
-"""Mock agent worker that simulates task completion."""
+        return r'''#!/usr/bin/env python3
+"""Mock agent worker that simulates bug-fix task completion."""
 import json
 import sys
 import time
@@ -129,63 +158,100 @@ def write_log(path: Path, message: str) -> None:
     """Append message to log file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a") as f:
-        f.write(f"{time.time()} {message}\\n")
+        f.write(f"{time.time()} {message}\n")
 
 
-def add_health_endpoint(workdir: Path, log_path: Path) -> None:
-    """Add /health endpoint to app.py."""
+def fix_off_by_one(workdir: Path, log_path: Path) -> None:
+    """Fix ITEMS[n] -> ITEMS[n - 1] off-by-one in app.py."""
     app_file = workdir / "app.py"
+    if not app_file.exists():
+        write_log(log_path, "⚠ app.py not found")
+        return
     content = app_file.read_text()
-
-    if "@app.route(\\"/health\\")" not in content:
-        # Find where to insert the new endpoint (before if __name__)
-        insert_point = content.find("if __name__ == ")
-        if insert_point > 0:
-            new_endpoint = (
-                '\\n\\n@app.route(\\"/health\\")\\n'
-                'def health() -> object:\\n'
-                '    """Health check endpoint."""\\n'
-                '    return jsonify({"status": "healthy", "version": "1.0.0"})\\n'
-            )
-            new_content = content[:insert_point] + new_endpoint + content[insert_point:]
-            app_file.write_text(new_content)
-            write_log(log_path, "✓ Added /health endpoint to app.py")
-        else:
-            write_log(log_path, "⚠ Could not find insertion point for health endpoint")
+    if "ITEMS[n]" in content:
+        content = content.replace(
+            "return jsonify({\"id\": n, \"item\": ITEMS[n]})  # off-by-one",
+            (
+                "if n < 1 or n > len(ITEMS):\n"
+                "        from flask import abort\n"
+                "        abort(404)\n"
+                "    return jsonify({\"id\": n, \"item\": ITEMS[n - 1]})"
+            ),
+        )
+        app_file.write_text(content)
+        write_log(log_path, "✓ Fixed off-by-one: ITEMS[n] → ITEMS[n - 1] + bounds check")
+    else:
+        write_log(log_path, "⚠ off-by-one pattern not found (already fixed?)")
 
 
-def add_tests(workdir: Path, log_path: Path) -> None:
-    """Add comprehensive tests to test_app.py."""
+def fix_missing_import(workdir: Path, log_path: Path) -> None:
+    """Add 'request' to the flask import line in app.py."""
+    app_file = workdir / "app.py"
+    if not app_file.exists():
+        write_log(log_path, "⚠ app.py not found")
+        return
+    content = app_file.read_text()
+    old_import = "from flask import Flask, jsonify  # BUG 2: 'request' is missing from this import"
+    new_import = "from flask import Flask, jsonify, request"
+    if old_import in content:
+        content = content.replace(old_import, new_import)
+        # Also remove the noqa/type-ignore comment from the echo route
+        content = content.replace(
+            "    msg = request.args.get(\"msg\", \"\")  # type: ignore[name-defined]  # noqa: F821",
+            "    msg = request.args.get(\"msg\", \"\")",
+        )
+        app_file.write_text(content)
+        write_log(log_path, "✓ Fixed missing import: added 'request' to flask imports")
+    elif "from flask import Flask, jsonify" in content and "request" not in content.split("\n")[1]:
+        content = content.replace(
+            "from flask import Flask, jsonify",
+            "from flask import Flask, jsonify, request",
+            1,
+        )
+        app_file.write_text(content)
+        write_log(log_path, "✓ Fixed missing import: added 'request' to flask imports")
+    else:
+        write_log(log_path, "⚠ missing import pattern not found (already fixed?)")
+
+
+def fix_health_status(workdir: Path, log_path: Path) -> None:
+    """Remove incorrect HTTP 201 status from health endpoint in app.py."""
+    app_file = workdir / "app.py"
+    if not app_file.exists():
+        write_log(log_path, "⚠ app.py not found")
+        return
+    content = app_file.read_text()
+    old_line = '    return jsonify({"status": "healthy", "version": "1.0.0"}), 201  # type: ignore[return-value]'
+    new_line = '    return jsonify({"status": "healthy", "version": "1.0.0"})'
+    if old_line in content:
+        content = content.replace(old_line, new_line)
+        app_file.write_text(content)
+        write_log(log_path, "✓ Fixed health status code: 201 → 200")
+    else:
+        write_log(log_path, "⚠ health status code pattern not found (already fixed?)")
+
+
+def fix_broken_test(workdir: Path, log_path: Path) -> None:
+    """Fix the wrong status_code assertion in tests/test_app.py."""
     test_file = workdir / "tests" / "test_app.py"
-    test_content = \'\'\'"Comprehensive tests for app.py."\\nimport pytest\\nfrom app import app\\n\\n\\n@pytest.fixture\\ndef client():\\n    app.config["TESTING"] = True\\n    with app.test_client() as c:\\n        yield c\\n\\n\\ndef test_hello(client):\\n    """Test the hello endpoint."""\\n    resp = client.get("/")\\n    assert resp.status_code == 200\\n    assert "message" in resp.json\\n\\n\\ndef test_health(client):\\n    """Test the health check endpoint."""\\n    resp = client.get("/health")\\n    assert resp.status_code == 200\\n    assert resp.json["status"] == "healthy"\\n\'\'\'
-    test_file.write_text(test_content)
-    write_log(log_path, "✓ Added comprehensive tests to test_app.py")
-
-
-def add_error_handlers(workdir: Path, log_path: Path) -> None:
-    """Add error handling middleware to app.py."""
-    app_file = workdir / "app.py"
-    content = app_file.read_text()
-
-    if "@app.errorhandler" not in content:
-        insert_point = content.find("if __name__ == ")
-        if insert_point > 0:
-            error_handlers = (
-                '\\n\\n@app.errorhandler(404)\\n'
-                'def not_found(e):  # type: ignore[misc]\\n'
-                '    """Handle 404 errors."""\\n'
-                '    return jsonify({"error": "Not found", "status": 404}), 404\\n'
-                '\\n'
-                '@app.errorhandler(500)\\n'
-                'def server_error(e):  # type: ignore[misc]\\n'
-                '    """Handle 500 errors."""\\n'
-                '    return jsonify({"error": "Internal server error", "status": 500}), 500\\n'
-            )
-            new_content = content[:insert_point] + error_handlers + content[insert_point:]
-            app_file.write_text(new_content)
-            write_log(log_path, "✓ Added error handlers to app.py")
-        else:
-            write_log(log_path, "⚠ Could not find insertion point for error handlers")
+    if not test_file.exists():
+        write_log(log_path, "⚠ tests/test_app.py not found")
+        return
+    content = test_file.read_text()
+    if "assert resp.status_code == 404  # wrong — should be 200" in content:
+        content = content.replace(
+            "assert resp.status_code == 404  # wrong — should be 200",
+            "assert resp.status_code == 200",
+        )
+        # Also remove the BUG 4 docstring annotation
+        content = content.replace(
+            '\n    BUG 4: asserts 404 instead of 200.\n    ',
+            '\n    ',
+        )
+        test_file.write_text(content)
+        write_log(log_path, "✓ Fixed broken test: status_code 404 → 200")
+    else:
+        write_log(log_path, "⚠ broken test pattern not found (already fixed?)")
 
 
 def main():
@@ -197,20 +263,20 @@ def main():
 
     write_log(log_path, f"Mock agent started for task: {task_name}")
 
-    # Simulate realistic work time
+    # Simulate realistic agent work time
     time.sleep(1.5)
 
-    # Apply task-specific changes
-    if task_name == "health_check":
-        add_health_endpoint(workdir, log_path)
-    elif task_name == "tests":
-        add_tests(workdir, log_path)
-    elif task_name == "error_handling":
-        add_error_handlers(workdir, log_path)
+    if task_name == "off_by_one":
+        fix_off_by_one(workdir, log_path)
+    elif task_name == "missing_import":
+        fix_missing_import(workdir, log_path)
+    elif task_name == "health_status":
+        fix_health_status(workdir, log_path)
+    elif task_name == "broken_test":
+        fix_broken_test(workdir, log_path)
     else:
-        write_log(log_path, f"Unknown task type: {task_name}")
+        write_log(log_path, f"Unknown task type: {task_name} — no-op")
 
-    # Simulate remaining work
     time.sleep(0.5)
     write_log(log_path, "Mock agent completed successfully")
 

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from bernstein.core.license_scanner import check_license_obligations
 from bernstein.core.models import GuardrailResult, Task
 
 
@@ -23,11 +24,13 @@ class GuardrailsConfig:
     Attributes:
         secrets: Whether to run secret detection.
         scope: Whether to run scope enforcement.
+        license_scan: Whether to scan for copyleft license obligations.
         max_deletion_pct: Flag if this fraction of a file's diff lines are removals.
     """
 
     secrets: bool = True
     scope: bool = True
+    license_scan: bool = True
     max_deletion_pct: int = 50
 
 
@@ -405,6 +408,11 @@ def run_guardrails(
     for r in check_dangerous_operations(diff, config):
         results.append(r)
         _record_result(task.id, r, workdir)
+
+    if config.license_scan:
+        for r in check_license_obligations(diff):
+            results.append(r)
+            _record_result(task.id, r, workdir)
 
     return results
 
