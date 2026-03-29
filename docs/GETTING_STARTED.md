@@ -10,11 +10,19 @@ around a central task server.  One command starts the whole orchestra.
 Requires Python 3.12+.
 
 ```bash
-# From the repo root
-pip install -e ".[dev]"
+# Install from PyPI
+pipx install bernstein   # or: uv tool install bernstein
 
 # Verify
 bernstein --version
+```
+
+### Development install
+
+```bash
+git clone https://github.com/chernistry/bernstein && cd bernstein
+uv venv && uv pip install -e ".[dev]"
+uv run python scripts/run_tests.py -x
 ```
 
 ---

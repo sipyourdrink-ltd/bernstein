@@ -51,8 +51,16 @@
       <li><a href="#task-server">Task Server</a></li>
       <li><a href="#tasks">Tasks</a></li>
       <li><a href="#agents">Agents</a></li>
+      <li><a href="#costs">Costs</a></li>
+      <li><a href="#quality">Quality</a></li>
+      <li><a href="#webhooks">Webhooks</a></li>
+      <li><a href="#auth">Auth</a></li>
+      <li><a href="#plans">Plans</a></li>
+      <li><a href="#graduation">Graduation</a></li>
+      <li><a href="#slack">Slack</a></li>
+      <li><a href="#acp">ACP</a></li>
       <li><a href="#bulletin">Bulletin Board</a></li>
-      <li><a href="#health">Health</a></li>
+      <li><a href="#health">Health &amp; Status</a></li>
       <li><a href="#cli">CLI Commands</a></li>
       <li><a href="#config-schema">Config Schema</a></li>
       <li><a href="#task-schema">Task Schema</a></li>
@@ -249,6 +257,285 @@ curl "http://127.0.0.1:8052/tasks?role=backend"</code></pre>
       </div>
     </div>
 
+    <h2 id="costs">Costs</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/costs</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Aggregated cost breakdown by model, role, and task.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/costs</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/costs/live</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Real-time cost data for the current run.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/costs/alerts</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Active cost alerts (budget threshold warnings).</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/costs/history</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Historical cost records across previous runs.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/costs/{run_id}</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Cost breakdown for a specific run.</p>
+      </div>
+    </div>
+
+    <h2 id="quality">Quality</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/quality</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Quality dashboard data: pass rates, verification results, and trends.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/quality/models</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Per-model quality metrics (success rates, average scores).</p>
+      </div>
+    </div>
+
+    <h2 id="webhooks">Webhooks</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/alerts</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Active system alerts (task failures, budget warnings, agent health).</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/webhooks/github</span>
+      </div>
+      <div class="endpoint-body">
+        <p>GitHub webhook receiver. Processes push events, PR events, and CI status updates to create or update tasks automatically.</p>
+      </div>
+    </div>
+
+    <h2 id="auth">Auth</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/auth/providers</span>
+      </div>
+      <div class="endpoint-body">
+        <p>List configured authentication providers (OIDC, SAML).</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/auth/login</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Initiate OIDC login flow (redirects to provider).</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/auth/cli/device</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Start CLI device code flow for headless authentication.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/auth/me</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Current authenticated user profile.</p>
+      </div>
+    </div>
+
+    <h2 id="plans">Plans</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/plans</span>
+      </div>
+      <div class="endpoint-body">
+        <p>List all plans (pending, approved, rejected).</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/plans/{plan_id}</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Get a specific plan by ID.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/plans/{plan_id}/approve</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Approve a pending plan. Approved plans are converted into tasks.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/plans/{plan_id}/reject</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Reject a pending plan with an optional reason.</p>
+      </div>
+    </div>
+
+    <h2 id="graduation">Graduation</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/graduation/status</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Overview of agent graduation status across all sessions.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/graduation/{session_id}</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Graduation details for a specific agent session.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/graduation/{session_id}/promote</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Promote an agent session to a higher trust level based on performance.</p>
+      </div>
+    </div>
+
+    <h2 id="slack">Slack</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/webhooks/slack/commands</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Slack slash command handler. Supports <code>/bernstein status</code>, <code>/bernstein run</code>, etc.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/webhooks/slack/events</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Slack Events API handler for real-time notifications.</p>
+      </div>
+    </div>
+
+    <h2 id="acp">ACP (Agent Communication Protocol)</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/.well-known/acp.json</span>
+      </div>
+      <div class="endpoint-body">
+        <p>ACP discovery document. Describes available agents, capabilities, and protocol version.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/acp/v0/agents</span>
+      </div>
+      <div class="endpoint-body">
+        <p>List agents available via the ACP protocol.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/acp/v0/runs</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Create a new ACP run (submit work to an agent).</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/acp/v0/runs/{run_id}</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Check the status of an ACP run.</p>
+      </div>
+    </div>
+
     <h2 id="bulletin">Bulletin Board</h2>
 
     <div class="endpoint">
@@ -279,7 +566,7 @@ curl "http://127.0.0.1:8052/tasks?role=backend"</code></pre>
       </div>
     </div>
 
-    <h2 id="health">Health</h2>
+    <h2 id="health">Health &amp; Status</h2>
 
     <div class="endpoint">
       <div class="endpoint-header">
@@ -294,6 +581,46 @@ curl "http://127.0.0.1:8052/tasks?role=backend"</code></pre>
       </div>
     </div>
 
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/metrics</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Prometheus-format metrics for Grafana and alerting.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/events</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Server-Sent Events (SSE) stream for real-time dashboard updates.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/routing/bandit</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Bandit-based model routing statistics (arm weights, selection counts).</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/cache-stats</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Semantic cache hit/miss statistics.</p>
+      </div>
+    </div>
+
     <h2 id="cli">CLI Commands</h2>
 
     <h3>Core</h3>
@@ -304,7 +631,9 @@ curl "http://127.0.0.1:8052/tasks?role=backend"</code></pre>
         <tr><td><code>bernstein -g "&lt;goal&gt;"</code></td><td>Run with a plain-English goal</td></tr>
         <tr><td><code>bernstein --seed-file &lt;path&gt;</code></td><td>Run with a YAML seed file</td></tr>
         <tr><td><code>bernstein stop</code></td><td>Graceful shutdown</td></tr>
-        <tr><td><code>bernstein stop --timeout N</code></td><td>Shutdown with custom timeout (seconds)</td></tr>
+        <tr><td><code>bernstein stop --force</code></td><td>Hard stop (kill immediately)</td></tr>
+        <tr><td><code>bernstein checkpoint</code></td><td>Save progress for later resume</td></tr>
+        <tr><td><code>bernstein wrap-up</code></td><td>End session with summary and learnings</td></tr>
       </tbody>
     </table>
 
@@ -313,10 +642,58 @@ curl "http://127.0.0.1:8052/tasks?role=backend"</code></pre>
       <thead><tr><th>Flag</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>--headless</code></td><td>Suppress live dashboard, write to logs only</td></tr>
+        <tr><td><code>--dry-run</code></td><td>Preview task plan without spawning agents</td></tr>
+        <tr><td><code>--budget N</code></td><td>Cost cap in USD (0 = unlimited)</td></tr>
+        <tr><td><code>--approval auto|review|pr</code></td><td>Approval gate before merge</td></tr>
+        <tr><td><code>--fresh</code></td><td>Ignore saved session, start clean</td></tr>
+        <tr><td><code>--cli claude|codex|gemini|qwen|auto</code></td><td>Force a specific agent adapter</td></tr>
+        <tr><td><code>--model MODEL</code></td><td>Force a specific model</td></tr>
         <tr><td><code>--evolve / -e</code></td><td>Enable continuous self-improvement mode</td></tr>
         <tr><td><code>--max-cycles N</code></td><td>Stop after N evolve cycles</td></tr>
-        <tr><td><code>--budget N</code></td><td>Stop after $N spent</td></tr>
         <tr><td><code>--interval N</code></td><td>Seconds between evolve cycles (default: 300)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Monitoring</h3>
+    <table>
+      <thead><tr><th>Command</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>bernstein live</code></td><td>Attach interactive TUI dashboard to running session</td></tr>
+        <tr><td><code>bernstein dashboard</code></td><td>Open web dashboard in browser</td></tr>
+        <tr><td><code>bernstein status</code></td><td>Show current task/agent status</td></tr>
+        <tr><td><code>bernstein ps</code></td><td>Show running agent processes</td></tr>
+        <tr><td><code>bernstein logs [AGENT_ID]</code></td><td>Tail agent log output</td></tr>
+        <tr><td><code>bernstein cost</code></td><td>Show spend breakdown by model, role, task</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Task management</h3>
+    <table>
+      <thead><tr><th>Command</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>bernstein plan</code></td><td>Show task backlog</td></tr>
+        <tr><td><code>bernstein add-task</code></td><td>Add a task to the backlog</td></tr>
+        <tr><td><code>bernstein list-tasks</code></td><td>List all tasks</td></tr>
+        <tr><td><code>bernstein cancel &lt;ID&gt;</code></td><td>Cancel a running or queued task</td></tr>
+        <tr><td><code>bernstein review</code></td><td>Review completed tasks</td></tr>
+        <tr><td><code>bernstein approve</code></td><td>Approve a task for merge</td></tr>
+        <tr><td><code>bernstein reject</code></td><td>Reject a task</td></tr>
+        <tr><td><code>bernstein pending</code></td><td>List tasks pending review</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Diagnostics</h3>
+    <table>
+      <thead><tr><th>Command</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>bernstein doctor</code></td><td>Pre-flight check: adapters, API keys, ports</td></tr>
+        <tr><td><code>bernstein recap</code></td><td>Post-run summary: tasks, pass/fail, cost</td></tr>
+        <tr><td><code>bernstein retro</code></td><td>Detailed retrospective report</td></tr>
+        <tr><td><code>bernstein trace &lt;ID&gt;</code></td><td>Step-by-step agent decision trace</td></tr>
+        <tr><td><code>bernstein replay &lt;ID&gt;</code></td><td>Re-run a task from its trace</td></tr>
+        <tr><td><code>bernstein audit</code></td><td>Audit tasks and code quality</td></tr>
+        <tr><td><code>bernstein verify</code></td><td>Verify task completion signals</td></tr>
+        <tr><td><code>bernstein benchmark run</code></td><td>Run the golden benchmark suite</td></tr>
       </tbody>
     </table>
 
@@ -330,23 +707,19 @@ curl "http://127.0.0.1:8052/tasks?role=backend"</code></pre>
       </tbody>
     </table>
 
-    <h3>Observability</h3>
-    <table>
-      <thead><tr><th>Command</th><th>Description</th></tr></thead>
-      <tbody>
-        <tr><td><code>bernstein cost</code></td><td>Show cost, tokens, and duration per model</td></tr>
-        <tr><td><code>bernstein benchmark run</code></td><td>Run the golden benchmark suite</td></tr>
-        <tr><td><code>bernstein benchmark run --tier smoke</code></td><td>Fast sanity check only</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Agent catalog</h3>
+    <h3>Agents and infrastructure</h3>
     <table>
       <thead><tr><th>Command</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>bernstein agents list</code></td><td>List available agents</td></tr>
         <tr><td><code>bernstein agents sync</code></td><td>Sync from remote catalogs</td></tr>
-        <tr><td><code>bernstein agents validate</code></td><td>Validate agent catalog files</td></tr>
+        <tr><td><code>bernstein agents discover</code></td><td>Auto-detect installed CLI agents</td></tr>
+        <tr><td><code>bernstein workspace</code></td><td>Show multi-repo workspace status</td></tr>
+        <tr><td><code>bernstein config</code></td><td>View and edit configuration</td></tr>
+        <tr><td><code>bernstein mcp</code></td><td>Start MCP server for tool integration</td></tr>
+        <tr><td><code>bernstein plugins</code></td><td>List discovered plugins</td></tr>
+        <tr><td><code>bernstein demo</code></td><td>Zero-to-running demo</td></tr>
+        <tr><td><code>bernstein chaos</code></td><td>Chaos testing commands</td></tr>
       </tbody>
     </table>
 
