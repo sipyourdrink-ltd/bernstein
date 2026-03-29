@@ -1,0 +1,96 @@
+name: Auto-release
+
+# Run after CI succeeds on main
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Bump version + publish
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # Read current version from pyproject.toml
+      - name: Get current version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "current=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Current version: $VERSION"
+
+      # Check if this version is already tagged (skip if so)
+      - name: Check if already released
+        id: check
+        run: |
+          if git tag -l "v${{ steps.version.outputs.current }}" | grep -q .; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Version v${{ steps.version.outputs.current }} already tagged — bumping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Version v${{ steps.version.outputs.current }} not yet tagged"
+          fi
+
+      # Bump patch version if current is already tagged
+      - name: Bump patch version
+        if: steps.check.outputs.skip == 'true'
+        id: bump
+        run: |
+          CURRENT="${{ steps.version.outputs.current }}"
+          # Split version: 1.0.1 → major=1 minor=0 patch=1
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          NEXT_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+          sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" pyproject.toml
+          echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Bumped: $CURRENT → $NEW_VERSION"
+
+      # Commit version bump
+      - name: Commit version bump
+        if: steps.check.outputs.skip == 'true'
+        run: |
+          git config user.name "bernstein[bot]"
+          git config user.email "bernstein-bot@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.new }}"
+          git push
+
+      # Determine final version (bumped or current)
+      - name: Set release version
+        id: release
+        run: |
+          if [ "${{ steps.check.outputs.skip }}" = "true" ]; then
+            echo "version=${{ steps.bump.outputs.new }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ steps.version.outputs.current }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tag and push
+      - name: Create tag
+        run: |
+          git tag "v${{ steps.release.outputs.version }}"
+          git push origin "v${{ steps.release.outputs.version }}"
+
+      # Build
+      - name: Build package
+        run: uv build
+
+      # Publish to PyPI (uses trusted publisher — no token needed)
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
