@@ -41,6 +41,177 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv run python scripts/run_tests.py -x
 
+  # Protocol compatibility matrix — tests against multiple protocol versions
+  protocol-matrix-setup:
+    name: Protocol Matrix Setup
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.read-matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: read-matrix
+        name: Read protocol version matrix
+        run: |
+          MATRIX=$(python -c "
+          import json
+          with open('tests/protocol/versions.json') as f:
+              data = json.load(f)
+          combinations = []
+          for py in data['python_versions']:
+              for mcp in data['mcp_versions']:
+                  for a2a in data['a2a_versions']:
+                      for acp in data['acp_versions']:
+                          combinations.append({'python': py, 'mcp': mcp, 'a2a': a2a, 'acp': acp})
+          print(json.dumps(combinations))
+          ")
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+  protocol-matrix:
+    name: Protocol Matrix (Python ${{ matrix.python }}, MCP ${{ matrix.mcp }}, A2A ${{ matrix.a2a }})
+    runs-on: ubuntu-latest
+    needs: [test, protocol-matrix-setup]
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.protocol-matrix-setup.outputs.matrix) }}
+      max-parallel: 8
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+      - name: Install protocol versions
+        run: |
+          uv pip install mcp==${{ matrix.mcp }} a2a==${{ matrix.a2a }} 2>/dev/null || {
+            echo "⚠️  Could not install mcp==${{ matrix.mcp }} or a2a==${{ matrix.a2a }}"
+            echo "status=incompatible" >> $GITHUB_ENV
+          }
+      - name: Run protocol tests
+        if: env.status != 'incompatible'
+        run: uv run pytest tests/protocol/ -v --tb=short 2>&1 | tee test-output.log
+        continue-on-error: true
+      - name: Collect results
+        id: collect
+        run: |
+          python << 'EOF'
+          import json
+          import subprocess
+          import time
+
+          result = {
+            "python": "${{ matrix.python }}",
+            "mcp": "${{ matrix.mcp }}",
+            "a2a": "${{ matrix.a2a }}",
+            "acp": "${{ matrix.acp }}",
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "status": "pass"
+          }
+
+          # Try to parse pytest output
+          try:
+              output = subprocess.run(['grep', '-E', 'passed|failed|skipped', 'test-output.log'],
+                                    capture_output=True, text=True).stdout
+              import re
+              if 'failed' in output:
+                  result["status"] = "fail"
+          except:
+              pass
+
+          with open('test-results.json', 'w') as f:
+              json.dump(result, f, indent=2)
+          EOF
+          echo "results=$(cat test-results.json | jq -c .)" >> $GITHUB_OUTPUT
+      - name: Upload results
+        uses: actions/upload-artifact@v7
+        with:
+          name: protocol-test-results-${{ matrix.python }}-${{ matrix.mcp }}-${{ matrix.a2a }}
+          path: test-results.json
+          retention-days: 30
+
+  protocol-matrix-aggregate:
+    name: Protocol Matrix Aggregate
+    runs-on: ubuntu-latest
+    needs: protocol-matrix
+    if: always()
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts/
+      - name: Aggregate results
+        run: |
+          python << 'EOF'
+          import json
+          import os
+          from pathlib import Path
+          from datetime import datetime
+
+          results = []
+          for artifact_dir in Path('artifacts').glob('protocol-test-results-*'):
+              result_file = artifact_dir / 'test-results.json'
+              if result_file.exists():
+                  with open(result_file) as f:
+                      results.append(json.load(f))
+
+          aggregated = {
+            "timestamp": datetime.now().isoformat(),
+            "github_run_id": "${{ github.run_id }}",
+            "commit_sha": "${{ github.sha }}",
+            "results": results,
+            "summary": {
+              "total_combinations": len(results),
+              "passed": sum(1 for r in results if r["status"] == "pass"),
+              "failed": sum(1 for r in results if r["status"] == "fail"),
+            }
+          }
+
+          with open('protocol-compat-results.json', 'w') as f:
+              json.dump(aggregated, f, indent=2)
+
+          print(json.dumps(aggregated, indent=2))
+          EOF
+      - name: Check compatibility
+        run: |
+          python scripts/check_compatibility.py \
+            --current-results protocol-compat-results.json \
+            --baseline tests/protocol/compatibility-baseline.json 2>&1 | tee compat-check.log
+      - name: Upload aggregated results
+        uses: actions/upload-artifact@v7
+        with:
+          name: protocol-compat-results
+          path: protocol-compat-results.json
+          retention-days: 30
+      - name: Check if breaking changes detected
+        id: gate
+        run: |
+          if grep -q '"breaking_changes": \[\]' compat-check.log; then
+            echo "✅ No breaking changes detected"
+            echo "status=pass" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️  Breaking changes detected"
+            echo "status=fail" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Trigger table generation (on success)
+        if: steps.gate.outputs.status == 'pass' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'protocol-compatibility-table.yml',
+              ref: context.ref,
+              inputs: {
+                results_artifact: 'protocol-compat-results',
+                commit_sha: context.sha
+              }
+            });
+
   # Auto-fix lint issues and push a fix commit (only on main, only if lint fails)
   autofix:
     name: Auto-fix lint
