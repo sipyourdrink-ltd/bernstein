@@ -389,7 +389,9 @@ class Orchestrator:
         self._merge_queue = MergeQueue()
 
         # AgentOps: SLO tracking, error budget, runbooks, incident response.
-        self._slo_tracker = SLOTracker.load(workdir / ".sdd" / "metrics")
+        # Reset error budget each run — stale failure data from prior runs
+        # should not throttle a fresh run's agent capacity.
+        self._slo_tracker = SLOTracker()  # fresh tracker, no persistence from prior runs
         self._runbook_engine = RunbookEngine()
         self._incident_manager = IncidentManager()
         self._consecutive_failures: int = 0
