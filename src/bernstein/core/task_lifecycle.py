@@ -1019,10 +1019,10 @@ def process_completed_tasks(
 
             # Cross-model verification: route diff to a different model for review.
             # Runs after quality gates, before the approval gate.
-            # Default: enabled (CrossModelVerifierConfig.enabled=True). Set
-            # cross_model_verify=CrossModelVerifierConfig(enabled=False) to opt out.
+            # None (the default) means disabled; pass CrossModelVerifierConfig() to enable.
+            _cmv_raw = getattr(orch._config, "cross_model_verify", None)
             _cmv_config: CrossModelVerifierConfig = (
-                getattr(orch._config, "cross_model_verify", None) or CrossModelVerifierConfig()
+                _cmv_raw if isinstance(_cmv_raw, CrossModelVerifierConfig) else CrossModelVerifierConfig(enabled=False)
             )
             if janitor_passed and _cmv_config.enabled:
                 _cmv_worktree = orch._spawner.get_worktree_path(session.id)
