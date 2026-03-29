@@ -717,7 +717,6 @@ class BernsteinApp(App[None]):
         Binding("r", "refresh", "Refresh"),
         Binding("s", "stop_bernstein", "Stop"),
         Binding("l", "toggle_activity", "Activity"),
-        Binding("d", "toggle_tree", "Delegation"),
         Binding("c", "focus_chat", "Chat"),
     ]
 
@@ -727,7 +726,6 @@ class BernsteinApp(App[None]):
         self._history: deque[float] = deque(maxlen=60)
         self._evolve = False
         self._activity_visible = True
-        self._tree_visible = False
         self._task_titles: dict[str, str] = {}
         self._task_progress: dict[str, int] = {}
         self._last_activity: list[str] = []
