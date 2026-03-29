@@ -70,7 +70,7 @@ from bernstein.core.router import TierAwareRouter, load_model_policy_from_yaml, 
 from bernstein.core.runbooks import RunbookEngine
 from bernstein.core.semantic_cache import ResponseCacheManager
 from bernstein.core.signals import read_unresolved_pivots
-from bernstein.core.slo import SLOTracker, apply_error_budget_adjustments
+from bernstein.core.slo import SLOTracker
 from bernstein.core.task_lifecycle import (
     auto_decompose_task,
     claim_and_spawn_batches,
