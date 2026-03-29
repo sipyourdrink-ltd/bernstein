@@ -9,7 +9,7 @@
 <br>
 
 ### Multi-agent orchestration for agentic engineering.
-### One command. Multiple coding agents. Your codebase moves forward while you sleep.
+### One command. Multiple coding agents. Deterministic scheduling, cost governance, verified output.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dashboard.svg">
@@ -255,6 +255,41 @@ Set `GITHUB_WEBHOOK_SECRET` and point webhooks at `POST /webhooks/github`. See [
 ## Origin
 
 Built during a 47-hour sprint: 12 AI agents on a single laptop, 737 tickets closed (15.7/hour), 826 commits. [Full write-up](docs/rag-challenge-swarm-architecture.md). Every design decision here is a direct response to those findings.
+
+## Roadmap
+
+Bernstein's roadmap is public. Near-term work focuses on adoption and the governance moat; longer-term work on enterprise standards and distribution.
+
+### Now (P0)
+
+| Area | What |
+|------|------|
+| **Adoption** | CI autofix pipeline — detect failing CI, orchestrate agents to fix, open PR |
+| **Adoption** | `bernstein demo` — zero-config first-run experience in 30 seconds |
+| **Adoption** | Public benchmark suite — orchestrated vs. single-agent, reproducible |
+| **Adoption** | VS Code / Cursor extension publish + UX polish |
+| **Governance** | Lifecycle governance kernel — explicit state machine for task and agent transitions |
+| **Governance** | Governed workflow mode — deterministic phases, hashable definitions, approval gates |
+| **Governance** | Immutable HMAC-chained audit log |
+| **Governance** | Model routing policy — provider allow/deny lists for CISO compliance |
+
+### Next (P1)
+
+| Area | What |
+|------|------|
+| **Routing** | Contextual bandit routing — online cost-quality optimization |
+| **Standards** | Agent run manifest — hashable spec for SOC2/ISO 27001 evidence |
+| **Standards** | Execution evidence bundle — exportable compliance artifact |
+| **Compliance** | EU AI Act compliance mode (enforcement begins Aug 2026) |
+| **Distribution** | First-party GitHub Action for CI-triggered orchestration |
+| **Interop** | ACP protocol bridge — auto-discoverable in JetBrains, Zed, Neovim |
+| **DX** | Deterministic replay — reproduce any orchestration run from its trace |
+
+### Later (P2+)
+
+Distributed worker daemon, web dashboard, cluster federation, workflow DSL, agent marketplace.
+
+Track progress and full ticket details in [`.sdd/backlog/`](.sdd/backlog/).
 
 ## Support Bernstein
 
