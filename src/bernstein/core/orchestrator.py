@@ -35,6 +35,7 @@ from bernstein.core.agent_lifecycle import (
 )
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.approval import ApprovalGate, ApprovalMode
+from bernstein.core.bandit_router import BanditRouter
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.cluster import NodeHeartbeatClient
 from bernstein.core.context import refresh_knowledge_base
@@ -46,6 +47,7 @@ from bernstein.core.fast_path import (
 )
 from bernstein.core.file_locks import FileLockManager
 from bernstein.core.graph import TaskGraph
+from bernstein.core.incident import IncidentManager
 from bernstein.core.merge_queue import MergeQueue
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
@@ -63,8 +65,11 @@ from bernstein.core.quarantine import QuarantineStore
 from bernstein.core.rate_limit_tracker import RateLimitTracker
 from bernstein.core.recorder import RunRecorder
 from bernstein.core.retrospective import generate_retrospective
-from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
+from bernstein.core.router import TierAwareRouter, load_model_policy_from_yaml, load_providers_from_yaml
+from bernstein.core.runbooks import RunbookEngine
+from bernstein.core.semantic_cache import ResponseCacheManager
 from bernstein.core.signals import read_unresolved_pivots
+from bernstein.core.slo import SLOTracker, apply_error_budget_adjustments
 from bernstein.core.task_lifecycle import (
     auto_decompose_task,
     claim_and_spawn_batches,
@@ -92,6 +97,7 @@ from bernstein.core.tick_pipeline import (
     total_spent_cache as total_spent_cache,
 )
 from bernstein.core.token_monitor import check_token_growth
+from bernstein.core.workflow import WorkflowExecutor, load_workflow
 from bernstein.evolution.governance import AdaptiveGovernor, GovernanceEntry, ProjectContext
 from bernstein.evolution.risk import RiskScorer
 
@@ -203,6 +209,20 @@ class Orchestrator:
             providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
             if providers_yaml.exists():
                 load_providers_from_yaml(providers_yaml, self._router)
+        # Load model policy — checked on every init so late-bound routers pick it up
+        if self._router is not None:
+            model_policy_yaml = workdir / ".sdd" / "config" / "model_policy.yaml"
+            if model_policy_yaml.exists():
+                load_model_policy_from_yaml(model_policy_yaml, self._router)
+            else:
+                # Fall back to bernstein.yaml model_policy section
+                seed_path = workdir / "bernstein.yaml"
+                if seed_path.exists():
+                    load_model_policy_from_yaml(seed_path, self._router)
+            # Warn on startup if policy leaves no viable providers
+            policy_issues = self._router.validate_policy()
+            for issue in policy_issues:
+                logger.warning("Model policy: %s", issue)
 
         # Rate-limit-aware scheduling: tracks per-provider throttle state.
         self._rate_limit_tracker = RateLimitTracker()
@@ -238,6 +258,19 @@ class Orchestrator:
 
         # Cross-run task quarantine: skip repeatedly-failing tasks
         self._quarantine = QuarantineStore(workdir / ".sdd" / "runtime" / "quarantine.json")
+
+        # Semantic response cache: reuse completed agent results for
+        # functionally identical tasks (cosine >= 0.95 skips spawn).
+        self._response_cache = ResponseCacheManager(workdir)
+
+        # Contextual bandit router: active when BERNSTEIN_ROUTING=bandit.
+        # Persists policy to .sdd/routing/ so learning accumulates across runs.
+        import os as _os
+
+        _routing_mode = _os.environ.get("BERNSTEIN_ROUTING", "static").lower()
+        self._bandit_router: BanditRouter | None = (
+            BanditRouter(policy_dir=workdir / ".sdd" / "routing") if _routing_mode == "bandit" else None
+        )
 
         # Adaptive polling backoff: multiplied by 2 each idle tick, reset on work.
         self._idle_multiplier: int = 1
@@ -296,6 +329,12 @@ class Orchestrator:
         # a MergeResult reports conflicting_files.
         self._merge_queue = MergeQueue()
 
+        # AgentOps: SLO tracking, error budget, runbooks, incident response.
+        self._slo_tracker = SLOTracker.load(workdir / ".sdd" / "metrics")
+        self._runbook_engine = RunbookEngine()
+        self._incident_manager = IncidentManager()
+        self._consecutive_failures: int = 0
+
         # Governed workflow mode: when config.workflow is set (e.g. "governed"),
         # the executor drives the run through deterministic phases, filtering
         # tasks and blocking advancement until guards pass.
@@ -316,6 +355,52 @@ class Orchestrator:
                 )
             else:
                 logger.warning("Unknown workflow %r — running in adaptive mode", config.workflow)
+
+        # Compliance mode: activate subsystems based on compliance config.
+        self._compliance = config.compliance
+        if self._compliance is not None:
+            from bernstein.core.compliance import persist_compliance_config
+
+            compliance: ComplianceConfig = self._compliance
+            persist_compliance_config(compliance, workdir / ".sdd")
+
+            # Log prerequisite warnings
+            prereq_warnings = compliance.check_prerequisites()
+            for w in prereq_warnings:
+                logger.warning("Compliance: %s", w)
+
+            preset_label = compliance.preset.value if compliance.preset else "custom"
+            features = []
+            if compliance.audit_logging:
+                features.append("audit")
+            if compliance.audit_hmac_chain:
+                features.append("hmac-chain")
+            if compliance.wal_enabled:
+                features.append("wal")
+            if compliance.wal_signed:
+                features.append("signed-wal")
+            if compliance.governed_workflow:
+                features.append("governed")
+            if compliance.approval_gates:
+                features.append("approval-gates")
+            if compliance.mandatory_human_review:
+                features.append("mandatory-review")
+            if compliance.execution_fingerprint:
+                features.append("fingerprint")
+            if compliance.ai_content_labels:
+                features.append("ai-labels")
+            if compliance.data_residency:
+                features.append(f"data-residency:{compliance.data_residency_region}")
+            if compliance.sbom_enabled:
+                features.append("sbom")
+            if compliance.evidence_bundle:
+                features.append("evidence-bundle")
+
+            logger.info(
+                "Compliance mode active: preset=%s features=[%s]",
+                preset_label,
+                ", ".join(features),
+            )
 
         # Progress-snapshot stall detection state (see check_stalled_tasks).
         # Tracks how many consecutive identical snapshots each task has had.
@@ -502,6 +587,20 @@ class Orchestrator:
         except OSError as exc:
             logger.warning("Failed to read pivot signals: %s", exc)
 
+        # 1b-ii. Governed workflow: filter tasks to current phase only
+        if self._workflow_executor is not None and not self._workflow_executor.is_completed:
+            before_wf = len(ready_tasks)
+            ready_tasks = self._workflow_executor.filter_tasks_for_current_phase(ready_tasks)
+            held_wf = before_wf - len(ready_tasks)
+            if held_wf:
+                logger.info(
+                    "Workflow phase %r: holding %d task(s) outside current phase",
+                    self._workflow_executor.current_phase_name,
+                    held_wf,
+                )
+            # Check for file-based approval grant
+            self._check_workflow_approval()
+
         # 1c. Build task graph and compute optimal parallelism
         all_tasks = [t for status_tasks in tasks_by_status.values() for t in status_tasks]
         task_graph = TaskGraph(all_tasks)
@@ -556,7 +655,16 @@ class Orchestrator:
             if agent.status != "dead":
                 assigned_task_ids.update(agent.task_ids)
 
-        # 3b. Claim tasks and spawn agents for ready batches (skip if budget is exhausted)
+        # 3b. Error budget: temporarily reduce max_agents if budget is depleted
+        _orig_max_agents = self._config.max_agents
+        if self._slo_tracker.error_budget.is_depleted:
+            _adj_max, _adj_model = apply_error_budget_adjustments(
+                self._config.max_agents,
+                self._slo_tracker,
+            )
+            self._config.max_agents = _adj_max
+
+        # 3c. Claim tasks and spawn agents for ready batches (skip if budget is exhausted)
         if self._config.dry_run:
             for batch in batches:
                 for task in batch:
@@ -589,8 +697,29 @@ class Orchestrator:
         else:
             claim_and_spawn_batches(self, batches, alive_count, assigned_task_ids, done_ids, result)
 
+        # Restore max_agents after error-budget-adjusted spawning
+        self._config.max_agents = _orig_max_agents
+
         # 4. Check done tasks, run janitor, record evolution metrics
         process_completed_tasks(self, done_tasks, result)
+
+        # 4a-wf. Governed workflow: try to advance phase after processing completions
+        if self._workflow_executor is not None and not self._workflow_executor.is_completed:
+            all_tasks = [t for status_tasks in tasks_by_status.values() for t in status_tasks]
+            phase_event = self._workflow_executor.try_advance(all_tasks)
+            if phase_event is not None:
+                self._recorder.record(
+                    "workflow_phase_advanced",
+                    workflow_hash=phase_event.workflow_hash,
+                    from_phase=phase_event.from_phase,
+                    to_phase=phase_event.to_phase,
+                    reason=phase_event.reason,
+                    tasks_completed=list(phase_event.tasks_completed),
+                )
+                self._post_bulletin(
+                    "status",
+                    f"Workflow phase: {phase_event.from_phase} -> {phase_event.to_phase}",
+                )
 
         # 4b. Use cached failed tasks and maybe retry with escalation
         failed_tasks = tasks_by_status["failed"]
@@ -614,6 +743,29 @@ class Orchestrator:
         # Run manager queue review when triggered (periodic correction pass)
         if self._should_trigger_manager_review(self._failures_since_review):
             self._run_manager_queue_review()
+
+        # 4b.6 AgentOps: update SLOs, check error budget, detect incidents
+        if self._tick_count % 5 == 0:  # every 5 ticks
+            collector = get_collector()
+            self._slo_tracker.update_from_collector(collector)
+            self._slo_tracker.save(self._workdir / ".sdd" / "metrics")
+
+            # Track consecutive failures for incident detection
+            if result.verified:
+                self._consecutive_failures = 0
+            if failed_tasks:
+                self._consecutive_failures += len([t for t in failed_tasks if t.id not in self._retried_task_ids])
+
+            # Check for incidents
+            all_counted = self._slo_tracker.error_budget.total_tasks
+            failed_counted = self._slo_tracker.error_budget.failed_tasks
+            self._incident_manager.check_for_incidents(
+                failed_task_count=failed_counted,
+                total_task_count=all_counted,
+                consecutive_failures=self._consecutive_failures,
+                error_budget_depleted=self._slo_tracker.error_budget.is_depleted,
+            )
+            self._incident_manager.save(self._workdir / ".sdd" / "runtime")
 
         # 4c. Check heartbeat-based staleness; send WAKEUP/SHUTDOWN as needed
         check_stale_agents(self)
@@ -665,6 +817,30 @@ class Orchestrator:
 
         return result
 
+    def _check_workflow_approval(self) -> None:
+        """Check for file-based workflow approval grant.
+
+        Looks for ``.sdd/runtime/workflow/approve_{phase_name}`` files.
+        When found, grants approval and removes the file.
+        """
+        if self._workflow_executor is None or not self._workflow_executor.approval_pending:
+            return
+        phase_name = self._workflow_executor.current_phase_name
+        approval_file = self._workdir / ".sdd" / "runtime" / "workflow" / f"approve_{phase_name}"
+        if approval_file.exists():
+            reason = approval_file.read_text().strip() or "file-based approval"
+            approval_file.unlink(missing_ok=True)
+            # Also clean up the pending request file
+            pending = self._workdir / ".sdd" / "runtime" / "workflow" / f"approval_pending_{phase_name}.json"
+            pending.unlink(missing_ok=True)
+            self._workflow_executor.grant_approval(reason=reason)
+            self._recorder.record(
+                "workflow_approval_granted",
+                phase=phase_name,
+                reason=reason,
+            )
+            logger.info("Workflow approval granted for phase %r via file", phase_name)
+
     def run(self) -> None:
         """Run the orchestrator loop until stopped.
 
@@ -685,11 +861,16 @@ class Orchestrator:
             logger.info("Cluster heartbeat client started")
         self._post_bulletin("status", "run started")
         self._notify("run.started", "Bernstein run started", "Agents are being spawned.")
+        _run_started_extra: dict[str, object] = {}
+        if self._workflow_executor is not None:
+            _run_started_extra["workflow_name"] = self._workflow_executor.definition.name
+            _run_started_extra["workflow_hash"] = self._workflow_executor.definition_hash
         self._recorder.record(
             "run_started",
             run_id=self._run_id,
             max_agents=self._config.max_agents,
             budget_usd=self._config.budget_usd,
+            **_run_started_extra,
         )
         consecutive_failures = 0
         max_consecutive_failures = 10
@@ -2127,6 +2308,12 @@ if __name__ == "__main__":
             router = TierAwareRouter()
             load_providers_from_yaml(providers_yaml, router)
             logger.info("Loaded TierAwareRouter from %s", providers_yaml)
+            # Load model policy for this router instance
+            model_policy_yaml = workdir / ".sdd" / "config" / "model_policy.yaml"
+            if model_policy_yaml.exists():
+                load_model_policy_from_yaml(model_policy_yaml, router)
+            elif seed_path.exists():
+                load_model_policy_from_yaml(seed_path, router)
 
         # Load MCP config from user global + project seed
         mcp_config = None
@@ -2215,7 +2402,7 @@ if __name__ == "__main__":
             mcp_manager=mcp_manager,
             agency_catalog=agency_catalog,
             catalog=catalog_registry,
-            use_worktrees=seed.worktree_setup is not None if seed else False,
+            use_worktrees=True,  # Always use worktrees for isolation + auto-commit
             worktree_setup_config=seed.worktree_setup if seed else None,
             enable_caching=True,
         )
@@ -2224,6 +2411,7 @@ if __name__ == "__main__":
         approval_mode = "auto"
         merge_strategy = "pr"
         auto_merge = True
+        workflow_mode: str | None = None
         run_config_path = workdir / ".sdd" / "runtime" / "run_config.json"
         if run_config_path.exists():
             try:
@@ -2233,8 +2421,29 @@ if __name__ == "__main__":
                 approval_mode = str(run_cfg.get("approval", "auto"))
                 merge_strategy = str(run_cfg.get("merge_strategy", "pr"))
                 auto_merge = bool(run_cfg.get("auto_merge", True))
+                workflow_mode = run_cfg.get("workflow") or None
             except (json.JSONDecodeError, ValueError):
                 pass
+        # Env var override for workflow mode
+        workflow_mode = os.environ.get("BERNSTEIN_WORKFLOW", workflow_mode or "") or None
+
+        # Resolve compliance config: env var > run_config > seed config
+        compliance_config = None
+        compliance_preset_env = os.environ.get("BERNSTEIN_COMPLIANCE")
+        if compliance_preset_env:
+            from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+
+            compliance_config = ComplianceConfig.from_preset(CompliancePreset(compliance_preset_env.lower()))
+        elif seed and seed.compliance:
+            compliance_config = seed.compliance
+        else:
+            from bernstein.core.compliance import load_compliance_config
+
+            compliance_config = load_compliance_config(workdir / ".sdd")
+
+        # Compliance can force governed workflow mode
+        if compliance_config and compliance_config.governed_workflow and not workflow_mode:
+            workflow_mode = "governed"
 
         # Resolve cluster-aware settings from env vars + seed config
         server_url = os.environ.get("BERNSTEIN_SERVER_URL", f"http://127.0.0.1:{args.port}")
@@ -2254,6 +2463,10 @@ if __name__ == "__main__":
                 bind_host=os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1"),
             )
 
+        # Compliance can force approval gates
+        if compliance_config and compliance_config.approval_gates and approval_mode == "auto":
+            approval_mode = "review"
+
         config = OrchestratorConfig(
             server_url=server_url,
             max_agents=seed.max_agents if seed else 6,
@@ -2263,6 +2476,8 @@ if __name__ == "__main__":
             approval=approval_mode,
             merge_strategy=merge_strategy,
             auto_merge=auto_merge,
+            workflow=workflow_mode,
+            compliance=compliance_config,
         )
 
         if args.cells > 1:

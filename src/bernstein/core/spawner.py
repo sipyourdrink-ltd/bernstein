@@ -12,6 +12,7 @@ from bernstein.core.container import ContainerConfig, ContainerError, ContainerM
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
 from bernstein.core.lessons import gather_lessons_for_context
+from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import AgentSession, IsolationMode, ModelConfig, Task
 from bernstein.core.router import RouterError, TierAwareRouter
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
@@ -257,11 +258,16 @@ def _render_prompt(
         for t in tasks
     )
     instructions = (
-        f"Complete these tasks. When ALL are done, mark each complete on the task server:\n\n"
+        f"Complete these tasks. When ALL are done:\n\n"
+        f"**Step 1: Commit your changes**\n"
+        f"```bash\n"
+        f'git add -A && git commit -m "feat: <brief summary of what you did>"\n'
+        f"```\n\n"
+        f"**Step 2: Mark tasks complete on the task server**\n"
         f"```bash\n{completion_cmds}\n```\n\n"
         f"**Note:** If a curl request fails with a connection error, retry up to 3 times "
         f"with a 2-second delay. The server may briefly restart during code updates.\n\n"
-        f"Then exit."
+        f"**Step 3: Exit**"
     )
 
     # Available roles from templates directory
@@ -402,7 +408,7 @@ class AgentSpawner:
         mcp_registry: MCPRegistry | None = None,
         mcp_manager: MCPManager | None = None,
         catalog: CatalogRegistry | None = None,
-        use_worktrees: bool = False,
+        use_worktrees: bool = True,
         worktree_setup_config: WorktreeSetupConfig | None = None,
         workspace: Workspace | None = None,
         bulletin: BulletinBoard | None = None,
@@ -617,7 +623,7 @@ class AgentSpawner:
                 mcp_config=effective_mcp,
             )
         session.pid = result.pid
-        session.status = "working"
+        transition_agent(session, "working", actor="spawner", reason="agent process started")
         if result.log_path:
             session.log_path = str(result.log_path)
         if result.proc is not None:
@@ -727,7 +733,7 @@ class AgentSpawner:
             session_id=session_id,
         )
         session.pid = result.pid
-        session.status = "working"
+        transition_agent(session, "working", actor="spawner", reason="agent process started in worktree")
         if result.log_path:
             session.log_path = str(result.log_path)
         if result.proc is not None:
@@ -929,7 +935,8 @@ class AgentSpawner:
                 self._container_mgr.destroy(handle)
         elif session.pid is not None:
             self._adapter.kill(session.pid)
-        session.status = "dead"
+        if session.status != "dead":
+            transition_agent(session, "dead", actor="spawner", reason="kill requested")
 
     def reap_completed_agent(
         self,
@@ -992,6 +999,15 @@ class AgentSpawner:
         if worktree_path is not None and self._worktree_mgr is not None:
             if not skip_merge:
                 merge_result = self._merge_worktree_branch(session.id)
+                # Push merged work to remote so nothing is lost
+                if merge_result and merge_result.success:
+                    from bernstein.core.git_ops import safe_push
+
+                    push_result = safe_push(self._workdir, "main")
+                    if push_result.ok:
+                        logger.info("Pushed merged work from %s to origin/main", session.id)
+                    else:
+                        logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
             self._worktree_mgr.cleanup(session.id)
 
         outcome = "completed" if session.status != "dead" else "timed_out"
