@@ -106,17 +106,38 @@ bernstein plugins                  # list active plugins
 bernstein trace <task_id>          # step-by-step agent decision trace
 bernstein replay <trace_id>        # re-run a task from its trace
 bernstein init                     # initialize project
+bernstein demo                     # zero-to-running demo (no API key needed)
+
+# CI autofix
+bernstein ci fix <run-url>         # parse failing CI run, create fix task
+bernstein ci watch <repo>          # continuous monitoring, auto-fix on failure
+
+# Governance & audit
+bernstein audit verify-hmac        # validate HMAC chain integrity
+bernstein audit query              # search audit log (--event-type, --actor, --since)
+bernstein verify --wal-integrity   # verify WAL hash chain
+bernstein verify --determinism     # check execution fingerprint reproducibility
+bernstein manifest show <run-id>   # display run manifest
+bernstein manifest diff <a> <b>    # compare two run configurations
+
+# Benchmarks & eval
+bernstein benchmark run            # run golden benchmark suite
+bernstein benchmark compare        # orchestrated vs. single-agent comparison
+
+# Evolution
 bernstein evolve review            # list evolution proposals
 bernstein evolve approve <id>      # approve a proposal
-bernstein benchmark run            # run golden benchmark suite
+bernstein ideate                   # run creative evolution pipeline
+
+# Agent management
 bernstein agents sync              # pull latest agent catalog
 bernstein agents list              # list available agents
 bernstein agents validate          # check catalog health
+
+# Workspace
 bernstein workspace                # show multi-repo workspace status
 bernstein plan                     # show task backlog
 bernstein logs                     # tail agent log output
-bernstein demo                     # zero-to-running demo
-bernstein ideate                   # run creative evolution pipeline
 bernstein retro                    # generate retrospective report
 ```
 
@@ -209,6 +230,9 @@ Any tool, CI pipeline, Slack bot, or custom UI can create tasks and read status.
 | Scheduling | Deterministic code | LLM-based | LLM-based | Graph | LLM-based |
 | Agent lifetime | Short (minutes) | Long-running | Long-running | Long-running | Long-running |
 | Verification | Built-in janitor | Manual | Manual | Manual | Manual |
+| HMAC audit trail | Yes (tamper-evident) | No | No | No | No |
+| Execution WAL | Yes (crash-safe, fingerprinted) | No | No | No | No |
+| CI autofix | Yes (`bernstein ci fix`) | No | No | No | No |
 | Self-evolution | Yes (risk-gated) | No | No | No | Yes |
 | CLI agents | Claude/Codex/Gemini/Qwen | API-only | API-only | API-only | Claude-only |
 | Model lock-in | **None** | Soft (LiteLLM) | Soft (LiteLLM) | Soft (LiteLLM) | **Claude-only** |
@@ -272,34 +296,36 @@ Built during a 47-hour sprint: 12 AI agents on a single laptop, 737 tickets clos
 
 Bernstein's roadmap is public. Near-term work focuses on adoption and the governance moat; longer-term work on enterprise standards and distribution.
 
-### Now (P0)
+### Shipped
+
+| Area | What | Status |
+|------|------|--------|
+| **Governance** | Lifecycle governance kernel — guarded state transitions, typed events | Done |
+| **Governance** | Governed workflow mode — deterministic phases, hashable definitions | Done |
+| **Governance** | Model routing policy — provider allow/deny lists | Done |
+| **Governance** | Immutable HMAC-chained audit log — tamper-evident, daily rotation | Done |
+| **Governance** | Execution WAL — hash-chained write-ahead log, crash recovery, determinism fingerprinting | Done |
+| **Adoption** | CI autofix pipeline — `bernstein ci fix <url>` and `bernstein ci watch` | Done |
+| **Adoption** | Comparative benchmark suite — orchestrated vs. single-agent proof | Done |
+| **Adoption** | Agent run manifest — hashable workflow spec for SOC2 evidence | Done |
+| **Adoption** | `bernstein demo` — zero-config first-run experience | Done |
+
+### Now (P1)
 
 | Area | What |
 |------|------|
-| **Adoption** | CI autofix pipeline — detect failing CI, orchestrate agents to fix, open PR |
-| **Adoption** | `bernstein demo` — zero-config first-run experience in 30 seconds |
-| **Adoption** | Public benchmark suite — orchestrated vs. single-agent, reproducible |
 | **Adoption** | VS Code / Cursor extension publish + UX polish |
-| **Governance** | Lifecycle governance kernel — explicit state machine for task and agent transitions |
-| **Governance** | Governed workflow mode — deterministic phases, hashable definitions, approval gates |
-| **Governance** | Immutable HMAC-chained audit log |
-| **Governance** | Model routing policy — provider allow/deny lists for CISO compliance |
-
-### Next (P1)
-
-| Area | What |
-|------|------|
-| **Routing** | Contextual bandit routing — online cost-quality optimization |
-| **Standards** | Agent run manifest — hashable spec for SOC2/ISO 27001 evidence |
 | **Standards** | Execution evidence bundle — exportable compliance artifact |
-| **Compliance** | EU AI Act compliance mode (enforcement begins Aug 2026) |
 | **Distribution** | First-party GitHub Action for CI-triggered orchestration |
-| **Interop** | ACP protocol bridge — auto-discoverable in JetBrains, Zed, Neovim |
 | **DX** | Deterministic replay — reproduce any orchestration run from its trace |
+| **DX** | Error DX — structured error codes, diagnostics, retry suggestions |
+| **Routing** | MCP gateway proxy — transparent recording and replay of tool calls |
+| **Routing** | Agent voting protocol — multi-model consensus with configurable quorum |
+| **Routing** | ML-predicted task duration — learned estimates for scheduling |
 
 ### Later (P2+)
 
-Distributed worker daemon, web dashboard, cluster federation, workflow DSL, agent marketplace.
+Distributed worker daemon, web dashboard, workflow DSL, agent marketplace, cluster federation.
 
 Track progress on [GitHub Issues](https://github.com/chernistry/bernstein/issues).
 

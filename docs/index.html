@@ -239,6 +239,24 @@
       </div>
 
       <div class="feature-group">
+        <h3 class="feature-group-title">Governance &amp; Compliance</h3>
+        <div class="feature-group-items">
+          <div class="feature-item">
+            <h4>HMAC-chained audit log</h4>
+            <p>Every orchestrator decision is logged in a tamper-evident, HMAC-chained JSONL file. Daily rotation, <code>bernstein audit verify-hmac</code> validates chain integrity. SOC2 Type II ready.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Execution WAL</h4>
+            <p>Hash-chained write-ahead log for crash recovery and determinism proof. <code>bernstein verify --determinism</code> produces an execution fingerprint proving two runs made identical decisions.</p>
+          </div>
+          <div class="feature-item">
+            <h4>CI autofix pipeline</h4>
+            <p><code>bernstein ci fix &lt;url&gt;</code> parses a failing GitHub Actions run, creates a fix task, and opens a PR. <code>bernstein ci watch</code> monitors continuously and auto-fixes.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature-group">
         <h3 class="feature-group-title">Operations</h3>
         <div class="feature-group-items">
           <div class="feature-item">
@@ -250,8 +268,8 @@
             <p>Real-time TUI shows agent status, task progress, activity feed, sparkline, and cost tracking. Chat input lets you add tasks mid-run without leaving the terminal.</p>
           </div>
           <div class="feature-item">
-            <h4>GitHub Action</h4>
-            <p>Trigger orchestration from CI. Auto-fix failing builds, run coding tasks on push, or schedule maintenance. Ships as a composite action — <code>uses: chernistry/bernstein@v3</code>.</p>
+            <h4>Comparative benchmarks</h4>
+            <p><code>bernstein benchmark compare</code> runs the same tasks single-agent vs orchestrated and produces a markdown report with wall time, cost, success rate, and token usage.</p>
           </div>
         </div>
       </div>
@@ -312,6 +330,30 @@
           </tr>
           <tr>
             <td>Completion signal verification</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>HMAC-chained audit trail</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>Execution WAL + determinism proof</td>
+            <td class="col-bern"><span class="check">&#10003;</span></td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+            <td>&#8212;</td>
+          </tr>
+          <tr>
+            <td>CI autofix (detect failure → fix → PR)</td>
             <td class="col-bern"><span class="check">&#10003;</span></td>
             <td>&#8212;</td>
             <td>&#8212;</td>
