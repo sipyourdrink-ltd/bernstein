@@ -424,3 +424,40 @@ class TestComplianceEngineRun:
         # Should not raise
         serialised = json.dumps(report)
         assert len(serialised) > 100
+
+    def test_next_steps_limited_risk(self) -> None:
+        """_next_steps for LIMITED risk returns Article 50 guidance."""
+        engine = ComplianceEngine()
+        report = engine.run(limited_risk_descriptor())
+        steps = report["compliance_summary"]["next_steps"]
+        assert any("50" in s or "transparency" in s.lower() or "disclosure" in s.lower() for s in steps)
+
+    def test_conformity_overall_status_partial(self) -> None:
+        """A system where all checks are PARTIAL (not FAIL) gets PARTIAL overall status."""
+        engine = ComplianceEngine()
+        # High-risk system with only Article 11 and 13 triggers (PARTIAL) and the rest PASS.
+        # Provide everything except tech_doc ref and instructions_for_use → Article 11 and 13 are PARTIAL.
+        # Also provide Article 15 (robustness) as NOT SPECIFIED → PARTIAL too.
+        # To get PARTIAL (not NON_CONFORMANT) we need zero FAILs.
+        d = SystemDescriptor(
+            name="PartialBot",
+            version="1.0.0",
+            description="A system with partial compliance",
+            intended_use="Hiring automation",
+            deployment_context="HR",
+            used_in_employment=True,
+            metadata={
+                "risk_management_system": "ISO 31000 risk framework",
+                "data_governance_practices": "ISO 8000 data quality",
+                "logging_capabilities": "Structured JSON audit log",
+                "human_oversight": "Human-in-the-loop for all decisions",
+                # Intentionally omit technical_documentation_reference → Article 11 = PARTIAL
+                # Intentionally omit instructions_for_use → Article 13 = PARTIAL
+                # Intentionally omit robustness_testing → Article 15 = PARTIAL
+            },
+        )
+        result = engine.assess_conformity(d)
+        # No FAILs (risk_mgmt, data_gov, logging, oversight all provided)
+        assert result.failed == 0
+        assert result.partial > 0
+        assert result.overall_status == "PARTIAL"

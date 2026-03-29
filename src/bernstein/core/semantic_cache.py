@@ -40,6 +40,20 @@ DEFAULT_TTL_SECONDS: float = 86_400.0  # 24 hours
 # Evict least-recently-used entries once we exceed this limit.
 MAX_CACHE_ENTRIES: int = 500
 
+# ---------------------------------------------------------------------------
+# Response cache constants (higher bar — agent spawns are expensive)
+# ---------------------------------------------------------------------------
+
+# Cosine threshold for agent-output response cache.  0.95 requires very close
+# semantic overlap before we skip spawning an agent.
+RESPONSE_CACHE_SIMILARITY_THRESHOLD: float = 0.95
+
+# 7-day TTL for agent results — implementations are more stable than plans.
+RESPONSE_CACHE_TTL_SECONDS: float = 604_800.0
+
+# Maximum cached agent results (larger pool — results are worth keeping longer).
+RESPONSE_CACHE_MAX_ENTRIES: int = 1_000
+
 _PUNCT_RE = re.compile(r"[^\w\s]")
 _SPACE_RE = re.compile(r"\s+")
 
@@ -180,7 +194,7 @@ class SemanticCacheManager:
             output or ``None`` on a cache miss, and *similarity* is in [0, 1].
         """
         # --- exact match (O(1)) ---
-        exact_key = _hash(self._normalize(key_text))
+        exact_key = _hash(_normalize(key_text))
         entry = self._manifest.entries.get(exact_key)
         if entry is not None and entry.model == model and not self._expired(entry):
             self._record_hit(entry)
@@ -188,7 +202,7 @@ class SemanticCacheManager:
             return entry.response, 1.0
 
         # --- fuzzy match (O(n)) ---
-        query_vec = self._embed(key_text)
+        query_vec = _embed(key_text)
         best_score = 0.0
         best_entry: SemanticCacheEntry | None = None
 
@@ -222,7 +236,7 @@ class SemanticCacheManager:
             response: The LLM response to cache.
             model: LLM model name that produced the response.
         """
-        norm = self._normalize(key_text)
+        norm = _normalize(key_text)
         cache_key = _hash(norm)
 
         if cache_key in self._manifest.entries:
@@ -238,7 +252,7 @@ class SemanticCacheManager:
             cache_key=cache_key,
             key_text=key_text,
             response=response,
-            word_vector=self._embed(key_text),
+            word_vector=_embed(key_text),
             model=model,
             hit_count=0,
             created_at=time.time(),
@@ -282,21 +296,6 @@ class SemanticCacheManager:
         except (OSError, json.JSONDecodeError, KeyError) as exc:
             logger.warning("Failed to load semantic cache: %s", exc)
 
-    def _normalize(self, text: str) -> str:
-        """Lowercase, strip punctuation, collapse whitespace."""
-        text = text.lower()
-        text = _PUNCT_RE.sub(" ", text)
-        return _SPACE_RE.sub(" ", text).strip()
-
-    def _embed(self, text: str) -> dict[str, float]:
-        """Return a sparse TF (term-frequency) word vector."""
-        words = self._normalize(text).split()
-        if not words:
-            return {}
-        counts = Counter(words)
-        total = float(len(words))
-        return {word: count / total for word, count in counts.items()}
-
     def _expired(self, entry: SemanticCacheEntry) -> bool:
         if self._ttl <= 0:
             return False
@@ -324,6 +323,206 @@ class SemanticCacheManager:
 
 
 # ---------------------------------------------------------------------------
+# Response cache: agent-output reuse at task level
+# ---------------------------------------------------------------------------
+
+
+class ResponseCacheManager:
+    """Agent-output response cache for task-level result reuse.
+
+    Caches completed task ``result_summary`` values keyed on the semantic
+    content of the task (role + title + description).  When a new task is
+    functionally identical (cosine >= 0.95) to a previously completed task,
+    the orchestrator returns the cached result instead of spawning an agent.
+
+    Target: 20-40% reduction in agent spawns via result reuse.
+
+    The cache is model-agnostic — it stores *what was accomplished*, not an
+    AI response, so the producing model is irrelevant for lookup.
+
+    Storage: ``.sdd/caching/response_cache.jsonl`` (one JSON line).
+
+    Args:
+        workdir: Project root (cache stored under workdir/.sdd/caching/).
+        similarity_threshold: Cosine similarity required for a cache hit.
+            Default 0.95 — deliberately high to prevent incorrect reuse.
+        ttl_seconds: Entries older than this (in seconds) are ignored.
+            Default 7 days.  Set to 0.0 to disable expiry.
+    """
+
+    def __init__(
+        self,
+        workdir: Path,
+        *,
+        similarity_threshold: float = RESPONSE_CACHE_SIMILARITY_THRESHOLD,
+        ttl_seconds: float = RESPONSE_CACHE_TTL_SECONDS,
+    ) -> None:
+        self._workdir = workdir
+        self._threshold = similarity_threshold
+        self._ttl = ttl_seconds
+        self._cache_path = workdir / ".sdd" / "caching" / "response_cache.jsonl"
+        self._manifest = SemanticCacheManifest()
+        self._load()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def task_key(role: str, title: str, description: str) -> str:
+        """Build a canonical lookup key for a task.
+
+        Args:
+            role: Task role (e.g. ``"backend"``, ``"qa"``).
+            title: Task title.
+            description: Task description.
+
+        Returns:
+            A single string suitable for ``lookup`` / ``store``.
+        """
+        return f"{role}:{title}\n{description}"
+
+    def lookup(self, key_text: str) -> tuple[str | None, float]:
+        """Look up a cached result for the given task key.
+
+        Performs an exact-hash check first, then falls back to cosine-
+        similarity search over all non-expired entries.
+
+        Args:
+            key_text: Task key from :meth:`task_key`.
+
+        Returns:
+            ``(result_summary, similarity)`` where *result_summary* is the
+            cached agent output or ``None`` on a miss.
+        """
+        # --- exact match (O(1)) ---
+        exact_key = _hash(_normalize(key_text))
+        entry = self._manifest.entries.get(exact_key)
+        if entry is not None and not self._expired(entry):
+            self._record_hit(entry)
+            logger.debug("Response cache exact-hit for key=%s", exact_key[:12])
+            return entry.response, 1.0
+
+        # --- fuzzy match (O(n)) ---
+        query_vec = _embed(key_text)
+        best_score = 0.0
+        best_entry: SemanticCacheEntry | None = None
+
+        for e in self._manifest.entries.values():
+            if self._expired(e):
+                continue
+            score = _cosine(query_vec, e.word_vector)
+            if score > best_score:
+                best_score = score
+                best_entry = e
+
+        if best_entry is not None and best_score >= self._threshold:
+            self._record_hit(best_entry)
+            logger.info(
+                "Response cache fuzzy-hit (similarity=%.3f) for task",
+                best_score,
+            )
+            return best_entry.response, best_score
+
+        return None, 0.0
+
+    def store(self, key_text: str, result_summary: str) -> None:
+        """Cache a completed task's result_summary.
+
+        Args:
+            key_text: Task key from :meth:`task_key`.
+            result_summary: The agent's result to cache.  Empty strings are
+                not stored (they carry no reusable information).
+        """
+        if not result_summary:
+            return
+
+        norm = _normalize(key_text)
+        cache_key = _hash(norm)
+
+        if cache_key in self._manifest.entries:
+            # Refresh the stored result.
+            entry = self._manifest.entries[cache_key]
+            entry.response = result_summary
+            entry.last_used_at = time.time()
+            return
+
+        self._evict_if_needed()
+
+        entry = SemanticCacheEntry(
+            cache_key=cache_key,
+            key_text=key_text,
+            response=result_summary,
+            word_vector=_embed(key_text),
+            model="agent",  # model-agnostic — result caching only
+            hit_count=0,
+            created_at=time.time(),
+        )
+        self._manifest.entries[cache_key] = entry
+        logger.debug("Response cache stored entry key=%s", cache_key[:12])
+
+    def save(self) -> None:
+        """Persist the current manifest to disk."""
+        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._cache_path, "w") as fh:
+            fh.write(self._manifest.to_json_line())
+        logger.debug("Response cache saved to %s", self._cache_path)
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return summary statistics for monitoring/dashboards.
+
+        Returns:
+            Dict with ``entries``, ``total_hits``, ``total_saved_calls``,
+            ``threshold``, and ``cache_path``.
+        """
+        return {
+            "entries": len(self._manifest.entries),
+            "total_hits": self._manifest.total_hits,
+            "total_saved_calls": self._manifest.total_saved_calls,
+            "threshold": self._threshold,
+            "cache_path": str(self._cache_path),
+        }
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _load(self) -> None:
+        if not self._cache_path.exists():
+            return
+        try:
+            text = self._cache_path.read_text().strip()
+            if text:
+                self._manifest = SemanticCacheManifest.from_json_line(text)
+        except (OSError, json.JSONDecodeError, KeyError) as exc:
+            logger.warning("Failed to load response cache: %s", exc)
+
+    def _expired(self, entry: SemanticCacheEntry) -> bool:
+        if self._ttl <= 0:
+            return False
+        return (time.time() - entry.created_at) > self._ttl
+
+    def _record_hit(self, entry: SemanticCacheEntry) -> None:
+        entry.hit_count += 1
+        entry.last_used_at = time.time()
+        self._manifest.total_hits += 1
+        self._manifest.total_saved_calls += 1
+
+    def _evict_if_needed(self) -> None:
+        """Remove least-recently-used entries if at capacity."""
+        if len(self._manifest.entries) < RESPONSE_CACHE_MAX_ENTRIES:
+            return
+        sorted_keys = sorted(
+            self._manifest.entries.keys(),
+            key=lambda k: self._manifest.entries[k].last_used_at or self._manifest.entries[k].created_at,
+        )
+        evict_count = max(1, len(sorted_keys) // 10)
+        for key in sorted_keys[:evict_count]:
+            del self._manifest.entries[key]
+        logger.debug("Response cache evicted %d LRU entries", evict_count)
+
+
+# ---------------------------------------------------------------------------
 # Pure functions (testable without instantiating the manager)
 # ---------------------------------------------------------------------------
 
@@ -331,6 +530,23 @@ class SemanticCacheManager:
 def _hash(text: str) -> str:
     """SHA-256 hex digest of a UTF-8 string."""
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _normalize(text: str) -> str:
+    """Lowercase, strip punctuation, collapse whitespace."""
+    text = text.lower()
+    text = _PUNCT_RE.sub(" ", text)
+    return _SPACE_RE.sub(" ", text).strip()
+
+
+def _embed(text: str) -> dict[str, float]:
+    """Return a sparse TF (term-frequency) word vector."""
+    words = _normalize(text).split()
+    if not words:
+        return {}
+    counts = Counter(words)
+    total = float(len(words))
+    return {word: count / total for word, count in counts.items()}
 
 
 def _cosine(v1: dict[str, float], v2: dict[str, float]) -> float:

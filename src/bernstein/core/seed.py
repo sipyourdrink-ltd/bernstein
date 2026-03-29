@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
+from bernstein.core.compliance import ComplianceConfig, CompliancePreset
 from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
 from bernstein.core.quality_gates import QualityGatesConfig
 from bernstein.core.workspace import Workspace
@@ -112,6 +113,8 @@ class SeedConfig:
     session: SessionConfig = field(default_factory=SessionConfig)
     worktree_setup: WorktreeSetupConfig | None = None
     quality_gates: QualityGatesConfig | None = None
+    model_policy: dict[str, Any] | None = None
+    compliance: ComplianceConfig | None = None
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -383,6 +386,13 @@ def parse_seed(path: Path) -> SeedConfig:
             setup_command=setup_cmd_raw if isinstance(setup_cmd_raw, str) else None,
         )
 
+    model_policy_raw: object = data.get("model_policy")
+    model_policy: dict[str, Any] | None = None
+    if model_policy_raw is not None:
+        if not isinstance(model_policy_raw, dict):
+            raise SeedError(f"model_policy must be a mapping, got: {type(model_policy_raw).__name__}")
+        model_policy = cast("dict[str, Any]", model_policy_raw)
+
     quality_gates_raw: object = data.get("quality_gates")
     quality_gates: QualityGatesConfig | None = None
     if quality_gates_raw is not None:
@@ -419,6 +429,22 @@ def parse_seed(path: Path) -> SeedConfig:
             timeout_s=_qg_int("timeout_s", 120),
         )
 
+    compliance_raw: object = data.get("compliance")
+    compliance: ComplianceConfig | None = None
+    if compliance_raw is not None:
+        if isinstance(compliance_raw, str):
+            # Simple preset name: compliance: standard
+            _valid_presets = tuple(p.value for p in CompliancePreset)
+            if compliance_raw.lower() not in _valid_presets:
+                raise SeedError(
+                    f"compliance must be one of {list(_valid_presets)} or a mapping, got: {compliance_raw!r}"
+                )
+            compliance = ComplianceConfig.from_preset(CompliancePreset(compliance_raw.lower()))
+        elif isinstance(compliance_raw, dict):
+            compliance = ComplianceConfig.from_dict(cast("dict[str, Any]", compliance_raw))
+        else:
+            raise SeedError(f"compliance must be a string or mapping, got: {type(compliance_raw).__name__}")
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -439,6 +465,8 @@ def parse_seed(path: Path) -> SeedConfig:
         session=session_cfg,
         worktree_setup=worktree_setup,
         quality_gates=quality_gates,
+        model_policy=model_policy,
+        compliance=compliance,
     )
 
 

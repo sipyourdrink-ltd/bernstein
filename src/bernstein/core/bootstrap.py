@@ -175,6 +175,20 @@ def bootstrap_from_seed(
     if auth_token:
         console.print("  [bold]Auth:[/bold] bearer token enabled")
 
+    # Compliance: resolve from env var override or seed config
+    compliance_config = seed.compliance
+    compliance_env = os.environ.get("BERNSTEIN_COMPLIANCE")
+    if compliance_env:
+        from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+
+        compliance_config = ComplianceConfig.from_preset(CompliancePreset(compliance_env.lower()))
+    if compliance_config is not None:
+        preset_label = compliance_config.preset.value if compliance_config.preset else "custom"
+        console.print(f"  [bold]Compliance:[/bold] {preset_label}")
+        prereq_warnings = compliance_config.check_prerequisites()
+        for w in prereq_warnings:
+            console.print(f"  [yellow]⚠ {w}[/yellow]")
+
     # 2. Init workspace + clean stale state
     with Status("[bold]Creating .sdd/ workspace...[/bold]", console=console):
         created = ensure_sdd(workdir)

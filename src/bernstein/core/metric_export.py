@@ -9,15 +9,28 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.differential_privacy import DPConfig
     from bernstein.core.metric_collector import MetricsCollector
 
 
-def export_metrics(collector: MetricsCollector, output_path: Path) -> None:
+def export_metrics(
+    collector: MetricsCollector,
+    output_path: Path,
+    dp_config: DPConfig | None = None,
+) -> None:
     """Export all metrics to a JSON file.
+
+    When *dp_config* is provided the numeric telemetry fields are privatised via
+    the Gaussian mechanism before writing, preventing re-identification of
+    developers or proprietary usage patterns from the exported data.
 
     Args:
         collector: MetricsCollector instance.
         output_path: Path to write the export.
+        dp_config: Optional (ε, δ)-DP configuration.  Pass a
+            :class:`~bernstein.core.differential_privacy.DPConfig` to apply
+            differential privacy noise before export.  ``None`` (default) writes
+            raw metrics.
     """
     data = {
         "exported_at": datetime.now().isoformat(),
@@ -48,6 +61,11 @@ def export_metrics(collector: MetricsCollector, output_path: Path) -> None:
             for a in collector.agent_metrics.values()
         ],
     }
+
+    if dp_config is not None:
+        from bernstein.core.differential_privacy import apply_dp_to_export
+
+        data = apply_dp_to_export(data, dp_config)
 
     with output_path.open("w") as f:
         json.dump(data, f, indent=2)

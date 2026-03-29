@@ -416,6 +416,29 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         "Install an adapter (claude/codex/gemini) and set its API key" if not any_adapter_key else "",
     )
 
+    # 11. Compliance mode prerequisites
+    from bernstein.core.compliance import load_compliance_config
+
+    compliance_cfg = load_compliance_config(workdir / ".sdd")
+    compliance_env = os.environ.get("BERNSTEIN_COMPLIANCE")
+    if compliance_env:
+        from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+
+        compliance_cfg = ComplianceConfig.from_preset(CompliancePreset(compliance_env.lower()))
+
+    if compliance_cfg is not None:
+        preset_label = compliance_cfg.preset.value if compliance_cfg.preset else "custom"
+        prereq_warnings = compliance_cfg.check_prerequisites()
+        if prereq_warnings:
+            _check(
+                f"Compliance ({preset_label})",
+                False,
+                f"{len(prereq_warnings)} issue(s): {prereq_warnings[0]}",
+                "; ".join(prereq_warnings),
+            )
+        else:
+            _check(f"Compliance ({preset_label})", True, "all prerequisites met", "")
+
     # --fix: attempt to auto-fix issues
     if auto_fix:
         failed = [c for c in checks if not c["ok"] and c.get("fix_id")]

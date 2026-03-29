@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from bernstein.core.a2a import A2AHandler
+from bernstein.core.acp import ACPHandler
 from bernstein.core.bulletin import BulletinBoard, MessageBoard, MessageType
 from bernstein.core.cluster import NodeRegistry
 from bernstein.core.models import (
@@ -49,6 +50,8 @@ _PUBLIC_PATHS = frozenset(
     {
         "/health",
         "/.well-known/agent.json",
+        "/.well-known/acp.json",
+        "/acp/v0/agents",
         "/docs",
         "/openapi.json",
         "/webhooks/github",
@@ -754,11 +757,13 @@ def create_app(
     bulletin = BulletinBoard()
     message_board = MessageBoard()
     a2a_handler = A2AHandler(server_url="http://localhost:8052")
+    acp_handler = ACPHandler(server_url="http://localhost:8052")
 
     application.state.store = store  # type: ignore[attr-defined]
     application.state.bulletin = bulletin  # type: ignore[attr-defined]
     application.state.message_board = message_board  # type: ignore[attr-defined]
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
+    application.state.acp_handler = acp_handler  # type: ignore[attr-defined]
     application.state.node_registry = node_registry  # type: ignore[attr-defined]
     application.state.sse_bus = sse_bus  # type: ignore[attr-defined]
     application.state.runtime_dir = jsonl_path.parent  # type: ignore[attr-defined]  # .sdd/runtime/
@@ -785,6 +790,11 @@ def create_app(
     application.include_router(costs_router)
     application.include_router(dashboard_router)
     application.include_router(quality_router)
+
+    # ACP (Agent Communication Protocol) routes — editor ecosystem visibility
+    from bernstein.core.routes.acp import router as acp_router
+
+    application.include_router(acp_router)
 
     # Plan approval routes (always mounted; returns 503 if plan_mode is off)
     from bernstein.core.routes.plans import router as plans_router

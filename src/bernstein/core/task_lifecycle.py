@@ -29,6 +29,7 @@ from bernstein.core.fast_path import (
     try_fast_path_batch,
 )
 from bernstein.core.janitor import verify_task
+from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
     AgentSession,
@@ -39,6 +40,7 @@ from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.tick_pipeline import (
     CompletionData,
+    complete_task,
     fail_task,
 )
 
@@ -799,6 +801,40 @@ def claim_and_spawn_batches(
         if claim_failed:
             continue
 
+        # Response cache: if a functionally identical task was already completed,
+        # return the cached result without spawning an agent (20-40% savings target).
+        # Only applied to single-task batches — multi-task batches have complex
+        # inter-task dependencies that make result reuse unsafe.
+        if len(batch) == 1:
+            _rc = getattr(orch, "_response_cache", None)
+            if _rc is not None:
+                _rc_task = batch[0]
+                _rc_key = _rc.task_key(_rc_task.role, _rc_task.title, _rc_task.description)
+                _cached_result, _rc_sim = _rc.lookup(_rc_key)
+                if _cached_result is not None:
+                    _rc_completed = False
+                    try:
+                        complete_task(orch._client, base, _rc_task.id, _cached_result)
+                        assigned_task_ids.add(_rc_task.id)
+                        _claimed_titles.add(_base_title(_rc_task.title))
+                        result.spawned.append(f"response-cache:{_rc_task.id}")
+                        logger.info(
+                            "Response cache hit (similarity=%.3f) for task %s (%r) -- skipping spawn",
+                            _rc_sim,
+                            _rc_task.id,
+                            _rc_task.title,
+                        )
+                        _rc.save()
+                        _rc_completed = True
+                    except Exception as _rc_exc:
+                        logger.warning(
+                            "Response cache complete_task failed for %s: %s -- falling through to spawn",
+                            _rc_task.id,
+                            _rc_exc,
+                        )
+                    if _rc_completed:
+                        continue
+
         # Fast-path: try deterministic execution for trivial (L0) tasks.
         # Runs inline, marks task complete on server, skips spawner entirely.
         if try_fast_path_batch(
@@ -1076,6 +1112,26 @@ def process_completed_tasks(
                     )
 
             orch._record_provider_health(session, success=janitor_passed)
+
+            # Bandit feedback: feed quality-cost reward back to the bandit policy
+            # so it learns which model performs best for each task context.
+            _bandit: Any = getattr(orch, "_bandit_router", None)
+            if _bandit is not None:
+                _bm = get_collector(orch._workdir / ".sdd" / "metrics").task_metrics.get(task.id)
+                _b_cost = _bm.cost_usd if _bm is not None else 0.0
+                _b_model = session.model_config.model if session.model_config else "sonnet"
+                _b_effort = getattr(session, "effort", "") or ""
+                _b_budget = float(getattr(orch._config, "budget_usd", 0.0) or 0.0)
+                _bandit.record_outcome(
+                    task=task,
+                    model=_b_model,
+                    effort=_b_effort,
+                    cost_usd=_b_cost,
+                    quality_score=1.0 if janitor_passed else 0.0,
+                    budget_ceiling=_b_budget if _b_budget > 0 else 1.0,
+                )
+                _bandit.save()
+
             _skip_merge = False
             if janitor_passed and orch._approval_gate is not None:
                 _approval_result = orch._approval_gate.evaluate(
@@ -1122,7 +1178,8 @@ def process_completed_tasks(
                             session.id,
                         )
             _merge_result: MergeResult | None = orch._spawner.reap_completed_agent(session, skip_merge=_skip_merge)
-            session.status = "dead"
+            if session.status != "dead":
+                transition_agent(session, "dead", actor="task_lifecycle", reason="task completed, process reaped")
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
 
             # Route merge conflicts to a dedicated resolver agent.
@@ -1208,6 +1265,23 @@ def process_completed_tasks(
                 task_id=task.id,
                 role=task.role,
             )
+            # Store result in the response cache so future identical tasks can
+            # be completed without spawning a new agent.
+            if task.result_summary:
+                _rc = getattr(orch, "_response_cache", None)
+                if _rc is not None:
+                    try:
+                        _rc.store(
+                            _rc.task_key(task.role, task.title, task.description),
+                            task.result_summary,
+                        )
+                        _rc.save()
+                    except Exception as _rc_store_exc:
+                        logger.warning(
+                            "Response cache store failed for task %s: %s",
+                            task.id,
+                            _rc_store_exc,
+                        )
         else:
             orch._post_bulletin(
                 "alert",
