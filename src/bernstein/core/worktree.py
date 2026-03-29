@@ -187,9 +187,9 @@ class WorktreeManager:
         branch_name = f"agent/{session_id}"
 
         if worktree_path.exists():
-            raise WorktreeError(
-                f"Worktree path already exists: {worktree_path}. Call cleanup() first or use a unique session_id."
-            )
+            # Auto-clean stale worktree from a previous run
+            logger.warning("Stale worktree found at %s — cleaning up before create", worktree_path)
+            self.cleanup(session_id)
 
         self._base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -247,6 +247,25 @@ class WorktreeManager:
             logger.warning("Failed to delete branch %s: %s", branch_name, exc)
 
         logger.info("Cleaned up worktree for session %s", session_id)
+
+    def cleanup_all_stale(self) -> int:
+        """Remove all worktrees under the base dir from prior runs.
+
+        Called at startup to ensure stale worktrees don't block new spawns.
+
+        Returns:
+            Number of worktrees cleaned up.
+        """
+        if not self._base_dir.exists():
+            return 0
+        cleaned = 0
+        for entry in self._base_dir.iterdir():
+            if entry.is_dir():
+                session_id = entry.name
+                logger.info("Cleaning stale worktree: %s", session_id)
+                self.cleanup(session_id)
+                cleaned += 1
+        return cleaned
 
     def list_active(self) -> list[str]:
         """Return session IDs that currently have active worktrees.

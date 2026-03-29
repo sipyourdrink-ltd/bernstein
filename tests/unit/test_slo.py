@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
@@ -16,7 +15,6 @@ from bernstein.core.slo import (
     SLOTracker,
     apply_error_budget_adjustments,
 )
-
 
 # ---------------------------------------------------------------------------
 # SLOTarget

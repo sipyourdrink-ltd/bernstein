@@ -12,14 +12,12 @@ Covers:
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 import pytest
 
 from bernstein.core.memory_integrity import (
     GENESIS_HASH,
-    ChainVerifyResult,
     EntryIntegrity,
     PoisonDetectionResult,
     ProvenanceEntry,
@@ -32,7 +30,6 @@ from bernstein.core.memory_integrity import (
     verify_chain,
     verify_entry_hash,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

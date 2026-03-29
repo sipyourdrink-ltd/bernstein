@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-import pytest
-
 from bernstein.compliance.eu_ai_act import (
     AnnexIIIDomain,
-    ClassificationResult,
     ComplianceEngine,
     ConformityAssessor,
-    ConformityResult,
     RiskCategory,
     SystemDescriptor,
     TechDoc,
     TechDocGenerator,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

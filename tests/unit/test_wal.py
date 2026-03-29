@@ -20,7 +20,6 @@ from bernstein.core.wal import (
     GENESIS_HASH,
     ExecutionFingerprint,
     WALEntry,
-    WALIntegrityError,
     WALReader,
     WALRecovery,
     WALWriter,

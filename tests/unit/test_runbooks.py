@@ -7,7 +7,6 @@ from pathlib import Path
 
 from bernstein.core.runbooks import RunbookEngine, RunbookRule
 
-
 # ---------------------------------------------------------------------------
 # RunbookRule
 # ---------------------------------------------------------------------------

@@ -15,7 +15,6 @@ import pytest
 
 from bernstein.core.models import Complexity, Scope, Task
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -329,7 +328,7 @@ class TestBanditRouter:
 
     def test_budget_ceiling_affects_reward(self) -> None:
         """Passing different budget ceilings should produce different rewards."""
-        from bernstein.core.bandit_router import BanditRouter, compute_reward
+        from bernstein.core.bandit_router import compute_reward
 
         r_tight = compute_reward(quality_score=1.0, cost_usd=0.5, budget_ceiling=1.0)
         r_loose = compute_reward(quality_score=1.0, cost_usd=0.5, budget_ceiling=10.0)

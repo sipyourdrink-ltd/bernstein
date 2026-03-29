@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from bernstein.core.container import (
     ContainerConfig,
     ContainerRuntime,
@@ -12,7 +10,6 @@ from bernstein.core.container import (
 )
 from bernstein.core.models import ContainerIsolationConfig
 from bernstein.core.orchestrator import _build_container_config
-
 
 # ---------------------------------------------------------------------------
 # _build_container_config — disabled

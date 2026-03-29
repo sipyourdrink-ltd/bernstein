@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from bernstein.core.license_scanner import check_license_obligations, _scan_diff_for_licenses
-
+from bernstein.core.license_scanner import _scan_diff_for_licenses, check_license_obligations
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -274,6 +273,7 @@ class TestDeduplication:
 class TestRunGuardrailsIntegration:
     def test_run_guardrails_includes_license_check(self, tmp_path: object) -> None:
         from pathlib import Path
+
         from bernstein.core.guardrails import GuardrailsConfig, run_guardrails
         from bernstein.core.models import Complexity, Scope, Task
 
@@ -293,6 +293,7 @@ class TestRunGuardrailsIntegration:
 
     def test_run_guardrails_skips_license_when_disabled(self, tmp_path: object) -> None:
         from pathlib import Path
+
         from bernstein.core.guardrails import GuardrailsConfig, run_guardrails
         from bernstein.core.models import Complexity, Scope, Task
 
@@ -312,6 +313,7 @@ class TestRunGuardrailsIntegration:
 
     def test_gpl_in_diff_is_hard_blocked_end_to_end(self, tmp_path: object) -> None:
         from pathlib import Path
+
         from bernstein.core.guardrails import GuardrailsConfig, run_guardrails
         from bernstein.core.models import Complexity, Scope, Task
 

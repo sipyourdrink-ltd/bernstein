@@ -8,8 +8,6 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.merkle import (
-    MerkleTree,
-    VerifyResult,
     _combine_hashes,
     _sha256,
     build_merkle_tree,
@@ -19,7 +17,6 @@ from bernstein.core.merkle import (
     save_seal,
     verify_merkle,
 )
-
 
 # ---------------------------------------------------------------------------
 # Hash primitives

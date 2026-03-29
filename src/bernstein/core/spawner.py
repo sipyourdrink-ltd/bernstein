@@ -437,9 +437,13 @@ class AgentSpawner:
         self._context_builder = TaskContextBuilder(workdir)
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
         self._use_worktrees = use_worktrees
-        self._worktree_mgr: WorktreeManager | None = (
-            WorktreeManager(workdir, setup_config=worktree_setup_config) if use_worktrees else None
-        )
+        self._worktree_mgr: WorktreeManager | None = None
+        if use_worktrees:
+            self._worktree_mgr = WorktreeManager(workdir, setup_config=worktree_setup_config)
+            # Clean stale worktrees from prior crashed/stopped runs
+            cleaned = self._worktree_mgr.cleanup_all_stale()
+            if cleaned:
+                logger.info("Cleaned %d stale worktree(s) from prior run", cleaned)
         self._worktree_paths: dict[str, Path] = {}
         self._traces: dict[str, AgentTrace] = {}
         self._trace_store = TraceStore(workdir / ".sdd" / "traces")
