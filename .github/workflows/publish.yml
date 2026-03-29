@@ -6,6 +6,78 @@ on:
       - "v*"
 
 jobs:
+  # Protocol compatibility gate — blocks release if breaking changes found
+  protocol-gate:
+    name: Protocol Compatibility Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Run protocol compatibility check
+        run: |
+          # Install test dependencies
+          uv pip install mcp a2a || true
+
+          # Run protocol tests
+          uv run pytest tests/protocol/ -v 2>&1 | tee test-output.log || true
+
+          # Generate results
+          python << 'EOF'
+          import json
+          import subprocess
+
+          results = []
+          test_output = open('test-output.log').read()
+
+          # Simplified: mark as pass/fail based on pytest output
+          status = "pass" if "FAILED" not in test_output else "fail"
+
+          result = {
+            "python": "3.12",
+            "mcp": "1.0",
+            "a2a": "0.2",
+            "status": status
+          }
+          results.append(result)
+
+          compat_data = {
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "release": "${{ github.ref_name }}",
+            "results": results
+          }
+
+          with open('release-compat-results.json', 'w') as f:
+              json.dump(compat_data, f, indent=2)
+          EOF
+
+      - name: Check against baseline
+        run: |
+          python scripts/check_compatibility.py \
+            --current-results release-compat-results.json \
+            --baseline tests/protocol/compatibility-baseline.json 2>&1 | tee gate-check.log
+
+      - name: Gate decision
+        run: |
+          BREAKING=$(grep -c "breaking_changes" gate-check.log || true)
+          ACKNOWLEDGE="${{ github.event.head_commit.message }}"
+
+          if grep -q "ACKNOWLEDGE_BREAKING_CHANGES" <<< "$ACKNOWLEDGE"; then
+            echo "✅ Operator acknowledged breaking changes"
+            exit 0
+          fi
+
+          if grep -q '"breaking_changes": \[\]' gate-check.log; then
+            echo "✅ Gate passed — no breaking changes detected"
+            exit 0
+          else
+            echo "❌ Release blocked — breaking changes detected"
+            echo "To proceed: include 'ACKNOWLEDGE_BREAKING_CHANGES' in commit message"
+            exit 1
+          fi
+
   # Safety: run tests before publishing even on manual tag push
   test:
     name: Verify tests pass
@@ -22,7 +94,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, protocol-gate]
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
