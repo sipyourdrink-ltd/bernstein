@@ -1,0 +1,93 @@
+name: Generate Protocol Compatibility Table
+
+on:
+  workflow_dispatch:
+    inputs:
+      results_artifact:
+        description: "Name of the protocol results artifact"
+        required: false
+        default: "protocol-compat-results"
+      commit_sha:
+        description: "Commit SHA for documentation"
+        required: false
+
+jobs:
+  generate-table:
+    name: Generate Compatibility Table
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Download protocol results
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ github.event.inputs.results_artifact || 'protocol-compat-results' }}
+          path: .
+
+      - name: Generate compatibility table
+        run: |
+          python scripts/generate_compatibility_table.py \
+            --results protocol-compat-results.json \
+            --output docs/compatibility.md
+
+      - name: Update README badges
+        run: |
+          python << 'EOF'
+          import json
+
+          # Read the results to determine which versions work
+          with open('protocol-compat-results.json') as f:
+              data = json.load(f)
+
+          # Extract unique versions that passed
+          mcp_versions = set()
+          a2a_versions = set()
+
+          for result in data.get('results', []):
+              if result['status'] == 'pass':
+                  mcp_versions.add(result['mcp'])
+                  a2a_versions.add(result['a2a'])
+
+          mcp_badge = f"![MCP](https://img.shields.io/badge/MCP-{','.join(sorted(mcp_versions))}-blue)"
+          a2a_badge = f"![A2A](https://img.shields.io/badge/A2A-{','.join(sorted(a2a_versions))}-blue)"
+          acp_badge = "![ACP](https://img.shields.io/badge/ACP-latest-brightgreen)"
+
+          # Update README if it exists
+          try:
+              with open('README.md', 'r') as f:
+                  content = f.read()
+
+              # Check if badges section exists, if not add it
+              if '<!-- protocol-badges-start -->' not in content:
+                  # Add badges section before "Features" or at top
+                  if '## Features' in content:
+                      content = content.replace('## Features', f'## Protocol Compatibility\n\n{mcp_badge} {a2a_badge} {acp_badge}\n\nSee [Protocol Compatibility Matrix](docs/compatibility.md) for details.\n\n## Features')
+                  else:
+                      content = f'## Protocol Compatibility\n\n{mcp_badge} {a2a_badge} {acp_badge}\n\n' + content
+
+              with open('README.md', 'w') as f:
+                  f.write(content)
+          except FileNotFoundError:
+              pass  # README doesn't exist yet
+          EOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "bernstein[bot]"
+          git config user.email "bernstein-bot@users.noreply.github.com"
+          git add docs/compatibility.md README.md 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "docs: update protocol compatibility table"
+            git push || {
+              echo "Push failed, may have conflicts. Manual review needed."
+              exit 1
+            }
+          fi
