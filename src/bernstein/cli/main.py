@@ -431,6 +431,8 @@ def cli(
         cli=cli_override,
         model=model_override,
         workflow=workflow_mode,
+        routing=None,
+        compliance=None,
     )
 
 
