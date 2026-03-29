@@ -96,5 +96,29 @@ export function registerCommands(
       },
     ),
 
+    vscode.commands.registerCommand(
+      'bernstein.inspectAgent',
+      (item: AgentItem) => {
+        const a = item.agent;
+        const runtime =
+          a.runtime_s > 60
+            ? `${Math.floor(a.runtime_s / 60)}m`
+            : `${a.runtime_s}s`;
+        const taskList = a.tasks?.length
+          ? a.tasks.map((t) => t.title).join(', ')
+          : 'No tasks';
+        const msg = [
+          `Agent: ${a.id}`,
+          `Role: ${a.role}`,
+          `Model: ${a.model ?? 'unknown'}`,
+          `Status: ${a.status}`,
+          `Runtime: ${runtime}`,
+          `Cost: $${a.cost_usd.toFixed(4)}`,
+          `Tasks: ${taskList}`,
+        ].join(' | ');
+        void vscode.window.showInformationMessage(msg);
+      },
+    ),
+
   );
 }
