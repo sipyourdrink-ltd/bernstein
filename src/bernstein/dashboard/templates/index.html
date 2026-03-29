@@ -46,6 +46,11 @@
     .tab-active { border-bottom: 2px solid #4f46e5; color: #e5e5e5; }
     .tab-inactive { border-bottom: 2px solid transparent; color: #737373; }
     .tab-inactive:hover { color: #a3a3a3; }
+    @media (max-width: 640px) {
+      .stat-grid { grid-template-columns: repeat(2, 1fr); }
+      table th:nth-child(6), table td:nth-child(6),
+      table th:nth-child(8), table td:nth-child(8) { display: none; }
+    }
   </style>
 </head>
 <body class="min-h-screen font-sans antialiased" x-data="dashboard()">
@@ -155,10 +160,11 @@
   </div>
 
   <!-- Main Area: 2 columns -->
-  <div class="px-4 pb-3 grid grid-cols-1 lg:grid-cols-5 gap-3" style="min-height: calc(100vh - 280px);">
+  <div class="px-4 pb-3 grid grid-cols-1 lg:grid-cols-5 gap-3" style="min-height: min(calc(100vh - 280px), 500px);">
 
     <!-- Left: Task Table (60%) -->
-    <div class="lg:col-span-3 bg-surface border border-border rounded-lg flex flex-col overflow-hidden" style="max-height: 60vh;">
+    <div class="lg:col-span-3 bg-surface border border-border rounded-lg flex flex-col overflow-hidden" style="max-height: min(60vh, 500px);">
+
       <!-- Table Header with Filters -->
       <div class="px-3 py-2 border-b border-border">
         <div class="flex items-center justify-between mb-1.5">
@@ -226,7 +232,9 @@
           </thead>
           <tbody class="divide-y divide-border/50">
             <template x-for="task in filteredTasks" :key="task.id">
-              <tr class="hover:bg-surface-2/30 transition-colors fade-in">
+              <tr class="hover:bg-surface-2/30 transition-colors fade-in cursor-pointer"
+                  @click="task.assigned_agent ? selectAgent(task.assigned_agent) : null"
+                  :title="task.assigned_agent ? 'Click to view agent logs' : ''">
                 <td class="px-3 py-1.5 text-center">
                   <span x-text="statusDot(task.status)"
                         :class="statusDotClass(task.status)"
@@ -280,7 +288,7 @@
     </div>
 
     <!-- Right: Agents + Activity Log (40%) -->
-    <div class="lg:col-span-2 flex flex-col gap-3 overflow-hidden" style="max-height: 60vh;">
+    <div class="lg:col-span-2 flex flex-col gap-3 overflow-hidden" style="max-height: min(60vh, 500px);">
 
       <!-- Agent Cards -->
       <div class="bg-surface border border-border rounded-lg flex flex-col overflow-hidden" style="flex: 1 1 55%;">
@@ -396,8 +404,8 @@
     </div>
   </div>
 
-  <!-- Bottom Section: Cost Breakdown + Workers -->
-  <div class="px-4 pb-4 grid grid-cols-1 lg:grid-cols-3 gap-3">
+  <!-- Bottom Section: Cost Breakdown + Workers + File Locks + Merge Queue -->
+  <div class="px-4 pb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
 
     <!-- Cost by Model -->
     <div class="bg-surface border border-border rounded-lg p-3">
@@ -542,6 +550,58 @@
         </template>
       </div>
     </div>
+
+    <!-- File Locks + Merge Queue -->
+    <div class="flex flex-col gap-3">
+      <!-- File Locks -->
+      <div class="bg-surface border border-border rounded-lg p-3">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xs font-semibold text-text">File Locks</h3>
+          <span class="text-[10px] text-muted tabular" x-text="fileLockCount + ' locked'"></span>
+        </div>
+        <template x-if="fileLockCount > 0">
+          <div class="space-y-1.5 max-h-40 overflow-auto">
+            <template x-for="[file, info] in fileLockEntries" :key="file">
+              <div class="text-[10px] px-2 py-1.5 rounded bg-bg border border-border/50">
+                <div class="font-mono text-text truncate" :title="file" x-text="file.split('/').pop()"></div>
+                <div class="flex items-center justify-between mt-0.5">
+                  <span class="text-muted" x-text="info.agent ? info.agent.slice(0, 12) : '--'"></span>
+                  <span class="text-muted/50 truncate max-w-[100px]" x-text="info.task_title || ''"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+        <template x-if="fileLockCount === 0">
+          <p class="text-[10px] text-muted text-center py-3">No locked files</p>
+        </template>
+      </div>
+
+      <!-- Merge Queue -->
+      <div class="bg-surface border border-border rounded-lg p-3 flex-1">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xs font-semibold text-text">Merge Queue</h3>
+          <span class="text-[10px] text-muted tabular" x-text="mergeQueue.length + ' pending'"></span>
+        </div>
+        <template x-if="mergeQueue.length > 0">
+          <div class="space-y-1.5 max-h-32 overflow-auto">
+            <template x-for="(job, i) in mergeQueue" :key="job.branch || i">
+              <div class="flex items-center justify-between text-[10px] px-2 py-1.5 rounded bg-bg border border-border/50">
+                <div class="flex items-center gap-1.5">
+                  <span class="inline-block w-1.5 h-1.5 rounded-full"
+                        :class="job.status === 'merging' ? 'bg-yellow-500 pulse' : job.status === 'ready' ? 'bg-green-500' : 'bg-muted'"></span>
+                  <span class="font-mono text-text truncate max-w-[120px]" x-text="job.branch || job.agent_id || ('Job #' + (i+1))"></span>
+                </div>
+                <span class="text-muted" x-text="job.status || 'queued'"></span>
+              </div>
+            </template>
+          </div>
+        </template>
+        <template x-if="mergeQueue.length === 0">
+          <p class="text-[10px] text-muted text-center py-3">Queue empty</p>
+        </template>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -661,6 +721,14 @@
         },
 
         // Unique values for filters
+        // File locks
+        get fileLockCount() {
+          return Object.keys(this.fileLocks).length;
+        },
+        get fileLockEntries() {
+          return Object.entries(this.fileLocks).sort((a, b) => a[0].localeCompare(b[0]));
+        },
+
         get uniqueRoles() {
           return [...new Set(this.tasks.map(t => t.role).filter(Boolean))].sort();
         },
