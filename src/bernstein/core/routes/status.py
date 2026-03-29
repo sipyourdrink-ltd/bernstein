@@ -535,6 +535,64 @@ def _read_merge_queue(request: Request) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Memory provenance audit
+# ---------------------------------------------------------------------------
+
+
+@router.get("/memory/audit")
+async def memory_audit(request: Request) -> JSONResponse:
+    """Audit the lesson memory provenance chain (OWASP ASI06 2026).
+
+    Returns chain integrity status and a per-entry provenance trail.
+    Detects tampering, insertion, deletion, and reordering attacks.
+    """
+    from bernstein.core.memory_integrity import audit_provenance, verify_chain
+
+    sdd_dir: Path | None = getattr(request.app.state, "sdd_dir", None)
+    if sdd_dir is None:
+        return JSONResponse(content={"error": "sdd_dir not configured"}, status_code=500)
+
+    lessons_path = sdd_dir / "memory" / "lessons.jsonl"
+
+    if not lessons_path.exists():
+        return JSONResponse(
+            content={
+                "valid": True,
+                "entries_checked": 0,
+                "errors": [],
+                "broken_at": -1,
+                "trail": [],
+            }
+        )
+
+    chain_result = verify_chain(lessons_path)
+    trail = audit_provenance(lessons_path)
+
+    return JSONResponse(
+        content={
+            "valid": chain_result.valid,
+            "entries_checked": chain_result.entries_checked,
+            "errors": chain_result.errors,
+            "broken_at": chain_result.broken_at,
+            "trail": [
+                {
+                    "line_number": e.line_number,
+                    "lesson_id": e.lesson_id,
+                    "filed_by_agent": e.filed_by_agent,
+                    "task_id": e.task_id,
+                    "created_iso": e.created_iso,
+                    "content_hash": e.content_hash[:16] + "…" if e.content_hash else "",
+                    "chain_hash": e.chain_hash[:16] + "…" if e.chain_hash else "",
+                    "hash_valid": e.hash_valid,
+                    "chain_position_valid": e.chain_position_valid,
+                }
+                for e in trail
+            ],
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
 # SSE events
 # ---------------------------------------------------------------------------
 
