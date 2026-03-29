@@ -30,7 +30,9 @@ TASK_PAYLOAD = {
 class TestBernsteinClientSync:
     @respx.mock
     def test_create_task(self) -> None:
-        respx.post(f"{BASE}/tasks").mock(return_value=httpx.Response(201, json=TASK_PAYLOAD))
+        respx.post(f"{BASE}/tasks").mock(
+            return_value=httpx.Response(201, json=TASK_PAYLOAD)
+        )
 
         with BernsteinClient(BASE) as client:
             task = client.create_task(title="Fix login bug", priority=1)
@@ -88,7 +90,15 @@ class TestBernsteinClientSync:
         respx.get(f"{BASE}/status").mock(
             return_value=httpx.Response(
                 200,
-                json={"total": 5, "open": 2, "claimed": 1, "done": 1, "failed": 1, "agents": 1, "cost_usd": 0.12},
+                json={
+                    "total": 5,
+                    "open": 2,
+                    "claimed": 1,
+                    "done": 1,
+                    "failed": 1,
+                    "agents": 1,
+                    "cost_usd": 0.12,
+                },
             )
         )
         with BernsteinClient(BASE) as client:
@@ -110,7 +120,9 @@ class TestBernsteinClientSync:
 
     @respx.mock
     def test_raises_on_4xx(self) -> None:
-        respx.post(f"{BASE}/tasks").mock(return_value=httpx.Response(422, json={"detail": "bad"}))
+        respx.post(f"{BASE}/tasks").mock(
+            return_value=httpx.Response(422, json={"detail": "bad"})
+        )
         with BernsteinClient(BASE) as client:
             with pytest.raises(httpx.HTTPStatusError):
                 client.create_task(title="Bad task")
@@ -120,7 +132,9 @@ class TestBernsteinClientAsync:
     @pytest.mark.asyncio
     @respx.mock
     async def test_create_task_async(self) -> None:
-        respx.post(f"{BASE}/tasks").mock(return_value=httpx.Response(201, json=TASK_PAYLOAD))
+        respx.post(f"{BASE}/tasks").mock(
+            return_value=httpx.Response(201, json=TASK_PAYLOAD)
+        )
 
         async with AsyncBernsteinClient(BASE) as client:
             task = await client.create_task(title="Fix login bug", priority=1)

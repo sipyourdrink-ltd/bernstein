@@ -1021,7 +1021,9 @@ def process_completed_tasks(
             # Runs after quality gates, before the approval gate.
             # Default: enabled (CrossModelVerifierConfig.enabled=True). Set
             # cross_model_verify=CrossModelVerifierConfig(enabled=False) to opt out.
-            _cmv_config: CrossModelVerifierConfig = getattr(orch._config, "cross_model_verify", None) or CrossModelVerifierConfig()
+            _cmv_config: CrossModelVerifierConfig = (
+                getattr(orch._config, "cross_model_verify", None) or CrossModelVerifierConfig()
+            )
             if janitor_passed and _cmv_config.enabled:
                 _cmv_worktree = orch._spawner.get_worktree_path(session.id)
                 _cmv_path = _cmv_worktree if _cmv_worktree is not None else orch._workdir
