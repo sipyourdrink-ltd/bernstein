@@ -18,6 +18,12 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.memory_integrity import (
+    build_entry_integrity,
+    detect_memory_poisoning,
+    get_last_chain_hash,
+)
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -54,6 +60,10 @@ class Lesson:
     filed_by_agent: str
     task_id: str
     version: int = 1
+    # Integrity fields (OWASP ASI06 2026 — Memory Provenance & Integrity)
+    content_hash: str | None = None  # SHA-256 of immutable fields
+    prev_hash: str | None = None  # chain_hash of predecessor entry
+    chain_hash: str | None = None  # SHA-256 of (content_hash + prev_hash)
 
 
 def file_lesson(
@@ -91,6 +101,17 @@ def file_lesson(
     confidence_clamped = max(0.0, min(1.0, confidence))
     now = time.time()
 
+    # --- Memory poisoning check (OWASP ASI06 2026) ---
+    poison = detect_memory_poisoning(content, tags_lower, confidence_clamped)
+    if poison.is_suspicious:
+        logger.warning(
+            "Rejected lesson from agent %s (task %s): %s",
+            agent_id,
+            task_id,
+            poison.reason,
+        )
+        raise ValueError(f"Lesson rejected — {poison.reason}")
+
     # Check for existing lesson with same tags + content (deduplication)
     existing_lesson_id = _find_similar_lesson(lessons_path, tags_lower, content)
     if existing_lesson_id:
@@ -111,16 +132,23 @@ def file_lesson(
         version=1,
     )
 
+    # Compute integrity fields (content hash + chain hash)
+    lesson_dict = asdict(lesson)
+    prev_chain_hash = get_last_chain_hash(lessons_path)
+    integrity = build_entry_integrity(lesson_dict, prev_chain_hash)
+    lesson_dict.update(integrity.as_dict())
+
     # Append to JSONL file (atomic: one JSON object per line)
     try:
         with open(lessons_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(lesson)) + "\n")
+            f.write(json.dumps(lesson_dict) + "\n")
         logger.info(
-            "Filed lesson %s from agent %s on task %s with tags %s",
+            "Filed lesson %s from agent %s on task %s with tags %s (content_hash=%s…)",
             lesson_id,
             agent_id,
             task_id,
             tags_lower,
+            integrity.content_hash[:12],
         )
     except OSError as e:
         logger.error("Failed to write lesson to %s: %s", lessons_path, e)
@@ -383,6 +411,9 @@ def _parse_lesson(data: Any) -> Lesson | None:
             filed_by_agent=str(data["filed_by_agent"]),
             task_id=str(data["task_id"]),
             version=int(data.get("version", 1)),
+            content_hash=data.get("content_hash") or None,
+            prev_hash=data.get("prev_hash") or None,
+            chain_hash=data.get("chain_hash") or None,
         )
     except (KeyError, ValueError, TypeError) as e:
         logger.debug("Failed to parse lesson: %s", e)

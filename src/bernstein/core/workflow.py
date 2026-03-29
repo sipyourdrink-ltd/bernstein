@@ -187,6 +187,7 @@ class WorkflowExecutor:
         self._run_id = run_id
         self._phase_index: int = 0
         self._approval_pending: bool = False
+        self._approval_granted: bool = False  # True after approval given, reset on phase advance
         self._completed: bool = False
         self._events: list[WorkflowPhaseEvent] = []
 
@@ -259,6 +260,7 @@ class WorkflowExecutor:
         """
         if self._approval_pending:
             self._approval_pending = False
+            self._approval_granted = True
             logger.info("Workflow approval granted for phase %r: %s", self.current_phase_name, reason)
 
     def filter_tasks_for_current_phase(self, tasks: list[Task]) -> list[Task]:
@@ -331,23 +333,22 @@ class WorkflowExecutor:
             return None
 
         # Check if approval is needed and hasn't been granted yet
-        if self.current_phase.requires_approval and not self._approval_pending:
-            self._approval_pending = True
-            logger.info(
-                "Workflow phase %r complete — awaiting human approval before advancing",
-                self.current_phase_name,
-            )
-            self._write_approval_request()
-            return None
-
-        if self._approval_pending:
-            return None  # still waiting
+        if self.current_phase.requires_approval and not self._approval_granted:
+            if not self._approval_pending:
+                self._approval_pending = True
+                logger.info(
+                    "Workflow phase %r complete — awaiting human approval before advancing",
+                    self.current_phase_name,
+                )
+                self._write_approval_request()
+            return None  # still waiting for approval
 
         # Advance to next phase
         old_phase = self.current_phase_name
         completed_ids = tuple(t.id for t in all_tasks if t.status in self.current_phase.completion_statuses)
 
         self._phase_index += 1
+        self._approval_granted = False  # reset for next phase
 
         if self._phase_index >= len(self._definition.phases):
             # Workflow complete

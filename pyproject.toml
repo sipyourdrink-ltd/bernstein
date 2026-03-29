@@ -71,6 +71,9 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "RUF"]
 # Agent-generated modules with long inline strings and class-level lists
 "src/bernstein/adapters/mock.py" = ["E501"]
 "src/bernstein/compliance/eu_ai_act.py" = ["E501", "RUF012"]
+"src/bernstein/core/differential_privacy.py" = ["RUF002"]
+"src/bernstein/core/license_scanner.py" = ["E501"]
+"src/bernstein/core/memory_integrity.py" = ["E501", "RUF003"]
 
 [tool.pyright]
 pythonVersion = "3.12"

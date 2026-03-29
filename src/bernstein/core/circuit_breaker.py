@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import KillReason
 
 if TYPE_CHECKING:
@@ -340,7 +341,8 @@ def check_scope_violations(orch: Any, result: Any) -> None:
             branch=branch,
         )
         # Mark session as being killed so we don't fire again next tick
-        session.status = "dead"
+        if session.status != "dead":
+            transition_agent(session, "dead", actor="circuit_breaker", reason="scope violation")
         result.reaped.append(session.id)
 
 
@@ -437,7 +439,8 @@ def check_budget_violations(orch: Any, result: Any) -> None:
             detail,
             branch=branch,
         )
-        session.status = "dead"
+        if session.status != "dead":
+            transition_agent(session, "dead", actor="circuit_breaker", reason="budget exceeded")
         result.reaped.append(session.id)
 
 
@@ -496,5 +499,6 @@ def check_guardrail_violations(orch: Any, result: Any) -> None:
             detail,
             branch=branch,
         )
-        session.status = "dead"
+        if session.status != "dead":
+            transition_agent(session, "dead", actor="circuit_breaker", reason="guardrail violation")
         result.reaped.append(session.id)

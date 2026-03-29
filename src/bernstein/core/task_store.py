@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import heapq
 import json
+import logging
 import time
 import uuid
 from collections import deque
@@ -18,6 +19,7 @@ from typing import Any, Literal, TypedDict, cast
 
 from fastapi import HTTPException
 
+from bernstein.core.lifecycle import IllegalTransitionError, transition_agent, transition_task
 from bernstein.core.models import (
     AgentSession,
     CompletionSignal,
@@ -29,6 +31,8 @@ from bernstein.core.models import (
     TaskType,
     UpgradeProposalDetails,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # TypedDicts for file-based state records
@@ -190,7 +194,7 @@ class TaskStore:
                 entry["cost_usd"] = round(cost_by_role[role], 4)
             per_role.append(entry)
 
-        return {
+        summary: dict[str, Any] = {
             "total": len(self._tasks),
             "open": len(self._by_status.get(TaskStatus.OPEN, {})),
             "claimed": len(self._by_status.get(TaskStatus.CLAIMED, {})),
@@ -199,6 +203,19 @@ class TaskStore:
             "per_role": per_role,
             "total_cost_usd": round(total_cost, 4),
         }
+        # Include bandit routing stats when available
+        bandit_state_path = self._jsonl_path.parent.parent / "routing" / "bandit_state.json"
+        if bandit_state_path.exists():
+            try:
+                bandit_data = json.loads(bandit_state_path.read_text())
+                summary["routing"] = {
+                    "mode": "bandit",
+                    "total_completions": bandit_data.get("total_completions", 0),
+                    "selection_frequency": bandit_data.get("selection_counts", {}),
+                }
+            except Exception:
+                pass
+        return summary
 
     # -- index helpers -------------------------------------------------------
 
@@ -499,7 +516,7 @@ class TaskStore:
             if task is None:
                 return None
             self._index_remove(task)
-            task.status = TaskStatus.CLAIMED
+            transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_next")
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
@@ -548,7 +565,7 @@ class TaskStore:
                 )
             if task.status == TaskStatus.OPEN:
                 self._index_remove(task)
-                task.status = TaskStatus.CLAIMED
+                transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_by_id")
                 task.version += 1
                 self._index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
@@ -586,7 +603,7 @@ class TaskStore:
                     failed.append(task_id)
                     continue
                 self._index_remove(task)
-                task.status = TaskStatus.CLAIMED
+                transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason=f"claim_batch by {agent_id}")
                 task.assigned_agent = agent_id
                 task.version += 1
                 self._index_add(task)
@@ -612,7 +629,7 @@ class TaskStore:
             if task is None:
                 raise KeyError(task_id)
             self._index_remove(task)
-            task.status = TaskStatus.DONE
+            transition_task(task, TaskStatus.DONE, actor="task_store", reason="complete")
             task.result_summary = result_summary
             task.version += 1
             self._index_add(task)
@@ -639,7 +656,7 @@ class TaskStore:
             if task is None:
                 raise KeyError(task_id)
             self._index_remove(task)
-            task.status = TaskStatus.FAILED
+            transition_task(task, TaskStatus.FAILED, actor="task_store", reason=reason)
             task.result_summary = reason
             task.version += 1
             self._index_add(task)
@@ -666,7 +683,7 @@ class TaskStore:
             if task is None:
                 raise KeyError(task_id)
             self._index_remove(task)
-            task.status = TaskStatus.BLOCKED
+            transition_task(task, TaskStatus.BLOCKED, actor="task_store", reason=reason)
             task.result_summary = reason
             task.version += 1
             self._index_add(task)
@@ -759,7 +776,7 @@ class TaskStore:
             if task.status not in (TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
                 raise ValueError(f"Task '{task_id}' cannot be cancelled from status '{task.status.value}'")
             self._index_remove(task)
-            task.status = TaskStatus.CANCELLED
+            transition_task(task, TaskStatus.CANCELLED, actor="task_store", reason=reason)
             task.result_summary = reason
             task.version += 1
             self._index_add(task)
@@ -861,7 +878,7 @@ class TaskStore:
             if task.status != TaskStatus.OPEN:
                 # Reset claimed/in_progress back to open
                 self._index_remove(task)
-                task.status = TaskStatus.OPEN
+                transition_task(task, TaskStatus.OPEN, actor="task_store", reason="force_claim")
                 self._index_add(task)
             task.priority = 0
             task.version += 1
@@ -919,8 +936,18 @@ class TaskStore:
         """
         now = time.time()
         if agent_id in self._agents:
-            self._agents[agent_id].heartbeat_ts = now
-            self._agents[agent_id].status = status
+            agent = self._agents[agent_id]
+            agent.heartbeat_ts = now
+            if agent.status != status:
+                try:
+                    transition_agent(agent, status, actor="heartbeat", reason=f"agent {agent_id} self-report")
+                except IllegalTransitionError:
+                    logger.warning(
+                        "Ignoring illegal heartbeat transition %s -> %s for %s",
+                        agent.status,
+                        status,
+                        agent_id,
+                    )
         else:
             self._agents[agent_id] = AgentSession(
                 id=agent_id,
@@ -943,7 +970,9 @@ class TaskStore:
         """
         count = 0
         for agent in self.stale_agents(threshold_s):
-            agent.status = "dead"
+            if agent.status == "dead":
+                continue
+            transition_agent(agent, "dead", actor="task_store", reason="stale heartbeat")
             count += 1
         return count
 
@@ -1005,6 +1034,11 @@ class TaskStore:
     def start_ts(self) -> float:
         """Server start timestamp."""
         return self._start_ts
+
+    @property
+    def jsonl_path(self) -> Path:
+        """Path to the primary task JSONL file."""
+        return self._jsonl_path
 
     @property
     def metrics_jsonl_path(self) -> Path:

@@ -686,6 +686,7 @@ class OrchestratorConfig:
     container_isolation: ContainerIsolationConfig = field(
         default_factory=ContainerIsolationConfig,
     )  # Container-based agent isolation settings
+    compliance: Any | None = None  # ComplianceConfig | None — compliance preset configuration
 
 
 # ---------------------------------------------------------------------------

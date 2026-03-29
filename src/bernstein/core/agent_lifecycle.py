@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from bernstein.core.janitor import verify_task
+from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
     AgentSession,
@@ -61,7 +62,7 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
         if session.status == "dead":
             continue
         if not orch._spawner.check_alive(session):
-            session.status = "dead"
+            transition_agent(session, "dead", actor="agent_lifecycle", reason="process not alive")
             # Release file ownership for this agent
             _release_file_ownership(orch, session.id)
             _release_task_to_session(orch, session.task_ids)

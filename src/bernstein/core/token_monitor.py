@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.lifecycle import transition_agent
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -350,7 +352,8 @@ def check_token_growth(orch: Any) -> None:
             with contextlib.suppress(Exception):
                 orch._spawner.kill(session)
             monitor.mark_killed(session.id)
-            session.status = "dead"
+            if session.status != "dead":
+                transition_agent(session, "dead", actor="token_monitor", reason="token budget exceeded")
             continue
 
         # 4. Quadratic growth warning (once per session)
