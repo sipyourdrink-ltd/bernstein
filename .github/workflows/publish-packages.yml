@@ -1,0 +1,241 @@
+name: Publish Linux Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-packages:
+    name: Build and publish .deb / .rpm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Extract version
+        id: ver
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # Fallback for workflow_dispatch (no tag)
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF" ]; then
+            VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ruby ruby-dev rpm gnupg2 dpkg-dev createrepo-c
+          sudo gem install --no-document fpm
+
+      - name: Build Python wheel
+        run: uv build --wheel
+
+      - name: Stage package for installation
+        run: |
+          # Bundle bernstein + all deps into /opt/bernstein/venv
+          mkdir -p staging/opt/bernstein
+          python3 -m venv staging/opt/bernstein/venv
+          staging/opt/bernstein/venv/bin/pip install --quiet dist/bernstein-*.whl
+
+          # Wrapper entrypoint that calls into the bundled venv
+          mkdir -p staging/usr/bin
+          cat > staging/usr/bin/bernstein << 'WRAPPER'
+          #!/bin/bash
+          exec /opt/bernstein/venv/bin/bernstein "$@"
+          WRAPPER
+          chmod +x staging/usr/bin/bernstein
+
+      - name: Build .deb package
+        run: |
+          fpm -s dir -t deb \
+            -n bernstein \
+            -v "${{ steps.ver.outputs.version }}" \
+            --iteration 1 \
+            --description "Declarative agent orchestration for engineering teams" \
+            --url "https://github.com/${{ github.repository }}" \
+            --maintainer "Alex Chernysh <alex@alexchernysh.com>" \
+            --license Apache-2.0 \
+            --category utils \
+            --architecture amd64 \
+            --prefix / \
+            -C staging \
+            opt/bernstein \
+            usr/bin/bernstein
+          echo "Built: $(ls bernstein_*.deb)"
+
+      - name: Build .rpm package
+        run: |
+          fpm -s dir -t rpm \
+            -n bernstein \
+            -v "${{ steps.ver.outputs.version }}" \
+            --iteration 1 \
+            --description "Declarative agent orchestration for engineering teams" \
+            --url "https://github.com/${{ github.repository }}" \
+            --maintainer "Alex Chernysh <alex@alexchernysh.com>" \
+            --license Apache-2.0 \
+            --category utils \
+            --architecture x86_64 \
+            --prefix / \
+            -C staging \
+            opt/bernstein \
+            usr/bin/bernstein
+          echo "Built: $(ls bernstein-*.rpm)"
+
+      - name: Import GPG signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          GPG_KEY_ID=$(gpg --list-secret-keys --with-colons | grep '^sec' | head -1 | cut -d: -f5)
+          echo "GPG_KEY_ID=$GPG_KEY_ID" >> "$GITHUB_ENV"
+
+      - name: Export GPG public key
+        run: |
+          gpg --armor --export "$GPG_KEY_ID" > bernstein-signing-key.gpg
+
+      - name: Sign .rpm package
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          # rpmsign reads passphrase from a temp file via macro override
+          echo "$GPG_PASSPHRASE" > /tmp/gpg-pass
+          chmod 600 /tmp/gpg-pass
+
+          cat > ~/.rpmmacros << EOF
+          %_gpg_name $GPG_KEY_ID
+          %_gpg_path $HOME/.gnupg
+          %__gpg /usr/bin/gpg2
+          %__gpg_sign_cmd %{__gpg} --batch --no-verbose --passphrase-file /tmp/gpg-pass \
+            --pinentry-mode loopback -u "%{_gpg_name}" \
+            -sbo %{__signature_filename} %{__plaintext_filename}
+          EOF
+
+          rpmsign --addsign bernstein-*.rpm
+          rm -f /tmp/gpg-pass
+
+      - name: Update packages branch (APT + YUM repo metadata)
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          REPO_URL="https://x-access-token:$GH_TOKEN@github.com/${{ github.repository }}.git"
+
+          git config --global user.name "bernstein[bot]"
+          git config --global user.email "bernstein-bot@users.noreply.github.com"
+
+          # Clone or initialize the packages branch (hosted via GitHub Pages)
+          if git ls-remote --exit-code --heads origin packages > /dev/null 2>&1; then
+            git clone --depth 1 --branch packages "$REPO_URL" pkg-repo
+          else
+            mkdir pkg-repo
+            cd pkg-repo
+            git init
+            git remote add origin "$REPO_URL"
+            git checkout --orphan packages
+            echo "# Bernstein Linux Packages" > README.md
+            git add README.md
+            git commit -m "chore: initialize packages branch"
+            cd ..
+          fi
+
+          cd pkg-repo
+          git config user.name "bernstein[bot]"
+          git config user.email "bernstein-bot@users.noreply.github.com"
+
+          # ── APT repository ─────────────────────────────────────────────
+          mkdir -p apt/pool/main
+          mkdir -p apt/dists/stable/main/binary-amd64
+
+          cp ../bernstein_*.deb apt/pool/main/
+
+          # Generate Packages index
+          dpkg-scanpackages --arch amd64 apt/pool/main > apt/dists/stable/main/binary-amd64/Packages
+          gzip  -9kc apt/dists/stable/main/binary-amd64/Packages \
+            > apt/dists/stable/main/binary-amd64/Packages.gz
+          bzip2 -kc  apt/dists/stable/main/binary-amd64/Packages \
+            > apt/dists/stable/main/binary-amd64/Packages.bz2
+
+          # Generate Release file with checksums
+          {
+            echo "Origin: Bernstein"
+            echo "Label: Bernstein"
+            echo "Suite: stable"
+            echo "Codename: stable"
+            echo "Version: $VERSION"
+            echo "Architectures: amd64"
+            echo "Components: main"
+            echo "Description: Bernstein APT repository"
+            echo "Date: $(date -u -R)"
+            echo "MD5Sum:"
+            for f in \
+              apt/dists/stable/main/binary-amd64/Packages \
+              apt/dists/stable/main/binary-amd64/Packages.gz \
+              apt/dists/stable/main/binary-amd64/Packages.bz2; do
+              printf " %s %d %s\n" "$(md5sum "$f" | cut -d' ' -f1)" "$(wc -c < "$f")" "${f#apt/dists/stable/}"
+            done
+            echo "SHA1:"
+            for f in \
+              apt/dists/stable/main/binary-amd64/Packages \
+              apt/dists/stable/main/binary-amd64/Packages.gz \
+              apt/dists/stable/main/binary-amd64/Packages.bz2; do
+              printf " %s %d %s\n" "$(sha1sum "$f" | cut -d' ' -f1)" "$(wc -c < "$f")" "${f#apt/dists/stable/}"
+            done
+            echo "SHA256:"
+            for f in \
+              apt/dists/stable/main/binary-amd64/Packages \
+              apt/dists/stable/main/binary-amd64/Packages.gz \
+              apt/dists/stable/main/binary-amd64/Packages.bz2; do
+              printf " %s %d %s\n" "$(sha256sum "$f" | cut -d' ' -f1)" "$(wc -c < "$f")" "${f#apt/dists/stable/}"
+            done
+          } > apt/dists/stable/Release
+
+          # Sign Release → Release.gpg (detached) + InRelease (cleartext inline)
+          echo "$GPG_PASSPHRASE" | gpg --batch --passphrase-fd 0 --pinentry-mode loopback \
+            --armor --detach-sign \
+            -o apt/dists/stable/Release.gpg \
+            apt/dists/stable/Release
+
+          echo "$GPG_PASSPHRASE" | gpg --batch --passphrase-fd 0 --pinentry-mode loopback \
+            --clearsign \
+            -o apt/dists/stable/InRelease \
+            apt/dists/stable/Release
+
+          # ── YUM/DNF repository ─────────────────────────────────────────
+          mkdir -p rpm/packages
+          cp ../bernstein-*.rpm rpm/packages/
+          createrepo_c rpm/
+
+          # Sign repomd.xml so dnf can verify repo integrity
+          echo "$GPG_PASSPHRASE" | gpg --batch --passphrase-fd 0 --pinentry-mode loopback \
+            --armor --detach-sign rpm/repodata/repomd.xml
+
+          # ── GPG public key ─────────────────────────────────────────────
+          mkdir -p gpg
+          cp ../bernstein-signing-key.gpg gpg/
+
+          # ── Commit ────────────────────────────────────────────────────
+          git add .
+          git diff --cached --quiet \
+            || git commit -m "pkg: bernstein v${VERSION} — .deb + .rpm"
+          git push origin packages
+
+      - name: Attach packages to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release upload "$TAG" \
+            bernstein_*.deb \
+            bernstein-*.rpm \
+            bernstein-signing-key.gpg \
+            --clobber

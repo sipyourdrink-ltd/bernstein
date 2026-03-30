@@ -277,8 +277,7 @@ def watch_cmd(glob_pattern: str | None, directory: str) -> None:
         from watchdog.observers import Observer
     except ImportError as exc:
         console.print(
-            "[red]Error:[/red] 'watchdog' is not installed.\n"
-            "Install it with: [bold]pip install watchdog[/bold]"
+            "[red]Error:[/red] 'watchdog' is not installed.\nInstall it with: [bold]pip install watchdog[/bold]"
         )
         raise SystemExit(1) from exc
 

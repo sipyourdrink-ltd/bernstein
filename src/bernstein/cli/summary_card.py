@@ -28,7 +28,7 @@ class RunSummaryData:
     tasks_failed: int
     wall_clock_seconds: float
     total_cost_usd: float
-    quality_score: float | None  # 0.0–1.0, None if no verification data
+    quality_score: float | None  # 0.0-1.0, None if no verification data
     timestamp: float = field(default_factory=time.time)
 
     @property

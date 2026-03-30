@@ -153,6 +153,14 @@ def bootstrap_from_seed(
 
     # ── Compact bootstrap: all steps on one screen ──
 
+    # 0. Pre-startup git hygiene — clean stale worktrees/branches from prior runs
+    try:
+        from bernstein.core.git_hygiene import run_hygiene
+
+        run_hygiene(workdir, full=True)
+    except Exception:
+        pass
+
     # 1. Parse seed
     seed = parse_seed(seed_path)
     if cli is not None:

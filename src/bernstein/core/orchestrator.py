@@ -806,6 +806,15 @@ class Orchestrator:
         # 4. Check done tasks, run janitor, record evolution metrics
         process_completed_tasks(self, done_tasks, result)
 
+        # 4x. Periodic git hygiene: every 5 completed tasks
+        if len(done_tasks) > 0 and self._tick_count % 5 == 0:
+            try:
+                from bernstein.core.git_hygiene import run_hygiene
+
+                run_hygiene(self._workdir)
+            except Exception:
+                pass
+
         # 4a-wf. Governed workflow: try to advance phase after processing completions
         if self._workflow_executor is not None and not self._workflow_executor.is_completed:
             all_tasks = [t for status_tasks in tasks_by_status.values() for t in status_tasks]
@@ -1372,6 +1381,14 @@ class Orchestrator:
         """Release resources held by the orchestrator."""
         # Save session state before releasing resources
         self._save_session_state()
+
+        # Full git hygiene on shutdown
+        try:
+            from bernstein.core.git_hygiene import run_hygiene
+
+            run_hygiene(self._workdir, full=True)
+        except Exception:
+            logger.debug("Git hygiene on shutdown failed (non-critical)", exc_info=True)
 
         # Stop cluster heartbeat client (unregisters from central server)
         if self._heartbeat_client is not None:

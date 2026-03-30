@@ -66,15 +66,9 @@ def _setup_workspace(project_dir: Path, port: int) -> None:
         (project_dir / sub).mkdir(parents=True, exist_ok=True)
 
     (project_dir / ".sdd" / "config.yaml").write_text(
-        f"server_port: {port}\n"
-        "max_workers: 1\n"
-        "default_model: sonnet\n"
-        "default_effort: normal\n"
-        "cli: claude\n"
+        f"server_port: {port}\nmax_workers: 1\ndefault_model: sonnet\ndefault_effort: normal\ncli: claude\n"
     )
-    (project_dir / ".sdd" / "runtime" / ".gitignore").write_text(
-        "*.pid\n*.log\ntasks.jsonl\n"
-    )
+    (project_dir / ".sdd" / "runtime" / ".gitignore").write_text("*.pid\n*.log\ntasks.jsonl\n")
 
 
 def _stop_processes(project_dir: Path) -> None:
@@ -110,9 +104,7 @@ def _poll_until_complete(port: int, timeout: int = _TASK_TIMEOUT) -> bool:
             resp = httpx.get(url, timeout=3.0)
             if resp.status_code == 200:
                 tasks = resp.json().get("tasks", [])
-                if tasks and all(
-                    t.get("status") in ("done", "failed") for t in tasks
-                ):
+                if tasks and all(t.get("status") in ("done", "failed") for t in tasks):
                     return True
         except Exception:
             pass
@@ -124,8 +116,15 @@ def _poll_until_complete(port: int, timeout: int = _TASK_TIMEOUT) -> bool:
 def _project_contains(project_dir: Path, needle: str) -> bool:
     """Return True if *needle* appears in any project source file."""
     extensions = {
-        ".py", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs",
-        ".html", ".md",
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".mjs",
+        ".cjs",
+        ".html",
+        ".md",
     }
     for path in project_dir.rglob("*"):
         if path.is_file() and path.suffix in extensions:
@@ -189,9 +188,7 @@ def test_fastapi_health_endpoint(tmp_path: Path) -> None:
         "def root() -> dict[str, str]:\n"
         "    return {'message': 'Hello World'}\n"
     )
-    (tmp_path / "requirements.txt").write_text(
-        "fastapi>=0.100.0\nuvicorn[standard]>=0.20.0\n"
-    )
+    (tmp_path / "requirements.txt").write_text("fastapi>=0.100.0\nuvicorn[standard]>=0.20.0\n")
 
     # Seed the specific task so the manager agent has concrete direction.
     (tmp_path / ".sdd" / "backlog" / "open" / "add-health-endpoint.md").write_text(
@@ -216,9 +213,9 @@ def test_fastapi_health_endpoint(tmp_path: Path) -> None:
         _stop_processes(tmp_path)
 
     assert done, f"Orchestration timed out after {_TASK_TIMEOUT}s"
-    assert _project_contains(tmp_path, "/health") or _project_contains(
-        tmp_path, "health"
-    ), "Expected a /health endpoint in project source files after agent run"
+    assert _project_contains(tmp_path, "/health") or _project_contains(tmp_path, "health"), (
+        "Expected a /health endpoint in project source files after agent run"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -232,20 +229,16 @@ def test_nextjs_about_page(tmp_path: Path) -> None:
 
     # Minimal Next.js project skeleton.
     (tmp_path / "package.json").write_text(
-        '{\n'
+        "{\n"
         '  "name": "nextjs-app",\n'
         '  "version": "0.1.0",\n'
         '  "scripts": {"dev": "next dev", "build": "next build"},\n'
         '  "dependencies": {"next": "14.0.0", "react": "18.0.0", "react-dom": "18.0.0"}\n'
-        '}\n'
+        "}\n"
     )
     pages_dir = tmp_path / "pages"
     pages_dir.mkdir()
-    (pages_dir / "index.tsx").write_text(
-        "export default function Home() {\n"
-        "  return <h1>Home Page</h1>;\n"
-        "}\n"
-    )
+    (pages_dir / "index.tsx").write_text("export default function Home() {\n  return <h1>Home Page</h1>;\n}\n")
 
     (tmp_path / ".sdd" / "backlog" / "open" / "add-about-page.md").write_text(
         "# Add About page to Next.js app\n\n"
@@ -278,9 +271,7 @@ def test_nextjs_about_page(tmp_path: Path) -> None:
         or (tmp_path / "app" / "about" / "page.js").exists()
         or _project_contains(tmp_path, "About")
     )
-    assert about_exists, (
-        "Expected an About page component in pages/ or app/about/ after agent run"
-    )
+    assert about_exists, "Expected an About page component in pages/ or app/about/ after agent run"
 
 
 # ---------------------------------------------------------------------------
@@ -341,8 +332,7 @@ def test_django_user_list_view(tmp_path: Path) -> None:
 
     assert done, f"Orchestration timed out after {_TASK_TIMEOUT}s"
     assert _project_contains(tmp_path, "user") and (
-        _project_contains(tmp_path, "user_list")
-        or _project_contains(tmp_path, "users")
+        _project_contains(tmp_path, "user_list") or _project_contains(tmp_path, "users")
     ), "Expected a user list view in Django project source files after agent run"
 
 
@@ -357,13 +347,13 @@ def test_express_logging_middleware(tmp_path: Path) -> None:
 
     # Minimal Express app.
     (tmp_path / "package.json").write_text(
-        '{\n'
+        "{\n"
         '  "name": "express-app",\n'
         '  "version": "0.1.0",\n'
         '  "main": "app.js",\n'
         '  "scripts": {"start": "node app.js"},\n'
         '  "dependencies": {"express": "^4.18.0"}\n'
-        '}\n'
+        "}\n"
     )
     (tmp_path / "app.js").write_text(
         "const express = require('express');\n"
@@ -390,19 +380,16 @@ def test_express_logging_middleware(tmp_path: Path) -> None:
     try:
         done = _run_stack_test(
             tmp_path,
-            goal=(
-                "Add request logging middleware to the Express app "
-                "that logs method and URL for every request"
-            ),
+            goal=("Add request logging middleware to the Express app that logs method and URL for every request"),
             port=_PORT_EXPRESS,
         )
     finally:
         _stop_processes(tmp_path)
 
     assert done, f"Orchestration timed out after {_TASK_TIMEOUT}s"
-    assert _project_contains(tmp_path, "log") or _project_contains(
-        tmp_path, "middleware"
-    ), "Expected logging middleware in Express project source files after agent run"
+    assert _project_contains(tmp_path, "log") or _project_contains(tmp_path, "middleware"), (
+        "Expected logging middleware in Express project source files after agent run"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +435,6 @@ def test_flask_status_endpoint(tmp_path: Path) -> None:
         _stop_processes(tmp_path)
 
     assert done, f"Orchestration timed out after {_TASK_TIMEOUT}s"
-    assert _project_contains(tmp_path, "/status") or _project_contains(
-        tmp_path, "status"
-    ), "Expected a /status endpoint in Flask project source files after agent run"
+    assert _project_contains(tmp_path, "/status") or _project_contains(tmp_path, "status"), (
+        "Expected a /status endpoint in Flask project source files after agent run"
+    )
