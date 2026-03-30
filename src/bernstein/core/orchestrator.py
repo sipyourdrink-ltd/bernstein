@@ -2234,6 +2234,67 @@ class Orchestrator:
             run_start_ts=self._run_start_ts,
         )
 
+        self._emit_summary_card(
+            done_tasks=done_tasks,
+            failed_tasks=failed_tasks,
+            collector=collector,
+            wall_clock_s=wall_clock_s,
+            total_cost=total_cost,
+        )
+
+    def _emit_summary_card(
+        self,
+        done_tasks: list[Task],
+        failed_tasks: list[Task],
+        collector: Any,
+        wall_clock_s: float,
+        total_cost: float,
+    ) -> None:
+        """Print the end-of-run summary card and write summary.json.
+
+        Suppressed when the ``BERNSTEIN_QUIET`` environment variable is set.
+
+        Args:
+            done_tasks: Completed tasks.
+            failed_tasks: Failed tasks.
+            collector: Live MetricsCollector for quality metrics.
+            wall_clock_s: Wall-clock duration in seconds.
+            total_cost: Total cost in USD.
+        """
+        from bernstein.cli.summary_card import RunSummaryData, print_summary_card, write_summary_json
+
+        total = len(done_tasks) + len(failed_tasks)
+
+        # Quality score: fraction of completed tasks where janitor verification passed.
+        task_metrics = collector._task_metrics  # type: ignore[reportPrivateUsage]
+        verified = [m for m in task_metrics.values() if m.end_time is not None]
+        quality_score: float | None = None
+        if verified:
+            quality_score = sum(1 for m in verified if m.janitor_passed) / len(verified)
+
+        summary_data = RunSummaryData(
+            run_id=self._run_id,
+            tasks_completed=len(done_tasks),
+            tasks_total=total,
+            tasks_failed=len(failed_tasks),
+            wall_clock_seconds=wall_clock_s,
+            total_cost_usd=total_cost,
+            quality_score=quality_score,
+        )
+
+        sdd_dir = self._workdir / ".sdd"
+        try:
+            write_summary_json(summary_data, self._run_id, sdd_dir)
+        except OSError as exc:
+            logger.warning("Failed to write summary.json: %s", exc)
+
+        quiet = os.environ.get("BERNSTEIN_QUIET", "").strip() == "1"
+        if not quiet:
+            try:
+                print_summary_card(summary_data)
+            except Exception as exc:
+                logger.debug("Summary card render failed (non-critical): %s", exc)
+
     def _record_tick_events(self, result: TickResult, tasks_by_status: dict[str, list[Task]]) -> None:
         """Record replay events from a completed tick for deterministic replay."""
         # Record spawned agents
