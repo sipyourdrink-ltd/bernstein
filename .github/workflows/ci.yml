@@ -73,8 +73,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: uv pip install vulture
-      - run: uv run vulture src/ --min-confidence 80 --exclude "tests,docs"
+      - run: uv pip install vulture --system
+      - run: vulture src/ --min-confidence 80 --exclude "tests,docs"
 
   actionlint:
     name: Workflow lint
