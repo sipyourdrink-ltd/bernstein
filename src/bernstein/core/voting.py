@@ -176,8 +176,7 @@ class VotingProtocol:
                 verdict="abstain",
                 confidence=vote.confidence,
                 reasoning=(
-                    f"Abstained: confidence {vote.confidence:.2f} < "
-                    f"threshold {self._config.abstention_threshold:.2f}"
+                    f"Abstained: confidence {vote.confidence:.2f} < threshold {self._config.abstention_threshold:.2f}"
                 ),
                 timestamp=vote.timestamp,
             )
@@ -200,11 +199,7 @@ class VotingProtocol:
         approvals = [v for v in non_abstained if v.verdict == "approve"]
         rejections = [v for v in non_abstained if v.verdict == "request_changes"]
 
-        avg_confidence = (
-            sum(v.confidence for v in non_abstained) / len(non_abstained)
-            if non_abstained
-            else 0.0
-        )
+        avg_confidence = sum(v.confidence for v in non_abstained) / len(non_abstained) if non_abstained else 0.0
 
         strategy = self._config.strategy
         if strategy == VotingStrategy.MAJORITY:
@@ -221,9 +216,7 @@ class VotingProtocol:
         a_count = len(approvals)
         r_count = len(rejections)
         abs_count = len(processed) - len(non_abstained)
-        reasoning = (
-            f"{strategy}: {a_count} approve, {r_count} reject, {abs_count} abstain → {verdict}"
-        )
+        reasoning = f"{strategy}: {a_count} approve, {r_count} reject, {abs_count} abstain → {verdict}"
 
         return VotingResult(
             votes=processed,
@@ -400,9 +393,7 @@ class VotingProtocol:
         """Parse LLM response into a Vote, defaulting to abstain on parse failure."""
         text = raw.strip()
         if text.startswith("```"):
-            text = "\n".join(
-                line for line in text.splitlines() if not line.strip().startswith("```")
-            ).strip()
+            text = "\n".join(line for line in text.splitlines() if not line.strip().startswith("```")).strip()
 
         data: dict[str, object] = {}
         try:

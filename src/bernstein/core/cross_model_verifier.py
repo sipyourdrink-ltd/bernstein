@@ -262,11 +262,7 @@ async def verify_with_cross_model(
         )
         issues: list[str] = []
         if result.final_verdict == "request_changes":
-            issues = [
-                f"{v.voter_model}: {v.reasoning}"
-                for v in result.votes
-                if v.verdict == "request_changes"
-            ]
+            issues = [f"{v.voter_model}: {v.reasoning}" for v in result.votes if v.verdict == "request_changes"]
         return CrossModelVerdict(
             verdict=result.final_verdict,
             feedback=result.reasoning,
@@ -344,6 +340,4 @@ def run_cross_model_verification_sync(
     Returns:
         CrossModelVerdict.
     """
-    return asyncio.run(
-        verify_with_cross_model(task, worktree_path, writer_model, config, voter_models=voter_models)
-    )
+    return asyncio.run(verify_with_cross_model(task, worktree_path, writer_model, config, voter_models=voter_models))
