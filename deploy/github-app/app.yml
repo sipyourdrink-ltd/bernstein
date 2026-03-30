@@ -8,7 +8,7 @@
 
 name: bernstein-orchestrator
 description: >-
-  Multi-agent orchestration for CLI coding agents.
+  Declarative agent orchestration for engineering teams.
   Converts GitHub issues, PRs, and pushes into Bernstein tasks.
 url: https://github.com/chernistry/bernstein
 

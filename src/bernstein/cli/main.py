@@ -1,4 +1,4 @@
-"""CLI entry point for Bernstein -- multi-agent orchestration.
+"""CLI entry point for Bernstein -- declarative agent orchestration.
 
 This module defines the top-level click group and registers all
 subcommand modules from:
@@ -212,7 +212,7 @@ def print_rich_help() -> None:
     c.print()
     c.print(
         Panel(
-            "[bold]bernstein[/bold]  —  multi-agent orchestration for CLI coding agents",
+            "[bold]bernstein[/bold]  —  declarative agent orchestration for engineering teams",
             border_style="blue",
             padding=(0, 2),
             expand=False,
@@ -397,7 +397,7 @@ def cli(
     from_plan: str | None,
     auto_approve: bool,
 ) -> None:
-    """Multi-agent orchestration for CLI coding agents."""
+    """Declarative agent orchestration for engineering teams."""
     if ctx.invoked_subcommand is not None:
         return
 

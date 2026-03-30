@@ -1,4 +1,4 @@
-"""Bernstein — Multi-agent orchestration for CLI coding agents."""
+"""Bernstein — Declarative agent orchestration for engineering teams."""
 
 from __future__ import annotations
 
