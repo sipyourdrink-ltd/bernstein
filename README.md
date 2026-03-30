@@ -255,9 +255,16 @@ Analyzes metrics, proposes changes to prompts and routing rules, sandboxes them,
 | [Codex CLI](https://github.com/openai/codex) | OpenAI | gpt-5.4, o3, o4-mini | `--cli codex` | `npm install -g @openai/codex` |
 | [Cursor](https://www.cursor.com) | Cursor AI | sonnet 4.6, opus 4.6, gpt-5.4 | `--cli cursor` | Cursor app (sign in via app) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Google | gemini-3-pro, 3-flash | `--cli gemini` | `npm install -g @google/gemini-cli` |
+| [Kilo](https://kilo.dev) | StackBlitz | configurable | `--cli kilo` | `npm install -g kilo` |
 | [Qwen](https://github.com/QwenLM/Qwen-Agent) | Alibaba / OpenRouter | qwen3-coder, qwen-max | `--cli qwen` | `npm install -g qwen-code` |
 | [Roo Code](https://github.com/RooVetGit/Roo-Code) | Anthropic / OpenAI / any | opus 4.6, sonnet 4.6, gpt-4o | `--cli roo-code` | VS Code extension (headless CLI) |
 | Any CLI agent | Yours | pass-through | `--cli generic` | Provide `--cli-command` and `--prompt-flag` |
+
+**Runtime bridges** (experimental):
+
+| Bridge | Status | Description |
+|--------|--------|-------------|
+| [OpenClaw](https://openclaw.dev) | 🧪 Experimental | Cloud sandbox execution — spawn agents in ephemeral, network-isolated containers. Stub ready, awaiting API GA. |
 
 Mix and match in a single run — the orchestrator doesn't care which agent handles which task:
 
