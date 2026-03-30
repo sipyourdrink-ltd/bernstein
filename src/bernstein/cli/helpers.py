@@ -180,7 +180,7 @@ def print_dry_run_table(workdir: Path) -> None:
     backlog_dir = workdir / ".sdd" / "backlog" / "open"
     tasks: list[BacklogTask] = []
     if backlog_dir.exists():
-        for md_file in sorted(backlog_dir.glob("*.md")):
+        for md_file in sorted(backlog_dir.glob("*.yaml")):
             bt = parse_backlog_file(md_file)
             if bt is not None:
                 tasks.append(bt)

@@ -1,4 +1,4 @@
-"""Sync .sdd/backlog/*.md files with the task server.
+"""Sync .sdd/backlog/*.yaml files with the task server.
 
 Two tracking systems exist: static backlog .md files (authored by humans or agents)
 and the dynamic task server (tasks.jsonl). This module bridges them:
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class BacklogTask:
-    """Metadata parsed from a .sdd/backlog/open/*.md file.
+    """Metadata parsed from a .sdd/backlog/open/*.yaml file.
 
     Attributes:
         title: Task title from the first ``# `` heading.
@@ -216,7 +216,7 @@ def sync_backlog_to_server(
     *,
     client: httpx.Client | None = None,
 ) -> SyncResult:
-    """Sync ``.sdd/backlog/open/*.md`` files with the running task server.
+    """Sync ``.sdd/backlog/open/*.yaml`` files with the running task server.
 
     Steps:
     1. Scan ``backlog/open/`` for ``.md`` files.
@@ -254,7 +254,7 @@ def sync_backlog_to_server(
             result.errors.append("Cannot connect to task server — is it running?")
             return result
 
-        md_files = sorted(backlog_open.glob("*.md"))
+        md_files = sorted(backlog_open.glob("*.yaml"))
 
         # --- Step 1: create new tasks ---
         for md_file in md_files:
@@ -297,7 +297,7 @@ def sync_backlog_to_server(
             normalise_title(t.get("title", "")) for t in _get_tasks_by_status(_client, server_url, "done")
         }
 
-        for md_file in sorted(backlog_open.glob("*.md")):
+        for md_file in sorted(backlog_open.glob("*.yaml")):
             task = parse_backlog_file(md_file)
             if task is None:
                 continue
