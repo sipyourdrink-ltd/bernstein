@@ -8,8 +8,8 @@
 
 <br>
 
-### Multi-agent orchestration for agentic engineering.
-### One command. Multiple coding agents. Deterministic scheduling, cost governance, verified output.
+### Declarative agent orchestration for engineering teams.
+### One YAML. Multiple coding agents. Ship while you sleep.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dashboard.svg">

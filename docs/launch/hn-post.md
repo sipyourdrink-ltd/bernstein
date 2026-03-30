@@ -1,4 +1,4 @@
-# Show HN: Bernstein – one command, multiple AI coding agents in parallel
+# Show HN: Bernstein – declarative agent orchestration, ship while you sleep
 
 **Date:** 2026-03-28
 **Status:** Reviewed — ready to submit once pre-launch gates #700 and #701 pass
@@ -10,7 +10,7 @@
 
 **Title:**
 ```
-Show HN: Bernstein – one command, multiple AI coding agents in parallel
+Show HN: Bernstein – declarative agent orchestration, ship while you sleep
 ```
 
 **Body:**

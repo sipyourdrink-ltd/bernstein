@@ -1,6 +1,6 @@
 apiVersion: v2
 name: bernstein
-description: Multi-agent orchestration for CLI coding agents
+description: Declarative agent orchestration for engineering teams
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

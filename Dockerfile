@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir hatchling && \
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="bernstein" \
-      org.opencontainers.image.description="Multi-agent orchestration for CLI coding agents" \
+      org.opencontainers.image.description="Declarative agent orchestration for engineering teams" \
       org.opencontainers.image.source="https://github.com/bernstein-ai/bernstein"
 
 # Install git (required for git_ops) and curl (healthcheck)
