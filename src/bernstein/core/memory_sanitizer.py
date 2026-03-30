@@ -61,7 +61,7 @@ Entries with ``trust_score < TRUST_THRESHOLD`` are routed to quarantine.
 # ---------------------------------------------------------------------------
 
 # Each rule: (label, compiled pattern, severity_deduction)
-# severity_deduction is the amount subtracted from the trust score (0–1 scale).
+# severity_deduction is the amount subtracted from the trust score (0-1 scale).
 _PII_RULES: list[tuple[str, re.Pattern[str], float]] = [
     (
         "ssn",
@@ -151,7 +151,7 @@ class SanitizationResult:
     """Result of the Memory Sanitization Firewall scan.
 
     Attributes:
-        trust_score: Composite score 0–1.  Values below ``TRUST_THRESHOLD``
+        trust_score: Composite score 0-1.  Values below ``TRUST_THRESHOLD``
             mean the entry should be quarantined, not filed.
         accepted: True when ``trust_score >= TRUST_THRESHOLD``.
         pii_matches: PII patterns found in the content.
@@ -252,7 +252,7 @@ class MemoryFirewall:
             content: The lesson text to scan.
             tags: Tags associated with the entry.
             source_agent: Agent ID submitting the entry.
-            confidence: Declared confidence score (0–1).
+            confidence: Declared confidence score (0-1).
 
         Returns:
             SanitizationResult with trust_score, matches, and
