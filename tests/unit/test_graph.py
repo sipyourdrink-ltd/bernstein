@@ -474,11 +474,13 @@ class TestTypedEdgeScheduling:
 
     def test_mixed_edges_only_blocking_matters(self) -> None:
         """Task with both INFORMS and BLOCKS deps: only BLOCKS blocks."""
-        g = TaskGraph([
-            _t(id="info", status="open"),
-            _t(id="blocker", status="done"),
-            _t(id="worker", status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="info", status="open"),
+                _t(id="blocker", status="done"),
+                _t(id="worker", status="open"),
+            ]
+        )
         g.add_dependency("info", "worker", EdgeType.INFORMS)
         g.add_dependency("blocker", "worker", EdgeType.BLOCKS)
         ready = g.ready_tasks()
@@ -486,11 +488,13 @@ class TestTypedEdgeScheduling:
 
     def test_mixed_edges_blocks_not_done(self) -> None:
         """If the BLOCKS dep isn't done, task is not ready even with INFORMS."""
-        g = TaskGraph([
-            _t(id="info", status="done"),
-            _t(id="blocker", status="open"),
-            _t(id="worker", status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="info", status="done"),
+                _t(id="blocker", status="open"),
+                _t(id="worker", status="open"),
+            ]
+        )
         g.add_dependency("info", "worker", EdgeType.INFORMS)
         g.add_dependency("blocker", "worker", EdgeType.BLOCKS)
         ready = g.ready_tasks()
@@ -498,10 +502,12 @@ class TestTypedEdgeScheduling:
 
     def test_existing_depends_on_defaults_to_blocks(self) -> None:
         """Edges from Task.depends_on default to BLOCKS semantic type."""
-        g = TaskGraph([
-            _t(id="t1", status="open"),
-            _t(id="t2", depends_on=["t1"], status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="t1", status="open"),
+                _t(id="t2", depends_on=["t1"], status="open"),
+            ]
+        )
         edges_to_t2 = g.edges_to("t2")
         assert len(edges_to_t2) == 1
         assert edges_to_t2[0].semantic_type == EdgeType.BLOCKS
@@ -568,10 +574,12 @@ class TestEdgeQueries:
 
 class TestPredecessorContext:
     def test_informs_predecessor_context(self) -> None:
-        g = TaskGraph([
-            _t(id="research", status="done", result_summary="Found 3 APIs"),
-            _t(id="impl", status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="research", status="done", result_summary="Found 3 APIs"),
+                _t(id="impl", status="open"),
+            ]
+        )
         g.add_dependency("research", "impl", EdgeType.INFORMS)
         ctx = g.predecessor_context("impl")
         assert len(ctx) == 1
@@ -580,10 +588,12 @@ class TestPredecessorContext:
         assert ctx[0]["edge_type"] == "informs"
 
     def test_transforms_predecessor_context(self) -> None:
-        g = TaskGraph([
-            _t(id="parser", status="done", result_summary="Parsed config"),
-            _t(id="consumer", status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="parser", status="done", result_summary="Parsed config"),
+                _t(id="consumer", status="open"),
+            ]
+        )
         g.add_dependency("parser", "consumer", EdgeType.TRANSFORMS)
         ctx = g.predecessor_context("consumer")
         assert len(ctx) == 1
@@ -591,27 +601,33 @@ class TestPredecessorContext:
 
     def test_blocks_not_in_predecessor_context(self) -> None:
         """BLOCKS edges do not contribute to predecessor context."""
-        g = TaskGraph([
-            _t(id="dep", status="done", result_summary="Done"),
-            _t(id="task", status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="dep", status="done", result_summary="Done"),
+                _t(id="task", status="open"),
+            ]
+        )
         g.add_dependency("dep", "task", EdgeType.BLOCKS)
         assert g.predecessor_context("task") == []
 
     def test_incomplete_predecessor_excluded(self) -> None:
         """Only DONE predecessors appear in context."""
-        g = TaskGraph([
-            _t(id="research", status="open", result_summary="Partial"),
-            _t(id="impl", status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="research", status="open", result_summary="Partial"),
+                _t(id="impl", status="open"),
+            ]
+        )
         g.add_dependency("research", "impl", EdgeType.INFORMS)
         assert g.predecessor_context("impl") == []
 
     def test_empty_summary_excluded(self) -> None:
-        g = TaskGraph([
-            _t(id="research", status="done"),
-            _t(id="impl", status="open"),
-        ])
+        g = TaskGraph(
+            [
+                _t(id="research", status="done"),
+                _t(id="impl", status="open"),
+            ]
+        )
         g.add_dependency("research", "impl", EdgeType.INFORMS)
         ctx = g.predecessor_context("impl")
         assert len(ctx) == 1

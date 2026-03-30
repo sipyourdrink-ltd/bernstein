@@ -55,9 +55,7 @@ class TestJetBrainsDiscovery:
     """JetBrains Air initiates discovery to find available agents."""
 
     @pytest.mark.anyio
-    async def test_jetbrains_discovers_bernstein_via_acp_discovery_endpoint(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_jetbrains_discovers_bernstein_via_acp_discovery_endpoint(self, client: AsyncClient) -> None:
         """Scenario 1: Discovery endpoint returns Bernstein as an available agent."""
         resp = await client.get("/.well-known/acp.json")
         assert resp.status_code == 200
@@ -86,9 +84,7 @@ class TestAgentMetadata:
     """JetBrains Air fetches detailed metadata about Bernstein."""
 
     @pytest.mark.anyio
-    async def test_jetbrains_fetches_bernstein_agent_metadata(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_jetbrains_fetches_bernstein_agent_metadata(self, client: AsyncClient) -> None:
         """Scenario 2: Agent metadata endpoint returns full capabilities."""
         resp = await client.get("/acp/v0/agents/bernstein")
         assert resp.status_code == 200
@@ -116,9 +112,7 @@ class TestAgentMetadata:
         assert "multi_agent" in cap_names
 
     @pytest.mark.anyio
-    async def test_agent_metadata_includes_endpoint_and_provider(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_agent_metadata_includes_endpoint_and_provider(self, client: AsyncClient) -> None:
         """Agent metadata must include endpoint for routing and provider info."""
         resp = await client.get("/acp/v0/agents/bernstein")
         data = resp.json()
@@ -138,9 +132,7 @@ class TestTaskSubmission:
     """JetBrains Air submits a task and receives a run identifier."""
 
     @pytest.mark.anyio
-    async def test_jetbrains_submits_acp_run_and_receives_run_id(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_jetbrains_submits_acp_run_and_receives_run_id(self, client: AsyncClient) -> None:
         """Scenario 3: POST /acp/v0/runs creates an ACP run with unique ID."""
         payload = {
             "input": "Implement a REST API for user management",
@@ -206,9 +198,7 @@ class TestStatusPolling:
     """JetBrains Air polls for task progress."""
 
     @pytest.mark.anyio
-    async def test_jetbrains_polls_run_status_via_get_endpoint(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_jetbrains_polls_run_status_via_get_endpoint(self, client: AsyncClient) -> None:
         """Scenario 4: GET /acp/v0/runs/{run_id} returns current status."""
         # Create a run
         payload = {"input": "Write unit tests", "agent_id": "bernstein"}
@@ -226,9 +216,7 @@ class TestStatusPolling:
         assert data["status"] == "created"
 
     @pytest.mark.anyio
-    async def test_status_polling_returns_all_required_fields(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_status_polling_returns_all_required_fields(self, client: AsyncClient) -> None:
         """Status response must include all required fields for editor display."""
         payload = {"input": "Deploy to production", "agent_id": "bernstein"}
         create_resp = await client.post("/acp/v0/runs", json=payload)
@@ -246,9 +234,7 @@ class TestStatusPolling:
         assert "updated_at" in data
 
     @pytest.mark.anyio
-    async def test_status_endpoint_returns_404_for_missing_run(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_status_endpoint_returns_404_for_missing_run(self, client: AsyncClient) -> None:
         """Polling a non-existent run should return 404."""
         resp = await client.get("/acp/v0/runs/nonexistent-run-id")
         assert resp.status_code == 404
@@ -263,9 +249,7 @@ class TestExecutionTracking:
     """JetBrains Air tracks task execution."""
 
     @pytest.mark.anyio
-    async def test_jetbrains_tracks_run_through_lifecycle(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_jetbrains_tracks_run_through_lifecycle(self, client: AsyncClient) -> None:
         """Scenario 5: Client can poll and track status changes through lifecycle."""
         # Create a run
         payload = {"input": "Refactor authentication module", "agent_id": "bernstein"}
@@ -294,9 +278,7 @@ class TestFinalStatus:
     """JetBrains Air verifies task completion."""
 
     @pytest.mark.anyio
-    async def test_acp_run_can_be_queried_for_final_status(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_acp_run_can_be_queried_for_final_status(self, client: AsyncClient) -> None:
         """Scenario 6: Client can retrieve final status of completed run."""
         # Create a run
         payload = {"input": "Optimize database queries", "agent_id": "bernstein"}
@@ -343,9 +325,7 @@ class TestEndToEndWorkflow:
     """Full JetBrains Air workflow from discovery to completion."""
 
     @pytest.mark.anyio
-    async def test_jetbrains_full_workflow_discovery_to_task_submission(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_jetbrains_full_workflow_discovery_to_task_submission(self, client: AsyncClient) -> None:
         """Complete E2E scenario: discover → fetch metadata → submit → poll."""
         # Step 1: Discover Bernstein
         discovery_resp = await client.get("/.well-known/acp.json")
@@ -382,7 +362,5 @@ class TestEndToEndWorkflow:
         assert tasks_resp.status_code == 200
         tasks = tasks_resp.json()
         assert len(tasks) >= 1
-        found = any(
-            "email notification system" in t.get("description", "") for t in tasks
-        )
+        found = any("email notification system" in t.get("description", "") for t in tasks)
         assert found

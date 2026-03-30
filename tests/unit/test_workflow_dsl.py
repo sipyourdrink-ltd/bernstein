@@ -908,9 +908,7 @@ class TestWorkflowDAG:
         dag1 = _simple_dag()
         dag2 = WorkflowDAG(
             definition=_simple_definition(),
-            nodes=(
-                DAGNode(id="x", phase="plan", role="manager"),
-            ),
+            nodes=(DAGNode(id="x", phase="plan", role="manager"),),
             edges=(),
         )
         assert dag1.definition_hash() != dag2.definition_hash()

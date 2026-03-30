@@ -136,15 +136,11 @@ class TestSlashCommandToTask:
         assert task["role"] == "qa"
 
     def test_unknown_action_returns_none(self) -> None:
-        event = _event(
-            payload={"issue": {"number": 1, "title": "foo"}, "comment": {"body": ""}}
-        )
+        event = _event(payload={"issue": {"number": 1, "title": "foo"}, "comment": {"body": ""}})
         assert slash_command_to_task(event, "unknown_action", "") is None
 
     def test_args_included_in_title(self) -> None:
-        event = _event(
-            payload={"issue": {"number": 3, "title": "X"}, "comment": {"body": ""}}
-        )
+        event = _event(payload={"issue": {"number": 3, "title": "X"}, "comment": {"body": ""}})
         task = slash_command_to_task(event, "fix", "add missing null guard")
         assert task is not None
         assert "add missing null guard" in task["title"]

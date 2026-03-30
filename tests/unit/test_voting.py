@@ -60,32 +60,24 @@ class TestMajority:
         assert result.final_verdict == "request_changes"
 
     def test_tie_defaults_to_reject(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.MAJORITY, tie_break=TieBreak.REJECT)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.MAJORITY, tie_break=TieBreak.REJECT))
         result = protocol.tally([_vote("approve"), _vote("request_changes")])
         assert result.final_verdict == "request_changes"
         assert not result.needs_escalation
 
     def test_tie_accept(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.MAJORITY, tie_break=TieBreak.ACCEPT)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.MAJORITY, tie_break=TieBreak.ACCEPT))
         result = protocol.tally([_vote("approve"), _vote("request_changes")])
         assert result.final_verdict == "approve"
 
     def test_tie_escalate_sets_flag_and_safe_default(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.MAJORITY, tie_break=TieBreak.ESCALATE)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.MAJORITY, tie_break=TieBreak.ESCALATE))
         result = protocol.tally([_vote("approve"), _vote("request_changes")])
         assert result.final_verdict == "request_changes"
         assert result.needs_escalation is True
 
     def test_all_abstain_falls_back_to_tie_break_reject(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.MAJORITY, tie_break=TieBreak.REJECT)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.MAJORITY, tie_break=TieBreak.REJECT))
         result = protocol.tally([_vote("abstain"), _vote("abstain")])
         assert result.final_verdict == "request_changes"
 
@@ -97,45 +89,33 @@ class TestMajority:
 
 class TestQuorum:
     def test_2_of_3_met(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=2, quorum_n=3)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=2, quorum_n=3))
         result = protocol.tally([_vote("approve"), _vote("approve"), _vote("request_changes")])
         assert result.final_verdict == "approve"
 
     def test_2_of_3_not_met(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=2, quorum_n=3)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=2, quorum_n=3))
         result = protocol.tally([_vote("approve"), _vote("request_changes"), _vote("request_changes")])
         assert result.final_verdict == "request_changes"
 
     def test_1_of_1_approve(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=1, quorum_n=1)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=1, quorum_n=1))
         result = protocol.tally([_vote("approve")])
         assert result.final_verdict == "approve"
 
     def test_1_of_1_reject(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=1, quorum_n=1)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=1, quorum_n=1))
         result = protocol.tally([_vote("request_changes")])
         assert result.final_verdict == "request_changes"
 
     def test_abstain_does_not_count_toward_quorum(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=2, quorum_n=3)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=2, quorum_n=3))
         # Only 1 approve even though abstains are present
         result = protocol.tally([_vote("approve"), _vote("abstain"), _vote("abstain")])
         assert result.final_verdict == "request_changes"
 
     def test_exactly_k_approvals_meets_quorum(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=3, quorum_n=3)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=3, quorum_n=3))
         result = protocol.tally([_vote("approve"), _vote("approve"), _vote("approve")])
         assert result.final_verdict == "approve"
 
@@ -157,16 +137,12 @@ class TestWeighted:
         assert result.final_verdict == "request_changes"
 
     def test_equal_weight_tie_break_reject(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.WEIGHTED, tie_break=TieBreak.REJECT)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.WEIGHTED, tie_break=TieBreak.REJECT))
         result = protocol.tally([_vote("approve", 0.5), _vote("request_changes", 0.5)])
         assert result.final_verdict == "request_changes"
 
     def test_equal_weight_tie_break_accept(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.WEIGHTED, tie_break=TieBreak.ACCEPT)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.WEIGHTED, tie_break=TieBreak.ACCEPT))
         result = protocol.tally([_vote("approve", 0.5), _vote("request_changes", 0.5)])
         assert result.final_verdict == "approve"
 
@@ -193,16 +169,12 @@ class TestUnanimous:
         assert result.final_verdict == "approve"
 
     def test_all_abstain_uses_tie_break_reject(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.UNANIMOUS, tie_break=TieBreak.REJECT)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.UNANIMOUS, tie_break=TieBreak.REJECT))
         result = protocol.tally([_vote("abstain"), _vote("abstain")])
         assert result.final_verdict == "request_changes"
 
     def test_all_abstain_uses_tie_break_accept(self) -> None:
-        protocol = VotingProtocol(
-            VotingConfig(strategy=VotingStrategy.UNANIMOUS, tie_break=TieBreak.ACCEPT)
-        )
+        protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.UNANIMOUS, tie_break=TieBreak.ACCEPT))
         result = protocol.tally([_vote("abstain"), _vote("abstain")])
         assert result.final_verdict == "approve"
 

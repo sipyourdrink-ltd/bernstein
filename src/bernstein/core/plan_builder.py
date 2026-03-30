@@ -238,10 +238,7 @@ class PlanBuilder:
             )
 
         total_tokens = sum(e.estimated_tokens for e in plan.task_estimates)
-        rows += (
-            f"| | **Total** | | | **{total_tokens:,}** "
-            f"| **{_fmt_cost(plan.total_estimated_cost_usd)}** | |\n"
-        )
+        rows += f"| | **Total** | | | **{total_tokens:,}** | **{_fmt_cost(plan.total_estimated_cost_usd)}** | |\n"
         return header + rows
 
     def _dependency_order(self) -> str:
@@ -291,7 +288,7 @@ class PlanBuilder:
         role_agents: dict[str, str] = {}
         for est in plan.task_estimates:
             task = self._tasks.get(est.task_id)
-            agent = (task.assigned_agent if task and task.assigned_agent else "unassigned")
+            agent = task.assigned_agent if task and task.assigned_agent else "unassigned"
             # Last non-unassigned agent wins per role
             existing = role_agents.get(est.role)
             if existing is None or (existing == "unassigned" and agent != "unassigned"):
