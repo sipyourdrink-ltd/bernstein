@@ -21,14 +21,28 @@ jobs:
     if: >
       !github.event.pull_request.draft &&
       !contains(github.event.pull_request.labels.*.name, 'skip-bernstein')
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check API key
+        id: check
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping Bernstein review — no ANTHROPIC_API_KEY secret"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.check.outputs.skip != 'true'
         with:
-          # Fetch the PR branch so Bernstein can diff against base.
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Review PR
+        if: steps.check.outputs.skip != 'true'
+        continue-on-error: true
         uses: ./
         with:
           task: >
@@ -39,7 +53,3 @@ jobs:
             and post them as a PR comment. Do not push any changes.
           budget: "3.00"
           post-comment: "true"
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # For Codex:  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # For Gemini: GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
