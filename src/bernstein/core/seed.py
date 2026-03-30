@@ -14,6 +14,7 @@ import yaml
 
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+from bernstein.core.formal_verification import FormalProperty, FormalVerificationConfig
 from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
 from bernstein.core.quality_gates import QualityGatesConfig
 from bernstein.core.workspace import Workspace
@@ -92,6 +93,8 @@ class SeedConfig:
         cells: Number of parallel orchestration cells (1 = single-cell).
         quality_gates: Optional quality gate configuration. When set, lint/type/test
             checks run after each task completes and before the approval gate.
+        formal_verification: Optional formal verification gateway config. When set,
+            Z3/Lean4 property checks run after quality gates and before merge.
     """
 
     goal: str
@@ -113,6 +116,7 @@ class SeedConfig:
     session: SessionConfig = field(default_factory=SessionConfig)
     worktree_setup: WorktreeSetupConfig | None = None
     quality_gates: QualityGatesConfig | None = None
+    formal_verification: FormalVerificationConfig | None = None
     model_policy: dict[str, Any] | None = None
     compliance: ComplianceConfig | None = None
 
@@ -429,6 +433,61 @@ def parse_seed(path: Path) -> SeedConfig:
             timeout_s=_qg_int("timeout_s", 120),
         )
 
+    formal_verification_raw: object = data.get("formal_verification")
+    formal_verification: FormalVerificationConfig | None = None
+    if formal_verification_raw is not None:
+        if not isinstance(formal_verification_raw, dict):
+            raise SeedError(f"formal_verification must be a mapping, got: {type(formal_verification_raw).__name__}")
+        fv_dict: dict[str, object] = cast("dict[str, object]", formal_verification_raw)
+        fv_enabled = fv_dict.get("enabled", True)
+        if not isinstance(fv_enabled, bool):
+            raise SeedError(f"formal_verification.enabled must be a bool, got: {type(fv_enabled).__name__}")
+        fv_block = fv_dict.get("block_on_violation", True)
+        if not isinstance(fv_block, bool):
+            raise SeedError(
+                f"formal_verification.block_on_violation must be a bool, got: {type(fv_block).__name__}"
+            )
+        fv_timeout = fv_dict.get("timeout_s", 60)
+        if not isinstance(fv_timeout, int):
+            raise SeedError(f"formal_verification.timeout_s must be an integer, got: {type(fv_timeout).__name__}")
+        fv_properties: list[FormalProperty] = []
+        props_raw = fv_dict.get("properties", [])
+        if not isinstance(props_raw, list):
+            raise SeedError("formal_verification.properties must be a list")
+        for idx, entry in enumerate(props_raw):
+            if not isinstance(entry, dict):
+                raise SeedError(f"formal_verification.properties[{idx}] must be a mapping")
+            prop_name = entry.get("name", f"property_{idx}")
+            if not isinstance(prop_name, str):
+                raise SeedError(f"formal_verification.properties[{idx}].name must be a string")
+            prop_invariant = entry.get("invariant", "True")
+            if not isinstance(prop_invariant, str):
+                raise SeedError(f"formal_verification.properties[{idx}].invariant must be a string")
+            prop_checker = entry.get("checker", "z3")
+            if not isinstance(prop_checker, str) or prop_checker not in ("z3", "lean4"):
+                raise SeedError(
+                    f"formal_verification.properties[{idx}].checker must be 'z3' or 'lean4', got: {prop_checker!r}"
+                )
+            prop_lemmas = entry.get("lemmas_file")
+            if prop_lemmas is not None and not isinstance(prop_lemmas, str):
+                raise SeedError(f"formal_verification.properties[{idx}].lemmas_file must be a string")
+            from typing import Literal as _Literal
+
+            fv_properties.append(
+                FormalProperty(
+                    name=prop_name,
+                    invariant=prop_invariant,
+                    checker=cast("_Literal['z3', 'lean4']", prop_checker),
+                    lemmas_file=prop_lemmas if isinstance(prop_lemmas, str) else None,
+                )
+            )
+        formal_verification = FormalVerificationConfig(
+            enabled=fv_enabled,
+            properties=fv_properties,
+            timeout_s=fv_timeout,
+            block_on_violation=fv_block,
+        )
+
     compliance_raw: object = data.get("compliance")
     compliance: ComplianceConfig | None = None
     if compliance_raw is not None:
@@ -465,6 +524,7 @@ def parse_seed(path: Path) -> SeedConfig:
         session=session_cfg,
         worktree_setup=worktree_setup,
         quality_gates=quality_gates,
+        formal_verification=formal_verification,
         model_policy=model_policy,
         compliance=compliance,
     )

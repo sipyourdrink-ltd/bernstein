@@ -99,6 +99,36 @@ catalogs:
 #   # setup_command: "uv sync"
 
 # ---------------------------------------------------------------------------
+# Formal verification gateway (Wave 5 — optional)
+# ---------------------------------------------------------------------------
+# When set, agent outputs pass through Z3 (SMT solver) or Lean4 (theorem
+# prover) checks before merge. The gateway is skipped when this section is
+# absent. Requires z3-solver (`pip install z3-solver`) for the z3 checker;
+# Lean4 CLI must be on PATH for the lean4 checker.
+#
+# formal_verification:
+#   enabled: true
+#   block_on_violation: true   # set false to warn-only
+#   timeout_s: 60              # per-property solver timeout
+#   properties:
+#     # Z3 example: property expression references task context variables:
+#     #   files_modified  (int)  — files changed by agent
+#     #   test_passed     (bool) — whether tests passed
+#     #   has_result      (bool) — result_summary is non-empty
+#     #   result_length   (int)  — len(result_summary)
+#     - name: output_non_empty
+#       invariant: "result_length > 0"
+#       checker: z3
+#     - name: files_were_changed
+#       invariant: "files_modified > 0"
+#       checker: z3
+#     # Lean4 example: theorem statement proven with pre-written lemmas
+#     - name: no_null_dereference
+#       invariant: "∀ x : Nat, x + 1 > 0"
+#       checker: lean4
+#       lemmas_file: proofs/lemmas.lean  # relative to project root
+
+# ---------------------------------------------------------------------------
 # Webhook notifications
 # ---------------------------------------------------------------------------
 # notify:

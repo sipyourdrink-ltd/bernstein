@@ -20,6 +20,7 @@ from bernstein.core.cross_model_verifier import (
     CrossModelVerifierConfig,
     run_cross_model_verification_sync,
 )
+from bernstein.core.formal_verification import FormalVerificationConfig, run_formal_verification
 from bernstein.core.janitor import verify_task
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
@@ -484,6 +485,49 @@ def process_completed_tasks(
                         task.id,
                         _cmv_verdict.reviewer_model,
                     )
+
+            # Formal verification: check Z3/Lean4 properties from bernstein.yaml.
+            # Runs after cross-model review, before the approval gate.
+            # Skipped when formal_verification section is absent from bernstein.yaml.
+            if janitor_passed:
+                _fv_config: FormalVerificationConfig | None = getattr(
+                    orch, "_formal_verification_config", None
+                )
+                if _fv_config is not None and _fv_config.enabled and _fv_config.properties:
+                    # Gather files_modified count from completion data for context
+                    _fv_completion = collect_completion_data(orch._workdir, session)
+                    _fv_files_modified = len(_fv_completion.get("files_modified", []))
+                    _fv_test_summary = _fv_completion.get("test_results", {}).get("summary", "")
+                    _fv_test_passed = "failed" not in _fv_test_summary.lower() if _fv_test_summary else True
+                    _fv_worktree = orch._spawner.get_worktree_path(session.id)
+                    _fv_run_dir = _fv_worktree if _fv_worktree is not None else orch._workdir
+                    _fv_result = run_formal_verification(
+                        task,
+                        _fv_run_dir,
+                        _fv_config,
+                        files_modified=_fv_files_modified,
+                        test_passed=_fv_test_passed,
+                    )
+                    if not _fv_result.passed and not _fv_result.skipped and _fv_config.block_on_violation:
+                        janitor_passed = False
+                        _fv_failed = [
+                            f"formal:{v.property_name}: {v.counterexample[:120]}"
+                            for v in _fv_result.violations
+                        ]
+                        with contextlib.suppress(ValueError):
+                            result.verified.remove(task.id)
+                        result.verification_failures.append((task.id, _fv_failed))
+                        logger.info(
+                            "Formal verification blocked merge for task %s: %s",
+                            task.id,
+                            ", ".join(_fv_failed),
+                        )
+                    else:
+                        logger.info(
+                            "Formal verification passed for task %s (%d properties checked)",
+                            task.id,
+                            _fv_result.properties_checked,
+                        )
 
             orch._record_provider_health(session, success=janitor_passed)
             _skip_merge = False

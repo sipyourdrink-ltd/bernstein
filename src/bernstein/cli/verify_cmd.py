@@ -1,9 +1,10 @@
-"""Verify CLI — WAL integrity, execution determinism, and memory provenance.
+"""Verify CLI — WAL integrity, execution determinism, memory provenance, and formal verification.
 
 Commands:
   bernstein verify --wal-integrity <run-id>   Verify WAL hash chain
   bernstein verify --determinism <run-id>     Compute execution fingerprint
   bernstein verify --memory-audit             Audit lesson memory provenance chain
+  bernstein verify --formal <task-id>         Run Z3/Lean4 formal property checks for a task
 """
 
 from __future__ import annotations
@@ -41,20 +42,32 @@ SDD_DIR = Path(".sdd")
     default=False,
     help="Audit lesson memory provenance chain (OWASP ASI06 2026).",
 )
+@click.option(
+    "--formal",
+    "formal_task_id",
+    default=None,
+    metavar="TASK_ID",
+    help="Run Z3/Lean4 formal property checks for a completed task.",
+)
 def verify_cmd(
     wal_run_id: str | None,
     determinism_run_id: str | None,
     memory_audit: bool,
+    formal_task_id: str | None,
 ) -> None:
-    """Verify WAL integrity, execution determinism, and memory provenance.
+    """Verify WAL integrity, execution determinism, memory provenance, and formal properties.
 
     \b
       bernstein verify --wal-integrity <run-id>   Validate hash chain
       bernstein verify --determinism  <run-id>    Show execution fingerprint
       bernstein verify --memory-audit             Audit lesson memory provenance
+      bernstein verify --formal <task-id>         Run Z3/Lean4 property checks
     """
-    if wal_run_id is None and determinism_run_id is None and not memory_audit:
-        console.print("[dim]Use --wal-integrity <run-id>, --determinism <run-id>, or --memory-audit.[/dim]")
+    if wal_run_id is None and determinism_run_id is None and not memory_audit and formal_task_id is None:
+        console.print(
+            "[dim]Use --wal-integrity <run-id>, --determinism <run-id>, --memory-audit, "
+            "or --formal <task-id>.[/dim]"
+        )
         console.print("[dim]WAL files are stored in .sdd/runtime/wal/<run-id>.wal.jsonl[/dim]")
         return
 
@@ -68,6 +81,9 @@ def verify_cmd(
 
     if memory_audit:
         exit_code |= _verify_memory_provenance()
+
+    if formal_task_id is not None:
+        exit_code |= _verify_formal(formal_task_id)
 
     raise SystemExit(exit_code)
 
@@ -245,3 +261,102 @@ def _verify_memory_provenance() -> int:
 
     console.print()
     return 0 if chain_result.valid else 1
+
+
+def _verify_formal(task_id: str) -> int:
+    """Run Z3/Lean4 formal property checks for *task_id*. Returns 0 on pass, 1 on failure."""
+    import httpx
+
+    from bernstein.core.formal_verification import load_formal_verification_config, run_formal_verification
+    from bernstein.core.models import Task
+    from bernstein.cli.helpers import SERVER_URL
+
+    workdir = Path.cwd()
+    console.print()
+
+    # Load formal_verification config from bernstein.yaml
+    fv_config = load_formal_verification_config(workdir)
+    if fv_config is None:
+        console.print(
+            Panel(
+                "[dim]No formal_verification section in bernstein.yaml — nothing to verify.[/dim]",
+                border_style="dim",
+                expand=False,
+            )
+        )
+        console.print()
+        return 0
+
+    if not fv_config.enabled:
+        console.print(Panel("[dim]Formal verification is disabled (enabled: false).[/dim]", border_style="dim", expand=False))
+        console.print()
+        return 0
+
+    if not fv_config.properties:
+        console.print(Panel("[dim]No properties defined in formal_verification section.[/dim]", border_style="dim", expand=False))
+        console.print()
+        return 0
+
+    # Fetch task from server
+    task: Task | None = None
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(f"{SERVER_URL}/tasks/{task_id}")
+            resp.raise_for_status()
+            task = Task.from_dict(resp.json())
+    except Exception as exc:
+        console.print(
+            Panel(
+                f"[bold red]Could not fetch task {task_id!r}:[/bold red] {exc}",
+                border_style="red",
+                expand=False,
+            )
+        )
+        console.print(f"[dim]Is the Bernstein server running? ({SERVER_URL})[/dim]")
+        console.print()
+        return 1
+
+    # Run formal verification
+    fv_result = run_formal_verification(task, workdir, fv_config)
+
+    if fv_result.passed:
+        console.print(
+            Panel(
+                "[bold green]Formal Verification: PASSED[/bold green]",
+                border_style="green",
+                expand=False,
+            )
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=22)
+        table.add_column("Value")
+        table.add_row("Task ID", task_id)
+        table.add_row("Task", task.title[:60])
+        table.add_row("Properties checked", str(fv_result.properties_checked))
+        table.add_row("Violations", "[green]0[/green]")
+        console.print(table)
+    else:
+        console.print(
+            Panel(
+                "[bold red]Formal Verification: FAILED[/bold red]",
+                border_style="red",
+                expand=False,
+            )
+        )
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim", no_wrap=True, min_width=22)
+        table.add_column("Value")
+        table.add_row("Task ID", task_id)
+        table.add_row("Task", task.title[:60])
+        table.add_row("Properties checked", str(fv_result.properties_checked))
+        table.add_row("Violations", f"[red]{len(fv_result.violations)}[/red]")
+        console.print(table)
+        console.print()
+        for violation in fv_result.violations:
+            console.print(f"  [red]✗[/red] [bold]{violation.property_name}[/bold] ({violation.checker})")
+            console.print(f"    [dim]{violation.detail}[/dim]")
+            if violation.counterexample and violation.counterexample != "(timeout)":
+                console.print(f"    [yellow]Counterexample:[/yellow] {violation.counterexample[:200]}")
+
+    console.print()
+    return 0 if fv_result.passed else 1

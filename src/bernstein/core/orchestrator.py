@@ -224,6 +224,7 @@ class Orchestrator:
         cluster_config: ClusterConfig | None = None,
         notifier: NotificationManager | None = None,
         quality_gate_config: QualityGatesConfig | None = None,
+        formal_verification_config: Any | None = None,
     ) -> None:
         self._config = config
         self._spawner = spawner
@@ -232,6 +233,7 @@ class Orchestrator:
         self._notifier: NotificationManager | None = notifier
         self._cluster_config = cluster_config
         self._quality_gate_config: QualityGatesConfig | None = quality_gate_config
+        self._formal_verification_config: Any | None = formal_verification_config
         _headers: dict[str, str] = {}
         if config.auth_token:
             _headers["Authorization"] = f"Bearer {config.auth_token}"
@@ -2729,6 +2731,7 @@ if __name__ == "__main__":
                 router=router,
                 cluster_config=cluster_cfg,
                 quality_gate_config=seed.quality_gates if seed else None,
+                formal_verification_config=seed.formal_verification if seed else None,
             )
 
             def _signal_handler(signum: int, _frame: object) -> None:
