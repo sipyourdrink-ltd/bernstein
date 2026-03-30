@@ -90,7 +90,7 @@ Bernstein is in active development. This page documents known constraints, their
 
 ## Provider-Specific Adapter Quirks
 
-**What:** Each CLI agent (Claude, Codex, Gemini, Qwen, Aider) has different capabilities, flags, output formats, and error behaviors.
+**What:** Each CLI agent (Claude, Codex, Cursor, Gemini, Qwen, Aider) has different capabilities, flags, output formats, and error behaviors.
 
 **Impact:** Some features work better with certain agents. For example, Claude Code supports stream-json output; Codex has native sandbox mode; Gemini has the largest context window but different error formatting.
 
