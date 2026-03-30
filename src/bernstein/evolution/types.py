@@ -119,3 +119,38 @@ class SandboxResult:
     duration_seconds: float
     log_path: str
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Evolution error taxonomy
+# ---------------------------------------------------------------------------
+
+
+class EvolutionError(Exception):
+    """Base class for evolution loop errors."""
+
+    error_type: str = "evolution_error"
+
+
+class ProposalGenerationError(EvolutionError):
+    """Failure during proposal generation from detected opportunities."""
+
+    error_type: str = "proposal_generation"
+
+
+class SandboxValidationError(EvolutionError):
+    """Failure during sandbox validation of a proposal."""
+
+    error_type: str = "sandbox_validation"
+
+
+class ApplyError(EvolutionError):
+    """Failure when applying an approved proposal to the codebase."""
+
+    error_type: str = "apply"
+
+
+class RollbackError(EvolutionError):
+    """Failure when rolling back a failed proposal application."""
+
+    error_type: str = "rollback"
