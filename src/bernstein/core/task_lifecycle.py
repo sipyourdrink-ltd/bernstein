@@ -1211,6 +1211,10 @@ def process_completed_tasks(
                 transition_agent(session, "dead", actor="task_lifecycle", reason="task completed, process reaped")
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
 
+            # Move backlog ticket file from open/ to closed/ if it exists
+            if janitor_passed and not _skip_merge:
+                _move_backlog_ticket(orch._workdir, task)
+
             # Route merge conflicts to a dedicated resolver agent.
             if (
                 _merge_result is not None
@@ -1415,3 +1419,41 @@ def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:
         # Keep legacy dict in sync so existing code that reads _file_ownership still works
         for fpath in files:
             orch._file_ownership[fpath] = agent_id
+
+
+# ---------------------------------------------------------------------------
+# Backlog ticket lifecycle: move completed tickets to closed/
+# ---------------------------------------------------------------------------
+
+
+def _move_backlog_ticket(workdir: Any, task: Any) -> None:
+    """Move a completed task's backlog .md file from open/ to closed/.
+
+    Matches by task title similarity (backlog filenames are slugified titles).
+    Safe to call even if no matching file exists — silently returns.
+
+    Args:
+        workdir: Project root (Path-like).
+        task: Completed Task object.
+    """
+    from pathlib import Path
+
+    open_dir = Path(workdir) / ".sdd" / "backlog" / "open"
+    closed_dir = Path(workdir) / ".sdd" / "backlog" / "closed"
+    if not open_dir.exists():
+        return
+    closed_dir.mkdir(parents=True, exist_ok=True)
+
+    # Try to find matching ticket by title slug
+    title_slug = re.sub(r"[^a-z0-9]+", "-", task.title.lower()).strip("-")[:40]
+
+    for md_file in open_dir.glob("*.md"):
+        file_slug = re.sub(r"[^a-z0-9]+", "-", md_file.stem.lower())
+        # Match if file contains a significant portion of the title slug
+        if title_slug[:15] in file_slug or file_slug in title_slug:
+            try:
+                md_file.rename(closed_dir / md_file.name)
+                logging.getLogger(__name__).info("Moved ticket %s to closed/ (task: %s)", md_file.name, task.title[:50])
+            except OSError:
+                pass
+            return

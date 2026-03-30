@@ -455,7 +455,10 @@ def sync_backlog_to_server(
             if task is None:
                 continue
             if normalise_title(task.title) in done_slugs:
-                dest = backlog_done / md_file.name
+                # Prefer closed/ over done/ (project convention)
+                _closed_dir = workdir / ".sdd" / "backlog" / "closed"
+                _closed_dir.mkdir(parents=True, exist_ok=True)
+                dest = _closed_dir / md_file.name
                 try:
                     shutil.move(str(md_file), str(dest))
                     result.moved.append(md_file.name)
