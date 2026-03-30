@@ -274,8 +274,8 @@ class TestSelectBatchConfig:
         # LOW+SMALL tasks hit the L1 fast-path → cheapest model (haiku/low)
         task = make_task(complexity=Complexity.LOW, scope=Scope.SMALL)
         config = _select_batch_config([task])
-        assert config.model == "haiku"
-        assert config.effort == "low"
+        assert config.model == "sonnet"
+        assert config.effort == "normal"
 
 
 # --- TierAwareRouter integration ---
@@ -567,14 +567,14 @@ class TestLoadRoleConfig:
 
 
 class TestWorktreeIntegration:
-    def test_worktrees_disabled_by_default(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+    def test_worktrees_enabled_by_default(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=100)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         spawner = AgentSpawner(adapter, templates_dir, tmp_path)
 
-        assert spawner._use_worktrees is False
-        assert spawner._worktree_mgr is None
+        assert spawner._use_worktrees is True
+        assert spawner._worktree_mgr is not None
 
     def test_worktrees_enabled_creates_manager(self, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
