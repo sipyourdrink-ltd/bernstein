@@ -179,15 +179,28 @@ AGENT_STATUS: dict[str, str] = {
 }
 
 
-def _tail_log(session_id: str, n: int = 5) -> list[str]:
-    p = Path(f".sdd/runtime/{session_id}.log")
-    if not p.exists():
-        return ["waiting for output..."]
-    try:
-        lines = p.read_text(errors="replace").strip().splitlines()
-        return lines[-n:] if lines else ["agent working..."]
-    except OSError:
-        return []
+def _tail_log(session_id: str, n: int = 5, log_path: str = "") -> list[str]:
+    """Read last N lines from an agent's log file.
+
+    Checks multiple possible locations:
+    1. Explicit log_path from agents.json
+    2. Main runtime dir: .sdd/runtime/{session_id}.log
+    3. Worktree runtime dir: .sdd/worktrees/{session_id}/.sdd/runtime/{session_id}.log
+    """
+    candidates = []
+    if log_path:
+        candidates.append(Path(log_path))
+    candidates.append(Path(f".sdd/runtime/{session_id}.log"))
+    candidates.append(Path(f".sdd/worktrees/{session_id}/.sdd/runtime/{session_id}.log"))
+
+    for p in candidates:
+        if p.exists():
+            try:
+                lines = p.read_text(errors="replace").strip().splitlines()
+                return lines[-n:] if lines else ["agent working..."]
+            except OSError:
+                continue
+    return ["waiting for output..."]
 
 
 # -- Widgets -------------------------------------------------------
@@ -259,7 +272,7 @@ class AgentWidget(Static):
                 t.append("\u258c", style="dim")
                 t.append(f" {progress}%", style=f"bold {bar_color}")
 
-        lines = _tail_log(aid, 5)
+        lines = _tail_log(aid, 5, log_path=a.get("log_path", ""))
         for line in lines:
             clean = line[:90] + "\u2026" if len(line) > 90 else line
             t.append(f"\n   {clean}", style="dim")
@@ -1081,7 +1094,7 @@ class BernsteinApp(App[None]):
             aid = a.get("id", "")
             role = a.get("role", "?")
             role_color = self.ROLE_COLORS.get(role.lower(), "bright_white")
-            lines = _tail_log(aid, 2)
+            lines = _tail_log(aid, 2, log_path=a.get("log_path", ""))
             for line in lines:
                 # UX-007: Filter routine/noisy events from activity log
                 lower = line.lower()

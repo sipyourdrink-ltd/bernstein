@@ -2395,6 +2395,7 @@ class Orchestrator:
                 "agent_source": s.agent_source,
                 "cell_id": s.cell_id,
                 "parent_id": s.parent_id,
+                "log_path": getattr(s, "log_path", ""),
             }
             for s in self._agents.values()
         ]
