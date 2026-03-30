@@ -86,7 +86,11 @@ class TestSourceChangeDetection:
 
         config = OrchestratorConfig(evolve_mode=True, dry_run=True)
         spawner = MagicMock()
-        with patch("bernstein.core.orchestrator.get_collector"):
+        with (
+            patch("bernstein.core.orchestrator.get_collector"),
+            patch("bernstein.core.orchestrator.build_manifest", return_value=MagicMock()),
+            patch("bernstein.core.orchestrator.save_manifest"),
+        ):
             orch = Orchestrator(config=config, spawner=spawner, workdir=tmp_path)
         return orch
 
@@ -132,7 +136,11 @@ class TestSessionSaveBeforeRestart:
         config = OrchestratorConfig(evolve_mode=True, poll_interval_s=0)
         spawner = MagicMock()
 
-        with patch("bernstein.core.orchestrator.get_collector"):
+        with (
+            patch("bernstein.core.orchestrator.get_collector"),
+            patch("bernstein.core.orchestrator.build_manifest", return_value=MagicMock()),
+            patch("bernstein.core.orchestrator.save_manifest"),
+        ):
             orch = Orchestrator(config=config, spawner=spawner, workdir=tmp_path)
 
         # Create the restart flag

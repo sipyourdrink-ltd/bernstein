@@ -247,7 +247,7 @@ class TestRenderPrompt:
         assert "T-011" in prompt
         assert "curl" in prompt
         assert "/complete" in prompt
-        assert "Then exit." in prompt
+        assert "Step 3: Exit" in prompt
 
 
 # --- _select_batch_config ---

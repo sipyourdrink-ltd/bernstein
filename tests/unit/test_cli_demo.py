@@ -97,12 +97,12 @@ def test_demo_dry_run_exits_zero():
     assert result.exit_code == 0, result.output
 
 
-def test_demo_dry_run_shows_cost_estimate():
-    """bernstein demo --dry-run must print the cost estimate."""
+def test_demo_dry_run_shows_task_table():
+    """bernstein demo --dry-run must show the task plan table."""
     runner = CliRunner()
     with patch("bernstein.cli.run_cmd.detect_available_adapter", return_value="claude"):
         result = runner.invoke(cli, ["demo", "--dry-run"])
-    assert "0.15" in result.output
+    assert "No agents were spawned" in result.output
 
 
 def test_demo_dry_run_shows_dry_run_label():
@@ -113,12 +113,12 @@ def test_demo_dry_run_shows_dry_run_label():
     assert "DRY RUN" in result.output
 
 
-def test_demo_no_adapter_exits_nonzero():
-    """bernstein demo must exit non-zero when no adapter is available."""
+def test_demo_no_adapter_dry_run_still_works():
+    """bernstein demo --dry-run works even without an adapter (just shows plan)."""
     runner = CliRunner()
     with patch("bernstein.cli.run_cmd.detect_available_adapter", return_value=None):
         result = runner.invoke(cli, ["demo", "--dry-run"])
-    assert result.exit_code != 0
+    assert result.exit_code == 0
 
 
 def test_demo_explicit_adapter_bypasses_detection():

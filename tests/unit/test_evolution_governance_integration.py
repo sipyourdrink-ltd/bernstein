@@ -533,7 +533,7 @@ def test_consecutive_empty_resets_after_successful_apply(tmp_path: Path) -> None
 
 def test_orchestrator_make_evolution_loop_passes_governor(tmp_path: Path) -> None:
     """Orchestrator.make_evolution_loop() creates an EvolutionLoop with governor wired."""
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
 
     from bernstein.core.models import OrchestratorConfig
     from bernstein.core.orchestrator import Orchestrator
@@ -545,11 +545,15 @@ def test_orchestrator_make_evolution_loop_passes_governor(tmp_path: Path) -> Non
     spawner = MagicMock()
     spawner.workdir = tmp_path
 
-    orch = Orchestrator(
-        config=config,
-        spawner=spawner,
-        workdir=tmp_path,
-    )
+    with (
+        patch("bernstein.core.orchestrator.build_manifest", return_value=MagicMock()),
+        patch("bernstein.core.orchestrator.save_manifest"),
+    ):
+        orch = Orchestrator(
+            config=config,
+            spawner=spawner,
+            workdir=tmp_path,
+        )
 
     loop = orch.make_evolution_loop()
     assert isinstance(loop._governor, AdaptiveGovernor)

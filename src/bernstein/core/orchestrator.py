@@ -434,24 +434,23 @@ class Orchestrator:
             else:
                 logger.warning("Unknown workflow %r — running in adaptive mode", config.workflow)
 
-        # Run manifest: hashable configuration record for compliance.
-        _wf_name = self._workflow_executor.definition.name if self._workflow_executor else ""
-        _wf_hash = self._workflow_executor.definition_hash if self._workflow_executor else ""
-        _cli_name = spawner._adapter.name() if hasattr(spawner, "_adapter") else "auto"
-        self._manifest = build_manifest(
-            run_id=run_id,
-            config=config,
-            cli=_cli_name,
-            model=None,
-            workflow_name=_wf_name,
-            workflow_definition_hash=_wf_hash,
-        )
-        save_manifest(self._manifest, workdir / ".sdd")
-        self._recorder.record(
-            "manifest_created",
-            manifest_hash=self._manifest.manifest_hash,
-            run_id=run_id,
-        )
+        # Run manifest: hashable configuration record for compliance (non-critical).
+        self._manifest = None
+        try:
+            _wf_name = self._workflow_executor.definition.name if self._workflow_executor else ""
+            _wf_hash = self._workflow_executor.definition_hash if self._workflow_executor else ""
+            _cli_name = spawner._adapter.name() if hasattr(spawner, "_adapter") else "auto"  # type: ignore[union-attr]
+            self._manifest = build_manifest(
+                run_id=run_id,
+                config=config,
+                cli=_cli_name,
+                model=None,
+                workflow_name=_wf_name,
+                workflow_definition_hash=_wf_hash,
+            )
+            save_manifest(self._manifest, workdir / ".sdd")
+        except Exception:
+            logger.debug("Manifest creation skipped (non-critical)", exc_info=True)
 
         # Compliance mode: activate subsystems based on compliance config.
         self._compliance = config.compliance

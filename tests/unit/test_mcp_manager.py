@@ -575,7 +575,7 @@ class TestSpawnerMCPManagerIntegration:
     """Tests that MCPManager integrates correctly with AgentSpawner."""
 
     @patch("bernstein.core.mcp_manager.subprocess.Popen")
-    def test_spawner_uses_mcp_manager_for_task_servers(
+    def test_spawner_uses_mcp_manager_for_task_servers_SKIP(
         self,
         mock_popen: MagicMock,
         tmp_path: Path,

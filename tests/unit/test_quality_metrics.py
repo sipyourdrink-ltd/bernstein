@@ -359,7 +359,12 @@ def test_quality_endpoint_with_iso8601_timestamps(tmp_path: Path) -> None:
     # Write completion metrics with numeric timestamps (as normally written)
     completion_file = metrics_dir / "task_completion_time_20260329.jsonl"
     completion_records = [
-        {"timestamp": time.time(), "metric_type": "task_completion_time", "value": 10.0, "labels": {"model": "sonnet", "success": "True"}},
+        {
+            "timestamp": time.time(),
+            "metric_type": "task_completion_time",
+            "value": 10.0,
+            "labels": {"model": "sonnet", "success": "True"},
+        },
     ]
     completion_file.write_text("\n".join(json.dumps(r) for r in completion_records))
 

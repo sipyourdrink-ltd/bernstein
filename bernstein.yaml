@@ -1,8 +1,8 @@
 goal: >
-  Continue developing Bernstein: read .sdd/backlog/open/ for prioritized tickets,
-  pick the highest-priority ones (333-336 first, then 337+), implement them,
-  run tests, commit, and move completed tickets to .sdd/backlog/closed/.
-  Focus on agent reliability, cost tracking, and quality gates.
+  Continue developing Bernstein: read .sdd/backlog/open/ for prioritized tickets
+  (p3-* series), implement them, run tests, commit. Focus on UX polish, startup
+  speed, error messages, and developer experience. Always run ruff + pyright
+  before committing.
 
 cli: auto  # use all detected agents: claude, codex, gemini
 
