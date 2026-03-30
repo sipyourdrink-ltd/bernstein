@@ -101,7 +101,7 @@ class CursorAdapter(CLIAdapter):
         # Cursor Pro is the most common paid tier — conservative estimate
         tier = ApiTier.PRO
         rate_limit = RateLimit(
-            requests_per_minute=50,   # 500 fast req/month ≈ ~50/min burst
+            requests_per_minute=50,  # 500 fast req/month ≈ ~50/min burst
             tokens_per_minute=20_000,
         )
 
