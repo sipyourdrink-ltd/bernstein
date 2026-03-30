@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -124,25 +125,38 @@ class TaskListWidget(DataTable[Text]):
         self.zebra_stripes = True
 
     def refresh_tasks(self, rows: list[TaskRow]) -> None:
-        """Replace all rows with fresh task data.
+        """Update task data in-place, preserving cursor and scroll position.
 
-        Args:
-            rows: Parsed task rows to display.
+        Only adds new rows and updates changed cells — never calls clear().
         """
-        self.clear()
+        # Build a lookup of incoming rows by task_id
+        incoming: dict[str, TaskRow] = {r.task_id: r for r in rows}
+        existing_keys: set[str] = set(self.rows)
+
+        # Remove rows no longer present
+        for key in existing_keys - incoming.keys():
+            self.remove_row(key)
+
+        # Update existing rows in-place, add new ones
+        columns = ("ID", "Status", "Role", "Title", "Model", "Time")
         for row in rows:
             colour = status_color(row.status)
             dot = status_dot(row.status)
-            dot_text = Text(f"{dot} {row.status}", style=colour)
-            self.add_row(
+            cells = (
                 Text(row.task_id, style="bold"),
-                dot_text,
+                Text(f"{dot} {row.status}", style=colour),
                 Text(row.role, style="cyan"),
                 Text(row.title),
                 Text(row.model, style="dim"),
                 Text(row.elapsed, style="dim"),
-                key=row.task_id,
             )
+            if row.task_id in existing_keys:
+                # Update each cell individually — preserves cursor position
+                for col_label, cell_value in zip(columns, cells, strict=True):
+                    with contextlib.suppress(Exception):
+                        self.update_cell(row.task_id, col_label, cell_value)
+            else:
+                self.add_row(*cells, key=row.task_id)
 
 
 class ActionBar(Static):
