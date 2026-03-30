@@ -32,6 +32,7 @@ dependencies = [
     "prometheus-client>=0.21",
     "pluggy>=1.5",
     "mcp>=1.0",
+    "watchdog>=4.0",
 ]
 
 [project.optional-dependencies]
