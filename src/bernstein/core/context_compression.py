@@ -4,6 +4,7 @@ Provides:
 - DependencyGraph: Builds file-level dependency graph via AST analysis
 - BM25Ranker: Ranks files by keyword relevance to task description
 - ContextCompressor: Orchestrates compression using dependencies + BM25
+- PromptCompressor: Budget-aware prompt section trimmer for spawn prompts
 """
 
 from __future__ import annotations
@@ -520,5 +521,170 @@ class ContextCompressor:
             compression_ratio=compression_ratio,
             selected_files=selected_files,
             dropped_files=dropped_files,
+            metrics=metrics,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Section priority table — higher value = keep under tight budget
+# ---------------------------------------------------------------------------
+_SECTION_PRIORITIES: dict[str, int] = {
+    "role": 10,
+    "task": 10,
+    "instruction": 10,
+    "signal": 10,
+    "project": 7,
+    "predecessor": 6,
+    "context": 5,
+    "lesson": 4,
+    "team": 3,
+    "specialist": 2,
+    "awareness": 3,
+    "bulletin": 3,
+}
+
+
+def _section_priority(name: str) -> int:
+    """Return priority for a named prompt section (higher = more important).
+
+    Matches the section name against a keyword table.  Unknown sections
+    default to medium priority (5).
+
+    Args:
+        name: Section name (case-insensitive).
+
+    Returns:
+        Integer priority in the range [2, 10].
+    """
+    name_lower = name.lower()
+    for keyword, priority in _SECTION_PRIORITIES.items():
+        if keyword in name_lower:
+            return priority
+    return 5
+
+
+class PromptCompressor:
+    """Budget-aware compressor for assembled agent spawn prompts.
+
+    Splits a prompt into named sections, estimates token cost per section,
+    and drops the lowest-priority sections until the total falls within
+    the configured token budget.  Sections with priority ≥ 10 are never
+    dropped (role prompt, task descriptions, instructions, signal checks).
+
+    Attributes:
+        token_budget: Maximum allowed estimated token count.
+    """
+
+    def __init__(self, token_budget: int = 50_000) -> None:
+        """Initialize PromptCompressor.
+
+        Args:
+            token_budget: Token budget for the compressed prompt.
+                Defaults to 50,000 (~50% of a 100 k-token context window).
+        """
+        self.token_budget = token_budget
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """Estimate token count using 4-chars-per-token heuristic.
+
+        Args:
+            text: Input text.
+
+        Returns:
+            Estimated token count (minimum 0).
+        """
+        return max(0, len(text) // 4)
+
+    def compress_sections(
+        self,
+        sections: list[tuple[str, str]],
+    ) -> tuple[str, int, int, list[str]]:
+        """Compress a list of named sections to fit within the token budget.
+
+        Sections are evaluated in ascending priority order; lowest-priority
+        sections are dropped first.  Sections whose name maps to priority 10
+        (role, task, instruction, signal) are never removed.
+
+        Args:
+            sections: Ordered list of (section_name, content) pairs.
+                Names are matched against the priority table via keywords.
+
+        Returns:
+            Tuple of:
+            - compressed_prompt: Joined content of kept sections.
+            - original_tokens: Estimated token count before compression.
+            - compressed_tokens: Estimated token count after compression.
+            - dropped_names: Names of sections that were removed.
+        """
+        if not sections:
+            return "", 0, 0, []
+
+        # Compute per-section token estimates and priorities
+        annotated: list[tuple[str, str, int, int]] = [
+            (name, content, self._estimate_tokens(content), _section_priority(name))
+            for name, content in sections
+        ]
+
+        original_tokens = sum(t for _, _, t, _ in annotated)
+
+        if original_tokens <= self.token_budget:
+            return "".join(c for _, c, _, _ in annotated), original_tokens, original_tokens, []
+
+        # Sort by priority ascending so we drop cheapest-value sections first
+        drop_candidates = sorted(
+            [(name, tokens, priority) for name, _, tokens, priority in annotated if priority < 10],
+            key=lambda x: x[2],
+        )
+
+        dropped: set[str] = set()
+        current_tokens = original_tokens
+        for name, tokens, _priority in drop_candidates:
+            if current_tokens <= self.token_budget:
+                break
+            dropped.add(name)
+            current_tokens -= tokens
+
+        kept_content = [content for name, content, _, _ in annotated if name not in dropped]
+        compressed_prompt = "".join(kept_content)
+        dropped_names = [name for name, _, _, _ in annotated if name in dropped]
+        return compressed_prompt, original_tokens, current_tokens, dropped_names
+
+    def compress(
+        self,
+        sections: list[tuple[str, str]],
+    ) -> CompressionResult:
+        """Compress sections and return a CompressionResult.
+
+        Convenience wrapper around :meth:`compress_sections` that packages
+        results in the standard :class:`CompressionResult` dataclass.
+
+        Args:
+            sections: Ordered list of (section_name, content) pairs.
+
+        Returns:
+            CompressionResult with token counts and kept/dropped section names.
+        """
+        compressed_prompt, original_tokens, compressed_tokens, dropped_names = (
+            self.compress_sections(sections)
+        )
+        _ = compressed_prompt  # caller extracts text via compress_sections if needed
+
+        ratio = compressed_tokens / max(1, original_tokens)
+        kept_names = [name for name, _ in sections if name not in set(dropped_names)]
+
+        metrics = CompressionMetrics(
+            bm25_matches=0,
+            dependency_matches=0,
+            semantic_matches=0,
+            total_files_analyzed=len(sections),
+        )
+
+        return CompressionResult(
+            original_tokens=original_tokens,
+            compressed_tokens=compressed_tokens,
+            compression_ratio=ratio,
+            selected_files=kept_names,
+            dropped_files=dropped_names,
             metrics=metrics,
         )
