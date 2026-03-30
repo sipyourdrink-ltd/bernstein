@@ -71,6 +71,7 @@ from bernstein.cli.task_cmd import (
     sync,
 )
 from bernstein.cli.verify_cmd import verify_cmd
+from bernstein.cli.voice_cmd import listen_cmd
 from bernstein.cli.watch_cmd import watch_cmd
 from bernstein.cli.workflow_cmd import workflow_group
 from bernstein.cli.workspace_cmd import config_group, workspace_group
@@ -117,6 +118,7 @@ __all__ = [
     "ideate",
     "install_hooks",
     "is_alive",
+    "listen_cmd",
     "is_process_alive",
     "kill_pid",
     "kill_pid_hard",
@@ -581,4 +583,5 @@ cli.add_command(gateway_group, "gateway")
 cli.add_command(workflow_group, "workflow")
 cli.add_command(quickstart_cmd, "quickstart")
 cli.add_command(watch_cmd, "watch")
+cli.add_command(listen_cmd, "listen")
 cli.add_command(self_update_cmd, "self-update")
