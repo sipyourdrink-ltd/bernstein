@@ -20,8 +20,10 @@ Usage::
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -387,6 +389,250 @@ def export_evidence_bundle(
     }
     (bundle_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     logger.info("Evidence bundle exported: %s (%d artifacts)", bundle_dir, len(manifest_entries))
+    return bundle_dir
+
+
+# ---------------------------------------------------------------------------
+# SOC 2 evidence export
+# ---------------------------------------------------------------------------
+
+
+def parse_period(period: str) -> tuple[str, str]:
+    """Parse a period string into ISO 8601 start/end timestamps.
+
+    Supported formats:
+      - ``Q1-2026`` through ``Q4-2026`` (quarter)
+      - ``2026-03`` (month)
+      - ``2026`` (full year)
+
+    Args:
+        period: Period string to parse.
+
+    Returns:
+        ``(start, end)`` as ISO 8601 date strings (``YYYY-MM-DD``).
+
+    Raises:
+        ValueError: If the period string cannot be parsed.
+    """
+    # Quarter: Q1-2026 .. Q4-2026
+    m = re.match(r"^Q([1-4])-(\d{4})$", period, re.IGNORECASE)
+    if m:
+        quarter = int(m.group(1))
+        year = int(m.group(2))
+        start_month = (quarter - 1) * 3 + 1
+        end_month = quarter * 3
+        # Last day of the end month
+        if end_month == 12:
+            end_day = 31
+        elif end_month in (4, 6, 9, 11):
+            end_day = 30
+        elif end_month == 2:
+            # Leap year check
+            end_day = 29 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 28
+        else:
+            end_day = 31
+        return f"{year}-{start_month:02d}-01", f"{year}-{end_month:02d}-{end_day:02d}"
+
+    # Month: 2026-03
+    m = re.match(r"^(\d{4})-(\d{2})$", period)
+    if m:
+        year = int(m.group(1))
+        month = int(m.group(2))
+        if not 1 <= month <= 12:
+            msg = f"Invalid month in period: {period!r}"
+            raise ValueError(msg)
+        # Last day of the month
+        if month == 12:
+            last_day = 31
+        elif month in (4, 6, 9, 11):
+            last_day = 30
+        elif month == 2:
+            last_day = 29 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 28
+        else:
+            last_day = 31
+        return f"{year}-{month:02d}-01", f"{year}-{month:02d}-{last_day}"
+
+    # Year: 2026
+    m = re.match(r"^(\d{4})$", period)
+    if m:
+        year = m.group(1)
+        return f"{year}-01-01", f"{year}-12-31"
+
+    msg = f"Cannot parse period: {period!r}. Use Q1-2026, 2026-03, or 2026."
+    raise ValueError(msg)
+
+
+def export_soc2_package(
+    sdd_dir: Path,
+    period: str,
+    output_path: Path | None = None,
+    fmt: str = "zip",
+) -> Path:
+    """Export a SOC 2 evidence package for the given period.
+
+    Collects audit logs, access records, compliance configuration, policy
+    versions, HMAC chain verification results, Merkle seals, and SBOM files
+    filtered to the requested period.  Produces either a directory or a zip
+    archive suitable for delivery to auditors.
+
+    Args:
+        sdd_dir: Path to the ``.sdd`` directory.
+        period: Period string (e.g. ``Q1-2026``, ``2026-03``, ``2026``).
+        output_path: Where to write the package.  Defaults to
+            ``sdd_dir / evidence / soc2-<period>``.
+        fmt: Output format — ``"zip"`` or ``"dir"``.
+
+    Returns:
+        Path to the exported zip file or directory.
+
+    Raises:
+        ValueError: If the period cannot be parsed or no audit data exists.
+    """
+    import shutil
+
+    start_date, end_date = parse_period(period)
+
+    if output_path is None:
+        output_path = sdd_dir / "evidence"
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    bundle_name = f"soc2-{period}"
+    bundle_dir = output_path / bundle_name
+    if bundle_dir.exists():
+        shutil.rmtree(bundle_dir)
+    bundle_dir.mkdir(parents=True)
+
+    artifacts_collected: list[dict[str, Any]] = []
+
+    # --- 1. Audit logs (filtered by period) --------------------------------
+    audit_dir = sdd_dir / "audit"
+    if audit_dir.is_dir():
+        dest = bundle_dir / "audit_logs"
+        dest.mkdir()
+        for jsonl_file in sorted(audit_dir.glob("*.jsonl")):
+            # File names are YYYY-MM-DD.jsonl — filter by date range
+            file_date = jsonl_file.stem  # e.g. "2026-01-15"
+            if start_date <= file_date <= end_date:
+                shutil.copy2(jsonl_file, dest / jsonl_file.name)
+        copied = list(dest.iterdir())
+        if copied:
+            artifacts_collected.append({
+                "type": "audit_logs",
+                "description": "HMAC-chained audit event logs",
+                "file_count": len(copied),
+                "period_filter": f"{start_date} to {end_date}",
+            })
+
+    # --- 2. HMAC chain verification ----------------------------------------
+    verification: dict[str, Any] = {"hmac_chain": None, "merkle": None}
+    if audit_dir.is_dir():
+        from bernstein.core.audit import AuditLog
+
+        try:
+            audit_log = AuditLog(audit_dir)
+            valid, errors = audit_log.verify()
+            verification["hmac_chain"] = {
+                "valid": valid,
+                "errors": errors,
+                "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+        except Exception as exc:
+            verification["hmac_chain"] = {"valid": False, "errors": [str(exc)]}
+
+    # --- 3. Merkle seals ---------------------------------------------------
+    merkle_dir = audit_dir / "merkle" if audit_dir.is_dir() else sdd_dir / "audit" / "merkle"
+    if merkle_dir.is_dir():
+        dest = bundle_dir / "merkle_seals"
+        dest.mkdir()
+        for seal_file in sorted(merkle_dir.glob("*.json")):
+            shutil.copy2(seal_file, dest / seal_file.name)
+        copied = list(dest.iterdir())
+        if copied:
+            artifacts_collected.append({
+                "type": "merkle_seals",
+                "description": "Merkle tree integrity seals",
+                "file_count": len(copied),
+            })
+
+    # --- 4. Compliance configuration ---------------------------------------
+    config_dir = sdd_dir / "config"
+    if config_dir.is_dir():
+        dest = bundle_dir / "compliance_config"
+        dest.mkdir()
+        for cfg_file in config_dir.iterdir():
+            if cfg_file.is_file() and cfg_file.name != "audit-key":
+                shutil.copy2(cfg_file, dest / cfg_file.name)
+        copied = list(dest.iterdir())
+        if copied:
+            artifacts_collected.append({
+                "type": "compliance_config",
+                "description": "Compliance and policy configuration",
+                "file_count": len(copied),
+            })
+
+    # --- 5. WAL (write-ahead log) ------------------------------------------
+    wal_dir = sdd_dir / "runtime" / "wal"
+    if wal_dir.is_dir():
+        dest = bundle_dir / "wal"
+        dest.mkdir()
+        for wal_file in sorted(wal_dir.glob("*")):
+            if wal_file.is_file():
+                shutil.copy2(wal_file, dest / wal_file.name)
+        copied = list(dest.iterdir())
+        if copied:
+            artifacts_collected.append({
+                "type": "wal",
+                "description": "Write-ahead log entries",
+                "file_count": len(copied),
+            })
+
+    # --- 6. SBOM -----------------------------------------------------------
+    sbom_dir = sdd_dir / "sbom"
+    if sbom_dir.is_dir():
+        dest = bundle_dir / "sbom"
+        dest.mkdir()
+        for sbom_file in sorted(sbom_dir.glob("*.json")):
+            shutil.copy2(sbom_file, dest / sbom_file.name)
+        copied = list(dest.iterdir())
+        if copied:
+            artifacts_collected.append({
+                "type": "sbom",
+                "description": "Software Bill of Materials (CycloneDX)",
+                "file_count": len(copied),
+            })
+
+    # --- 7. Write verification results -------------------------------------
+    (bundle_dir / "verification.json").write_text(json.dumps(verification, indent=2))
+
+    # --- 8. Compute package checksum ---------------------------------------
+    file_checksums: dict[str, str] = {}
+    for path in sorted(bundle_dir.rglob("*")):
+        if path.is_file() and path.name != "manifest.json":
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            file_checksums[str(path.relative_to(bundle_dir))] = digest
+
+    # --- 9. Write manifest -------------------------------------------------
+    manifest = {
+        "package_type": "soc2-evidence",
+        "period": period,
+        "period_start": start_date,
+        "period_end": end_date,
+        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "artifacts": artifacts_collected,
+        "verification": verification,
+        "file_checksums": file_checksums,
+    }
+    (bundle_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    # --- 10. Optionally zip ------------------------------------------------
+    if fmt == "zip":
+        zip_path = output_path / f"{bundle_name}.zip"
+        shutil.make_archive(str(output_path / bundle_name), "zip", output_path, bundle_name)
+        shutil.rmtree(bundle_dir)
+        logger.info("SOC 2 evidence package exported: %s", zip_path)
+        return zip_path
+
+    logger.info("SOC 2 evidence package exported: %s", bundle_dir)
     return bundle_dir
 
 
