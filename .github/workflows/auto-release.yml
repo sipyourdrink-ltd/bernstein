@@ -1,6 +1,6 @@
 name: Auto-release
 
-# Run after CI succeeds on main
+# Triggers after CI passes on main — bumps patch version and publishes
 on:
   workflow_run:
     workflows: ["CI"]
@@ -9,12 +9,17 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
-    name: Bump version + publish
+    name: Patch release
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    environment:
+      name: pypi
+      url: https://pypi.org/p/bernstein
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,72 +30,66 @@ jobs:
         with:
           enable-cache: true
 
-      # Read current version from pyproject.toml
-      - name: Get current version
-        id: version
+      # Read current version
+      - name: Get version
+        id: ver
         run: |
           VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "current=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Current version: $VERSION"
 
-      # Check if this version is already tagged (skip if so)
-      - name: Check if already released
+      # Skip if this version is already tagged
+      - name: Check tag
         id: check
         run: |
-          if git tag -l "v${{ steps.version.outputs.current }}" | grep -q .; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Version v${{ steps.version.outputs.current }} already tagged — bumping"
+          if git tag -l "v${{ steps.ver.outputs.current }}" | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Version v${{ steps.version.outputs.current }} not yet tagged"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Bump patch version if current is already tagged
-      - name: Bump patch version
-        if: steps.check.outputs.skip == 'true'
+      # Only bump if tag already exists (means this is a new CI pass on same version)
+      - name: Bump patch
+        if: steps.check.outputs.exists == 'true'
         id: bump
         run: |
-          CURRENT="${{ steps.version.outputs.current }}"
-          # Split version: 1.0.1 → major=1 minor=0 patch=1
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          NEXT_PATCH=$((PATCH + 1))
-          NEW_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
-          sed -i "s/^version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" pyproject.toml
-          echo "new=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Bumped: $CURRENT → $NEW_VERSION"
-
-      # Commit version bump
-      - name: Commit version bump
-        if: steps.check.outputs.skip == 'true'
-        run: |
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${{ steps.ver.outputs.current }}"
+          NEW="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          sed -i "s/^version = \"${{ steps.ver.outputs.current }}\"/version = \"${NEW}\"/" pyproject.toml
+          echo "version=$NEW" >> "$GITHUB_OUTPUT"
           git config user.name "bernstein[bot]"
           git config user.email "bernstein-bot@users.noreply.github.com"
           git add pyproject.toml
-          git commit -m "chore: bump version to ${{ steps.bump.outputs.new }}"
+          git commit -m "chore: auto-bump to v${NEW}"
           git push
 
-      # Determine final version (bumped or current)
-      - name: Set release version
-        id: release
+      # Final version (bumped or current)
+      - name: Set version
+        id: final
         run: |
-          if [ "${{ steps.check.outputs.skip }}" = "true" ]; then
-            echo "version=${{ steps.bump.outputs.new }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ steps.check.outputs.exists }}" = "true" ]; then
+            echo "version=${{ steps.bump.outputs.version }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${{ steps.version.outputs.current }}" >> "$GITHUB_OUTPUT"
+            echo "version=${{ steps.ver.outputs.current }}" >> "$GITHUB_OUTPUT"
           fi
 
-      # Tag and push
-      - name: Create tag
+      # Tag + build + publish
+      - name: Tag
         run: |
-          git tag "v${{ steps.release.outputs.version }}"
-          git push origin "v${{ steps.release.outputs.version }}"
+          git tag "v${{ steps.final.outputs.version }}"
+          git push origin "v${{ steps.final.outputs.version }}"
 
-      # Build
-      - name: Build package
+      - name: Build
         run: uv build
 
-      # Publish to PyPI (uses trusted publisher — no token needed)
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           attestations: true
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.final.outputs.version }}" dist/* \
+            --title "v${{ steps.final.outputs.version }}" \
+            --generate-notes
