@@ -35,6 +35,39 @@ _RATE_LIMIT_PATTERNS: tuple[str, ...] = (
     "overloaded",
 )
 
+# Text patterns that indicate a timeout in agent logs.
+_TIMEOUT_PATTERNS: tuple[str, ...] = (
+    "timeout",
+    "timed out",
+    "time out",
+    "deadline exceeded",
+    "request timeout",
+    "connect timeout",
+    "read timeout",
+    "ETIMEDOUT",
+    "TimeoutError",
+    "ConnectTimeoutError",
+    "ReadTimeoutError",
+    "504",
+    "gateway timeout",
+)
+
+# Text patterns that indicate an API error (non-429, non-timeout) in agent logs.
+_API_ERROR_PATTERNS: tuple[str, ...] = (
+    "500 internal server error",
+    "502 bad gateway",
+    "503 service unavailable",
+    "APIError",
+    "api_error",
+    "InternalServerError",
+    "ServiceUnavailableError",
+    "APIConnectionError",
+    "connection refused",
+    "connection reset",
+    "ECONNREFUSED",
+    "ECONNRESET",
+)
+
 _BASE_THROTTLE_S: float = 60.0
 _MAX_THROTTLE_S: float = 3600.0
 _LOG_SCAN_TAIL_LINES: int = 500
@@ -201,17 +234,71 @@ class RateLimitTracker:
             True if a rate-limit indicator was found, False otherwise (including
             when the file does not exist or cannot be read).
         """
+        return self._scan_log_for_patterns(log_path, _RATE_LIMIT_PATTERNS)
+
+    def scan_log_for_timeout(self, log_path: Path) -> bool:
+        """Scan the tail of *log_path* for timeout patterns.
+
+        Args:
+            log_path: Path to the agent's subprocess log file.
+
+        Returns:
+            True if a timeout indicator was found, False otherwise.
+        """
+        return self._scan_log_for_patterns(log_path, _TIMEOUT_PATTERNS)
+
+    def scan_log_for_api_error(self, log_path: Path) -> bool:
+        """Scan the tail of *log_path* for API error patterns (non-429, non-timeout).
+
+        Args:
+            log_path: Path to the agent's subprocess log file.
+
+        Returns:
+            True if an API error indicator was found, False otherwise.
+        """
+        return self._scan_log_for_patterns(log_path, _API_ERROR_PATTERNS)
+
+    def detect_failure_type(self, log_path: Path) -> str | None:
+        """Scan an agent log and return the detected failure type.
+
+        Checks for rate limits first, then timeouts, then general API errors.
+
+        Args:
+            log_path: Path to the agent's subprocess log file.
+
+        Returns:
+            One of ``"rate_limit"``, ``"timeout"``, ``"api_error"``, or ``None``
+            if no failure pattern was detected.
+        """
+        if self.scan_log_for_429(log_path):
+            return "rate_limit"
+        if self.scan_log_for_timeout(log_path):
+            return "timeout"
+        if self.scan_log_for_api_error(log_path):
+            return "api_error"
+        return None
+
+    def _scan_log_for_patterns(self, log_path: Path, patterns: tuple[str, ...]) -> bool:
+        """Scan the tail of *log_path* for any of the given patterns.
+
+        Args:
+            log_path: Path to the agent's subprocess log file.
+            patterns: Tuple of strings to search for (case-insensitive).
+
+        Returns:
+            True if any pattern was found, False otherwise.
+        """
         if not log_path.exists():
             return False
         try:
             text = log_path.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
-            logger.debug("scan_log_for_429: cannot read %s: %s", log_path, exc)
+            logger.debug("_scan_log_for_patterns: cannot read %s: %s", log_path, exc)
             return False
 
         lines = text.splitlines()[-_LOG_SCAN_TAIL_LINES:]
         snippet = "\n".join(lines).lower()
-        return any(pat.lower() in snippet for pat in _RATE_LIMIT_PATTERNS)
+        return any(pat.lower() in snippet for pat in patterns)
 
 
 # ------------------------------------------------------------------

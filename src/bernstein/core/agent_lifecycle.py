@@ -214,9 +214,9 @@ def handle_orphaned_task(
         )
         return
 
-    # Rate-limit 429 detection: scan the agent's log before deciding how to retry.
-    # If a 429 pattern is found, throttle the provider so subsequent spawns avoid it.
-    # Then attempt cascade fallback to another installed agent.
+    # Failure detection: scan the agent's log for rate-limit, timeout, or API error
+    # patterns before deciding how to retry.  If a failure is detected, throttle
+    # the provider and attempt cascade fallback to another installed agent.
     _rl_tracker = getattr(orch, "_rate_limit_tracker", None)
     if _rl_tracker is not None and session.provider:
         # Use session's log_path if available, else check standard locations
@@ -229,10 +229,14 @@ def handle_orphaned_task(
                 _wt_log = orch._workdir / ".sdd" / "worktrees" / session.id / ".sdd" / "runtime" / f"{session.id}.log"
                 if _wt_log.exists():
                     _log_path = _wt_log
-        if _rl_tracker.scan_log_for_429(_log_path):
+
+        # Detect failure type: rate_limit, timeout, api_error, or None
+        _failure_type = _rl_tracker.detect_failure_type(_log_path)
+        if _failure_type is not None:
             _rl_tracker.throttle_provider(session.provider, getattr(orch, "_router", None))
             logger.warning(
-                "Rate-limit detected in log for session %s (provider=%r, task=%s)",
+                "Failure detected (%s) in log for session %s (provider=%r, task=%s)",
+                _failure_type,
                 session.id,
                 session.provider,
                 task_id,
@@ -248,7 +252,15 @@ def handle_orphaned_task(
 
             # Collect all currently throttled providers
             _throttled = frozenset(p for p in _rl_tracker.throttle_summary() if _rl_tracker.is_throttled(p))
-            _decision = _cascade.find_fallback(task.complexity, _throttled)
+
+            # Determine current cascade entry from the session's model/provider
+            _current_entry = getattr(task, "model", None) or session.provider or None
+            _decision = _cascade.find_fallback(
+                task.complexity,
+                _throttled,
+                current_entry=_current_entry,
+                trigger=_failure_type,
+            )
 
             if isinstance(_decision, CascadeDecision):
                 logger.info(
@@ -260,6 +272,10 @@ def handle_orphaned_task(
                 )
                 # Override the task's model to use the fallback agent's default
                 task.model = _decision.fallback_model
+
+                # Persist cascade metrics
+                _metrics_dir = orch._workdir / ".sdd" / "metrics"
+                _cascade.save_metrics(_metrics_dir)
             else:
                 logger.warning(
                     "Cascade exhausted for task %s: %s — task will wait for throttle recovery",
