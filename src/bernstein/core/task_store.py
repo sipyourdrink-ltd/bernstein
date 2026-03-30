@@ -146,9 +146,7 @@ async def _retry_io(fn: Any, *args: Any) -> Any:
                     _MAX_IO_RETRIES,
                     exc,
                 )
-    raise TaskStoreUnavailable(
-        f"File I/O failed after {_MAX_IO_RETRIES} retries: {last_exc}"
-    ) from last_exc
+    raise TaskStoreUnavailable(f"File I/O failed after {_MAX_IO_RETRIES} retries: {last_exc}") from last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -288,9 +286,7 @@ class TaskStore:
         try:
             lines = self._jsonl_path.read_text().splitlines()
         except OSError as exc:
-            raise TaskStoreUnavailable(
-                f"Cannot read task JSONL at {self._jsonl_path}: {exc}"
-            ) from exc
+            raise TaskStoreUnavailable(f"Cannot read task JSONL at {self._jsonl_path}: {exc}") from exc
         for line_num, raw_line in enumerate(lines, 1):
             line = raw_line.strip()
             if not line:
