@@ -114,11 +114,15 @@ def _parse_yaml_frontmatter(filename: str, content: str) -> ParsedBacklogTask | 
     context_raw = raw.get("context_files", [])
     context = tuple(str(p) for p in context_raw) if isinstance(context_raw, list) else ()
     janitor_raw = raw.get("janitor_signals", [])
-    janitor = tuple(
-        {"type": str(s.get("type", "")), "value": str(s.get("value", ""))}
-        for s in janitor_raw
-        if isinstance(s, dict)
-    ) if isinstance(janitor_raw, list) else ()
+    janitor = (
+        tuple(
+            {"type": str(s.get("type", "")), "value": str(s.get("value", ""))}
+            for s in janitor_raw
+            if isinstance(s, dict)
+        )
+        if isinstance(janitor_raw, list)
+        else ()
+    )
 
     return ParsedBacklogTask(
         title=title,
