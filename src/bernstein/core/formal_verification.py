@@ -206,7 +206,7 @@ def _verify_z3(
 
     # Evaluate invariant as Z3 expression
     try:
-        invariant_expr = eval(prop.invariant, {"__builtins__": {}}, z3_ns)  # noqa: S307
+        invariant_expr = eval(prop.invariant, {"__builtins__": {}}, z3_ns)
     except Exception as exc:
         logger.debug("Cannot parse invariant %r as Z3 expression (%s); using Python eval", prop.invariant, exc)
         return _verify_python_eval(prop, context)
@@ -247,7 +247,7 @@ def _verify_python_eval(prop: FormalProperty, context: dict[str, Any]) -> Proper
         None if the expression evaluates to True, PropertyViolation otherwise.
     """
     try:
-        result = eval(prop.invariant, {"__builtins__": {}}, dict(context))  # noqa: S307
+        result = eval(prop.invariant, {"__builtins__": {}}, dict(context))
         if not result:
             return PropertyViolation(
                 property_name=prop.name,
@@ -489,7 +489,9 @@ def load_formal_verification_config(workdir: Path) -> FormalVerificationConfig |
         invariant = str(entry.get("invariant", "True"))
         checker_raw = str(entry.get("checker", "z3")).lower()
         if checker_raw not in ("z3", "lean4"):
-            logger.warning("formal_verification: unknown checker %r for property %r; defaulting to z3", checker_raw, name)
+            logger.warning(
+                "formal_verification: unknown checker %r for property %r; defaulting to z3", checker_raw, name
+            )
             checker_raw = "z3"
         checker: Literal["z3", "lean4"] = checker_raw  # type: ignore[assignment]
         lemmas_file: str | None = entry.get("lemmas_file")  # type: ignore[assignment]

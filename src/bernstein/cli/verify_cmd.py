@@ -65,8 +65,7 @@ def verify_cmd(
     """
     if wal_run_id is None and determinism_run_id is None and not memory_audit and formal_task_id is None:
         console.print(
-            "[dim]Use --wal-integrity <run-id>, --determinism <run-id>, --memory-audit, "
-            "or --formal <task-id>.[/dim]"
+            "[dim]Use --wal-integrity <run-id>, --determinism <run-id>, --memory-audit, or --formal <task-id>.[/dim]"
         )
         console.print("[dim]WAL files are stored in .sdd/runtime/wal/<run-id>.wal.jsonl[/dim]")
         return
@@ -267,9 +266,9 @@ def _verify_formal(task_id: str) -> int:
     """Run Z3/Lean4 formal property checks for *task_id*. Returns 0 on pass, 1 on failure."""
     import httpx
 
+    from bernstein.cli.helpers import SERVER_URL
     from bernstein.core.formal_verification import load_formal_verification_config, run_formal_verification
     from bernstein.core.models import Task
-    from bernstein.cli.helpers import SERVER_URL
 
     workdir = Path.cwd()
     console.print()
@@ -288,12 +287,16 @@ def _verify_formal(task_id: str) -> int:
         return 0
 
     if not fv_config.enabled:
-        console.print(Panel("[dim]Formal verification is disabled (enabled: false).[/dim]", border_style="dim", expand=False))
+        console.print(
+            Panel("[dim]Formal verification is disabled (enabled: false).[/dim]", border_style="dim", expand=False)
+        )
         console.print()
         return 0
 
     if not fv_config.properties:
-        console.print(Panel("[dim]No properties defined in formal_verification section.[/dim]", border_style="dim", expand=False))
+        console.print(
+            Panel("[dim]No properties defined in formal_verification section.[/dim]", border_style="dim", expand=False)
+        )
         console.print()
         return 0
 

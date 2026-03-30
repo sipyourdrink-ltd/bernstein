@@ -490,9 +490,7 @@ def process_completed_tasks(
             # Runs after cross-model review, before the approval gate.
             # Skipped when formal_verification section is absent from bernstein.yaml.
             if janitor_passed:
-                _fv_config: FormalVerificationConfig | None = getattr(
-                    orch, "_formal_verification_config", None
-                )
+                _fv_config: FormalVerificationConfig | None = getattr(orch, "_formal_verification_config", None)
                 if _fv_config is not None and _fv_config.enabled and _fv_config.properties:
                     # Gather files_modified count from completion data for context
                     _fv_completion = collect_completion_data(orch._workdir, session)
@@ -511,8 +509,7 @@ def process_completed_tasks(
                     if not _fv_result.passed and not _fv_result.skipped and _fv_config.block_on_violation:
                         janitor_passed = False
                         _fv_failed = [
-                            f"formal:{v.property_name}: {v.counterexample[:120]}"
-                            for v in _fv_result.violations
+                            f"formal:{v.property_name}: {v.counterexample[:120]}" for v in _fv_result.violations
                         ]
                         with contextlib.suppress(ValueError):
                             result.verified.remove(task.id)

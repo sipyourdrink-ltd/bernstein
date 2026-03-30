@@ -444,9 +444,7 @@ def parse_seed(path: Path) -> SeedConfig:
             raise SeedError(f"formal_verification.enabled must be a bool, got: {type(fv_enabled).__name__}")
         fv_block = fv_dict.get("block_on_violation", True)
         if not isinstance(fv_block, bool):
-            raise SeedError(
-                f"formal_verification.block_on_violation must be a bool, got: {type(fv_block).__name__}"
-            )
+            raise SeedError(f"formal_verification.block_on_violation must be a bool, got: {type(fv_block).__name__}")
         fv_timeout = fv_dict.get("timeout_s", 60)
         if not isinstance(fv_timeout, int):
             raise SeedError(f"formal_verification.timeout_s must be an integer, got: {type(fv_timeout).__name__}")
