@@ -77,7 +77,6 @@ async def duration_predictions(request: Request) -> JSONResponse:
           ]
         }
     """
-    import asyncio as _asyncio
 
     from bernstein.core.duration_predictor import get_predictor
 
