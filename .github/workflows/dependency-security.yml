@@ -1,0 +1,145 @@
+name: Dependency Security
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      create_pr:
+        description: "Create a PR if fixes are found"
+        required: false
+        default: "true"
+
+jobs:
+  check-dependencies:
+    name: Check Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install audit tools
+        run: uv pip install pip-audit safety
+
+      - name: Check dependencies
+        id: check
+        run: uv run python scripts/check_dependencies.py --output .sdd/dependency-report.json
+        continue-on-error: true
+
+      - name: Upload report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dependency-report
+          path: .sdd/dependency-report.json
+
+      - name: Parse report
+        id: parse
+        if: success() || failure()
+        run: |
+          python << 'EOF'
+          import json
+          with open(".sdd/dependency-report.json") as f:
+              report = json.load(f)
+
+          has_issues = report["summary"]["cves_found"] > 0 or report["summary"]["conflicts_found"] > 0
+          has_fixes = report["summary"]["resolutions_suggested"] > 0
+
+          print(f"HAS_ISSUES={has_issues}")
+          print(f"HAS_FIXES={has_fixes}")
+          print(f"CVE_COUNT={report['summary']['cves_found']}")
+          print(f"RESOLUTION_COUNT={report['summary']['resolutions_suggested']}")
+
+          with open("$GITHUB_OUTPUT", "a") as f:
+              f.write(f"has_issues={has_issues}\n")
+              f.write(f"has_fixes={has_fixes}\n")
+              f.write(f"cve_count={report['summary']['cves_found']}\n")
+              f.write(f"resolution_count={report['summary']['resolutions_suggested']}\n")
+          EOF
+
+      - name: Comment on PR if issues found
+        if: steps.parse.outputs.has_issues == 'True'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('.sdd/dependency-report.json', 'utf-8'));
+
+            let comment = `## 🔒 Dependency Security Report\n\n`;
+            comment += `Found **${report.summary.cves_found}** CVEs and **${report.summary.conflicts_found}** conflicts.\n\n`;
+
+            if (report.cves.length > 0) {
+              comment += `### CVEs Detected\n`;
+              for (const cve of report.cves) {
+                comment += `- **${cve.cve_id}** in ${cve.package} ${cve.current_version}\n`;
+                if (cve.fix_versions.length > 0) {
+                  comment += `  Fix available: ${cve.fix_versions.join(', ')}\n`;
+                } else {
+                  comment += `  No fix version available yet\n`;
+                }
+              }
+              comment += `\n`;
+            }
+
+            if (report.suggested_resolutions.length > 0) {
+              comment += `### Suggested Upgrades\n`;
+              for (const res of report.suggested_resolutions) {
+                comment += `- ${res.package}: \`${res.current}\` → \`${res.suggested}\` (${res.reason})\n`;
+              }
+            }
+
+            console.log(comment);
+
+      - name: Apply fixes and test
+        if: steps.parse.outputs.has_fixes == 'True' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+        id: fix
+        run: uv run python scripts/apply_dependency_fixes.py --report .sdd/dependency-report.json --create-pr
+        continue-on-error: true
+
+      - name: Create issue if fixes needed but tests fail
+        if: steps.parse.outputs.has_issues == 'True' && steps.fix.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('.sdd/dependency-report.json', 'utf-8'));
+
+            const issue_title = `[Security] Dependency CVEs detected (${report.summary.cves_found} CVEs)`;
+            const issue_body = `## Security Alert\n\nDependency security scan detected issues:\n\n` +
+              `- CVEs: ${report.summary.cves_found}\n` +
+              `- Conflicts: ${report.summary.conflicts_found}\n` +
+              `- Resolutions suggested: ${report.summary.resolutions_suggested}\n\n` +
+              `Run dependency fix CI to apply updates.`;
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: issue_title,
+              body: issue_body,
+              labels: ['security', 'dependencies']
+            });
+
+  # Auto-create PR on schedule with tested fixes
+  create-fix-pr:
+    name: Create Fix PR
+    runs-on: ubuntu-latest
+    needs: check-dependencies
+    if: github.event_name == 'schedule'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install audit tools
+        run: uv pip install pip-audit safety
+
+      - name: Check and apply fixes
+        run: |
+          uv run python scripts/check_dependencies.py --output .sdd/dependency-report.json || true
+          uv run python scripts/apply_dependency_fixes.py --report .sdd/dependency-report.json --create-pr || true
+        continue-on-error: true
