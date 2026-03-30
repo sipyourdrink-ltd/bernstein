@@ -713,33 +713,36 @@ async def memory_audit(request: Request) -> JSONResponse:
 
 @router.post("/broadcast")
 async def broadcast_command(request: Request) -> JSONResponse:
-    """Send a COMMAND signal to all running agents.
+    """Send a message to all running agents via fastest available channel.
+
+    Uses stdin pipe where available (sub-second delivery), falls back
+    to file-based COMMAND signal for agents without pipe support.
 
     Expects JSON body: ``{"message": "some instruction"}``.
-    Returns ``{"status": "broadcast_sent", "recipients": <count>}``.
     """
-    from bernstein.core.agent_signals import AgentSignalManager
+    from bernstein.core.agent_ipc import broadcast_message
 
     body = await request.json()
     message: str = body.get("message", "")
     if not message:
-        return JSONResponse(
-            content={"error": "message is required"},
-            status_code=400,
-        )
+        return JSONResponse(content={"error": "message is required"}, status_code=400)
 
     sdd_dir: Path | None = getattr(request.app.state, "sdd_dir", None)
     if sdd_dir is None:
-        return JSONResponse(
-            content={"error": "sdd_dir not configured"},
-            status_code=500,
-        )
+        return JSONResponse(content={"error": "sdd_dir not configured"}, status_code=500)
 
     workdir = sdd_dir.parent
-    signal_mgr = AgentSignalManager(workdir)
-    count = signal_mgr.write_command_signals_all(message)
+    results = broadcast_message(message, workdir=workdir)
 
-    return JSONResponse(content={"status": "broadcast_sent", "recipients": count})
+    pipe_count = sum(1 for v in results.values() if v == "pipe")
+    file_count = sum(1 for v in results.values() if v == "file")
+
+    return JSONResponse(content={
+        "status": "broadcast_sent",
+        "recipients": len(results),
+        "via_pipe": pipe_count,
+        "via_file": file_count,
+    })
 
 
 # ---------------------------------------------------------------------------

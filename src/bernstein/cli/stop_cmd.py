@@ -203,7 +203,15 @@ def soft_stop(timeout: int) -> None:
     Args:
         timeout: Maximum seconds to wait for agents to exit gracefully.
     """
-    # 1. Write SHUTDOWN signal files for all active agents
+    # 1a. Try real-time IPC first (sub-second for agents with stdin pipes)
+    workdir = Path.cwd()
+    from bernstein.core.agent_ipc import shutdown_all as ipc_shutdown
+    ipc_results = ipc_shutdown(reason="user requested stop", workdir=workdir)
+    pipe_count = sum(1 for v in ipc_results.values() if v == "pipe")
+    if pipe_count:
+        console.print(f"  Sent shutdown via pipe to {pipe_count} agent(s).")
+
+    # 1b. Also write file-based signals as belt-and-suspenders
     signaled = write_shutdown_signals(reason="User requested stop")
     if signaled:
         console.print(f"[dim]Wrote SHUTDOWN signals for {len(signaled)} agent(s).[/dim]")
