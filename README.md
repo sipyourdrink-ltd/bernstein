@@ -12,10 +12,13 @@
 ### One YAML. Multiple coding agents. Ship while you sleep.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/dashboard.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/dashboard.svg">
-  <img alt="Bernstein Dashboard" src="docs/assets/dashboard.svg" width="700">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tui.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/tui.svg">
+  <img alt="Bernstein TUI — live task dashboard" src="docs/assets/tui.svg" width="700">
 </picture>
+
+<p align="center"><strong>Web dashboard</strong> — real-time task monitoring, cost tracking, agent status</p>
+<p align="center"><img alt="Bernstein Web Dashboard" src="docs/assets/web-dashboard.png" width="700" style="border-radius:8px"></p>
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
 [![Tests](https://img.shields.io/badge/tests-4250+-2ea44f)]()
