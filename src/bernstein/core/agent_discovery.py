@@ -323,6 +323,49 @@ def _detect_cursor() -> tuple[AgentCapabilities | None, list[str]]:
     ), warnings
 
 
+def _detect_kilo() -> tuple[AgentCapabilities | None, list[str]]:
+    """Detect Kilo CLI (Stackblitz)."""
+    warnings: list[str] = []
+    binary = shutil.which("kilo")
+    if binary is None:
+        return None, []
+
+    # Version
+    version = _extract_version(_run_probe(["kilo", "--version"]))
+
+    # Login check: KILO_API_KEY env var or OAuth session in ~/.kilo/
+    logged_in = False
+    login_method = ""
+    if os.environ.get("KILO_API_KEY"):
+        logged_in = True
+        login_method = "API key"
+    else:
+        kilo_dir = Path.home() / ".kilo"
+        if kilo_dir.exists():
+            logged_in = True
+            login_method = "OAuth"
+
+    if binary and not logged_in:
+        warnings.append("kilo found but not authenticated — set KILO_API_KEY or run: kilo login")
+
+    return AgentCapabilities(
+        name="kilo",
+        binary=binary,
+        version=version,
+        logged_in=logged_in,
+        login_method=login_method,
+        available_models=["anthropic/claude-sonnet-4-6", "openai/gpt-5.4", "google/gemini-2.5-pro"],
+        default_model="anthropic/claude-sonnet-4-6",
+        supports_headless=True,
+        supports_sandbox=False,
+        supports_mcp=True,  # --mcp flag
+        max_context_tokens=200_000,
+        reasoning_strength="very_high",  # delegates to Claude/GPT/Gemini under the hood
+        best_for=["full-stack", "code-generation", "refactoring"],
+        cost_tier="moderate",  # subscription-based; delegates to upstream model pricing
+    ), warnings
+
+
 def _detect_aider() -> tuple[AgentCapabilities | None, list[str]]:
     """Detect Aider CLI."""
     warnings: list[str] = []
@@ -388,7 +431,7 @@ def discover_agents() -> DiscoveryResult:
     agents: list[AgentCapabilities] = []
     warnings: list[str] = []
 
-    for detector in (_detect_claude, _detect_codex, _detect_cursor, _detect_gemini, _detect_qwen, _detect_aider):
+    for detector in (_detect_claude, _detect_codex, _detect_cursor, _detect_gemini, _detect_kilo, _detect_qwen, _detect_aider):
         try:
             agent, agent_warnings = detector()
             if agent is not None:
@@ -450,7 +493,7 @@ def detect_auth_status() -> dict[str, tuple[bool, bool]]:
     discovery = discover_agents_cached()
 
     # All known agents to report on, even if not found
-    all_agents = {"claude", "codex", "cursor", "gemini", "qwen", "aider"}
+    all_agents = {"claude", "codex", "cursor", "gemini", "kilo", "qwen", "aider"}
 
     result: dict[str, tuple[bool, bool]] = {}
 

@@ -10,6 +10,7 @@ from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.cursor import CursorAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
+from bernstein.adapters.kilo import KiloAdapter
 from bernstein.adapters.mock import MockAgentAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.roo_code import RooCodeAdapter
@@ -21,6 +22,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "codex": CodexAdapter,
     "cursor": CursorAdapter,
     "gemini": GeminiAdapter,
+    "kilo": KiloAdapter,
     "mock": MockAgentAdapter,
     "qwen": QwenAdapter,
     "roo-code": RooCodeAdapter,
@@ -28,7 +30,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
 
 
 def get_adapter(cli_name: str) -> CLIAdapter:
-    """Get adapter by name: 'aider', 'claude', 'codex', 'gemini', 'qwen', or 'generic'.
+    """Get adapter by name: 'aider', 'claude', 'codex', 'gemini', 'kilo', 'qwen', or 'generic'.
 
     For 'generic', returns a GenericAdapter with default settings.
     For known adapters, instantiates the corresponding class.
