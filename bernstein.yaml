@@ -1,8 +1,9 @@
 goal: >
-  Continue developing Bernstein: read .sdd/backlog/open/ for prioritized tickets
-  (p3-* series), implement them, run tests, commit. Focus on UX polish, startup
-  speed, error messages, and developer experience. Always run ruff + pyright
-  before committing.
+  Implement tickets from .sdd/backlog/open/ numbered 001-004 (highest priority).
+  Read each ticket file for requirements. Implement, write tests, run
+  uv run ruff check src/ and uv run pytest tests/unit/RELEVANT_FILE.py -x -q.
+  Commit each completed task. Do NOT invent new tickets or create tasks
+  beyond what is in the backlog files.
 
 cli: auto  # use all detected agents: claude, codex, gemini
 

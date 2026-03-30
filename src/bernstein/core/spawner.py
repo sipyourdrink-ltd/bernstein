@@ -1203,7 +1203,7 @@ def _select_batch_config(
         if task.complexity == Complexity.HIGH:
             return ModelConfig(model="opus", effort="high")
         if task.priority == 1:
-            return ModelConfig(model="sonnet", effort="max")
+            return ModelConfig(model="opus", effort="max")
         # Consult bandit for standard tasks
         return route_task(task, bandit_metrics_dir=metrics_dir)
 
