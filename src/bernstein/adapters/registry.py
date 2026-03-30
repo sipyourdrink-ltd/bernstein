@@ -7,6 +7,7 @@ from bernstein.adapters.amp import AmpAdapter
 from bernstein.adapters.base import CLIAdapter
 from bernstein.adapters.claude import ClaudeCodeAdapter
 from bernstein.adapters.codex import CodexAdapter
+from bernstein.adapters.cursor import CursorAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.mock import MockAgentAdapter
@@ -18,6 +19,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "aider": AiderAdapter,
     "claude": ClaudeCodeAdapter,
     "codex": CodexAdapter,
+    "cursor": CursorAdapter,
     "gemini": GeminiAdapter,
     "mock": MockAgentAdapter,
     "qwen": QwenAdapter,

@@ -54,6 +54,7 @@
       <li><a href="#matrix">Feature matrix</a></li>
       <li><a href="#claude">Claude Code</a></li>
       <li><a href="#codex">Codex CLI</a></li>
+      <li><a href="#cursor">Cursor</a></li>
       <li><a href="#gemini">Gemini CLI</a></li>
       <li><a href="#qwen">Qwen</a></li>
       <li><a href="#generic">Generic adapter</a></li>
@@ -86,6 +87,7 @@
           <th>Feature</th>
           <th>Claude Code</th>
           <th>Codex CLI</th>
+          <th>Cursor</th>
           <th>Gemini CLI</th>
           <th>Qwen</th>
           <th>Generic</th>
@@ -96,6 +98,7 @@
           <td>Model selection</td>
           <td>opus / sonnet / haiku</td>
           <td>gpt-5.4 / o3 / o4-mini</td>
+          <td>sonnet 4.6 / opus 4.6 / gpt-5.4</td>
           <td>gemini-3-pro / 3-flash / 2.5-pro</td>
           <td>qwen3-coder / qwen-max</td>
           <td>Pass-through</td>
@@ -107,11 +110,13 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
         </tr>
         <tr>
           <td>MCP config injection</td>
           <td>✓</td>
           <td>—</td>
+          <td>✓ (--add-mcp)</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
@@ -123,11 +128,13 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
         </tr>
         <tr>
           <td>Tier detection</td>
           <td>✓ (API key prefix)</td>
           <td>✓ (org ID / key prefix)</td>
+          <td>✓ (~/.cursor/ present)</td>
           <td>✓ (GCP project / key format)</td>
           <td>✓ (provider env vars)</td>
           <td>—</td>
@@ -136,6 +143,7 @@
           <td>Auto-approval</td>
           <td><code>--dangerously-skip-permissions</code></td>
           <td><code>--approval-mode full-auto</code></td>
+          <td>Built-in agent mode</td>
           <td><code>--sandbox none</code></td>
           <td><code>-y</code></td>
           <td>Via <code>extra_args</code></td>
@@ -143,6 +151,7 @@
         <tr>
           <td>Web search</td>
           <td>Via MCP</td>
+          <td>Native</td>
           <td>Native</td>
           <td>Native</td>
           <td>Via Tavily (optional)</td>
@@ -153,11 +162,13 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
           <td>✓ (OpenRouter, Together, Oxen)</td>
           <td>—</td>
         </tr>
         <tr>
           <td>Local / offline models</td>
+          <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
@@ -200,6 +211,20 @@ export OPENAI_API_KEY=sk-proj-...</code></pre>
     </div>
 
     <p>Runs in <code>--approval-mode full-auto</code> with <code>--quiet</code> to suppress interactive prompts. Pass any OpenAI model name directly via <code>--model</code>. Recommended model: <code>gpt-5.4</code> (Mar 2026). The o-series reasoning models (<code>o3</code>, <code>o4-mini</code>) are also supported. Tier detection checks for <code>OPENAI_ORG_ID</code> (enterprise) and key prefix (<code>sk-proj</code> = pro).</p>
+
+    <h2 id="cursor">Cursor</h2>
+
+    <p><strong>Provider:</strong> Cursor AI &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli cursor</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash"># Install Cursor from https://www.cursor.com
+# Sign in via the Cursor app — auth is stored in ~/.cursor/
+cursor agent --version</code></pre>
+    </div>
+
+    <p>Cursor is a VS Code fork with built-in AI. The <code>cursor agent</code> subcommand runs the agent headlessly in the terminal. Bernstein uses <code>--user-data-dir</code> to isolate each session's state, and <code>--add-mcp</code> to inject MCP server config. The adapter does not pass <code>--model</code> because Cursor selects the model from the user's subscription settings.</p>
+
+    <p>Authentication is via the Cursor app OAuth session — no separate API key is needed. Bernstein detects login by checking for <code>~/.cursor/</code>. Tier detection reports Pro when logged in.</p>
 
     <h2 id="gemini">Gemini CLI</h2>
 
