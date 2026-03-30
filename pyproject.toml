@@ -167,6 +167,7 @@ exclude = [
     "src/bernstein/core/prompt_versioning.py",
     "src/bernstein/core/secrets.py",
     "src/bernstein/core/agent_lifecycle.py",
+    "src/bernstein/core/backlog_parser.py",
 ]
 
 [tool.pytest.ini_options]
