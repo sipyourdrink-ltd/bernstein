@@ -802,6 +802,11 @@ def create_app(
     else:
         application.state.plan_store = None  # type: ignore[attr-defined]
 
+    # Root redirect → /status
+    @application.get("/")
+    async def root() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+        return {"name": "Bernstein Task Server", "status": "running", "docs": "/docs"}
+
     # Mount routers
     application.include_router(agents_router)
     application.include_router(tasks_router)
