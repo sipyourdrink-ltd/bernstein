@@ -133,7 +133,7 @@ class QwenAdapter(CLIAdapter):
                     wrapped_cmd,
                     cwd=workdir,
                     env=env,
-                    stdin=subprocess.DEVNULL,
+                    stdin=subprocess.PIPE,
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
@@ -144,7 +144,7 @@ class QwenAdapter(CLIAdapter):
                 raise RuntimeError(f"Permission denied executing qwen: {exc}") from exc
 
         timer = self._start_watchdog(proc, timeout_seconds=timeout_seconds, workdir=workdir, session_id=session_id)
-        return SpawnResult(pid=proc.pid, log_path=log_path, timer=timer)
+        return SpawnResult(pid=proc.pid, log_path=log_path, proc=proc, timer=timer)
 
     def name(self) -> str:
         return "Qwen CLI"
