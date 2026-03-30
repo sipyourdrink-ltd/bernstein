@@ -56,6 +56,7 @@ from bernstein.cli.eval_benchmark_cmd import (
 from bernstein.cli.evolve_cmd import evolve
 from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.manifest_cmd import manifest_group
+from bernstein.cli.quickstart_cmd import quickstart_cmd
 from bernstein.cli.task_cmd import (
     add_task,
     approve,
@@ -127,6 +128,7 @@ __all__ = [
     "print_banner",
     "print_dry_run_table",
     "quarantine_group",
+    "quickstart_cmd",
     "read_pid",
     "recap",
     "recover_orphaned_claims",
@@ -266,6 +268,7 @@ def print_rich_help() -> None:
                 ("agents discover", "Auto-detect installed CLI agents"),
                 ("evolve", "Self-improvement proposals"),
                 ("demo", "Zero-to-running demo in 60 seconds"),
+                ("quickstart", "Zero-config demo: 3 tasks on a Flask TODO API"),
             ],
         ),
     ]
@@ -572,3 +575,4 @@ cli.add_command(manifest_group, "manifest")
 cli.add_command(ci_group, "ci")
 cli.add_command(gateway_group, "gateway")
 cli.add_command(workflow_group, "workflow")
+cli.add_command(quickstart_cmd, "quickstart")
