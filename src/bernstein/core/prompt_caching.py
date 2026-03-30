@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -140,6 +141,34 @@ def compute_cache_key(prefix: str) -> str:
         Lowercase hex string (64 chars) of SHA-256 hash.
     """
     return hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+
+
+def make_prompt_cache_key(
+    system_prompt: str,
+    context_files: list[Path] | None = None,
+) -> str:
+    """Compute orchestrator-level cache key from system prompt and context files.
+
+    Cache key = SHA-256(system_prompt + sorted file contents).
+    Automatically invalidates when any context file's content changes.
+    Missing files are silently skipped.
+
+    Args:
+        system_prompt: Role prompt and project context text.
+        context_files: Optional list of file paths whose contents contribute
+            to the cache key.  Files are sorted by path before hashing so
+            order of the input list does not matter.
+
+    Returns:
+        Lowercase hex string (64 chars) of SHA-256 hash.
+    """
+    h = hashlib.sha256()
+    h.update(system_prompt.encode("utf-8"))
+    if context_files:
+        for path in sorted(context_files):
+            with contextlib.suppress(OSError):
+                h.update(path.read_bytes())
+    return h.hexdigest()
 
 
 def extract_system_prefix(prompt: str) -> tuple[str, str]:
