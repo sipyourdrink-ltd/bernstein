@@ -765,6 +765,7 @@ class AgentSpawner:
             provider=provider_name,
             agent_source=agent_source,
             isolation=isolation_mode.value,
+            token_budget=task_token_budget,
         )
 
         # Determine working directory: repo-specific > worktree > shared workdir

@@ -396,11 +396,15 @@ def _get_worktree_branch(worktree_path: Path) -> str | None:
 
 
 def check_budget_violations(orch: Any, result: Any) -> None:
-    """Kill agents that have exceeded their per-session token budget.
+    """Kill agents that have exceeded their per-task token budget.
 
-    Reads ``orch._config.token_budget_per_session`` (0 = disabled).  Token
-    counts come from ``AgentSession.tokens_used``, which is updated each tick
-    by ``token_monitor.check_token_growth`` (called before this function).
+    Reads ``AgentSession.token_budget`` (0 = disabled) for each session.
+    Token counts come from ``AgentSession.tokens_used``, which is updated each
+    tick by ``token_monitor.check_token_growth`` (called before this function).
+
+    The hard-kill threshold is **2x** the per-task budget: the budget hint
+    embedded in the agent prompt is the soft limit; the circuit breaker fires
+    at 2x to catch runaway agents that ignore the hint.
 
     On violation: writes a structured kill signal, logs to the kill audit, and
     writes quarantine metadata.
@@ -410,17 +414,20 @@ def check_budget_violations(orch: Any, result: Any) -> None:
             and ``_config`` attributes).
         result: Current :class:`TickResult` to record reaped agent IDs into.
     """
-    budget: int = getattr(orch._config, "token_budget_per_session", 0)
-    if budget <= 0:
-        return  # Feature disabled
-
     for session in list(orch._agents.values()):
         if session.status == "dead":
             continue
-        if session.tokens_used <= budget:
+        budget: int = getattr(session, "token_budget", 0)
+        if budget <= 0:
+            continue  # No budget defined for this session (unlimited)
+        kill_threshold = budget * 2  # Hard-kill at 2x the soft budget
+        if session.tokens_used <= kill_threshold:
             continue
 
-        detail = f"Session token budget exceeded: {session.tokens_used:,} tokens used vs {budget:,} limit"
+        detail = (
+            f"Per-task token budget exceeded: {session.tokens_used:,} tokens used"
+            f" vs {kill_threshold:,} hard limit (2x {budget:,} budget)"
+        )
         logger.warning(
             "Budget violation by agent %s: %s",
             session.id,
