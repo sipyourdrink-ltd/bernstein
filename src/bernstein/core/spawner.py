@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.adapters.base import RateLimitError, SpawnError, SpawnResult
@@ -24,7 +25,6 @@ from bernstein.templates.renderer import TemplateError, render_role_prompt
 if TYPE_CHECKING:
     import subprocess
     import threading
-    from pathlib import Path
 
     from bernstein.adapters.base import CLIAdapter
     from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
@@ -240,6 +240,7 @@ def _render_prompt(
     templates_dir: Path,
     workdir: Path,
     agency_catalog: dict[str, AgencyAgent] | None = None,
+    spawner_config: Any | None = None,
     catalog_system_prompt: str | None = None,
     context_builder: TaskContextBuilder | None = None,
     session_id: str = "",
@@ -262,6 +263,7 @@ def _render_prompt(
         templates_dir: Root of templates/roles/ directory.
         workdir: Project working directory.
         agency_catalog: Optional Agency agent catalog for extended roles.
+        spawner_config: Optional spawner config used for prompt-side limits.
         catalog_system_prompt: Optional system prompt from a catalog agent.
             When set, this replaces the template/role-based role prompt.
         context_builder: Optional TaskContextBuilder for rich context injection.
@@ -359,10 +361,61 @@ def _render_prompt(
             logger.debug("Template render failed for role %s, using fallback: %s", role, exc)
             role_prompt = _render_fallback(role, templates_dir, agency_catalog)
 
-    # Inject prior agent lessons based on task tags
+    # Inject prior agent lessons based on task tags (legacy JSONL system)
     sdd_dir = workdir / ".sdd"
     lesson_tags = _extract_tags_from_tasks(tasks)
     lesson_context = gather_lessons_for_context(sdd_dir, lesson_tags)
+
+    # Inject persistent memory from SQLite store (new system)
+    persistent_memory_context = ""
+    db_path = sdd_dir / "memory" / "memory.db"
+    if db_path.exists():
+        try:
+            from bernstein.core.memory.sqlite_store import SQLiteMemoryStore
+
+            store = SQLiteMemoryStore(db_path)
+            memories = store.get_relevant(lesson_tags, limit=10)
+            if memories:
+                lines = ["## Persistent Memory\nRelevant conventions and architectural decisions:"]
+                for m in memories:
+                    lines.append(f"- [{m.type.upper()}] {m.content}")
+                persistent_memory_context = "\n".join(lines) + "\n"
+        except Exception as mem_exc:
+            logger.debug("Failed to fetch persistent memory: %s", mem_exc)
+
+    # Smart context injection (RAG)
+    smart_context = ""
+    try:
+        from bernstein.core.rag import CodebaseIndexer
+
+        indexer = CodebaseIndexer(workdir)
+        if indexer.file_count() > 0:
+            query = " ".join(t.description for t in tasks)
+            # Find top N relevant files
+            rag_cfg = getattr(spawner_config, "rag", None)
+            max_files = rag_cfg.max_files if rag_cfg else 5
+            max_chars = (rag_cfg.max_tokens if rag_cfg else 50000) * 4  # heuristic: 4 chars per token
+
+            results = indexer.search(query, limit=max_files)
+            if results:
+                lines = ["## Relevant Code Context\nAutomatically identified relevant files via RAG:"]
+                total_chars = 0
+                for res in results:
+                    if total_chars >= max_chars:
+                        break
+                    path = Path(res["path"])
+                    if path.exists():
+                        content = path.read_text(encoding="utf-8", errors="replace")
+                        # Truncate if this file alone exceeds remaining budget
+                        remaining = max_chars - total_chars
+                        if len(content) > remaining:
+                            content = content[:remaining] + "\n... (truncated)"
+
+                        lines.append(f"### {res['path']} (score: {res['score']:.2f})\n```\n{content}\n```")
+                        total_chars += len(content)
+                smart_context = "\n".join(lines) + "\n"
+    except Exception as rag_exc:
+        logger.debug("Smart context injection failed: %s", rag_exc)
 
     # Assemble final prompt
     sections = [role_prompt]
@@ -371,6 +424,10 @@ def _render_prompt(
     sections.append(f"\n## Assigned tasks\n{task_block}")
     if lesson_context:
         sections.append(f"\n{lesson_context}\n")
+    if persistent_memory_context:
+        sections.append(f"\n{persistent_memory_context}\n")
+    if smart_context:
+        sections.append(f"\n{smart_context}\n")
     if rich_context:
         sections.append(f"\n{rich_context}\n")
     predecessor_ctx = _render_predecessor_context(tasks, task_graph)
@@ -553,18 +610,25 @@ class AgentSpawner:
         self._adapter_cache[adapter_name] = adapter
         return adapter
 
-    def spawn_for_tasks(self, tasks: list[Task]) -> AgentSession:
-        """Route, render prompt, and spawn an agent for a task batch.
+    def spawn_for_tasks(self, tasks: list[Task], model_override: str | None = None) -> AgentSession:
+        """Route, render prompt, and spawn an agent for a task batch."""
+        from bernstein.core.telemetry import start_span
 
-        Args:
-            tasks: Batch of 1-3 tasks. All must share the same role.
+        if not tasks:
+            raise ValueError("Cannot spawn agent with empty task list")
 
-        Returns:
-            AgentSession with PID and metadata populated.
+        with start_span(
+            "agent.spawn",
+            attributes={
+                "role": tasks[0].role,
+                "task_count": len(tasks),
+                "model_override": model_override,
+            },
+        ):
+            return self._spawn_for_tasks_internal(tasks, model_override=model_override)
 
-        Raises:
-            ValueError: If tasks list is empty or roles are mixed.
-        """
+    def _spawn_for_tasks_internal(self, tasks: list[Task], model_override: str | None = None) -> AgentSession:
+        """Actual spawn implementation."""
         if self._shutdown_event is not None and self._shutdown_event.is_set():
             raise ShutdownInProgress("Orchestrator shutting down — refusing new spawn")
 
@@ -582,6 +646,13 @@ class AgentSpawner:
             templates_dir=self._templates_dir,
             metrics_dir=metrics_dir if metrics_dir.exists() else None,
         )
+        if model_override:
+            base_config = ModelConfig(
+                model=model_override,
+                effort=base_config.effort,
+                max_tokens=base_config.max_tokens,
+                is_batch=base_config.is_batch,
+            )
         model_config = base_config
         provider_name: str | None = None
         role_policy = self._role_model_policy.get(tasks[0].role, {})
@@ -662,6 +733,7 @@ class AgentSpawner:
             self._templates_dir,
             self._workdir,
             self._agency_catalog,
+            spawner_config=getattr(self, "_config", None),
             catalog_system_prompt=catalog_system_prompt,
             context_builder=self._context_builder,
             session_id=session_id,
@@ -945,6 +1017,7 @@ class AgentSpawner:
             self._templates_dir,
             self._workdir,
             self._agency_catalog,
+            spawner_config=getattr(self, "_config", None),
             context_builder=self._context_builder,
             session_id=session_id,
         )

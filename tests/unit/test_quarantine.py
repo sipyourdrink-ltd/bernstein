@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.quarantine import QUARANTINE_THRESHOLD, QuarantineEntry, QuarantineStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

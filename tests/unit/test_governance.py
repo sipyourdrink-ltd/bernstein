@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,6 +16,9 @@ from bernstein.evolution.governance import (
     ProjectContext,
     log_evolution_decision,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # EvolutionWeights

@@ -15,7 +15,6 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
@@ -58,7 +57,6 @@ def apply_upgrades(resolutions: list[dict]) -> None:
 
         # Update the dependency requirement
         old_pattern = f"{package}>="
-        new_pattern = f"{package}>={suggested}"
 
         if old_pattern in content:
             lines = content.split("\n")
@@ -88,7 +86,7 @@ def update_lockfile() -> None:
 def run_tests() -> bool:
     """Run the full test suite."""
     console.print("[bold cyan]Running test suite[/bold cyan]")
-    exit_code, stdout, stderr = run_command(["uv", "run", "python", "scripts/run_tests.py", "-x"], check=False)
+    exit_code, stdout, _stderr = run_command(["uv", "run", "python", "scripts/run_tests.py", "-x"], check=False)
 
     if exit_code == 0:
         console.print("  ✓ All tests passed")

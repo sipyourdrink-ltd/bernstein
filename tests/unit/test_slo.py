@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.metric_collector import MetricsCollector
 from bernstein.core.slo import (
@@ -15,6 +15,9 @@ from bernstein.core.slo import (
     SLOTracker,
     apply_error_budget_adjustments,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # SLOTarget
@@ -131,7 +134,7 @@ class TestSLOTracker:
 
     def test_update_from_collector(self, tmp_path: Path) -> None:
         collector = MetricsCollector(metrics_dir=tmp_path / "metrics")
-        now = time.time()
+        time.time()
 
         # Add 10 tasks, 9 successful
         for i in range(10):

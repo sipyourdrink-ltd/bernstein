@@ -11,6 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from bernstein.core.adaptive_parallelism import AdaptiveParallelism
+
 # ---------------------------------------------------------------------------
 # Memory guard: prevent any single pytest run from eating >2 GB RAM.
 # ---------------------------------------------------------------------------
@@ -41,6 +43,17 @@ def _memory_guard():
                 file=sys.stderr,
             )
             sys.exit(137)
+
+
+@pytest.fixture(autouse=True)
+def _stable_adaptive_parallelism(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep adaptive parallelism deterministic across the test suite.
+
+    Integration tests should not depend on ambient machine load. Individual
+    adaptive-parallelism tests can still override this with their own patches.
+    """
+
+    monkeypatch.setattr(AdaptiveParallelism, "_get_cpu_percent", lambda self: 0.0)
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +15,9 @@ from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.core.models import ModelConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -50,7 +53,7 @@ def _spawn_codex(tmp_path: Path, model: str = "gpt-4o") -> tuple[list[str], Magi
     proc_mock = _make_popen_mock(pid=100)
     with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
         with patch("builtins.open", MagicMock()):
-            result = adapter.spawn(
+            adapter.spawn(
                 prompt="do work",
                 workdir=tmp_path,
                 model_config=ModelConfig(model=model, effort="high"),
@@ -61,7 +64,7 @@ def _spawn_codex(tmp_path: Path, model: str = "gpt-4o") -> tuple[list[str], Magi
 
 
 def _spawn_gemini(tmp_path: Path, model: str = "gemini-pro") -> tuple[list[str], MagicMock]:
-    adapter = GeminiAdapter()
+    GeminiAdapter()
     proc_mock = _make_popen_mock(pid=200)
     with patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock):
         with patch("builtins.open", MagicMock()):
@@ -115,10 +118,10 @@ class TestCodexAdapterSpawn:
                 session_id="s2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--model" in inner
-        assert inner[inner.index("--model") + 1] == "gpt-4.1"
+        assert "-m" in inner
+        assert inner[inner.index("-m") + 1] == "gpt-4.1"
 
-    def test_approval_mode_full_auto(self, tmp_path: Path) -> None:
+    def test_exec_mode_full_auto(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
         proc_mock = _make_popen_mock(pid=103)
         with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
@@ -129,10 +132,9 @@ class TestCodexAdapterSpawn:
                 session_id="s3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--approval-mode" in inner
-        assert inner[inner.index("--approval-mode") + 1] == "full-auto"
+        assert inner[:3] == ["codex", "exec", "--full-auto"]
 
-    def test_quiet_flag(self, tmp_path: Path) -> None:
+    def test_json_output_file_flags(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
         proc_mock = _make_popen_mock(pid=104)
         with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
@@ -143,7 +145,9 @@ class TestCodexAdapterSpawn:
                 session_id="s4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--quiet" in inner
+        assert "--json" in inner
+        assert "-o" in inner
+        assert inner[inner.index("-o") + 1].endswith("s4.last-message.txt")
 
     def test_prompt_appended_last(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -228,10 +232,10 @@ class TestGeminiAdapterSpawn:
                 session_id="g2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--model" in inner
-        assert inner[inner.index("--model") + 1] == "gemini-pro"
+        assert "-m" in inner
+        assert inner[inner.index("-m") + 1] == "gemini-pro"
 
-    def test_sandbox_none_flag(self, tmp_path: Path) -> None:
+    def test_yolo_flag(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
         proc_mock = _make_popen_mock(pid=203)
         with patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock) as popen:
@@ -242,8 +246,7 @@ class TestGeminiAdapterSpawn:
                 session_id="g3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--sandbox" in inner
-        assert inner[inner.index("--sandbox") + 1] == "none"
+        assert "--yolo" in inner
 
     def test_prompt_flag(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
@@ -256,8 +259,22 @@ class TestGeminiAdapterSpawn:
                 session_id="g4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--prompt" in inner
-        assert inner[inner.index("--prompt") + 1] == "do-something"
+        assert "-p" in inner
+        assert inner[inner.index("-p") + 1] == "do-something"
+
+    def test_json_output_flag(self, tmp_path: Path) -> None:
+        adapter = GeminiAdapter()
+        proc_mock = _make_popen_mock(pid=207)
+        with patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gemini-pro", effort="high"),
+                session_id="g7",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--output-format" in inner
+        assert inner[inner.index("--output-format") + 1] == "json"
 
     def test_creates_log_dir(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()

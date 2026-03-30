@@ -28,7 +28,7 @@ Implementation details:
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from bernstein.core.agent_lifecycle import (
@@ -44,6 +44,9 @@ from bernstein.core.models import (
     TaskStatus,
     TaskType,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

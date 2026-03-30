@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,6 +12,9 @@ from bernstein.core.semantic_cache import (
     _cosine,
     _hash,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Pure function tests
@@ -80,7 +83,7 @@ class TestSemanticCacheManager:
 
     def test_no_cross_model_hit(self, cache: SemanticCacheManager) -> None:
         cache.store("add unit tests for auth", "response A", model="gpt-4")
-        response, score = cache.lookup("add unit tests for auth", model="claude-3")
+        response, _score = cache.lookup("add unit tests for auth", model="claude-3")
         assert response is None
 
     def test_fuzzy_hit_similar_goal(self, cache: SemanticCacheManager) -> None:
@@ -94,7 +97,7 @@ class TestSemanticCacheManager:
 
     def test_fuzzy_miss_unrelated_goal(self, cache: SemanticCacheManager) -> None:
         cache.store("add unit tests for auth", "cached plan", model="gpt-4")
-        response, score = cache.lookup("deploy to kubernetes cluster", model="gpt-4")
+        response, _score = cache.lookup("deploy to kubernetes cluster", model="gpt-4")
         assert response is None
 
     def test_hit_increments_hit_count(self, cache: SemanticCacheManager) -> None:
@@ -119,7 +122,7 @@ class TestSemanticCacheManager:
         mgr = SemanticCacheManager(tmp_path, ttl_seconds=0.001)
         mgr.store("old goal", "old plan", model="m1")
         time.sleep(0.01)
-        response, score = mgr.lookup("old goal", model="m1")
+        response, _score = mgr.lookup("old goal", model="m1")
         assert response is None
 
     def test_no_ttl_when_zero(self, tmp_path: Path) -> None:

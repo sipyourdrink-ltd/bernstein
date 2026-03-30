@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import signal
 import subprocess
 from pathlib import Path
 from typing import Any

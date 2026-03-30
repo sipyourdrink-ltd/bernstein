@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +15,9 @@ from bernstein.core.researcher import (
     format_research_context,
     run_research,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # ResearchResult
@@ -60,7 +63,7 @@ class TestResearchCache:
 
     def test_cache_creates_directory(self, tmp_path: Path) -> None:
         cache_dir = tmp_path / "deep" / "nested" / "cache"
-        cache = ResearchCache(cache_dir)
+        ResearchCache(cache_dir)
         assert cache_dir.is_dir()
 
     def test_key_sanitization(self, tmp_path: Path) -> None:
@@ -139,7 +142,6 @@ class TestRunResearch:
         with patch("bernstein.core.llm.tavily_search", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = "Search result"
             await run_research(tmp_path)
-            first_count = mock_search.call_count
 
             # Second run should use cache exclusively — zero new API calls
             mock_search.reset_mock()

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.scenario_library import load_scenario_library
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_load_scenario_library_reads_valid_yaml(tmp_path: Path) -> None:

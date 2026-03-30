@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -32,6 +33,63 @@ _VALID_PROVIDERS: frozenset[str] = frozenset({"vault", "aws", "1password"})
 
 class SecretsError(Exception):
     """Raised when a secrets manager operation fails."""
+
+
+class SecretsRefresher:
+    """Background thread that refreshes secrets before they expire.
+
+    Ensures that ``load_secrets`` always has a fresh entry in its module-level
+    cache, preventing latencies when agents are spawned.
+    """
+
+    def __init__(self, config: SecretsConfig) -> None:
+        self.config = config
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        """Launch the background refresh thread."""
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="secrets-refresher",
+            daemon=True,
+        )
+        self._thread.start()
+        logger.info("Secrets background refresher started (ttl=%ds)", self.config.ttl)
+
+    def stop(self) -> None:
+        """Signal the background thread to exit."""
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=1.0)
+        logger.info("Secrets background refresher stopped")
+
+    def _run(self) -> None:
+        """Core refresh loop."""
+        # Refresh interval: 80% of TTL to stay ahead of expiry
+        interval = max(30.0, self.config.ttl * 0.8)
+        while not self._stop_event.is_set():
+            try:
+                # Direct call to fetch() bypasses cache logic
+                provider = _create_provider(self.config.provider)
+                raw = provider.fetch(self.config.path)
+
+                # Update module-level cache
+                key = _cache_key(self.config)
+                _cache[key] = _CachedSecrets(
+                    values=raw,
+                    fetched_at=time.monotonic(),
+                    ttl=self.config.ttl,
+                )
+                logger.debug("Background secrets refresh successful for %s", key)
+            except Exception as exc:
+                logger.warning("Background secrets refresh failed for %s: %s", self.config.path, exc)
+
+            # Wait for next interval or stop signal
+            self._stop_event.wait(timeout=interval)
 
 
 @dataclass(frozen=True)

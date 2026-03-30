@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import threading
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from bernstein.core.metrics import MetricsCollector, MetricType
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

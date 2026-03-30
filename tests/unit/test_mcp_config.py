@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +13,9 @@ from bernstein.adapters.claude import ClaudeCodeAdapter, _resolve_env_vars, load
 from bernstein.core.models import ModelConfig
 from bernstein.core.seed import parse_seed
 from bernstein.core.spawner import AgentSpawner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # load_mcp_config
@@ -103,7 +106,7 @@ class TestLoadMcpConfig:
         claude_dir.mkdir()
         (claude_dir / "mcp.json").write_text("not valid json {{{")
 
-        result_no_project = load_mcp_config(project_servers=None)
+        load_mcp_config(project_servers=None)
         # Should not crash, returns None since no servers found
         # (global parse failed, no project servers)
 

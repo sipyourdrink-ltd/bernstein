@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_test_adapter_success(tmp_path: Path) -> None:

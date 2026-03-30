@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import signal
 import threading
-import time
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult, _SIGTERM_GRACE_SECONDS
+from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.codex import CodexAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.core.models import ModelConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -33,6 +33,9 @@ dependencies = [
     "pluggy>=1.5",
     "mcp>=1.0",
     "watchdog>=4.0",
+    "opentelemetry-api>=1.30.0",
+    "opentelemetry-sdk>=1.30.0",
+    "opentelemetry-exporter-otlp>=1.30.0",
 ]
 
 [project.optional-dependencies]
@@ -76,6 +79,11 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "RUF"]
 "src/bernstein/core/differential_privacy.py" = ["RUF002"]
 "src/bernstein/core/license_scanner.py" = ["E501"]
 "src/bernstein/core/memory_integrity.py" = ["E501", "RUF003"]
+"benchmarks/run_benchmark.py" = ["E501", "RUF002"]
+"scripts/generate_roadmap_tickets.py" = ["E501", "RUF001"]
+"sdk/python/src/bernstein_sdk/adapters/github_actions.py" = ["E501"]
+"sdk/python/src/bernstein_sdk/adapters/jira.py" = ["E501"]
+"tests/**/*.py" = ["E402", "E501", "E741", "RUF002", "RUF003", "RUF012", "RUF043", "SIM108", "SIM117", "TC002", "TC003", "TC006"]
 
 [tool.pyright]
 pythonVersion = "3.12"

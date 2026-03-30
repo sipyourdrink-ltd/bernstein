@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,12 +14,14 @@ from bernstein.core.models import RiskAssessment, RollbackPlan
 from bernstein.evolution.detector import ImprovementOpportunity, UpgradeCategory
 from bernstein.evolution.gate import ApprovalDecision, ApprovalOutcome
 from bernstein.evolution.loop import EvolutionLoop, ExperimentResult
-from bernstein.evolution.types import ProposalGenerationError, SandboxValidationError
 from bernstein.evolution.proposals import (
     UpgradeProposal,
 )
-from bernstein.evolution.types import RiskLevel
+from bernstein.evolution.types import ProposalGenerationError, RiskLevel, SandboxValidationError
 from bernstein.evolution.types import SandboxResult as TypesSandboxResult
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.roadmap_runtime import emit_roadmap_wave
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _seed_scenario(root: Path) -> None:

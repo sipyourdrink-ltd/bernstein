@@ -8,8 +8,8 @@ Optimized for execution by Bernstein's own agents:
 - Acceptance criteria machine-verifiable where possible
 """
 
-from pathlib import Path
 import textwrap
+from pathlib import Path
 
 BACKLOG = Path(".sdd/backlog/open")
 BACKLOG.mkdir(parents=True, exist_ok=True)

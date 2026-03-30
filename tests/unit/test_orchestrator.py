@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.core.models import (
@@ -36,6 +38,9 @@ from bernstein.core.router import (
 )
 from bernstein.core.spawner import AgentSpawner
 from bernstein.core.tick_pipeline import prioritize_starving_roles
+
+if TYPE_CHECKING:
+    from bernstein.core.bulletin import BulletinBoard
 
 # --- Helpers ---
 
@@ -620,7 +625,7 @@ class TestPerRoleCapDistribution:
         """
         backend_tasks = [_make_task(id=f"T-be{i}", role="backend", title=f"Backend {i}") for i in range(9)]
         qa_task = _make_task(id="T-qa1", role="qa", title="QA 1")
-        task_dicts = [_task_as_dict(t) for t in backend_tasks + [qa_task]]
+        task_dicts = [_task_as_dict(t) for t in [*backend_tasks, qa_task]]
 
         cfg = OrchestratorConfig(
             max_agents=5,
@@ -1038,7 +1043,7 @@ class TestOrchestratorTick:
         )
         orch = _build_orchestrator(tmp_path, transport)
 
-        result = orch.tick()
+        orch.tick()
 
         # Only task_a's batch spawned; task_b blocked by unmet dependency
         spawned_task_ids: list[str] = []
@@ -1060,7 +1065,7 @@ class TestOrchestratorTick:
         )
         orch = _build_orchestrator(tmp_path, transport)
 
-        result = orch.tick()
+        orch.tick()
 
         spawned_task_ids: list[str] = []
         for session in orch.active_agents.values():
@@ -2824,7 +2829,7 @@ class TestEvolutionMetricsRecording:
         # Reset the global so we get a fresh collector for this test.
         _metrics_mod._default_collector = None
 
-        orch, evolution = self._build_with_evolution(tmp_path)
+        orch, _evolution = self._build_with_evolution(tmp_path)
         session = AgentSession(
             id="backend-agent-task",
             role="backend",
@@ -4519,7 +4524,7 @@ class TestCheckEvolve:
         runtime.mkdir(parents=True)
         (runtime / "evolve.json").write_text("{not valid json!!")
         orch = self._make_orch(tmp_path)
-        mock_run, mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
+        mock_run, _mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
 
         orch._check_evolve(TickResult(), {})  # must not raise
 
@@ -4535,7 +4540,7 @@ class TestCheckEvolve:
         evolve_path = runtime / "evolve.json"
         evolve_path.write_text('{"enabled": true}')
         orch = self._make_orch(tmp_path)
-        mock_run, mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
+        mock_run, _mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
 
         with patch.object(evolve_path.__class__, "read_text", side_effect=OSError("disk error")):
             orch._check_evolve(TickResult(), {})  # must not raise
@@ -4547,7 +4552,7 @@ class TestCheckEvolve:
         """enabled=false in evolve.json → no cycle triggered."""
         _write_evolve_config(tmp_path, enabled=False)
         orch = self._make_orch(tmp_path)
-        mock_run, mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
+        mock_run, _mock_commit, mock_spawn = self._patch_evolve_helpers(orch)
 
         orch._check_evolve(TickResult(), {})
 
@@ -4821,9 +4826,6 @@ class TestComputeTotalSpentCache:
 
 
 # --- Metrics wiring ---
-
-
-import pytest  # noqa: E402 (already imported at top of file but need for type hints below)
 
 
 class TestMetricsWiring:

@@ -55,7 +55,7 @@ def mgr(repo_root: Path) -> WorktreeManager:
 
 class TestCreate:
     def test_returns_worktree_path(self, mgr: WorktreeManager, repo_root: Path) -> None:
-        with patch("subprocess.run", return_value=_ok()) as mock_run:
+        with patch("subprocess.run", return_value=_ok()):
             result = mgr.create("sess1")
 
         expected = repo_root / ".sdd/worktrees/sess1"

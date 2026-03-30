@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -37,6 +37,9 @@ from bernstein.evolution.proposals import (
 from bernstein.evolution.types import CircuitState, RiskLevel
 from bernstein.evolution.types import SandboxResult as TypesSandboxResult
 from bernstein.evolution.types import UpgradeProposal as TypesUpgradeProposal
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -457,13 +460,16 @@ class TestEvolutionLoopFullCycle:
     def _make_loop(self, tmp_path: Path) -> EvolutionLoop:
         state_dir = tmp_path / ".sdd"
         state_dir.mkdir()
-        return EvolutionLoop(
+        loop = EvolutionLoop(
             state_dir=state_dir,
             repo_root=tmp_path,
             cycle_seconds=1,
             max_proposals=5,
             window_seconds=60,
         )
+        # These full-cycle tests exercise the sandbox/apply path directly.
+        loop._classify_risk_route = lambda composite_risk: "standard"  # type: ignore[method-assign]
+        return loop
 
     def test_run_cycle_returns_experiment_result_when_opportunity_found(self, tmp_path: Path) -> None:
         """run_cycle() returns ExperimentResult when an opportunity is available."""
@@ -764,7 +770,7 @@ class TestCircuitBreakerIntegration:
         breaker._save_state()
 
         # can_evolve should transition to HALF_OPEN and allow L0
-        allowed, reason = breaker.can_evolve(RiskLevel.L0_CONFIG)
+        allowed, _reason = breaker.can_evolve(RiskLevel.L0_CONFIG)
         assert allowed is True
         assert breaker.state == CircuitState.HALF_OPEN
 

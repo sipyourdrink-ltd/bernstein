@@ -298,6 +298,10 @@ class Orchestrator:
 
         self._rate_limit_tracker = _RLTracker()
 
+        # Telemetry
+        from bernstein.core.telemetry import init_telemetry
+        init_telemetry(config.telemetry.otlp_endpoint if hasattr(config, "telemetry") else None)
+
         # Self-evolution feedback loop
         if config.evolution_enabled:
             self._evolution = evolution or EvolutionCoordinator(
@@ -646,18 +650,14 @@ class Orchestrator:
     # -- Core tick -----------------------------------------------------------
 
     def tick(self) -> TickResult:
-        """Execute one orchestrator cycle.
+        """Execute one orchestrator cycle."""
+        from bernstein.core.telemetry import start_span
 
-        Steps:
-            1. Fetch tasks by status (open/claimed/done/failed) via filtered queries.
-            2. Group open tasks into role-based batches.
-            3. Spawn agents if capacity allows.
-            4. Check done tasks and run janitor.
-            5. Reap dead/stale agents and fail their tasks.
+        with start_span("orchestrator.tick", attributes={"tick": self._tick_count + 1}):
+            return self._tick_internal()
 
-        Returns:
-            Summary of what happened this tick.
-        """
+    def _tick_internal(self) -> TickResult:
+        """Actual tick implementation (previously tick())."""
         result = TickResult()
         self._tick_count += 1
         base = self._config.server_url
@@ -958,6 +958,9 @@ class Orchestrator:
         # 4d-ii. Token growth monitor: alert on quadratic growth, kill runaway agents
         check_token_growth(self)
 
+        # 4d-iii. Real-time cost recording: update budget status from live tokens
+        self._record_live_costs()
+
         # 4e. Recycle idle agents (task already resolved but process still alive,
         #     or no heartbeat for idle threshold). SHUTDOWN → 30s grace → SIGKILL.
         recycle_idle_agents(self, tasks_by_status)
@@ -1182,6 +1185,41 @@ class Orchestrator:
             server_url=self._config.server_url,
             quarantine=self._quarantine,
         )
+
+    def _record_live_costs(self) -> None:
+        """Update live cost tracker from active agent token usage.
+
+        Iterates over all agents (not just dead ones), extracts their
+        live token counts (updated by TokenMonitor), computes current
+        cost, and updates the CostTracker.  This enables the real-time
+        cost counter in the TUI/Dashboard.
+        """
+        any_change = False
+        for session in self._agents.values():
+            if session.status == "dead" or session.tokens_used == 0:
+                continue
+
+            # Record into cost tracker.  CostTracker handles deduplication
+            # by agent_id and only increments if tokens increased.
+            from bernstein.core.models import ModelConfig
+
+            m_config = getattr(session, "model_config", ModelConfig(model="sonnet"))
+            cost_usd = self._cost_tracker.record(
+                agent_id=session.id,
+                model=m_config.model,
+                tokens=session.tokens_used,
+            )
+            if cost_usd > 0:
+                any_change = True
+
+        if any_change:
+            self._cost_tracker.save()
+            # Broadcast to TUI/API via bulletin
+            status = self._cost_tracker.status()
+            self._post_bulletin(
+                "status",
+                f"live_cost_update: {status.spent_usd:.4f} USD spent ({status.percentage_used * 100:.1f}%)",
+            )
 
     def _reap_dead_agents(self, result: TickResult, tasks_snapshot: dict[str, list[Task]]) -> None:
         """Delegate to agent_lifecycle.reap_dead_agents."""
@@ -2779,9 +2817,11 @@ if __name__ == "__main__":
                 bind_host=os.environ.get("BERNSTEIN_BIND_HOST", "127.0.0.1"),
             )
 
-        # Compliance can force approval gates
+        # Resolve compliance can force approval gates
         if compliance_config and compliance_config.approval_gates and approval_mode == "auto":
             approval_mode = "review"
+
+        _ab_test = os.environ.get("BERNSTEIN_AB_TEST", "0").strip() in ("1", "true", "yes")
 
         config = OrchestratorConfig(
             server_url=server_url,
@@ -2794,6 +2834,7 @@ if __name__ == "__main__":
             auto_merge=auto_merge,
             workflow=workflow_mode,
             compliance=compliance_config,
+            ab_test=_ab_test,
         )
 
         if args.cells > 1:

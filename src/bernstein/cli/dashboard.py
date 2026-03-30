@@ -71,7 +71,7 @@ def _fetch_all() -> dict[str, Any]:
         "tasks": tasks,
         "status": _get("/status"),
         "agents": _load_agents(),
-        "costs": _get("/costs/live"),
+        "costs": _get("/costs"),
         "quality": _get("/quality"),
         "quarantine": _load_quarantine(),
         "guardrails": _load_guardrail_violations(),
@@ -762,6 +762,7 @@ class BernsteinApp(App[None]):
         Binding("p", "prioritize_task", "P0"),
         Binding("t", "retry_task", "Retry"),
         Binding("d", "compare_task", "Compare"),
+        Binding("v", "compare_task", "Compare", show=False),
         Binding("i", "inspect_task", "Inspect", show=False),
     ]
 
@@ -1044,7 +1045,7 @@ class BernsteinApp(App[None]):
             pct = float(costs.get("percentage_used", 0.0))
             bar.spent_usd = spent
             bar.budget_usd = budget
-            bar.budget_pct = pct
+            bar.budget_pct = pct * 100
             bar.per_model = costs.get("per_model", {})
 
             # Budget threshold alerts (fire once per level)
@@ -1235,7 +1236,7 @@ class BernsteinApp(App[None]):
             self._compare_mark = task_id
             title = self._task_titles.get(task_id, task_id[:8])
             self.notify(
-                f"Marked [cyan]{title}[/cyan] for compare. Press [bold]d[/bold] on another task.",
+                f"Marked [cyan]{title}[/cyan] for compare. Press [bold]d[/bold] or [bold]v[/bold] on another task.",
                 severity="information",
                 timeout=5,
             )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.knowledge_base import TaskContextBuilder
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
@@ -18,6 +18,9 @@ from bernstein.core.repo_index import (
     load_repo_graph,
     save_repo_graph,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

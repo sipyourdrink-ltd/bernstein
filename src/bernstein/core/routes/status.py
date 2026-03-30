@@ -195,13 +195,28 @@ async def health_check(request: Request) -> HealthResponse:
     """Basic liveness check."""
     store = _get_store(request)
     is_readonly: bool = getattr(request.app.state, "readonly", False)
+    summary = store.status_summary()
     return HealthResponse(
         status="ok",
         uptime_s=round(time.time() - store.start_ts, 2),
         task_count=len(store.list_tasks()),
         agent_count=store.agent_count,
+        task_queue_depth=summary.get("open", 0),
         is_readonly=is_readonly,
     )
+
+
+@router.get("/health/ready")
+async def ready_check(request: Request) -> JSONResponse:
+    """Readiness check for load balancers."""
+    # Ready if store is loaded and server is accepting tasks
+    return JSONResponse(content={"status": "ready"})
+
+
+@router.get("/health/live")
+async def live_check() -> JSONResponse:
+    """Liveness check for process monitoring."""
+    return JSONResponse(content={"status": "alive"})
 
 
 @router.post("/shutdown")

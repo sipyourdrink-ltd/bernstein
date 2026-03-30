@@ -380,20 +380,9 @@ def _start_spawner(
     server_url: str | None = None,
     auth_token: str | None = None,
     cluster_enabled: bool = False,
+    ab_test: bool = False,
 ) -> int:
-    """Launch the spawner process in the background.
-
-    Args:
-        workdir: Project root.
-        port: Task server port.
-        cells: Number of parallel orchestration cells (1 = single-cell).
-        server_url: Override server URL (e.g. remote central server).
-        auth_token: Bearer token for API auth.
-        cluster_enabled: Whether cluster mode is active.
-
-    Returns:
-        PID of the spawner process.
-    """
+    """Launch the spawner process in the background."""
     pid_path = workdir / ".sdd" / "runtime" / "spawner.pid"
     log_path = workdir / ".sdd" / "runtime" / "spawner.log"
 
@@ -406,6 +395,8 @@ def _start_spawner(
         env["BERNSTEIN_AUTH_TOKEN"] = auth_token
     if cluster_enabled:
         env["BERNSTEIN_CLUSTER_ENABLED"] = "1"
+    if ab_test:
+        env["BERNSTEIN_AB_TEST"] = "1"
 
     log_fh = log_path.open("w")
     proc = subprocess.Popen(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -17,6 +17,9 @@ from bernstein.core.retrospective import (
 from bernstein.core.retrospective import (
     get_recent_project_memory_from_json as get_recent_project_memory,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture

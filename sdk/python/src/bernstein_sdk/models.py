@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     """Bernstein task lifecycle states."""
 
     OPEN = "open"
@@ -20,13 +20,13 @@ class TaskStatus(str, Enum):
     ORPHANED = "orphaned"
 
 
-class TaskScope(str, Enum):
+class TaskScope(StrEnum):
     SMALL = "small"
     MEDIUM = "medium"
     LARGE = "large"
 
 
-class TaskComplexity(str, Enum):
+class TaskComplexity(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"

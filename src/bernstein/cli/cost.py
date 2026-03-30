@@ -225,6 +225,53 @@ def _aggregate(
     return dict(rows)
 
 
+@click.command("estimate")
+@click.argument("goal")
+@click.option("--role", default="backend", help="Agent role for the task.")
+@click.option("--scope", type=click.Choice(["small", "medium", "large"]), default="medium", help="Task scope.")
+@click.option("--complexity", type=click.Choice(["low", "medium", "high"]), default="medium", help="Task complexity.")
+@click.option(
+    "--metrics-dir",
+    default=".sdd/metrics",
+    show_default=True,
+    help="Directory containing historical metrics.",
+)
+def estimate_cmd(goal: str, role: str, scope: str, complexity: str, metrics_dir: str) -> None:
+    """Predict the cost of a task before running it.
+
+    \b
+      bernstein estimate "Fix all typos in src/" --scope small
+      bernstein estimate "Implement RAG system" --scope large --complexity high
+    """
+    from bernstein.core.cost import predict_task_cost
+    from bernstein.core.models import Complexity, Scope, Task
+
+    # Create a dummy task for prediction
+    task = Task(
+        id="estimate",
+        title=goal[:100],
+        description=goal,
+        role=role,
+        scope=Scope(scope),
+        complexity=Complexity(complexity),
+    )
+
+    est_cost = predict_task_cost(task, metrics_dir=Path(metrics_dir))
+
+    console.print(Panel(
+        f"[bold]Cost Prediction[/bold]\n\n"
+        f"Goal:       [cyan]{goal}[/cyan]\n"
+        f"Role:       {role}\n"
+        f"Scope:      {scope}\n"
+        f"Complexity: {complexity}\n\n"
+        f"Estimated total: [bold green]${est_cost:.4f}[/bold green] (±20%)\n\n"
+        f"[dim]Note: Predictions use historical data when available and assume\n"
+        f"average token consumption for the given scope/complexity.[/dim]",
+        border_style="green",
+        expand=False,
+    ))
+
+
 # ---------------------------------------------------------------------------
 # Command
 # ---------------------------------------------------------------------------

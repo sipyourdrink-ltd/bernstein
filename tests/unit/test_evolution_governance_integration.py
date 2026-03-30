@@ -12,7 +12,7 @@ Validates:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from bernstein.core.models import RiskAssessment, RollbackPlan
@@ -27,6 +27,9 @@ from bernstein.evolution.loop import EvolutionLoop
 from bernstein.evolution.proposals import UpgradeProposal
 from bernstein.evolution.types import RiskLevel
 from bernstein.evolution.types import SandboxResult as TypesSandboxResult
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -283,7 +286,6 @@ def test_fast_track_skips_sandbox(tmp_path: Path) -> None:
 
     sandbox_called = []
 
-    original_validate = loop._sandbox.validate
 
     def mock_validate(**kwargs: object) -> TypesSandboxResult:
         sandbox_called.append(True)

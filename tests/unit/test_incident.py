@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.incident import (
     Incident,
@@ -12,6 +12,9 @@ from bernstein.core.incident import (
     IncidentStatus,
     StateSnapshot,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Incident
@@ -221,7 +224,7 @@ class TestIncidentManager:
 
     def test_save(self, tmp_path: Path) -> None:
         mgr = IncidentManager()
-        inc = mgr.create_incident(
+        mgr.create_incident(
             severity=IncidentSeverity.SEV2,
             title="Test save",
             description="Testing persistence",

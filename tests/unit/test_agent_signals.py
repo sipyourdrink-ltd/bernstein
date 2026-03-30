@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.models import AgentHeartbeat
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # AgentHeartbeat model

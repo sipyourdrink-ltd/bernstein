@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -16,6 +16,9 @@ from bernstein.core.sync import (
     parse_backlog_file,
     sync_backlog_to_server,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

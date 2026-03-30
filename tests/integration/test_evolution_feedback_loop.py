@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from starlette.testclient import TestClient
@@ -32,6 +32,9 @@ from bernstein.evolution.gate import ApprovalGate, ApprovalOutcome
 from bernstein.evolution.proposals import AnalysisTrigger, UpgradeStatus
 from bernstein.evolution.types import RiskLevel
 from bernstein.evolution.types import UpgradeProposal as EvolutionUpgradeProposal
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

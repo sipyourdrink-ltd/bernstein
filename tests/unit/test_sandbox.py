@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from bernstein.evolution.sandbox import SandboxValidator
 from bernstein.evolution.types import RiskLevel, SandboxResult, UpgradeProposal
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.metrics import MetricsCollector
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.retrospective import _build_recommendations, _fmt_seconds, generate_retrospective
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,7 +44,7 @@ def _collector_with_tasks(
 ) -> MetricsCollector:
     """Build a MetricsCollector with pre-populated TaskMetrics."""
     collector = MetricsCollector(metrics_dir=tmp_path / "metrics")
-    now = time.time()
+    time.time()
     for task_id, role, model, success, dur in tasks:
         m = collector.start_task(task_id, role, model, "claude")
         m.end_time = m.start_time + dur

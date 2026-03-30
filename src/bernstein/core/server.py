@@ -305,6 +305,7 @@ class HealthResponse(BaseModel):
     uptime_s: float
     task_count: int
     agent_count: int
+    task_queue_depth: int = 0
     is_readonly: bool = False
 
 

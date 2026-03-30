@@ -526,6 +526,31 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             elif fix_id == "gemini_auth":
                 manual_needed.append("Run 'gemini' to authenticate Gemini CLI (prompts on first run)")
 
+    # 10. Secrets provider connectivity
+    try:
+        # Load config from bernstein.yaml if it exists
+        yaml_path = workdir / "bernstein.yaml"
+        if yaml_path.exists():
+            from bernstein.core.seed import parse_seed
+
+            seed = parse_seed(yaml_path)
+            if seed.secrets:
+                from bernstein.core.secrets import check_secrets_connectivity
+
+                ok, detail = check_secrets_connectivity(seed.secrets)
+                _check(
+                    f"Secrets: {seed.secrets.provider}",
+                    ok,
+                    detail,
+                    f"Check {seed.secrets.provider} credentials and path {seed.secrets.path}" if not ok else "",
+                )
+            else:
+                _check("Secrets", True, "none (using environment variables)", "")
+        else:
+            _check("Secrets", True, "no bernstein.yaml (using environment variables)", "")
+    except Exception as exc:
+        _check("Secrets", False, f"configuration error: {exc}", "Check bernstein.yaml syntax")
+
     if as_json:
         import json as _json
 

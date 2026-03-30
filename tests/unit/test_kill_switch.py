@@ -10,8 +10,8 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from bernstein.core.circuit_breaker import (
@@ -23,6 +23,9 @@ from bernstein.core.circuit_breaker import (
     enforce_kill_signal,
 )
 from bernstein.core.models import AgentSession, KillReason
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

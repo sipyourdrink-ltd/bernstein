@@ -17,7 +17,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.memory_sanitizer import (
     TRUST_THRESHOLD,
@@ -29,6 +29,9 @@ from bernstein.core.memory_sanitizer import (
     _redact_pii,
     sanitize_memory_entry,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

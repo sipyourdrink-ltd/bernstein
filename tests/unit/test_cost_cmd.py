@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.cost import cost_cmd
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture()

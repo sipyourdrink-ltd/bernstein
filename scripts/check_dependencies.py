@@ -19,7 +19,6 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
@@ -92,7 +91,7 @@ def detect_cves() -> list[CVE]:
                         # Fix versions may be missing (empty column)
                         fix_versions = parts[3:] if len(parts) > 3 else []
                         cves.append(CVE(package=package, version=version, cve_id=cve_id, fix_versions=fix_versions))
-                    except (IndexError, ValueError) as e:
+                    except (IndexError, ValueError):
                         # Skip malformed lines
                         pass
 
@@ -102,13 +101,12 @@ def detect_cves() -> list[CVE]:
 def check_conflicts() -> list[str]:
     """Check for dependency conflicts using uv."""
     console.print("[bold cyan]Checking dependency conflicts with uv...[/bold cyan]")
-    exit_code, stdout, stderr = run_command(["uv", "pip", "compile", "pyproject.toml", "--resolution", "highest"])
+    exit_code, _stdout, stderr = run_command(["uv", "pip", "compile", "pyproject.toml", "--resolution", "highest"])
 
     conflicts = []
-    if exit_code != 0:
+    if exit_code != 0 and ("conflict" in stderr.lower() or "incompatible" in stderr.lower()):
         # uv would have reported conflicts
-        if "conflict" in stderr.lower() or "incompatible" in stderr.lower():
-            conflicts.append(stderr)
+        conflicts.append(stderr)
 
     return conflicts
 
@@ -153,7 +151,7 @@ def test_resolution(resolution: ConflictResolution) -> bool:
     # Create temporary test environment
     cmd = ["uv", "pip", "install", f"{resolution.package}=={resolution.suggested}", "--dry-run"]
 
-    exit_code, stdout, stderr = run_command(cmd)
+    exit_code, _stdout, _stderr = run_command(cmd)
     success = exit_code == 0
 
     if success:

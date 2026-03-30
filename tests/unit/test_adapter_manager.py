@@ -5,11 +5,14 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from bernstein.adapters.manager import ManagerAdapter
 from bernstein.core.models import ModelConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_popen_mock(pid: int) -> MagicMock:

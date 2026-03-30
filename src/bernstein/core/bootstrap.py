@@ -120,6 +120,7 @@ def bootstrap_from_seed(
     evolve_mode: bool = False,
     cli: str | None = None,
     model: str | None = None,
+    ab_test: bool = False,
 ) -> BootstrapResult:
     """Full bootstrap: parse seed -> init .sdd -> start server -> plan -> orchestrate.
 
@@ -228,7 +229,26 @@ def bootstrap_from_seed(
 
         ComplianceConfig.from_preset(CompliancePreset(compliance_env.lower()))
 
-    # 3. Start server (compact output — single line)
+    # 3. Load secrets provider if configured
+    if seed.secrets:
+        from bernstein.core.secrets import SecretsRefresher, load_secrets
+
+        # Initial fetch to ensure we have keys before starting
+        try:
+            load_secrets(seed.secrets)
+            # Start background refresher
+            refresher = SecretsRefresher(seed.secrets)
+            refresher.start()
+            # Register for shutdown (best effort)
+            import atexit
+
+            atexit.register(refresher.stop)
+            console.print(f"  [dim]secrets[/dim] load from {seed.secrets.provider} [green]ok[/green]")
+        except Exception as sec_exc:
+            console.print(f"  [red]✗[/red] [dim]secrets[/dim] load failed: {sec_exc}")
+            raise SystemExit(1) from sec_exc
+
+    # 4. Start server (compact output — single line)
     server_pid = _start_server(
         workdir,
         port,
@@ -294,6 +314,7 @@ def bootstrap_from_seed(
         server_url=server_url,
         auth_token=auth_token,
         cluster_enabled=cluster_enabled,
+        ab_test=ab_test,
     )
     _start_watchdog(workdir, port)
     console.print(f"  [dim]agents[/dim]  spawning (max {seed.max_agents})")
@@ -421,6 +442,7 @@ def bootstrap_from_goal(
     cells: int = 1,
     force_fresh: bool = False,
     model: str | None = None,
+    ab_test: bool = False,
 ) -> BootstrapResult:
     """Bootstrap from an inline goal string (no YAML file needed).
 
@@ -554,7 +576,7 @@ def bootstrap_from_goal(
 
     cell_label = f"{cells} cells" if cells > 1 else "single cell"
     with Status(f"[bold]Spawning agents ({cell_label})...[/bold]", console=console):
-        spawner_pid = _start_spawner(workdir, port, cells=cells)
+        spawner_pid = _start_spawner(workdir, port, cells=cells, ab_test=ab_test)
         _start_watchdog(workdir, port)
     console.print(f"[green]→[/green] Spawning agents (PID {spawner_pid})")
 

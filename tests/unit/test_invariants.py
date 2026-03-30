@@ -46,16 +46,16 @@ class TestVerifyInvariants:
         src = tmp_path / "src" / "bernstein" / "core"
         src.mkdir(parents=True)
         (src / "janitor.py").write_text("# code")
-        ok, violations = verify_invariants(tmp_path)
+        ok, _violations = verify_invariants(tmp_path)
         assert ok
         assert (tmp_path / ".sdd" / "invariants.lock").exists()
 
 
 class TestCheckProposalTargets:
     def test_rejects_locked(self):
-        ok, v = check_proposal_targets(["src/bernstein/core/janitor.py"])
+        ok, _v = check_proposal_targets(["src/bernstein/core/janitor.py"])
         assert not ok
 
     def test_allows_safe(self):
-        ok, v = check_proposal_targets(["templates/roles/backend/system_prompt.md"])
+        ok, _v = check_proposal_targets(["templates/roles/backend/system_prompt.md"])
         assert ok

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.agents.catalog import (
     _REMOTE_TTL,
     CachedAgentEntry,
     CatalogRegistry,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

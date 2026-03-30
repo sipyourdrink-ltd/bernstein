@@ -8,7 +8,7 @@ Tests the end-to-end pipeline:
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from starlette.testclient import TestClient
@@ -21,6 +21,9 @@ from bernstein.core.models import (
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -271,7 +274,7 @@ def test_lifecycle_model_effort_routing_by_complexity(tmp_path: Path) -> None:
             assert resp.status_code == 201
 
         orchestrator = _make_orchestrator(tmp_path, client, mock_spawner, max_tasks_per_agent=1)
-        result = orchestrator.tick()
+        orchestrator.tick()
 
         # Both tasks are backend role → may be grouped into 1 or 2 batches
         # depending on max_tasks_per_agent. With max_tasks_per_agent=1, each task

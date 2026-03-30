@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
 from bernstein.core.semantic_cache import ResponseCacheManager
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _seed_cache(workdir: Path) -> None:

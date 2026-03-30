@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -32,6 +32,9 @@ from bernstein.evolution.aggregator import (
     _std,
     _student_t_pdf,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -108,7 +111,7 @@ def test_ewma_multiple_updates_track_weighted_average(tmp_path: Path) -> None:
 def test_ewma_control_limits_set_after_min_samples(tmp_path: Path) -> None:
     agg, _ = _make_aggregator(tmp_path)
     sigma = 1.0
-    for i in range(MIN_SAMPLES_EWMA + 1):
+    for _i in range(MIN_SAMPLES_EWMA + 1):
         state = agg.update_ewma("metric", 5.0, sigma=sigma)
 
     # After enough samples, UCL and LCL should be set around center_line

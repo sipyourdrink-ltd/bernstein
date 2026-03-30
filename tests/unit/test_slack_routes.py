@@ -6,12 +6,15 @@ import hashlib
 import hmac
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.server import create_app
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture()

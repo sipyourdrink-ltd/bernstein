@@ -434,8 +434,8 @@ class TestMaybeRetryProgressiveTimeout:
         assert posted[0]["model"] == "opus"
         assert posted[0]["effort"] == "max"
 
-    def test_maybe_retry_large_scope_uses_opus_max(self, tmp_path: Path) -> None:
-        """Large-scope tasks get opus/max on any retry via _maybe_retry_task."""
+    def test_maybe_retry_high_complexity_large_scope_uses_opus_max(self, tmp_path: Path) -> None:
+        """High-complexity large-scope tasks get opus/max on retry."""
         task = _make_task(
             id="T-mr-4",
             complexity="high",

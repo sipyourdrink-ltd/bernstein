@@ -194,7 +194,7 @@ class TestClassification:
             ("used_in_migration", AnnexIIIDomain.MIGRATION),
             ("used_in_justice", AnnexIIIDomain.JUSTICE),
         ]
-        for flag, expected_domain in domain_flags:
+        for flag, _expected_domain in domain_flags:
             d = minimal_descriptor(**{flag: True})
             result = engine.classify(d)
             assert result.risk_category == RiskCategory.HIGH, f"Expected HIGH for {flag}"

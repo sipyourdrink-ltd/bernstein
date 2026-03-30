@@ -203,9 +203,7 @@ class WorktreeManager:
         branch_name = f"agent/{session_id}"
 
         if worktree_path.exists():
-            # Auto-clean stale worktree from a previous run
-            logger.warning("Stale worktree found at %s — cleaning up before create", worktree_path)
-            self.cleanup(session_id)
+            raise WorktreeError(f"Worktree path '{worktree_path}' already exists")
 
         self._base_dir.mkdir(parents=True, exist_ok=True)
 

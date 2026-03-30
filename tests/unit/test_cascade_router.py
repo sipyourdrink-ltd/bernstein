@@ -13,7 +13,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -25,6 +25,9 @@ from bernstein.core.cascade_router import (
     load_cascade_savings_summary,
 )
 from bernstein.core.models import Complexity, Scope, Task
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -257,7 +260,7 @@ class TestDetectLowConfidence:
 
     def test_detects_cannot_determine(self) -> None:
         router = CascadeRouter()
-        low, phrase = router.detect_low_confidence("I cannot determine the correct approach here.")
+        low, _phrase = router.detect_low_confidence("I cannot determine the correct approach here.")
         assert low is True
 
     def test_detects_incomplete_implementation(self) -> None:

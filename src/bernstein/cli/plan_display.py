@@ -307,10 +307,21 @@ class _PlanRenderer:
 
         rows: list[tuple[str, str, str]] = [
             ("Tasks", str(len(plan.task_estimates)), C_BRIGHT),
-            ("Est. cost", _fmt_cost(plan.total_estimated_cost_usd), C_CYAN),
+            ("Est. cost", f"{_fmt_cost(plan.total_estimated_cost_usd)} (±20%)", C_CYAN),
             ("Est. time", _fmt_minutes(plan.total_estimated_minutes), C_WHITE),
             ("High-risk", str(high_risk), risk_color),
         ]
+
+        # Budget warning
+        budget_usd = getattr(plan, "budget_usd", 0.0)
+        if budget_usd > 0 and plan.total_estimated_cost_usd > budget_usd:
+            warning = (
+                f"Estimated cost (${plan.total_estimated_cost_usd:.2f}) exceeds "
+                f"configured budget (${budget_usd:.2f})."
+            )
+            self._add(_box_row(f"[bold {C_ERR}]⚠ BUDGET WARNING[/{C_ERR}]", self.width))
+            self._add(_box_row(f"[{C_ERR}]{_truncate(warning, self.width - 6)}[/{C_ERR}]", self.width))
+            self._blank()
 
         self._add(_inner_box_top("Summary", box_w))
         for label, value, color in rows:

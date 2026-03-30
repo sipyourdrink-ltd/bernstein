@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -20,7 +22,7 @@ class ParsedBacklogTask:
     complexity: str
     source_file: str
 
-    def to_task_payload(self) -> dict[str, Any]:
+    def to_task_payload(self) -> dict[str, object]:
         """Convert to POST /tasks payload."""
         return {
             "title": self.title,
@@ -64,11 +66,12 @@ def _parse_yaml_frontmatter(filename: str, content: str) -> ParsedBacklogTask | 
     except ImportError:
         return None
     try:
-        raw = yaml.safe_load(content[3:end]) or {}
+        loaded: object = yaml.safe_load(content[3:end]) or {}
     except Exception:
         return None
-    if not isinstance(raw, dict):
+    if not isinstance(loaded, dict):
         return None
+    raw = cast("dict[str, object]", loaded)
 
     title = str(raw.get("title", "")).strip()
     if not title:
@@ -118,7 +121,7 @@ def _extract_h1_title(lines: list[str]) -> str:
     return ""
 
 
-def _parse_priority(raw: Any) -> int:
+def _parse_priority(raw: object) -> int:
     match = re.search(r"\d+", str(raw))
     if not match:
         return 2

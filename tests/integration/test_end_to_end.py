@@ -7,7 +7,7 @@ with the Orchestrator, exercises one full cycle:
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from starlette.testclient import TestClient
@@ -20,6 +20,9 @@ from bernstein.core.models import (
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

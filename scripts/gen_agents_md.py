@@ -181,10 +181,7 @@ def _collect_package(package: str) -> list[tuple[str, str]]:
         seen_subdirs.add(subdir.name)
         # Collect a one-liner from __init__.py if it exists
         init = subdir / "__init__.py"
-        if init.exists():
-            desc = _first_docstring_line(init)
-        else:
-            desc = f"{subdir.name}/ sub-package"
+        desc = _first_docstring_line(init) if init.exists() else f"{subdir.name}/ sub-package"
         # List contents inline if small
         py_names = sorted(f.stem for f in subdir.glob("*.py") if not f.name.startswith("_"))
         if py_names and not desc:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.rule_enforcer import (
@@ -17,6 +17,9 @@ from bernstein.core.rule_enforcer import (
     load_rules_config,
     run_rule_enforcement,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

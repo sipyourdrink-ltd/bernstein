@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.context import (
     TaskContextBuilder,
@@ -13,6 +13,9 @@ from bernstein.core.context import (
 )
 from bernstein.core.knowledge_base import _parse_python_file, _subsystem_context
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

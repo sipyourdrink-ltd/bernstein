@@ -926,6 +926,31 @@ def claim_and_spawn_batches(
                 )
             else:
                 session = orch._spawner.spawn_for_tasks(batch)
+
+            # --- A/B Testing ---
+            # If A/B test mode is enabled and this is a single-task batch, spawn a second agent
+            # with a different model (usually the next tier down/up).
+            if getattr(orch._config, "ab_test", False) and len(batch) == 1 and alive_count < orch._config.max_agents:
+                ab_task = batch[0]
+                current_model = session.model_config.model
+                # Simple heuristic for A/B model: sonnet vs opus, or gpt-4o vs o1
+                alt_model = "opus" if current_model == "sonnet" else "sonnet"
+                if "gpt" in current_model:
+                    alt_model = "gpt-4o" if "o1" in current_model else "o1-preview"
+
+                try:
+                    logger.info("A/B TEST: spawning second agent for task %s with model %s", ab_task.id, alt_model)
+                    alt_session = orch._spawner.spawn_for_tasks(batch, model_override=alt_model)
+                    alt_session.timeout_s = batch_timeout_s
+                    orch._agents[alt_session.id] = alt_session
+                    # Note: we don't map task -> session for the alt agent because only one
+                    # can 'own' the task completion logic via server.
+                    # Instead, we just let it run and produce changes in its worktree.
+                    alive_count += 1
+                    result.spawned.append(alt_session.id)
+                except Exception as ab_exc:
+                    logger.warning("A/B TEST: failed to spawn alternative agent: %s", ab_exc)
+
             session.timeout_s = batch_timeout_s
             orch._agents[session.id] = session
             for _t in batch:

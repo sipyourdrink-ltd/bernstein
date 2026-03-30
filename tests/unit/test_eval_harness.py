@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.eval.golden import GoldenTask
 from bernstein.eval.harness import (
@@ -16,6 +16,9 @@ from bernstein.eval.judge import JudgeVerdict
 from bernstein.eval.metrics import EvalScoreComponents, TierScores
 from bernstein.eval.taxonomy import FailureCategory, FailureRecord, FailureTaxonomy, classify_failure
 from bernstein.eval.telemetry import AgentTelemetry
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # EvalTier

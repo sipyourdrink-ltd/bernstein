@@ -13,12 +13,15 @@ integration between ACP routes, handlers, and the task server.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.server import create_app
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -157,7 +160,7 @@ class TestTaskSubmission:
             "role": "backend",
         }
         run_resp = await client.post("/acp/v0/runs", json=payload)
-        run_data = run_resp.json()
+        run_resp.json()
 
         # Verify a Bernstein task was created
         tasks_resp = await client.get("/tasks")

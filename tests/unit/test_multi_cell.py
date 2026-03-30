@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import httpx
@@ -24,6 +24,9 @@ from bernstein.core.multi_cell import (
 )
 from bernstein.core.orchestrator import TickResult
 from bernstein.core.spawner import AgentSpawner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

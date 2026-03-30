@@ -5,13 +5,16 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.core.models import ModelConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

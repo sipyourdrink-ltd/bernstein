@@ -70,23 +70,29 @@ def _resolve_task_diff(
         return "", "", None
 
     session_id = agent.get("id", "")
-    branch = f"agent/{session_id}"
+    branches = [f"agent/{session_id}", f"task/{task_id}"]
+    if len(task_id) > 8:
+        branches.append(f"task/{task_id[:8]}")
+
     worktree_path = root / ".sdd" / "worktrees" / session_id
 
     diff_text = ""
     stat_text = ""
 
-    # Try worktree first
+    # 1. Try worktree first (most live data)
     if worktree_path.exists() and (worktree_path / ".git").exists():
         diff_text = _run_git(["diff", f"{base}...HEAD", "--"], worktree_path)
         stat_text = _run_git(["diff", f"{base}...HEAD", "--stat"], worktree_path)
 
-    # Try branch
+    # 2. Try branches in order
     if not diff_text:
-        check = _run_git(["branch", "--list", branch], root)
-        if check.strip():
-            diff_text = _run_git(["diff", f"{base}...{branch}", "--"], root)
-            stat_text = _run_git(["diff", f"{base}...{branch}", "--stat"], root)
+        for branch in branches:
+            check = _run_git(["branch", "--list", branch], root)
+            if check.strip():
+                diff_text = _run_git(["diff", f"{base}...{branch}", "--"], root)
+                stat_text = _run_git(["diff", f"{base}...{branch}", "--stat"], root)
+                if diff_text:
+                    break
 
     return diff_text, stat_text, agent
 

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from bernstein.cli.self_update_cmd import (
@@ -20,6 +18,8 @@ from bernstein.cli.self_update_cmd import (
     self_update_cmd,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # _parse_version

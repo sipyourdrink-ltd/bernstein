@@ -405,6 +405,12 @@ def _show_run_summary() -> None:
         "task lifecycle event, with Merkle tree seal on shutdown."
     ),
 )
+@click.option(
+    "--ab-test",
+    is_flag=True,
+    default=False,
+    help="A/B testing mode: spawn two agents with different models for each task.",
+)
 def run(
     goal: str | None,
     seed_file: str | None,
@@ -424,6 +430,7 @@ def run(
     auto_approve: bool,
     quiet: bool,
     audit: bool,
+    ab_test: bool = False,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 

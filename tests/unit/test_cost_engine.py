@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -27,6 +27,9 @@ from bernstein.core.cost import (
     project_monthly_cost,
 )
 from bernstein.core.models import Complexity, Scope, Task
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

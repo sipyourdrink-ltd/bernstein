@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.evolution.gate import (
     ApprovalGate,
@@ -11,6 +11,9 @@ from bernstein.evolution.gate import (
     RiskClassifier,
 )
 from bernstein.evolution.types import RiskLevel, UpgradeProposal
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

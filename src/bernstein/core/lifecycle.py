@@ -207,16 +207,27 @@ def transition_task(
 
     task.status = new_status
 
-    event = LifecycleEvent(
-        timestamp=time.time(),
-        entity_type="task",
-        entity_id=task.id,
-        from_status=old_status.value,
-        to_status=new_status.value,
-        actor=actor,
-        reason=reason,
-    )
-    _emit(event)
+    from bernstein.core.telemetry import start_span
+
+    with start_span(
+        f"task.{new_status.value}",
+        attributes={
+            "task_id": task.id,
+            "role": task.role,
+            "from_status": old_status.value,
+            "actor": actor,
+        },
+    ):
+        event = LifecycleEvent(
+            timestamp=time.time(),
+            entity_type="task",
+            entity_id=task.id,
+            from_status=old_status.value,
+            to_status=new_status.value,
+            actor=actor,
+            reason=reason,
+        )
+        _emit(event)
 
     if _audit_log is not None:
         input_state = {"task_id": task.id, "status": old_status.value}
@@ -272,16 +283,27 @@ def transition_agent(
 
     agent.status = new_status
 
-    event = LifecycleEvent(
-        timestamp=time.time(),
-        entity_type="agent",
-        entity_id=agent.id,
-        from_status=old_status,
-        to_status=new_status,
-        actor=actor,
-        reason=reason,
-    )
-    _emit(event)
+    from bernstein.core.telemetry import start_span
+
+    with start_span(
+        f"agent.{new_status}",
+        attributes={
+            "agent_id": agent.id,
+            "role": agent.role,
+            "from_status": old_status,
+            "actor": actor,
+        },
+    ):
+        event = LifecycleEvent(
+            timestamp=time.time(),
+            entity_type="agent",
+            entity_id=agent.id,
+            from_status=old_status,
+            to_status=new_status,
+            actor=actor,
+            reason=reason,
+        )
+        _emit(event)
 
     if _audit_log is not None:
         input_state = {"agent_id": agent.id, "status": old_status}

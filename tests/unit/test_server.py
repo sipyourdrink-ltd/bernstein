@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -181,7 +182,7 @@ async def test_simple_cycle_rejected(client: AsyncClient) -> None:
     # that depends on B — simulated by creating two independent tasks first,
     # then attempting a task that would close a cycle.
     a = (await client.post("/tasks", json=TASK_PAYLOAD)).json()["id"]
-    b = (await client.post("/tasks", json={**TASK_PAYLOAD, "depends_on": [a]})).json()["id"]
+    (await client.post("/tasks", json={**TASK_PAYLOAD, "depends_on": [a]})).json()["id"]
     # Now attempt a task that depends on B and on A — not a cycle by itself.
     # To get a real cycle we need to create task C that depends on B,
     # then a task D that depends on C and C depends back on D — but tasks are
@@ -1133,7 +1134,7 @@ def _make_archive(path: Path, count: int) -> list[dict[str, Any]]:
 def test_read_archive_large_file_returns_limit(tmp_path: Path) -> None:
     """read_archive(limit=10) on a 500-entry file returns exactly 10 records."""
     archive_path = tmp_path / "archive" / "tasks.jsonl"
-    all_records = _make_archive(archive_path, 500)
+    _make_archive(archive_path, 500)
 
     store = TaskStore(tmp_path / "tasks.jsonl")
     store._archive_path = archive_path
@@ -1562,117 +1563,6 @@ async def test_dependency_blocks_open_listing(client: AsyncClient) -> None:
 
 
 def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
-    """_read_cost_by_role() only parses new lines on the second call."""
-    jsonl = tmp_path / "tasks.jsonl"
-    jsonl.touch()
-    metrics_jsonl = tmp_path / "metrics.jsonl"
-    metrics_jsonl.touch()
-
-    store = TaskStore(jsonl_path=jsonl, metrics_jsonl_path=metrics_jsonl)
-
-    # First append: one record for 'backend'
-    record1 = json.dumps({"role": "backend", "cost_usd": 0.10}) + "\n"
-    metrics_jsonl.write_bytes(record1.encode())
-
-    # Bust the mtime cache by advancing mtime
-    import os
-
-    mtime1 = metrics_jsonl.stat().st_mtime + 1
-    os.utime(metrics_jsonl, (mtime1, mtime1))
-    store._cost_cache_mtime = 0.0  # force miss
-
-    result1 = store._read_cost_by_role()
-    assert result1 == {"backend": pytest.approx(0.10)}
-    offset_after_first = store._cost_cache_offset
-    assert offset_after_first == len(record1.encode())
-
-    # Second append: another record for 'qa'
-    record2 = json.dumps({"role": "qa", "cost_usd": 0.05}) + "\n"
-    with metrics_jsonl.open("ab") as fh:
-        fh.write(record2.encode())
-
-    # Track seek position by spying on file.seek via monkeypatching open
-    seek_calls: list[int] = []
-    original_open = open
-
-    import builtins
-
-    real_open = builtins.open
-
-    def patched_open(path, mode="r", **kwargs):  # type: ignore[no-untyped-def]
-        fh = real_open(path, mode, **kwargs)
-        if "b" in mode and str(path) == str(metrics_jsonl):
-            original_seek = fh.seek
-
-            def tracking_seek(offset: int, *args: object) -> int:  # type: ignore[no-untyped-def]
-                seek_calls.append(offset)
-                return original_seek(offset, *args)
-
-            fh.seek = tracking_seek  # type: ignore[method-assign]
-        return fh
-
-    builtins.open = patched_open  # type: ignore[assignment]
-    try:
-        mtime2 = metrics_jsonl.stat().st_mtime + 1
-        os.utime(metrics_jsonl, (mtime2, mtime2))
-        store._cost_cache_mtime = mtime1  # simulate prior cached mtime
-
-        result2 = store._read_cost_by_role()
-    finally:
-        builtins.open = real_open  # type: ignore[assignment]
-
-    # Both roles should now be in the cache
-    assert result2["backend"] == pytest.approx(0.10)
-    assert result2["qa"] == pytest.approx(0.05)
-
-    # The second call must have seeked to the offset from the first call,
-    # not to 0 (which would re-read everything).
-    assert seek_calls, "expected at least one seek call"
-    assert seek_calls[0] == offset_after_first, f"expected seek to {offset_after_first}, got {seek_calls[0]}"
-
-
-def test_read_cost_by_role_truncation_reset(tmp_path: Path) -> None:
-    """When the metrics file is truncated, offset resets and cache clears."""
-    jsonl = tmp_path / "tasks.jsonl"
-    jsonl.touch()
-    metrics_jsonl = tmp_path / "metrics.jsonl"
-
-    store = TaskStore(jsonl_path=jsonl, metrics_jsonl_path=metrics_jsonl)
-
-    # Write initial data and prime the cache
-    record = json.dumps({"role": "backend", "cost_usd": 1.00}) + "\n"
-    metrics_jsonl.write_bytes(record.encode())
-
-    import os
-
-    mtime1 = metrics_jsonl.stat().st_mtime + 1
-    os.utime(metrics_jsonl, (mtime1, mtime1))
-    store._cost_cache_mtime = 0.0
-
-    store._read_cost_by_role()
-    assert store._cost_cache_offset > 0
-
-    # Simulate truncation: offset is now beyond file size
-    store._cost_cache_offset = 99999
-    store._cost_cache_mtime = 0.0  # force re-read
-
-    # Write a smaller replacement file
-    new_record = json.dumps({"role": "qa", "cost_usd": 0.25}) + "\n"
-    metrics_jsonl.write_bytes(new_record.encode())
-    mtime2 = metrics_jsonl.stat().st_mtime + 2
-    os.utime(metrics_jsonl, (mtime2, mtime2))
-
-    result = store._read_cost_by_role()
-    # Cache should have been reset; old 'backend' cost gone, only new 'qa'
-    assert "backend" not in result
-    assert result.get("qa") == pytest.approx(0.25)
-    assert store._cost_cache_offset == len(new_record.encode())
-
-
-# -- Incremental metrics parsing (byte offset) --------------------------------
-
-
-def test_read_cost_by_role_incremental_offset(tmp_path: Path) -> None:
     """_read_cost_by_role() only parses new lines on the second call.
 
     We verify seek-position behaviour by inspecting _cost_cache_offset:
@@ -1823,7 +1713,7 @@ async def test_jsonl_write_buffering(tmp_path: Path) -> None:
 # Cluster API endpoint tests
 # ---------------------------------------------------------------------------
 
-from bernstein.core.models import ClusterConfig  # noqa: E402
+from bernstein.core.models import ClusterConfig
 
 
 @pytest.fixture()

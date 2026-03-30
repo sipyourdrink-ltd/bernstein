@@ -359,7 +359,7 @@ def _labels_to_complexity(labels: list[str]) -> TaskComplexity:
 
 
 def _extract_adf_text(adf: dict[str, Any], _depth: int = 0) -> str:
-    """Recursively extract plain text from a Jira ADF (Atlassian Document Format) node."""
+    """Recursively extract plain text from a Jira ADF node."""
     if _depth > 20:
         return ""
     text = adf.get("text", "")

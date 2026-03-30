@@ -5,10 +5,8 @@ from __future__ import annotations
 import signal
 import subprocess
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from bernstein.adapters.aider import AiderAdapter
 from bernstein.adapters.amp import AmpAdapter
@@ -19,6 +17,9 @@ from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.roo_code import RooCodeAdapter
 from bernstein.core.models import ModelConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

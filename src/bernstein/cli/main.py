@@ -52,7 +52,7 @@ from bernstein.cli.changelog_cmd import changelog_cmd
 from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
-from bernstein.cli.cost import cost_cmd
+from bernstein.cli.cost import cost_cmd, estimate_cmd
 from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.eval_benchmark_cmd import (
     benchmark_group,
@@ -61,6 +61,7 @@ from bernstein.cli.eval_benchmark_cmd import (
 from bernstein.cli.evolve_cmd import evolve
 from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.manifest_cmd import manifest_group
+from bernstein.cli.memory_cmd import memory_group
 from bernstein.cli.merge_cmd import merge_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
@@ -77,6 +78,7 @@ from bernstein.cli.task_cmd import (
     review_cmd,
     sync,
 )
+from bernstein.cli.undo_cmd import undo_cmd
 from bernstein.cli.verify_cmd import verify_cmd
 from bernstein.cli.voice_cmd import listen_cmd
 from bernstein.cli.watch_cmd import watch_cmd
@@ -584,6 +586,7 @@ cli.add_command(help_all, "help-all")
 cli.add_command(agents_group)
 cli.add_command(evolve)
 cli.add_command(cost_cmd, "cost")
+cli.add_command(estimate_cmd, "estimate")
 cli.add_command(status)
 cli.add_command(ps_cmd, "ps")
 cli.add_command(stop)
@@ -597,6 +600,7 @@ cli.add_command(audit_group, "audit")
 cli.add_command(verify_cmd, "verify")
 cli.add_command(chaos_group, "chaos")
 cli.add_command(manifest_group, "manifest")
+cli.add_command(memory_group, "memory")
 cli.add_command(prompts_group, "prompts")
 cli.add_command(ci_group, "ci")
 cli.add_command(gateway_group, "gateway")
@@ -605,6 +609,7 @@ cli.add_command(quickstart_cmd, "quickstart")
 cli.add_command(watch_cmd, "watch")
 cli.add_command(listen_cmd, "listen")
 cli.add_command(self_update_cmd, "self-update")
+cli.add_command(undo_cmd, "undo")
 cli.add_command(worker, "worker")
 cli.add_command(diff_cmd, "diff")
 cli.add_command(merge_cmd, "merge")

@@ -6,7 +6,7 @@ LLM calls are mocked; these tests verify prompt rendering and response parsing.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -41,6 +41,9 @@ from bernstein.core.models import (
     TaskStatus,
     TaskType,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Fixtures

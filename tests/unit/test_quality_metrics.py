@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi.testclient import TestClient
 
@@ -21,6 +20,9 @@ from bernstein.core.routes.quality import (
     _compute_per_model,
     _pct,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # _pct helper

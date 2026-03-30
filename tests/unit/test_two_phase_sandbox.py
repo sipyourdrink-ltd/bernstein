@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from bernstein.core.container import (
@@ -14,6 +14,9 @@ from bernstein.core.container import (
     _detect_setup_commands,
 )
 from bernstein.core.models import ContainerIsolationConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # _detect_setup_commands

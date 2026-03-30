@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -14,6 +14,9 @@ from bernstein.core.lessons import (
     get_lessons_for_agent,
 )
 from bernstein.core.spawner import _extract_tags_from_tasks
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -73,7 +76,7 @@ class TestFileLessonBasic:
 
     def test_file_lesson_normalizes_tags(self, temp_sdd_dir: Path) -> None:
         """Tags are lowercased and sorted."""
-        lesson_id = file_lesson(
+        file_lesson(
             sdd_dir=temp_sdd_dir,
             task_id="task_001",
             agent_id="agent_a",

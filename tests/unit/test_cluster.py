@@ -159,7 +159,7 @@ def test_mark_stale_does_not_touch_fresh_nodes() -> None:
 def test_total_capacity_sums_online_nodes() -> None:
     registry = NodeRegistry(_make_config())
     n1 = registry.register(NodeInfo(name="n1", capacity=NodeCapacity(available_slots=3)))
-    n2 = registry.register(NodeInfo(name="n2", capacity=NodeCapacity(available_slots=5)))
+    registry.register(NodeInfo(name="n2", capacity=NodeCapacity(available_slots=5)))
     assert registry.total_capacity() == 8
 
     # Offline node doesn't count
@@ -174,7 +174,7 @@ def test_total_capacity_sums_online_nodes() -> None:
 
 def test_best_node_for_task_picks_most_available() -> None:
     registry = NodeRegistry(_make_config())
-    n_small = registry.register(
+    registry.register(
         NodeInfo(
             name="small",
             capacity=NodeCapacity(available_slots=1),
@@ -223,7 +223,7 @@ def test_best_node_returns_none_when_all_full() -> None:
 
 def test_best_node_label_affinity() -> None:
     registry = NodeRegistry(_make_config())
-    generic = registry.register(
+    registry.register(
         NodeInfo(
             name="generic",
             capacity=NodeCapacity(available_slots=4),

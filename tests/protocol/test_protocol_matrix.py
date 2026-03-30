@@ -26,7 +26,7 @@ class TestProtocolVersionDetection:
             import mcp
 
             # MCP may not have __version__, check for version info in various places
-            version = getattr(mcp, "__version__", None) or getattr(mcp, "version", None)
+            getattr(mcp, "__version__", None) or getattr(mcp, "version", None)
             # If no version attribute, just check it imports successfully
             assert mcp is not None
         except ImportError:

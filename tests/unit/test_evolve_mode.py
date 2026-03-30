@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import httpx
@@ -16,6 +16,9 @@ from bernstein.core.models import (
 )
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -125,7 +128,7 @@ class TestEvolveTriggering:
         client = _mock_client_idle()
         orch = Orchestrator(config, spawner, tmp_path, client=client)
 
-        result = orch.tick()
+        orch.tick()
 
         # Should have posted a manager task
         assert client.post.called
@@ -334,7 +337,7 @@ class TestEvolvePriorityRotation:
         focus_areas_seen: list[str] = []
 
         for cycle in range(6):
-            evolve_path = _write_evolve_json(tmp_path, _cycle_count=cycle)
+            _write_evolve_json(tmp_path, _cycle_count=cycle)
             spawner = _make_spawner(tmp_path)
             config = _make_config()
             client = _mock_client_idle()

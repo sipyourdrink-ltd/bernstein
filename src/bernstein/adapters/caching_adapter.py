@@ -89,7 +89,7 @@ class CachingAdapter(CLIAdapter):
             # Orchestrator handles PID 0 as a completed task from cache.
             return SpawnResult(
                 pid=0,
-                log_path=str(workdir / f"{session_id}.log"),
+                log_path=workdir / f"{session_id}.log",
             )
 
         # 3. Cache miss: delegate to inner adapter

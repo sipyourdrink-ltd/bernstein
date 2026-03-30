@@ -297,6 +297,10 @@ class EpsilonGreedyBandit:
             )
         return rows
 
+    def get_arm(self, role: str, model: str) -> BanditArm | None:
+        """Return the recorded arm state for a role/model pair, if available."""
+        return self._arms.get((role, model))
+
 
 # ---------------------------------------------------------------------------
 # Model cascade
@@ -428,3 +432,46 @@ def estimate_run_cost(task_count: int, model: str = "sonnet") -> tuple[float, fl
     low = task_count * low_tokens_per_task * cost_per_1k
     high = task_count * high_tokens_per_task * cost_per_1k
     return (round(low, 2), round(high, 2))
+
+
+def predict_task_cost(task: Task, metrics_dir: Path | None = None) -> float:
+    """Predict the USD cost of a task before execution.
+
+    Uses task scope and complexity to estimate token usage, then applies
+    model-specific pricing.  If metrics_dir is provided, uses historical
+    averages for the task's role to refine the prediction.
+
+    Args:
+        task: The task to estimate.
+        metrics_dir: Optional path to .sdd/metrics for historical data.
+
+    Returns:
+        Estimated cost in USD.
+    """
+    model = task.model or get_cascade_model(task)
+    cost_per_1k = _model_cost(model)
+
+    # Base token estimates by scope (in 1k tokens)
+    # small: 10k, medium: 50k, large: 150k
+    scope_map = {Scope.SMALL: 10, Scope.MEDIUM: 50, Scope.LARGE: 150}
+    base_tokens = scope_map.get(task.scope, 50)
+
+    # Complexity multiplier
+    # low: 0.8x, medium: 1.0x, high: 2.0x
+    complexity_map = {Complexity.LOW: 0.8, Complexity.MEDIUM: 1.0, Complexity.HIGH: 2.0}
+    multiplier = complexity_map.get(task.complexity, 1.0)
+
+    estimated_tokens = base_tokens * multiplier
+
+    # Refine with historical data if available
+    if metrics_dir and metrics_dir.exists():
+        bandit = EpsilonGreedyBandit.load(metrics_dir)
+        arm = bandit.get_arm(task.role, model)
+        if arm and arm.observations >= MIN_OBSERVATIONS:
+            # Use weighted average of heuristic and historical data
+            # (Heuristic weight decreases as observations increase)
+            weight = 1.0 / (1.0 + arm.observations / 10.0)
+            hist_tokens = (arm.avg_cost_usd / cost_per_1k) if cost_per_1k > 0 else base_tokens
+            estimated_tokens = (weight * estimated_tokens) + ((1 - weight) * hist_tokens)
+
+    return round(estimated_tokens * cost_per_1k, 4)

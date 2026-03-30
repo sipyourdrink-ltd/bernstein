@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # --- Fixtures ---
 
@@ -175,7 +178,7 @@ class TestContextCompressor:
 
         task.owned_files = ["src/myapp/models.py"]
         compressor = ContextCompressor(project)
-        selected, bm25, _ = compressor.select_relevant_files([task], max_files=10)
+        selected, _bm25, _ = compressor.select_relevant_files([task], max_files=10)
 
         assert "src/myapp/models.py" in selected
 

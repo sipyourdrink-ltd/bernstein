@@ -7,13 +7,16 @@ import os
 import signal
 import subprocess
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from bernstein.adapters.claude import ClaudeCodeAdapter, _resolve_env_vars, load_mcp_config
 from bernstein.core.models import ModelConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures

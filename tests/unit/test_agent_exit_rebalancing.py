@@ -7,7 +7,7 @@ role queue becomes empty after task completion (Case 4: role_drained_rebalance).
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from bernstein.core.agent_lifecycle import recycle_idle_agents
@@ -21,6 +21,9 @@ from bernstein.core.models import (
     TaskType,
 )
 from bernstein.core.router import ModelConfig as RouterModelConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # --- Helpers ---
 

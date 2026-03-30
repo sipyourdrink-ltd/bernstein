@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
-import pytest
+from typing import TYPE_CHECKING, Any
 
 from bernstein.tui.app import BernsteinApp, _kill_agent, _kill_all_agents
 from bernstein.tui.widgets import (
@@ -19,6 +16,11 @@ from bernstein.tui.widgets import (
     status_color,
     status_dot,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
 
 
 class TestStatusColors:

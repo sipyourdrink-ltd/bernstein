@@ -11,7 +11,7 @@ Tests cover:
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -29,6 +29,9 @@ from bernstein.core.models import (
 )
 from bernstein.core.orchestrator import Orchestrator
 from bernstein.core.spawner import AgentSpawner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -340,7 +343,7 @@ def test_orchestrator_calls_spawn_for_resume_when_worktree_preserved(tmp_path: P
     """With recovery='resume', after a crash the orchestrator should call
     spawn_for_resume with the crashed agent's worktree path."""
     task = _make_task(id="T-resume", status="open")
-    orch, task_store = _make_orchestrator(
+    orch, _task_store = _make_orchestrator(
         tmp_path,
         recovery="resume",
         tasks=[_task_as_dict(task)],
@@ -357,7 +360,6 @@ def test_orchestrator_calls_spawn_for_resume_when_worktree_preserved(tmp_path: P
     )
 
     # Mock spawn_for_tasks to raise (should NOT be called in resume path)
-    original_spawn = orch._spawner.spawn_for_tasks
     orch._spawner.spawn_for_tasks = MagicMock(side_effect=AssertionError("spawn_for_tasks must not be called"))  # type: ignore[method-assign]
 
     # Tick should pick up the open task and call spawn_for_resume

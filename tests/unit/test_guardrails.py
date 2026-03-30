@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.guardrails import (
     GuardrailsConfig,
@@ -15,6 +15,9 @@ from bernstein.core.guardrails import (
     run_guardrails,
 )
 from bernstein.core.models import Complexity, Scope, Task
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_task(

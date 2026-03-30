@@ -10,13 +10,16 @@ Simulates a star-topology cluster:
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.models import ClusterConfig, ClusterTopology
 from bernstein.core.server import create_app
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -180,9 +180,13 @@ class CITaskFactory:
         priority = self._conclusion_to_priority.get(run.conclusion, 1)
         conclusion_label = run.conclusion.replace("_", " ")
 
-        title = f"Fix CI {conclusion_label}: {run.workflow_name} on {run.branch_name} ({run.short_sha})"
+        title = (
+            f"Fix CI {conclusion_label}: {run.workflow_name} "
+            f"on {run.branch_name} ({run.short_sha})"
+        )
         description_parts = [
-            f"Workflow **{run.workflow_name}** {conclusion_label} on branch `{run.branch_name}`.",
+            f"Workflow **{run.workflow_name}** {conclusion_label} "
+            f"on branch `{run.branch_name}`.",
             f"Commit: `{run.commit_sha}`",
             f"Repository: `{run.repository}`",
         ]

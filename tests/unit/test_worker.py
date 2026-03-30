@@ -8,9 +8,12 @@ import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.adapters.base import build_worker_cmd
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # build_worker_cmd
@@ -140,7 +143,7 @@ class TestWorkerProcess:
 
         # Send SIGTERM to the process group
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        exit_code = proc.wait(timeout=5)
+        proc.wait(timeout=5)
 
         # Should have exited (SIGTERM → child killed → worker exits)
         assert proc.poll() is not None

@@ -661,6 +661,31 @@ class Cell:
     task_queue: list[Task] = field(default_factory=list[Task])
 
 
+@dataclass(frozen=True)
+class TelemetryConfig:
+    """OpenTelemetry configuration.
+
+    Attributes:
+        otlp_endpoint: Target OTLP collector URL (e.g. http://localhost:4317).
+            If None, telemetry is disabled.
+    """
+
+    otlp_endpoint: str | None = None
+
+
+@dataclass(frozen=True)
+class RAGConfig:
+    """Smart context injection configuration.
+
+    Attributes:
+        max_files: Maximum number of relevant files to inject.
+        max_tokens: Maximum tokens to use for injected context.
+    """
+
+    max_files: int = 5
+    max_tokens: int = 50000
+
+
 @dataclass
 class OrchestratorConfig:
     """Configuration for the orchestrator main loop.
@@ -675,6 +700,7 @@ class OrchestratorConfig:
         evolution_tick_interval: Run evolution analysis every N ticks (~1.5 min at 3s poll).
         max_task_retries: Max times a task is re-queued after agent crash (0 = no retry).
         cross_model_verify: Cross-model verification config (None = disabled).
+        telemetry: OpenTelemetry configuration.
     """
 
     max_agents: int = 6
@@ -707,6 +733,9 @@ class OrchestratorConfig:
     max_tokens_per_task: dict[str, int] = field(
         default_factory=lambda: {"small": 10_000, "medium": 50_000, "large": 200_000},
     )  # Per-task token budget by scope; agents warned at 80%, hard-killed at 2x
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
+    ab_test: bool = False
+    rag: RAGConfig = field(default_factory=RAGConfig)
 
 
 # ---------------------------------------------------------------------------

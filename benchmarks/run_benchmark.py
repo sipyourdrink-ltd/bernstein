@@ -521,7 +521,7 @@ def simulate_schedule(task: BenchmarkTask, agents: int) -> float:
         # Sequential: respect dependency order via topological sort
         return _sequential_time(task)
 
-    subtasks_by_id = {st.id: st for st in task.subtasks}
+    {st.id: st for st in task.subtasks}
     completed: set[str] = set()
     # agent_free_at[i] = the time when agent i becomes available
     agent_free_at = [0.0] * agents
@@ -581,11 +581,11 @@ def _sequential_time(task: BenchmarkTask) -> float:
         Total sequential time in minutes.
     """
     # Build adjacency: id -> subtask
-    by_id = {st.id: st for st in task.subtasks}
+    {st.id: st for st in task.subtasks}
     # Kahn's algorithm for topological order
     in_degree: dict[str, int] = {st.id: 0 for st in task.subtasks}
     for st in task.subtasks:
-        for dep in st.depends_on:
+        for _dep in st.depends_on:
             in_degree[st.id] = in_degree.get(st.id, 0) + 1
 
     # Actually just sum all times for single agent (order doesn't matter for total)
@@ -1727,10 +1727,7 @@ def main() -> None:
 
     print(f"Loaded {len(tasks)} task(s) from {tasks_dir}")
 
-    if args.mode == "simulate":
-        suite = run_simulate(tasks)
-    else:
-        suite = run_real(tasks, budget_usd=args.budget)
+    suite = run_simulate(tasks) if args.mode == "simulate" else run_real(tasks, budget_usd=args.budget)
 
     _print_suite(suite)
 

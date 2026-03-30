@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
@@ -14,6 +14,9 @@ from bernstein.agents.registry import (
     get_registry,
 )
 from bernstein.core.models import ModelConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # --- Fixtures ---
 
@@ -310,7 +313,7 @@ class TestHotReload:
         # Delete file
         yaml_file.unlink()
 
-        loaded, removed = registry.reload_definitions()
+        loaded, _removed = registry.reload_definitions()
         assert loaded == []
         # Note: current implementation may not remove by name, just file hash
 
@@ -335,7 +338,7 @@ class TestHotReload:
             {"name": "agent", "role": "modified", "model": "sonnet", "version": "2.0.0"},
         )
 
-        loaded, removed = registry.reload_definitions()
+        loaded, _removed = registry.reload_definitions()
         assert len(loaded) == 1
         assert loaded[0].role == "modified"
         assert loaded[0].version == "2.0.0"

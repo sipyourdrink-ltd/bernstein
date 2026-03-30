@@ -11,7 +11,7 @@ _SCRIPTS = Path(__file__).parent.parent.parent / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from test_impact import (  # noqa: E402
+from test_impact import (
     _cache_is_fresh,
     _extract_bernstein_imports,
     build_dep_map,

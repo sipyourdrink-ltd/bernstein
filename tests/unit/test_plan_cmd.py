@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from click.testing import CliRunner
 
 from bernstein.cli.main import plan
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 SAMPLE_TASKS = [
     {

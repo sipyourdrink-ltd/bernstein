@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import yaml
 
 from bernstein.core.scenario_library import ScenarioLibrary, ScenarioRecipe, load_scenario_library
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -127,40 +130,36 @@ def _write_ticket(backlog_open: Path, spec: RoadmapSpec, scenario: ScenarioRecip
 
 def _load_roadmap(path: Path) -> RoadmapSpec | None:
     try:
-        raw_data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return None
-    if not isinstance(raw_data, dict):
+    if not isinstance(loaded, dict):
         return None
-    roadmap_id = str(raw_data.get("id", "")).strip()
-    title = str(raw_data.get("title", "")).strip()
-    scenario_ids_raw = raw_data.get("scenarios")
+    raw = cast("dict[str, object]", loaded)
+    roadmap_id = str(raw.get("id", "")).strip()
+    title = str(raw.get("title", "")).strip()
+    scenario_ids_raw = raw.get("scenarios")
     if not roadmap_id or not title or not isinstance(scenario_ids_raw, list):
         return None
-    scenario_ids = tuple(str(s).strip() for s in scenario_ids_raw if str(s).strip())
+    scenario_ids = tuple(str(s).strip() for s in cast("list[object]", scenario_ids_raw) if str(s).strip())
     if not scenario_ids:
         return None
-    try:
-        wave_size = int(raw_data.get("wave_size", 10))
-    except (TypeError, ValueError):
-        wave_size = 10
+    wave_size = _coerce_int(raw.get("wave_size"), default=10)
     return RoadmapSpec(roadmap_id=roadmap_id, title=title, scenario_ids=scenario_ids, wave_size=max(1, wave_size))
 
 
 def _load_cursor(path: Path) -> RoadmapCursor:
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        loaded: object = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return RoadmapCursor()
-    if not isinstance(raw, dict):
+    if not isinstance(loaded, dict):
         return RoadmapCursor()
-    try:
-        return RoadmapCursor(
-            scenario_index=max(0, int(raw.get("scenario_index", 0))),
-            task_index=max(0, int(raw.get("task_index", 0))),
-        )
-    except (TypeError, ValueError):
-        return RoadmapCursor()
+    raw = cast("dict[str, object]", loaded)
+    return RoadmapCursor(
+        scenario_index=max(0, _coerce_int(raw.get("scenario_index"), default=0)),
+        task_index=max(0, _coerce_int(raw.get("task_index"), default=0)),
+    )
 
 
 def _save_cursor(path: Path, cursor: RoadmapCursor) -> None:
@@ -173,3 +172,20 @@ def _save_cursor(path: Path, cursor: RoadmapCursor) -> None:
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug or "task"
+
+
+def _coerce_int(value: object, *, default: int) -> int:
+    """Coerce a loosely-typed YAML/JSON value to ``int`` with fallback."""
+
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default

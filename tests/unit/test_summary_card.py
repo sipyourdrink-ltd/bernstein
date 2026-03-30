@@ -6,10 +6,10 @@ import io
 import json
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from rich.console import Console
-from rich.table import Table
 
 from bernstein.cli.summary_card import (
     RunSummaryData,
@@ -18,6 +18,9 @@ from bernstein.cli.summary_card import (
     print_summary_card,
     write_summary_json,
 )
+
+if TYPE_CHECKING:
+    from rich.table import Table
 
 # ---------------------------------------------------------------------------
 # _fmt_duration

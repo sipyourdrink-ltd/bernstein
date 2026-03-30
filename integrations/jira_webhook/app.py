@@ -53,16 +53,27 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
-from bernstein_sdk.adapters.jira import JiraAdapter, JiraIssueRef
-from bernstein_sdk.models import TaskStatus
-from bernstein_sdk.state_map import BernsteinToJira
+try:
+    from bernstein_sdk.adapters.jira import JiraAdapter, JiraIssueRef
+    from bernstein_sdk.models import TaskStatus
+    from bernstein_sdk.state_map import BernsteinToJira
+except ModuleNotFoundError:
+    # Support running the integration app directly from the repo checkout.
+    _sdk_src = Path(__file__).resolve().parents[2] / "sdk" / "python" / "src"
+    if _sdk_src.exists():
+        sys.path.insert(0, str(_sdk_src))
+    from bernstein_sdk.adapters.jira import JiraAdapter, JiraIssueRef
+    from bernstein_sdk.models import TaskStatus
+    from bernstein_sdk.state_map import BernsteinToJira
 
 log = logging.getLogger(__name__)
 
@@ -298,11 +309,11 @@ async def receive_task_update(request: Request) -> JSONResponse:
 
     try:
         bernstein_status = TaskStatus(task_status_raw)
-    except ValueError:
+    except ValueError as err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown task status: {task_status_raw!r}",
-        )
+        ) from err
 
     target_jira_status = BernsteinToJira.map(bernstein_status)
     adapter = _get_adapter()

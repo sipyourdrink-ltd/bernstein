@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from bernstein.core.evolution import (
@@ -33,6 +33,9 @@ from bernstein.core.models import (
     Task,
     TaskType,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # --- Helpers ---
 
@@ -552,7 +555,7 @@ class TestEvolutionCoordinator:
         coordinator = EvolutionCoordinator(tmp_path)
 
         # Add some metrics to analyze
-        for i in range(20):
+        for _i in range(20):
             coordinator.collector.record_task_metrics(
                 _make_task_metrics(cost_usd=0.5)  # High cost to trigger opportunity
             )
@@ -569,7 +572,7 @@ class TestEvolutionCoordinator:
         for _ in range(20):
             coordinator.collector.record_task_metrics(_make_task_metrics(cost_usd=0.5, janitor_passed=False))
 
-        proposals = coordinator.run_analysis_cycle()
+        coordinator.run_analysis_cycle()
 
         # Should have generated some proposals
         assert len(coordinator._pending_upgrades) >= 0  # May vary based on analysis
@@ -892,7 +895,7 @@ class TestEvolutionIntegration:
             )
 
         # Run analysis
-        proposals = coordinator.run_analysis_cycle()
+        coordinator.run_analysis_cycle()
 
         # Should have generated proposals
         assert len(coordinator._pending_upgrades) >= 0
@@ -934,7 +937,7 @@ class TestEvolutionIntegration:
 
     def test_produces_upgrade_tasks(self, tmp_path: Path) -> None:
         """Test that the coordinator produces valid upgrade tasks."""
-        coordinator = EvolutionCoordinator(tmp_path)
+        EvolutionCoordinator(tmp_path)
 
         # Create a proposal manually
         proposal = UpgradeProposal(

@@ -10,10 +10,9 @@ All HTTP communication and subprocess spawning is mocked.
 from __future__ import annotations
 
 import json
-import re
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -45,7 +44,7 @@ from bernstein.core.task_lifecycle import (
     collect_completion_data,
     maybe_retry_task,
 )
-from bernstein.core.tick_pipeline import fetch_all_tasks, prioritize_starving_roles
+from bernstein.core.tick_pipeline import prioritize_starving_roles
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -524,7 +523,7 @@ class TestCostTrackerBudgetEnforcement:
         tracker = CostTracker(run_id="test-persist", budget_usd=20.0)
         tracker.record("A-1", "T-1", "sonnet", 5000, 5000, cost_usd=2.5)
         tracker.record("A-2", "T-2", "opus", 3000, 3000, cost_usd=4.0)
-        saved_path = tracker.save(tmp_path)
+        tracker.save(tmp_path)
 
         loaded = CostTracker.load(tmp_path, "test-persist")
         assert loaded is not None
@@ -603,14 +602,14 @@ class TestJanitorSignalEvaluation:
         target = tmp_path / "output.txt"
         target.write_text("result")
         signal = CompletionSignal(type="path_exists", value="output.txt")
-        passed, detail = evaluate_signal(signal, tmp_path)
+        passed, _detail = evaluate_signal(signal, tmp_path)
         assert passed is True
 
     def test_path_exists_signal_fails(self, tmp_path: Path) -> None:
         from bernstein.core.janitor import evaluate_signal
 
         signal = CompletionSignal(type="path_exists", value="missing.txt")
-        passed, detail = evaluate_signal(signal, tmp_path)
+        passed, _detail = evaluate_signal(signal, tmp_path)
         assert passed is False
 
     def test_glob_exists_signal_passes(self, tmp_path: Path) -> None:
@@ -619,14 +618,14 @@ class TestJanitorSignalEvaluation:
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "test_foo.py").write_text("pass")
         signal = CompletionSignal(type="glob_exists", value="tests/test_*.py")
-        passed, detail = evaluate_signal(signal, tmp_path)
+        passed, _detail = evaluate_signal(signal, tmp_path)
         assert passed is True
 
     def test_glob_exists_signal_fails_no_match(self, tmp_path: Path) -> None:
         from bernstein.core.janitor import evaluate_signal
 
         signal = CompletionSignal(type="glob_exists", value="nonexistent/**/*.xyz")
-        passed, detail = evaluate_signal(signal, tmp_path)
+        passed, _detail = evaluate_signal(signal, tmp_path)
         assert passed is False
 
     def test_file_contains_signal_passes(self, tmp_path: Path) -> None:
@@ -636,7 +635,7 @@ class TestJanitorSignalEvaluation:
         target.parent.mkdir(parents=True)
         target.write_text("class MyFeature:\n    pass\n")
         signal = CompletionSignal(type="file_contains", value="src/module.py :: class MyFeature")
-        passed, detail = evaluate_signal(signal, tmp_path)
+        passed, _detail = evaluate_signal(signal, tmp_path)
         assert passed is True
 
     def test_file_contains_signal_fails(self, tmp_path: Path) -> None:
@@ -646,7 +645,7 @@ class TestJanitorSignalEvaluation:
         target.parent.mkdir(parents=True)
         target.write_text("# empty\n")
         signal = CompletionSignal(type="file_contains", value="src/module.py :: class NotHere")
-        passed, detail = evaluate_signal(signal, tmp_path)
+        passed, _detail = evaluate_signal(signal, tmp_path)
         assert passed is False
 
     def test_verify_task_all_signals_pass(self, tmp_path: Path) -> None:
@@ -850,7 +849,7 @@ class TestAgentCrashMidTask:
         adapter.is_alive.return_value = False
 
         # Second tick: orchestrator should detect dead agent
-        result2 = orch.tick()
+        orch.tick()
 
         # The agent should now be dead
         all_dead = [s for s in orch._agents.values() if s.status == "dead"]

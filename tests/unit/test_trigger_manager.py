@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
@@ -17,6 +16,9 @@ from bernstein.core.trigger_manager import (
     load_trigger_configs,
     render_task_payload,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Fixtures

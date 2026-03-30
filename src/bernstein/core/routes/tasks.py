@@ -480,6 +480,22 @@ async def post_bulletin(body: BulletinPostRequest, request: Request) -> Bulletin
         cell_id=body.cell_id,
     )
     stored = bulletin.post(msg)
+
+    # Broadcast to SSE bus
+    sse_bus = _get_sse_bus(request)
+    sse_bus.publish(
+        "bulletin",
+        json.dumps(
+            {
+                "agent_id": stored.agent_id,
+                "type": stored.type,
+                "content": stored.content,
+                "timestamp": stored.timestamp,
+                "cell_id": stored.cell_id,
+            }
+        ),
+    )
+
     return BulletinMessageResponse(
         agent_id=stored.agent_id,
         type=stored.type,

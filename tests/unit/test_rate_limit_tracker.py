@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.rate_limit_tracker import RateLimitTracker, ThrottleState
 from bernstein.core.router import (
@@ -13,6 +13,9 @@ from bernstein.core.router import (
     Tier,
     TierAwareRouter,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers

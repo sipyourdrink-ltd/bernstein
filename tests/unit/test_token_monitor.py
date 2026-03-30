@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 from bernstein.core.token_monitor import (
@@ -14,6 +14,11 @@ from bernstein.core.token_monitor import (
     get_monitor,
     reset_monitor,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from bernstein.core.token_monitor import AgentTokenHistory
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -104,7 +109,7 @@ class TestQuadraticGrowth:
         assert not monitor.is_quadratic_growth("s1")
 
 
-def _make_history(session_id: str, totals: list[int]) -> bernstein.core.token_monitor.AgentTokenHistory:  # type: ignore[name-defined]
+def _make_history(session_id: str, totals: list[int]) -> AgentTokenHistory:
     from bernstein.core.token_monitor import AgentTokenHistory
 
     h = AgentTokenHistory(session_id=session_id)

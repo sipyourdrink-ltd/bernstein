@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from bernstein.core.auth_rate_limiter import AuthRateLimiter
 
 
@@ -66,10 +64,9 @@ class TestAuthRateLimiterHTTP:
         from fastapi import APIRouter, Depends, FastAPI
         from starlette.testclient import TestClient
 
-        from bernstein.core.auth_rate_limiter import AuthRateLimiter, check_auth_rate_limit
-
         # Patch the module-level limiter with a low-limit one for testing
         import bernstein.core.auth_rate_limiter as mod
+        from bernstein.core.auth_rate_limiter import AuthRateLimiter, check_auth_rate_limit
 
         original = mod._auth_limiter
         mod._auth_limiter = AuthRateLimiter(max_requests=3, window_seconds=60)

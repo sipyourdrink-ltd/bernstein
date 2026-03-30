@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -17,6 +17,9 @@ from bernstein.core.cascade import (
 )
 from bernstein.core.models import Complexity
 from bernstein.core.rate_limit_tracker import RateLimitTracker
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_agent(
@@ -401,12 +404,12 @@ class TestEntryResolution:
 
     def test_unknown_entry_returns_none(self) -> None:
         """Unknown entry returns None for agent."""
-        agent, model = CascadeFallbackManager._resolve_entry("unknown", MOCK_AGENTS.agents)
+        agent, _model = CascadeFallbackManager._resolve_entry("unknown", MOCK_AGENTS.agents)
         assert agent is None
 
     def test_case_insensitive_resolution(self) -> None:
         """Entries are resolved case-insensitively."""
-        agent, model = CascadeFallbackManager._resolve_entry("Opus", MOCK_AGENTS.agents)
+        agent, _model = CascadeFallbackManager._resolve_entry("Opus", MOCK_AGENTS.agents)
         assert agent is not None
         assert agent.name == "claude"
 
@@ -450,7 +453,6 @@ class TestBackwardCompatibility:
 # ---------------------------------------------------------------------------
 
 
-from pathlib import Path
 
 
 class TestExpandedErrorDetection:

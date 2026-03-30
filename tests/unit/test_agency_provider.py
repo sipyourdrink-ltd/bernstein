@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import textwrap
-from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from bernstein.agents.agency_provider import AgencyProvider
 from bernstein.agents.catalog import CatalogAgent
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
 
 # ---------------------------------------------------------------------------
 # Sample Agency markdown files

@@ -6,7 +6,7 @@ Tests follow TDD: written before implementation to define the API.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from bernstein.core.models import (
@@ -17,6 +17,9 @@ from bernstein.core.models import (
     TaskStatus,
     TaskType,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_task(

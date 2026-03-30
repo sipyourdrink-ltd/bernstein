@@ -5,17 +5,27 @@ Provides real-time and historical cost data for the dashboard.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import time
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.responses import StreamingResponse
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
     from pathlib import Path
 
+    from bernstein.core.server import SSEBus
+
 router = APIRouter()
+
+
+def _get_sse_bus(request: Request) -> SSEBus:
+    return request.app.state.sse_bus  # type: ignore[no-any-return]
 
 
 def _get_sdd_dir(request: Request) -> Path:
@@ -40,6 +50,54 @@ def _build_breakdowns(tracker: Any) -> dict[str, Any]:
         "per_agent": {k: round(v, 6) for k, v in per_agent.items()},
         "per_model": {k: round(v, 6) for k, v in per_model.items()},
     }
+
+
+@router.get("/events/cost")
+async def cost_events(request: Request) -> StreamingResponse:
+    """SSE endpoint for real-time cost updates.
+
+    Listens to the global SSE bus for ``bulletin`` events that match
+    the ``live_cost_update`` status pattern and forwards them to clients.
+    Also provides periodic heartbeats.
+    """
+    sse_bus = _get_sse_bus(request)
+    queue = sse_bus.subscribe()
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            # Initial status
+            yield 'event: heartbeat\ndata: {"connected": true}\n\n'
+            while True:
+                message = await queue.get()
+                # Intercept bulletin events for cost updates
+                if "event: bulletin" in message:
+                    try:
+                        # Extract data part
+                        data_str = message.split("data: ", 1)[1].strip()
+                        data = json.loads(data_str)
+                        if data.get("type") == "status" and "live_cost_update" in data.get("content", ""):
+                            # Forward as a cost event
+                            yield f"event: cost\ndata: {data_str}\n\n"
+                    except (IndexError, json.JSONDecodeError):
+                        pass
+
+                # Pass through heartbeats
+                if "event: heartbeat" in message:
+                    yield message
+        except asyncio.CancelledError:
+            return
+        finally:
+            sse_bus.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/costs")

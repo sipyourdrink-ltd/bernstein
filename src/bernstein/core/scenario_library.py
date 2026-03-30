@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, cast
 
 import yaml
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -60,12 +62,12 @@ def load_scenario_library(root: Path) -> ScenarioLibrary:
 
 def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
     try:
-        raw_data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        loaded: object = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return None
-    if not isinstance(raw_data, dict):
+    if not isinstance(loaded, dict):
         return None
-    data = raw_data
+    data = cast("dict[str, object]", loaded)
 
     scenario_id = str(data.get("id", "")).strip()
     name = str(data.get("name", "")).strip()
@@ -75,27 +77,32 @@ def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
         return None
 
     tasks: list[ScenarioTaskTemplate] = []
-    for item in tasks_raw:
+    for item in cast("list[object]", tasks_raw):
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title", "")).strip()
+        item_data = cast("dict[str, object]", item)
+        title = str(item_data.get("title", "")).strip()
         if not title:
             continue
         tasks.append(
             ScenarioTaskTemplate(
                 title=title,
-                description=str(item.get("description", "")).strip(),
-                role=str(item.get("role", "backend")).strip() or "backend",
-                priority=_parse_priority(item.get("priority", 2)),
-                scope=_parse_scope(str(item.get("scope", "medium"))),
-                complexity=_parse_complexity(str(item.get("complexity", "medium"))),
+                description=str(item_data.get("description", "")).strip(),
+                role=str(item_data.get("role", "backend")).strip() or "backend",
+                priority=_parse_priority(item_data.get("priority", 2)),
+                scope=_parse_scope(str(item_data.get("scope", "medium"))),
+                complexity=_parse_complexity(str(item_data.get("complexity", "medium"))),
             )
         )
 
     if not tasks:
         return None
     tags_raw = data.get("tags", [])
-    tags = tuple(str(t).strip() for t in tags_raw if str(t).strip()) if isinstance(tags_raw, list) else ()
+    tags = (
+        tuple(str(t).strip() for t in cast("list[object]", tags_raw) if str(t).strip())
+        if isinstance(tags_raw, list)
+        else ()
+    )
     return ScenarioRecipe(
         scenario_id=scenario_id,
         name=name,
@@ -106,10 +113,19 @@ def _load_recipe_file(path: Path) -> ScenarioRecipe | None:
     )
 
 
-def _parse_priority(raw: Any) -> int:
-    try:
+def _parse_priority(raw: object) -> int:
+    if isinstance(raw, bool):
         value = int(raw)
-    except (TypeError, ValueError):
+    elif isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, float):
+        value = int(raw)
+    elif isinstance(raw, str):
+        try:
+            value = int(raw)
+        except ValueError:
+            return 2
+    else:
         return 2
     if value <= 1:
         return 1

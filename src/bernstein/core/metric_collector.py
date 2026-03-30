@@ -6,6 +6,7 @@ API usage patterns, error rates, and cost efficiency.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
@@ -686,8 +687,6 @@ class MetricsCollector:
 
     def __del__(self) -> None:
         """Flush remaining buffered metrics on garbage collection."""
-        import contextlib
-
         with contextlib.suppress(Exception):
             self._flush_buffer()
 
