@@ -239,6 +239,7 @@ def _render_prompt(
     session_id: str = "",
     bulletin_summary: str = "",
     task_graph: TaskGraph | None = None,
+    token_budget: int = 0,
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -378,6 +379,18 @@ def _render_prompt(
         )
     if project_context:
         sections.append(f"\n## Project context\n{project_context}\n")
+    if token_budget > 0:
+        if token_budget >= 1_000_000:
+            budget_hint = f"~{token_budget // 1_000_000}M"
+        elif token_budget >= 1_000:
+            budget_hint = f"~{token_budget // 1_000}K"
+        else:
+            budget_hint = str(token_budget)
+        sections.append(
+            f"\n## Token budget\n"
+            f"You have {budget_hint} tokens for this task. Plan your work accordingly — "
+            f"focus on the task, avoid unnecessary exploration, and wrap up promptly.\n"
+        )
     sections.append(f"\n## Instructions\n{instructions}\n")
     if session_id:
         sections.append(_render_signal_check(session_id))
@@ -452,6 +465,7 @@ class AgentSpawner:
         bulletin: BulletinBoard | None = None,
         enable_caching: bool = False,
         container_config: ContainerConfig | None = None,
+        max_tokens_per_task: dict[str, int] | None = None,
     ) -> None:
         if enable_caching:
             from bernstein.adapters.caching_adapter import CachingAdapter
@@ -470,6 +484,7 @@ class AgentSpawner:
         self._mcp_registry = mcp_registry
         self._mcp_manager = mcp_manager
         self._catalog = catalog
+        self._max_tokens_per_task = max_tokens_per_task or {}
         self._workspace = workspace
         self._bulletin = bulletin
         self._context_builder = TaskContextBuilder(workdir)
@@ -550,6 +565,11 @@ class AgentSpawner:
                 )
                 catalog_system_prompt = catalog_system_prompt + tools_hint
 
+        # Compute per-task token budget from scope (use highest scope in batch)
+        _scope_order = {"small": 0, "medium": 1, "large": 2}
+        max_scope = max((t.scope.value for t in tasks), key=lambda s: _scope_order.get(s, 1))
+        task_token_budget = self._max_tokens_per_task.get(max_scope, 0)
+
         # Render prompt (catalog system_prompt replaces role template when matched)
         bulletin_summary = self._bulletin.summary() if self._bulletin is not None else ""
         prompt = _render_prompt(
@@ -561,6 +581,7 @@ class AgentSpawner:
             context_builder=self._context_builder,
             session_id=session_id,
             bulletin_summary=bulletin_summary,
+            token_budget=task_token_budget,
         )
 
         agent_source = catalog_agent.source if catalog_agent else "built-in"
