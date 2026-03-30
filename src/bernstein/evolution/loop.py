@@ -55,7 +55,14 @@ from bernstein.evolution.proposals import (
 )
 from bernstein.evolution.risk import ProposalRiskScore, RiskScorer
 from bernstein.evolution.sandbox import SandboxValidator
-from bernstein.evolution.types import RiskLevel, SandboxResult
+from bernstein.evolution.types import (
+    ApplyError,
+    ProposalGenerationError,
+    RiskLevel,
+    RollbackError,
+    SandboxResult,
+    SandboxValidationError,
+)
 from bernstein.evolution.types import UpgradeProposal as TypesUpgradeProposal
 
 if TYPE_CHECKING:
@@ -248,6 +255,11 @@ class EvolutionLoop:
         self._cycle_count: int = 0
         self._consecutive_empty: int = 0
 
+        # --- Error tracking ---
+        self._error_counts: dict[str, int] = {}
+        self._consecutive_errors: dict[str, int] = {}
+        self._last_error_type: str | None = None
+
         # --- GitHub sync state ---
         # Tracks the GitHub issue number for the proposal currently in flight
         # so we can close it when the proposal is accepted.
@@ -318,13 +330,35 @@ class EvolutionLoop:
 
         while self._within_window(effective_window) and self._proposals_generated < effective_max and self._running:
             cycle_start = time.time()
+            # Peek at what the next cycle's focus will be for error context.
+            rotation = _FOCUS_ROTATION_COMMUNITY if self._community_mode else _FOCUS_ROTATION
+            focus = rotation[self._cycle_count % len(rotation)]
 
             try:
                 result = self.run_cycle()
                 if result is not None:
                     self._experiments.append(result)
-            except Exception:
-                logger.exception("Unhandled error in evolution cycle")
+            except ProposalGenerationError as exc:
+                self._record_error(exc, focus=focus)
+            except SandboxValidationError as exc:
+                self._record_error(exc, focus=focus)
+            except ApplyError as exc:
+                self._record_error(exc, focus=focus)
+            except RollbackError as exc:
+                self._record_error(exc, focus=focus)
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error in evolution cycle %d: %s",
+                    self._cycle_count,
+                    exc,
+                    exc_info=True,
+                    extra={
+                        "focus_area": focus,
+                        "error_type": type(exc).__name__,
+                        "cycle": self._cycle_count,
+                    },
+                )
+                self._record_error(exc, focus=focus)
 
             # Sleep until next cycle boundary, but only if still running.
             if self._running and self._within_window(effective_window):
@@ -638,6 +672,85 @@ class EvolutionLoop:
             return 0.0
         return self._proposals_accepted / self._proposals_generated
 
+    def get_error_summary(self) -> dict[str, Any]:
+        """Return evolution error counts by type.
+
+        Returns:
+            Dict with ``errors_by_type`` (cumulative counts per error type)
+            and ``consecutive_errors`` (current consecutive streak per type).
+        """
+        return {
+            "errors_by_type": dict(self._error_counts),
+            "consecutive_errors": dict(self._consecutive_errors),
+        }
+
+    # ------------------------------------------------------------------
+    # Error tracking
+    # ------------------------------------------------------------------
+
+    _CONSECUTIVE_ERROR_THRESHOLD: int = 3
+
+    def _record_error(
+        self,
+        exc: Exception,
+        *,
+        focus: str = "unknown",
+        proposal_id: str | None = None,
+        risk_level: str | None = None,
+    ) -> None:
+        """Record an evolution error, track consecutive streaks, and log with context.
+
+        Args:
+            exc: The caught exception.
+            focus: The focus area of the current cycle.
+            proposal_id: ID of the proposal being processed, if any.
+            risk_level: Risk level string, if known.
+        """
+        from bernstein.evolution.types import EvolutionError
+
+        error_type = exc.error_type if isinstance(exc, EvolutionError) else type(exc).__name__
+
+        # Increment cumulative count.
+        self._error_counts[error_type] = self._error_counts.get(error_type, 0) + 1
+
+        # Increment Prometheus counter.
+        from bernstein.core.prometheus import evolution_errors_by_type
+
+        evolution_errors_by_type.labels(error_type=error_type).inc()
+
+        # Track consecutive errors per type.
+        if self._last_error_type == error_type:
+            self._consecutive_errors[error_type] = self._consecutive_errors.get(error_type, 0) + 1
+        else:
+            self._consecutive_errors[error_type] = 1
+        self._last_error_type = error_type
+
+        context = {
+            "proposal_id": proposal_id,
+            "focus_area": focus,
+            "risk_level": risk_level,
+            "error_type": error_type,
+        }
+
+        logger.error(
+            "Evolution error [%s] in cycle %d (focus=%s): %s",
+            error_type,
+            self._cycle_count,
+            focus,
+            exc,
+            exc_info=True,
+            extra=context,
+        )
+
+        # Warn on consecutive error streak.
+        consecutive = self._consecutive_errors[error_type]
+        if consecutive >= self._CONSECUTIVE_ERROR_THRESHOLD:
+            logger.warning(
+                "Evolution loop degraded: %d consecutive '%s' errors",
+                consecutive,
+                error_type,
+            )
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -868,8 +981,21 @@ class EvolutionLoop:
                 score,
             )
             return score
-        except Exception:
-            logger.exception("Baseline benchmark run failed — defaulting to 1.0")
+        except OSError as exc:
+            logger.error(
+                "Baseline benchmark I/O error: %s",
+                exc,
+                exc_info=True,
+                extra={"error_type": "baseline_io"},
+            )
+            return 1.0
+        except (ValueError, ArithmeticError) as exc:
+            logger.error(
+                "Baseline benchmark computation error: %s",
+                exc,
+                exc_info=True,
+                extra={"error_type": "baseline_computation"},
+            )
             return 1.0
 
     def _generate_proposal(
