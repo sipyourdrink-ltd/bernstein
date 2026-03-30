@@ -66,9 +66,7 @@ class CursorAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError(
-                    "cursor not found in PATH. Install from https://cursor.com"
-                ) from exc
+                raise RuntimeError("cursor not found in PATH. Install from https://cursor.com") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing cursor: {exc}") from exc
 
