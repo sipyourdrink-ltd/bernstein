@@ -1002,3 +1002,28 @@ class WorkflowPhaseEvent:
     to_phase: str
     reason: str = ""
     tasks_completed: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class VoteEvent:
+    """Event emitted for each vote cast and for the final voting result.
+
+    Attributes:
+        timestamp: Unix epoch when this event was created.
+        task_id: ID of the task being reviewed.
+        voter_model: Model that cast this vote (empty string for final-result events).
+        verdict: Individual vote verdict or final consensus verdict.
+        confidence: Confidence score 0.0-1.0.
+        reasoning: One-sentence rationale.
+        is_final: True when this event records the aggregated voting result.
+        strategy: VotingStrategy value used (e.g. "quorum").
+    """
+
+    timestamp: float
+    task_id: str
+    voter_model: str
+    verdict: Literal["approve", "request_changes", "abstain"]
+    confidence: float
+    reasoning: str
+    is_final: bool = False
+    strategy: str = ""

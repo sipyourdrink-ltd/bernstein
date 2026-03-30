@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,6 +20,9 @@ from bernstein.core.cross_model_verifier import (
     verify_with_cross_model,
 )
 from bernstein.core.models import Task
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_task(
@@ -344,3 +347,121 @@ class TestCrossModelVerifierConfigDefaults:
     def test_can_disable_explicitly(self) -> None:
         config = CrossModelVerifierConfig(enabled=False)
         assert config.enabled is False
+
+    def test_voting_config_defaults_to_none(self) -> None:
+        config = CrossModelVerifierConfig()
+        assert config.voting_config is None
+
+
+# ---------------------------------------------------------------------------
+# Multi-voter path (voting_config set)
+# ---------------------------------------------------------------------------
+
+
+class TestMultiVoterVerification:
+    @pytest.mark.asyncio
+    async def test_quorum_2_of_2_both_approve(self, tmp_path: Path) -> None:
+        from bernstein.core.voting import VotingConfig, VotingStrategy
+
+        task = _make_task()
+        voting_cfg = VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=2, quorum_n=2)
+        config = CrossModelVerifierConfig(voting_config=voting_cfg)
+
+        diff_response = MagicMock(stdout="+code\n")
+        approve_json = json.dumps({"verdict": "approve", "feedback": "OK", "confidence": 0.9})
+
+        with (
+            patch("subprocess.run", return_value=diff_response),
+            patch("bernstein.core.voting.call_llm", new=AsyncMock(return_value=approve_json)),
+        ):
+            verdict = await verify_with_cross_model(
+                task,
+                tmp_path,
+                "claude-sonnet",
+                config,
+                voter_models=["google/gemini-flash-1.5", "anthropic/claude-haiku-3-5"],
+            )
+
+        assert verdict.verdict == "approve"
+
+    @pytest.mark.asyncio
+    async def test_quorum_2_of_2_one_reject_fails(self, tmp_path: Path) -> None:
+        from bernstein.core.voting import VotingConfig, VotingStrategy
+
+        task = _make_task()
+        voting_cfg = VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=2, quorum_n=2)
+        config = CrossModelVerifierConfig(voting_config=voting_cfg)
+
+        diff_response = MagicMock(stdout="+code\n")
+        approve_json = json.dumps({"verdict": "approve", "feedback": "OK", "confidence": 0.9})
+        reject_json = json.dumps({"verdict": "request_changes", "feedback": "Bug", "confidence": 0.85})
+
+        call_count = 0
+
+        async def alternating_llm(*args: object, **kwargs: object) -> str:
+            nonlocal call_count
+            call_count += 1
+            return approve_json if call_count == 1 else reject_json
+
+        with (
+            patch("subprocess.run", return_value=diff_response),
+            patch("bernstein.core.voting.call_llm", new=alternating_llm),
+        ):
+            verdict = await verify_with_cross_model(
+                task,
+                tmp_path,
+                "claude-sonnet",
+                config,
+                voter_models=["google/gemini-flash-1.5", "anthropic/claude-haiku-3-5"],
+            )
+
+        assert verdict.verdict == "request_changes"
+
+    @pytest.mark.asyncio
+    async def test_multi_voter_reviewer_model_is_all_voters(self, tmp_path: Path) -> None:
+        from bernstein.core.voting import VotingConfig, VotingStrategy
+
+        task = _make_task()
+        voting_cfg = VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=1, quorum_n=2)
+        config = CrossModelVerifierConfig(voting_config=voting_cfg)
+
+        diff_response = MagicMock(stdout="+x\n")
+        approve_json = json.dumps({"verdict": "approve", "feedback": "OK", "confidence": 0.9})
+
+        with (
+            patch("subprocess.run", return_value=diff_response),
+            patch("bernstein.core.voting.call_llm", new=AsyncMock(return_value=approve_json)),
+        ):
+            verdict = await verify_with_cross_model(
+                task,
+                tmp_path,
+                "claude-sonnet",
+                config,
+                voter_models=["m1", "m2"],
+            )
+
+        assert "m1" in verdict.reviewer_model
+        assert "m2" in verdict.reviewer_model
+
+    @pytest.mark.asyncio
+    async def test_no_voter_models_falls_back_to_single_reviewer(self, tmp_path: Path) -> None:
+        """voting_config set but no voter_models → single-reviewer fallback."""
+        from bernstein.core.voting import VotingConfig, VotingStrategy
+
+        task = _make_task()
+        voting_cfg = VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=2, quorum_n=2)
+        config = CrossModelVerifierConfig(voting_config=voting_cfg)
+
+        diff_response = MagicMock(stdout="+x\n")
+        approve_json = json.dumps({"verdict": "approve", "feedback": "Fine", "issues": []})
+
+        with (
+            patch("subprocess.run", return_value=diff_response),
+            patch(
+                "bernstein.core.cross_model_verifier.call_llm",
+                new=AsyncMock(return_value=approve_json),
+            ),
+        ):
+            verdict = await verify_with_cross_model(task, tmp_path, "claude-sonnet", config)
+
+        assert verdict.verdict == "approve"
