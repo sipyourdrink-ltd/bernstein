@@ -57,49 +57,17 @@
           <a href="https://github.com/chernistry/bernstein" class="btn-secondary" target="_blank" rel="noopener">View source</a>
         </div>
       </div>
-      <div>
-        <div class="terminal">
-          <div class="term-bar">
-            <div class="term-dots">
-              <span></span><span></span><span></span>
-            </div>
-            <div class="term-title">bernstein</div>
-          </div>
-          <div class="term-body"><span class="t-prompt">$ </span><span class="t-cmd">bernstein -g "Add JWT auth with refresh tokens, tests, and docs"</span>
-
-<span class="t-head">  BERNSTEIN</span>  <span class="t-dim">Agent Orchestra</span>
-<span class="t-border">  ─────────────────────────────────────────────</span>
-<span class="t-label">  Task server   </span><span class="t-agent">● running</span><span class="t-label">  localhost:8052</span>
-<span class="t-label">  Workers       </span><span class="t-bar">██████░░░░</span><span class="t-label"> 3 / 5</span>
-<span class="t-border">  ─────────────────────────────────────────────</span>
-  <span class="t-agent">● backend   </span><span class="t-task">Implement JWT middleware       </span><span class="t-label">sonnet·high</span>
-  <span class="t-agent">● backend   </span><span class="t-task">Add refresh token rotation     </span><span class="t-label">sonnet·high</span>
-  <span class="t-done">✓ qa        </span><span class="t-task">Write auth integration tests   </span><span class="t-label">done</span>
-  <span class="t-agent">● security  </span><span class="t-task">Audit token storage            </span><span class="t-label">opus·max</span>
-  <span class="t-dim">· docs      </span><span class="t-task">Generate API documentation     </span><span class="t-label">queued</span>
-<span class="t-border">  ─────────────────────────────────────────────</span>
-<span class="t-label">  Elapsed  </span><span class="t-dim">3m 47s</span><span class="t-label">   Cost  </span><span class="t-dim">$0.31</span><span class="t-label">   Done  </span><span class="t-agent">1/5</span>
-<span class="t-cursor"></span></div>
-        </div>
+      <div id="dashboard-gallery" style="display:flex;flex-direction:column;gap:0.6rem;">
+        <a href="assets/tui.svg" target="_blank" style="display:block;border-radius:8px;overflow:hidden;border:1px solid var(--border,#2a2a2a);transition:transform 150ms ease,box-shadow 150ms ease;" onmouseover="this.style.transform='scale(1.01)';this.style.boxShadow='0 6px 20px rgba(0,0,0,0.25)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+          <img src="assets/tui.svg" alt="TUI dashboard" style="width:100%;display:block;" />
+          <div style="padding:0.3rem 0.5rem;font-size:0.65rem;color:var(--text-muted,#888);background:var(--bg-card,#1a1a1a);">TUI — terminal dashboard</div>
+        </a>
+        <a href="assets/web-dashboard.png" target="_blank" style="display:block;border-radius:8px;overflow:hidden;border:1px solid var(--border,#2a2a2a);transition:transform 150ms ease,box-shadow 150ms ease;" onmouseover="this.style.transform='scale(1.01)';this.style.boxShadow='0 6px 20px rgba(0,0,0,0.25)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
+          <img src="assets/web-dashboard.png" alt="Web dashboard" style="width:100%;display:block;" />
+          <div style="padding:0.3rem 0.5rem;font-size:0.65rem;color:var(--text-muted,#888);background:var(--bg-card,#1a1a1a);">Web — browser dashboard</div>
+        </a>
       </div>
     </div>
-  </div>
-</section>
-
-<!-- ── Dashboard gallery ── -->
-<section id="dashboard-gallery" style="padding:2rem 0 1rem;">
-  <div class="container">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;max-width:900px;margin:0 auto;">
-      <a href="assets/tui.svg" target="_blank" style="display:block;border-radius:8px;overflow:hidden;border:1px solid var(--border,#2a2a2a);transition:transform 150ms ease,box-shadow 150ms ease;" onmouseover="this.style.transform='scale(1.015)';this.style.boxShadow='0 8px 24px rgba(0,0,0,0.3)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
-        <img src="assets/tui.svg" alt="TUI dashboard" style="width:100%;display:block;" />
-        <div style="padding:0.4rem 0.6rem;font-size:0.7rem;color:var(--text-muted,#888);background:var(--bg-card,#1a1a1a);">TUI — terminal dashboard</div>
-      </a>
-      <a href="assets/web-dashboard.png" target="_blank" style="display:block;border-radius:8px;overflow:hidden;border:1px solid var(--border,#2a2a2a);transition:transform 150ms ease,box-shadow 150ms ease;" onmouseover="this.style.transform='scale(1.015)';this.style.boxShadow='0 8px 24px rgba(0,0,0,0.3)'" onmouseout="this.style.transform='';this.style.boxShadow=''">
-        <img src="assets/web-dashboard.png" alt="Web dashboard" style="width:100%;display:block;" />
-        <div style="padding:0.4rem 0.6rem;font-size:0.7rem;color:var(--text-muted,#888);background:var(--bg-card,#1a1a1a);">Web — browser dashboard</div>
-      </a>
-    </div>
-    <p style="text-align:center;margin-top:0.5rem;font-size:0.65rem;color:var(--text-muted,#666);">Click to enlarge</p>
   </div>
 </section>
 
