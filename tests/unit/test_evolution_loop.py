@@ -14,6 +14,7 @@ from bernstein.core.models import RiskAssessment, RollbackPlan
 from bernstein.evolution.detector import ImprovementOpportunity, UpgradeCategory
 from bernstein.evolution.gate import ApprovalDecision, ApprovalOutcome
 from bernstein.evolution.loop import EvolutionLoop, ExperimentResult
+from bernstein.evolution.types import ProposalGenerationError, SandboxValidationError
 from bernstein.evolution.proposals import (
     UpgradeProposal,
 )
@@ -558,7 +559,7 @@ def test_generate_proposal_filters_high_risk(tmp_path: Path) -> None:
 
 
 def test_run_cycle_proposal_generation_llm_timeout(tmp_path: Path) -> None:
-    """RuntimeError (LLM timeout) from create_proposal propagates out of run_cycle."""
+    """RuntimeError (LLM timeout) from create_proposal is wrapped in ProposalGenerationError."""
     state_dir = tmp_path / ".sdd"
     state_dir.mkdir()
     loop = EvolutionLoop(state_dir, repo_root=tmp_path)
@@ -573,13 +574,13 @@ def test_run_cycle_proposal_generation_llm_timeout(tmp_path: Path) -> None:
             "create_proposal",
             side_effect=RuntimeError("LLM request timed out after 30s"),
         ),
-        pytest.raises(RuntimeError, match="LLM request timed out"),
+        pytest.raises(ProposalGenerationError, match="LLM request timed out"),
     ):
         loop.run_cycle()
 
 
 def test_run_cycle_proposal_generation_malformed_response(tmp_path: Path) -> None:
-    """ValueError (malformed LLM response) from create_proposal propagates out of run_cycle."""
+    """ValueError (malformed LLM response) from create_proposal is wrapped in ProposalGenerationError."""
     state_dir = tmp_path / ".sdd"
     state_dir.mkdir()
     loop = EvolutionLoop(state_dir, repo_root=tmp_path)
@@ -594,7 +595,7 @@ def test_run_cycle_proposal_generation_malformed_response(tmp_path: Path) -> Non
             "create_proposal",
             side_effect=ValueError("Malformed LLM response: missing 'title' field"),
         ),
-        pytest.raises(ValueError, match="Malformed LLM response"),
+        pytest.raises(ProposalGenerationError, match="Malformed LLM response"),
     ):
         loop.run_cycle()
 
@@ -639,7 +640,7 @@ def test_run_logs_and_continues_after_run_cycle_exception(tmp_path: Path) -> Non
 
 
 def test_run_cycle_sandbox_raises_worktree_error(tmp_path: Path) -> None:
-    """RuntimeError from sandbox.validate (worktree creation failure) propagates."""
+    """RuntimeError from sandbox.validate is wrapped in SandboxValidationError."""
     state_dir = tmp_path / ".sdd"
     state_dir.mkdir()
     loop = EvolutionLoop(state_dir, repo_root=tmp_path)
@@ -660,13 +661,13 @@ def test_run_cycle_sandbox_raises_worktree_error(tmp_path: Path) -> None:
             "validate",
             side_effect=RuntimeError("git worktree add failed: branch already exists"),
         ),
-        pytest.raises(RuntimeError, match="git worktree add failed"),
+        pytest.raises(SandboxValidationError, match="git worktree add failed"),
     ):
         loop.run_cycle()
 
 
 def test_run_cycle_sandbox_raises_test_crash(tmp_path: Path) -> None:
-    """RuntimeError from sandbox.validate (test process crash/timeout) propagates."""
+    """RuntimeError from sandbox.validate (test process crash) is wrapped in SandboxValidationError."""
     state_dir = tmp_path / ".sdd"
     state_dir.mkdir()
     loop = EvolutionLoop(state_dir, repo_root=tmp_path)
@@ -687,7 +688,7 @@ def test_run_cycle_sandbox_raises_test_crash(tmp_path: Path) -> None:
             "validate",
             side_effect=RuntimeError("Tests timed out after 300s"),
         ),
-        pytest.raises(RuntimeError, match="Tests timed out"),
+        pytest.raises(SandboxValidationError, match="Tests timed out"),
     ):
         loop.run_cycle()
 

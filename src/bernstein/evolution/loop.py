@@ -55,7 +55,15 @@ from bernstein.evolution.proposals import (
 )
 from bernstein.evolution.risk import ProposalRiskScore, RiskScorer
 from bernstein.evolution.sandbox import SandboxValidator
-from bernstein.evolution.types import RiskLevel, SandboxResult
+from bernstein.core.prometheus import evolution_errors_by_type
+from bernstein.evolution.types import (
+    ApplyError,
+    ProposalGenerationError,
+    RiskLevel,
+    RollbackError,
+    SandboxResult,
+    SandboxValidationError,
+)
 from bernstein.evolution.types import UpgradeProposal as TypesUpgradeProposal
 
 if TYPE_CHECKING:
@@ -248,6 +256,10 @@ class EvolutionLoop:
         self._cycle_count: int = 0
         self._consecutive_empty: int = 0
 
+        # --- Error tracking ---
+        self._error_counts: dict[str, int] = {}
+        self._consecutive_errors: dict[str, int] = {}
+
         # --- GitHub sync state ---
         # Tracks the GitHub issue number for the proposal currently in flight
         # so we can close it when the proposal is accepted.
@@ -323,8 +335,24 @@ class EvolutionLoop:
                 result = self.run_cycle()
                 if result is not None:
                     self._experiments.append(result)
-            except Exception:
-                logger.exception("Unhandled error in evolution cycle")
+                # Successful cycle completion — reset consecutive error counts.
+                self._consecutive_errors.clear()
+            except (ProposalGenerationError, SandboxValidationError, ApplyError, RollbackError) as e:
+                self._record_error(
+                    type(e).__name__,
+                    proposal_id=e.proposal_id,
+                    focus_area=e.focus_area,
+                    risk_level=e.risk_level,
+                )
+                logger.exception("Evolution cycle error (%s): %s", type(e).__name__, e)
+            except Exception as e:
+                self._record_error(
+                    "UnhandledError",
+                    proposal_id=None,
+                    focus_area="",
+                    risk_level="",
+                )
+                logger.exception("Unhandled error in evolution cycle: %s", e)
 
             # Sleep until next cycle boundary, but only if still running.
             if self._running and self._within_window(effective_window):
@@ -413,7 +441,14 @@ class EvolutionLoop:
             github_hint = self._github_check_unclaimed()
 
         # Step 4 — Generate a proposal.
-        proposal = self._generate_proposal(opportunities)
+        try:
+            proposal = self._generate_proposal(opportunities)
+        except Exception as exc:
+            raise ProposalGenerationError(
+                str(exc),
+                focus_area=focus,
+                risk_level="unknown",
+            ) from exc
         if proposal is None:
             logger.debug("No actionable opportunities found this cycle")
             self._consecutive_empty += 1
@@ -513,11 +548,19 @@ class EvolutionLoop:
             )
             sandbox_result = self._make_fast_track_sandbox_result(proposal.id, baseline_score)
         else:
-            sandbox_result = self._sandbox.validate(
-                proposal_id=proposal.id,
-                diff=proposal.proposed_change,
-                baseline_score=baseline_score,
-            )
+            try:
+                sandbox_result = self._sandbox.validate(
+                    proposal_id=proposal.id,
+                    diff=proposal.proposed_change,
+                    baseline_score=baseline_score,
+                )
+            except Exception as exc:
+                raise SandboxValidationError(
+                    str(exc),
+                    proposal_id=proposal.id,
+                    focus_area=focus,
+                    risk_level=risk_level.value,
+                ) from exc
 
             if not sandbox_result.passed:
                 self._breaker.record_sandbox_failure(proposal.id)
@@ -637,6 +680,63 @@ class EvolutionLoop:
         if self._proposals_generated == 0:
             return 0.0
         return self._proposals_accepted / self._proposals_generated
+
+    def get_error_summary(self) -> dict[str, int]:
+        """Return cumulative error counts by type for this session.
+
+        Returns:
+            Dict mapping error type name to total occurrence count.
+        """
+        return dict(self._error_counts)
+
+    def _record_error(
+        self,
+        error_type: str,
+        *,
+        proposal_id: str | None,
+        focus_area: str,
+        risk_level: str,
+    ) -> None:
+        """Increment error counters and emit a structured error log.
+
+        Increments both the cumulative count and consecutive count for the
+        given error type.  Logs a WARNING when consecutive errors of the same
+        type reach 3 ("evolution loop degraded").  Also increments the
+        Prometheus counter so the error is visible on the ``/metrics`` endpoint.
+
+        Args:
+            error_type: Short name of the error class (e.g. "ApplyError").
+            proposal_id: ID of the proposal being processed, if known.
+            focus_area: Cycle focus area, if known.
+            risk_level: Risk level string of the proposal, if known.
+        """
+        self._error_counts[error_type] = self._error_counts.get(error_type, 0) + 1
+        self._consecutive_errors[error_type] = self._consecutive_errors.get(error_type, 0) + 1
+
+        evolution_errors_by_type.labels(error_type=error_type).inc()
+
+        logger.error(
+            "Evolution error: %s — proposal=%s focus=%s risk=%s",
+            error_type,
+            proposal_id,
+            focus_area,
+            risk_level,
+            extra={
+                "error_type": error_type,
+                "proposal_id": proposal_id,
+                "focus_area": focus_area,
+                "risk_level": risk_level,
+            },
+        )
+
+        consecutive = self._consecutive_errors[error_type]
+        if consecutive >= 3:
+            logger.warning(
+                "evolution loop degraded: %d consecutive %s errors (total=%d)",
+                consecutive,
+                error_type,
+                self._error_counts[error_type],
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -868,8 +968,8 @@ class EvolutionLoop:
                 score,
             )
             return score
-        except Exception:
-            logger.exception("Baseline benchmark run failed — defaulting to 1.0")
+        except Exception as e:
+            logger.exception("Baseline benchmark run failed — defaulting to 1.0: %s", e)
             return 1.0
 
     def _generate_proposal(
@@ -925,13 +1025,28 @@ class EvolutionLoop:
         """
         risk_level = self._infer_risk_level(proposal)
 
-        success = self._executor.execute_upgrade(proposal)
+        try:
+            success = self._executor.execute_upgrade(proposal)
+        except Exception as exc:
+            raise ApplyError(
+                str(exc),
+                proposal_id=proposal.id,
+                risk_level=risk_level.value,
+            ) from exc
+
         if success:
             self._breaker.record_change(risk_level, proposal.id)
             logger.info("Proposal %s applied successfully", proposal.id)
         else:
             logger.warning("Proposal %s application failed — attempting rollback", proposal.id)
-            self._executor.rollback_upgrade(proposal)
+            try:
+                self._executor.rollback_upgrade(proposal)
+            except Exception as exc:
+                raise RollbackError(
+                    str(exc),
+                    proposal_id=proposal.id,
+                    risk_level=risk_level.value,
+                ) from exc
             self._breaker.record_rollback(proposal.id)
 
         return success
