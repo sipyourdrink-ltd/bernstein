@@ -142,9 +142,7 @@ class CheckRunClient:
         """PATCH to a GitHub API path and return the parsed result."""
         return self._gh_api(path, method="PATCH", body=body)
 
-    def _gh_api(
-        self, path: str, method: str, body: dict[str, Any]
-    ) -> CheckRunResult | None:
+    def _gh_api(self, path: str, method: str, body: dict[str, Any]) -> CheckRunResult | None:
         """Call the GitHub API via ``gh api``.
 
         Uses ``gh api --method <METHOD> <path> --input -`` with the body
