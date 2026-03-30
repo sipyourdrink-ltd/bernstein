@@ -807,7 +807,11 @@ class BernsteinApp(App[None]):
             except Exception as exc:
                 logger.warning("Failed to read evolve.json: %s", exc)
 
-        # Quality and delegation tree hidden by default
+        # Write startup messages to activity log
+        log = self.query_one("#activity-log", RichLog)
+        log.write("[bold]Bernstein starting...[/bold]")
+        log.write("[dim]Connecting to task server on :8052[/dim]")
+        log.write("[dim]Waiting for manager to plan tasks...[/dim]")
 
         self.set_interval(1.0, self._schedule_poll)
         self._schedule_poll()
@@ -833,6 +837,35 @@ class BernsteinApp(App[None]):
 
     def _apply_data(self, data: dict[str, Any]) -> None:
         """Apply fetched data to widgets (main thread, non-blocking)."""
+        # Log phase transitions to activity
+        log = self.query_one("#activity-log", RichLog)
+        status = data.get("status") or {}
+
+        agents_list = data.get("agents") or []
+        total = status.get("total", 0) if isinstance(status, dict) else 0
+        alive = sum(1 for a in agents_list if isinstance(a, dict) and a.get("status") != "dead")
+
+        # Track state transitions
+        prev_total = getattr(self, "_prev_total", 0)
+        prev_alive = getattr(self, "_prev_alive", 0)
+
+        if total > 0 and prev_total == 0:
+            log.write(f"[green]→ {total} task(s) planned[/green]")
+        if alive > 0 and prev_alive == 0:
+            log.write("[green]→ First agent spawned[/green]")
+        elif alive > prev_alive and prev_alive > 0:
+            log.write(f"[dim]→ {alive} agent(s) active[/dim]")
+
+        if not isinstance(status, dict) or not status:
+            if not getattr(self, "_logged_no_server", False):
+                log.write("[yellow]Server not responding yet...[/yellow]")
+                self._logged_no_server = True  # type: ignore[attr-defined]
+        else:
+            self._logged_no_server = False  # type: ignore[attr-defined]
+
+        self._prev_total = total  # type: ignore[attr-defined]
+        self._prev_alive = alive  # type: ignore[attr-defined]
+
         self._update_tasks(data.get("tasks"))
         costs: dict[str, Any] = data.get("costs") or {}
         self._update_agents(data.get("agents", []), costs)

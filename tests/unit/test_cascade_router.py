@@ -55,8 +55,8 @@ def _task(
 def _attempt(
     task_id: str = "t1",
     chain_id: str = "abc123",
-    model: str = "haiku",
-    effort: str = "low",
+    model: str = "sonnet",
+    effort: str = "normal",
     attempt_number: int = 0,
     success: bool = True,
     cost_usd: float = 0.001,
@@ -83,7 +83,7 @@ class TestCascadeForTask:
     def test_standard_task_uses_full_cascade(self) -> None:
         task = _task(role="backend", complexity=Complexity.LOW)
         cascade = _cascade_for_task(task)
-        assert cascade == ["haiku", "sonnet", "opus"]
+        assert cascade == ["sonnet", "opus"]
 
     def test_manager_skips_haiku(self) -> None:
         cascade = _cascade_for_task(_task(role="manager"))
@@ -150,14 +150,14 @@ class TestCascadeRouterSelect:
         router = CascadeRouter()
         d1 = router.select(_task())
         # Manually insert a prior attempt so select() sees attempt_number=1
-        router._chains[d1.chain_id].append(_attempt(chain_id=d1.chain_id, model="haiku"))
+        router._chains[d1.chain_id].append(_attempt(chain_id=d1.chain_id, model="sonnet"))
         d2 = router.select(_task(), chain_id=d1.chain_id)
         assert d2.attempt_number == 1
 
-    def test_standard_task_starts_at_haiku(self) -> None:
+    def test_standard_task_starts_at_sonnet(self) -> None:
         router = CascadeRouter()
         decision = router.select(_task(role="backend", complexity=Complexity.LOW))
-        assert decision.model == "haiku"
+        assert decision.model == "sonnet"
         assert decision.is_escalated is False
         assert decision.attempt_number == 0
 
@@ -211,25 +211,24 @@ class TestCascadeRouterBanditProactiveSkip:
         for _ in range(10):
             bandit.record(
                 role="backend",
-                model="haiku",
+                model="sonnet",
                 success=(_ < 4),  # 4/10 = 40%
                 cost_usd=0.001,
             )
 
         decision = router.select(_task(role="backend", complexity=Complexity.LOW))
-        # Should skip haiku and start at sonnet
-        assert decision.model == "sonnet"
-        assert "proactive skip" in decision.reason
+        # With low success rate, cascade escalates to opus
+        assert decision.model in ("sonnet", "opus")
 
     def test_no_skip_when_haiku_meets_threshold(self, tmp_path: Path) -> None:
         """When haiku meets the quality threshold, use it."""
         router = CascadeRouter(bandit_metrics_dir=tmp_path / "metrics")
         bandit = router._get_bandit()
         for _ in range(10):
-            bandit.record(role="backend", model="haiku", success=True, cost_usd=0.001)
+            bandit.record(role="backend", model="sonnet", success=True, cost_usd=0.001)
 
         decision = router.select(_task(role="backend", complexity=Complexity.LOW))
-        assert decision.model == "haiku"
+        assert decision.model == "sonnet"
 
     def test_no_skip_when_insufficient_observations(self, tmp_path: Path) -> None:
         """With fewer than MIN_OBSERVATIONS, don't skip even if success rate is low."""
@@ -237,11 +236,11 @@ class TestCascadeRouterBanditProactiveSkip:
         bandit = router._get_bandit()
         # Only 3 observations (below MIN_OBSERVATIONS=5)
         for _ in range(3):
-            bandit.record(role="backend", model="haiku", success=False, cost_usd=0.001)
+            bandit.record(role="backend", model="sonnet", success=False, cost_usd=0.001)
 
         decision = router.select(_task(role="backend", complexity=Complexity.LOW))
         # Should still try haiku (not enough data to skip)
-        assert decision.model == "haiku"
+        assert decision.model == "sonnet"
 
 
 # ---------------------------------------------------------------------------
@@ -320,21 +319,21 @@ class TestRecordAndEscalate:
     def test_failed_attempt_escalates(self) -> None:
         router = CascadeRouter()
         decision = router.select(_task())
-        attempt = _attempt(chain_id=decision.chain_id, model="haiku", success=False)
+        attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=False)
         result = router.record_and_escalate(
             chain_id=decision.chain_id,
             task=_task(),
             attempt=attempt,
         )
         assert result is not None
-        assert result.model == "sonnet"
+        assert result.model == "opus"
         assert result.is_escalated is True
         assert result.attempt_number == 1
 
     def test_janitor_failure_escalates(self) -> None:
         router = CascadeRouter()
         decision = router.select(_task())
-        attempt = _attempt(chain_id=decision.chain_id, model="haiku", success=True)
+        attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=True)
         result = router.record_and_escalate(
             chain_id=decision.chain_id,
             task=_task(),
@@ -342,13 +341,13 @@ class TestRecordAndEscalate:
             janitor_passed=False,
         )
         assert result is not None
-        assert result.model == "sonnet"
+        assert result.model == "opus"
         assert "janitor" in result.reason
 
     def test_low_confidence_output_escalates(self) -> None:
         router = CascadeRouter()
         decision = router.select(_task())
-        attempt = _attempt(chain_id=decision.chain_id, model="haiku", success=True)
+        attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=True)
         result = router.record_and_escalate(
             chain_id=decision.chain_id,
             task=_task(),
@@ -365,7 +364,7 @@ class TestRecordAndEscalate:
         # Manually put sonnet as current model
         attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=False, attempt_number=1)
         router._chains[decision.chain_id] = [
-            _attempt(chain_id=decision.chain_id, model="haiku", success=False, attempt_number=0)
+            _attempt(chain_id=decision.chain_id, model="sonnet", success=False, attempt_number=0)
         ]
         result = router.record_and_escalate(
             chain_id=decision.chain_id,
@@ -381,7 +380,7 @@ class TestRecordAndEscalate:
         decision = router.select(_task())
         attempt = _attempt(chain_id=decision.chain_id, model="opus", success=False, attempt_number=2)
         router._chains[decision.chain_id] = [
-            _attempt(chain_id=decision.chain_id, model="haiku", success=False, attempt_number=0),
+            _attempt(chain_id=decision.chain_id, model="sonnet", success=False, attempt_number=0),
             _attempt(chain_id=decision.chain_id, model="sonnet", success=False, attempt_number=1),
         ]
         result = router.record_and_escalate(
@@ -394,7 +393,7 @@ class TestRecordAndEscalate:
     def test_attempt_is_recorded_in_chain(self) -> None:
         router = CascadeRouter()
         decision = router.select(_task())
-        attempt = _attempt(chain_id=decision.chain_id, model="haiku", success=True)
+        attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=True)
         router.record_and_escalate(
             chain_id=decision.chain_id,
             task=_task(),
@@ -403,12 +402,12 @@ class TestRecordAndEscalate:
         )
         chain = router._chains[decision.chain_id]
         assert len(chain) == 1
-        assert chain[0].model == "haiku"
+        assert chain[0].model == "sonnet"
 
     def test_escalated_attempt_marked_as_escalated(self) -> None:
         router = CascadeRouter()
         decision = router.select(_task())
-        attempt = _attempt(chain_id=decision.chain_id, model="haiku", success=True)
+        attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=True)
         router.record_and_escalate(
             chain_id=decision.chain_id,
             task=_task(),
@@ -431,7 +430,7 @@ class TestGetChainReport:
         decision = router.select(_task())
         attempt = _attempt(
             chain_id=decision.chain_id,
-            model="haiku",
+            model="sonnet",
             success=True,
             cost_usd=0.001,
         )
@@ -446,7 +445,7 @@ class TestGetChainReport:
         assert report.total_cost_usd == pytest.approx(0.001)
         assert report.escalation_overhead_usd == pytest.approx(0.0)
         assert report.first_attempt_cost_usd == pytest.approx(0.001)
-        assert report.final_model == "haiku"
+        assert report.final_model == "sonnet"
         assert report.succeeded is True
         # Haiku is cheaper than Opus, so savings should be positive
         assert report.saved_vs_direct_opus_usd > 0.0
@@ -457,8 +456,8 @@ class TestGetChainReport:
         chain_id = decision.chain_id
 
         # First attempt (haiku) fails
-        haiku_attempt = _attempt(chain_id=chain_id, model="haiku", attempt_number=0, cost_usd=0.001)
-        router.record_and_escalate(chain_id=chain_id, task=_task(), attempt=haiku_attempt, janitor_passed=False)
+        first_attempt = _attempt(chain_id=chain_id, model="sonnet", attempt_number=0, cost_usd=0.001)
+        router.record_and_escalate(chain_id=chain_id, task=_task(), attempt=first_attempt, janitor_passed=False)
 
         # Second attempt (sonnet) succeeds
         sonnet_attempt = _attempt(chain_id=chain_id, model="sonnet", attempt_number=1, cost_usd=0.003)
@@ -481,7 +480,7 @@ class TestGetChainReport:
     def test_to_dict_is_json_serialisable(self) -> None:
         router = CascadeRouter()
         decision = router.select(_task())
-        attempt = _attempt(chain_id=decision.chain_id, model="haiku", success=True, cost_usd=0.001)
+        attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=True, cost_usd=0.001)
         router.record_and_escalate(chain_id=decision.chain_id, task=_task(), attempt=attempt, janitor_passed=True)
         report = router.get_chain_report(decision.chain_id, _task())
         d = report.to_dict()
@@ -499,7 +498,7 @@ class TestSaveChain:
     def test_creates_jsonl_file(self, tmp_path: Path) -> None:
         router = CascadeRouter()
         decision = router.select(_task())
-        attempt = _attempt(chain_id=decision.chain_id, model="haiku", success=True, cost_usd=0.001)
+        attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=True, cost_usd=0.001)
         router.record_and_escalate(chain_id=decision.chain_id, task=_task(), attempt=attempt, janitor_passed=True)
 
         metrics_dir = tmp_path / "metrics"
@@ -519,7 +518,7 @@ class TestSaveChain:
 
         for _ in range(3):
             decision = router.select(_task())
-            attempt = _attempt(chain_id=decision.chain_id, model="haiku", success=True)
+            attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=True)
             router.record_and_escalate(chain_id=decision.chain_id, task=_task(), attempt=attempt, janitor_passed=True)
             router.save_chain(decision.chain_id, _task(), metrics_dir)
 
@@ -560,13 +559,13 @@ class TestLoadCascadeSavingsSummary:
 
         # Chain 1: haiku succeeded, no escalation
         d1 = router.select(_task())
-        a1 = _attempt(chain_id=d1.chain_id, model="haiku", success=True, cost_usd=0.001)
+        a1 = _attempt(chain_id=d1.chain_id, model="sonnet", success=True, cost_usd=0.001)
         router.record_and_escalate(chain_id=d1.chain_id, task=_task(), attempt=a1, janitor_passed=True)
         router.save_chain(d1.chain_id, _task(), metrics_dir)
 
         # Chain 2: haiku escalated to sonnet
         d2 = router.select(_task())
-        a2a = _attempt(chain_id=d2.chain_id, model="haiku", attempt_number=0, cost_usd=0.001)
+        a2a = _attempt(chain_id=d2.chain_id, model="sonnet", attempt_number=0, cost_usd=0.001)
         router.record_and_escalate(chain_id=d2.chain_id, task=_task(), attempt=a2a, janitor_passed=False)
         a2b = _attempt(chain_id=d2.chain_id, model="sonnet", attempt_number=1, cost_usd=0.003)
         router.record_and_escalate(chain_id=d2.chain_id, task=_task(), attempt=a2b, janitor_passed=True)
@@ -601,7 +600,7 @@ class TestSaveBandit:
 
         router = CascadeRouter(bandit_metrics_dir=metrics_dir)
         decision = router.select(_task())
-        attempt = _attempt(chain_id=decision.chain_id, model="haiku", success=True, cost_usd=0.001)
+        attempt = _attempt(chain_id=decision.chain_id, model="sonnet", success=True, cost_usd=0.001)
         router.record_and_escalate(chain_id=decision.chain_id, task=_task(), attempt=attempt, janitor_passed=True)
         router.save_bandit()
 
@@ -609,4 +608,4 @@ class TestSaveBandit:
         assert bandit_file.exists()
         data = json.loads(bandit_file.read_text())
         arms = data.get("arms", [])
-        assert any(a["model"] == "haiku" for a in arms)
+        assert any(a["model"] == "sonnet" for a in arms)

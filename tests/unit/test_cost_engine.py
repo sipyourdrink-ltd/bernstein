@@ -154,7 +154,7 @@ class TestEpsilonGreedyBanditSelect:
             bandit.record(role="backend", model="sonnet", success=True, cost_usd=0.003)
 
         result = bandit.select(role="backend")
-        assert result == "haiku"
+        assert result == "sonnet"
 
     def test_avoids_arm_below_quality_threshold(self) -> None:
         """haiku has <80% success rate; bandit should prefer sonnet."""
@@ -183,7 +183,7 @@ class TestEpsilonGreedyBanditSelect:
 
         result = bandit.select(role="backend")
         # Falls back to cheapest (haiku)
-        assert result == "haiku"
+        assert result == "sonnet"
 
     def test_candidate_restriction(self) -> None:
         """Restricting candidates limits the selection pool."""
@@ -220,7 +220,7 @@ class TestRoutTaskBanditIntegration:
         task = _task(role="backend", complexity=Complexity.MEDIUM)
         config = route_task(task, bandit_metrics_dir=metrics_dir)
 
-        assert config.model == "haiku"
+        assert config.model == "sonnet"
 
     def test_bandit_does_not_affect_manager_tasks(self, tmp_path: Path) -> None:
         """Manager role always uses opus regardless of bandit data."""
@@ -266,7 +266,7 @@ class TestSelectBatchConfigBanditIntegration:
         tasks = [_task(role="backend", complexity=Complexity.LOW)]
         config = _select_batch_config(tasks, metrics_dir=metrics_dir)
 
-        assert config.model == "haiku"
+        assert config.model == "sonnet"
 
     def test_manager_ignores_bandit(self, tmp_path: Path) -> None:
         """Manager always gets opus even if bandit says haiku."""
@@ -288,7 +288,7 @@ class TestSelectBatchConfigBanditIntegration:
         tasks = [_task(role="backend", complexity=Complexity.MEDIUM)]
         config = _select_batch_config(tasks, metrics_dir=None)
 
-        assert config.model in ("haiku", "sonnet", "opus")
+        assert config.model in ("sonnet", "opus")
 
 
 # ---------------------------------------------------------------------------
@@ -297,15 +297,15 @@ class TestSelectBatchConfigBanditIntegration:
 
 
 class TestGetCascadeModel:
-    def test_starts_at_haiku_for_standard_task(self) -> None:
+    def test_starts_at_sonnet_for_standard_task(self) -> None:
         task = _task(role="backend", complexity=Complexity.LOW, scope=Scope.SMALL)
-        assert get_cascade_model(task, retry_count=0) == "haiku"
+        assert get_cascade_model(task, retry_count=0) == "sonnet"
 
-    def test_escalates_to_sonnet_on_first_retry(self) -> None:
+    def test_escalates_to_opus_on_first_retry(self) -> None:
         task = _task(role="backend", complexity=Complexity.LOW, scope=Scope.SMALL)
-        assert get_cascade_model(task, retry_count=1) == "sonnet"
+        assert get_cascade_model(task, retry_count=1) == "opus"
 
-    def test_escalates_to_opus_on_second_retry(self) -> None:
+    def test_stays_at_opus_on_second_retry(self) -> None:
         task = _task(role="backend", complexity=Complexity.LOW, scope=Scope.SMALL)
         assert get_cascade_model(task, retry_count=2) == "opus"
 

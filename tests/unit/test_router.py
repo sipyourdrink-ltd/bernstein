@@ -423,15 +423,15 @@ class TestRouteTask:
         assert config.model == "sonnet"
         assert config.effort == "high"
 
-    def test_simple_tasks_route_to_haiku_low(self) -> None:
+    def test_simple_tasks_route_to_sonnet(self) -> None:
         # Low complexity + small scope tasks are L1 fast-pathed to haiku/low
         task = _make_task(complexity=Complexity.LOW, scope=Scope.SMALL)
         config = route_task(task)
 
-        assert config.model == "haiku"
-        assert config.effort == "low"
+        assert config.model == "sonnet"
+        assert config.effort == "normal"
 
-    def test_l1_docstring_task_routes_to_haiku_low(self) -> None:
+    def test_l1_docstring_task_routes_to_sonnet(self) -> None:
         """L1 tasks (e.g. add docstring) should route to haiku/low."""
         task = _make_task(
             title="Add docstring to parse_config",
@@ -440,10 +440,10 @@ class TestRouteTask:
         )
         config = route_task(task)
 
-        assert config.model == "haiku"
-        assert config.effort == "low"
+        assert config.model == "sonnet"
+        assert config.effort == "normal"
 
-    def test_l1_typo_task_routes_to_haiku_low(self) -> None:
+    def test_l1_typo_task_routes_to_sonnet(self) -> None:
         """L1 tasks (e.g. fix typo) should route to haiku/low."""
         task = _make_task(
             title="Fix typo in error message",
@@ -452,8 +452,8 @@ class TestRouteTask:
         )
         config = route_task(task)
 
-        assert config.model == "haiku"
-        assert config.effort == "low"
+        assert config.model == "sonnet"
+        assert config.effort == "normal"
 
     def test_l1_not_applied_to_excluded_roles(self) -> None:
         """Manager/architect/security roles are never L1-routed."""

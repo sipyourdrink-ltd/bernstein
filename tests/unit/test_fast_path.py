@@ -372,10 +372,10 @@ class TestFastPathStats:
 class TestL1ModelConfig:
     """Tests for L1 cheapest model config."""
 
-    def test_l1_model_is_haiku(self) -> None:
+    def test_l1_model_is_sonnet(self) -> None:
         cfg = get_l1_model_config()
-        assert cfg.model == "haiku"
-        assert cfg.effort == "low"
+        assert cfg.model == "sonnet"
+        assert cfg.effort == "normal"
 
     def test_l1_model_has_reasonable_token_limit(self) -> None:
         cfg = get_l1_model_config()
