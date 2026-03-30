@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "1.0.2"
+version = "1.1.0"
 description = "Multi-agent orchestration for CLI coding agents"
 readme = "README.md"
 requires-python = ">=3.12"
