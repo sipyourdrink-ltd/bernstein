@@ -51,6 +51,14 @@ def _get(path: str) -> Any:
         return None
 
 
+def _post(path: str, body: dict[str, Any] | None = None) -> Any:
+    try:
+        return httpx.post(f"{SERVER_URL}{path}", json=body or {}, timeout=2.0).json()
+    except Exception as exc:
+        logger.warning("Dashboard POST %s failed: %s", path, exc)
+        return None
+
+
 def _fetch_all() -> dict[str, Any]:
     """Fetch all dashboard data in one blocking call (run in thread)."""
     tasks = _get("/tasks")
@@ -151,6 +159,24 @@ def _load_cache_stats() -> dict[str, Any]:
     except Exception as exc:
         logger.warning("Failed to load cache manifest: %s", exc)
         return {"hits": 0, "misses": 0, "hit_rate": 0.0}
+
+
+# -- UX-010: Visual premium status icons --
+
+STATUS_ICONS: dict[str, str] = {
+    "open": "\u25cb",
+    "claimed": "\u25c9",
+    "in_progress": "\u25cf",
+    "done": "[green]\u2713[/green]",
+    "failed": "[red]\u2717[/red]",
+    "cancelled": "[dim]\u2298[/dim]",
+}
+
+AGENT_STATUS: dict[str, str] = {
+    "working": "[bold green]\u25cf[/bold green]",
+    "starting": "[yellow]\u25c9[/yellow]",
+    "dead": "[dim]\u25cb[/dim]",
+}
 
 
 def _tail_log(session_id: str, n: int = 5) -> list[str]:
@@ -718,6 +744,10 @@ class BernsteinApp(App[None]):
         Binding("s", "stop_bernstein", "Stop"),
         Binding("l", "toggle_activity", "Activity"),
         Binding("c", "focus_chat", "Chat"),
+        Binding("i", "inspect_task", "Inspect", show=False),
+        Binding("x", "cancel_task", "Cancel", show=False),
+        Binding("p", "prioritize_task", "Priority", show=False),
+        Binding("t", "retry_task", "Retry", show=False),
     ]
 
     def __init__(self, **kw: Any) -> None:
@@ -872,14 +902,33 @@ class BernsteinApp(App[None]):
         order: dict[str, int] = {"claimed": 0, "in_progress": 0, "open": 1, "done": 2, "failed": 3}
         tasks.sort(key=lambda t: order.get(t.get("status", "open"), 9))
 
+        # UX-010: Plain icons for Text objects (no markup -- style is applied separately)
+        plain_icons: dict[str, str] = {
+            "open": "\u25cb",
+            "claimed": "\u25c9",
+            "in_progress": "\u25cf",
+            "done": "\u2713",
+            "failed": "\u2717",
+            "cancelled": "\u2298",
+        }
         for t in tasks:
             st: str = t.get("status", "open")
-            icon = {"done": "\u2713", "failed": "\u2717", "claimed": "\u26a1", "open": "\u00b7"}.get(st, "?")
-            color = {"done": "green", "failed": "red", "claimed": "yellow", "open": "dim"}.get(st, "white")
+            icon = plain_icons.get(st, "\u25cb")
+            status_colors = {
+                "done": "green",
+                "failed": "red",
+                "claimed": "yellow",
+                "in_progress": "cyan",
+                "open": "dim",
+                "cancelled": "dim",
+            }
+            color = status_colors.get(st, "white")
+            tid = str(t.get("id", ""))
             table.add_row(
                 Text(f" {icon}", style=f"bold {color}"),
                 Text(str(t.get("role", "-")).upper().ljust(9), style=color),
                 Text(str(t.get("title", "-")), style=color if st != "open" else ""),
+                key=tid,
             )
 
     # -- Stats --
@@ -898,6 +947,10 @@ class BernsteinApp(App[None]):
             bar.done = sd.get("done", 0)
             bar.failed = sd.get("failed", 0)
             self._history.append(float(bar.done))
+            # UX-007: Update terminal title with progress
+            done = sd.get("done", 0)
+            total = sd.get("total", 0)
+            self.title = f"bernstein: {done}/{total} done"
 
         bar.agents = sum(1 for a in agents if a.get("status") not in ("dead", None))
         bar.elapsed = int(time.time() - self._start_ts)
@@ -970,6 +1023,21 @@ class BernsteinApp(App[None]):
 
     # -- Activity --
 
+    # UX-007: Noise words to filter from activity log (heartbeats, ticks, routine)
+    _NOISE_PATTERNS: ClassVar[tuple[str, ...]] = (
+        "heartbeat",
+        "tick",
+        "polling",
+        "healthcheck",
+        "health check",
+        "keepalive",
+        "keep-alive",
+        "claim attempt",
+        "no tasks",
+        "idle",
+        "waiting for",
+    )
+
     def _update_activity(self, agents: list[dict[str, Any]]) -> None:
         log = self.query_one("#activity-log", RichLog)
 
@@ -982,6 +1050,10 @@ class BernsteinApp(App[None]):
             role_color = self.ROLE_COLORS.get(role.lower(), "bright_white")
             lines = _tail_log(aid, 2)
             for line in lines:
+                # UX-007: Filter routine/noisy events from activity log
+                lower = line.lower()
+                if any(noise in lower for noise in self._NOISE_PATTERNS):
+                    continue
                 clean = line[:100] + "\u2026" if len(line) > 100 else line
                 new_lines.append(f"[bold {role_color}]{role.upper()}[/] {clean}")
 
@@ -991,6 +1063,64 @@ class BernsteinApp(App[None]):
         self._last_activity = new_lines
 
     # -- Actions --
+
+    def action_inspect_task(self) -> None:
+        """Show details of selected task in activity log."""
+        table = self.query_one("#tasks-table", DataTable)
+        try:
+            row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+            task_id = str(row_key.value) if row_key.value else ""
+        except Exception:
+            return
+        if not task_id:
+            return
+        log = self.query_one("#activity-log", RichLog)
+        # Fetch task details from server
+        data = _get(f"/tasks/{task_id}")
+        if data and isinstance(data, dict):
+            log.write(f"[bold cyan]Task {task_id}[/bold cyan]")
+            log.write(f"  Title: {data.get('title', '?')}")
+            log.write(f"  Role: {data.get('role', '?')}")
+            log.write(f"  Status: {data.get('status', '?')}")
+            desc = data.get("description", "")
+            if desc:
+                log.write(f"  Description: {desc[:200]}")
+
+    def action_cancel_task(self) -> None:
+        """Cancel the selected task."""
+        table = self.query_one("#tasks-table", DataTable)
+        try:
+            row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+            task_id = str(row_key.value) if row_key.value else ""
+        except Exception:
+            return
+        if task_id:
+            _post(f"/tasks/{task_id}/cancel", {"reason": "cancelled via TUI"})
+            self.notify(f"Task {task_id[:8]} cancelled", severity="warning")
+
+    def action_prioritize_task(self) -> None:
+        """Bump selected task to priority 0."""
+        table = self.query_one("#tasks-table", DataTable)
+        try:
+            row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+            task_id = str(row_key.value) if row_key.value else ""
+        except Exception:
+            return
+        if task_id:
+            _post(f"/tasks/{task_id}/prioritize")
+            self.notify(f"Task {task_id[:8]} \u2192 P0", severity="information")
+
+    def action_retry_task(self) -> None:
+        """Re-queue a failed task."""
+        table = self.query_one("#tasks-table", DataTable)
+        try:
+            row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+            task_id = str(row_key.value) if row_key.value else ""
+        except Exception:
+            return
+        if task_id:
+            _post(f"/tasks/{task_id}/retry")
+            self.notify(f"Task {task_id[:8]} re-queued", severity="information")
 
     def action_refresh(self) -> None:
         self._schedule_poll()
