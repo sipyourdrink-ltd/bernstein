@@ -6,10 +6,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
@@ -72,9 +69,7 @@ class KiloAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError(
-                    "kilo not found in PATH. Install from https://kilocode.ai"
-                ) from exc
+                raise RuntimeError("kilo not found in PATH. Install from https://kilocode.ai") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing kilo: {exc}") from exc
 

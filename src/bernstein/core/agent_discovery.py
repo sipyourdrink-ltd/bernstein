@@ -431,7 +431,15 @@ def discover_agents() -> DiscoveryResult:
     agents: list[AgentCapabilities] = []
     warnings: list[str] = []
 
-    for detector in (_detect_claude, _detect_codex, _detect_cursor, _detect_gemini, _detect_kilo, _detect_qwen, _detect_aider):
+    for detector in (
+        _detect_claude,
+        _detect_codex,
+        _detect_cursor,
+        _detect_gemini,
+        _detect_kilo,
+        _detect_qwen,
+        _detect_aider,
+    ):
         try:
             agent, agent_warnings = detector()
             if agent is not None:
