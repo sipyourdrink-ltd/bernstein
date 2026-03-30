@@ -37,9 +37,7 @@ class OpenClawBridge(RuntimeBridge):
                     ``endpoint`` pointing to the OpenClaw API gateway.
         """
         if config.bridge_type != "openclaw":
-            raise BridgeError(
-                f"OpenClawBridge requires bridge_type='openclaw', got {config.bridge_type!r}"
-            )
+            raise BridgeError(f"OpenClawBridge requires bridge_type='openclaw', got {config.bridge_type!r}")
         super().__init__(config)
         logger.debug("OpenClawBridge initialised (stub) endpoint=%s", config.endpoint)
 
