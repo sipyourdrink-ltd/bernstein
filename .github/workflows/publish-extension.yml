@@ -65,7 +65,7 @@ jobs:
       # Publish to VS Code Marketplace (requires VS_MARKETPLACE_TOKEN secret)
       - name: Publish to VS Code Marketplace
         if: env.VS_MARKETPLACE_TOKEN != ''
-        uses: HaaLeo/publish-vscode-extension@v1
+        uses: HaaLeo/publish-vscode-extension@v2
         with:
           pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
           registryUrl: https://marketplace.visualstudio.com
@@ -73,7 +73,7 @@ jobs:
       # Publish to Open VSX — used by Cursor, VSCodium, Gitpod (requires OPEN_VSX_TOKEN secret)
       - name: Publish to Open VSX
         if: env.OPEN_VSX_TOKEN != ''
-        uses: HaaLeo/publish-vscode-extension@v1
+        uses: HaaLeo/publish-vscode-extension@v2
         with:
           pat: ${{ secrets.OPEN_VSX_TOKEN }}
           registryUrl: https://open-vsx.org
