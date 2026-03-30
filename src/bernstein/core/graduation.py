@@ -389,7 +389,7 @@ class GraduationStore:
         try:
             return GraduationRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
-            logger.warning("failed to load graduation record %s: %s", session_id, exc)
+            logger.warning("failed to load graduation record %s: %s", session_id.replace("\n", ""), exc)
             return None
 
     def save(self, record: GraduationRecord) -> None:

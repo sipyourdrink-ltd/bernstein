@@ -295,7 +295,7 @@ class JiraAdapter:
                 "JiraAdapter: no transition to %r found for %s (available: %s)",
                 _s(target_status_name),
                 _s(issue_key),
-                [t.get("name") for t in transitions],
+                [_s(t.get("name", "")) for t in transitions],
             )
             return False
 

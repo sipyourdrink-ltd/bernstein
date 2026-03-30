@@ -70,10 +70,11 @@ async def slack_slash_command(request: Request) -> JSONResponse:
             "trigger_id": _first("trigger_id"),
             "thread_ts": _first("thread_ts"),
         }
-    except Exception as exc:
+    except Exception:
+        logger.debug("Bad slash command payload", exc_info=True)
         return JSONResponse(
             status_code=400,
-            content={"detail": f"Bad slash command payload: {exc}"},
+            content={"detail": "Bad slash command payload"},
         )
 
     from bernstein.core.sanitize import sanitize_log
