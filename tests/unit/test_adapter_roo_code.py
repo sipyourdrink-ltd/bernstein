@@ -169,6 +169,82 @@ class TestRooCodeAdapterName:
         assert adapter.name() == "Roo Code"
 
 
+class TestRooCodeEnvIsolation:
+    """spawn() passes only expected API keys to subprocess."""
+
+    def test_env_contains_anthropic_key(self, tmp_path: Path) -> None:
+        from bernstein.adapters.roo_code import RooCodeAdapter
+
+        adapter = RooCodeAdapter()
+        proc_mock = _make_popen_mock(pid=520)
+        with (
+            patch("bernstein.adapters.roo_code.subprocess.Popen", return_value=proc_mock) as popen,
+            patch.dict(
+                "os.environ",
+                {"ANTHROPIC_API_KEY": "ant-test", "PATH": "/usr/bin"},
+                clear=True,
+            ),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="roo-env1",
+            )
+        env = popen.call_args.kwargs.get("env", {})
+        assert env.get("ANTHROPIC_API_KEY") == "ant-test"
+
+    def test_env_contains_openai_key(self, tmp_path: Path) -> None:
+        from bernstein.adapters.roo_code import RooCodeAdapter
+
+        adapter = RooCodeAdapter()
+        proc_mock = _make_popen_mock(pid=521)
+        with (
+            patch("bernstein.adapters.roo_code.subprocess.Popen", return_value=proc_mock) as popen,
+            patch.dict(
+                "os.environ",
+                {"OPENAI_API_KEY": "sk-test", "PATH": "/usr/bin"},
+                clear=True,
+            ),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="roo-env2",
+            )
+        env = popen.call_args.kwargs.get("env", {})
+        assert env.get("OPENAI_API_KEY") == "sk-test"
+
+    def test_env_excludes_unrelated_keys(self, tmp_path: Path) -> None:
+        from bernstein.adapters.roo_code import RooCodeAdapter
+
+        adapter = RooCodeAdapter()
+        proc_mock = _make_popen_mock(pid=522)
+        with (
+            patch("bernstein.adapters.roo_code.subprocess.Popen", return_value=proc_mock) as popen,
+            patch.dict(
+                "os.environ",
+                {
+                    "ANTHROPIC_API_KEY": "ant-test",
+                    "DATABASE_URL": "postgres://x",
+                    "SECRET_KEY": "s3cret",
+                    "PATH": "/usr/bin",
+                },
+                clear=True,
+            ),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="roo-env3",
+            )
+        env = popen.call_args.kwargs.get("env", {})
+        assert "DATABASE_URL" not in env
+        assert "SECRET_KEY" not in env
+
+
 class TestRooCodeAdapterMissingBinary:
     """spawn() raises RuntimeError with a clear message when binary is missing."""
 
