@@ -69,6 +69,7 @@ from bernstein.cli.task_cmd import (
     sync,
 )
 from bernstein.cli.verify_cmd import verify_cmd
+from bernstein.cli.workflow_cmd import workflow_group
 from bernstein.cli.workspace_cmd import config_group, workspace_group
 from bernstein.cli.wrap_up_cmd import wrap_up
 
@@ -500,3 +501,4 @@ cli.add_command(chaos_group, "chaos")
 cli.add_command(manifest_group, "manifest")
 cli.add_command(ci_group, "ci")
 cli.add_command(gateway_group, "gateway")
+cli.add_command(workflow_group, "workflow")

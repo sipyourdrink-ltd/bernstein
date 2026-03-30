@@ -1,0 +1,87 @@
+# Example workflow DSL: CI pipeline with conditional fan-out/fan-in.
+#
+# Demonstrates:
+#   - Phase-based execution (plan -> implement -> verify -> merge)
+#   - Fan-out: decompose -> build-api + build-ui (parallel)
+#   - Fan-in: run-tests waits for both build tasks
+#   - Conditional edge: fix-bugs only runs if tests fail
+#   - Retry/loop: fix-bugs retries up to 3 times
+#   - Conditional deploy: only if tests pass
+
+name: ci-pipeline
+version: "1.0.0"
+
+phases:
+  - name: plan
+    allowed_roles: [manager, architect]
+  - name: implement
+  - name: verify
+    allowed_roles: [qa, security]
+  - name: merge
+    allowed_roles: [manager]
+
+nodes:
+  decompose:
+    phase: plan
+    role: manager
+    description: "Break down the goal into implementation tasks"
+    estimated_minutes: 15
+
+  # Fan-out: two parallel implementation tasks
+  build-api:
+    phase: implement
+    role: backend
+    description: "Implement the API endpoints"
+    estimated_minutes: 60
+    depends_on:
+      - decompose
+
+  build-ui:
+    phase: implement
+    role: frontend
+    description: "Implement the UI components"
+    estimated_minutes: 45
+    depends_on:
+      - decompose
+
+  # Fan-in: waits for both build tasks
+  run-tests:
+    phase: verify
+    role: qa
+    description: "Run the full test suite"
+    estimated_minutes: 20
+    depends_on:
+      - build-api
+      - build-ui
+
+  security-scan:
+    phase: verify
+    role: security
+    description: "Run security analysis"
+    estimated_minutes: 15
+    depends_on:
+      - build-api
+      - build-ui
+
+  # Conditional: only triggers when tests fail (loop pattern)
+  fix-bugs:
+    phase: implement
+    role: backend
+    description: "Fix failing tests"
+    depends_on:
+      - source: run-tests
+        condition: "status == 'failed'"
+    retry:
+      max_attempts: 3
+      until: "status == 'done'"
+
+  # Conditional: only deploys when tests pass
+  deploy:
+    phase: merge
+    role: manager
+    description: "Deploy to production"
+    depends_on:
+      - source: run-tests
+        condition: "status == 'done'"
+      - source: security-scan
+        condition: "status == 'done'"

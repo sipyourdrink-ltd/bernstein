@@ -468,10 +468,51 @@ class WorkflowExecutor:
 def load_workflow(name: str) -> WorkflowDefinition | None:
     """Look up a workflow definition by name.
 
+    First checks the built-in registry, then searches for a DSL YAML
+    file in ``.bernstein/workflows/``.
+
     Args:
-        name: Workflow name (e.g. "governed").
+        name: Workflow name (e.g. "governed") or DSL file name.
 
     Returns:
         The WorkflowDefinition if found, else None.
     """
-    return WORKFLOW_REGISTRY.get(name)
+    if name in WORKFLOW_REGISTRY:
+        return WORKFLOW_REGISTRY[name]
+
+    # Try loading from DSL file.
+    try:
+        from bernstein.core.workflow_dsl import load_workflow_dsl
+
+        dag = load_workflow_dsl(name)
+        if dag is not None:
+            return dag.definition
+    except Exception:
+        logger.debug("Failed to load workflow DSL %r", name, exc_info=True)
+
+    return None
+
+
+def load_workflow_dag(name: str) -> Any:
+    """Load a full WorkflowDAG (with conditional edges) by name.
+
+    Returns None if the name resolves to a built-in definition or is
+    not found.  Use ``load_workflow()`` for definitions without DAG
+    structure.
+
+    Args:
+        name: Workflow name or DSL file name.
+
+    Returns:
+        WorkflowDAG if found, else None.
+    """
+    if name in WORKFLOW_REGISTRY:
+        return None  # Built-in, no DAG structure.
+
+    try:
+        from bernstein.core.workflow_dsl import load_workflow_dsl
+
+        return load_workflow_dsl(name)
+    except Exception:
+        logger.debug("Failed to load workflow DAG %r", name, exc_info=True)
+        return None
