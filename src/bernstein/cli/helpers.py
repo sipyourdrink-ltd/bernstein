@@ -56,9 +56,7 @@ console = Console()
 
 
 def print_banner() -> None:
-    from rich.panel import Panel
-
-    console.print(Panel(BANNER, border_style="blue", expand=False))
+    console.print(f"[blue]{BANNER}[/blue]")
 
 
 def auth_headers() -> dict[str, str]:
