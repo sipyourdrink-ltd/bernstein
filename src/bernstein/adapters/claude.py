@@ -243,6 +243,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = 1800,
     ) -> SpawnResult:
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,7 +271,10 @@ class ClaudeCodeAdapter(CLIAdapter):
         # Also track wrapper so we can kill both
         self._wrapper_pids[claude_proc.pid] = wrapper_proc.pid
 
-        return SpawnResult(pid=claude_proc.pid, log_path=log_path, proc=claude_proc)
+        timer = self._start_watchdog(
+            claude_proc, timeout_seconds=timeout_seconds, workdir=workdir, session_id=session_id
+        )
+        return SpawnResult(pid=claude_proc.pid, log_path=log_path, proc=claude_proc, timer=timer)
 
     def is_alive(self, pid: int) -> bool:
         # Use poll() to detect zombies — os.kill(pid, 0) can't

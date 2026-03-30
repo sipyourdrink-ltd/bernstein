@@ -31,6 +31,7 @@ class MockAgentAdapter(CLIAdapter):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = 1800,
     ) -> SpawnResult:
         """Spawn a mock agent subprocess that applies demo changes.
 
