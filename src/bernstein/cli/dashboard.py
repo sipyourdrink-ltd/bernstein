@@ -962,19 +962,27 @@ class BernsteinApp(App[None]):
 
         plain_icons: dict[str, str] = {
             "open": "\u25cb",
-            "claimed": "\u25c9",
-            "in_progress": "\u25cf",
+            "planned": "\u25cb",
+            "claimed": "\u25b6",
+            "in_progress": "\u25b6",
             "done": "\u2713",
             "failed": "\u2717",
             "cancelled": "\u2298",
+            "blocked": "\u29bb",
+            "orphaned": "\u26a0",
+            "pending_approval": "\u2714",
         }
         status_colors: dict[str, str] = {
             "done": "green",
             "failed": "red",
-            "claimed": "bright_green",
-            "in_progress": "bright_green",
+            "claimed": "#00ff41",
+            "in_progress": "#00ff41",
             "open": "dim",
+            "planned": "dim",
             "cancelled": "dim",
+            "blocked": "yellow",
+            "orphaned": "bright_red",
+            "pending_approval": "bright_cyan",
         }
 
         incoming_ids = {str(t.get("id", "")) for t in tasks}
