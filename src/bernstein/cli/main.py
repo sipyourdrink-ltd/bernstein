@@ -287,6 +287,9 @@ def print_rich_help() -> None:
     opts.add_column("", style="dim")
     opts.add_row("", "--budget [dim]N[/dim]", "Cost cap in USD (0 = unlimited)")
     opts.add_row("", "--dry-run", "Preview task plan without spawning")
+    opts.add_row("", "--plan-only", "Show execution plan without running agents")
+    opts.add_row("", "--from-plan [dim]path[/dim]", "Execute a saved plan file")
+    opts.add_row("", "--auto-approve", "Skip confirmation prompt before execution")
     opts.add_row("", "--approval [dim]auto|review|pr[/dim]", "Gate before merge")
     opts.add_row("", "--fresh", "Ignore saved session, start clean")
     opts.add_row("", "--version", "Show version")
@@ -327,6 +330,15 @@ class _RichGroup(click.Group):
 @click.option("--dry-run", is_flag=True, default=False, help="Preview task plan without spawning agents.")
 @click.option("--yes", "-y", is_flag=True, default=False, hidden=True, help="Skip cost confirmation prompt.")
 @click.option("--fresh", "force_fresh", is_flag=True, default=False, help="Ignore saved session; start from scratch.")
+@click.option("--plan-only", is_flag=True, default=False, help="Show execution plan without running agents.")
+@click.option(
+    "--from-plan",
+    "from_plan",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Execute a saved plan file (skips interactive planning).",
+)
+@click.option("--auto-approve", is_flag=True, default=False, help="Skip confirmation prompt before execution.")
 @click.option(
     "--approval",
     type=click.Choice(["auto", "review", "pr"]),
@@ -381,6 +393,9 @@ def cli(
     cli_override: str | None,
     model_override: str | None,
     workflow_mode: str | None,
+    plan_only: bool,
+    from_plan: str | None,
+    auto_approve: bool,
 ) -> None:
     """Multi-agent orchestration for CLI coding agents."""
     if ctx.invoked_subcommand is not None:
@@ -441,6 +456,9 @@ def cli(
         container=False,
         container_image=None,
         two_phase_sandbox=False,
+        plan_only=plan_only,
+        from_plan=Path(from_plan) if from_plan else None,
+        auto_approve=auto_approve or yes,
     )
 
 
