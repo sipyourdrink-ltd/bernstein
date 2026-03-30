@@ -779,7 +779,7 @@ class BernsteinApp(App[None]):
 
         # Quality and delegation tree hidden by default
 
-        self.set_interval(2.0, self._schedule_poll)
+        self.set_interval(1.0, self._schedule_poll)
         self._schedule_poll()
 
     # -- Polling via background worker (non-blocking) --

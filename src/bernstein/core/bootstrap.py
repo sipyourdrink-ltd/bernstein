@@ -11,6 +11,7 @@ Entry points:
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
 import subprocess
@@ -202,8 +203,15 @@ def bootstrap_from_seed(
         _discover_catalog(workdir)
     console.print("[green]→[/green] Agent catalog loaded")
 
-    with Status("[bold]Indexing codebase...[/bold]", console=console):
-        _build_codebase_index(workdir)
+    with (
+        Status("[bold]Indexing codebase...[/bold]", console=console),
+        concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool,
+    ):
+        future = pool.submit(_build_codebase_index, workdir)
+        try:
+            future.result(timeout=10)
+        except concurrent.futures.TimeoutError:
+            console.print("[yellow]→[/yellow] Indexing taking too long — continuing in background")
     console.print("[green]→[/green] Codebase indexed")
 
     with Status("[bold]Checking safety invariants...[/bold]", console=console):
@@ -485,8 +493,15 @@ def bootstrap_from_goal(
         _discover_catalog(workdir)
     console.print("[green]→[/green] Agent catalog loaded")
 
-    with Status("[bold]Indexing codebase...[/bold]", console=console):
-        _build_codebase_index(workdir)
+    with (
+        Status("[bold]Indexing codebase...[/bold]", console=console),
+        concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool,
+    ):
+        future = pool.submit(_build_codebase_index, workdir)
+        try:
+            future.result(timeout=10)
+        except concurrent.futures.TimeoutError:
+            console.print("[yellow]→[/yellow] Indexing taking too long — continuing in background")
     console.print("[green]→[/green] Codebase indexed")
 
     with Status("[bold]Checking safety invariants...[/bold]", console=console):

@@ -49,6 +49,10 @@ INDEXABLE_EXTENSIONS: frozenset[str] = frozenset(
 SKIP_DIRS: frozenset[str] = frozenset(
     {
         ".sdd/runtime",
+        ".sdd/traces",
+        ".sdd/archive",
+        "benchmarks",
+        ".claude",
         "__pycache__",
         ".git",
         "node_modules",
@@ -288,6 +292,7 @@ class CodebaseIndexer:
     def _build_inner(self, conn: sqlite3.Connection) -> int:
         """Core indexing logic (separated for testability)."""
         current_files = self._collect_files()
+        logger.info("Indexing %d files...", len(current_files))
         current_paths: dict[str, float] = {}
         for fpath, mtime in current_files:
             rel = str(fpath.relative_to(self._root))

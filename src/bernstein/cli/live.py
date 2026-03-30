@@ -224,7 +224,7 @@ class LiveView:
             with Live(
                 Text("Connecting\u2026", style="dim"),
                 console=self._console,
-                refresh_per_second=4,
+                refresh_per_second=8,
                 screen=True,
             ) as live:
                 while True:
