@@ -167,6 +167,48 @@ class AgentSignalManager:
         return (time.time() - hb.timestamp) > stale_after_s
 
     # ------------------------------------------------------------------
+    # COMMAND (broadcast)
+    # ------------------------------------------------------------------
+
+    def write_command_signal(self, session_id: str, message: str) -> bool:
+        """Write a COMMAND signal file with an arbitrary message.
+
+        Args:
+            session_id: The agent's session ID.
+            message: Free-form instruction text for the agent.
+
+        Returns:
+            True on success, False on failure.
+        """
+        try:
+            signal_dir = self._signals_dir / session_id
+            signal_dir.mkdir(parents=True, exist_ok=True)
+            (signal_dir / "COMMAND").write_text(message, encoding="utf-8")
+            logger.info("COMMAND signal written for agent %s", session_id)
+            return True
+        except OSError as exc:
+            logger.warning("Failed to write COMMAND signal for %s: %s", session_id, exc)
+            return False
+
+    def write_command_signals_all(self, message: str) -> int:
+        """Write a COMMAND signal to ALL active session directories.
+
+        Args:
+            message: Free-form instruction text for every agent.
+
+        Returns:
+            Number of session directories the signal was written to.
+        """
+        if not self._signals_dir.exists():
+            return 0
+        count = 0
+        for child in self._signals_dir.iterdir():
+            if child.is_dir():
+                if self.write_command_signal(child.name, message):
+                    count += 1
+        return count
+
+    # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
 
@@ -179,7 +221,7 @@ class AgentSignalManager:
             session_id: The agent's session ID.
         """
         signal_dir = self._signals_dir / session_id
-        for name in ("WAKEUP", "SHUTDOWN"):
+        for name in ("WAKEUP", "SHUTDOWN", "COMMAND"):
             with contextlib.suppress(OSError):
                 (signal_dir / name).unlink()
         with contextlib.suppress(OSError):

@@ -86,6 +86,7 @@ def _render_signal_check(session_id: str) -> str:
         "```bash\n"
         f"cat .sdd/runtime/signals/{session_id}/WAKEUP 2>/dev/null\n"
         f"cat .sdd/runtime/signals/{session_id}/SHUTDOWN 2>/dev/null\n"
+        f"cat .sdd/runtime/signals/{session_id}/COMMAND 2>/dev/null\n"
         "```\n"
         "If **SHUTDOWN** exists:\n"
         "```bash\n"
@@ -93,6 +94,11 @@ def _render_signal_check(session_id: str) -> str:
         "exit 0\n"
         "```\n"
         "If **WAKEUP** exists: read it, address the concern, then continue working.\n"
+        "If **COMMAND** exists: read its content as an instruction from the user, "
+        "execute it, then delete the file:\n"
+        "```bash\n"
+        f"rm .sdd/runtime/signals/{session_id}/COMMAND\n"
+        "```\n"
     )
 
 
