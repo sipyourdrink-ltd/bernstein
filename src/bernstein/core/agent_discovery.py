@@ -7,6 +7,7 @@ by ``bernstein doctor``, ``bernstein init``, and the auto-routing layer.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -14,7 +15,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,44 @@ def _extract_version(result: subprocess.CompletedProcess[str] | None) -> str:
         if stripped and stripped[0].isdigit():
             return stripped
     return text[:40] if text else "unknown"
+
+
+def _extract_model_names(result: subprocess.CompletedProcess[str] | None) -> list[str]:
+    """Parse model names from JSON or line-oriented CLI output."""
+    if result is None or result.returncode != 0:
+        return []
+
+    text = (result.stdout or "").strip()
+    if not text:
+        return []
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        models: list[str] = []
+        for line in text.splitlines():
+            candidate = line.strip().split()[0]
+            if candidate and any(ch.isalnum() for ch in candidate):
+                models.append(candidate)
+        return models
+
+    if isinstance(payload, list):
+        models: list[str] = []
+        payload_list = cast("list[object]", payload)
+        for item in payload_list:
+            if isinstance(item, str):
+                models.append(item)
+            elif isinstance(item, dict):
+                item_dict = cast("dict[str, object]", item)
+                name: object = item_dict.get("name", "")
+                if not isinstance(name, str) or not name:
+                    name = item_dict.get("id", "")
+                if not isinstance(name, str) or not name:
+                    name = item_dict.get("model", "")
+                if isinstance(name, str) and name:
+                    models.append(name)
+        return models
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +405,127 @@ def _detect_kilo() -> tuple[AgentCapabilities | None, list[str]]:
     ), warnings
 
 
+def _detect_kiro() -> tuple[AgentCapabilities | None, list[str]]:
+    """Detect Kiro CLI."""
+    warnings: list[str] = []
+    binary = shutil.which("kiro-cli") or shutil.which("kiro")
+    if binary is None:
+        return None, []
+
+    binary_name = Path(binary).name
+    version = _extract_version(_run_probe([binary_name, "--version"]))
+
+    logged_in = False
+    login_method = ""
+    whoami_result = _run_probe([binary_name, "whoami", "--format", "json"])
+    if whoami_result is not None and whoami_result.returncode == 0:
+        logged_in = True
+        login_method = "Kiro account"
+        try:
+            payload = json.loads((whoami_result.stdout or "").strip())
+            method = payload.get("authMethod") or payload.get("provider")
+            if isinstance(method, str) and method:
+                login_method = method
+        except json.JSONDecodeError:
+            pass
+    elif os.environ.get("KIRO_API_KEY"):
+        logged_in = True
+        login_method = "API key"
+    elif (Path.home() / ".kiro").exists():
+        logged_in = True
+        login_method = "config"
+
+    models = _extract_model_names(_run_probe([binary_name, "chat", "--list-models", "--format", "json"]))
+    if not models:
+        models = [
+            "anthropic/claude-sonnet-4-6",
+            "openai/gpt-5.4",
+            "google/gemini-2.5-pro",
+        ]
+
+    if binary and not logged_in:
+        warnings.append("kiro found but not authenticated — run: kiro-cli login")
+
+    return AgentCapabilities(
+        name="kiro",
+        binary=binary,
+        version=version,
+        logged_in=logged_in,
+        login_method=login_method,
+        available_models=models,
+        default_model=models[0],
+        supports_headless=True,
+        supports_sandbox=False,
+        supports_mcp=True,
+        max_context_tokens=200_000,
+        reasoning_strength="high",
+        best_for=["full-stack", "automation", "code-generation"],
+        cost_tier="moderate",
+    ), warnings
+
+
+def _detect_opencode() -> tuple[AgentCapabilities | None, list[str]]:
+    """Detect OpenCode CLI."""
+    warnings: list[str] = []
+    binary = shutil.which("opencode")
+    if binary is None:
+        return None, []
+
+    version = _extract_version(_run_probe(["opencode", "--version"]))
+    logged_in = False
+    login_method = ""
+    auth_result = _run_probe(["opencode", "auth", "list"])
+    if auth_result is not None and auth_result.returncode == 0 and (auth_result.stdout or "").strip():
+        logged_in = True
+        login_method = "auth list"
+    elif any(
+        os.environ.get(name)
+        for name in (
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENROUTER_API_KEY_PAID",
+            "XAI_API_KEY",
+            "GITLAB_TOKEN",
+        )
+    ):
+        logged_in = True
+        login_method = "provider env"
+    elif (Path.home() / ".local" / "share" / "opencode" / "auth.json").exists():
+        logged_in = True
+        login_method = "auth file"
+
+    models = _extract_model_names(_run_probe(["opencode", "models"]))
+    if not models:
+        models = [
+            "openai/gpt-5.4-mini",
+            "anthropic/claude-sonnet-4-6",
+            "google/gemini-2.5-flash",
+        ]
+
+    if binary and not logged_in:
+        warnings.append("opencode found but not authenticated — run: opencode auth login")
+
+    return AgentCapabilities(
+        name="opencode",
+        binary=binary,
+        version=version,
+        logged_in=logged_in,
+        login_method=login_method,
+        available_models=models,
+        default_model=models[0],
+        supports_headless=True,
+        supports_sandbox=False,
+        supports_mcp=True,
+        max_context_tokens=200_000,
+        reasoning_strength="high",
+        best_for=["multi-provider", "headless-runs", "code-generation"],
+        cost_tier="cheap",
+    ), warnings
+
+
 def _detect_aider() -> tuple[AgentCapabilities | None, list[str]]:
     """Detect Aider CLI."""
     warnings: list[str] = []
@@ -420,7 +580,8 @@ _DETECTORS: list[tuple[str, type[None]]] = []  # unused, kept for potential plug
 def discover_agents() -> DiscoveryResult:
     """Scan system for all available CLI coding agents.
 
-    Probes each known CLI binary (codex, gemini, claude, qwen, aider), checks login
+    Probes each known CLI binary (claude, codex, cursor, gemini, kilo, kiro,
+    opencode, qwen, aider), checks login
     status, and returns structured capabilities.  The entire scan targets < 2 s
     wall-clock time by using short subprocess timeouts.
 
@@ -437,6 +598,8 @@ def discover_agents() -> DiscoveryResult:
         _detect_cursor,
         _detect_gemini,
         _detect_kilo,
+        _detect_kiro,
+        _detect_opencode,
         _detect_qwen,
         _detect_aider,
     ):
@@ -501,7 +664,7 @@ def detect_auth_status() -> dict[str, tuple[bool, bool]]:
     discovery = discover_agents_cached()
 
     # All known agents to report on, even if not found
-    all_agents = {"claude", "codex", "cursor", "gemini", "kilo", "qwen", "aider"}
+    all_agents = {"claude", "codex", "cursor", "gemini", "kilo", "kiro", "opencode", "qwen", "aider"}
 
     result: dict[str, tuple[bool, bool]] = {}
 
@@ -534,13 +697,37 @@ def detect_auth_status() -> dict[str, tuple[bool, bool]]:
 _ROLE_PREFERENCES: dict[str, list[tuple[str, str]]] = {
     "manager": [("claude", "claude-opus-4-6"), ("codex", "o3"), ("gemini", "gemini-2.5-pro")],
     "architect": [("claude", "claude-opus-4-6"), ("codex", "o3"), ("gemini", "gemini-2.5-pro")],
-    "backend": [("claude", "claude-sonnet-4-6"), ("codex", "o4-mini"), ("gemini", "gemini-2.5-flash")],
-    "frontend": [("gemini", "gemini-2.5-flash"), ("claude", "claude-sonnet-4-6"), ("codex", "o4-mini")],
-    "qa": [("codex", "o4-mini"), ("gemini", "gemini-2.5-flash"), ("claude", "claude-sonnet-4-6")],
+    "backend": [
+        ("claude", "claude-sonnet-4-6"),
+        ("codex", "o4-mini"),
+        ("opencode", "openai/gpt-5.4-mini"),
+        ("gemini", "gemini-2.5-flash"),
+    ],
+    "frontend": [
+        ("gemini", "gemini-2.5-flash"),
+        ("kiro", "anthropic/claude-sonnet-4-6"),
+        ("claude", "claude-sonnet-4-6"),
+        ("codex", "o4-mini"),
+    ],
+    "qa": [
+        ("codex", "o4-mini"),
+        ("opencode", "openai/gpt-5.4-mini"),
+        ("gemini", "gemini-2.5-flash"),
+        ("claude", "claude-sonnet-4-6"),
+    ],
     "security": [("claude", "claude-opus-4-6"), ("codex", "o3"), ("gemini", "gemini-2.5-pro")],
     "docs": [("gemini", "gemini-2.5-flash"), ("claude", "claude-haiku-4-5-20251001"), ("codex", "o4-mini")],
-    "devops": [("codex", "o4-mini"), ("claude", "claude-sonnet-4-6"), ("gemini", "gemini-2.5-flash")],
-    "resolver": [("gemini", "gemini-2.5-flash"), ("codex", "o4-mini"), ("claude", "claude-haiku-4-5-20251001")],
+    "devops": [
+        ("opencode", "openai/gpt-5.4-mini"),
+        ("codex", "o4-mini"),
+        ("claude", "claude-sonnet-4-6"),
+        ("gemini", "gemini-2.5-flash"),
+    ],
+    "resolver": [
+        ("gemini", "gemini-2.5-flash"),
+        ("codex", "o4-mini"),
+        ("claude", "claude-haiku-4-5-20251001"),
+    ],
 }
 
 

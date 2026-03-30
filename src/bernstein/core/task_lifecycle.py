@@ -605,6 +605,10 @@ def claim_and_spawn_batches(
         done_ids: IDs of already-completed tasks (reserved for future guard use).
         result: TickResult accumulator for spawned/error lists.
     """
+    if getattr(orch, "is_shutting_down", lambda: False)():
+        logger.debug("Skipping claim/spawn: orchestrator is shutting down")
+        return
+
     base = orch._config.server_url
 
     # Compute fair per-role caps: ceil(max_agents * role_tasks / total_tasks).
@@ -660,6 +664,9 @@ def claim_and_spawn_batches(
                 _claimed_titles.add(tid)
 
     for batch in batches:
+        if getattr(orch, "is_shutting_down", lambda: False)():
+            logger.debug("Stopping claim/spawn loop: orchestrator is shutting down")
+            break
         if alive_count >= orch._config.max_agents:
             break
 
@@ -825,16 +832,17 @@ def claim_and_spawn_batches(
             if _rc is not None:
                 _rc_task = batch[0]
                 _rc_key = _rc.task_key(_rc_task.role, _rc_task.title, _rc_task.description)
-                _cached_result, _rc_sim = _rc.lookup(_rc_key)
-                if _cached_result is not None:
+                _cached_entry, _rc_sim = _rc.lookup_entry(_rc_key)
+                if _cached_entry is not None and _cached_entry.verified:
                     _rc_completed = False
                     try:
-                        complete_task(orch._client, base, _rc_task.id, _cached_result)
+                        complete_task(orch._client, base, _rc_task.id, _cached_entry.response)
+                        orch._sync_backlog_file(_rc_task)
                         assigned_task_ids.add(_rc_task.id)
                         _claimed_titles.add(_base_title(_rc_task.title))
                         result.spawned.append(f"response-cache:{_rc_task.id}")
                         logger.info(
-                            "Response cache hit (similarity=%.3f) for task %s (%r) -- skipping spawn",
+                            "Verified response cache hit (similarity=%.3f) for task %s (%r) -- skipping spawn",
                             _rc_sim,
                             _rc_task.id,
                             _rc_task.title,
@@ -849,6 +857,12 @@ def claim_and_spawn_batches(
                         )
                     if _rc_completed:
                         continue
+                elif _cached_entry is not None:
+                    logger.info(
+                        "Ignoring unverified response cache hit for task %s (%r)",
+                        _rc_task.id,
+                        _rc_task.title,
+                    )
 
         # Fast-path: try deterministic execution for trivial (L0) tasks.
         # Runs inline, marks task complete on server, skips spawner entirely.
@@ -1012,6 +1026,8 @@ def process_completed_tasks(
 
     # Fan-in: collect results then run sequential post-verification steps.
     for task in new_tasks:
+        _cache_verified = False
+        _cache_diff_lines = 0
         if task.id in verify_futures:
             passed, failed_signals = verify_futures[task.id].result()
             janitor_passed = passed
@@ -1042,6 +1058,9 @@ def process_completed_tasks(
         # an agent owns multiple tasks that all complete in the same tick.
         _agent_just_reaped = session is not None and session.status != "dead"
         if session is not None:
+            _cache_worktree = orch._spawner.get_worktree_path(session.id)
+            if _cache_worktree is not None:
+                _cache_diff_lines = _get_git_diff_line_count_in_worktree(_cache_worktree)
             # Quality gates: lint/type/test checks run after janitor, before approval.
             _qg_config = getattr(orch, "_quality_gate_config", None)
             if janitor_passed and _qg_config is not None:
@@ -1210,6 +1229,7 @@ def process_completed_tasks(
             if session.status != "dead":
                 transition_agent(session, "dead", actor="task_lifecycle", reason="task completed, process reaped")
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
+            _cache_verified = janitor_passed and session.exit_code == 0 and _cache_diff_lines > 0
 
             # Move backlog ticket file from open/ to closed/ if it exists
             if janitor_passed and not _skip_merge:
@@ -1307,6 +1327,9 @@ def process_completed_tasks(
                         _rc.store(
                             _rc.task_key(task.role, task.title, task.description),
                             task.result_summary,
+                            verified=_cache_verified,
+                            git_diff_lines=_cache_diff_lines,
+                            source_task_id=task.id,
                         )
                         _rc.save()
                     except Exception as _rc_store_exc:
@@ -1391,6 +1414,43 @@ def _get_changed_files_in_worktree(worktree_path: Path) -> list[str]:
     except Exception as exc:
         logger.debug("_get_changed_files_in_worktree failed for %s: %s", worktree_path, exc)
     return []
+
+
+def _get_git_diff_line_count_in_worktree(worktree_path: Path) -> int:
+    """Return the total tracked diff line count in a worktree.
+
+    Args:
+        worktree_path: Path to the git worktree.
+
+    Returns:
+        Count of added plus deleted lines from ``git diff --numstat HEAD``.
+        Returns 0 on any error or when there are no tracked changes.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--numstat", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return 0
+        total = 0
+        for line in result.stdout.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) < 2:
+                continue
+            if parts[0].isdigit():
+                total += int(parts[0])
+            if parts[1].isdigit():
+                total += int(parts[1])
+        return total
+    except Exception as exc:
+        logger.debug("_get_git_diff_line_count_in_worktree failed for %s: %s", worktree_path, exc)
+        return 0
 
 
 def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:

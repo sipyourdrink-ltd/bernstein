@@ -13,6 +13,8 @@ from bernstein.core.agent_discovery import (
     _detect_claude,
     _detect_codex,
     _detect_gemini,
+    _detect_kiro,
+    _detect_opencode,
     _detect_qwen,
     _extract_version,
     clear_discovery_cache,
@@ -197,6 +199,63 @@ class TestDetectGemini:
         assert any("not logged in" in w for w in warnings)
 
 
+class TestDetectKiro:
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    def test_not_found(self, _which: Any) -> None:
+        agent, warnings = _detect_kiro()
+        assert agent is None
+        assert warnings == []
+
+    @patch("bernstein.core.agent_discovery._run_probe")
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/kiro-cli")
+    def test_detects_logged_in_and_models(self, _which: Any, mock_probe: MagicMock) -> None:
+        version = subprocess.CompletedProcess(args=[], returncode=0, stdout="kiro-cli 1.2.3\n", stderr="")
+        whoami = subprocess.CompletedProcess(args=[], returncode=0, stdout='{"authMethod":"oauth"}', stderr="")
+        models = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='["anthropic/claude-sonnet-4-6","openai/gpt-5.4"]',
+            stderr="",
+        )
+        mock_probe.side_effect = [version, whoami, models]
+
+        agent, warnings = _detect_kiro()
+
+        assert agent is not None
+        assert agent.logged_in is True
+        assert agent.login_method == "oauth"
+        assert agent.available_models[0] == "anthropic/claude-sonnet-4-6"
+        assert warnings == []
+
+
+class TestDetectOpenCode:
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value=None)
+    def test_not_found(self, _which: Any) -> None:
+        agent, warnings = _detect_opencode()
+        assert agent is None
+        assert warnings == []
+
+    @patch("bernstein.core.agent_discovery._run_probe")
+    @patch("bernstein.core.agent_discovery.shutil.which", return_value="/usr/local/bin/opencode")
+    def test_detects_logged_in_and_models(self, _which: Any, mock_probe: MagicMock) -> None:
+        version = subprocess.CompletedProcess(args=[], returncode=0, stdout="opencode 0.8.0\n", stderr="")
+        auth = subprocess.CompletedProcess(args=[], returncode=0, stdout="anthropic\nopenai\n", stderr="")
+        models = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="openai/gpt-5.4-mini\nanthropic/claude-sonnet-4-6\n",
+            stderr="",
+        )
+        mock_probe.side_effect = [version, auth, models]
+
+        agent, warnings = _detect_opencode()
+
+        assert agent is not None
+        assert agent.logged_in is True
+        assert agent.available_models[0] == "openai/gpt-5.4-mini"
+        assert warnings == []
+
+
 # ---------------------------------------------------------------------------
 # _detect_claude
 # ---------------------------------------------------------------------------
@@ -329,6 +388,8 @@ class TestDetectAider:
 class TestDiscoverAgents:
     @patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, []))
+    @patch("bernstein.core.agent_discovery._detect_opencode", return_value=(None, []))
+    @patch("bernstein.core.agent_discovery._detect_kiro", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_kilo", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, []))
@@ -366,6 +427,8 @@ class TestDiscoverAgents:
             patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_kilo", return_value=(None, [])),
+            patch("bernstein.core.agent_discovery._detect_kiro", return_value=(None, [])),
+            patch("bernstein.core.agent_discovery._detect_opencode", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),
         ):
@@ -387,6 +450,8 @@ class TestDiscoverAgents:
             patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_kilo", return_value=(None, [])),
+            patch("bernstein.core.agent_discovery._detect_kiro", return_value=(None, [])),
+            patch("bernstein.core.agent_discovery._detect_opencode", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),
         ):
@@ -531,6 +596,8 @@ class TestDetectAuthStatus:
         assert result["claude"] == (False, False)
         assert result["codex"] == (False, False)
         assert result["gemini"] == (False, False)
+        assert result["kiro"] == (False, False)
+        assert result["opencode"] == (False, False)
         assert result["qwen"] == (False, False)
         assert result["aider"] == (False, False)
 
@@ -547,6 +614,8 @@ class TestDetectAuthStatus:
         assert result["codex"] == (True, False)  # installed, not authenticated
         assert result["aider"] == (True, True)  # installed, authenticated
         assert result["gemini"] == (False, False)  # not installed
+        assert result["kiro"] == (False, False)  # not installed
+        assert result["opencode"] == (False, False)  # not installed
         assert result["qwen"] == (False, False)  # not installed
 
     def test_all_agents_installed_authenticated(self) -> None:
@@ -554,6 +623,8 @@ class TestDetectAuthStatus:
             _make_agent("claude", logged_in=True),
             _make_agent("codex", logged_in=True),
             _make_agent("gemini", logged_in=True),
+            _make_agent("kiro", logged_in=True),
+            _make_agent("opencode", logged_in=True),
             _make_agent("qwen", logged_in=True),
             _make_agent("aider", logged_in=True),
         ]
@@ -562,7 +633,7 @@ class TestDetectAuthStatus:
         with patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery):
             result = detect_auth_status()
 
-        for agent_name in ["claude", "codex", "gemini", "qwen", "aider"]:
+        for agent_name in ["claude", "codex", "gemini", "kiro", "opencode", "qwen", "aider"]:
             assert result[agent_name] == (True, True), f"{agent_name} should be installed and authenticated"
 
 

@@ -6,12 +6,13 @@ import contextlib
 import logging
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,6 +28,14 @@ DEFAULT_TIMEOUT_SECONDS: int = 1800
 _SIGTERM_GRACE_SECONDS: int = 30
 
 
+class SpawnError(RuntimeError):
+    """Raised when an adapter process exits too early to be treated as spawned."""
+
+
+class RateLimitError(SpawnError):
+    """Raised when an adapter detects provider-side rate limiting on startup."""
+
+
 @dataclass
 class SpawnResult:
     """Result of spawning an agent process."""
@@ -35,6 +44,13 @@ class SpawnResult:
     log_path: Path
     proc: object | None = None  # subprocess.Popen, kept for poll()-based alive check
     timeout_timer: threading.Timer | None = field(default=None, repr=False)
+
+
+class WaitableProcess(Protocol):
+    """Minimal process protocol for fast-exit probing."""
+
+    def wait(self, timeout: float | None = None) -> object:
+        """Wait for process completion and return its exit status."""
 
 
 def build_worker_cmd(
@@ -150,6 +166,69 @@ class CLIAdapter(ABC):
         timer.name = f"timeout-watchdog-{session_id}"
         timer.start()
         return timer
+
+    @staticmethod
+    def _read_last_lines(log_path: Path, n: int = 10) -> list[str]:
+        """Read the last *n* lines from a log file."""
+        try:
+            return log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
+        except OSError:
+            return []
+
+    @staticmethod
+    def _is_rate_limit_error(lines: list[str]) -> bool:
+        """Return True when log lines contain a provider rate-limit signal."""
+        text = "\n".join(lines).lower()
+        needles = (
+            "rate limit",
+            "usage limit",
+            "quota exceeded",
+            "too many requests",
+            "429",
+            "overloaded",
+        )
+        return any(needle in text for needle in needles)
+
+    def _probe_fast_exit(
+        self,
+        proc: WaitableProcess,
+        log_path: Path,
+        *,
+        provider_name: str,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        """Treat early non-zero exits as spawn failures instead of live sessions.
+
+        Args:
+            proc: Subprocess-like object with ``wait(timeout=...)``.
+            log_path: Runtime log path for tail inspection.
+            provider_name: Human-readable provider/adapter label for errors.
+            timeout_seconds: Probe window after spawn.
+
+        Raises:
+            RateLimitError: Provider immediately exited due to rate limiting.
+            SpawnError: Provider immediately exited for another reason.
+        """
+        try:
+            exit_code = proc.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            return
+        except Exception as exc:
+            logger.debug("Fast-exit probe failed for %s: %s", provider_name, exc)
+            return
+
+        if not isinstance(exit_code, int):
+            logger.debug("Fast-exit probe for %s returned non-integer exit code %r; skipping", provider_name, exit_code)
+            return
+
+        if exit_code == 0:
+            return
+
+        tail_lines = self._read_last_lines(log_path, n=10)
+        tail_text = tail_lines[-1] if tail_lines else "(no log output)"
+        if self._is_rate_limit_error(tail_lines):
+            raise RateLimitError(f"{provider_name} rate-limited during startup: {tail_text}")
+        raise SpawnError(f"{provider_name} exited early with code {exit_code}: {tail_text}")
 
     @staticmethod
     def cancel_timeout(result: SpawnResult) -> None:

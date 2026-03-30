@@ -21,6 +21,7 @@ from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 def _make_popen_mock(pid: int) -> MagicMock:
     m = MagicMock(spec=subprocess.Popen)
     m.pid = pid
+    m.wait.return_value = None
     return m
 
 
@@ -65,10 +66,10 @@ class TestGeminiAdapterSpawn:
                 session_id="gemini-s2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--model" in inner
-        assert inner[inner.index("--model") + 1] == "gemini-2.5-flash"
+        assert "-m" in inner
+        assert inner[inner.index("-m") + 1] == "gemini-2.5-flash"
 
-    def test_sandbox_none_flag(self, tmp_path: Path) -> None:
+    def test_output_format_json_flag(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
         proc_mock = _make_popen_mock(pid=102)
         with patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock) as popen:
@@ -79,8 +80,8 @@ class TestGeminiAdapterSpawn:
                 session_id="gemini-s3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--sandbox" in inner
-        assert inner[inner.index("--sandbox") + 1] == "none"
+        assert "--output-format" in inner
+        assert inner[inner.index("--output-format") + 1] == "json"
 
     def test_prompt_flag_used(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
@@ -93,8 +94,21 @@ class TestGeminiAdapterSpawn:
                 session_id="gemini-s4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--prompt" in inner
-        assert inner[inner.index("--prompt") + 1] == "my-unique-prompt"
+        assert "-p" in inner
+        assert inner[inner.index("-p") + 1] == "my-unique-prompt"
+
+    def test_yolo_flag_present(self, tmp_path: Path) -> None:
+        adapter = GeminiAdapter()
+        proc_mock = _make_popen_mock(pid=108)
+        with patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                session_id="gemini-s8",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--yolo" in inner
 
     def test_creates_log_dir(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
@@ -267,6 +281,24 @@ class TestGeminiSpawnMissingBinary:
                 model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
                 session_id="perm-denied",
             )
+
+
+class TestGeminiWarnings:
+    def test_warns_when_no_api_key_present(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        adapter = GeminiAdapter()
+        proc_mock = _make_popen_mock(pid=301)
+        with (
+            patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock),
+            patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            caplog.at_level("WARNING"),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                session_id="warn-missing-key",
+            )
+        assert "neither GOOGLE_API_KEY nor GEMINI_API_KEY is set" in caplog.text
 
 
 # ---------------------------------------------------------------------------

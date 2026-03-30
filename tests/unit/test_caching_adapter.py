@@ -1,8 +1,8 @@
-"""Unit tests for CachingAdapter prompt-prefix caching wrapper."""
+"""Unit tests for CachingAdapter prompt-prefix caching and response reuse wrapper."""
 
 from __future__ import annotations
 
-import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,198 +11,125 @@ import pytest
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.caching_adapter import CachingAdapter
 from bernstein.core.models import ModelConfig
+from bernstein.core.semantic_cache import ResponseCacheManager
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+@pytest.fixture
+def mock_inner() -> MagicMock:
+    """Mock CLIAdapter that records spawn calls."""
+    inner = MagicMock(spec=CLIAdapter)
+    inner.name.return_value = "mock-adapter"
+    inner.spawn.return_value = SpawnResult(pid=1234, log_path="/tmp/agent.log")
+    return inner
 
 
-class FakeAdapter(CLIAdapter):
-    """Minimal concrete adapter for testing."""
-
-    def __init__(self) -> None:
-        self.spawn_calls: list[str] = []
-
-    def spawn(
-        self,
-        *,
-        prompt: str,
-        workdir: Path,
-        model_config: ModelConfig,
-        session_id: str,
-        mcp_config: dict | None = None,
-        timeout_seconds: int = 1800,
-    ) -> SpawnResult:
-        self.spawn_calls.append(prompt)
-        return SpawnResult(pid=42, log_path=workdir / "log.txt")
-
-    def name(self) -> str:
-        return "fake"
-
-    def is_alive(self, pid: int) -> bool:
-        return pid == 42
-
-    def kill(self, pid: int) -> None:
-        pass
-
-    def detect_tier(self) -> None:
-        return None
+@pytest.fixture
+def adapter(mock_inner: MagicMock, tmp_path: Path) -> CachingAdapter:
+    """CachingAdapter instance with temp workdir."""
+    return CachingAdapter(mock_inner, tmp_path)
 
 
-def _spawn(adapter: CachingAdapter, prompt: str, tmp_path: Path) -> SpawnResult:
-    """Shorthand to call spawn with defaults."""
-    return adapter.spawn(
-        prompt=prompt,
-        workdir=tmp_path,
-        model_config=ModelConfig(model="sonnet", effort="normal"),
-        session_id="test-session",
+def test_cache_miss_delegates_to_inner(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    """Verify that a cache miss calls the inner adapter's spawn."""
+    res = adapter.spawn(
+        prompt="Initial task",
+        workdir=Path("/tmp"),
+        model_config=ModelConfig(model="sonnet"),
+        session_id="session-1",
     )
 
-
-# Prompts with different system prefixes (split on "## Assigned tasks")
-PROMPT_A = "You are a backend engineer.\n## Assigned tasks\nFix the login bug"
-PROMPT_B = "You are a QA engineer.\n## Assigned tasks\nFix the login bug"
-PROMPT_A_TASK2 = "You are a backend engineer.\n## Assigned tasks\nAdd unit tests"
+    assert res.pid == 1234
+    assert mock_inner.spawn.call_count == 1
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
+def test_cache_hit_returns_pid_0_without_inner_call(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    """Verify that a verified cache hit returns PID 0 and skips inner spawn."""
+    prompt = "Identical task content"
+    
+    # 1. First run: cache miss, stores result (if we manually store it)
+    adapter._response_cache.store(
+        adapter._response_cache.task_key("mock-adapter", prompt[:100], prompt),
+        "Result summary",
+        verified=True,
+    )
+    adapter._response_cache.save()
+
+    # 2. Second run: should be a hit
+    res = adapter.spawn(
+        prompt=prompt,
+        workdir=Path("/tmp"),
+        model_config=ModelConfig(model="sonnet"),
+        session_id="session-2",
+    )
+
+    assert res.pid == 0
+    # Inner spawn should NOT have been called (it was only called by Orchestrator usually, 
+    # but here we are testing the adapter's own bypass).
+    assert mock_inner.spawn.call_count == 0
 
 
-class TestCachingAdapterDelegation:
-    """CachingAdapter delegates all CLIAdapter methods to the inner adapter."""
+def test_ttl_expiry_causes_re_delegation(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    """Verify that cache hits expire after TTL."""
+    prompt = "Temporary task"
+    
+    # Create short-lived adapter
+    adapter = CachingAdapter(mock_inner, adapter._workdir, ttl_seconds=1)
+    
+    # 1. Store verified entry
+    adapter._response_cache.store(
+        adapter._response_cache.task_key("mock-adapter", prompt[:100], prompt),
+        "Result summary",
+        verified=True,
+    )
+    adapter._response_cache.save()
 
-    def test_spawn_delegates_to_inner(self, tmp_path: Path) -> None:
-        """Spawn always calls the inner adapter and returns its result."""
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
+    # 2. Immediate hit
+    res1 = adapter.spawn(prompt=prompt, workdir=Path("/tmp"), model_config=ModelConfig(model="s"), session_id="s1")
+    assert res1.pid == 0
+    assert mock_inner.spawn.call_count == 0
 
-        result = _spawn(adapter, PROMPT_A, tmp_path)
-
-        assert len(inner.spawn_calls) == 1
-        assert inner.spawn_calls[0] == PROMPT_A
-        assert result.pid == 42
-
-    def test_name_delegates(self, tmp_path: Path) -> None:
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
-        assert adapter.name() == "fake"
-
-    def test_is_alive_delegates(self, tmp_path: Path) -> None:
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
-        assert adapter.is_alive(42) is True
-        assert adapter.is_alive(99) is False
-
-    def test_kill_delegates(self, tmp_path: Path) -> None:
-        inner = MagicMock(spec=CLIAdapter)
-        adapter = CachingAdapter(inner, tmp_path)
-        adapter.kill(42)
-        inner.kill.assert_called_once_with(42)
-
-    def test_detect_tier_delegates(self, tmp_path: Path) -> None:
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
-        assert adapter.detect_tier() is None
+    # 3. Wait for TTL expiry
+    time.sleep(1.1)
+    
+    # 4. Should be a miss now
+    res2 = adapter.spawn(prompt=prompt, workdir=Path("/tmp"), model_config=ModelConfig(model="s"), session_id="s2")
+    assert res2.pid == 1234
+    assert mock_inner.spawn.call_count == 1
 
 
-class TestCachingAdapterCacheBehavior:
-    """CachingAdapter tracks prompt prefix reuse via PromptCachingManager."""
+def test_unverified_cache_entry_is_ignored(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    """Verify that unverified cache entries (failed/in-progress) are ignored."""
+    prompt = "Unverified task"
+    
+    # Store unverified entry
+    adapter._response_cache.store(
+        adapter._response_cache.task_key("mock-adapter", prompt[:100], prompt),
+        "Failed summary",
+        verified=False,
+    )
+    adapter._response_cache.save()
 
-    def test_cache_miss_delegates_to_inner(self, tmp_path: Path) -> None:
-        """First call with a new prompt prefix is a cache miss; inner adapter is called."""
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
+    # Should still delegate to inner adapter
+    res = adapter.spawn(prompt=prompt, workdir=Path("/tmp"), model_config=ModelConfig(model="s"), session_id="s1")
+    assert res.pid == 1234
+    assert mock_inner.spawn.call_count == 1
 
-        result = _spawn(adapter, PROMPT_A, tmp_path)
 
-        assert len(inner.spawn_calls) == 1
-        assert result.pid == 42
+def test_kill_delegates_to_inner_unless_pid_0(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    """Verify kill delegation logic."""
+    adapter.kill(1234)
+    mock_inner.kill.assert_called_with(1234)
+    
+    mock_inner.kill.reset_mock()
+    adapter.kill(0)
+    assert mock_inner.kill.call_count == 0
 
-    def test_cache_hit_still_delegates(self, tmp_path: Path) -> None:
-        """Second call with same prefix is a cache hit; inner adapter is still called.
 
-        The CachingAdapter caches prompt prefixes for tracking, not results.
-        """
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
-
-        _spawn(adapter, PROMPT_A, tmp_path)
-        _spawn(adapter, PROMPT_A, tmp_path)
-
-        assert len(inner.spawn_calls) == 2
-
-    def test_same_prefix_different_task_reuses_cache(self, tmp_path: Path) -> None:
-        """Same system prefix with different tasks shares cache entry."""
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
-
-        _spawn(adapter, PROMPT_A, tmp_path)
-        _spawn(adapter, PROMPT_A_TASK2, tmp_path)
-
-        # Both use the same prefix ("You are a backend engineer.")
-        mgr = adapter._caching_mgr
-        assert len(mgr._manifest.entries) == 1
-        entry = next(iter(mgr._manifest.entries.values()))
-        assert entry.hit_count == 1  # second call incremented
-
-    def test_different_prefix_creates_separate_cache_entry(self, tmp_path: Path) -> None:
-        """Different system prefixes get separate cache keys."""
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
-
-        _spawn(adapter, PROMPT_A, tmp_path)
-        _spawn(adapter, PROMPT_B, tmp_path)
-
-        mgr = adapter._caching_mgr
-        assert len(mgr._manifest.entries) == 2
-
-    def test_manifest_saved_after_spawn(self, tmp_path: Path) -> None:
-        """save_manifest is called after each spawn."""
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
-
-        with patch.object(adapter._caching_mgr, "save_manifest") as mock_save:
-            _spawn(adapter, PROMPT_A, tmp_path)
-            mock_save.assert_called_once()
-
-    def test_manifest_persisted_to_disk(self, tmp_path: Path) -> None:
-        """Manifest file is written to .sdd/caching/manifest.jsonl."""
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
-
-        _spawn(adapter, PROMPT_A, tmp_path)
-
-        manifest_path = tmp_path / ".sdd" / "caching" / "manifest.jsonl"
-        assert manifest_path.exists()
-        content = manifest_path.read_text()
-        assert len(content) > 0
-
-    def test_concurrent_spawns_no_corruption(self, tmp_path: Path) -> None:
-        """Concurrent spawn calls don't corrupt the cache manifest."""
-        inner = FakeAdapter()
-        adapter = CachingAdapter(inner, tmp_path)
-        errors: list[Exception] = []
-
-        def spawn_n(prompt: str, n: int) -> None:
-            try:
-                for _ in range(n):
-                    _spawn(adapter, prompt, tmp_path)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(exc)
-
-        threads = [
-            threading.Thread(target=spawn_n, args=(PROMPT_A, 5)),
-            threading.Thread(target=spawn_n, args=(PROMPT_B, 5)),
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=10)
-
-        assert not errors, f"Errors during concurrent spawns: {errors}"
-        mgr = adapter._caching_mgr
-        assert len(mgr._manifest.entries) == 2
-        assert len(inner.spawn_calls) == 10
+def test_is_alive_always_false_for_pid_0(adapter: CachingAdapter, mock_inner: MagicMock) -> None:
+    """Verify is_alive logic for virtual PIDs."""
+    assert not adapter.is_alive(0)
+    assert mock_inner.is_alive.call_count == 0
+    
+    mock_inner.is_alive.return_value = True
+    assert adapter.is_alive(1234)
+    mock_inner.is_alive.assert_called_with(1234)

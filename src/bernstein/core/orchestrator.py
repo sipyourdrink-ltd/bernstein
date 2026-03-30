@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import signal
+import threading
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -65,6 +66,7 @@ from bernstein.core.models import (
 )
 from bernstein.core.notifications import NotificationManager, NotificationPayload
 from bernstein.core.quarantine import QuarantineStore
+from bernstein.core.quota_poller import QuotaPoller
 from bernstein.core.rate_limit_tracker import RateLimitTracker
 from bernstein.core.recorder import RunRecorder
 from bernstein.core.retrospective import generate_retrospective
@@ -262,10 +264,13 @@ class Orchestrator:
         # Run completion summary state
         self._summary_written: bool = False
         self._run_start_ts: float = time.time()
+        self._shutting_down = threading.Event()
+        self._executor_drained = False
         # Background thread pool for non-blocking ruff/pytest runs
         self._executor: concurrent.futures.ThreadPoolExecutor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         self._pending_ruff_future: concurrent.futures.Future[list[RuffViolation]] | None = None
         self._pending_test_future: concurrent.futures.Future[TestResults] | None = None
+        self._spawner.set_shutdown_event(self._shutting_down)
 
         # Provider-aware routing and health tracking
         self._router = router
@@ -342,6 +347,9 @@ class Orchestrator:
         # Semantic response cache: reuse completed agent results for
         # functionally identical tasks (cosine >= 0.95 skips spawn).
         self._response_cache = ResponseCacheManager(workdir)
+        self._quota_poller = QuotaPoller(router=self._router, workdir=workdir) if self._router is not None else None
+        if self._quota_poller is not None:
+            self._quota_poller.poll_once()
 
         # Contextual bandit router: active when BERNSTEIN_ROUTING=bandit.
         # Persists policy to .sdd/routing/ so learning accumulates across runs.
@@ -657,6 +665,8 @@ class Orchestrator:
 
         # Record tick start for deterministic replay
         self._recorder.record("tick_start", tick=self._tick_count)
+        if self._quota_poller is not None:
+            self._quota_poller.maybe_poll()
 
         # WAL: record tick boundary for crash recovery and audit trail
         try:
@@ -670,6 +680,15 @@ class Orchestrator:
             logger.debug("WAL write failed for tick_start %d", self._tick_count)
 
         # 0. Ingest any new backlog files before fetching tasks
+        try:
+            from bernstein.core.roadmap_runtime import emit_roadmap_wave
+
+            emitted = emit_roadmap_wave(self._workdir)
+            if emitted:
+                logger.info("Emitted %d roadmap ticket(s) into backlog/open", len(emitted))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("roadmap wave emission failed: %s", exc)
+
         try:
             self.ingest_backlog()
         except (OSError, json.JSONDecodeError, ValueError) as exc:
@@ -1079,6 +1098,7 @@ class Orchestrator:
                 self._restart()
                 return  # _restart calls os.execv, but just in case
 
+        self._drain_before_cleanup()
         self._cleanup()
         self._post_bulletin("status", "run stopped")
         self._recorder.record(
@@ -1099,9 +1119,37 @@ class Orchestrator:
         Also writes SHUTDOWN signal files to all active agents so they can
         save WIP and exit cleanly before the orchestrator terminates.
         """
+        self._shutting_down.set()
         self._running = False
         with contextlib.suppress(Exception):
             send_shutdown_signals(self, reason="orchestrator_stopped")
+
+    def is_shutting_down(self) -> bool:
+        """Return True when the orchestrator is draining for shutdown."""
+        return self._shutting_down.is_set()
+
+    def _drain_before_cleanup(self, timeout_s: float = 10.0) -> None:
+        """Stop new work, wait briefly for active agents, then drain executor."""
+        if self._executor_drained:
+            return
+
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            active_sessions = [
+                session
+                for session in self._agents.values()
+                if session.status != "dead" and self._spawner.check_alive(session)
+            ]
+            if not active_sessions:
+                break
+            time.sleep(0.2)
+
+        try:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+        except TypeError:
+            self._executor.shutdown(wait=True)
+        self._executor_drained = True
+        logger.info("Executor drained before cleanup")
 
     # -- Delegating methods (keep as methods for backward compat) -----------
 
@@ -1467,11 +1515,12 @@ class Orchestrator:
         self._pending_test_future = None
 
         # Shut down the thread pool
-        try:
-            self._executor.shutdown(wait=False, cancel_futures=True)
-        except TypeError:
-            # Python <3.9 doesn't have cancel_futures
-            self._executor.shutdown(wait=False)
+        if not self._executor_drained:
+            try:
+                self._executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                # Python <3.9 doesn't have cancel_futures
+                self._executor.shutdown(wait=False)
         logger.info("Executor shut down, background test/ruff processes released")
 
     def _restart(self) -> None:
@@ -2387,6 +2436,7 @@ class Orchestrator:
                     agent_id=session.id,
                     role=session.role,
                     model=session.model_config.model if session.model_config else None,
+                    provider=session.provider,
                     task_ids=session.task_ids,
                     agent_source=session.agent_source,
                 )
@@ -2670,6 +2720,7 @@ if __name__ == "__main__":
             worktree_setup_config=seed.worktree_setup if seed else None,
             enable_caching=True,
             container_config=container_config,
+            role_model_policy=seed.role_model_policy if seed else None,
         )
         budget_usd = 0.0
         dry_run = False

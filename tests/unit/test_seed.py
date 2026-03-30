@@ -106,6 +106,20 @@ class TestParseSeedValid:
         cfg = parse_seed(seed_file)
         assert cfg.cli == "gemini"
 
+    def test_role_model_policy_parsed(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n'
+            "role_model_policy:\n"
+            "  backend:\n"
+            "    provider: codex\n"
+            "    model: gpt-5.4-mini\n"
+            "    effort: high\n"
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.role_model_policy == {
+            "backend": {"provider": "codex", "model": "gpt-5.4-mini", "effort": "high"}
+        }
+
 
 # ---------------------------------------------------------------------------
 # parse_seed — invalid inputs
@@ -157,6 +171,11 @@ class TestParseSeedInvalid:
     def test_team_with_non_string_items_raises_seed_error(self, seed_file: Path) -> None:
         seed_file.write_text('goal: "T"\nteam: [1, 2, 3]\n')
         with pytest.raises(SeedError, match="team list must contain only strings"):
+            parse_seed(seed_file)
+
+    def test_invalid_role_model_policy_shape_raises(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nrole_model_policy: "bad"\n')
+        with pytest.raises(SeedError, match="role_model_policy must be a mapping"):
             parse_seed(seed_file)
 
 

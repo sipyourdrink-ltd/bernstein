@@ -120,6 +120,7 @@ class SeedConfig:
     formal_verification: FormalVerificationConfig | None = None
     secrets: SecretsConfig | None = None
     model_policy: dict[str, Any] | None = None
+    role_model_policy: dict[str, dict[str, str]] | None = None
     compliance: ComplianceConfig | None = None
 
 
@@ -202,6 +203,36 @@ def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
     raise SeedError(f"{field_name} must be a list of strings, got: {type(raw).__name__}")
 
 
+def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
+    """Parse optional role-specific provider/model overrides."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError("role_model_policy must be a mapping of role -> settings")
+
+    parsed: dict[str, dict[str, str]] = {}
+    for role, settings in raw.items():
+        if not isinstance(role, str) or not role:
+            raise SeedError("role_model_policy keys must be non-empty role strings")
+        if not isinstance(settings, dict):
+            raise SeedError(f"role_model_policy[{role!r}] must be a mapping")
+
+        normalized: dict[str, str] = {}
+        for key in ("provider", "model", "effort"):
+            value = settings.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value:
+                raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a non-empty string")
+            normalized[key] = value
+
+        unknown_keys = sorted(set(settings) - {"provider", "model", "effort"})
+        if unknown_keys:
+            raise SeedError(f"role_model_policy[{role!r}] has unknown keys: {', '.join(unknown_keys)}")
+        parsed[role] = normalized
+    return parsed
+
+
 def parse_seed(path: Path) -> SeedConfig:
     """Parse a bernstein.yaml seed file into a validated SeedConfig.
 
@@ -256,6 +287,7 @@ def parse_seed(path: Path) -> SeedConfig:
 
     constraints = _parse_string_list(data.get("constraints"), "constraints")
     context_files = _parse_string_list(data.get("context_files"), "context_files")
+    role_model_policy = _parse_role_model_policy(data.get("role_model_policy"))
 
     agent_catalog_raw: object = data.get("agent_catalog")
     if agent_catalog_raw is not None and not isinstance(agent_catalog_raw, str):
@@ -564,6 +596,7 @@ def parse_seed(path: Path) -> SeedConfig:
         quality_gates=quality_gates,
         formal_verification=formal_verification,
         model_policy=model_policy,
+        role_model_policy=role_model_policy,
         compliance=compliance,
     )
 

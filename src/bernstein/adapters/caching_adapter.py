@@ -1,4 +1,4 @@
-"""Caching wrapper for CLI adapters to enable prompt prefix deduplication."""
+"""Caching wrapper for CLI adapters to enable prompt prefix deduplication and response reuse."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
 from bernstein.core.prompt_caching import PromptCachingManager
+from bernstein.core.semantic_cache import ResponseCacheManager
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,23 +18,23 @@ logger = logging.getLogger(__name__)
 
 
 class CachingAdapter(CLIAdapter):
-    """Wraps a CLIAdapter to enable prompt caching.
+    """Wraps a CLIAdapter to enable prompt caching and response reuse.
 
     Intercepts spawn calls to:
     - Extract and deduplicate system prompt prefixes
     - Track cache metadata
-    - Persist cache manifest
-
-    The wrapped adapter behavior is unchanged; caching is transparent.
+    - Skip spawn if a verified response hit is found (Cosine >= 0.95)
 
     Args:
         inner_adapter: The underlying CLIAdapter to wrap.
         workdir: Project working directory for cache storage.
+        ttl: Time-to-live for response cache entries in seconds.
     """
 
-    def __init__(self, inner_adapter: CLIAdapter, workdir: Path) -> None:
+    def __init__(self, inner_adapter: CLIAdapter, workdir: Path, ttl_seconds: int = 3600) -> None:
         self._inner = inner_adapter
         self._caching_mgr = PromptCachingManager(workdir)
+        self._response_cache = ResponseCacheManager(workdir, ttl_seconds=float(ttl_seconds))
 
     def spawn(
         self,
@@ -45,7 +46,7 @@ class CachingAdapter(CLIAdapter):
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> SpawnResult:
-        """Spawn agent with caching: process prompt then delegate to inner adapter.
+        """Spawn agent with caching: process prompt, check response cache, then delegate.
 
         Args:
             prompt: Full agent prompt.
@@ -56,19 +57,42 @@ class CachingAdapter(CLIAdapter):
             timeout_seconds: Timeout before killing the agent process.
 
         Returns:
-            SpawnResult from the inner adapter.
+            SpawnResult (pid=0 if cache hit, otherwise from the inner adapter).
         """
-        result = self._caching_mgr.process_prompt(prompt)
+        # 1. Prompt prefix caching (Anthropic-style)
+        cache_res = self._caching_mgr.process_prompt(prompt)
         logger.debug(
             "Prompt cache: key=%s, is_new=%s, hit_count=%s, reuse_savings=%s%%",
-            result.cache_key[:8],
-            result.is_new_prefix,
-            result.hit_count,
-            "90" if not result.is_new_prefix else "0",
+            cache_res.cache_key[:8],
+            cache_res.is_new_prefix,
+            cache_res.hit_count,
+            "90" if not cache_res.is_new_prefix else "0",
         )
-
         self._caching_mgr.save_manifest()
 
+        # 2. Response caching (Skip execution)
+        # Use first 100 chars as title heuristic for the task key
+        key = self._response_cache.task_key(
+            role=self._inner.name(),
+            title=prompt[:100].strip(),
+            description=prompt,
+        )
+        cached_entry, similarity = self._response_cache.lookup_entry(key)
+
+        if cached_entry and cached_entry.verified:
+            logger.info(
+                "Response cache hit (similarity=%.3f) for session %s -- skipping spawn",
+                similarity,
+                session_id,
+            )
+            # Return a "virtual" spawn result with PID 0.
+            # Orchestrator handles PID 0 as a completed task from cache.
+            return SpawnResult(
+                pid=0,
+                log_path=str(workdir / f"{session_id}.log"),
+            )
+
+        # 3. Cache miss: delegate to inner adapter
         return self._inner.spawn(
             prompt=prompt,
             workdir=workdir,
@@ -83,11 +107,15 @@ class CachingAdapter(CLIAdapter):
         return self._inner.name()
 
     def is_alive(self, pid: int) -> bool:
-        """Delegate to inner adapter."""
+        """Delegate to inner adapter (always False for cached PID 0)."""
+        if pid == 0:
+            return False
         return self._inner.is_alive(pid)
 
     def kill(self, pid: int) -> None:
         """Delegate to inner adapter."""
+        if pid == 0:
+            return
         self._inner.kill(pid)
 
     def detect_tier(self) -> Any:

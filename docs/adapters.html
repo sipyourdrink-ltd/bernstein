@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Adapters — Bernstein</title>
-  <meta name="description" content="Bernstein adapter reference: Claude Code, Codex CLI, Gemini CLI, Qwen, and how to add your own. Feature matrix, install instructions, model mapping." />
+  <meta name="description" content="Bernstein adapter reference: Claude Code, Codex CLI, Gemini CLI, Kiro, OpenCode, Qwen, and how to add your own. Feature matrix, install instructions, model mapping." />
   <link rel="stylesheet" href="style.css" />
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
   <script src="script.js"></script>
@@ -39,7 +39,7 @@
 <div class="page-hero">
   <div class="container">
     <h1>Adapters</h1>
-    <p>Bernstein is model-agnostic. Use Aider, Amp, Claude Code, Codex, Cursor, Gemini CLI, Qwen, Roo Code — or any CLI agent — without changing your orchestration. Switch providers without rewriting anything.</p>
+    <p>Bernstein is model-agnostic. Use Aider, Amp, Claude Code, Codex, Cursor, Gemini CLI, Kilo, Kiro, OpenCode, Qwen, Roo Code - or any CLI agent - without changing your orchestration. Switch providers without rewriting anything.</p>
   </div>
 </div>
 
@@ -59,9 +59,12 @@
       <li><a href="#cursor">Cursor</a></li>
       <li><a href="#gemini">Gemini CLI</a></li>
       <li><a href="#kilo">Kilo</a></li>
+      <li><a href="#kiro">Kiro</a></li>
+      <li><a href="#opencode">OpenCode</a></li>
       <li><a href="#qwen">Qwen</a></li>
       <li><a href="#roo-code">Roo Code</a></li>
       <li><a href="#generic">Generic adapter</a></li>
+      <li><a href="#smoke-tests">Adapter smoke tests</a></li>
       <li><a href="#custom">Add a custom adapter</a></li>
       <li><a href="#mixing">Mixing adapters in one run</a></li>
     </ul>
@@ -96,6 +99,8 @@
           <th>Cursor</th>
           <th>Gemini CLI</th>
           <th>Kilo</th>
+          <th>Kiro</th>
+          <th>OpenCode</th>
           <th>Qwen</th>
           <th>Roo Code</th>
           <th>Generic</th>
@@ -111,6 +116,8 @@
           <td>sonnet 4.6 / opus 4.6 / gpt-5.4</td>
           <td>gemini-3-pro / 3-flash / 2.5-pro</td>
           <td>Any (provider/model)</td>
+          <td>Configured in CLI</td>
+          <td>Provider/model string</td>
           <td>qwen3-coder / qwen-max</td>
           <td>opus 4.6 / sonnet 4.6 / gpt-4o</td>
           <td>Pass-through</td>
@@ -120,6 +127,8 @@
           <td>—</td>
           <td>—</td>
           <td>max / high / medium / low</td>
+          <td>—</td>
+          <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
@@ -140,6 +149,8 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
+          <td>—</td>
         </tr>
         <tr>
           <td>Structured JSON output</td>
@@ -149,6 +160,8 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
+          <td>✓ (--format json)</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
@@ -163,6 +176,8 @@
           <td>✓ (~/.cursor/ present)</td>
           <td>✓ (GCP project / key format)</td>
           <td>✓ (~/.kilo/ or API key)</td>
+          <td>✓ (~/.kiro/ or API key)</td>
+          <td>✓ (~/.config/opencode/ or provider env)</td>
           <td>✓ (provider env vars)</td>
           <td>—</td>
           <td>—</td>
@@ -176,6 +191,8 @@
           <td>Built-in agent mode</td>
           <td><code>--sandbox none</code></td>
           <td><code>--yes</code></td>
+          <td><code>--trust-all-tools --no-interactive</code></td>
+          <td>Built-in run mode</td>
           <td><code>-y</code></td>
           <td>Via config</td>
           <td>Via <code>extra_args</code></td>
@@ -189,6 +206,8 @@
           <td>Native</td>
           <td>Native</td>
           <td>Depends on model</td>
+          <td>Depends on model</td>
+          <td>Depends on backend</td>
           <td>Via Tavily (optional)</td>
           <td>Via MCP</td>
           <td>Depends on CLI</td>
@@ -202,6 +221,8 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
+          <td>✓</td>
           <td>✓ (OpenRouter, Together, Oxen)</td>
           <td>✓</td>
           <td>—</td>
@@ -215,6 +236,8 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
+          <td>Depends on configured backend</td>
           <td>✓ (via OpenAI-compatible server)</td>
           <td>✓</td>
           <td>✓</td>
@@ -276,7 +299,7 @@ export ANTHROPIC_API_KEY=sk-ant-...</code></pre>
 export OPENAI_API_KEY=sk-proj-...</code></pre>
     </div>
 
-    <p>Runs in <code>--approval-mode full-auto</code> with <code>--quiet</code> to suppress interactive prompts. Pass any OpenAI model name directly via <code>--model</code>. Recommended model: <code>gpt-5.4</code> (Mar 2026). The o-series reasoning models (<code>o3</code>, <code>o4-mini</code>) are also supported. Tier detection checks for <code>OPENAI_ORG_ID</code> (enterprise) and key prefix (<code>sk-proj</code> = pro).</p>
+    <p>Runs headlessly via <code>codex exec --full-auto -m &lt;model&gt; --json -o &lt;file&gt; &lt;prompt&gt;</code>. Pass any OpenAI model name directly via <code>--model</code>. Recommended model: <code>gpt-5.4</code> (Mar 2026). The o-series reasoning models (<code>o3</code>, <code>o4-mini</code>) are also supported. Tier detection checks for <code>OPENAI_ORG_ID</code> (enterprise) and key prefix (<code>sk-proj</code> = pro).</p>
 
     <h2 id="cursor">Cursor</h2>
 
@@ -301,7 +324,7 @@ cursor agent --version</code></pre>
 export GOOGLE_API_KEY=AIza...</code></pre>
     </div>
 
-    <p>Runs with <code>--sandbox none</code>. The default model is <code>gemini-3-pro</code> (preview, Mar 2026). Gemini 2.5 Pro/Flash are GA but <a href="https://ai.google.dev/gemini-api/docs/models" target="_blank" rel="noopener">deprecating June 2026</a>. For Vertex AI / enterprise use, set <code>GOOGLE_CLOUD_PROJECT</code> — tier detection will pick this up and apply higher rate limits accordingly.</p>
+    <p>Runs headlessly via <code>gemini -p &lt;prompt&gt; -m &lt;model&gt; --output-format json --yolo</code>. The default model is <code>gemini-3-pro</code> (preview, Mar 2026). Gemini 2.5 Pro/Flash are GA but <a href="https://ai.google.dev/gemini-api/docs/models" target="_blank" rel="noopener">deprecating June 2026</a>. For Vertex AI / enterprise use, set <code>GOOGLE_CLOUD_PROJECT</code> - tier detection will pick this up and apply higher rate limits accordingly.</p>
 
     <h2 id="kilo">Kilo</h2>
 
@@ -316,6 +339,28 @@ kilo --version</code></pre>
     <p>Kilo is a multi-provider agent CLI from Stackblitz. It supports headless mode, ACP/MCP protocols, and session management. Bernstein invokes it as <code>kilo run --prompt "&lt;task&gt;" --model &lt;provider/model&gt; --yes</code>. Pass any <code>provider/model</code> string — e.g. <code>anthropic/claude-sonnet-4-6</code>, <code>openai/gpt-5.4</code>, or <code>google/gemini-2.5-pro</code>.</p>
 
     <p>Authentication is via <code>KILO_API_KEY</code> (preferred) or OAuth session stored in <code>~/.kilo/</code>. MCP server config is injected via <code>--mcp</code>. Tier detection reports Pro when any auth is found.</p>
+
+    <h2 id="kiro">Kiro</h2>
+
+    <p><strong>Provider:</strong> Multi-provider &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli kiro</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash"># Install Kiro CLI from vendor docs
+kiro-cli --version</code></pre>
+    </div>
+
+    <p>The Kiro adapter uses <code>kiro-cli chat --no-interactive --trust-all-tools &lt;prompt&gt;</code>. Kiro does not currently expose a stable documented per-run model flag, so Bernstein treats authentication and discovery as best-effort while still supporting headless orchestration and startup validation.</p>
+
+    <h2 id="opencode">OpenCode</h2>
+
+    <p><strong>Provider:</strong> Multi-provider &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli opencode</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash"># Install OpenCode from vendor docs
+opencode --version</code></pre>
+    </div>
+
+    <p>The OpenCode adapter uses <code>opencode run -m &lt;model&gt; --format json &lt;prompt&gt;</code>. It is useful as a provider escape hatch because Bernstein can pin a role to an OpenCode provider/model pair while leaving the rest of the run on other CLIs.</p>
 
     <h2 id="qwen">Qwen</h2>
 
@@ -371,6 +416,18 @@ cli_options:
     </div>
 
     <p>Bernstein calls: <code>aider --model &lt;model&gt; --yes --no-git --message &lt;prompt&gt;</code>. Any coding agent with a non-interactive mode works.</p>
+
+    <h2 id="smoke-tests">Adapter smoke tests</h2>
+
+    <p>Use the built-in smoke command before a long run or after changing credentials:</p>
+
+    <div class="code-block">
+      <pre><code class="language-bash">bernstein test-adapter codex
+bernstein test-adapter gemini
+bernstein test-adapter kiro</code></pre>
+    </div>
+
+    <p>The smoke test launches the adapter in the same headless mode Bernstein uses during orchestration, checks for immediate failures such as missing auth or rate limits, and then tears the process down.</p>
 
     <h2 id="openclaw">OpenClaw <span style="font-size:0.6em;padding:2px 6px;border-radius:4px;background:#6d28d9;color:white;vertical-align:middle;">experimental</span></h2>
 
@@ -443,7 +500,7 @@ register_adapter("my-agent", MyAgentAdapter())</code></pre>
 
     <h2 id="mixing">Mixing adapters in one run</h2>
 
-    <p>Different task roles can use different adapters. Configure per-role overrides in <code>bernstein.yaml</code>:</p>
+    <p>Different task roles can use different adapters. Configure runtime-enforced pins with <code>role_model_policy</code> in <code>bernstein.yaml</code>:</p>
 
     <div class="code-block">
       <pre><code class="language-yaml">goal: "Add auth, write tests, and document the API"
@@ -451,17 +508,19 @@ register_adapter("my-agent", MyAgentAdapter())</code></pre>
 # Default adapter for all roles (auto-detects installed agents)
 cli: auto
 
-# Per-role overrides
-role_config:
+# Per-role provider/model pins
+role_model_policy:
   qa:
-    cli: codex          # GPT-5.4 for test generation
-    model: gpt-5.4
+    provider: codex_standard
+    model: o3
+    effort: high
   docs:
-    cli: gemini         # Gemini Flash for docs — cheaper
-    model: gemini-3-flash</code></pre>
+    provider: gemini_cheap
+    model: gemini-2.5-flash
+    effort: high</code></pre>
     </div>
 
-    <p>The orchestrator assigns each task to the right adapter based on role. All tasks write to the same <code>.sdd/</code> state — adapter choice is transparent to the rest of the system.</p>
+    <p>The orchestrator assigns each task to the right adapter based on role. All tasks write to the same <code>.sdd/</code> state - adapter choice is transparent to the rest of the system. When provider quota is exhausted or a fast-exit rate limit is detected, Bernstein can retry a different provider and preserve the task for later pickup.</p>
 
     <p>See the <a href="https://github.com/chernistry/bernstein/tree/main/examples/multi-model">multi-model example</a> for a working demo with three adapters in a single run.</p>
 

@@ -23,6 +23,8 @@ from pathlib import Path
 
 import click
 
+from bernstein.cli.adapter_cmd import test_adapter
+
 # Import commands from decomposed modules (NEW)
 from bernstein.cli.advanced_cmd import (
     completions,
@@ -45,6 +47,7 @@ from bernstein.cli.advanced_cmd import (
 # Subcommand imports from modules
 from bernstein.cli.agents_cmd import agents_group
 from bernstein.cli.audit_cmd import audit_group
+from bernstein.cli.cache_cmd import cache_group
 from bernstein.cli.changelog_cmd import changelog_cmd
 from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
@@ -104,6 +107,7 @@ __all__ = [
     "auth_headers",
     # Groups and commands from advanced_cmd
     "benchmark_group",
+    "cache_group",
     "cancel",
     "changelog_cmd",
     "chaos_group",
@@ -157,6 +161,7 @@ __all__ = [
     "sigint_handler",
     "soft_stop",
     "sync",
+    "test_adapter",
     "trace_cmd",
     "watch_cmd",
     "worker",
@@ -557,6 +562,7 @@ cli.add_command(config_group)
 
 # From advanced_cmd module - groups and commands
 cli.add_command(benchmark_group)
+cli.add_command(cache_group, "cache")
 cli.add_command(eval_group)
 cli.add_command(dashboard)
 cli.add_command(live)
@@ -581,6 +587,7 @@ cli.add_command(cost_cmd, "cost")
 cli.add_command(status)
 cli.add_command(ps_cmd, "ps")
 cli.add_command(stop)
+cli.add_command(test_adapter, "test-adapter")
 cli.add_command(init)
 cli.add_command(start)
 cli.add_command(demo)

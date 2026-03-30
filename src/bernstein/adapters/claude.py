@@ -271,6 +271,15 @@ class ClaudeCodeAdapter(CLIAdapter):
         # Also track wrapper so we can kill both
         self._wrapper_pids[claude_proc.pid] = wrapper_proc.pid
 
+        try:
+            self._probe_fast_exit(claude_proc, log_path, provider_name="claude")
+        except Exception:
+            self._wrapper_pids.pop(claude_proc.pid, None)
+            self._procs.pop(claude_proc.pid, None)
+            with contextlib.suppress(Exception):
+                wrapper_proc.wait(timeout=1)
+            raise
+
         result = SpawnResult(pid=claude_proc.pid, log_path=log_path, proc=claude_proc)
         if timeout_seconds > 0:
             result.timeout_timer = self._start_timeout_watchdog(claude_proc.pid, timeout_seconds, session_id)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -38,6 +39,22 @@ def _get_sse_bus(request: Request) -> SSEBus:
     return request.app.state.sse_bus  # type: ignore[no-any-return]
 
 
+def _read_provider_status(request: Request) -> dict[str, Any] | None:
+    """Load the latest provider status snapshot written by the orchestrator."""
+    sdd_dir = getattr(request.app.state, "sdd_dir", None)
+    if sdd_dir is None:
+        return None
+
+    path = sdd_dir / "runtime" / "provider_status.json"
+    if not path.exists():
+        return None
+
+    try:
+        return cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Status & health
 # ---------------------------------------------------------------------------
@@ -47,7 +64,11 @@ def _get_sse_bus(request: Request) -> SSEBus:
 async def status_dashboard(request: Request) -> JSONResponse:
     """Dashboard summary of task counts."""
     store = _get_store(request)
-    return JSONResponse(content=store.status_summary())
+    payload = store.status_summary()
+    provider_status = _read_provider_status(request)
+    if provider_status is not None:
+        payload["provider_status"] = provider_status
+    return JSONResponse(content=payload)
 
 
 @router.get("/status/duration-predictions")

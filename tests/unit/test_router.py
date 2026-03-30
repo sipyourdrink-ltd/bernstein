@@ -237,6 +237,27 @@ class TestSelectProviderForTask:
         assert decision.provider == "free-cheap"
         assert decision.estimated_cost == 0.0
 
+    def test_preferred_provider_override_is_honored(self) -> None:
+        router = TierAwareRouter()
+        router.register_provider(_make_provider(name="claude", tier=Tier.STANDARD))
+        router.register_provider(
+            _make_provider(
+                name="codex",
+                tier=Tier.FREE,
+                models={"openai/gpt-5.4-mini": ModelConfig("openai/gpt-5.4-mini", "high")},
+            )
+        )
+
+        task = _make_task()
+        decision = router.select_provider_for_task(
+            task,
+            base_config=ModelConfig("openai/gpt-5.4-mini", "high"),
+            preferred_provider="codex",
+        )
+
+        assert decision.provider == "codex"
+        assert decision.reason == "role_policy"
+
     def test_considers_quota_remaining(self) -> None:
         router = TierAwareRouter()
         router.state.preferred_tier = Tier.FREE

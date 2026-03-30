@@ -126,6 +126,34 @@ async def test_claim_does_not_double_claim(client: AsyncClient) -> None:
     assert resp2.status_code == 404
 
 
+@pytest.mark.anyio
+async def test_status_includes_provider_status_snapshot(client: AsyncClient, app) -> None:  # type: ignore[no-untyped-def]
+    runtime_dir = app.state.sdd_dir / "runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "provider_status.json").write_text(
+        json.dumps(
+            {
+                "generated_at": 123.0,
+                "providers": {
+                    "codex": {
+                        "health": "healthy",
+                        "available": True,
+                        "tier": "free",
+                        "model": "gpt-5.4-mini",
+                        "quota_snapshot": {"requests_per_minute": 120},
+                    }
+                },
+            }
+        )
+    )
+
+    resp = await client.get("/status")
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["provider_status"]["providers"]["codex"]["quota_snapshot"]["requests_per_minute"] == 120
+
+
 # -- Dependency validation --------------------------------------------------
 
 

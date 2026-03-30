@@ -45,7 +45,7 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 
 Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and commits the results. You come back to working code, passing tests, and a clean git history.
 
-**No framework to learn. No vendor lock-in.** If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), [Cursor](https://www.cursor.com), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Qwen](https://github.com/QwenLM/Qwen-Agent) installed, Bernstein uses them. Mix models in the same run — cheap free-tier agents for boilerplate, heavy models for architecture. Switch providers without rewriting anything. Agents spawn, work, exit. No context drift. No babysitting.
+**No framework to learn. No vendor lock-in.** If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), [Cursor](https://www.cursor.com), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Kiro](https://kiro.dev), [OpenCode](https://opencode.ai), or [Qwen](https://github.com/QwenLM/Qwen-Agent) installed, Bernstein uses them. Mix models in the same run - cheap free-tier agents for boilerplate, heavy models for architecture. Switch providers without rewriting anything. Agents spawn, work, exit. No context drift. No babysitting.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture.svg">
@@ -119,6 +119,7 @@ bernstein trace <task_id>          # step-by-step agent decision trace
 bernstein replay <run_id>          # re-run from a recorded trace
 bernstein recap [--as-json]        # post-run summary: tasks, pass/fail, cost
 bernstein diff <task_id>           # git diff for what an agent changed
+bernstein test-adapter NAME        # smoke-test one adapter in headless mode
 
 # Task management
 bernstein plan [--export]          # show task backlog (--export to JSON)
@@ -130,6 +131,9 @@ bernstein review                   # trigger immediate manager queue review
 bernstein approve <task_id>        # approve a pending task review
 bernstein reject <task_id>         # reject a pending task review
 bernstein pending                  # list tasks waiting for approval
+bernstein cache list               # inspect verified/unverified response-cache entries
+bernstein cache inspect <task_id>  # inspect the cache entry linked to a task
+bernstein cache clear --unverified # clear only unsafe/unverified cache entries
 
 # Agent management
 bernstein agents sync              # pull latest agent catalog
@@ -257,6 +261,8 @@ Analyzes metrics, proposes changes to prompts and routing rules, sandboxes them,
 | [Cursor](https://www.cursor.com) | Cursor AI | sonnet 4.6, opus 4.6, gpt-5.4 | `--cli cursor` | Cursor app (sign in via app) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Google | gemini-3-pro, 3-flash | `--cli gemini` | `npm install -g @google/gemini-cli` |
 | [Kilo](https://kilo.dev) | StackBlitz | configurable | `--cli kilo` | `npm install -g kilo` |
+| [Kiro](https://kiro.dev) | Multi-provider | configurable | `--cli kiro` | Install Kiro CLI |
+| [OpenCode](https://opencode.ai) | Multi-provider | configurable | `--cli opencode` | Install OpenCode CLI |
 | [Qwen](https://github.com/QwenLM/Qwen-Agent) | Alibaba / OpenRouter | qwen3-coder, qwen-max | `--cli qwen` | `npm install -g qwen-code` |
 | [Roo Code](https://github.com/RooVetGit/Roo-Code) | Anthropic / OpenAI / any | opus 4.6, sonnet 4.6, gpt-4o | `--cli roo-code` | VS Code extension (headless CLI) |
 | Any CLI agent | Yours | pass-through | `--cli generic` | Provide `--cli-command` and `--prompt-flag` |
@@ -356,11 +362,18 @@ These features vary in maturity. Chaos engineering, audit, and trace/replay are 
 bernstein ps          # which agents are running, what role, which model
 bernstein doctor      # pre-flight check: Python, CLI tools, API keys, ports
 bernstein trace T-042 # step-by-step view of what agent did and why
+bernstein status      # includes provider health and quota snapshots when available
 ```
 
 Agents are visible in Activity Monitor / `ps` as `bernstein: <role> [<session>]` — no more hunting for mystery Python processes.
 
 **Prometheus metrics** at `/metrics` — wire up Grafana, set alerts, monitor cost.
+
+## Cache and failover
+
+Bernstein's semantic response cache only auto-completes from **verified** entries: janitor must have passed, the agent must have exited cleanly, and the worktree must show a tracked diff. Unverified entries remain inspectable for debugging but never silently close future tasks.
+
+Use `bernstein cache list`, `bernstein cache inspect <task_id>`, and `bernstein cache clear --unverified --yes` to manage cache state. Use `bernstein test-adapter <name>` to smoke-test a single adapter before a longer run. During orchestration, rate-limited providers are marked unhealthy, alternate providers are retried, and `bernstein status` surfaces the latest provider/quota snapshot collected by the quota poller.
 
 ## Extensibility
 

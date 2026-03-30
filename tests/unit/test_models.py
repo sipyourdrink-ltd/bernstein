@@ -20,12 +20,16 @@ class TestProviderType:
         assert ProviderType.CLAUDE.value == "claude"
         assert ProviderType.GEMINI.value == "gemini"
         assert ProviderType.CODEX.value == "codex"
+        assert ProviderType.KIRO.value == "kiro"
+        assert ProviderType.OPENCODE.value == "opencode"
         assert ProviderType.QWEN.value == "qwen"
 
     def test_provider_type_from_string(self) -> None:
         assert ProviderType("claude") == ProviderType.CLAUDE
         assert ProviderType("gemini") == ProviderType.GEMINI
         assert ProviderType("codex") == ProviderType.CODEX
+        assert ProviderType("kiro") == ProviderType.KIRO
+        assert ProviderType("opencode") == ProviderType.OPENCODE
         assert ProviderType("qwen") == ProviderType.QWEN
 
     def test_invalid_provider_type_raises(self) -> None:

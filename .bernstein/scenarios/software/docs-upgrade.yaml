@@ -1,0 +1,29 @@
+id: docs-upgrade
+name: Documentation Upgrade
+version: "1.0"
+description: Improve functional coverage and practical usability guidance in docs.
+tags:
+  - docs
+  - onboarding
+tasks:
+  - title: Audit docs against current feature surface
+    role: docs
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Compare current documentation against implemented features and identify missing/incorrect areas.
+  - title: Update practical usage guides for key workflows
+    role: docs
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Add concrete walkthroughs for the most valuable workflows and commands.
+  - title: Add discoverability section for advanced orchestration features
+    role: docs
+    priority: 3
+    scope: small
+    complexity: low
+    description: |
+      Add a concise index section that points users to scenario/workflow and automation capabilities.

@@ -6,11 +6,12 @@ How Bernstein compares to other multi-agent frameworks, as of March 2026.
 
 | Feature | Bernstein | CrewAI | AutoGen | LangGraph | OpenAI Agents SDK | Google ADK |
 |---|---|---|---|---|---|---|
-| **Model agnostic** | Yes — any CLI agent (Claude Code, Codex, Gemini CLI, Qwen) | Yes — LiteLLM integration | Yes — supports OpenAI, Azure, local models | Yes — via LangChain model abstraction | No — OpenAI models only | No — Gemini models only |
+| **Model agnostic** | Yes — any CLI agent (Claude Code, Codex, Gemini CLI, Kiro, OpenCode, Qwen) | Yes — LiteLLM integration | Yes — supports OpenAI, Azure, local models | Yes — via LangChain model abstraction | No — OpenAI models only | No — Gemini models only |
 | **CLI agent support** | Core design — wraps existing CLI tools directly | No — Python API agents only | No — Python API agents only | No — Python API agents only | No — API-based agents only | No — API-based agents only |
 | **File-based state** | Yes — `.sdd/` directory, no database required | No — in-memory or requires external storage | No — in-memory conversation state | Requires checkpointer backend (SQLite, Postgres) | No — in-memory | No — in-memory or cloud state |
 | **Self-evolving** | Yes — `--evolve` mode analyzes metrics, proposes and executes improvements | No | No | No | No | No |
-| **Multi-provider routing** | Yes — routes tasks to different providers based on complexity, cost, health | Partial — can assign different models per agent | Partial — can configure per-agent models | Yes — can assign models per node | No — single provider | No — single provider |
+| **Multi-provider routing** | Yes — routes tasks to different providers based on complexity, cost, health, quota, and role-pinned provider policy | Partial — can assign different models per agent | Partial — can configure per-agent models | Yes — can assign models per node | No — single provider | No — single provider |
+| **Provider failover** | Yes — typed rate-limit detection retries alternate providers and requeues orphaned work safely | Partial — user-defined retries | Partial — custom logic required | Partial — graph author must implement | No | No |
 | **Process isolation** | Yes — each agent runs in its own process and git worktree | No — threads or async within one process | Partial — agents share a Python runtime | No — runs within one Python process | No — API calls within one process | No — runs within one process |
 | **Cost optimization** | Yes — epsilon-greedy bandit learns cheapest viable model per task type, model cascade on failure | No — manual model assignment | No — manual model selection | No — manual model selection | No — single model pricing | No — single model pricing |
 | **Deterministic orchestrator** | Yes — zero LLM tokens on coordination | No — LLM-driven agent delegation | No — LLM-driven conversation routing | Partial — graph structure is deterministic, but nodes use LLMs | No — LLM-driven handoffs | No — LLM-driven orchestration |
@@ -21,11 +22,11 @@ How Bernstein compares to other multi-agent frameworks, as of March 2026.
 
 ## Where Bernstein is different
 
-**CLI-native, not API-native.** Most frameworks require you to build agents in Python using their SDK. Bernstein wraps CLI tools you already have installed. If you can run `claude` or `codex` in your terminal, Bernstein can orchestrate it. No new abstractions to learn, no vendor SDK to import.
+**CLI-native, not API-native.** Most frameworks require you to build agents in Python using their SDK. Bernstein wraps CLI tools you already have installed. If you can run `claude`, `codex`, `gemini`, `kiro`, or `opencode` in your terminal, Bernstein can orchestrate it. No new abstractions to learn, no vendor SDK to import.
 
 **No LLM tokens wasted on coordination.** The orchestrator is deterministic Python code. Task assignment, scheduling, health checks, and retries are all regular control flow. LLM calls happen only inside the agents doing actual work. This is a deliberate architectural choice — LLM-based schedulers are expensive, non-deterministic, and hard to debug.
 
-**Agents are disposable.** Each agent spawns fresh, works in an isolated git worktree, and exits. No context window drift across tasks. No accumulated hallucinations. The janitor independently verifies each result (tests pass, files exist, no regressions) before merging.
+**Agents are disposable.** Each agent spawns fresh, works in an isolated git worktree, and exits. No context window drift across tasks. No accumulated hallucinations. The janitor independently verifies each result (tests pass, files exist, no regressions) before merging. Response-cache reuse is also verification-gated, so cached completions cannot bypass that safety bar.
 
 **Cost optimization is learned, not configured.** The epsilon-greedy bandit tracks which model gives the best success-rate-to-cost ratio for each task type. It starts by exploring, then converges on the cheapest model that still meets quality thresholds. Model cascade (cheap to expensive) handles failures automatically.
 

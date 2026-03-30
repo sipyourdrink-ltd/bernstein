@@ -46,7 +46,7 @@
       <div>
         <h1>Declarative agent orchestration. Ship while you sleep.</h1>
         <p class="hero-sub">
-          Describe a goal. Bernstein decomposes it, spawns short-lived coding agents in parallel, verifies the output, and commits the results. Works with Claude Code, Codex, Gemini CLI, Qwen — or any future CLI agent.
+          Describe a goal. Bernstein decomposes it, spawns short-lived coding agents in parallel, verifies the output, and commits the results. Works with Claude Code, Codex, Gemini CLI, Kiro, OpenCode, Qwen - or any future CLI agent.
         </p>
         <p class="hero-analogy" style="margin-top:1.25rem;font-size:0.9rem;color:var(--text-muted, #666);line-height:1.6;max-width:36rem;margin-left:auto;margin-right:auto;">
           <strong>Think of it as what Kubernetes did for containers, but for AI coding agents.</strong>
@@ -204,6 +204,10 @@
             <h4>Cost budgeting</h4>
             <p>Set a dollar cap with <code>--budget 5.00</code>. The tracker warns at 80%, alerts at 95%, and hard-stops agents at 100%. No more runaway API bills.</p>
           </div>
+          <div class="feature-item">
+            <h4>Verified cache and quota-aware status</h4>
+            <p>Only verified response-cache entries can auto-complete work. Provider health and quota snapshots are polled separately and shown in <code>bernstein status</code> and <code>/status</code>.</p>
+          </div>
         </div>
       </div>
 
@@ -212,7 +216,7 @@
         <div class="feature-group-items">
           <div class="feature-item">
             <h4>Any CLI agent</h4>
-            <p>Claude Code, Codex, Gemini CLI, Qwen — all supported via thin adapters. The orchestrator is model-agnostic. Mix models in the same run. No vendor lock-in.</p>
+            <p>Claude Code, Codex, Gemini CLI, Kiro, OpenCode, Qwen - all supported via thin adapters. The orchestrator is model-agnostic. Mix models in the same run. No vendor lock-in.</p>
           </div>
           <div class="feature-item">
             <h4>Agent catalogs</h4>

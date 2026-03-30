@@ -151,6 +151,24 @@ class TestResponseCacheManagerStats:
         rcache.store(ResponseCacheManager.task_key("backend", "Fix bug B", ""), "done B")
         assert rcache.get_stats()["entries"] == 2
 
+    def test_stats_split_verified_and_unverified_entries(self, rcache: ResponseCacheManager) -> None:
+        rcache.store(
+            ResponseCacheManager.task_key("backend", "Verified task", ""),
+            "done A",
+            verified=True,
+            git_diff_lines=12,
+            source_task_id="T-verified",
+        )
+        rcache.store(
+            ResponseCacheManager.task_key("backend", "Unverified task", ""),
+            "done B",
+            verified=False,
+            source_task_id="T-unverified",
+        )
+        stats = rcache.get_stats()
+        assert stats["verified_entries"] == 1
+        assert stats["unverified_entries"] == 1
+
 
 class TestResponseCacheManagerTTL:
     def test_expired_entries_not_returned(self, tmp_path: Path) -> None:
@@ -200,6 +218,72 @@ class TestResponseCacheManagerPersistence:
         mgr = ResponseCacheManager(tmp_path)
         assert "response_cache.jsonl" in str(mgr.get_stats()["cache_path"])
         assert "semantic_cache" not in str(mgr.get_stats()["cache_path"])
+
+
+class TestResponseCacheManagerMetadata:
+    def test_lookup_entry_returns_metadata(self, rcache: ResponseCacheManager) -> None:
+        key = ResponseCacheManager.task_key("backend", "Fix login", "desc")
+        rcache.store(
+            key,
+            "Fixed by patching auth middleware",
+            verified=True,
+            git_diff_lines=21,
+            source_task_id="T-123",
+        )
+
+        entry, score = rcache.lookup_entry(key)
+
+        assert entry is not None
+        assert score == pytest.approx(1.0)
+        assert entry.verified is True
+        assert entry.git_diff_lines == 21
+        assert entry.source_task_id == "T-123"
+
+    def test_duplicate_store_refreshes_metadata(self, rcache: ResponseCacheManager) -> None:
+        key = ResponseCacheManager.task_key("backend", "Fix login", "desc")
+        rcache.store(key, "old", verified=False, git_diff_lines=0, source_task_id="T-old")
+        rcache.store(key, "new", verified=True, git_diff_lines=7, source_task_id="T-new")
+
+        entry, _score = rcache.lookup_entry(key)
+
+        assert entry is not None
+        assert entry.response == "new"
+        assert entry.verified is True
+        assert entry.git_diff_lines == 7
+        assert entry.source_task_id == "T-new"
+
+    def test_list_entries_sorted_by_recency(self, rcache: ResponseCacheManager) -> None:
+        first_key = ResponseCacheManager.task_key("backend", "Task A", "")
+        second_key = ResponseCacheManager.task_key("backend", "Task B", "")
+        rcache.store(first_key, "A", source_task_id="T-a")
+        time.sleep(0.01)
+        rcache.store(second_key, "B", source_task_id="T-b")
+
+        entries = rcache.list_entries()
+
+        assert [entry.source_task_id for entry in entries[:2]] == ["T-b", "T-a"]
+
+    def test_inspect_task_finds_originating_entry(self, rcache: ResponseCacheManager) -> None:
+        key = ResponseCacheManager.task_key("backend", "Task A", "")
+        rcache.store(key, "A", source_task_id="T-a", verified=True)
+
+        entry = rcache.inspect_task("T-a")
+
+        assert entry is not None
+        assert entry.response == "A"
+        assert entry.verified is True
+
+    def test_clear_unverified_only_keeps_verified_entries(self, rcache: ResponseCacheManager) -> None:
+        verified_key = ResponseCacheManager.task_key("backend", "Verified", "")
+        unverified_key = ResponseCacheManager.task_key("backend", "Unverified", "")
+        rcache.store(verified_key, "safe", verified=True, source_task_id="T-safe")
+        rcache.store(unverified_key, "ghost", verified=False, source_task_id="T-ghost")
+
+        removed = rcache.clear(unverified_only=True)
+
+        assert removed == 1
+        assert rcache.inspect_task("T-safe") is not None
+        assert rcache.inspect_task("T-ghost") is None
 
 
 class TestResponseCacheManagerEviction:

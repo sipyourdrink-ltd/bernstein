@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from typing import TYPE_CHECKING, Any
@@ -12,6 +13,8 @@ if TYPE_CHECKING:
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiAdapter(CLIAdapter):
@@ -30,14 +33,21 @@ class GeminiAdapter(CLIAdapter):
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
+        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            logger.warning(
+                "GeminiAdapter: neither GOOGLE_API_KEY nor GEMINI_API_KEY is set — spawn will likely fail"
+            )
+
         cmd = [
             "gemini",
-            "--model",
-            model_config.model,
-            "--sandbox",
-            "none",
-            "--prompt",
+            "-p",
             prompt,
+            "-m",
+            model_config.model,
+            "--output-format",
+            "json",
+            "--yolo",
         ]
 
         # Wrap with bernstein-worker for process visibility
@@ -50,7 +60,14 @@ class GeminiAdapter(CLIAdapter):
             model=model_config.model,
         )
 
-        env = build_filtered_env(["GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT", "GOOGLE_APPLICATION_CREDENTIALS"])
+        env = build_filtered_env(
+            [
+                "GOOGLE_API_KEY",
+                "GEMINI_API_KEY",
+                "GOOGLE_CLOUD_PROJECT",
+                "GOOGLE_APPLICATION_CREDENTIALS",
+            ]
+        )
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
@@ -68,7 +85,9 @@ class GeminiAdapter(CLIAdapter):
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing gemini: {exc}") from exc
 
-        result = SpawnResult(pid=proc.pid, log_path=log_path)
+        self._probe_fast_exit(proc, log_path, provider_name="gemini")
+
+        result = SpawnResult(pid=proc.pid, log_path=log_path, proc=proc)
         if timeout_seconds > 0:
             result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
         return result

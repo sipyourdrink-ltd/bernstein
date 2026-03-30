@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from typing import TYPE_CHECKING, Any
@@ -12,6 +13,8 @@ if TYPE_CHECKING:
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+
+logger = logging.getLogger(__name__)
 
 
 class CodexAdapter(CLIAdapter):
@@ -29,14 +32,20 @@ class CodexAdapter(CLIAdapter):
     ) -> SpawnResult:
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path = workdir / ".sdd" / "runtime" / f"{session_id}.last-message.txt"
+
+        if not os.environ.get("OPENAI_API_KEY"):
+            logger.warning("CodexAdapter: OPENAI_API_KEY is not set — spawn may fail or rely on existing CLI auth")
 
         cmd = [
             "codex",
-            "--model",
+            "exec",
+            "--full-auto",
+            "-m",
             model_config.model,
-            "--approval-mode",
-            "full-auto",
-            "--quiet",
+            "--json",
+            "-o",
+            str(output_path),
             prompt,
         ]
 
@@ -66,7 +75,9 @@ class CodexAdapter(CLIAdapter):
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing codex: {exc}") from exc
 
-        result = SpawnResult(pid=proc.pid, log_path=log_path)
+        self._probe_fast_exit(proc, log_path, provider_name="codex")
+
+        result = SpawnResult(pid=proc.pid, log_path=log_path, proc=proc)
         if timeout_seconds > 0:
             result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
         return result

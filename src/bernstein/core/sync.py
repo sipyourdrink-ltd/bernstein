@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
+from bernstein.core.backlog_parser import parse_backlog_path
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -64,22 +66,18 @@ def parse_backlog_file(path: Path) -> BacklogTask | None:
     Returns:
         Parsed BacklogTask, or None if the file cannot be parsed.
     """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        logger.warning("Cannot read backlog file %s: %s", path, exc)
+    parsed = parse_backlog_path(path)
+    if parsed is None:
         return None
-
-    if not text.strip():
-        return None
-
-    # Try YAML frontmatter first
-    task = _parse_yaml_frontmatter(text, path.name)
-    if task is not None:
-        return task
-
-    # Fall back to markdown bold fields
-    return _parse_markdown_fields(text, path.name)
+    return BacklogTask(
+        title=parsed.title,
+        description=parsed.description,
+        role=parsed.role,
+        priority=parsed.priority,
+        scope=parsed.scope,
+        complexity=parsed.complexity,
+        source_file=parsed.source_file,
+    )
 
 
 def _parse_yaml_frontmatter(text: str, filename: str) -> BacklogTask | None:

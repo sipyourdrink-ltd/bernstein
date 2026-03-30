@@ -6,7 +6,8 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any, cast
 
-from bernstein.adapters.base import SpawnResult
+from bernstein.adapters.base import RateLimitError, SpawnError, SpawnResult
+from bernstein.adapters.registry import get_adapter
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.core.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.context import TaskContextBuilder
@@ -14,7 +15,7 @@ from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import AgentSession, IsolationMode, ModelConfig, Task
-from bernstein.core.router import RouterError, TierAwareRouter
+from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
 from bernstein.plugins.manager import get_plugin_manager
@@ -22,6 +23,7 @@ from bernstein.templates.renderer import TemplateError, render_role_prompt
 
 if TYPE_CHECKING:
     import subprocess
+    import threading
     from pathlib import Path
 
     from bernstein.adapters.base import CLIAdapter
@@ -87,6 +89,10 @@ def _list_subdirs_cached(path: Path) -> list[str]:
 
 
 logger = logging.getLogger(__name__)
+
+
+class ShutdownInProgress(RuntimeError):
+    """Raised when a spawn is attempted after shutdown has started."""
 
 
 def _render_signal_check(session_id: str) -> str:
@@ -466,12 +472,16 @@ class AgentSpawner:
         enable_caching: bool = False,
         container_config: ContainerConfig | None = None,
         max_tokens_per_task: dict[str, int] | None = None,
+        role_model_policy: dict[str, dict[str, str]] | None = None,
     ) -> None:
+        self._enable_caching = enable_caching
+        self._adapter_cache: dict[str, CLIAdapter] = {}
         if enable_caching:
             from bernstein.adapters.caching_adapter import CachingAdapter
 
             adapter = CachingAdapter(adapter, workdir)
         self._adapter = adapter
+        self._adapter_cache[self._adapter.name()] = self._adapter
         self._templates_dir = templates_dir
         self._workdir = workdir
         self._registry = agent_registry or get_registry(
@@ -485,10 +495,12 @@ class AgentSpawner:
         self._mcp_manager = mcp_manager
         self._catalog = catalog
         self._max_tokens_per_task = max_tokens_per_task or {}
+        self._role_model_policy = role_model_policy or {}
         self._workspace = workspace
         self._bulletin = bulletin
         self._context_builder = TaskContextBuilder(workdir)
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
+        self._shutdown_event: threading.Event | None = None
         self._use_worktrees = use_worktrees
         self._worktree_mgr: WorktreeManager | None = None
         if use_worktrees:
@@ -508,6 +520,39 @@ class AgentSpawner:
             except ContainerError as exc:
                 logger.warning("Container runtime unavailable, falling back to subprocess: %s", exc)
 
+    def set_shutdown_event(self, shutdown_event: threading.Event | None) -> None:
+        """Attach the orchestrator shutdown event for spawn/worktree guards."""
+        self._shutdown_event = shutdown_event
+        if self._worktree_mgr is not None:
+            self._worktree_mgr.set_shutdown_event(shutdown_event)
+
+    def _infer_adapter_name_for_provider(self, provider_name: str | None, model: str) -> str:
+        """Infer adapter name from provider/model identifiers."""
+        text = f"{provider_name or ''} {model}".lower()
+        if "gemini" in text or "google" in text:
+            return "gemini"
+        if "codex" in text or "openai" in text or "gpt" in text:
+            return "codex"
+        if "qwen" in text:
+            return "qwen"
+        if "claude" in text or "anthropic" in text:
+            return "claude"
+        return self._adapter.name()
+
+    def _get_adapter_by_name(self, adapter_name: str) -> CLIAdapter:
+        """Return cached adapter instance, creating one when needed."""
+        cached = self._adapter_cache.get(adapter_name)
+        if cached is not None:
+            return cached
+
+        adapter = get_adapter(adapter_name)
+        if self._enable_caching:
+            from bernstein.adapters.caching_adapter import CachingAdapter
+
+            adapter = CachingAdapter(adapter, self._workdir)
+        self._adapter_cache[adapter_name] = adapter
+        return adapter
+
     def spawn_for_tasks(self, tasks: list[Task]) -> AgentSession:
         """Route, render prompt, and spawn an agent for a task batch.
 
@@ -520,6 +565,9 @@ class AgentSpawner:
         Raises:
             ValueError: If tasks list is empty or roles are mixed.
         """
+        if self._shutdown_event is not None and self._shutdown_event.is_set():
+            raise ShutdownInProgress("Orchestrator shutting down — refusing new spawn")
+
         if not tasks:
             raise ValueError("Cannot spawn agent with empty task list")
 
@@ -536,14 +584,51 @@ class AgentSpawner:
         )
         model_config = base_config
         provider_name: str | None = None
+        role_policy = self._role_model_policy.get(tasks[0].role, {})
+        preferred_provider = role_policy.get("provider")
+
+        if not tasks[0].model and role_policy.get("model"):
+            model_config = ModelConfig(
+                model=role_policy["model"],
+                effort=role_policy.get("effort", base_config.effort),
+                max_tokens=base_config.max_tokens,
+                is_batch=base_config.is_batch,
+            )
+        elif not tasks[0].effort and role_policy.get("effort"):
+            model_config = ModelConfig(
+                model=base_config.model,
+                effort=role_policy["effort"],
+                max_tokens=base_config.max_tokens,
+                is_batch=base_config.is_batch,
+            )
 
         if self._router is not None and self._router.state.providers:
             try:
-                decision = self._router.select_provider_for_task(tasks[0], base_config=base_config)
+                decision = self._router.select_provider_for_task(
+                    tasks[0],
+                    base_config=model_config,
+                    preferred_provider=preferred_provider,
+                )
                 model_config = decision.model_config
                 provider_name = decision.provider
             except RouterError as exc:
-                logger.warning("Router failed to select provider, using fallback: %s", exc)
+                if preferred_provider:
+                    logger.warning(
+                        "Role policy provider override for role=%s could not be honored (%s); "
+                        "falling back to normal routing",
+                        tasks[0].role,
+                        exc,
+                    )
+                    try:
+                        decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
+                        model_config = decision.model_config
+                        provider_name = decision.provider
+                    except RouterError as fallback_exc:
+                        logger.warning("Router failed to select provider, using fallback: %s", fallback_exc)
+                else:
+                    logger.warning("Router failed to select provider, using fallback: %s", exc)
+        elif preferred_provider:
+            provider_name = preferred_provider
 
         # Check catalog for a specialist agent before building from templates
         role = tasks[0].role
@@ -610,11 +695,6 @@ class AgentSpawner:
             isolation=isolation_mode.value,
         )
 
-        # Use CLI adapter for all roles including manager.
-        # When the adapter is Claude Code, the manager agent gets API instructions
-        # in its role template and uses curl to POST tasks to the server.
-        target_adapter = self._adapter
-
         # Determine working directory: repo-specific > worktree > shared workdir
         spawn_cwd = self._workdir
 
@@ -669,24 +749,106 @@ class AgentSpawner:
                 base_config=effective_mcp,
             )
 
-        # Spawn via adapter (with optional container isolation)
-        if self._container_mgr is not None:
-            result = self._spawn_in_container(
-                session_id=session_id,
-                prompt=prompt,
-                spawn_cwd=spawn_cwd,
-                model_config=model_config,
-                mcp_config=effective_mcp,
-                session=session,
-            )
-        else:
-            result = target_adapter.spawn(
-                prompt=prompt,
-                workdir=spawn_cwd,
-                model_config=model_config,
-                session_id=session_id,
-                mcp_config=effective_mcp,
-            )
+        # Spawn via adapter with runtime provider/adapter failover.
+        # This is critical for real-world rate-limit handling where a chosen
+        # provider may fail at process-start time.
+        result: SpawnResult | None = None
+        attempt_errors: list[str] = []
+        disabled_providers: dict[str, bool] = {}
+        attempted: set[tuple[str | None, str, str]] = set()
+        max_attempts = max(1, len(self._router.state.providers) if self._router is not None else 1) + 2
+        while len(attempted) < max_attempts:
+            adapter_name = self._infer_adapter_name_for_provider(provider_name, model_config.model)
+            attempt_key = (provider_name, adapter_name, model_config.model)
+            if attempt_key in attempted:
+                break
+            attempted.add(attempt_key)
+
+            try:
+                target_adapter = self._get_adapter_by_name(adapter_name)
+            except Exception as exc:
+                attempt_errors.append(f"{adapter_name}: {exc}")
+                break
+
+            try:
+                if self._container_mgr is not None:
+                    result = self._spawn_in_container(
+                        session_id=session_id,
+                        prompt=prompt,
+                        spawn_cwd=spawn_cwd,
+                        model_config=model_config,
+                        mcp_config=effective_mcp,
+                        session=session,
+                        adapter=target_adapter,
+                    )
+                else:
+                    result = target_adapter.spawn(
+                        prompt=prompt,
+                        workdir=spawn_cwd,
+                        model_config=model_config,
+                        session_id=session_id,
+                        mcp_config=effective_mcp,
+                    )
+                session.provider = (
+                    provider_name
+                    if provider_name is not None
+                    else (adapter_name if (self._router and self._router.state.providers) else None)
+                )
+                session.model_config = model_config
+                break
+            except RateLimitError as exc:
+                attempt_errors.append(f"{adapter_name}: {exc}")
+                logger.warning(
+                    "Rate-limit detected for provider=%s adapter=%s; retrying with alternate provider",
+                    provider_name or adapter_name,
+                    adapter_name,
+                )
+                if self._router is None or provider_name is None:
+                    continue
+                provider_cfg = self._router.state.providers.get(provider_name)
+                if provider_cfg is not None:
+                    provider_cfg.health.status = ProviderHealthStatus.RATE_LIMITED
+                    if provider_name not in disabled_providers:
+                        disabled_providers[provider_name] = provider_cfg.available
+                    provider_cfg.available = False
+                try:
+                    decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
+                    provider_name = decision.provider
+                    model_config = decision.model_config
+                except RouterError:
+                    provider_name = None
+            except (SpawnError, Exception) as exc:
+                attempt_errors.append(f"{adapter_name}: {exc}")
+                logger.warning(
+                    "Agent spawn failed (session=%s provider=%s adapter=%s): %s",
+                    session_id,
+                    provider_name,
+                    adapter_name,
+                    exc,
+                )
+                if self._router is None or provider_name is None:
+                    continue
+                provider_cfg = self._router.state.providers.get(provider_name)
+                if provider_cfg is not None:
+                    self._router.update_provider_health(provider_name, success=False)
+                    if provider_name not in disabled_providers:
+                        disabled_providers[provider_name] = provider_cfg.available
+                    provider_cfg.available = False
+                try:
+                    decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
+                    provider_name = decision.provider
+                    model_config = decision.model_config
+                except RouterError:
+                    provider_name = None
+
+        for prov, was_available in disabled_providers.items():
+            provider_cfg = self._router.state.providers.get(prov) if self._router is not None else None
+            if provider_cfg is not None:
+                provider_cfg.available = was_available
+
+        if result is None:
+            error_text = "; ".join(attempt_errors) or "no viable spawn attempts"
+            raise RuntimeError(f"All spawn attempts failed for session {session_id}: {error_text}")
         session.pid = result.pid
         transition_agent(session, "working", actor="spawner", reason="agent process started")
         if result.log_path:
@@ -824,6 +986,7 @@ class AgentSpawner:
         model_config: ModelConfig,
         mcp_config: dict[str, Any] | None,
         session: AgentSession,
+        adapter: CLIAdapter,
     ) -> SpawnResult:
         """Spawn an agent inside a container.
 
@@ -847,7 +1010,7 @@ class AgentSpawner:
         # Build environment for the container from the adapter's filtered env
         from bernstein.adapters.env_isolation import build_filtered_env
 
-        adapter_name = self._adapter.name().lower()
+        adapter_name = adapter.name().lower()
         extra_keys: list[str] = []
         if "claude" in adapter_name:
             extra_keys.append("ANTHROPIC_API_KEY")
@@ -901,6 +1064,7 @@ class AgentSpawner:
                     model_config=model_config,
                     session_id=session_id,
                     mcp_config=mcp_config,
+                    adapter=adapter,
                 ),
                 env=container_env,
                 workspace_override=spawn_cwd,
@@ -917,7 +1081,7 @@ class AgentSpawner:
                 exc,
             )
             session.isolation = IsolationMode.NONE.value
-            return self._adapter.spawn(
+            return adapter.spawn(
                 prompt=prompt,
                 workdir=spawn_cwd,
                 model_config=model_config,
@@ -932,6 +1096,7 @@ class AgentSpawner:
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None,
+        adapter: CLIAdapter,
     ) -> list[str]:
         """Build the CLI command to run inside the container.
 
@@ -952,7 +1117,7 @@ class AgentSpawner:
 
         # Build a generic shell command that reads the prompt and pipes it
         # to the adapter CLI. This works across all adapters.
-        adapter_name = self._adapter.name().lower()
+        adapter_name = adapter.name().lower()
         if "claude" in adapter_name:
             cmd = [
                 "sh",
@@ -986,8 +1151,19 @@ class AgentSpawner:
         if session.container_id and self._container_mgr is not None:
             handle = self._container_mgr.get_handle(session.id)
             if handle is not None:
-                return self._container_mgr.is_alive(handle)
+                alive = self._container_mgr.is_alive(handle)
+                if not alive:
+                    session.exit_code = self._container_mgr.get_exit_code(handle)
+                return alive
             return False
+
+        proc = self._procs.get(session.id)
+        if proc is not None:
+            exit_code = proc.poll()
+            if exit_code is not None:
+                session.exit_code = exit_code
+                return False
+            return True
 
         if session.pid is None:
             return False
@@ -1052,7 +1228,7 @@ class AgentSpawner:
             except Exception as exc:
                 logger.warning("reap_completed_agent: terminate failed for %s: %s", session.id, exc)
             try:
-                proc.wait(timeout=5)
+                session.exit_code = proc.wait(timeout=5)
             except Exception as exc:
                 logger.warning("reap_completed_agent: wait failed for %s: %s", session.id, exc)
         logger.info("Agent %s process reaped", session.id)

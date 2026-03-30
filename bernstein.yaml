@@ -22,6 +22,42 @@ routing:
   reviewer: codex-gpt-5.4     # cross-model review (different model catches different bugs)
   docs: gemini-flash           # documentation (free tier, fast)
 
+# Runtime-enforced provider/model pins. Provider names come from
+# .sdd/config/providers.yaml.
+role_model_policy:
+  manager:
+    provider: claude_premium
+    model: opus
+    effort: max
+  architect:
+    provider: claude_premium
+    model: opus
+    effort: max
+  security:
+    provider: claude_premium
+    model: opus
+    effort: max
+  backend:
+    provider: claude_standard
+    model: sonnet
+    effort: high
+  frontend:
+    provider: claude_standard
+    model: sonnet
+    effort: high
+  qa:
+    provider: claude_standard
+    model: sonnet
+    effort: high
+  reviewer:
+    provider: codex_standard
+    model: o3
+    effort: high
+  docs:
+    provider: gemini_cheap
+    model: gemini-2.5-flash
+    effort: high
+
 # Fallback: if non-Claude agent fails, retry on Claude Code
 fallback:
   enabled: true

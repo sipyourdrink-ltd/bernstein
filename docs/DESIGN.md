@@ -154,6 +154,8 @@ src/bernstein/adapters/
 ├── claude.py           # Claude Code CLI
 ├── codex.py            # OpenAI Codex CLI
 ├── gemini.py           # Gemini CLI
+├── kiro.py             # Kiro CLI
+├── opencode.py         # OpenCode CLI
 ├── generic.py          # Generic pass-through adapter
 ├── qwen.py             # Qwen CLI agent
 ├── roo_code.py         # Roo Code
@@ -168,6 +170,26 @@ Each adapter knows how to:
 2. Pass model/effort parameters
 3. Launch and monitor the process
 4. Read output logs
+
+Recent hardening in this layer:
+
+1. Codex and Gemini use explicit headless JSON-oriented invocations so spawn failures are observable immediately.
+2. Fast-exit probes classify rate limits and convert them into typed `RateLimitError` failures that the spawner can reroute.
+3. Kiro and OpenCode are first-class adapters in discovery, registry, status, and tests.
+
+## Verified Response Cache and Provider Status
+
+The semantic response cache is intentionally conservative:
+
+1. Entries are only eligible for auto-completion when they are marked `verified`.
+2. Verification requires janitor success, a zero exit code, and a tracked git diff with non-zero changed lines.
+3. Unverified entries remain inspectable for debugging but are never used to silently close future tasks.
+
+Provider health is now surfaced separately from task state:
+
+1. A quota poller records per-provider snapshots into `.sdd/runtime/provider_status.json`.
+2. `/status` and `bernstein status` show provider health, tier, model, and quota hints when available.
+3. Role-aware provider/model pinning is supplied by `role_model_policy` in `bernstein.yaml`, while concrete provider definitions remain in `.sdd/config/providers.yaml`.
 
 A special `adapter-writer` agent role can study a new CLI's docs and generate the adapter code automatically.
 

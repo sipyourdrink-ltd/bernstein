@@ -14,13 +14,19 @@ Usage::
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
+
+if TYPE_CHECKING:
+    import threading
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +168,11 @@ class WorktreeManager:
         self.repo_root = repo_root.resolve()
         self._base_dir = self.repo_root / _WORKTREE_BASE
         self._setup_config = setup_config
+        self._shutdown_event: threading.Event | None = None
+
+    def set_shutdown_event(self, shutdown_event: threading.Event | None) -> None:
+        """Attach a shutdown event used to reject new worktree creation."""
+        self._shutdown_event = shutdown_event
 
     # ------------------------------------------------------------------
     # Public API
@@ -185,6 +196,9 @@ class WorktreeManager:
             WorktreeError: If the worktree or branch already exists, or if
                 the ``git worktree add`` command fails for any other reason.
         """
+        if self._shutdown_event is not None and self._shutdown_event.is_set():
+            raise WorktreeError("Orchestrator shutting down — refusing new worktree")
+
         worktree_path = self._base_dir / session_id
         branch_name = f"agent/{session_id}"
 
@@ -258,16 +272,48 @@ class WorktreeManager:
         Returns:
             Number of worktrees cleaned up.
         """
+        try:
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=self.repo_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception as exc:
+            logger.debug("git worktree prune failed: %s", exc)
+
         if not self._base_dir.exists():
             return 0
         cleaned = 0
         for entry in self._base_dir.iterdir():
             if entry.is_dir():
                 session_id = entry.name
+                if self._session_has_live_pid(session_id):
+                    logger.debug("Keeping live worktree %s during stale cleanup", session_id)
+                    continue
                 logger.info("Cleaning stale worktree: %s", session_id)
                 self.cleanup(session_id)
                 cleaned += 1
         return cleaned
+
+    def _session_has_live_pid(self, session_id: str) -> bool:
+        """Return True when the session has a live recorded worker process."""
+        pid_file = self.repo_root / ".sdd" / "runtime" / "pids" / f"{session_id}.json"
+        if not pid_file.exists():
+            return False
+        try:
+            data = json.loads(pid_file.read_text(encoding="utf-8"))
+            worker_pid = int(data.get("worker_pid", 0) or 0)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+        if worker_pid <= 0:
+            return False
+        try:
+            os.kill(worker_pid, 0)
+            return True
+        except OSError:
+            return False
 
     def list_active(self) -> list[str]:
         """Return session IDs that currently have active worktrees.

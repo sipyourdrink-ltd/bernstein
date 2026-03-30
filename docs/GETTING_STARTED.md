@@ -77,6 +77,7 @@ Bernstein will:
 
 ```bash
 bernstein ps                        # table of running agents
+bernstein status                    # task summary + provider health/quota when available
 ```
 
 **TUI dashboard** — `bernstein` blocks in a live terminal dashboard by default.
@@ -100,6 +101,23 @@ bernstein dashboard                 # opens http://localhost:8052/dashboard
 curl http://127.0.0.1:8052/status   # dashboard summary
 curl http://127.0.0.1:8052/tasks    # all tasks
 curl http://127.0.0.1:8052/metrics  # Prometheus format
+```
+
+### 3b. Validate adapters and inspect cache
+
+Before a long run, smoke-test the adapters you expect Bernstein to use:
+
+```bash
+bernstein test-adapter codex
+bernstein test-adapter gemini
+```
+
+Response-cache entries are safe by default: only verified entries can auto-complete future tasks. Inspect or clear them with:
+
+```bash
+bernstein cache list
+bernstein cache inspect TASK-123
+bernstein cache clear --unverified --yes
 ```
 
 ### 4. Add a task manually
@@ -171,6 +189,22 @@ tasks:
     scope: medium
     complexity: medium
     depends_on: ["TSK-001", "TSK-002"]
+
+# Optional: pin specific roles to registered providers/models.
+# Provider names must match your provider config (for example .sdd/config/providers.yaml).
+role_model_policy:
+  backend:
+    provider: claude_standard
+    model: sonnet
+    effort: high
+  reviewer:
+    provider: codex_standard
+    model: o3
+    effort: high
+  docs:
+    provider: gemini_cheap
+    model: gemini-2.5-flash
+    effort: high
 ```
 
 ---
@@ -803,6 +837,13 @@ documentation coverage status, see [`docs/FEATURE_MATRIX.md`](FEATURE_MATRIX.md)
 | `bernstein listen [--dry-run]` | Voice command session (offline STT, experimental) |
 | `bernstein checkpoint [--goal G]` | Snapshot session progress |
 | `bernstein wrap-up [--stop]` | End session with a structured wrap-up brief |
+
+### Scenario playbooks and rolling roadmaps
+
+- Put reusable scenario recipes in `.bernstein/scenarios/**/*.yaml`.
+- Put roadmap plans in `.sdd/roadmaps/open/*.yaml` with ordered `scenarios` and `wave_size`.
+- On each orchestrator tick, Bernstein emits only the next wave of tickets into `.sdd/backlog/open/` and persists roadmap cursor state in `.sdd/runtime/roadmaps/`.
+- This keeps large roadmap stubs as planning artifacts while execution still runs on concrete tickets.
 
 ### Configuration & workspace
 

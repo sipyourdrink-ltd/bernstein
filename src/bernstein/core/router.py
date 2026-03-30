@@ -20,6 +20,8 @@ from bernstein.core.models import Complexity, ModelConfig, Scope, Task
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.quota_probe import QuotaSnapshot
+
 logger = logging.getLogger(__name__)
 
 
@@ -235,6 +237,7 @@ class ProviderConfig:
     max_context_tokens: int = 200_000
     supports_streaming: bool = True
     supports_vision: bool = False
+    quota_snapshot: QuotaSnapshot | None = None
 
     def is_free_tier_exhausted(self) -> bool:
         """Check if free tier quota is exhausted."""
@@ -443,6 +446,7 @@ class TierAwareRouter:
         self,
         task: Task,
         base_config: ModelConfig | None = None,
+        preferred_provider: str | None = None,
     ) -> RoutingDecision:
         """
         Select the best provider for a task based on health, cost, and requirements.
@@ -457,6 +461,7 @@ class TierAwareRouter:
         Args:
             task: Task to route.
             base_config: Optional base model config (uses route_task if None).
+            preferred_provider: Optional provider pinned by role policy.
 
         Returns:
             RoutingDecision with selected provider and metadata.
@@ -468,6 +473,22 @@ class TierAwareRouter:
         # Determine required capabilities based on task
         requires_vision = self._task_requires_vision(task)
         requires_large_context = self._task_requires_large_context(task)
+
+        if preferred_provider:
+            provider = self.state.providers.get(preferred_provider)
+            if provider is None:
+                raise RouterError(f"Preferred provider '{preferred_provider}' is not registered")
+            if not self.state.model_policy.is_provider_allowed(provider.name):
+                raise RouterError(f"Preferred provider '{preferred_provider}' is denied by model_policy")
+            if not provider.available:
+                raise RouterError(f"Preferred provider '{preferred_provider}' is unavailable")
+            if not self._provider_supports_model(provider, base_config.model):
+                raise RouterError(
+                    f"Preferred provider '{preferred_provider}' does not support model '{base_config.model}'"
+                )
+            if not self._provider_meets_requirements(provider, requires_vision, requires_large_context):
+                raise RouterError(f"Preferred provider '{preferred_provider}' does not meet task requirements")
+            return self._create_decision(provider, base_config, "role_policy", fallback=False)
 
         # Try preferred tier first (default: FREE)
         preferred_providers = self.get_available_providers(

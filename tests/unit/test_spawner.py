@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from bernstein.core.agency_loader import AgencyAgent
 from bernstein.core.models import (
@@ -338,6 +341,88 @@ class TestSpawnerWithRouter:
         # Should fall back gracefully
         assert session.provider is None
         assert session.pid == 500
+
+    def test_spawn_retries_with_alternate_provider_after_spawn_failure(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+
+        router = TierAwareRouter()
+        router.state.preferred_tier = Tier.FREE
+        router.register_provider(
+            ProviderConfig(
+                name="anthropic_primary",
+                models={"sonnet": RouterModelConfig("sonnet", "high")},
+                tier=Tier.FREE,
+                cost_per_1k_tokens=0.0,
+            )
+        )
+        router.register_provider(
+            ProviderConfig(
+                name="google_backup",
+                models={"sonnet": RouterModelConfig("sonnet", "high")},
+                tier=Tier.STANDARD,
+                cost_per_1k_tokens=0.003,
+            )
+        )
+
+        failing_adapter = mock_adapter_factory(pid=0)
+        failing_adapter.spawn.side_effect = RuntimeError("rate limit exceeded")
+        failing_adapter.name.return_value = "claude"
+
+        backup_adapter = mock_adapter_factory(pid=901)
+        backup_adapter.name.return_value = "gemini"
+
+        spawner = AgentSpawner(mock_adapter_factory(pid=123), templates_dir, tmp_path, router=router)
+        with patch.object(spawner, "_get_adapter_by_name", side_effect=[failing_adapter, backup_adapter]):
+            session = spawner.spawn_for_tasks([make_task()])
+
+        assert session.pid == 901
+        assert session.provider == "google_backup"
+        assert failing_adapter.spawn.call_count == 1
+        assert backup_adapter.spawn.call_count == 1
+
+    def test_role_model_policy_pins_provider_and_model(
+        self, tmp_path: Path, make_task, mock_adapter_factory
+    ) -> None:
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+
+        router = TierAwareRouter()
+        router.register_provider(
+            ProviderConfig(
+                name="codex",
+                models={"openai/gpt-5.4-mini": RouterModelConfig("openai/gpt-5.4-mini", "high")},
+                tier=Tier.STANDARD,
+                cost_per_1k_tokens=0.003,
+            )
+        )
+        router.register_provider(
+            ProviderConfig(
+                name="claude",
+                models={"sonnet": RouterModelConfig("sonnet", "high")},
+                tier=Tier.FREE,
+                cost_per_1k_tokens=0.0,
+            )
+        )
+
+        pinned_adapter = mock_adapter_factory(pid=777)
+        pinned_adapter.name.return_value = "codex"
+        spawner = AgentSpawner(
+            mock_adapter_factory(pid=123),
+            templates_dir,
+            tmp_path,
+            router=router,
+            role_model_policy={"backend": {"provider": "codex", "model": "openai/gpt-5.4-mini"}},
+        )
+
+        with patch.object(spawner, "_get_adapter_by_name", return_value=pinned_adapter):
+            session = spawner.spawn_for_tasks([make_task(role="backend")])
+
+        assert session.provider == "codex"
+        assert session.model_config.model == "openai/gpt-5.4-mini"
+        assert session.pid == 777
 
 
 # --- _render_prompt with agency_catalog ---

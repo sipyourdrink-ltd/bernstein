@@ -21,6 +21,7 @@ from bernstein.core.models import ApiTier, ModelConfig, ProviderType
 def _make_popen_mock(pid: int) -> MagicMock:
     m = MagicMock(spec=subprocess.Popen)
     m.pid = pid
+    m.wait.return_value = None
     return m
 
 
@@ -65,10 +66,10 @@ class TestCodexAdapterSpawn:
                 session_id="codex-s2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--model" in inner
-        assert inner[inner.index("--model") + 1] == "o3-mini"
+        assert "-m" in inner
+        assert inner[inner.index("-m") + 1] == "o3-mini"
 
-    def test_approval_mode_full_auto(self, tmp_path: Path) -> None:
+    def test_full_auto_flag_present(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
         proc_mock = _make_popen_mock(pid=102)
         with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
@@ -79,10 +80,9 @@ class TestCodexAdapterSpawn:
                 session_id="codex-s3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--approval-mode" in inner
-        assert inner[inner.index("--approval-mode") + 1] == "full-auto"
+        assert "--full-auto" in inner
 
-    def test_quiet_flag_present(self, tmp_path: Path) -> None:
+    def test_json_output_flag_present(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
         proc_mock = _make_popen_mock(pid=103)
         with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
@@ -93,7 +93,21 @@ class TestCodexAdapterSpawn:
                 session_id="codex-s4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert "--quiet" in inner
+        assert "--json" in inner
+
+    def test_output_file_flag_present(self, tmp_path: Path) -> None:
+        adapter = CodexAdapter()
+        proc_mock = _make_popen_mock(pid=109)
+        with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="o3", effort="high"),
+                session_id="codex-s9",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "-o" in inner
+        assert inner[inner.index("-o") + 1].endswith("codex-s9.last-message.txt")
 
     def test_prompt_appended_last(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -277,6 +291,40 @@ class TestCodexSpawnMissingBinary:
                 model_config=ModelConfig(model="o3", effort="high"),
                 session_id="perm-denied",
             )
+
+
+class TestCodexWarningsAndFastExit:
+    def test_warns_when_openai_api_key_missing(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        adapter = CodexAdapter()
+        proc_mock = _make_popen_mock(pid=301)
+        with (
+            patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock),
+            patch.dict("os.environ", {"PATH": "/usr/bin"}, clear=True),
+            caplog.at_level("WARNING"),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="o3", effort="high"),
+                session_id="warn-missing-key",
+            )
+        assert "OPENAI_API_KEY is not set" in caplog.text
+
+    def test_fast_exit_rate_limit_raises(self, tmp_path: Path) -> None:
+        adapter = CodexAdapter()
+        proc_mock = _make_popen_mock(pid=302)
+        proc_mock.wait.return_value = 1
+        with (
+            patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock),
+            patch.object(CodexAdapter, "_read_last_lines", return_value=["429 rate limit exceeded"]),
+        ):
+            with pytest.raises(RuntimeError, match="rate-limited"):
+                adapter.spawn(
+                    prompt="hello",
+                    workdir=tmp_path,
+                    model_config=ModelConfig(model="o3", effort="high"),
+                    session_id="codex-fast-exit",
+                )
 
 
 # ---------------------------------------------------------------------------

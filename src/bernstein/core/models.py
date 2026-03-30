@@ -37,7 +37,9 @@ class ProviderType(Enum):
     GEMINI = "gemini"
     CODEX = "codex"
     QWEN = "qwen"
+    KIRO = "kiro"
     KILO = "kilo"
+    OPENCODE = "opencode"
 
 
 class ApiTier(Enum):
@@ -585,6 +587,7 @@ class AgentSession:
     heartbeat_ts: float = 0.0
     spawn_ts: float = field(default_factory=time.time)
     status: Literal["starting", "working", "idle", "dead"] = "starting"
+    exit_code: int | None = None  # Process exit code once known; None while still running
     cell_id: str | None = None  # Which cell this agent belongs to
     provider: str | None = None  # Provider selected by TierAwareRouter
     agent_source: str = "built-in"  # "catalog", "agency", or "built-in"

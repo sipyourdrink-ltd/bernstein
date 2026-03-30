@@ -9,10 +9,10 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from bernstein.core.backlog_parser import parse_backlog_text
 from bernstein.core.models import Task, TaskType
 
 if TYPE_CHECKING:
@@ -265,53 +265,18 @@ def parse_backlog_file(filename: str, content: str) -> dict[str, Any]:
     Returns:
         Dict suitable for POST /tasks.
     """
-    lines = content.splitlines()
-
-    # Title: first H1 line, strip leading "# " and numeric prefix like "100 -- "
-    title = filename.replace(".md", "").replace("-", " ")
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            raw = stripped[2:].strip()
-            raw = re.sub(r"^\d+\s*--\s*", "", raw)
-            title = raw
-            break
-
-    # Role: **Role:** backend
-    role = "backend"
-    role_match = re.search(r"\*\*Role:\*\*\s*(\S+)", content)
-    if role_match:
-        role = role_match.group(1).strip()
-
-    # Priority: **Priority:** 2
-    priority = 2
-    priority_match = re.search(r"\*\*Priority:\*\*\s*(\d+)", content)
-    if priority_match:
-        priority = int(priority_match.group(1))
-
-    # Description: everything after the header/front-matter lines
-    desc_lines: list[str] = []
-    past_header = False
-    for line in lines:
-        stripped = line.strip()
-        if not past_header:
-            if stripped.startswith("# ") or re.match(r"\*\*\w+:\*\*", stripped):
-                past_header = True
-                continue
-            continue
-        if re.match(r"\*\*\w+:\*\*", stripped):
-            continue
-        desc_lines.append(line)
-    description = "\n".join(desc_lines).strip() or content.strip()
-
-    return {
-        "title": title,
-        "description": description,
-        "role": role,
-        "priority": priority,
-        "scope": "medium",
-        "complexity": "medium",
-    }
+    parsed = parse_backlog_text(filename, content)
+    if parsed is None:
+        title = filename.replace(".md", "").replace("-", " ")
+        return {
+            "title": title,
+            "description": content.strip(),
+            "role": "backend",
+            "priority": 2,
+            "scope": "medium",
+            "complexity": "medium",
+        }
+    return parsed.to_task_payload()
 
 
 # ---------------------------------------------------------------------------

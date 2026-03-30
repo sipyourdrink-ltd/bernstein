@@ -76,6 +76,9 @@ class SemanticCacheEntry:
         hit_count: Times this entry was served from cache (not counting initial store).
         created_at: Unix timestamp when the entry was first stored.
         last_used_at: Unix timestamp of the most recent cache hit.
+        verified: Whether the entry came from a real completed task execution.
+        git_diff_lines: Number of tracked diff lines in the producing worktree.
+        source_task_id: Optional originating task ID for inspection/debugging.
     """
 
     cache_key: str
@@ -86,6 +89,9 @@ class SemanticCacheEntry:
     hit_count: int
     created_at: float
     last_used_at: float | None = None
+    verified: bool = False
+    git_diff_lines: int = 0
+    source_task_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-safe dict."""
@@ -103,6 +109,13 @@ class SemanticCacheEntry:
             hit_count=data.get("hit_count", 0),
             created_at=data["created_at"],
             last_used_at=data.get("last_used_at"),
+            verified=bool(data.get("verified", False)),
+            git_diff_lines=int(data.get("git_diff_lines", 0) or 0),
+            source_task_id=(
+                str(data["source_task_id"])
+                if data.get("source_task_id") is not None
+                else None
+            ),
         )
 
 
@@ -395,13 +408,28 @@ class ResponseCacheManager:
             ``(result_summary, similarity)`` where *result_summary* is the
             cached agent output or ``None`` on a miss.
         """
+        entry, similarity = self.lookup_entry(key_text)
+        if entry is None:
+            return None, similarity
+        return entry.response, similarity
+
+    def lookup_entry(self, key_text: str) -> tuple[SemanticCacheEntry | None, float]:
+        """Look up a cached entry for the given task key.
+
+        Args:
+            key_text: Task key from :meth:`task_key`.
+
+        Returns:
+            ``(entry, similarity)`` where *entry* is the matched cache entry
+            or ``None`` on a miss.
+        """
         # --- exact match (O(1)) ---
         exact_key = _hash(_normalize(key_text))
         entry = self._manifest.entries.get(exact_key)
         if entry is not None and not self._expired(entry):
             self._record_hit(entry)
             logger.debug("Response cache exact-hit for key=%s", exact_key[:12])
-            return entry.response, 1.0
+            return entry, 1.0
 
         # --- fuzzy match (O(n)) ---
         query_vec = _embed(key_text)
@@ -422,17 +450,28 @@ class ResponseCacheManager:
                 "Response cache fuzzy-hit (similarity=%.3f) for task",
                 best_score,
             )
-            return best_entry.response, best_score
+            return best_entry, best_score
 
         return None, 0.0
 
-    def store(self, key_text: str, result_summary: str) -> None:
+    def store(
+        self,
+        key_text: str,
+        result_summary: str,
+        *,
+        verified: bool = False,
+        git_diff_lines: int = 0,
+        source_task_id: str | None = None,
+    ) -> None:
         """Cache a completed task's result_summary.
 
         Args:
             key_text: Task key from :meth:`task_key`.
             result_summary: The agent's result to cache.  Empty strings are
                 not stored (they carry no reusable information).
+            verified: Whether the entry came from a verified real execution.
+            git_diff_lines: Number of tracked diff lines in the producing run.
+            source_task_id: Originating task ID when known.
         """
         if not result_summary:
             return
@@ -445,6 +484,9 @@ class ResponseCacheManager:
             entry = self._manifest.entries[cache_key]
             entry.response = result_summary
             entry.last_used_at = time.time()
+            entry.verified = verified
+            entry.git_diff_lines = git_diff_lines
+            entry.source_task_id = source_task_id
             return
 
         self._evict_if_needed()
@@ -457,9 +499,52 @@ class ResponseCacheManager:
             model="agent",  # model-agnostic — result caching only
             hit_count=0,
             created_at=time.time(),
+            verified=verified,
+            git_diff_lines=git_diff_lines,
+            source_task_id=source_task_id,
         )
         self._manifest.entries[cache_key] = entry
         logger.debug("Response cache stored entry key=%s", cache_key[:12])
+
+    def list_entries(self) -> list[SemanticCacheEntry]:
+        """Return response-cache entries sorted by recency."""
+        return sorted(
+            self._manifest.entries.values(),
+            key=lambda entry: entry.last_used_at or entry.created_at,
+            reverse=True,
+        )
+
+    def inspect_task(self, task_id: str) -> SemanticCacheEntry | None:
+        """Return the response-cache entry that originated from *task_id*."""
+        for entry in self._manifest.entries.values():
+            if entry.source_task_id == task_id:
+                return entry
+        return None
+
+    def clear(self, *, unverified_only: bool = False) -> int:
+        """Remove response-cache entries and persist the updated manifest.
+
+        Args:
+            unverified_only: When True, keep verified entries and remove only
+                unverified ones.
+
+        Returns:
+            Number of entries removed.
+        """
+        if unverified_only:
+            removed = sum(1 for entry in self._manifest.entries.values() if not entry.verified)
+            self._manifest.entries = {
+                key: entry
+                for key, entry in self._manifest.entries.items()
+                if entry.verified
+            }
+        else:
+            removed = len(self._manifest.entries)
+            self._manifest.entries.clear()
+
+        if removed > 0 or self._cache_path.exists():
+            self.save()
+        return removed
 
     def save(self) -> None:
         """Persist the current manifest to disk."""
@@ -481,6 +566,8 @@ class ResponseCacheManager:
             "total_saved_calls": self._manifest.total_saved_calls,
             "threshold": self._threshold,
             "cache_path": str(self._cache_path),
+            "verified_entries": sum(1 for entry in self._manifest.entries.values() if entry.verified),
+            "unverified_entries": sum(1 for entry in self._manifest.entries.values() if not entry.verified),
         }
 
     # ------------------------------------------------------------------

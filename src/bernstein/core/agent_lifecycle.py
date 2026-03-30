@@ -152,6 +152,48 @@ def _maybe_preserve_worktree(orch: Any, session: AgentSession, task_id: str) -> 
 # ---------------------------------------------------------------------------
 
 
+def _requeue_rate_limited_task(
+    *,
+    client: httpx.Client,
+    server_url: str,
+    task: Task,
+    fallback_model: str | None,
+) -> bool:
+    """Persist a fallback model if needed, then force-claim the task.
+
+    Args:
+        client: HTTP client for task-server calls.
+        server_url: Base server URL.
+        task: Task to requeue.
+        fallback_model: Optional model override selected by cascade logic.
+
+    Returns:
+        ``True`` when the task was successfully force-claimed, otherwise
+        ``False``.
+    """
+    if fallback_model and fallback_model != task.model:
+        try:
+            client.patch(
+                f"{server_url}/tasks/{task.id}",
+                json={"model": fallback_model},
+            ).raise_for_status()
+            task.model = fallback_model
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Failed to persist fallback model %s for task %s before requeue: %s",
+                fallback_model,
+                task.id,
+                exc,
+            )
+
+    try:
+        client.post(f"{server_url}/tasks/{task.id}/force-claim").raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.error("Failed to force-claim rate-limited task %s: %s", task.id, exc)
+        return False
+    return True
+
+
 def handle_orphaned_task(
     orch: Any,
     task_id: str,
@@ -262,6 +304,7 @@ def handle_orphaned_task(
                 trigger=_failure_type,
             )
 
+            _fallback_model: str | None = None
             if isinstance(_decision, CascadeDecision):
                 logger.info(
                     "Cascade fallback: task %s reassigned from %s → %s (%s)",
@@ -270,8 +313,7 @@ def handle_orphaned_task(
                     _decision.fallback_provider,
                     _decision.reason,
                 )
-                # Override the task's model to use the fallback agent's default
-                task.model = _decision.fallback_model
+                _fallback_model = _decision.fallback_model
 
                 # Persist cascade metrics
                 _metrics_dir = orch._workdir / ".sdd" / "metrics"
@@ -282,6 +324,71 @@ def handle_orphaned_task(
                     task_id,
                     _decision.reason,
                 )
+
+            if _failure_type == "rate_limit":
+                success = False
+                if _requeue_rate_limited_task(
+                    client=orch._client,
+                    server_url=base,
+                    task=task,
+                    fallback_model=_fallback_model,
+                ):
+                    if _fallback_model:
+                        task.model = _fallback_model
+                    error_type = "rate_limit_requeued"
+                    logger.info(
+                        "Requeued rate-limited orphaned task %s via force-claim (provider=%s, model=%s)",
+                        task_id,
+                        session.provider,
+                        task.model or "",
+                    )
+                    _wal = getattr(orch, "_wal_writer", None)
+                    if _wal is not None:
+                        try:
+                            _wal.write_entry(
+                                decision_type="task_requeued",
+                                inputs={
+                                    "task_id": task_id,
+                                    "agent_id": session.id,
+                                    "orphaned": True,
+                                    "trigger": _failure_type,
+                                },
+                                output={"model": task.model or "", "provider": session.provider or ""},
+                                actor="agent_lifecycle",
+                            )
+                        except OSError:
+                            logger.debug("WAL write failed for orphaned task_requeued %s", task_id)
+                else:
+                    error_type = "rate_limit_requeue_failed"
+
+                emit_orphan_metrics(
+                    orch._workdir,
+                    task_id,
+                    session,
+                    start_ts,
+                    success=False,
+                    error_type=error_type,
+                )
+                orch._record_provider_health(session, success=False)
+                if orch._evolution is not None:
+                    _now = time.time()
+                    _duration = _now - start_ts
+                    try:
+                        orch._evolution.record_task_completion(
+                            task=task,
+                            duration_seconds=round(_duration, 2),
+                            cost_usd=0.0,
+                            janitor_passed=False,
+                            model=session.model_config.model,
+                            provider=session.provider,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Evolution record_task_completion for orphan %s failed: %s",
+                            task_id,
+                            exc,
+                        )
+                return
 
     # Escalate strategy: block task when crash limit exceeded
     if orch._config.recovery == "escalate" and orch._crash_counts.get(task_id, 0) >= orch._config.max_crash_retries:

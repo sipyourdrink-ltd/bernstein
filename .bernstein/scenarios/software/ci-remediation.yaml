@@ -1,0 +1,31 @@
+id: ci-remediation
+name: CI Remediation Sprint
+version: "1.0"
+description: Stabilize failing CI by tightening checks and fixing regressions.
+tags:
+  - ci
+  - quality
+  - automation
+tasks:
+  - title: Audit failing checks and classify root causes
+    role: qa
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Review the latest CI failures and classify them into flaky tests, lint/type failures,
+      infrastructure errors, and real regressions. Produce a short root-cause matrix.
+  - title: Fix deterministic lint and type violations
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+    description: |
+      Resolve deterministic lint/type violations and add regression tests where needed.
+  - title: Add CI guardrails for recurring failure classes
+    role: devops
+    priority: 2
+    scope: medium
+    complexity: medium
+    description: |
+      Add lightweight guardrails (retries, clearer output, or pre-checks) for recurring CI failures.

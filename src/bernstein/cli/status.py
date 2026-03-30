@@ -6,7 +6,7 @@ active agents, total cost, and elapsed time.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from rich.table import Table
 from rich.text import Text
@@ -103,6 +103,48 @@ def _build_cost_table(per_role: list[dict[str, Any]]) -> Table | None:
     return table
 
 
+def _build_provider_table(provider_status: dict[str, Any]) -> Table | None:
+    """Build a provider/quota table from persisted orchestrator status."""
+    providers_obj = provider_status.get("providers")
+    if not isinstance(providers_obj, dict) or not providers_obj:
+        return None
+
+    table = Table(title="Providers", show_lines=False, header_style="bold cyan")
+    table.add_column("Provider", min_width=12)
+    table.add_column("Health", min_width=12)
+    table.add_column("Tier", min_width=10)
+    table.add_column("Model", min_width=20)
+    table.add_column("Quota", min_width=18)
+
+    providers = cast("dict[str, object]", providers_obj)
+    for provider_name, payload_obj in sorted(providers.items(), key=lambda item: item[0]):
+        if not isinstance(payload_obj, dict):
+            continue
+        payload = cast("dict[str, object]", payload_obj)
+        snapshot_obj = payload.get("quota_snapshot")
+        snapshot = cast("dict[str, object]", snapshot_obj) if isinstance(snapshot_obj, dict) else {}
+        quota = "unknown"
+        rpm_obj = snapshot.get("requests_per_minute")
+        tpm_obj = snapshot.get("tokens_per_minute")
+        rpm = int(rpm_obj) if isinstance(rpm_obj, int) else None
+        tpm = int(tpm_obj) if isinstance(tpm_obj, int) else None
+        if rpm is not None or tpm is not None:
+            parts: list[str] = []
+            if rpm is not None:
+                parts.append(f"{rpm}/m")
+            if tpm is not None:
+                parts.append(f"{tpm} tok/m")
+            quota = " ".join(parts)
+        table.add_row(
+            provider_name,
+            str(payload.get("health", "unknown")),
+            str(payload.get("tier", "unknown")),
+            str(payload.get("model", "—")),
+            quota,
+        )
+    return table
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -128,6 +170,8 @@ def render_status(
     agents_raw: list[dict[str, Any]] = data.get("agents", [])
     summary_raw: dict[str, Any] = data.get("summary", {})
     per_role: list[dict[str, Any]] = data.get("per_role", [])
+    provider_status_obj = data.get("provider_status", {})
+    provider_status = cast("dict[str, Any]", provider_status_obj) if isinstance(provider_status_obj, dict) else {}
 
     summary = TaskSummary.from_dict(
         {
@@ -192,6 +236,11 @@ def render_status(
         cost_table = _build_cost_table(per_role)
         if cost_table is not None:
             con.print(cost_table)
+
+    provider_table = _build_provider_table(provider_status)
+    if provider_table is not None:
+        con.print()
+        con.print(provider_table)
 
     # Clean summary table
     con.print()
