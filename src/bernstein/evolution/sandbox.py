@@ -325,7 +325,10 @@ class SandboxValidator:
         try:
             result = subprocess.run(
                 command,
-                shell=True,  # SECURITY: shell=True required because command is a developer-configured test command string (e.g. "pytest tests/ -x") that may use shell features like pipes or globs; not user input
+                shell=True,  # SECURITY: shell=True required because command is a
+                # developer-configured test command string
+                # (e.g. "pytest tests/ -x") that may use shell features like
+                # pipes or globs; not user input
                 cwd=worktree,
                 capture_output=True,
                 text=True,
