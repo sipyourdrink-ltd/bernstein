@@ -73,6 +73,12 @@ def _clean_stale_runtime(workdir: Path) -> None:
     if jsonl.exists():
         jsonl.unlink(missing_ok=True)
 
+    # Clear stale SQLite WAL/SHM locks from codebase index (can block re-index)
+    index_dir = workdir / ".sdd" / "index"
+    if index_dir.exists():
+        for lock_file in (*index_dir.glob("*.db-wal"), *index_dir.glob("*.db-shm")):
+            lock_file.unlink(missing_ok=True)
+
 
 def ensure_sdd(workdir: Path) -> bool:
     """Create .sdd/ workspace structure if it does not exist.

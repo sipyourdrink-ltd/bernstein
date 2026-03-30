@@ -224,9 +224,7 @@ class TestRunFormalVerificationLean4:
         task = _FakeTask()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop("False")])
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(
-                returncode=1, stdout="", stderr="error: tactic 'decide' failed"
-            )
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error: tactic 'decide' failed")
             result = run_formal_verification(task, tmp_path, config)  # type: ignore[arg-type]
         assert result.passed is False
         assert len(result.violations) == 1

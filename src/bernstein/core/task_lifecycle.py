@@ -1429,8 +1429,9 @@ def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:
 def _move_backlog_ticket(workdir: Any, task: Any) -> None:
     """Move a completed task's backlog .md file from open/ to closed/.
 
-    Matches by task title similarity (backlog filenames are slugified titles).
-    Safe to call even if no matching file exists — silently returns.
+    Uses the ``<!-- source: filename.md -->`` tag embedded by sync.py for
+    **exact** filename matching.  Falls back to exact normalised-title match
+    (never substring).  This prevents accidental closure of unrelated tickets.
 
     Args:
         workdir: Project root (Path-like).
@@ -1438,22 +1439,44 @@ def _move_backlog_ticket(workdir: Any, task: Any) -> None:
     """
     from pathlib import Path
 
+    _log = logging.getLogger(__name__)
     open_dir = Path(workdir) / ".sdd" / "backlog" / "open"
     closed_dir = Path(workdir) / ".sdd" / "backlog" / "closed"
     if not open_dir.exists():
         return
     closed_dir.mkdir(parents=True, exist_ok=True)
 
-    # Try to find matching ticket by title slug
-    title_slug = re.sub(r"[^a-z0-9]+", "-", task.title.lower()).strip("-")[:40]
-
-    for md_file in open_dir.glob("*.md"):
-        file_slug = re.sub(r"[^a-z0-9]+", "-", md_file.stem.lower())
-        # Match if file contains a significant portion of the title slug
-        if title_slug[:15] in file_slug or file_slug in title_slug:
+    # --- Strategy 1: exact filename from <!-- source: ... --> tag ---
+    source_match = re.search(r"<!--\s*source:\s*(\S+\.md)\s*-->", getattr(task, "description", "") or "")
+    if source_match:
+        source_file = open_dir / source_match.group(1)
+        if source_file.exists():
             try:
-                md_file.rename(closed_dir / md_file.name)
-                logging.getLogger(__name__).info("Moved ticket %s to closed/ (task: %s)", md_file.name, task.title[:50])
+                source_file.rename(closed_dir / source_file.name)
+                _log.info(
+                    "Moved ticket %s to closed/ (exact source match, task: %s)", source_file.name, task.title[:50]
+                )
             except OSError:
                 pass
             return
+
+    # --- Strategy 2: exact normalised-title match (no substring!) ---
+    title_slug = re.sub(r"[^a-z0-9]+", "-", task.title.lower()).strip("-")
+    for md_file in open_dir.glob("*.md"):
+        # Parse the ticket heading and normalise it
+        try:
+            text = md_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if line.startswith("# "):
+                heading = re.sub(r"^[0-9a-fA-F]+\s*[—:\-]\s*", "", line[2:].strip())
+                heading_slug = re.sub(r"[^a-z0-9]+", "-", heading.lower()).strip("-")
+                if heading_slug == title_slug:
+                    try:
+                        md_file.rename(closed_dir / md_file.name)
+                        _log.info("Moved ticket %s to closed/ (title match, task: %s)", md_file.name, task.title[:50])
+                    except OSError:
+                        pass
+                    return
+                break  # only check first heading
