@@ -737,12 +737,14 @@ async def broadcast_command(request: Request) -> JSONResponse:
     pipe_count = sum(1 for v in results.values() if v == "pipe")
     file_count = sum(1 for v in results.values() if v == "file")
 
-    return JSONResponse(content={
-        "status": "broadcast_sent",
-        "recipients": len(results),
-        "via_pipe": pipe_count,
-        "via_file": file_count,
-    })
+    return JSONResponse(
+        content={
+            "status": "broadcast_sent",
+            "recipients": len(results),
+            "via_pipe": pipe_count,
+            "via_file": file_count,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

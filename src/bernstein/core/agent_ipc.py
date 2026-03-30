@@ -50,10 +50,12 @@ def send_message(session_id: str, message: str) -> bool:
         return False
 
     try:
-        payload = json.dumps({
-            "type": "user_message",
-            "content": message,
-        })
+        payload = json.dumps(
+            {
+                "type": "user_message",
+                "content": message,
+            }
+        )
         pipe.write(payload.encode("utf-8") + b"\n")
         pipe.flush()
         logger.debug("Sent message via stdin pipe to session %s", session_id)
@@ -93,6 +95,7 @@ def broadcast_message(message: str, workdir: Any = None) -> dict[str, str]:
         signal_mgr = AgentSignalManager(workdir)
         # Get all signal directories (sessions with signal dirs but no pipe)
         import os
+
         signals_dir = workdir / ".sdd" / "runtime" / "signals"
         if signals_dir.exists():
             for entry in os.listdir(signals_dir):
@@ -106,7 +109,9 @@ def broadcast_message(message: str, workdir: Any = None) -> dict[str, str]:
     file_count = sum(1 for v in results.values() if v == "file")
     logger.info(
         "Broadcast to %d agents: %d via pipe, %d via file",
-        len(results), pipe_count, file_count,
+        len(results),
+        pipe_count,
+        file_count,
     )
 
     return results
