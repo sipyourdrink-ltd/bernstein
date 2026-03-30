@@ -330,6 +330,7 @@ class TestDiscoverAgents:
     @patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, []))
+    @patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_codex", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_claude", return_value=(None, []))
     def test_no_agents(self, *_: Any) -> None:
@@ -361,6 +362,7 @@ class TestDiscoverAgents:
                 "bernstein.core.agent_discovery._detect_codex",
                 return_value=(None, ["codex found but not logged in"]),
             ),
+            patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),
@@ -380,6 +382,7 @@ class TestDiscoverAgents:
         with (
             patch("bernstein.core.agent_discovery._detect_claude", side_effect=RuntimeError("boom")),
             patch("bernstein.core.agent_discovery._detect_codex", return_value=(None, [])),
+            patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),

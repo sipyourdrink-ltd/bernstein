@@ -344,7 +344,7 @@ class TestSyncBacklogToServer:
 
     def test_moves_file_for_done_task(self, tmp_path: Path) -> None:
         backlog_open = tmp_path / ".sdd" / "backlog" / "open"
-        backlog_done = tmp_path / ".sdd" / "backlog" / "done"
+        backlog_closed = tmp_path / ".sdd" / "backlog" / "closed"
         _write_md(backlog_open / "115-wire-router.md", SAMPLE_MD_BOLD)
 
         transport = _server_with_done_task("Wire TierAwareRouter into orchestrator")
@@ -354,7 +354,7 @@ class TestSyncBacklogToServer:
 
         assert "115-wire-router.md" in result.moved
         assert not (backlog_open / "115-wire-router.md").exists()
-        assert (backlog_done / "115-wire-router.md").exists()
+        assert (backlog_closed / "115-wire-router.md").exists()
 
     def test_returns_empty_result_when_no_backlog(self, tmp_path: Path) -> None:
         # No .sdd/backlog/open/ directory at all

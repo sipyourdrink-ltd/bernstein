@@ -15,9 +15,7 @@ def _make_registry() -> NodeRegistry:
 
 
 def _register(registry: NodeRegistry, name: str, slots: int = 4) -> NodeInfo:
-    return registry.register(
-        NodeInfo(name=name, capacity=NodeCapacity(max_agents=slots, available_slots=slots))
-    )
+    return registry.register(NodeInfo(name=name, capacity=NodeCapacity(max_agents=slots, available_slots=slots)))
 
 
 # ---------------------------------------------------------------------------
