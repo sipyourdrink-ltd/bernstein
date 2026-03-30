@@ -13,7 +13,6 @@ from bernstein.github_app.mapper import (
 )
 from bernstein.github_app.webhooks import WebhookEvent
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

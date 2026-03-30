@@ -211,8 +211,7 @@ class ShortcutsFooter(Static):
 
     def _render(self) -> None:
         parts = "  [dim]\u2502[/dim]  ".join(
-            f"[bold]{hint.split()[0]}[/bold] [dim]{' '.join(hint.split()[1:])}[/dim]"
-            for hint in self._SHORTCUTS
+            f"[bold]{hint.split()[0]}[/bold] [dim]{' '.join(hint.split()[1:])}[/dim]" for hint in self._SHORTCUTS
         )
         self.update(Text.from_markup(f"  {parts}  "))
 

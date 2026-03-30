@@ -19,8 +19,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.memory_sanitizer import (
     TRUST_THRESHOLD,
     MemoryFirewall,
@@ -31,7 +29,6 @@ from bernstein.core.memory_sanitizer import (
     _redact_pii,
     sanitize_memory_entry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

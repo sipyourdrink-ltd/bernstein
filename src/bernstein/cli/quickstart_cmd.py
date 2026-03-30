@@ -30,8 +30,8 @@ _QUICKSTART_TASKS: list[dict[str, str]] = [
             "**Priority:** 1\n\n"
             "In `app.py`, update the `create_todo` endpoint:\n"
             "- Check that the request body is valid JSON with a `title` field\n"
-            "- Return HTTP 400 with `{\"error\": \"title is required\"}` if missing or empty\n"
-            "- Return HTTP 400 with `{\"error\": \"invalid JSON\"}` if body is not valid JSON\n"
+            '- Return HTTP 400 with `{"error": "title is required"}` if missing or empty\n'
+            '- Return HTTP 400 with `{"error": "invalid JSON"}` if body is not valid JSON\n'
         ),
     },
     {
@@ -41,7 +41,7 @@ _QUICKSTART_TASKS: list[dict[str, str]] = [
             "**Role:** backend\n"
             "**Priority:** 2\n\n"
             "In `app.py`, update `update_todo` and `delete_todo`:\n"
-            "- Return HTTP 404 with `{\"error\": \"not found\"}` when `todo_id` does not exist\n"
+            '- Return HTTP 404 with `{"error": "not found"}` when `todo_id` does not exist\n'
             "- Do not allow an unhandled `KeyError` to propagate\n"
         ),
     },
@@ -217,10 +217,7 @@ def _print_quickstart_summary(
     console.print(f"\n[dim]Project directory:[/dim] {project_dir}")
 
     if keep:
-        console.print(
-            "[dim]  Inspect generated files:[/dim] "
-            f"[bold]ls {project_dir}[/bold]"
-        )
+        console.print(f"[dim]  Inspect generated files:[/dim] [bold]ls {project_dir}[/bold]")
         console.print(
             "[dim]  Run the test suite:[/dim] "
             f"[bold]cd {project_dir} && pip install -r requirements.txt && pytest tests/ -q[/bold]"
@@ -232,9 +229,7 @@ def _print_quickstart_summary(
         "\n[dim]Next: initialise your own project with [bold]bernstein init[/bold] "
         "and describe your goal in [bold]bernstein.yaml[/bold].[/dim]"
     )
-    console.print(
-        f"\n[bold green]Completed {done} task{'s' if done != 1 else ''} in {elapsed_str}.[/bold green]"
-    )
+    console.print(f"\n[bold green]Completed {done} task{'s' if done != 1 else ''} in {elapsed_str}.[/bold green]")
 
 
 @click.command("quickstart")
@@ -290,9 +285,7 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
 
     _setup_quickstart_project(project_dir, detected)
     console.print("[green]✓[/green] Flask TODO API project created")
-    console.print(
-        "[green]✓[/green] 3 tasks seeded: input validation · error handling · pytest suite"
-    )
+    console.print("[green]✓[/green] 3 tasks seeded: input validation · error handling · pytest suite")
 
     server_url = f"http://127.0.0.1:{_QUICKSTART_PORT}"
     orchestration_start = time.monotonic()
@@ -340,14 +333,10 @@ def quickstart_cmd(keep: bool, timeout: int, adapter: str | None) -> None:
                             role = t.get("role", "agent")
                             if t.get("status") == "done" and tid not in seen_done:
                                 seen_done.add(tid)
-                                progress.console.print(
-                                    f"  [green]✓[/green] [{role}] {title}"
-                                )
+                                progress.console.print(f"  [green]✓[/green] [{role}] {title}")
                             elif t.get("status") == "failed" and tid not in seen_failed:
                                 seen_failed.add(tid)
-                                progress.console.print(
-                                    f"  [red]✗[/red] [{role}] {title}"
-                                )
+                                progress.console.print(f"  [red]✗[/red] [{role}] {title}")
 
                         progress.update(
                             poll_task,

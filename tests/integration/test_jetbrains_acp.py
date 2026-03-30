@@ -20,7 +20,6 @@ from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.server import create_app
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

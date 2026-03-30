@@ -9,7 +9,6 @@ import pytest
 
 from bernstein.core.mcp_gateway import GatewayReplay, MCPGateway, ToolMetrics
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

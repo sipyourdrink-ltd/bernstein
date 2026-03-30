@@ -6,13 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
+from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult
 from bernstein.core.cascade import (
     CascadeDecision,
     CascadeExhausted,
     CascadeFallbackManager,
-    CAPABILITY_FLOOR,
 )
-from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult
 from bernstein.core.models import Complexity
 from bernstein.core.rate_limit_tracker import RateLimitTracker
 
@@ -102,7 +101,9 @@ class TestCascadeFallback:
         # gemini is free and very_high reasoning — should be preferred
         assert result.fallback_provider == "gemini"
 
-    def test_skips_throttled_agents(self, _mock_disc: object, cascade: CascadeFallbackManager, tracker: RateLimitTracker) -> None:
+    def test_skips_throttled_agents(
+        self, _mock_disc: object, cascade: CascadeFallbackManager, tracker: RateLimitTracker
+    ) -> None:
         """Agents currently throttled should be skipped."""
         tracker.throttle_provider("gemini")
         result = cascade.find_fallback(Complexity.MEDIUM, frozenset({"claude"}))

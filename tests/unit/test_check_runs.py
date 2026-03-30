@@ -5,10 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from bernstein.github_app.check_runs import CheckRunClient, CheckRunResult, _iso_now
-
 
 # ---------------------------------------------------------------------------
 # _iso_now

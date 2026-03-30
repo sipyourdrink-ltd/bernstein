@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from bernstein.core.models import (
@@ -16,7 +14,6 @@ from bernstein.core.models import (
     TaskStatus,
 )
 from bernstein.core.plan_builder import PlanBuilder, _fmt_cost, _fmt_minutes, _topological_order
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

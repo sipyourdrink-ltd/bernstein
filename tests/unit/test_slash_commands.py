@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from bernstein.github_app.slash_commands import parse_slash_command, slash_command_to_task
 from bernstein.github_app.webhooks import WebhookEvent
-
 
 # ---------------------------------------------------------------------------
 # Helpers
