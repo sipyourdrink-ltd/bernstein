@@ -401,11 +401,63 @@ def cli(
     if ctx.invoked_subcommand is not None:
         return
 
-    print_banner()
+    from bernstein.cli.splash import splash
 
     seed_path = find_seed_file()
     workdir = Path.cwd()
     port = 8052
+
+    # Detect agents for splash screen
+    _splash_agents: list[dict[str, object]] = []
+    try:
+        from bernstein.core.agent_discovery import discover_agents_cached
+
+        _disc = discover_agents_cached()
+        _splash_agents = [
+            {"name": a.name, "logged_in": a.logged_in, "default_model": a.default_model} for a in _disc.agents
+        ]
+    except Exception:
+        pass
+
+    # Count backlog tasks
+    _task_count = 0
+    try:
+        _open_dir = workdir / ".sdd" / "backlog" / "open"
+        if _open_dir.exists():
+            _task_count = sum(1 for f in _open_dir.iterdir() if f.suffix == ".md")
+    except Exception:
+        pass
+
+    # Get version
+    _version = ""
+    try:
+        from importlib.metadata import version as _get_version
+
+        _version = _get_version("bernstein")
+    except Exception:
+        pass
+
+    # Read goal from seed
+    _goal_preview = goal or ""
+    if not _goal_preview and seed_path:
+        try:
+            import yaml
+
+            with open(seed_path) as f:
+                _seed_data = yaml.safe_load(f)
+            _goal_preview = str(_seed_data.get("goal", ""))[:80]
+        except Exception:
+            pass
+
+    splash(
+        console,
+        version=_version,
+        agents=_splash_agents,  # type: ignore[arg-type]
+        seed_file=str(seed_path) if seed_path else None,
+        goal_preview=_goal_preview,
+        budget=budget,
+        task_count=_task_count,
+    )
 
     if dry_run:
         print_dry_run_table(workdir)
@@ -414,7 +466,7 @@ def cli(
     # Recover orphaned claimed tickets from any prior crashed/stopped session
     recovered = recover_orphaned_claims()
     if recovered:
-        console.print(f"[yellow]Recovered {recovered} orphaned ticket(s) from a prior session.[/yellow]")
+        console.print(f"[yellow]Recovered {recovered} orphaned ticket(s).[/yellow]")
 
     # Evolve mode safety: require --budget or --max-cycles
     if evolve and budget <= 0 and max_cycles <= 0:
