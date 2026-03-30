@@ -32,21 +32,20 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _make_session(session_id: str, tokens_used: int = 0) -> AgentSession:
+def _make_session(session_id: str, tokens_used: int = 0, token_budget: int = 0) -> AgentSession:
     s = AgentSession(id=session_id, role="backend")
     s.tokens_used = tokens_used
+    s.token_budget = token_budget
     return s
 
 
 def _make_orch(
     tmp_path: Path,
     sessions: list[AgentSession],
-    token_budget_per_session: int = 0,
 ) -> SimpleNamespace:
     """Build a minimal orchestrator-like namespace for unit tests."""
     config = SimpleNamespace(
         server_url="http://localhost:8052",
-        token_budget_per_session=token_budget_per_session,
     )
 
     spawner = MagicMock()
@@ -192,23 +191,34 @@ class TestCheckScopeViolations:
 
 class TestCheckBudgetViolations:
     def test_disabled_when_budget_zero(self, tmp_path: Path) -> None:
-        session = _make_session("b1", tokens_used=999_999)
-        orch = _make_orch(tmp_path, [session], token_budget_per_session=0)
+        # token_budget=0 (default) → feature disabled, never killed regardless of usage
+        session = _make_session("b1", tokens_used=999_999, token_budget=0)
+        orch = _make_orch(tmp_path, [session])
         result = _make_result()
         check_budget_violations(orch, result)
         assert result.reaped == []
         assert session.status != "dead"
 
     def test_under_budget_not_killed(self, tmp_path: Path) -> None:
-        session = _make_session("b2", tokens_used=10_000)
-        orch = _make_orch(tmp_path, [session], token_budget_per_session=50_000)
+        # 10K tokens used vs 50K budget → hard kill is at 100K (2x), so safe
+        session = _make_session("b2", tokens_used=10_000, token_budget=50_000)
+        orch = _make_orch(tmp_path, [session])
         result = _make_result()
         check_budget_violations(orch, result)
         assert result.reaped == []
 
-    def test_over_budget_killed(self, tmp_path: Path) -> None:
-        session = _make_session("b3", tokens_used=60_001)
-        orch = _make_orch(tmp_path, [session], token_budget_per_session=60_000)
+    def test_at_budget_not_killed(self, tmp_path: Path) -> None:
+        # Exactly at budget (soft limit) → hard kill is at 2x, so not yet killed
+        session = _make_session("b3a", tokens_used=10_000, token_budget=10_000)
+        orch = _make_orch(tmp_path, [session])
+        result = _make_result()
+        check_budget_violations(orch, result)
+        assert result.reaped == []
+
+    def test_over_2x_budget_killed(self, tmp_path: Path) -> None:
+        # budget=30K → hard kill at 60K; 60_001 tokens → killed
+        session = _make_session("b3", tokens_used=60_001, token_budget=30_000)
+        orch = _make_orch(tmp_path, [session])
         result = _make_result()
         with patch("bernstein.core.circuit_breaker._get_worktree_branch", return_value=None):
             check_budget_violations(orch, result)
@@ -220,16 +230,17 @@ class TestCheckBudgetViolations:
         assert payload["reason"] == "budget_exceeded"
 
     def test_dead_session_skipped(self, tmp_path: Path) -> None:
-        session = _make_session("b4", tokens_used=999_999)
+        session = _make_session("b4", tokens_used=999_999, token_budget=1)
         session.status = "dead"
-        orch = _make_orch(tmp_path, [session], token_budget_per_session=1)
+        orch = _make_orch(tmp_path, [session])
         result = _make_result()
         check_budget_violations(orch, result)
         assert result.reaped == []
 
     def test_quarantine_written_on_budget_exceed(self, tmp_path: Path) -> None:
-        session = _make_session("b5", tokens_used=100_001)
-        orch = _make_orch(tmp_path, [session], token_budget_per_session=100_000)
+        # budget=50K → hard kill at 100K; 100_001 tokens → quarantine written
+        session = _make_session("b5", tokens_used=100_001, token_budget=50_000)
+        orch = _make_orch(tmp_path, [session])
         result = _make_result()
         with patch("bernstein.core.circuit_breaker._get_worktree_branch", return_value=None):
             check_budget_violations(orch, result)
@@ -237,6 +248,19 @@ class TestCheckBudgetViolations:
         assert q.exists()
         meta = json.loads(q.read_text())
         assert meta["reason"] == "budget_exceeded"
+
+    def test_kill_detail_includes_2x_info(self, tmp_path: Path) -> None:
+        # Verify the kill detail message mentions the hard limit and soft budget
+        session = _make_session("b6", tokens_used=20_001, token_budget=10_000)
+        orch = _make_orch(tmp_path, [session])
+        result = _make_result()
+        with patch("bernstein.core.circuit_breaker._get_worktree_branch", return_value=None):
+            check_budget_violations(orch, result)
+        kill_file = tmp_path / ".sdd" / "runtime" / "b6.kill"
+        payload = json.loads(kill_file.read_text())
+        assert "20,001" in payload["detail"]
+        assert "20,000" in payload["detail"]  # 2x hard limit
+        assert "10,000" in payload["detail"]  # soft budget
 
 
 # ---------------------------------------------------------------------------
