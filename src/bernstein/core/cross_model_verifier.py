@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.models import Task
+    from bernstein.core.voting import VotingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,9 @@ class CrossModelVerifierConfig:
         max_tokens: Token cap for the reviewer response.
         block_on_issues: When True, a ``request_changes`` verdict prevents merge
             and creates a fix task.  When False, findings are logged only.
+        voting_config: When set, enables multi-model voting via VotingProtocol.
+            voter_models must also be supplied to verify_with_cross_model.
+            When None, single-reviewer QUORUM(1,1) behaviour is used.
     """
 
     enabled: bool = True
@@ -95,6 +99,7 @@ class CrossModelVerifierConfig:
     max_diff_chars: int = _MAX_DIFF_CHARS
     max_tokens: int = _MAX_TOKENS
     block_on_issues: bool = True
+    voting_config: VotingConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -220,22 +225,56 @@ async def verify_with_cross_model(
     worktree_path: Path,
     writer_model: str,
     config: CrossModelVerifierConfig,
+    *,
+    voter_models: list[str] | None = None,
 ) -> CrossModelVerdict:
     """Run a cross-model review on a completed task's diff.
 
-    Selects a reviewer different from the writer, fetches the diff, and
-    calls the reviewer LLM.  On LLM failure, returns an "approve" verdict so
-    a transient outage never blocks the pipeline permanently.
+    When ``config.voting_config`` is set and ``voter_models`` is provided,
+    delegates to :class:`~bernstein.core.voting.VotingProtocol` for multi-model
+    consensus.  Otherwise falls back to single-reviewer QUORUM(1, 1) behaviour
+    for full backward compatibility.
+
+    On LLM failure, returns an "approve" verdict so a transient outage never
+    blocks the pipeline permanently.
 
     Args:
         task: The completed task.
         worktree_path: Path to the agent's git worktree (or main workdir).
         writer_model: Model that wrote the code — used to select a different reviewer.
         config: Verifier configuration.
+        voter_models: Explicit list of voter model identifiers for multi-model
+            voting.  Required when ``config.voting_config`` is set.
 
     Returns:
         CrossModelVerdict with approve/request_changes decision.
     """
+    # --- Multi-model voting path ---
+    if config.voting_config is not None and voter_models:
+        from bernstein.core.voting import VotingProtocol
+
+        protocol = VotingProtocol(config.voting_config)
+        result = await protocol.collect_votes(
+            task=task,
+            worktree_path=worktree_path,
+            voter_models=voter_models,
+            verifier_cfg=config,
+        )
+        issues: list[str] = []
+        if result.final_verdict == "request_changes":
+            issues = [
+                f"{v.voter_model}: {v.reasoning}"
+                for v in result.votes
+                if v.verdict == "request_changes"
+            ]
+        return CrossModelVerdict(
+            verdict=result.final_verdict,
+            feedback=result.reasoning,
+            issues=issues,
+            reviewer_model=", ".join(voter_models),
+        )
+
+    # --- Single-reviewer path (backward-compatible QUORUM 1-of-1) ---
     reviewer = select_reviewer_model(writer_model, override=config.reviewer_model)
 
     diff = _get_diff(worktree_path, task.owned_files)
@@ -287,6 +326,8 @@ def run_cross_model_verification_sync(
     worktree_path: Path,
     writer_model: str,
     config: CrossModelVerifierConfig,
+    *,
+    voter_models: list[str] | None = None,
 ) -> CrossModelVerdict:
     """Synchronous wrapper for verify_with_cross_model.
 
@@ -298,8 +339,11 @@ def run_cross_model_verification_sync(
         worktree_path: Worktree path for git diff.
         writer_model: Model that wrote the code.
         config: Verifier configuration.
+        voter_models: Voter model list forwarded to verify_with_cross_model.
 
     Returns:
         CrossModelVerdict.
     """
-    return asyncio.run(verify_with_cross_model(task, worktree_path, writer_model, config))
+    return asyncio.run(
+        verify_with_cross_model(task, worktree_path, writer_model, config, voter_models=voter_models)
+    )
