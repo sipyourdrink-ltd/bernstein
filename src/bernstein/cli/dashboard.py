@@ -752,7 +752,7 @@ class BernsteinApp(App[None]):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("q", "quit", "Quit"),
+        Binding("q", "graceful_quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
         Binding("s", "stop_bernstein", "Stop"),
         Binding("l", "toggle_activity", "Activity"),
@@ -1239,6 +1239,56 @@ class BernsteinApp(App[None]):
 
     def _clear_stop_pending(self) -> None:
         self._stop_pending = False  # type: ignore[attr-defined]
+
+    def action_graceful_quit(self) -> None:
+        """Graceful quit: stop all agents, wait for cleanup, then exit."""
+        import signal
+
+        self.notify(
+            "Stopping agents… (up to 30s)",
+            title="Shutting down",
+            severity="warning",
+            timeout=30,
+        )
+
+        # 1. Try real-time IPC shutdown first
+        try:
+            from bernstein.core.agent_ipc import shutdown_all
+            workdir = Path.cwd()
+            ipc_results = shutdown_all(reason="user quit TUI", workdir=workdir)
+            pipe_count = sum(1 for v in ipc_results.values() if v == "pipe")
+            if pipe_count:
+                self.notify(f"Sent shutdown via pipe to {pipe_count} agent(s)")
+        except Exception:
+            pass
+
+        # 2. Write file-based SHUTDOWN signals
+        try:
+            from bernstein.cli.stop_cmd import write_shutdown_signals
+            write_shutdown_signals()
+        except Exception:
+            pass
+
+        # 3. Send SIGTERM to orchestrator processes
+        for name in ("watchdog", "spawner", "server"):
+            pp = Path(f".sdd/runtime/{name}.pid")
+            if pp.exists():
+                with contextlib.suppress(ValueError, OSError):
+                    os.kill(int(pp.read_text().strip()), signal.SIGTERM)
+                pp.unlink(missing_ok=True)
+
+        # 4. Give agents time, then kill survivors
+        def _finish_shutdown() -> None:
+            for a in _load_agents():
+                pid = a.get("pid")
+                if pid:
+                    with contextlib.suppress(OSError):
+                        os.killpg(os.getpgid(pid), signal.SIGTERM)
+            self._show_run_summary()
+            self.exit(message="Bernstein stopped.")
+
+        # Wait 5 seconds for graceful shutdown, then force-kill and exit
+        self.set_timer(5.0, _finish_shutdown)
 
     def _show_run_summary(self) -> None:
         """Show a run completion summary before exit."""
