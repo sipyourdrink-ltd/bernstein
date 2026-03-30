@@ -43,6 +43,9 @@ from bernstein.core.server import (
     TaskPatchRequest,
     TaskProgressRequest,
     TaskResponse,
+    TaskStealAction,
+    TaskStealRequest,
+    TaskStealResponse,
     TaskStore,
     a2a_task_to_response,
     node_to_response,
@@ -641,3 +644,56 @@ async def cluster_status(request: Request) -> ClusterStatusResponse:
         active_agents=summary["active_agents"],
         nodes=[NodeResponse(**n) for n in summary["nodes"]],
     )
+
+
+@router.post("/cluster/steal", response_model=TaskStealResponse)
+async def steal_tasks(body: TaskStealRequest, request: Request) -> TaskStealResponse:
+    """Evaluate task stealing policy and reassign claimed tasks between nodes.
+
+    Workers report their queue depths; the server runs the steal policy and
+    returns a list of task reassignments.  Stolen tasks are reset to ``open``
+    so the receiver node can claim them.
+    """
+    from bernstein.core.cluster import TaskStealPolicy
+
+    node_registry = _get_node_registry(request)
+    store = _get_store(request)
+
+    policy = TaskStealPolicy()
+    pairs = policy.find_steal_pairs(node_registry, body.queue_depths)
+
+    actions: list[TaskStealAction] = []
+    total_stolen = 0
+
+    for donor_id, receiver_id, count in pairs:
+        # Find claimed tasks that could be released from the donor.
+        # The task store's list_tasks is sync; filter by cell_id or
+        # assigned_agent that maps to the donor node.
+        claimed = store.list_tasks(status="claimed")
+        donor_tasks = [
+            t for t in claimed
+            if getattr(t, "assigned_node", None) == donor_id
+        ][:count]
+
+        # If no tasks tagged with assigned_node, fall back to taking the
+        # oldest claimed tasks (best-effort redistribution).
+        if not donor_tasks and claimed:
+            donor_tasks = sorted(claimed, key=lambda t: t.version)[:count]
+
+        stolen_ids: list[str] = []
+        for task in donor_tasks:
+            try:
+                await store.force_claim(task.id)
+                stolen_ids.append(task.id)
+            except (KeyError, ValueError):
+                continue
+
+        if stolen_ids:
+            actions.append(TaskStealAction(
+                donor_node_id=donor_id,
+                receiver_node_id=receiver_id,
+                task_ids=stolen_ids,
+            ))
+            total_stolen += len(stolen_ids)
+
+    return TaskStealResponse(actions=actions, total_stolen=total_stolen)

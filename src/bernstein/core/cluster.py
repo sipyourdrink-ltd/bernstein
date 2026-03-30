@@ -220,6 +220,76 @@ def node_from_dict(raw: dict[str, Any]) -> NodeInfo:
     )
 
 
+class TaskStealPolicy:
+    """Policy for when and how to steal tasks between nodes.
+
+    A node is eligible to *donate* tasks when its queue depth exceeds
+    ``overload_threshold``.  A node is eligible to *receive* stolen tasks
+    when its available slots are above ``idle_threshold``.
+
+    The central server evaluates this policy; individual workers just
+    report their queue depth on each heartbeat.
+    """
+
+    def __init__(
+        self,
+        overload_threshold: int = 5,
+        idle_threshold: int = 2,
+        max_steal_per_tick: int = 3,
+    ) -> None:
+        self.overload_threshold = overload_threshold
+        self.idle_threshold = idle_threshold
+        self.max_steal_per_tick = max_steal_per_tick
+
+    def find_steal_pairs(
+        self,
+        registry: NodeRegistry,
+        queue_depths: dict[str, int],
+    ) -> list[tuple[str, str, int]]:
+        """Identify (donor_node_id, receiver_node_id, count) steal actions.
+
+        Args:
+            registry: The cluster node registry.
+            queue_depths: Mapping of node_id → number of queued/claimed tasks.
+
+        Returns:
+            List of (donor_id, receiver_id, steal_count) tuples.
+        """
+        online = registry.list_nodes(NodeStatus.ONLINE)
+        if len(online) < 2:
+            return []
+
+        donors: list[tuple[str, int]] = []
+        receivers: list[tuple[str, int]] = []
+
+        for node in online:
+            depth = queue_depths.get(node.id, 0)
+            if depth > self.overload_threshold:
+                donors.append((node.id, depth))
+            elif node.capacity.available_slots >= self.idle_threshold:
+                receivers.append((node.id, node.capacity.available_slots))
+
+        # Sort donors by most overloaded first, receivers by most idle first
+        donors.sort(key=lambda x: x[1], reverse=True)
+        receivers.sort(key=lambda x: x[1], reverse=True)
+
+        pairs: list[tuple[str, str, int]] = []
+        for donor_id, depth in donors:
+            excess = depth - self.overload_threshold
+            for i, (recv_id, recv_slots) in enumerate(receivers):
+                if recv_slots <= 0:
+                    continue
+                steal_count = min(excess, recv_slots, self.max_steal_per_tick)
+                if steal_count > 0:
+                    pairs.append((donor_id, recv_id, steal_count))
+                    excess -= steal_count
+                    receivers[i] = (recv_id, recv_slots - steal_count)
+                if excess <= 0:
+                    break
+
+        return pairs
+
+
 class NodeHeartbeatClient:
     """Background heartbeat client for worker nodes.
 

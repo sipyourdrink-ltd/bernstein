@@ -373,6 +373,27 @@ class ClusterStatusResponse(BaseModel):
     nodes: list[NodeResponse]
 
 
+class TaskStealRequest(BaseModel):
+    """Body for POST /cluster/steal — report queue depths and request rebalancing."""
+
+    queue_depths: dict[str, int] = Field(default_factory=dict)
+
+
+class TaskStealAction(BaseModel):
+    """A single steal action: move tasks from donor to receiver."""
+
+    donor_node_id: str
+    receiver_node_id: str
+    task_ids: list[str]
+
+
+class TaskStealResponse(BaseModel):
+    """Response for POST /cluster/steal."""
+
+    actions: list[TaskStealAction]
+    total_stolen: int
+
+
 class BulletinMessageResponse(BaseModel):
     """Single bulletin message in responses."""
 
