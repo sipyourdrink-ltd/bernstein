@@ -336,32 +336,53 @@ def _render_prompt(
     lesson_tags = _extract_tags_from_tasks(tasks)
     lesson_context = gather_lessons_for_context(sdd_dir, lesson_tags)
 
-    # Assemble final prompt
-    sections = [role_prompt]
+    # Assemble final prompt as named sections for budget-aware compression
+    named_sections: list[tuple[str, str]] = [("role", role_prompt)]
     if specialist_block:
-        sections.append(specialist_block)
-    sections.append(f"\n## Assigned tasks\n{task_block}")
+        named_sections.append(("specialists", specialist_block))
+    named_sections.append(("tasks", f"\n## Assigned tasks\n{task_block}"))
     if lesson_context:
-        sections.append(f"\n{lesson_context}\n")
+        named_sections.append(("lessons", f"\n{lesson_context}\n"))
     if rich_context:
-        sections.append(f"\n{rich_context}\n")
+        named_sections.append(("context", f"\n{rich_context}\n"))
     predecessor_ctx = _render_predecessor_context(tasks, task_graph)
     if predecessor_ctx:
-        sections.append(predecessor_ctx)
+        named_sections.append(("predecessor", predecessor_ctx))
     if bulletin_summary:
-        sections.append(
-            f"\n## Team awareness\n"
-            f"Other agents are working in parallel. Recent activity:\n{bulletin_summary}\n\n"
-            f"If you need to create a shared utility, check if it already exists first.\n"
-            f"If you define an API endpoint, use consistent naming with existing endpoints.\n"
+        named_sections.append(
+            (
+                "team awareness",
+                f"\n## Team awareness\n"
+                f"Other agents are working in parallel. Recent activity:\n{bulletin_summary}\n\n"
+                f"If you need to create a shared utility, check if it already exists first.\n"
+                f"If you define an API endpoint, use consistent naming with existing endpoints.\n",
+            )
         )
     if project_context:
-        sections.append(f"\n## Project context\n{project_context}\n")
-    sections.append(f"\n## Instructions\n{instructions}\n")
+        named_sections.append(("project", f"\n## Project context\n{project_context}\n"))
+    named_sections.append(("instructions", f"\n## Instructions\n{instructions}\n"))
     if session_id:
-        sections.append(_render_signal_check(session_id))
+        named_sections.append(("signal", _render_signal_check(session_id)))
 
-    return "".join(sections)
+    # Apply budget-aware prompt compression
+    try:
+        from bernstein.core.context_compression import PromptCompressor
+
+        compressor = PromptCompressor()
+        compressed, original_tokens, compressed_tokens, dropped = compressor.compress_sections(named_sections)
+        if dropped:
+            reduction_pct = (1.0 - compressed_tokens / max(1, original_tokens)) * 100
+            logger.debug(
+                "Prompt compressed: %d → %d tokens (%.0f%% reduction), dropped: %s",
+                original_tokens,
+                compressed_tokens,
+                reduction_pct,
+                dropped,
+            )
+        return compressed
+    except Exception as exc:
+        logger.debug("PromptCompressor failed, using uncompressed prompt: %s", exc)
+        return "".join(content for _, content in named_sections)
 
 
 def _render_fallback(
