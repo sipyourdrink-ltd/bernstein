@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from bernstein.agents.catalog import CatalogAgent, CatalogRegistry
     from bernstein.core.agency_loader import AgencyAgent
     from bernstein.core.bulletin import BulletinBoard
+    from bernstein.core.graph import TaskGraph
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.workspace import Workspace
@@ -197,6 +198,41 @@ def _extract_tags_from_tasks(tasks: list[Task]) -> list[str]:
     return sorted(tags)
 
 
+def _render_predecessor_context(tasks: list[Task], task_graph: TaskGraph | None) -> str:
+    """Build a context section from INFORMS/TRANSFORMS predecessor outputs.
+
+    Args:
+        tasks: Batch of tasks being assigned.
+        task_graph: Optional task graph for looking up typed edges.
+
+    Returns:
+        Markdown section with predecessor results, or empty string.
+    """
+    if task_graph is None:
+        return ""
+
+    lines: list[str] = []
+    for task in tasks:
+        pred_ctx = task_graph.predecessor_context(task.id)
+        for item in pred_ctx:
+            summary = item["result_summary"]
+            if not summary:
+                continue
+            edge_label = "informed by" if item["edge_type"] == "informs" else "transforms output of"
+            lines.append(
+                f"- **{item['title']}** ({edge_label}): {summary}"
+            )
+
+    if not lines:
+        return ""
+    return (
+        "\n## Predecessor context\n"
+        "The following completed tasks provide context for your work:\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
 def _render_prompt(
     tasks: list[Task],
     templates_dir: Path,
@@ -206,6 +242,7 @@ def _render_prompt(
     context_builder: TaskContextBuilder | None = None,
     session_id: str = "",
     bulletin_summary: str = "",
+    task_graph: TaskGraph | None = None,
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -227,6 +264,8 @@ def _render_prompt(
         context_builder: Optional TaskContextBuilder for rich context injection.
         bulletin_summary: Optional recent bulletin activity to inject as a
             team-awareness section. Empty string means no section is added.
+        task_graph: Optional task graph for injecting typed-edge predecessor
+            context (INFORMS / TRANSFORMS outputs).
 
     Returns:
         Complete prompt string ready for the CLI adapter.
@@ -331,6 +370,9 @@ def _render_prompt(
         sections.append(f"\n{lesson_context}\n")
     if rich_context:
         sections.append(f"\n{rich_context}\n")
+    predecessor_ctx = _render_predecessor_context(tasks, task_graph)
+    if predecessor_ctx:
+        sections.append(predecessor_ctx)
     if bulletin_summary:
         sections.append(
             f"\n## Team awareness\n"
