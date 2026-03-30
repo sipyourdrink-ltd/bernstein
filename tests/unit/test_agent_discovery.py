@@ -329,6 +329,7 @@ class TestDetectAider:
 class TestDiscoverAgents:
     @patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, []))
+    @patch("bernstein.core.agent_discovery._detect_kilo", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, []))
     @patch("bernstein.core.agent_discovery._detect_codex", return_value=(None, []))
@@ -364,6 +365,7 @@ class TestDiscoverAgents:
             ),
             patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
+            patch("bernstein.core.agent_discovery._detect_kilo", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),
         ):
@@ -384,6 +386,7 @@ class TestDiscoverAgents:
             patch("bernstein.core.agent_discovery._detect_codex", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_cursor", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_gemini", return_value=(None, [])),
+            patch("bernstein.core.agent_discovery._detect_kilo", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_qwen", return_value=(None, [])),
             patch("bernstein.core.agent_discovery._detect_aider", return_value=(None, [])),
         ):
