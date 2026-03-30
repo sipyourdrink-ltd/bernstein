@@ -310,6 +310,16 @@ class Orchestrator:
         # directory regardless of cwd at call time.
         get_collector(workdir / ".sdd" / "metrics")
 
+        # Initialize the duration predictor and auto-retrain in the background
+        # if the training dataset has grown since the last training run.
+        try:
+            from bernstein.core.duration_predictor import get_predictor as _get_predictor
+
+            _dp = _get_predictor(workdir / ".sdd" / "models")
+            self._executor.submit(_dp.train)
+        except Exception as _dp_exc:
+            logger.debug("Duration predictor startup skipped: %s", _dp_exc)
+
         # Fast-path: deterministic execution for trivial tasks (L0).
         # Load patterns from routing.yaml so the YAML config is authoritative.
         routing_yaml = workdir / ".sdd" / "config" / "routing.yaml"

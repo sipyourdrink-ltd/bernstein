@@ -47,6 +47,90 @@ async def status_dashboard(request: Request) -> JSONResponse:
     return JSONResponse(content=store.status_summary())
 
 
+@router.get("/status/duration-predictions")
+async def duration_predictions(request: Request) -> JSONResponse:
+    """Return ML-predicted duration estimates for all open/claimed tasks.
+
+    Uses the local GradientBoosting duration predictor.  Falls back to the
+    static cold-start table when fewer than 50 completions are available.
+
+    Response shape::
+
+        {
+          "predictor": {
+            "trained": true,
+            "training_samples": 142,
+            "cold_start": false
+          },
+          "tasks": [
+            {
+              "task_id": "abc123",
+              "title": "Refactor auth module",
+              "role": "backend",
+              "p50_seconds": 720.0,
+              "p90_seconds": 1440.0,
+              "confidence": 0.62,
+              "is_cold_start": false,
+              "eta_p50": "12m 0s",
+              "eta_p90": "24m 0s"
+            }
+          ]
+        }
+    """
+    import asyncio as _asyncio
+
+    from bernstein.core.duration_predictor import get_predictor
+
+    store = _get_store(request)
+    sdd_dir: Any = getattr(request.app.state, "sdd_dir", None)
+    models_dir = (sdd_dir / "models") if sdd_dir is not None else None
+
+    predictor = get_predictor(models_dir)
+
+    def _fmt(seconds: float) -> str:
+        s = int(seconds)
+        h, rem = divmod(s, 3600)
+        m, sec = divmod(rem, 60)
+        if h:
+            return f"{h}h {m}m {sec}s"
+        if m:
+            return f"{m}m {sec}s"
+        return f"{sec}s"
+
+    tasks = store.list_tasks()
+    active_statuses = {"open", "claimed", "in_progress"}
+    predictions = []
+    for task in tasks:
+        status_val = task.status.value if hasattr(task.status, "value") else str(task.status)
+        if status_val not in active_statuses:
+            continue
+        est = predictor.predict(task)
+        predictions.append(
+            {
+                "task_id": task.id,
+                "title": task.title,
+                "role": task.role,
+                "p50_seconds": est.p50_seconds,
+                "p90_seconds": est.p90_seconds,
+                "confidence": est.confidence,
+                "is_cold_start": est.is_cold_start,
+                "eta_p50": _fmt(est.p50_seconds),
+                "eta_p90": _fmt(est.p90_seconds),
+            }
+        )
+
+    return JSONResponse(
+        content={
+            "predictor": {
+                "trained": predictor.is_trained,
+                "training_samples": predictor.training_sample_count,
+                "cold_start": not predictor.is_trained,
+            },
+            "tasks": predictions,
+        }
+    )
+
+
 @router.get("/routing/bandit")
 async def bandit_routing_stats(request: Request) -> JSONResponse:
     """Return contextual bandit routing statistics.

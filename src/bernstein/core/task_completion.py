@@ -666,3 +666,19 @@ def process_completed_tasks(
                 )
             except Exception as exc:
                 logger.warning("Evolution record_task_completion failed: %s", exc)
+
+        # Record actual duration for ML duration predictor training.
+        # Only record successful completions to avoid training on failure noise.
+        if janitor_passed and duration > 0:
+            try:
+                from bernstein.core.duration_predictor import get_predictor
+
+                _effective_model = session.model_config.model if session else None
+                _models_dir = orch._workdir / ".sdd" / "models"
+                get_predictor(_models_dir).record_completion(
+                    task,
+                    actual_duration_seconds=round(duration, 2),
+                    model=_effective_model,
+                )
+            except Exception as exc:
+                logger.debug("Duration predictor record_completion failed: %s", exc)
