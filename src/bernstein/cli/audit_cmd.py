@@ -249,6 +249,74 @@ def verify_hmac_cmd() -> None:
     raise SystemExit(0 if valid else 1)
 
 
+@audit_group.command("export")
+@click.option("--period", required=True, help="Time period to export (e.g. Q1-2026, 2026-03, 2026).")
+@click.option(
+    "--format",
+    "fmt",
+    default="zip",
+    type=click.Choice(["zip", "dir"]),
+    show_default=True,
+    help="Output format.",
+)
+@click.option("--output", "-o", default=None, help="Output directory (defaults to .sdd/evidence/).")
+@click.option("--dir", "workdir", default=".", show_default=True, help="Project root directory.")
+def export_cmd(period: str, fmt: str, output: str | None, workdir: str) -> None:
+    """Export a SOC 2 evidence package for auditors.
+
+    \b
+    Collects audit logs, HMAC verification, Merkle seals, compliance config,
+    WAL entries, and SBOM into a single package.
+
+    \b
+    Examples:
+      bernstein audit export --period Q1-2026
+      bernstein audit export --period Q1-2026 --format dir
+      bernstein audit export --period 2026-03 -o /tmp/evidence
+    """
+    from bernstein.core.compliance import export_soc2_package, parse_period
+
+    sdd_dir = Path(workdir).resolve() / ".sdd"
+    if not sdd_dir.is_dir():
+        console.print(f"[red]State directory not found:[/red] {sdd_dir}")
+        console.print("[dim]Run [bold]bernstein run[/bold] first to generate audit data.[/dim]")
+        raise SystemExit(1)
+
+    # Validate period before doing work
+    try:
+        start, end = parse_period(period)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from None
+
+    output_path = Path(output).resolve() if output else None
+
+    try:
+        result = export_soc2_package(sdd_dir, period, output_path=output_path, fmt=fmt)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise SystemExit(1) from None
+
+    # Display summary
+    console.print()
+    console.print(
+        Panel(
+            "[bold]SOC 2 Evidence Package[/bold]",
+            border_style="green",
+            expand=False,
+        )
+    )
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+    table.add_column("Value")
+    table.add_row("Period", f"{period}  ({start} to {end})")
+    table.add_row("Format", fmt)
+    table.add_row("Output", str(result))
+    console.print(table)
+    console.print()
+
+
 @audit_group.command("query")
 @click.option("--event-type", default=None, help="Filter by event type.")
 @click.option("--actor", default=None, help="Filter by actor.")
