@@ -67,7 +67,7 @@ class CursorAdapter(CLIAdapter):
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError(
-                    "cursor not found in PATH. Install Cursor from https://www.cursor.com and ensure the CLI is on PATH."
+                    "cursor not found in PATH. Install from https://cursor.com"
                 ) from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing cursor: {exc}") from exc
