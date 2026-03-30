@@ -12,6 +12,7 @@ Entry points:
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import logging
 import os
 import subprocess
@@ -150,118 +151,76 @@ def bootstrap_from_seed(
     auth_token = _resolve_auth_token()
     server_url = _resolve_server_url(port)
 
+    # ── Compact bootstrap: all steps on one screen ──
+
     # 1. Parse seed
-    with Status("[bold]Parsing seed file...[/bold]", console=console):
-        seed = parse_seed(seed_path)
-        # Apply CLI overrides (--cli, --model take precedence over seed config)
-        if cli is not None:
-            object.__setattr__(seed, "cli", cli)
-        if model is not None:
-            object.__setattr__(seed, "model", model)
-        # Pre-flight: verify binary, API key, and port before touching anything.
-        preflight_checks(seed.cli, port)
+    seed = parse_seed(seed_path)
+    if cli is not None:
+        object.__setattr__(seed, "cli", cli)
+    if model is not None:
+        object.__setattr__(seed, "model", model)
+    preflight_checks(seed.cli, port)
     effective_cells = cells if cells is not None else seed.cells
-    console.print(f"[green]→[/green] Parsed seed: [bold]{seed.goal[:80]}[/bold]")
-    if seed.budget_usd is not None:
-        console.print(f"  [bold]Budget:[/bold] ${seed.budget_usd:.2f}")
-    else:
-        console.print('  [bold]Budget:[/bold] none set (use budget: "$N" in seed to cap spend)')
-    if seed.team != "auto":
-        console.print(f"  [bold]Team:[/bold] {', '.join(seed.team)}")
-    console.print(f"  [bold]CLI:[/bold] {seed.cli}  [bold]Cells:[/bold] {effective_cells}")
-    if seed.constraints:
-        console.print(f"  [bold]Constraints:[/bold] {len(seed.constraints)} rules")
-    if remote:
-        console.print(f"  [bold]Mode:[/bold] remote (binding to {bind_host}:{port})")
-    if auth_token:
-        console.print("  [bold]Auth:[/bold] bearer token enabled")
 
-    # Compliance: resolve from env var override or seed config
-    compliance_config = seed.compliance
-    compliance_env = os.environ.get("BERNSTEIN_COMPLIANCE")
-    if compliance_env:
-        from bernstein.core.compliance import ComplianceConfig, CompliancePreset
+    # 2. Workspace + catalog + index (silent — errors logged, not printed)
+    ensure_sdd(workdir)
+    _clean_stale_runtime(workdir)
+    _discover_catalog(workdir)
 
-        compliance_config = ComplianceConfig.from_preset(CompliancePreset(compliance_env.lower()))
-    if compliance_config is not None:
-        preset_label = compliance_config.preset.value if compliance_config.preset else "custom"
-        console.print(f"  [bold]Compliance:[/bold] {preset_label}")
-        prereq_warnings = compliance_config.check_prerequisites()
-        for w in prereq_warnings:
-            console.print(f"  [yellow]⚠ {w}[/yellow]")
-
-    # 2. Init workspace + clean stale state
-    with Status("[bold]Creating .sdd/ workspace...[/bold]", console=console):
-        created = ensure_sdd(workdir)
-        _clean_stale_runtime(workdir)
-    if created:
-        console.print("[green]→[/green] Created .sdd/ workspace")
-    else:
-        console.print("[green]→[/green] Workspace ready")
-
-    with Status("[bold]Loading agent catalog...[/bold]", console=console):
-        _discover_catalog(workdir)
-    console.print("[green]→[/green] Agent catalog loaded")
-
-    with (
-        Status("[bold]Indexing codebase...[/bold]", console=console),
-        concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool,
-    ):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(_build_codebase_index, workdir)
-        try:
+        with contextlib.suppress(concurrent.futures.TimeoutError):
             future.result(timeout=10)
-        except concurrent.futures.TimeoutError:
-            console.print("[yellow]→[/yellow] Indexing taking too long — continuing in background")
-    console.print("[green]→[/green] Codebase indexed")
 
-    with Status("[bold]Checking safety invariants...[/bold]", console=console):
+    # Safety invariants (silent unless violations)
+    try:
         from bernstein.evolution.invariants import verify_invariants, write_lockfile
 
         ok, violations = verify_invariants(workdir)
         if not ok:
-            console.print(f"[bold red]SAFETY: {len(violations)} locked file(s) modified[/bold red]")
-            for v in violations:
-                console.print(f"  [red]{v}[/red]")
+            console.print(f"[bold red]⚠ {len(violations)} locked file(s) modified[/bold red]")
         write_lockfile(workdir)
+    except Exception:
+        pass
 
-    # Export storage backend config from seed to env so the server picks it up.
+    # Storage + cluster config (env vars, no output)
     if seed.storage is not None:
         os.environ.setdefault("BERNSTEIN_STORAGE_BACKEND", seed.storage.backend)
         if seed.storage.database_url:
             os.environ.setdefault("BERNSTEIN_DATABASE_URL", seed.storage.database_url)
         if seed.storage.redis_url:
             os.environ.setdefault("BERNSTEIN_REDIS_URL", seed.storage.redis_url)
-        if seed.storage.backend != "memory":
-            console.print(f"  [bold]Storage:[/bold] {seed.storage.backend}")
 
-    # Determine if cluster mode should be enabled (seed config or env var)
     cluster_enabled = (seed.cluster is not None and seed.cluster.enabled) or os.environ.get(
         "BERNSTEIN_CLUSTER_ENABLED", ""
     ).lower() in ("1", "true", "yes")
-    if cluster_enabled:
-        console.print("  [bold]Cluster:[/bold] enabled")
 
-    # 3. Start server
-    with Status(f"[bold]Starting task server on {bind_host}:{port}...[/bold]", console=console):
-        server_pid = _start_server(
-            workdir,
-            port,
-            bind_host=bind_host,
-            cluster_enabled=cluster_enabled,
-            auth_token=auth_token,
-            evolve_mode=evolve_mode,
-        )
-        if not _wait_for_server(port, server_url=server_url):
-            from bernstein.cli.errors import BernsteinError
+    # Compliance (env var override or seed)
+    compliance_env = os.environ.get("BERNSTEIN_COMPLIANCE")
+    if compliance_env:
+        from bernstein.core.compliance import ComplianceConfig, CompliancePreset
 
-            BernsteinError(
-                what=f"Task server on port {port} did not respond within 10.0s",
-                why="Server process may have crashed during startup",
-                fix="Check .sdd/runtime/server.log for details",
-            ).print()
-            raise SystemExit(1)
-    reload_label = " +reload" if evolve_mode else ""
-    console.print(f"[green]→[/green] Task server ready (PID {server_pid}, {bind_host}:{port}{reload_label})")
+        ComplianceConfig.from_preset(CompliancePreset(compliance_env.lower()))
+
+    # 3. Start server (compact output — single line)
+    server_pid = _start_server(
+        workdir,
+        port,
+        bind_host=bind_host,
+        cluster_enabled=cluster_enabled,
+        auth_token=auth_token,
+        evolve_mode=evolve_mode,
+    )
+    if not _wait_for_server(port, server_url=server_url):
+        from bernstein.cli.errors import BernsteinError
+
+        BernsteinError(
+            what=f"Task server on port {port} did not respond within 10.0s",
+            why="Server process may have crashed during startup",
+            fix="Check .sdd/runtime/server.log for details",
+        ).print()
+        raise SystemExit(1)
+    console.print(f"  [dim]server[/dim]  :{port} [green]ready[/green]")
 
     # 4. Sync backlog / create manager task
     from bernstein.core.session import check_resume_session
@@ -275,61 +234,44 @@ def bootstrap_from_seed(
         stale_minutes=_stale_minutes,
     )
 
-    with Status("[bold]Loading tasks...[/bold]", console=console):
-        sync_result = sync_backlog_to_server(workdir, server_url=server_url)
+    sync_result = sync_backlog_to_server(workdir, server_url=server_url)
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
 
     manager_task_id = ""
     if prior_session is not None:
-        completed_count = len(prior_session.completed_task_ids)
-        console.print(
-            f"[bold cyan]Resuming from previous session[/bold cyan] "
-            f"({completed_count} task(s) already completed — skipping re-planning)"
-        )
+        console.print(f"  [dim]resume[/dim]  {len(prior_session.completed_task_ids)} done previously")
     elif backlog_count > 0:
-        console.print(
-            f"[green]→[/green] Planning tasks ({backlog_count} found in backlog"
-            + (f", {len(sync_result.skipped)} already synced" if sync_result.skipped else "")
-            + ")"
-        )
+        console.print(f"  [dim]tasks[/dim]   {backlog_count} from backlog")
     else:
-        # No backlog and no prior session — use the manager agent to plan from scratch
-        with Status("[bold]Creating planning task...[/bold]", console=console):
-            manager_task_id = _inject_manager_task(
-                seed,
-                workdir,
-                port,
-                server_url=server_url,
-                auth_token=auth_token,
-            )
-        console.print("[green]→[/green] Planning tasks (manager agent will decompose goal)")
-
-    # Cost estimation — show before spawning agents
-    from bernstein.core.cost import estimate_run_cost
-
-    est_task_count = backlog_count if backlog_count > 0 else 5  # default estimate for manager-planned
-    est_model = seed.model or "sonnet"
-    low, high = estimate_run_cost(est_task_count, est_model)
-    console.print(
-        f"[bold yellow]Cost estimate:[/bold yellow] ${low:.2f}-${high:.2f} "
-        f"({est_task_count} task(s), {est_model} model)"
-    )
-
-    # 5. Start spawner + watchdog
-    cell_label = f"{effective_cells} cells" if effective_cells > 1 else "single cell"
-    with Status(f"[bold]Spawning agents ({cell_label})...[/bold]", console=console):
-        spawner_pid = _start_spawner(
+        manager_task_id = _inject_manager_task(
+            seed,
             workdir,
             port,
-            cells=effective_cells,
             server_url=server_url,
             auth_token=auth_token,
-            cluster_enabled=cluster_enabled,
         )
-        _start_watchdog(workdir, port)
-    console.print(f"[green]→[/green] Spawning agents (PID {spawner_pid})")
+        console.print("  [dim]plan[/dim]    manager agent will decompose goal")
 
-    console.print("\n[bold green]Dashboard ready.[/bold green] Use [bold]bernstein stop[/bold] to stop.")
+    # Cost estimate (single compact line)
+    from bernstein.core.cost import estimate_run_cost
+
+    est_count = backlog_count if backlog_count > 0 else 5
+    est_model = seed.model or "sonnet"
+    low, high = estimate_run_cost(est_count, est_model)
+    console.print(f"  [dim]cost[/dim]    ~${low:.2f}-${high:.2f} ({est_count} tasks, {est_model})")
+
+    # 5. Start spawner + watchdog
+    spawner_pid = _start_spawner(
+        workdir,
+        port,
+        cells=effective_cells,
+        server_url=server_url,
+        auth_token=auth_token,
+        cluster_enabled=cluster_enabled,
+    )
+    _start_watchdog(workdir, port)
+    console.print(f"  [dim]agents[/dim]  spawning (max {seed.max_agents})")
+    console.print()
 
     result = BootstrapResult(
         seed=seed,
