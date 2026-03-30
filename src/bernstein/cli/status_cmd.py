@@ -407,7 +407,58 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             "Set BERNSTEIN_STORAGE_BACKEND to memory, postgres, or redis",
         )
 
-    # 10. Overall readiness
+    # 10. Secrets manager connectivity
+    from bernstein.core.secrets import SecretsConfig, check_provider_connectivity
+
+    secrets_cfg: SecretsConfig | None = None
+    # Check project config for secrets configuration
+    sdd_config_path = workdir / ".sdd" / "config.yaml"
+    if sdd_config_path.exists():
+        try:
+            import yaml as _yaml
+
+            sdd_data = _yaml.safe_load(sdd_config_path.read_text(encoding="utf-8"))
+            if isinstance(sdd_data, dict) and "secrets" in sdd_data:
+                s = sdd_data["secrets"]
+                if isinstance(s, dict) and "provider" in s and "path" in s:
+                    secrets_cfg = SecretsConfig(
+                        provider=s["provider"],
+                        path=s["path"],
+                        ttl=s.get("ttl", 300),
+                        field_map=s.get("field_map", {}),
+                    )
+        except Exception:
+            pass
+    # Also check bernstein.yaml
+    bernstein_yaml = workdir / "bernstein.yaml"
+    if secrets_cfg is None and bernstein_yaml.exists():
+        try:
+            import yaml as _yaml
+
+            by_data = _yaml.safe_load(bernstein_yaml.read_text(encoding="utf-8"))
+            if isinstance(by_data, dict) and "secrets" in by_data:
+                s = by_data["secrets"]
+                if isinstance(s, dict) and "provider" in s and "path" in s:
+                    secrets_cfg = SecretsConfig(
+                        provider=s["provider"],
+                        path=s["path"],
+                        ttl=s.get("ttl", 300),
+                        field_map=s.get("field_map", {}),
+                    )
+        except Exception:
+            pass
+    if secrets_cfg is not None:
+        sm_ok, sm_detail = check_provider_connectivity(secrets_cfg)
+        _check(
+            f"Secrets: {secrets_cfg.provider}",
+            sm_ok,
+            sm_detail,
+            f"Check {secrets_cfg.provider} connectivity and credentials" if not sm_ok else "",
+        )
+    else:
+        _check("Secrets manager", True, "not configured (using env vars)", "")
+
+    # 11. Overall readiness
     any_adapter_key = any_adapter and any_key
     _check(
         "Ready to run",
@@ -416,7 +467,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         "Install an adapter (claude/codex/gemini) and set its API key" if not any_adapter_key else "",
     )
 
-    # 11. Compliance mode prerequisites
+    # 12. Compliance mode prerequisites
     from bernstein.core.compliance import load_compliance_config
 
     compliance_cfg = load_compliance_config(workdir / ".sdd")

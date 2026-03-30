@@ -15,11 +15,16 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from bernstein.core.secrets import SecretsConfig
+
+logger = logging.getLogger(__name__)
 
 # Variables always passed to every spawned agent, regardless of role.
 # This is the minimal set required for any CLI coding agent to function correctly.
@@ -89,22 +94,32 @@ _BASE_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def build_filtered_env(extra_keys: Iterable[str] = ()) -> dict[str, str]:
+def build_filtered_env(
+    extra_keys: Iterable[str] = (),
+    *,
+    secrets_config: SecretsConfig | None = None,
+) -> dict[str, str]:
     """Build a filtered copy of the environment safe for agent subprocesses.
 
     Only variables in the base allowlist or ``extra_keys`` are included.
     All other variables (database credentials, CI tokens, secrets for
     unrelated services, etc.) are excluded.
 
+    When ``secrets_config`` is provided, secrets are loaded from the
+    configured provider and injected into the returned environment.
+    If the provider is unavailable, falls back to env vars silently.
+
     Args:
         extra_keys: Additional variable names to include beyond the base
             allowlist.  Pass the adapter-specific API key name(s) here,
             e.g. ``["ANTHROPIC_API_KEY"]``.
+        secrets_config: Optional secrets manager configuration. When set,
+            API keys are loaded from the external provider instead of
+            (or in addition to) environment variables.
 
     Returns:
         A fresh dict containing only the allowed variables that are currently
-        set in ``os.environ``.  Variables not present in the environment are
-        silently omitted.
+        set in ``os.environ``, plus any secrets from the provider.
 
     Example::
 
@@ -113,4 +128,19 @@ def build_filtered_env(extra_keys: Iterable[str] = ()) -> dict[str, str]:
         # env does NOT contain DATABASE_URL, AWS_SECRET_ACCESS_KEY, etc.
     """
     allowed = _BASE_ALLOWLIST | frozenset(extra_keys)
-    return {k: v for k, v in os.environ.items() if k in allowed}
+    env = {k: v for k, v in os.environ.items() if k in allowed}
+
+    # Overlay secrets from external provider (if configured).
+    if secrets_config is not None:
+        from bernstein.core.secrets import load_secrets
+
+        provider_secrets = load_secrets(secrets_config)
+        if provider_secrets:
+            logger.debug(
+                "Injecting %d secret(s) from %s into agent env",
+                len(provider_secrets),
+                secrets_config.provider,
+            )
+            env.update(provider_secrets)
+
+    return env

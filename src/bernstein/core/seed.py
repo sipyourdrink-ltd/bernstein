@@ -17,6 +17,7 @@ from bernstein.core.compliance import ComplianceConfig, CompliancePreset
 from bernstein.core.formal_verification import FormalProperty, FormalVerificationConfig
 from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
 from bernstein.core.quality_gates import QualityGatesConfig
+from bernstein.core.secrets import SecretsConfig
 from bernstein.core.workspace import Workspace
 from bernstein.core.worktree import WorktreeSetupConfig
 
@@ -117,6 +118,7 @@ class SeedConfig:
     worktree_setup: WorktreeSetupConfig | None = None
     quality_gates: QualityGatesConfig | None = None
     formal_verification: FormalVerificationConfig | None = None
+    secrets: SecretsConfig | None = None
     model_policy: dict[str, Any] | None = None
     compliance: ComplianceConfig | None = None
 
@@ -486,6 +488,43 @@ def parse_seed(path: Path) -> SeedConfig:
             block_on_violation=fv_block,
         )
 
+    secrets_raw: object = data.get("secrets")
+    secrets: SecretsConfig | None = None
+    if secrets_raw is not None:
+        if not isinstance(secrets_raw, dict):
+            raise SeedError(f"secrets must be a mapping, got: {type(secrets_raw).__name__}")
+        secrets_dict: dict[str, object] = cast("dict[str, object]", secrets_raw)
+        secrets_provider_raw: object = secrets_dict.get("provider")
+        if not isinstance(secrets_provider_raw, str):
+            raise SeedError("secrets.provider is required and must be a string")
+        from bernstein.core.secrets import _VALID_PROVIDERS
+
+        if secrets_provider_raw not in _VALID_PROVIDERS:
+            raise SeedError(
+                f"secrets.provider must be one of {sorted(_VALID_PROVIDERS)}, got: {secrets_provider_raw!r}"
+            )
+        secrets_path_raw: object = secrets_dict.get("path")
+        if not isinstance(secrets_path_raw, str):
+            raise SeedError("secrets.path is required and must be a string")
+        secrets_ttl_raw: object = secrets_dict.get("ttl", 300)
+        if not isinstance(secrets_ttl_raw, int) or secrets_ttl_raw < 0:
+            raise SeedError(f"secrets.ttl must be a non-negative integer, got: {secrets_ttl_raw!r}")
+        field_map_raw: object = secrets_dict.get("field_map")
+        field_map: dict[str, str] = {}
+        if field_map_raw is not None:
+            if not isinstance(field_map_raw, dict):
+                raise SeedError(f"secrets.field_map must be a mapping, got: {type(field_map_raw).__name__}")
+            for fk, fv in cast("dict[str, object]", field_map_raw).items():
+                if not isinstance(fv, str):
+                    raise SeedError(f"secrets.field_map values must be strings, got: {type(fv).__name__}")
+                field_map[str(fk)] = fv
+        secrets = SecretsConfig(
+            provider=secrets_provider_raw,  # type: ignore[arg-type]
+            path=secrets_path_raw,
+            ttl=secrets_ttl_raw,
+            field_map=field_map,
+        )
+
     compliance_raw: object = data.get("compliance")
     compliance: ComplianceConfig | None = None
     if compliance_raw is not None:
@@ -521,6 +560,7 @@ def parse_seed(path: Path) -> SeedConfig:
         workspace=workspace,
         session=session_cfg,
         worktree_setup=worktree_setup,
+        secrets=secrets,
         quality_gates=quality_gates,
         formal_verification=formal_verification,
         model_policy=model_policy,
