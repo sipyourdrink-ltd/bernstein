@@ -7,7 +7,7 @@ goal: >
 
 cli: auto  # use all detected agents: claude, codex, gemini
 
-max_agents: 6
+max_agents: 8  # 6 Claude + 1 Codex + 1 Gemini
 
 # Route tasks to the best agent per role.
 # Claude gets 80%+ of work ($200 Max plan = best limits + models).
