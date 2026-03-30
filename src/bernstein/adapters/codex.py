@@ -25,6 +25,7 @@ class CodexAdapter(CLIAdapter):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = 1800,
     ) -> SpawnResult:
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,7 +66,8 @@ class CodexAdapter(CLIAdapter):
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing codex: {exc}") from exc
 
-        return SpawnResult(pid=proc.pid, log_path=log_path)
+        timer = self._start_watchdog(proc, timeout_seconds=timeout_seconds, workdir=workdir, session_id=session_id)
+        return SpawnResult(pid=proc.pid, log_path=log_path, timer=timer)
 
     def name(self) -> str:
         return "Codex"

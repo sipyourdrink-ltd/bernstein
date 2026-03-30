@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import signal
+import subprocess
 import sys
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -15,6 +18,8 @@ if TYPE_CHECKING:
 
     from bernstein.core.models import ApiTierInfo, ModelConfig
 
+_log = logging.getLogger(__name__)
+
 
 @dataclass
 class SpawnResult:
@@ -23,6 +28,7 @@ class SpawnResult:
     pid: int
     log_path: Path
     proc: object | None = None  # subprocess.Popen, kept for poll()-based alive check
+    timer: threading.Timer | None = None  # watchdog; cancel on normal process exit
 
 
 def build_worker_cmd(
@@ -80,9 +86,80 @@ class CLIAdapter(ABC):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = 1800,
     ) -> SpawnResult:
         """Launch an agent process with the given prompt."""
         ...
+
+    def _start_watchdog(
+        self,
+        proc: subprocess.Popen[bytes],
+        *,
+        timeout_seconds: int,
+        workdir: Path,
+        session_id: str,
+    ) -> threading.Timer:
+        """Start a watchdog timer that kills proc after timeout_seconds.
+
+        On timeout: commits partial work, sends SIGTERM, waits 30 s, then SIGKILL.
+        The returned timer should be cancelled when the process exits normally.
+
+        Args:
+            proc: The subprocess to watch.
+            timeout_seconds: Seconds before the watchdog fires.
+            workdir: Agent working directory (used for git commit of partial work).
+            session_id: Session identifier, included in log messages.
+
+        Returns:
+            The started threading.Timer (daemon, so it won't block interpreter exit).
+        """
+
+        def _on_timeout() -> None:
+            if proc.poll() is not None:
+                return  # already exited normally
+
+            _log.warning(
+                "Agent timed out — killing",
+                extra={
+                    "session_id": session_id,
+                    "timeout_seconds": timeout_seconds,
+                    "reason": "timeout",
+                },
+            )
+
+            # Preserve partial work before sending signals
+            with contextlib.suppress(Exception):
+                subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=workdir,
+                    capture_output=True,
+                    timeout=10,
+                )
+                subprocess.run(
+                    ["git", "commit", "-m", f"[WIP] timeout: {session_id}"],
+                    cwd=workdir,
+                    capture_output=True,
+                    timeout=10,
+                )
+
+            # SIGTERM first
+            with contextlib.suppress(OSError):
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+
+            # SIGKILL after 30 s if still alive
+            def _force_kill() -> None:
+                if proc.poll() is None:
+                    with contextlib.suppress(OSError):
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+
+            force_timer = threading.Timer(30.0, _force_kill)
+            force_timer.daemon = True
+            force_timer.start()
+
+        timer = threading.Timer(float(timeout_seconds), _on_timeout)
+        timer.daemon = True
+        timer.start()
+        return timer
 
     def is_alive(self, pid: int) -> bool:
         """Check if the agent process is still running."""

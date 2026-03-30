@@ -43,6 +43,7 @@ class CachingAdapter(CLIAdapter):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = 1800,
     ) -> SpawnResult:
         """Spawn agent with caching: process prompt then delegate to inner adapter.
 
@@ -52,6 +53,7 @@ class CachingAdapter(CLIAdapter):
             model_config: Model configuration.
             session_id: Session ID for the agent.
             mcp_config: Optional MCP configuration.
+            timeout_seconds: Watchdog timeout; passed through to inner adapter.
 
         Returns:
             SpawnResult from the inner adapter.
@@ -73,6 +75,7 @@ class CachingAdapter(CLIAdapter):
             model_config=model_config,
             session_id=session_id,
             mcp_config=mcp_config,
+            timeout_seconds=timeout_seconds,
         )
 
     def name(self) -> str:
