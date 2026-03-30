@@ -32,6 +32,7 @@ console = Console()
 @dataclass
 class CVE:
     """Known vulnerability."""
+
     package: str
     version: str
     cve_id: str
@@ -42,6 +43,7 @@ class CVE:
 @dataclass
 class ConflictResolution:
     """Suggested resolution for a conflict."""
+
     package: str
     current: str
     suggested: str
@@ -89,12 +91,7 @@ def detect_cves() -> list[CVE]:
                         cve_id = parts[2]
                         # Fix versions may be missing (empty column)
                         fix_versions = parts[3:] if len(parts) > 3 else []
-                        cves.append(CVE(
-                            package=package,
-                            version=version,
-                            cve_id=cve_id,
-                            fix_versions=fix_versions
-                        ))
+                        cves.append(CVE(package=package, version=version, cve_id=cve_id, fix_versions=fix_versions))
                     except (IndexError, ValueError) as e:
                         # Skip malformed lines
                         pass
@@ -124,6 +121,7 @@ def suggest_resolutions(cves: list[CVE]) -> list[ConflictResolution]:
         if cve.fix_versions:
             # Find the highest version available
             try:
+
                 def parse_version(v: str) -> tuple:
                     """Parse version string into tuple for comparison."""
                     try:
@@ -132,13 +130,15 @@ def suggest_resolutions(cves: list[CVE]) -> list[ConflictResolution]:
                         return (0, 0, 0)
 
                 target_version = max(cve.fix_versions, key=parse_version)
-                resolutions.append(ConflictResolution(
-                    package=cve.package,
-                    current=cve.version,
-                    suggested=target_version,
-                    reason=f"CVE {cve.cve_id}: upgrade to {target_version}+",
-                    requires_test=True
-                ))
+                resolutions.append(
+                    ConflictResolution(
+                        package=cve.package,
+                        current=cve.version,
+                        suggested=target_version,
+                        reason=f"CVE {cve.cve_id}: upgrade to {target_version}+",
+                        requires_test=True,
+                    )
+                )
             except (ValueError, AttributeError):
                 # If we can't parse versions, suggest manual review
                 pass
@@ -151,11 +151,7 @@ def test_resolution(resolution: ConflictResolution) -> bool:
     console.print(f"  Testing: {resolution.package} {resolution.current} → {resolution.suggested}")
 
     # Create temporary test environment
-    cmd = [
-        "uv", "pip", "install",
-        f"{resolution.package}=={resolution.suggested}",
-        "--dry-run"
-    ]
+    cmd = ["uv", "pip", "install", f"{resolution.package}=={resolution.suggested}", "--dry-run"]
 
     exit_code, stdout, stderr = run_command(cmd)
     success = exit_code == 0
@@ -175,27 +171,22 @@ def generate_report(cves: list[CVE], conflicts: list[str], resolutions: list[Con
         "summary": {
             "cves_found": len(cves),
             "conflicts_found": len(conflicts),
-            "resolutions_suggested": len(resolutions)
+            "resolutions_suggested": len(resolutions),
         },
         "cves": [
             {
                 "package": cve.package,
                 "current_version": cve.version,
                 "cve_id": cve.cve_id,
-                "fix_versions": cve.fix_versions
+                "fix_versions": cve.fix_versions,
             }
             for cve in cves
         ],
         "conflicts": conflicts,
         "suggested_resolutions": [
-            {
-                "package": r.package,
-                "current": r.current,
-                "suggested": r.suggested,
-                "reason": r.reason
-            }
+            {"package": r.package, "current": r.current, "suggested": r.suggested, "reason": r.reason}
             for r in resolutions
-        ]
+        ],
     }
 
     return report

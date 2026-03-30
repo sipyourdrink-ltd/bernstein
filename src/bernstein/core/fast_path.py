@@ -419,7 +419,9 @@ def execute_fast_path(
 # L1 model override — cheapest model for simple tasks
 # ---------------------------------------------------------------------------
 
-_l1_model_config = ModelConfig(model="haiku", effort="low", max_tokens=50_000)
+# Default L1 model: sonnet (not haiku — on Max plan sonnet is unlimited
+# and produces much better results for the same cost).
+_l1_model_config = ModelConfig(model="sonnet", effort="normal", max_tokens=50_000)
 
 
 def get_l1_model_config() -> ModelConfig:

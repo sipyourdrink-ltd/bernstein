@@ -65,8 +65,9 @@ _MODEL_COST_USD_PER_1K: dict[str, float] = {
     "qwen-turbo": 0.0002,
 }
 
-# Cascade order — index 0 is cheapest
-CASCADE: list[str] = ["haiku", "sonnet", "opus"]
+# Cascade order — sonnet first (haiku removed: on Max plan sonnet is
+# unlimited and produces much better results)
+CASCADE: list[str] = ["sonnet", "opus"]
 
 
 def _model_cost(model: str) -> float:
