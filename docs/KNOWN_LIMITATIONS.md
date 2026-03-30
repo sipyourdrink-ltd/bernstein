@@ -6,13 +6,15 @@ Bernstein is in active development. This page documents known constraints, their
 
 ## Agent Communication Latency
 
-**What:** Commands sent to running agents (e.g., "save work and exit") are delivered via file-based signal polling with up to 60-second delay.
+**What:** Claude Code agents receive commands in sub-second via stdin pipe IPC. Other agents (Codex, Gemini, Qwen, Aider) still use file-based signal polling with up to 60-second delay.
 
-**Impact:** When you issue a broadcast command or stop signal, agents may not respond for up to a minute. Work in progress during that window continues unsupervised.
+**Impact:** Non-Claude agents may not respond to broadcast commands or stop signals for up to a minute.
 
-**Workaround:** Use `bernstein stop` which writes SHUTDOWN signals and waits up to 30 seconds for agents to finish. For immediate termination, use `bernstein stop --force`.
+**Workaround:** Press **Q** in the TUI dashboard — this performs a graceful shutdown that tries stdin pipe first, then file-based signals, then SIGTERM after 5 seconds. Alternatively, run `bernstein stop` from another terminal. For immediate termination, use `bernstein stop --force`.
 
-**Plan:** Ticket D03b — replace file polling with stdin pipe IPC for supported adapters (Claude Code first). Target: sub-2-second command delivery. File-based signals remain as fallback for adapters without stdin support.
+**Note:** Pressing Q no longer silently exits. It stops all agents before quitting. Pressing S (double-tap) performs an immediate hard stop.
+
+**Plan:** Extend stdin pipe IPC to Codex (via `--pipe` flag) and other adapters that support stdin communication.
 
 ---
 
