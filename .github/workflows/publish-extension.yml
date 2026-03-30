@@ -9,7 +9,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # needed to create GitHub Release
+      contents: write
+    env:
+      VS_MARKETPLACE_TOKEN: ${{ secrets.VS_MARKETPLACE_TOKEN }}
+      OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +64,7 @@ jobs:
 
       # Publish to VS Code Marketplace (requires VS_MARKETPLACE_TOKEN secret)
       - name: Publish to VS Code Marketplace
-        if: ${{ secrets.VS_MARKETPLACE_TOKEN != '' }}
+        if: env.VS_MARKETPLACE_TOKEN != ''
         uses: HaaLeo/publish-vscode-extension@v1
         with:
           pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
@@ -69,7 +72,7 @@ jobs:
 
       # Publish to Open VSX — used by Cursor, VSCodium, Gitpod (requires OPEN_VSX_TOKEN secret)
       - name: Publish to Open VSX
-        if: ${{ secrets.OPEN_VSX_TOKEN != '' }}
+        if: env.OPEN_VSX_TOKEN != ''
         uses: HaaLeo/publish-vscode-extension@v1
         with:
           pat: ${{ secrets.OPEN_VSX_TOKEN }}

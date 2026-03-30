@@ -1,4 +1,8 @@
 """Explain command — show routing rationale, execution trace, and outcome for a task."""
+# TODO(D6): Not yet wired into main.py CLI group. WIP — routing explanation
+# reconstructs router logic heuristically and may diverge from live
+# core/router.py decisions. Wire in once _explain_routing is validated
+# against actual router state. See p0-documentation-overhaul.md.
 
 from __future__ import annotations
 
