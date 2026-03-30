@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import time
 from collections import defaultdict
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Request
@@ -24,6 +25,27 @@ router = APIRouter()
 
 def _get_sdd_dir(request: Request) -> Path:
     return request.app.state.sdd_dir  # type: ignore[no-any-return]
+
+
+def _parse_timestamp(value: Any) -> float:
+    """Convert timestamp to Unix float, handling both numeric and ISO 8601 formats.
+
+    Args:
+        value: Unix timestamp (float/int) or ISO 8601 string.
+
+    Returns:
+        Unix timestamp as float, or 0.0 if unparseable.
+    """
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            # Try parsing ISO 8601 format (with or without timezone)
+            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return dt.timestamp()
+        except (ValueError, AttributeError):
+            return 0.0
+    return 0.0
 
 
 def _pct(data: list[float], p: float) -> float:
@@ -66,7 +88,7 @@ def _read_completion_metrics(metrics_dir: Path, days: int = 7) -> list[dict[str,
                     continue
                 try:
                     rec: dict[str, Any] = json.loads(raw)
-                    if rec.get("timestamp", 0) >= cutoff:
+                    if _parse_timestamp(rec.get("timestamp", 0)) >= cutoff:
                         records.append(rec)
                 except json.JSONDecodeError:
                     continue
@@ -101,7 +123,7 @@ def _read_api_usage_metrics(metrics_dir: Path, days: int = 7) -> list[dict[str, 
                     continue
                 try:
                     rec: dict[str, Any] = json.loads(raw)
-                    if rec.get("timestamp", 0) >= cutoff:
+                    if _parse_timestamp(rec.get("timestamp", 0)) >= cutoff:
                         records.append(rec)
                 except json.JSONDecodeError:
                     continue
@@ -136,7 +158,7 @@ def _read_quality_gates(metrics_dir: Path, days: int = 30) -> list[dict[str, Any
                 continue
             try:
                 rec: dict[str, Any] = json.loads(raw)
-                if rec.get("timestamp", 0) >= cutoff:
+                if _parse_timestamp(rec.get("timestamp", 0)) >= cutoff:
                     records.append(rec)
             except json.JSONDecodeError:
                 continue

@@ -299,9 +299,7 @@ class TestMCPGatewayLiveMode:
                 fut.set_result(fake_response)
 
         with patch.object(gw, "_send_upstream", side_effect=_mock_send):
-            await gw.handle_jsonrpc(
-                {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "run_test"}}
-            )
+            await gw.handle_jsonrpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "run_test"}})
 
         metrics = gw.get_metrics()
         assert "tools/call:run_test" in metrics
@@ -352,9 +350,7 @@ class TestMCPGatewayLiveMode:
                 fut.set_result(error_response)
 
         with patch.object(gw, "_send_upstream", side_effect=_mock_send):
-            await gw.handle_jsonrpc(
-                {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "bad_tool"}}
-            )
+            await gw.handle_jsonrpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "bad_tool"}})
 
         reader = WALReader(run_id="error-session", sdd_dir=sdd)
         entries = list(reader.iter_entries())

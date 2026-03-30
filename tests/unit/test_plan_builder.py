@@ -263,7 +263,7 @@ def test_render_with_tasks_shows_depends_on() -> None:
     md = PlanBuilder(plan, tasks=[task1, task2]).render_to_markdown()
     assert "t1" in md
     # Dependency section should note t2 depends on t1
-    dep_section = md[md.index("## Dependency Order"):]
+    dep_section = md[md.index("## Dependency Order") :]
     assert "t1" in dep_section
     assert "t2" in dep_section
 
@@ -275,7 +275,7 @@ def test_render_dependency_order_respects_topology() -> None:
     task1 = _make_task(task_id="t1")
     task2 = _make_task(task_id="t2", depends_on=["t1"])
     md = PlanBuilder(plan, tasks=[task1, task2]).render_to_markdown()
-    dep_section = md[md.index("## Dependency Order"):]
+    dep_section = md[md.index("## Dependency Order") :]
     assert dep_section.index("`t1`") < dep_section.index("`t2`")
 
 

@@ -341,3 +341,35 @@ def test_quality_endpoint_with_gate_data(tmp_path: Path) -> None:
     assert abs(gate_stats["lint"]["pass_rate"] - 0.5) < 0.001
     # Guardrail pass rate should reflect the blocked gate
     assert body["guardrail_pass_rate"] < 1.0
+
+
+def test_quality_endpoint_with_iso8601_timestamps(tmp_path: Path) -> None:
+    """Test that /quality endpoint handles ISO 8601 string timestamps (not just Unix floats)."""
+    metrics_dir = tmp_path / ".sdd" / "metrics"
+    metrics_dir.mkdir(parents=True)
+
+    # Write gate records with ISO 8601 string timestamps (as found in production)
+    gates_file = metrics_dir / "quality_gates.jsonl"
+    gate_records = [
+        {"timestamp": "2026-03-29T19:48:43.812896+00:00", "task_id": "t1", "gate": "lint", "result": "pass"},
+        {"timestamp": "2026-03-29T19:50:41.230744+00:00", "task_id": "t2", "gate": "lint", "result": "blocked"},
+    ]
+    gates_file.write_text("\n".join(json.dumps(r) for r in gate_records))
+
+    # Write completion metrics with numeric timestamps (as normally written)
+    completion_file = metrics_dir / "task_completion_time_20260329.jsonl"
+    completion_records = [
+        {"timestamp": time.time(), "metric_type": "task_completion_time", "value": 10.0, "labels": {"model": "sonnet", "success": "True"}},
+    ]
+    completion_file.write_text("\n".join(json.dumps(r) for r in completion_records))
+
+    app = _make_test_app(tmp_path / "tasks.jsonl")
+    app.state.sdd_dir = metrics_dir.parent
+
+    with TestClient(app) as client:
+        resp = client.get("/quality")
+    # Should succeed despite string timestamps in gate records
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["gate_stats"]["lint"]["total"] == 2
+    assert body["gate_stats"]["lint"]["pass"] == 1
