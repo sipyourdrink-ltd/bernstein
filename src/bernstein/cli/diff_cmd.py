@@ -1,9 +1,14 @@
-"""diff command — show the git diff of what an agent changed for a task."""
+"""diff command — show the git diff of what an agent changed for a task.
+
+Includes side-by-side comparison mode for comparing two agents' work on
+the same (or related) tasks: ``bernstein diff --compare agent1 agent2``.
+"""
 
 from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +19,25 @@ from bernstein.cli.helpers import console
 # ---------------------------------------------------------------------------
 # Diff resolution helpers
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ResolvedDiff:
+    """Result of resolving a diff for an agent/task.
+
+    Attributes:
+        diff_text: The raw unified diff string.
+        source_label: Human-readable Rich markup describing where the diff came from.
+        agent: The agent session dict (if found).
+        session_id: The agent session ID (if found).
+        stat_text: The ``--stat`` summary (if available).
+    """
+
+    diff_text: str
+    source_label: str
+    agent: dict[str, Any] | None = None
+    session_id: str | None = None
+    stat_text: str = ""
 
 
 def _load_agents(workdir: Path) -> list[dict[str, Any]]:
@@ -34,6 +58,15 @@ def _find_agent_for_task(task_id: str, agents: list[dict[str, Any]]) -> dict[str
         for tid in agent.get("task_ids", []):
             if tid == task_id or tid.startswith(task_id) or task_id.startswith(tid[:8]):
                 return agent
+    return None
+
+
+def _find_agent_by_session(session_id: str, agents: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Find an agent session by its session ID (exact or prefix match)."""
+    for agent in agents:
+        aid = agent.get("id", "")
+        if aid == session_id or aid.startswith(session_id) or session_id.startswith(aid[:8]):
+            return agent
     return None
 
 
@@ -109,13 +142,209 @@ def _search_commits_by_task_id(task_id: str, workdir: Path) -> str:
     return _run_git(["show", first_hash, "--", "--format="], workdir)
 
 
+def _get_stat_from_worktree(worktree: Path, base: str = "main") -> str:
+    """Get --stat from a live worktree."""
+    return _run_git(["diff", f"{base}...HEAD", "--stat"], worktree)
+
+
+def _get_stat_from_branch(branch: str, workdir: Path, base: str = "main") -> str:
+    """Get --stat from a branch."""
+    return _run_git(["diff", f"{base}...{branch}", "--stat"], workdir)
+
+
+# ---------------------------------------------------------------------------
+# Unified diff resolver
+# ---------------------------------------------------------------------------
+
+
+def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base: str = "main") -> ResolvedDiff:
+    """Resolve a diff for a task ID or agent session ID.
+
+    Tries multiple strategies: live worktree, local branch, merge commit,
+    commit search. The *identifier* can be a task ID or session ID.
+
+    Args:
+        identifier: Task ID or agent session ID (prefix match OK).
+        root: Project root directory.
+        agents: List of agent session dicts from agents.json.
+        base: Base branch to diff against.
+
+    Returns:
+        ResolvedDiff with the diff text and metadata.
+    """
+    # Try as task ID first, then as session ID
+    agent = _find_agent_for_task(identifier, agents) or _find_agent_by_session(identifier, agents)
+    session_id = None if agent is None else agent.get("id")
+
+    diff_text = ""
+    source_label = ""
+    stat_text = ""
+
+    if session_id:
+        branch = f"agent/{session_id}"
+        worktree_path = root / ".sdd" / "worktrees" / session_id
+
+        # Live worktree
+        if worktree_path.exists() and (worktree_path / ".git").exists():
+            diff_text = _get_diff_from_worktree(worktree_path, base)
+            if diff_text:
+                source_label = f"[dim]source:[/dim] worktree [cyan]{session_id}[/cyan] vs [yellow]{base}[/yellow]"
+                stat_text = _get_stat_from_worktree(worktree_path, base)
+
+        # Local branch still exists
+        if not diff_text and _branch_exists(branch, root):
+            diff_text = _get_diff_from_branch(branch, root, base)
+            if diff_text:
+                source_label = f"[dim]source:[/dim] branch [cyan]{branch}[/cyan] vs [yellow]{base}[/yellow]"
+                stat_text = _get_stat_from_branch(branch, root, base)
+
+        # Merged branch
+        if not diff_text:
+            merge_commit = _find_merge_commit(session_id, root)
+            if merge_commit:
+                diff_text = _get_diff_from_merge_commit(merge_commit, root)
+                if diff_text:
+                    source_label = (
+                        f"[dim]source:[/dim] merge commit [cyan]{merge_commit}[/cyan]"
+                        f" ([dim]agent/{session_id}[/dim])"
+                    )
+
+    # Last resort: search commits
+    if not diff_text:
+        diff_text = _search_commits_by_task_id(identifier, root)
+        if diff_text:
+            source_label = f"[dim]source:[/dim] commit search for [cyan]{identifier}[/cyan]"
+
+    return ResolvedDiff(
+        diff_text=diff_text,
+        source_label=source_label,
+        agent=agent,
+        session_id=session_id,
+        stat_text=stat_text,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Side-by-side comparison renderer
+# ---------------------------------------------------------------------------
+
+
+def _parse_diff_files(diff_text: str) -> dict[str, list[str]]:
+    """Parse a unified diff into a dict of {filepath: [lines]}."""
+    files: dict[str, list[str]] = {}
+    current_file: str | None = None
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git"):
+            # Extract b/path
+            parts = line.split(" b/", 1)
+            current_file = parts[1] if len(parts) > 1 else line
+            files[current_file] = []
+        elif current_file is not None:
+            files[current_file].append(line)
+    return files
+
+
+def _render_compare(left: ResolvedDiff, right: ResolvedDiff, left_name: str, right_name: str) -> None:
+    """Render side-by-side comparison of two diffs using Rich columns."""
+    from rich.columns import Columns
+    from rich.panel import Panel
+    from rich.syntax import Syntax
+    from rich.table import Table
+    from rich.text import Text
+
+    # -- Header with agent info --
+    header = Table.grid(expand=True)
+    header.add_column(ratio=1)
+    header.add_column(ratio=1)
+
+    def _agent_label(rd: ResolvedDiff, name: str) -> Text:
+        t = Text()
+        t.append(name, style="bold cyan")
+        if rd.agent:
+            role = rd.agent.get("role", "")
+            model = rd.agent.get("model", "")
+            if role or model:
+                t.append(f"  role={role} model={model}", style="dim")
+        return t
+
+    header.add_row(_agent_label(left, left_name), _agent_label(right, right_name))
+    console.print(header)
+    console.print()
+
+    # -- Stat summary comparison --
+    if left.stat_text or right.stat_text:
+        stat_table = Table.grid(expand=True)
+        stat_table.add_column(ratio=1)
+        stat_table.add_column(ratio=1)
+        stat_table.add_row(
+            Text(left.stat_text or "(no changes)", style="dim"),
+            Text(right.stat_text or "(no changes)", style="dim"),
+        )
+        console.print(stat_table)
+        console.print()
+
+    # -- File-level comparison --
+    left_files = _parse_diff_files(left.diff_text) if left.diff_text else {}
+    right_files = _parse_diff_files(right.diff_text) if right.diff_text else {}
+    all_files = sorted(set(left_files) | set(right_files))
+
+    if not all_files:
+        console.print("[yellow]Neither agent produced any changes.[/yellow]")
+        return
+
+    # Summary table: which files each agent touched
+    summary = Table(title="Files Changed", expand=True, show_lines=True)
+    summary.add_column("File", style="white")
+    summary.add_column(left_name, justify="center", width=12)
+    summary.add_column(right_name, justify="center", width=12)
+    summary.add_column("Status", width=14)
+
+    for f in all_files:
+        in_left = f in left_files
+        in_right = f in right_files
+        left_mark = "[green]+[/green]" if in_left else "[dim]-[/dim]"
+        right_mark = "[green]+[/green]" if in_right else "[dim]-[/dim]"
+        if in_left and in_right:
+            status = "[yellow]both[/yellow]"
+        elif in_left:
+            status = f"[cyan]{left_name} only[/cyan]"
+        else:
+            status = f"[magenta]{right_name} only[/magenta]"
+        summary.add_row(f, left_mark, right_mark, status)
+
+    console.print(summary)
+    console.print()
+
+    # Per-file side-by-side diffs
+    for f in all_files:
+        left_content = "\n".join(left_files.get(f, ["(no changes)"]))
+        right_content = "\n".join(right_files.get(f, ["(no changes)"]))
+
+        left_panel = Panel(
+            Syntax(left_content, "diff", theme="monokai", line_numbers=False),
+            title=f"[cyan]{left_name}[/cyan]",
+            border_style="cyan",
+            expand=True,
+        )
+        right_panel = Panel(
+            Syntax(right_content, "diff", theme="monokai", line_numbers=False),
+            title=f"[magenta]{right_name}[/magenta]",
+            border_style="magenta",
+            expand=True,
+        )
+
+        console.print(f"[bold]--- {f} ---[/bold]")
+        console.print(Columns([left_panel, right_panel], expand=True, equal=True))
+        console.print()
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
 
 @click.command("diff")
-@click.argument("task_id")
+@click.argument("task_id", required=False, default=None)
 @click.option("--base", default="main", show_default=True, help="Base branch to diff against.")
 @click.option(
     "--workdir",
@@ -126,7 +355,22 @@ def _search_commits_by_task_id(task_id: str, workdir: Path) -> str:
 )
 @click.option("--stat", "stat_only", is_flag=True, default=False, help="Show diff --stat summary only.")
 @click.option("--raw", is_flag=True, default=False, help="Print raw diff without syntax highlighting.")
-def diff_cmd(task_id: str, base: str, workdir: str, stat_only: bool, raw: bool) -> None:
+@click.option(
+    "--compare",
+    nargs=2,
+    type=str,
+    default=None,
+    metavar="AGENT1 AGENT2",
+    help="Compare two agents side-by-side (task IDs or session IDs).",
+)
+def diff_cmd(
+    task_id: str | None,
+    base: str,
+    workdir: str,
+    stat_only: bool,
+    raw: bool,
+    compare: tuple[str, str] | None,
+) -> None:
     """Show the git diff of what an agent changed for a task.
 
     Looks up the agent session that handled TASK_ID, then retrieves the diff
@@ -134,96 +378,78 @@ def diff_cmd(task_id: str, base: str, workdir: str, stat_only: bool, raw: bool) 
 
     \b
     Examples:
-      bernstein diff 90307ac2             # partial task ID OK
-      bernstein diff 90307ac2 --stat      # summary only
-      bernstein diff 90307ac2 --base main # diff vs a specific base branch
+      bernstein diff 90307ac2                         # single task diff
+      bernstein diff 90307ac2 --stat                  # summary only
+      bernstein diff --compare backend-abc qa-def     # side-by-side
+      bernstein diff --compare task1 task2 --stat     # stat comparison
     """
     root = Path(workdir).resolve()
     agents = _load_agents(root)
 
     # ------------------------------------------------------------------
-    # 1. Find the agent session for this task
+    # Compare mode: side-by-side diff of two agents
     # ------------------------------------------------------------------
-    agent = _find_agent_for_task(task_id, agents)
-    session_id = None if agent is None else agent.get("id")
+    if compare is not None:
+        left_id, right_id = compare
+        left = resolve_diff(left_id, root, agents, base)
+        right = resolve_diff(right_id, root, agents, base)
 
-    diff_text = ""
-    source_label = ""
+        if not left.diff_text and not right.diff_text:
+            console.print(f"[yellow]No diffs found for either [bold]{left_id}[/bold] or [bold]{right_id}[/bold].[/yellow]")
+            raise SystemExit(1)
 
-    if session_id:
-        branch = f"agent/{session_id}"
-        worktree_path = root / ".sdd" / "worktrees" / session_id
+        if stat_only:
+            from rich.table import Table
 
-        # ------------------------------------------------------------------
-        # 2a. Live worktree (task still in progress)
-        # ------------------------------------------------------------------
-        if worktree_path.exists() and (worktree_path / ".git").exists():
-            diff_text = _get_diff_from_worktree(worktree_path, base)
-            if diff_text:
-                source_label = f"[dim]source:[/dim] worktree [cyan]{session_id}[/cyan] vs [yellow]{base}[/yellow]"
+            t = Table(title="Stat Comparison", expand=True)
+            t.add_column(left_id, style="cyan")
+            t.add_column(right_id, style="magenta")
+            t.add_row(
+                left.stat_text or "(no changes)",
+                right.stat_text or "(no changes)",
+            )
+            console.print(t)
+            return
 
-        # ------------------------------------------------------------------
-        # 2b. Local branch still exists (not yet merged)
-        # ------------------------------------------------------------------
-        if not diff_text and _branch_exists(branch, root):
-            diff_text = _get_diff_from_branch(branch, root, base)
-            if diff_text:
-                source_label = f"[dim]source:[/dim] branch [cyan]{branch}[/cyan] vs [yellow]{base}[/yellow]"
-
-        # ------------------------------------------------------------------
-        # 2c. Merged branch — find the merge commit
-        # ------------------------------------------------------------------
-        if not diff_text:
-            merge_commit = _find_merge_commit(session_id, root)
-            if merge_commit:
-                diff_text = _get_diff_from_merge_commit(merge_commit, root)
-                if diff_text:
-                    source_label = (
-                        f"[dim]source:[/dim] merge commit [cyan]{merge_commit}[/cyan] ([dim]agent/{session_id}[/dim])"
-                    )
+        _render_compare(left, right, left_id, right_id)
+        return
 
     # ------------------------------------------------------------------
-    # 3. Last resort: search all commits for the task_id
+    # Single-task mode (original behavior)
     # ------------------------------------------------------------------
-    if not diff_text:
-        diff_text = _search_commits_by_task_id(task_id, root)
-        if diff_text:
-            source_label = f"[dim]source:[/dim] commit search for [cyan]{task_id}[/cyan]"
+    if task_id is None:
+        console.print("[red]Error:[/red] TASK_ID is required when not using --compare.")
+        raise SystemExit(1)
 
-    # ------------------------------------------------------------------
-    # 4. Render
-    # ------------------------------------------------------------------
-    if not diff_text:
-        agent_hint = f" (agent: [cyan]{session_id}[/cyan])" if session_id else ""
+    resolved = resolve_diff(task_id, root, agents, base)
+
+    if not resolved.diff_text:
+        agent_hint = f" (agent: [cyan]{resolved.session_id}[/cyan])" if resolved.session_id else ""
         console.print(f"[yellow]No diff found for task:[/yellow] [bold]{task_id}[/bold]{agent_hint}")
         console.print("[dim]The task may not have made any changes yet, or the branch/worktree was cleaned up.[/dim]")
         raise SystemExit(1)
 
     # Header
-    if agent:
-        task_ids_str = ", ".join(agent.get("task_ids", []))
-        role = agent.get("role", "")
-        model = agent.get("model", "")
+    if resolved.agent:
+        task_ids_str = ", ".join(resolved.agent.get("task_ids", []))
+        role = resolved.agent.get("role", "")
+        model = resolved.agent.get("model", "")
         console.print(f"[bold]Task:[/bold] [cyan]{task_ids_str}[/cyan]  [dim]role={role}, model={model}[/dim]")
-    if source_label:
-        console.print(source_label)
+    if resolved.source_label:
+        console.print(resolved.source_label)
     console.print()
 
     if stat_only:
-        # Show only the stat summary
-        stat_lines = [
-            line for line in diff_text.splitlines() if "|" in line or "changed" in line or "insertion" in line
-        ]
-        if stat_lines:
-            console.print("\n".join(stat_lines))
+        if resolved.stat_text:
+            console.print(resolved.stat_text)
         else:
             # Re-run with --stat if we have enough info
-            if session_id:
-                worktree_path = root / ".sdd" / "worktrees" / session_id
+            if resolved.session_id:
+                worktree_path = root / ".sdd" / "worktrees" / resolved.session_id
                 if worktree_path.exists():
                     stat = _run_git(["diff", f"{base}...HEAD", "--stat"], worktree_path)
                 else:
-                    branch = f"agent/{session_id}"
+                    branch = f"agent/{resolved.session_id}"
                     stat = _run_git(["diff", f"{base}...{branch}", "--stat"], root)
                 console.print(stat or "[dim](no stat available)[/dim]")
             else:
@@ -231,11 +457,11 @@ def diff_cmd(task_id: str, base: str, workdir: str, stat_only: bool, raw: bool) 
         return
 
     if raw:
-        console.print(diff_text)
+        console.print(resolved.diff_text)
         return
 
     # Syntax-highlighted diff
     from rich.syntax import Syntax
 
-    syntax = Syntax(diff_text, "diff", theme="monokai", line_numbers=False)
+    syntax = Syntax(resolved.diff_text, "diff", theme="monokai", line_numbers=False)
     console.print(syntax)
