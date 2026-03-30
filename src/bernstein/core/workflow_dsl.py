@@ -384,10 +384,7 @@ class WorkflowDAG:
         phase_hash = self.definition.definition_hash()
         dag_payload = json.dumps(
             {
-                "nodes": [
-                    {"id": n.id, "phase": n.phase, "role": n.role}
-                    for n in self.nodes
-                ],
+                "nodes": [{"id": n.id, "phase": n.phase, "role": n.role} for n in self.nodes],
                 "edges": [
                     {
                         "source": e.source,
@@ -683,8 +680,7 @@ def validate_dag(dag: WorkflowDAG) -> ValidationResult:
     for node in dag.nodes:
         if node.phase not in phase_names:
             result.errors.append(
-                f"Node {node.id!r} references unknown phase {node.phase!r}; "
-                f"known phases: {phase_names}"
+                f"Node {node.id!r} references unknown phase {node.phase!r}; known phases: {phase_names}"
             )
 
     if result.errors:
@@ -895,9 +891,7 @@ class DAGExecutor:
             incoming = self._edges_by_target.get(node.id, [])
             if not incoming:
                 # Root node: ready if no active task or retryable.
-                if existing is None or (
-                    existing.status == TaskStatus.FAILED and self.should_retry(node.id, existing)
-                ):
+                if existing is None or (existing.status == TaskStatus.FAILED and self.should_retry(node.id, existing)):
                     ready.append(node.id)
                 continue
 
