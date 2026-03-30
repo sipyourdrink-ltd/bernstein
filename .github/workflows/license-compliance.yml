@@ -29,7 +29,7 @@ jobs:
 
       - name: Check licenses
         id: license_check_report
-        uses: pilosus/action-pip-license-checker@v2
+        uses: pilosus/action-pip-license-checker@v3
         with:
           requirements: "requirements-all.txt"
           report-format: "json-pretty"
