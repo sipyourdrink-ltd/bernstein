@@ -138,7 +138,7 @@ class PlanBuilder:
             self._agent_assignments(),
             self._footer(),
         ]
-        return "\n\n".join(p for p in parts if p) + "\n"
+        return "\n".join(p for p in parts if p) + "\n"
 
     # ------------------------------------------------------------------
     # Private section renderers
@@ -177,37 +177,23 @@ class PlanBuilder:
         if not plan.task_estimates:
             return "## Tasks\n\n_No tasks in this plan._"
 
-        lines = [
-            "## Tasks",
-            "",
-            "<!-- Edit model/effort per task, reorder, or add context notes. -->",
-        ]
+        lines = ["## Tasks", ""]
 
         for i, est in enumerate(plan.task_estimates, start=1):
             task = self._tasks.get(est.task_id)
             effort = (task.effort or "auto") if task else "auto"
-            scope = task.scope.value if task else "medium"
-            depends_on_ids = task.depends_on if task else []
-            dep_str = ", ".join(depends_on_ids) if depends_on_ids else "none"
-
+            deps = ", ".join(task.depends_on) if task and task.depends_on else ""
             risk_icon = _RISK_ICON.get(est.risk_level, "?")
-            risk_reasons_str = "; ".join(est.risk_reasons) if est.risk_reasons else "none"
+            dep_part = f" | deps: {deps}" if deps else ""
+            time_est = _fmt_minutes(task.estimated_minutes if task else 30)
 
-            lines += [
-                "",
-                f"### {i}. {est.title}",
-                "",
-                f"- **ID:** `{est.task_id}`",
-                f"- **Role:** {est.role}",
-                f"- **Model:** {est.model}",
-                f"- **Effort:** {effort}",
-                f"- **Scope:** {scope}",
-                f"- **Estimated time:** {_fmt_minutes(task.estimated_minutes if task else 30)}",
-                f"- **Estimated cost:** {_fmt_cost(est.estimated_cost_usd)}",
-                f"- **Risk:** {risk_icon} {est.risk_level}",
-                f"- **Risk reasons:** {risk_reasons_str}",
-                f"- **Depends on:** {dep_str}",
-            ]
+            # Compact 2-line format per task
+            lines.append(
+                f"{i}. **{est.title[:70]}**  "
+                f"`{est.role}` · {est.model}/{effort} · "
+                f"{time_est} · {_fmt_cost(est.estimated_cost_usd)} · "
+                f"{risk_icon}{dep_part}"
+            )
 
         return "\n".join(lines)
 
