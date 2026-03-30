@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+import json
 import os
 import sys
 import time
@@ -21,6 +23,91 @@ from bernstein.cli.helpers import (
 )
 from bernstein.cli.run import render_run_summary_from_dict
 from bernstein.cli.ui import make_console
+
+# ---------------------------------------------------------------------------
+# Plan helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_synthetic_plan(goal: str, team: list[str] | None = None) -> tuple[Any, list[Any]]:
+    """Build a synthetic TaskPlan from a goal for --plan-only or confirmation display.
+
+    Args:
+        goal: Project goal string.
+        team: Optional list of role names. Defaults to ["manager"].
+
+    Returns:
+        Tuple of (TaskPlan, list[Task]).
+    """
+    from bernstein.core.models import Complexity, Scope, Task
+    from bernstein.core.plan_approval import create_plan
+
+    roles = team or ["manager"]
+    tasks: list[Task] = []
+    for i, role in enumerate(roles):
+        tasks.append(
+            Task(
+                id=f"planned-{i + 1}",
+                title=f"[{role}] {goal[:70]}",
+                description=goal,
+                role=role,
+                priority=i + 1,
+                scope=Scope.MEDIUM,
+                complexity=Complexity.MEDIUM,
+            )
+        )
+    plan = create_plan(goal, tasks)
+    return plan, tasks
+
+
+def _load_plan_goal(plan_path: Path) -> str:
+    """Extract the goal from a saved plan file (JSON or markdown).
+
+    Args:
+        plan_path: Path to the plan file.
+
+    Returns:
+        Goal string extracted from the plan.
+
+    Raises:
+        ValueError: If the goal cannot be extracted.
+    """
+    content = plan_path.read_text()
+
+    # Try JSON first (PlanStore format)
+    if plan_path.suffix == ".json":
+        try:
+            data = json.loads(content)
+            if "goal" in data:
+                return str(data["goal"])
+        except json.JSONDecodeError:
+            pass
+
+    # Fall back to markdown: look for "**Goal:** ..." line
+    for line in content.splitlines():
+        if line.startswith("**Goal:**"):
+            return line.replace("**Goal:**", "").strip()
+
+    raise ValueError(f"Could not extract goal from plan file: {plan_path}")
+
+
+def _save_plan_markdown(md: str, workdir: Path) -> Path:
+    """Save rendered plan markdown to .sdd/runtime/plans/ with a timestamp name.
+
+    Args:
+        md: Markdown content to save.
+        workdir: Project root directory.
+
+    Returns:
+        Path to the saved file.
+    """
+    plans_dir = workdir / ".sdd" / "runtime" / "plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    plan_file = plans_dir / f"plan-{ts}.md"
+    plan_file.write_text(md)
+    return plan_file
+
 
 # ---------------------------------------------------------------------------
 # init
@@ -284,6 +371,25 @@ def _show_run_summary() -> None:
         "Requires --container."
     ),
 )
+@click.option(
+    "--plan-only",
+    is_flag=True,
+    default=False,
+    help="Generate and display the execution plan without running any agents.",
+)
+@click.option(
+    "--from-plan",
+    "from_plan",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Load a saved plan file and execute it (skips interactive planning).",
+)
+@click.option(
+    "--auto-approve",
+    is_flag=True,
+    default=False,
+    help="Skip the confirmation prompt before execution.",
+)
 def run(
     goal: str | None,
     seed_file: str | None,
@@ -298,6 +404,9 @@ def run(
     container: bool,
     container_image: str | None,
     two_phase_sandbox: bool,
+    plan_only: bool,
+    from_plan: Path | None,
+    auto_approve: bool,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
@@ -305,6 +414,9 @@ def run(
       bernstein conduct                        # reads bernstein.yaml
       bernstein conduct --goal "Build X"       # inline goal
       bernstein conduct --seed custom.yaml     # custom seed file
+      bernstein conduct --plan-only            # show plan without executing
+      bernstein conduct --from-plan plan.md    # execute a saved plan
+      bernstein conduct --auto-approve         # skip confirmation prompt
       bernstein conduct --cells 3              # 3 parallel cells (multi-cell mode)
       bernstein conduct --remote               # bind to 0.0.0.0 for cluster access
       bernstein conduct --cli claude           # force Claude Code agent
@@ -349,6 +461,98 @@ def run(
         os.environ["BERNSTEIN_TWO_PHASE_SANDBOX"] = "1"
 
     workdir = Path.cwd()
+
+    # --from-plan: load goal from saved plan file, override inline goal
+    if from_plan is not None:
+        try:
+            goal = _load_plan_goal(from_plan)
+            console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
+            console.print(f"[dim]Goal:[/dim] {goal[:100]}")
+        except (ValueError, OSError) as exc:
+            console.print(f"[red]Failed to load plan:[/red] {exc}")
+            raise SystemExit(1) from exc
+
+    # --plan-only: build a synthetic plan, render to markdown, save, and exit
+    if plan_only:
+        from bernstein.core.plan_builder import PlanBuilder
+        from bernstein.core.seed import SeedError, parse_seed
+
+        effective_goal = goal
+        team: list[str] | None = None
+
+        if effective_goal is None:
+            # Resolve seed file
+            if seed_file is not None:
+                seed_path = Path(seed_file)
+            else:
+                found = find_seed_file()
+                if found is not None:
+                    seed_path = found
+                else:
+                    from bernstein.cli.errors import no_seed_or_goal
+
+                    no_seed_or_goal().print()
+                    raise SystemExit(1)
+            try:
+                seed = parse_seed(seed_path)
+                effective_goal = seed.goal
+                team = list(seed.team) if seed.team != "auto" else None
+            except SeedError as exc:
+                from bernstein.cli.errors import seed_parse_error
+
+                seed_parse_error(exc).print()
+                raise SystemExit(1) from exc
+
+        plan_obj, tasks = _build_synthetic_plan(effective_goal, team)
+        builder = PlanBuilder(plan_obj, tasks)
+        md = builder.render_to_markdown()
+
+        # Render to terminal
+        from rich.markdown import Markdown
+
+        console.print(Markdown(md))
+
+        # Save to file
+        plan_file = _save_plan_markdown(md, workdir)
+        console.print(f"\n[dim]Plan saved to:[/dim] {plan_file}")
+        console.print(f"[dim]Execute with:[/dim] bernstein run --from-plan {plan_file}")
+        return
+
+    # Confirmation prompt before execution (skip with --auto-approve)
+    if not auto_approve:
+        effective_goal_for_confirm = goal
+        team_for_confirm: list[str] | None = None
+
+        if effective_goal_for_confirm is None:
+            # Peek at seed to get goal for confirmation display
+            if seed_file is not None:
+                _peek_path: Path | None = Path(seed_file)
+            else:
+                _peek_path = find_seed_file()
+
+            if _peek_path is not None:
+                try:
+                    from bernstein.core.seed import parse_seed as _parse_seed
+
+                    _seed = _parse_seed(_peek_path)
+                    effective_goal_for_confirm = _seed.goal
+                    team_for_confirm = list(_seed.team) if _seed.team != "auto" else None
+                except Exception:
+                    pass
+
+        if effective_goal_for_confirm:
+            plan_obj, tasks = _build_synthetic_plan(effective_goal_for_confirm, team_for_confirm)
+            from rich.markdown import Markdown
+
+            from bernstein.core.plan_builder import PlanBuilder
+
+            builder = PlanBuilder(plan_obj, tasks)
+            md = builder.render_to_markdown()
+            console.print(Markdown(md))
+
+        if not click.confirm("\nProceed with execution?", default=True):
+            console.print("[dim]Cancelled.[/dim]")
+            return
 
     if goal is not None:
         # Inline goal mode -- no YAML needed
