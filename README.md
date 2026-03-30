@@ -95,50 +95,122 @@ See [`examples/quickstart/`](examples/quickstart/) for a ready-to-run example wi
 <summary><strong>All CLI commands</strong></summary>
 
 ```bash
-bernstein stop                     # graceful shutdown
+# Core
+bernstein -g "goal"                # start orchestration with inline goal
+bernstein                          # start from bernstein.yaml
+bernstein init                     # initialize .sdd/ workspace
+bernstein stop [--timeout N]       # graceful shutdown (--force for hard kill)
 bernstein ps                       # show running agent processes
-bernstein cancel <task_id>         # cancel a task
-bernstein cost                     # show cost summary
-bernstein live                     # open live TUI dashboard
+bernstein status                   # task summary, active agents, cost estimate
+bernstein cost [--json] [--share]  # show cost, tokens, duration per model
+bernstein demo [--real]            # zero-config demo (--real uses live agents)
+bernstein quickstart               # zero-config demo: 3 tasks on Flask TODO API
+
+# Monitoring
+bernstein live [--classic]         # live TUI dashboard
 bernstein dashboard                # open web dashboard in browser
-bernstein doctor                   # health check: deps, keys, ports
-bernstein plugins                  # list active plugins
+bernstein doctor [--fix]           # health check: deps, keys, ports (--fix auto-repairs)
+bernstein logs [-f] [-a AGENT]     # tail agent log output
 bernstein trace <task_id>          # step-by-step agent decision trace
-bernstein replay <trace_id>        # re-run a task from its trace
-bernstein init                     # initialize project
-bernstein demo                     # zero-to-running demo (no API key needed)
+bernstein replay <run_id>          # re-run from a recorded trace
+bernstein recap [--as-json]        # post-run summary: tasks, pass/fail, cost
+bernstein diff <task_id>           # git diff for what an agent changed
+
+# Task management
+bernstein plan [--export]          # show task backlog (--export to JSON)
+bernstein add-task TITLE           # inject a task into the running server
+bernstein cancel <task_id>         # cancel a running or queued task
+bernstein list-tasks [--status-filter] # list tasks with optional filters
+bernstein sync                     # sync .sdd/backlog/open/ with task server
+bernstein review                   # trigger immediate manager queue review
+bernstein approve <task_id>        # approve a pending task review
+bernstein reject <task_id>         # reject a pending task review
+bernstein pending                  # list tasks waiting for approval
+
+# Agent management
+bernstein agents sync              # pull latest agent catalog
+bernstein agents list              # list available agents
+bernstein agents validate          # check catalog health
+bernstein agents showcase          # show agent capabilities showcase
+bernstein agents match QUERY       # find best agent for a task description
+bernstein agents discover          # discover installed CLI agents
 
 # CI autofix
 bernstein ci fix <run-url>         # parse failing CI run, create fix task
 bernstein ci watch <repo>          # continuous monitoring, auto-fix on failure
 
 # Governance & audit
+bernstein audit show               # recent audit log events
+bernstein audit seal               # create Merkle seal of audit log
+bernstein audit verify             # verify Merkle proof integrity
 bernstein audit verify-hmac        # validate HMAC chain integrity
 bernstein audit query              # search audit log (--event-type, --actor, --since)
 bernstein verify --wal-integrity   # verify WAL hash chain
 bernstein verify --determinism     # check execution fingerprint reproducibility
+bernstein verify --memory-audit    # detect memory leaks in agent processes
+bernstein verify --formal          # formal verification mode
+bernstein manifest list            # list all run manifests
 bernstein manifest show <run-id>   # display run manifest
-bernstein manifest diff <a> <b>    # compare two run configurations
+bernstein manifest diff <a> <b>   # compare two run configurations
 
 # Benchmarks & eval
 bernstein benchmark run            # run golden benchmark suite
 bernstein benchmark compare        # orchestrated vs. single-agent comparison
+bernstein benchmark swe-bench      # run SWE-bench harness
+bernstein eval run                 # run evaluation suite with scoring
+bernstein eval report              # generate evaluation report
+bernstein eval failures            # show evaluation failures
 
 # Evolution
+bernstein evolve run               # run autoresearch evolution loop
 bernstein evolve review            # list evolution proposals
 bernstein evolve approve <id>      # approve a proposal
-bernstein ideate                   # run creative evolution pipeline
+bernstein evolve status            # show evolution pipeline status
+bernstein evolve export            # export evolution proposals
+bernstein ideate                   # creative evolution pipeline
 
-# Agent management
-bernstein agents sync              # pull latest agent catalog
-bernstein agents list              # list available agents
-bernstein agents validate          # check catalog health
+# Advanced
+bernstein chaos agent-kill         # kill a random agent (fault injection)
+bernstein chaos rate-limit         # simulate API rate limiting
+bernstein chaos file-remove        # remove files an agent depends on
+bernstein chaos status             # show chaos experiment status
+bernstein chaos slo                # check SLO compliance under chaos
+bernstein gateway start            # start MCP gateway proxy
+bernstein gateway replay <run-id>  # replay recorded MCP tool calls
+bernstein workflow validate FILE   # validate a workflow YAML
+bernstein workflow list            # list workflow DSL files
+bernstein workflow show NAME       # show workflow details
+bernstein mcp                      # run Bernstein as an MCP server
+bernstein watch [DIR]              # monitor directory, re-run on changes
+bernstein listen                   # voice command session (offline STT)
+bernstein checkpoint [--goal]      # snapshot session progress
+bernstein wrap-up [--stop]         # end session with structured brief
 
-# Workspace
+# Configuration & workspace
 bernstein workspace                # show multi-repo workspace status
-bernstein plan                     # show task backlog
-bernstein logs                     # tail agent log output
-bernstein retro                    # generate retrospective report
+bernstein workspace clone          # clone missing repos
+bernstein workspace validate       # check workspace health
+bernstein config set KEY VALUE     # set a global config value
+bernstein config get KEY           # show effective config value
+bernstein config list              # list all config keys
+bernstein config validate          # validate project configuration
+
+# Utilities
+bernstein retro [--since H]        # generate retrospective report
+bernstein plugins                  # list active plugins
+bernstein install-hooks            # install git hooks
+bernstein completions              # generate shell completion scripts
+bernstein self-update [--check]    # upgrade from PyPI (--rollback to revert)
+bernstein worker --server URL      # join a cluster as a worker node
+bernstein help-all                 # comprehensive help for all commands
+
+# GitHub integration
+bernstein github setup             # configure GitHub App integration
+bernstein github test-webhook      # verify webhook configuration
+
+# Quarantine
+bernstein quarantine list          # list quarantined tasks
+bernstein quarantine clear         # clear quarantine
 ```
 
 </details>
@@ -245,6 +317,27 @@ CrewAI, AutoGen, and LangGraph work with any model via API wrappers — but they
 **[Full comparison pages →](docs/compare/README.md)** — detailed feature matrices, benchmark data, and "when to use X instead" guides for Conductor, Dorothy, Parallel Code, Crystal, Stoneforge, [GitHub Agent HQ](docs/compare/bernstein-vs-github-agent-hq.md), and single-agent workflows.
 
 </details>
+
+## Noteworthy capabilities
+
+Beyond core orchestration, Bernstein ships several features that are useful but easy to miss in `--help` output:
+
+| Capability | Command | What it does |
+|------------|---------|--------------|
+| **Chaos engineering** | `bernstein chaos` | Fault injection (kill agents, rate-limit APIs, remove files) to test resilience. SLO compliance checks. |
+| **Cryptographic audit** | `bernstein audit seal/verify` | Tamper-evident execution logs with Merkle proofs. HMAC chain integrity verification. |
+| **Gateway proxy** | `bernstein gateway start` | Transparent MCP gateway that records and replays tool calls between agents and providers. |
+| **Workflow DSL** | `bernstein workflow` | Declarative YAML-based task pipelines with validation, listing, and inspection. |
+| **MCP server mode** | `bernstein mcp` | Runs Bernstein itself as an MCP tool server, exposable to other agents or editors. |
+| **Trace & replay** | `bernstein trace/replay` | Record agent decisions step-by-step, then deterministically replay any run. |
+| **Formal verification** | `bernstein verify --formal` | Experimental formal verification of execution invariants. |
+| **File watching** | `bernstein watch` | Monitors directories and re-triggers task execution on file changes. |
+| **Voice commands** | `bernstein listen` | Offline speech-to-text mapped to CLI commands. Experimental. |
+| **Cluster worker** | `bernstein worker` | Join a remote Bernstein cluster as a worker node for distributed orchestration. |
+| **Task delegation** | (not yet wired) | Agents and scripts can submit tasks programmatically via `delegate` command. |
+| **Event triggers** | (not yet wired) | Define event-driven triggers (file changes, webhooks, schedules) that create tasks automatically. |
+
+These features vary in maturity. Chaos engineering, audit, and trace/replay are production-tested. Voice commands and formal verification are experimental. See `docs/FEATURE_MATRIX.md` for full documentation coverage status.
 
 ## Observability
 
