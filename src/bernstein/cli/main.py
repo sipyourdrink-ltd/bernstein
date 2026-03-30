@@ -51,7 +51,6 @@ from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.cost import cost_cmd
 from bernstein.cli.diff_cmd import diff_cmd
-from bernstein.cli.merge_cmd import merge_cmd
 from bernstein.cli.eval_benchmark_cmd import (
     benchmark_group,
     eval_group,
@@ -59,6 +58,7 @@ from bernstein.cli.eval_benchmark_cmd import (
 from bernstein.cli.evolve_cmd import evolve
 from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.manifest_cmd import manifest_group
+from bernstein.cli.merge_cmd import merge_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
 from bernstein.cli.self_update_cmd import self_update_cmd

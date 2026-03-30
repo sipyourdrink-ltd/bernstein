@@ -6,14 +6,12 @@ same task) to select a winner: ``bernstein merge --pick agent1``.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import click
 
 from bernstein.cli.diff_cmd import (
-    ResolvedDiff,
     _branch_exists,
     _find_agent_by_session,
     _find_agent_for_task,
@@ -28,7 +26,9 @@ from bernstein.cli.helpers import console
 # ---------------------------------------------------------------------------
 
 
-def _resolve_agent_branch(identifier: str, root: Path, agents: list[dict[str, Any]]) -> tuple[str | None, dict[str, Any] | None]:
+def _resolve_agent_branch(
+    identifier: str, root: Path, agents: list[dict[str, Any]]
+) -> tuple[str | None, dict[str, Any] | None]:
     """Resolve an identifier (task ID or session ID) to a branch name.
 
     Returns:
@@ -137,7 +137,7 @@ def merge_cmd(
     # ------------------------------------------------------------------
     resolved = resolve_diff(pick, root, agents, base)
     if resolved.stat_text:
-        console.print(f"\n[bold]Changes to merge:[/bold]")
+        console.print("\n[bold]Changes to merge:[/bold]")
         console.print(resolved.stat_text)
         console.print()
 
@@ -148,7 +148,7 @@ def merge_cmd(
         if reject_others:
             console.print("\n[bold]Would reject (delete branches):[/bold]")
             for rej_id in reject_others:
-                rej_branch, rej_agent = _resolve_agent_branch(rej_id, root, agents)
+                rej_branch, _rej_agent = _resolve_agent_branch(rej_id, root, agents)
                 status = f"[cyan]{rej_branch}[/cyan]" if rej_branch else "[dim]not found[/dim]"
                 console.print(f"  {rej_id} -> {status}")
         return
@@ -173,11 +173,11 @@ def merge_cmd(
         merge_args.append("--no-ff")
     merge_args.extend(["-m", merge_msg, branch])
 
-    merge_output = _run_git(merge_args, root)
+    _run_git(merge_args, root)
 
     # Check if merge succeeded
     # After merge, HEAD should have moved
-    post_head = _run_git(["rev-parse", "HEAD"], root)
+    _run_git(["rev-parse", "HEAD"], root)
     merge_log = _run_git(["log", "-1", "--oneline"], root)
 
     if merge_msg[:20] in merge_log or "Merge" in merge_log:
@@ -202,7 +202,7 @@ def merge_cmd(
     if reject_others:
         console.print()
         for rej_id in reject_others:
-            rej_branch, rej_agent = _resolve_agent_branch(rej_id, root, agents)
+            rej_branch, _rej_agent = _resolve_agent_branch(rej_id, root, agents)
             if rej_branch:
                 del_result = _run_git(["branch", "-D", rej_branch], root)
                 if del_result:

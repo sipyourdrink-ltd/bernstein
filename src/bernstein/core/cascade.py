@@ -322,9 +322,7 @@ class CascadeFallbackManager:
                 sticky.model,
             )
             return CascadeDecision(
-                original_provider=(
-                    next(iter(excluded_providers)) if excluded_providers else "unknown"
-                ),
+                original_provider=(next(iter(excluded_providers)) if excluded_providers else "unknown"),
                 fallback_provider=sticky.provider,
                 fallback_model=sticky.model,
                 reason=f"sticky fallback active: {sticky.cascade_entry}",
@@ -335,12 +333,17 @@ class CascadeFallbackManager:
         # 2. If current_entry is given, walk the cascade chain
         if current_entry is not None:
             return self._find_fallback_by_chain(
-                task_complexity, excluded_providers, current_entry, trigger,
+                task_complexity,
+                excluded_providers,
+                current_entry,
+                trigger,
             )
 
         # 3. Fallback to best-available selection (v1 behaviour)
         return self._find_fallback_best_available(
-            task_complexity, excluded_providers, trigger,
+            task_complexity,
+            excluded_providers,
+            trigger,
         )
 
     def _find_fallback_by_chain(

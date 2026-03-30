@@ -146,8 +146,7 @@ class AdaptiveParallelism:
                 self._low_error_since = now  # reset timer after increase
                 self._last_adjustment_reason = f"error_rate_low ({error_rate:.0%})"
                 logger.info(
-                    "Adaptive parallelism: increasing to %d agents "
-                    "(error rate %.0f%% < %.0f%% for 10+ min)",
+                    "Adaptive parallelism: increasing to %d agents (error rate %.0f%% < %.0f%% for 10+ min)",
                     self._current_max,
                     error_rate * 100,
                     _ERROR_RATE_LOW * 100,

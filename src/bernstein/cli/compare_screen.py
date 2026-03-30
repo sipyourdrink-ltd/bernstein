@@ -7,17 +7,19 @@ in the dashboard (key ``d`` to mark, then ``d`` again to compare).
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from rich.syntax import Syntax
 from rich.text import Text
-from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from textual.app import ComposeResult
 
 # ---------------------------------------------------------------------------
 # Lightweight git helpers (no import from diff_cmd to avoid heavy deps in TUI)
@@ -27,14 +29,20 @@ from textual.widgets import Footer, Header, Static
 def _run_git(args: list[str], cwd: Path) -> str:
     try:
         result = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30,
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         return result.stdout.strip()
     except (subprocess.TimeoutExpired, OSError):
         return ""
 
 
-def _resolve_task_diff(task_id: str, agents: list[dict[str, Any]], root: Path, base: str = "main") -> tuple[str, str, dict[str, Any] | None]:
+def _resolve_task_diff(
+    task_id: str, agents: list[dict[str, Any]], root: Path, base: str = "main"
+) -> tuple[str, str, dict[str, Any] | None]:
     """Resolve diff text and stat for a task ID.
 
     Returns:
@@ -191,15 +199,23 @@ class CompareScreen(Screen[None]):
 
     def _load_diffs(self) -> None:
         left_diff, left_stat, left_agent = _resolve_task_diff(
-            self._left_id, self._agents, self._root,
+            self._left_id,
+            self._agents,
+            self._root,
         )
         right_diff, right_stat, right_agent = _resolve_task_diff(
-            self._right_id, self._agents, self._root,
+            self._right_id,
+            self._agents,
+            self._root,
         )
         self.call_from_thread(
             self._render_comparison,
-            left_diff, left_stat, left_agent,
-            right_diff, right_stat, right_agent,
+            left_diff,
+            left_stat,
+            left_agent,
+            right_diff,
+            right_stat,
+            right_agent,
         )
 
     def _render_comparison(

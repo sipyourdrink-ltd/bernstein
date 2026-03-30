@@ -205,8 +205,7 @@ def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base
                 diff_text = _get_diff_from_merge_commit(merge_commit, root)
                 if diff_text:
                     source_label = (
-                        f"[dim]source:[/dim] merge commit [cyan]{merge_commit}[/cyan]"
-                        f" ([dim]agent/{session_id}[/dim])"
+                        f"[dim]source:[/dim] merge commit [cyan]{merge_commit}[/cyan] ([dim]agent/{session_id}[/dim])"
                     )
 
     # Last resort: search commits
@@ -395,7 +394,9 @@ def diff_cmd(
         right = resolve_diff(right_id, root, agents, base)
 
         if not left.diff_text and not right.diff_text:
-            console.print(f"[yellow]No diffs found for either [bold]{left_id}[/bold] or [bold]{right_id}[/bold].[/yellow]")
+            console.print(
+                f"[yellow]No diffs found for either [bold]{left_id}[/bold] or [bold]{right_id}[/bold].[/yellow]"
+            )
             raise SystemExit(1)
 
         if stat_only:
