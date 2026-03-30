@@ -70,7 +70,7 @@ def splash(
     if seed_file:
         console.print(f"  [dim]seed[/dim]   {seed_file}")
     if goal_preview:
-        g = goal_preview[:min(60, width - 12)]
+        g = goal_preview[: min(60, width - 12)]
         console.print(f"  [dim]goal[/dim]   {g}")
     if task_count > 0:
         extra = f"  [dim]budget ${budget:.2f}[/dim]" if budget > 0 else ""
