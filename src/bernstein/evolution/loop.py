@@ -547,11 +547,14 @@ class EvolutionLoop:
             )
             sandbox_result = self._make_fast_track_sandbox_result(proposal.id, baseline_score)
         else:
-            sandbox_result = self._sandbox.validate(
-                proposal_id=proposal.id,
-                diff=proposal.proposed_change,
-                baseline_score=baseline_score,
-            )
+            try:
+                sandbox_result = self._sandbox.validate(
+                    proposal_id=proposal.id,
+                    diff=proposal.proposed_change,
+                    baseline_score=baseline_score,
+                )
+            except Exception as exc:
+                raise SandboxValidationError(str(exc)) from exc
 
             if not sandbox_result.passed:
                 self._breaker.record_sandbox_failure(proposal.id)
@@ -1027,10 +1030,13 @@ class EvolutionLoop:
         eligible.sort(key=lambda o: o.confidence, reverse=True)
         best = eligible[0]
 
-        return self._proposal_generator.create_proposal(
-            best,
-            AnalysisTrigger.SCHEDULED,
-        )
+        try:
+            return self._proposal_generator.create_proposal(
+                best,
+                AnalysisTrigger.SCHEDULED,
+            )
+        except Exception as exc:
+            raise ProposalGenerationError(str(exc)) from exc
 
     def _apply_proposal(
         self,
