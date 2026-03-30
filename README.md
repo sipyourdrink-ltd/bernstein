@@ -26,7 +26,7 @@
 [![Sponsor](https://img.shields.io/badge/sponsor-GitHub%20%2F%20OpenCollective-ff69b4?logo=github&logoColor=white)](https://github.com/sponsors/chernistry)
 <!-- [![Discord](https://img.shields.io/discord/1234567890?logo=discord&logoColor=white&label=discord&color=5865F2)](https://discord.gg/bernstein) -->
 
-[Homepage](https://alexchernysh.com/bernstein) | [Documentation](https://chernistry.github.io/bernstein/)
+[Homepage](https://alexchernysh.com/bernstein) | [Documentation](https://chernistry.github.io/bernstein/) | [Known Limitations](docs/KNOWN_LIMITATIONS.md)
 
 </div>
 
