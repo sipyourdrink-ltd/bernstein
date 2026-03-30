@@ -349,7 +349,7 @@ def _check_command(rule: RuleSpec, run_dir: Path, timeout_s: int = 60) -> RuleVi
     try:
         proc = subprocess.run(
             rule.command,
-            shell=True,
+            shell=True,  # SECURITY: shell=True required because rule commands are developer-defined enforcement scripts that may use shell features; not user input
             cwd=run_dir,
             capture_output=True,
             text=True,

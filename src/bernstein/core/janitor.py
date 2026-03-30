@@ -575,7 +575,7 @@ def _check_test_passes(command: str, workdir: Path) -> bool:
     try:
         result = subprocess.run(
             command,
-            shell=True,
+            shell=True,  # SECURITY: shell=True required because janitor commands are internally-constructed test invocations (e.g. "pytest tests/...") that may use shell features; not user input
             cwd=workdir,
             capture_output=True,
             timeout=120,

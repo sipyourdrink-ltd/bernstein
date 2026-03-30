@@ -114,7 +114,7 @@ def setup_worktree_env(
         try:
             result = subprocess.run(
                 config.setup_command,
-                shell=True,
+                shell=True,  # SECURITY: shell=True required because worktree setup commands are admin-configured shell strings that may use pipes or redirects; not user input
                 cwd=worktree_path,
                 capture_output=True,
                 text=True,

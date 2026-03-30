@@ -10,6 +10,7 @@ Custom voice aliases are loaded from ``~/.bernstein/voice.yaml``.
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -397,7 +398,8 @@ def _listen_loop(
             continue
 
         try:
-            subprocess.run(cmd, shell=True, check=False)
+            # SECURITY: use list args, not shell=True — cmd contains voice input
+            subprocess.run(shlex.split(cmd), check=False)
         except Exception as exc:
             console.print(f"[red]  Error executing command:[/red] {exc}")
 

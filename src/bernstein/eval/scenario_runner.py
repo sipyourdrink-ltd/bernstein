@@ -319,7 +319,7 @@ class ScenarioRunner:
         try:
             result = subprocess.run(
                 scenario.setup.command,
-                shell=True,
+                shell=True,  # SECURITY: shell=True required because scenario setup commands are developer-authored YAML configs that may use shell features; not user input
                 capture_output=True,
                 text=True,
                 timeout=self._command_timeout,
@@ -646,7 +646,7 @@ class ScenarioRunner:
         try:
             result = subprocess.run(
                 command,
-                shell=True,
+                shell=True,  # SECURITY: shell=True required because eval scenario validation commands are developer-authored shell strings from YAML configs; not user input
                 capture_output=True,
                 text=True,
                 timeout=self._command_timeout,
