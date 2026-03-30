@@ -16,6 +16,7 @@ from bernstein.core.prompt_caching import (
     _estimate_tokens,
     compute_cache_key,
     extract_system_prefix,
+    make_prompt_cache_key,
 )
 
 # ---------------------------------------------------------------------------
@@ -448,3 +449,93 @@ def test_bootstrap_creates_spawner_with_caching() -> None:
 
         assert isinstance(spawner._adapter, CachingAdapter)
         assert spawner._adapter._inner is mock_adapter
+
+
+# ---------------------------------------------------------------------------
+# make_prompt_cache_key — orchestrator-level cache key with file invalidation
+# ---------------------------------------------------------------------------
+
+
+def test_make_prompt_cache_key_text_only() -> None:
+    """Cache key from system prompt alone is a 64-char hex SHA-256."""
+    key = make_prompt_cache_key("You are a backend engineer.")
+    assert isinstance(key, str)
+    assert len(key) == 64
+
+
+def test_make_prompt_cache_key_deterministic() -> None:
+    """Same system prompt always produces the same key."""
+    prompt = "You are a backend engineer with deep knowledge of databases."
+    assert make_prompt_cache_key(prompt) == make_prompt_cache_key(prompt)
+
+
+def test_make_prompt_cache_key_differs_for_different_prompts() -> None:
+    """Different system prompts produce different keys."""
+    k1 = make_prompt_cache_key("You are a backend engineer.")
+    k2 = make_prompt_cache_key("You are a QA engineer.")
+    assert k1 != k2
+
+
+def test_make_prompt_cache_key_includes_context_files() -> None:
+    """Key changes when context files are included vs not."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = Path(tmpdir) / "context.md"
+        ctx.write_text("# Project context\nThis is a Python service.")
+
+        prompt = "You are a backend engineer."
+        key_no_files = make_prompt_cache_key(prompt)
+        key_with_files = make_prompt_cache_key(prompt, context_files=[ctx])
+
+        assert key_no_files != key_with_files
+
+
+def test_make_prompt_cache_key_invalidates_on_file_change() -> None:
+    """Cache key changes when a context file's content changes."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = Path(tmpdir) / "context.md"
+        ctx.write_text("# Project context v1")
+
+        prompt = "You are a backend engineer."
+        key_v1 = make_prompt_cache_key(prompt, context_files=[ctx])
+
+        ctx.write_text("# Project context v2 — changed")
+        key_v2 = make_prompt_cache_key(prompt, context_files=[ctx])
+
+        assert key_v1 != key_v2
+
+
+def test_make_prompt_cache_key_stable_when_files_unchanged() -> None:
+    """Cache key is stable across calls when context files are unchanged."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ctx = Path(tmpdir) / "context.md"
+        ctx.write_text("# Stable context")
+
+        prompt = "You are a backend engineer."
+        k1 = make_prompt_cache_key(prompt, context_files=[ctx])
+        k2 = make_prompt_cache_key(prompt, context_files=[ctx])
+
+        assert k1 == k2
+
+
+def test_make_prompt_cache_key_missing_file_is_skipped() -> None:
+    """Non-existent context files are skipped without error."""
+    prompt = "You are a backend engineer."
+    key = make_prompt_cache_key(prompt, context_files=[Path("/nonexistent/file.md")])
+    # Should not raise, key is still a valid 64-char hash
+    assert len(key) == 64
+
+
+def test_make_prompt_cache_key_multiple_files() -> None:
+    """Key is deterministic when multiple context files are provided."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        f1 = Path(tmpdir) / "a.md"
+        f2 = Path(tmpdir) / "b.md"
+        f1.write_text("file A content")
+        f2.write_text("file B content")
+
+        prompt = "You are a backend engineer."
+        k1 = make_prompt_cache_key(prompt, context_files=[f1, f2])
+        k2 = make_prompt_cache_key(prompt, context_files=[f2, f1])  # order-independent
+
+        assert k1 == k2  # sorted by path, so order-independent
+        assert len(k1) == 64
