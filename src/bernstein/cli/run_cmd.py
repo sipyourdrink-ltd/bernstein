@@ -552,22 +552,19 @@ def run(
                     pass
 
         if effective_goal_for_confirm:
-            plan_obj, tasks = _build_synthetic_plan(effective_goal_for_confirm, team_for_confirm)
-            from rich.markdown import Markdown
+            plan_obj, plan_tasks = _build_synthetic_plan(effective_goal_for_confirm, team_for_confirm)
+            from bernstein.cli.plan_display import display_plan_and_confirm
 
-            from bernstein.core.plan_builder import PlanBuilder
-
-            builder = PlanBuilder(plan_obj, tasks)
-            md = builder.render_to_markdown()
-            console.print(Markdown(md))
-
-        if not auto_approve:
+            if not display_plan_and_confirm(plan_obj, plan_tasks, console=console):
+                return
+        elif not auto_approve:
+            # No goal resolved -- fall back to simple confirmation
             try:
                 if not click.confirm("\nProceed with execution?", default=True):
                     console.print("[dim]Cancelled.[/dim]")
                     return
             except (UnicodeDecodeError, EOFError):
-                # Non-ASCII input (e.g. Cyrillic keyboard) — treat as "yes"
+                # Non-ASCII input (e.g. Cyrillic keyboard) -- treat as "yes"
                 pass
 
     if goal is not None:
