@@ -1,0 +1,97 @@
+name: AI PR Review (Gemini CLI)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-gemini-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gemini-review:
+    name: Gemini CLI review
+    runs-on: ubuntu-latest
+    if: >
+      !github.event.pull_request.draft &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-ai')
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Check for API key
+        id: check
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "GEMINI_API_KEY not configured; skipping Gemini review."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.skip == 'false'
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.skip == 'false'
+        with:
+          node-version: "22"
+
+      - name: Install Gemini CLI
+        if: steps.check.outputs.skip == 'false'
+        run: npm install -g @google/gemini-cli
+
+      - name: Generate AI review
+        if: steps.check.outputs.skip == 'false'
+        id: review
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          git diff --unified=3 origin/${{ github.base_ref }}...HEAD > pr.diff
+
+          RESPONSE=$(gemini \
+            -p "You are a senior Python library maintainer. Review the following PR diff for Bernstein (Python 3.12+ multi-agent CLI orchestrator). Focus on correctness, backward compatibility, security, and missing tests. Return a concise markdown report with sections: Summary, Risk Assessment, and Actionable Recommendations (max 5 items).
+
+          Diff:
+          $(head -c 80000 pr.diff)" \
+            --output-format json 2>/dev/null || echo '{"response":"Gemini review could not be generated."}')
+
+          BODY=$(echo "$RESPONSE" | jq -r '.response // .text // "Review unavailable."')
+          echo "body<<REVIEW_EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "REVIEW_EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Post review comment
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- ai-review-gemini -->';
+            const body = `${marker}\n### AI Review (Gemini CLI)\n\n${{ steps.review.outputs.body }}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

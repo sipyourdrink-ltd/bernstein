@@ -1,0 +1,28 @@
+[default]
+extend-ignore-re = [
+  # UUIDs
+  "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+  # Base64-encoded strings
+  "[A-Za-z0-9+/]{40,}={0,2}",
+  # SHA hashes
+  "[0-9a-f]{40,64}",
+]
+
+[files]
+extend-exclude = [
+  "*.json",
+  "*.lock",
+  "*.jsonl",
+  "*.db",
+  ".sdd/index/",
+  ".sdd/runtime/",
+  ".sdd/archive/",
+  "dist/",
+  "*.egg-info/",
+]
+
+[default.extend-words]
+# Domain-specific words that are not typos
+ser = "ser"
+numer = "numer"
+crate = "crate"

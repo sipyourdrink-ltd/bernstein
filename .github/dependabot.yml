@@ -4,6 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    labels:
+      - "dependencies"
     groups:
       minor-and-patch:
         update-types:
@@ -17,3 +19,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    labels:
+      - "dependencies"
+      - "ci"
