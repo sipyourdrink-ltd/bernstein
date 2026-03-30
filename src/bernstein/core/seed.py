@@ -15,6 +15,7 @@ import yaml
 from bernstein.agents.catalog import CatalogRegistry
 from bernstein.core.compliance import ComplianceConfig, CompliancePreset
 from bernstein.core.formal_verification import FormalProperty, FormalVerificationConfig
+from bernstein.core.key_rotation import KeyRotationConfig, _parse_interval
 from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
 from bernstein.core.quality_gates import QualityGatesConfig
 from bernstein.core.secrets import SecretsConfig
@@ -119,6 +120,7 @@ class SeedConfig:
     quality_gates: QualityGatesConfig | None = None
     formal_verification: FormalVerificationConfig | None = None
     secrets: SecretsConfig | None = None
+    key_rotation: KeyRotationConfig | None = None
     model_policy: dict[str, Any] | None = None
     role_model_policy: dict[str, dict[str, str]] | None = None
     compliance: ComplianceConfig | None = None
@@ -557,6 +559,63 @@ def parse_seed(path: Path) -> SeedConfig:
             field_map=field_map,
         )
 
+    # ---- key_rotation ----
+    kr_raw: object = data.get("key_rotation")
+    key_rotation: KeyRotationConfig | None = None
+    if kr_raw is not None:
+        if not isinstance(kr_raw, dict):
+            raise SeedError(f"key_rotation must be a mapping, got: {type(kr_raw).__name__}")
+        kr_dict: dict[str, object] = cast("dict[str, object]", kr_raw)
+
+        kr_interval_raw: object = kr_dict.get("interval", 2592000)
+        try:
+            if isinstance(kr_interval_raw, (str, int)):
+                kr_interval = _parse_interval(kr_interval_raw)
+            else:
+                raise SeedError(
+                    f"key_rotation.interval must be a string or int, got: {type(kr_interval_raw).__name__}"
+                )
+        except ValueError as exc:
+            raise SeedError(f"key_rotation.interval: {exc}") from exc
+
+        kr_on_leak_raw: object = kr_dict.get("on_leak", "revoke_immediately")
+        _valid_policies = ("revoke_immediately", "revoke_after_rotation", "alert_only")
+        if not isinstance(kr_on_leak_raw, str) or kr_on_leak_raw not in _valid_policies:
+            raise SeedError(
+                f"key_rotation.on_leak must be one of {list(_valid_policies)}, got: {kr_on_leak_raw!r}"
+            )
+
+        kr_provider_raw: object = kr_dict.get("secrets_provider")
+        kr_provider: str | None = None
+        if kr_provider_raw is not None:
+            if not isinstance(kr_provider_raw, str):
+                raise SeedError("key_rotation.secrets_provider must be a string")
+            kr_provider = kr_provider_raw
+
+        kr_path_raw: object = kr_dict.get("secrets_path")
+        kr_path: str | None = None
+        if kr_path_raw is not None:
+            if not isinstance(kr_path_raw, str):
+                raise SeedError("key_rotation.secrets_path must be a string")
+            kr_path = kr_path_raw
+
+        kr_patterns_raw: object = kr_dict.get("leak_patterns")
+        kr_patterns: list[str] = []
+        if kr_patterns_raw is not None:
+            if not isinstance(kr_patterns_raw, list):
+                raise SeedError(
+                    f"key_rotation.leak_patterns must be a list, got: {type(kr_patterns_raw).__name__}"
+                )
+            kr_patterns = [str(p) for p in kr_patterns_raw]
+
+        key_rotation = KeyRotationConfig(
+            interval_seconds=kr_interval,
+            on_leak=kr_on_leak_raw,  # type: ignore[arg-type]
+            secrets_provider=kr_provider,
+            secrets_path=kr_path,
+            leak_patterns=kr_patterns,
+        )
+
     compliance_raw: object = data.get("compliance")
     compliance: ComplianceConfig | None = None
     if compliance_raw is not None:
@@ -593,6 +652,7 @@ def parse_seed(path: Path) -> SeedConfig:
         session=session_cfg,
         worktree_setup=worktree_setup,
         secrets=secrets,
+        key_rotation=key_rotation,
         quality_gates=quality_gates,
         formal_verification=formal_verification,
         model_policy=model_policy,
