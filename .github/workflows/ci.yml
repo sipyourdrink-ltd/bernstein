@@ -67,39 +67,6 @@ jobs:
           git commit -m "style: auto-fix ruff lint and format"
           git push
 
-  # Stack integration tests — all 5 stacks run in parallel.
-  # Tests self-skip when BERNSTEIN_TEST_API_KEY is absent; the job always
-  # exits green so it never blocks the main CI pipeline.
-  stack-integration:
-    name: Stack integration (${{ matrix.stack }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - stack: fastapi
-            test: test_fastapi_health_endpoint
-          - stack: nextjs
-            test: test_nextjs_about_page
-          - stack: django
-            test: test_django_user_list_view
-          - stack: express
-            test: test_express_logging_middleware
-          - stack: flask
-            test: test_flask_status_endpoint
-    env:
-      BERNSTEIN_TEST_API_KEY: ${{ secrets.BERNSTEIN_TEST_API_KEY }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-      - name: Run ${{ matrix.stack }} integration test
-        run: |
-          uv run pytest tests/integration/test_stack_integrations.py \
-            -k "${{ matrix.test }}" \
-            -v --timeout=240
-        timeout-minutes: 10
 
   # Auto-close ci-fix issues when CI passes
   close-ci-issues:

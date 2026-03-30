@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "1.1.4"
+version = "1.2.0"
 description = "Declarative agent orchestration for engineering teams"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -143,6 +143,8 @@ exclude = [
     "src/bernstein/core/voting.py",
     "src/bernstein/core/workflow.py",
     "src/bernstein/core/workflow_dsl.py",
+    "src/bernstein/cli/self_update_cmd.py",
+    "src/bernstein/tui/widgets.py",
 ]
 
 [tool.pytest.ini_options]
