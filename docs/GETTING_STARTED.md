@@ -671,42 +671,162 @@ curl -s -X POST http://127.0.0.1:8052/tasks/TASK_ID/cancel \
 
 ## CLI reference
 
-Run `bernstein --help` for the full option list.  The commands below are all
-top-level subcommands:
+Run `bernstein --help` for the full option list. For a feature-by-feature
+documentation coverage status, see [`docs/FEATURE_MATRIX.md`](FEATURE_MATRIX.md).
+
+### Core orchestration
 
 | Command | Description |
 |---------|-------------|
 | `bernstein [-g GOAL] [--evolve] [--headless]` | Start orchestration; shows live TUI dashboard unless `--headless` |
 | `bernstein --dry-run [-g GOAL]` | Preview the task plan without spawning any agents |
+| `bernstein --plan-only` | Generate plan only, do not execute |
+| `bernstein --from-plan FILE` | Execute a previously saved plan |
 | `bernstein init` | Initialise a `.sdd/` workspace in the current directory |
-| `bernstein stop [--timeout N]` | Gracefully stop all agents and the task server |
+| `bernstein stop [--timeout N] [--force]` | Gracefully stop all agents and the task server |
+| `bernstein demo [--dry-run] [--real] [--adapter NAME]` | Zero-to-running demo (`--real` uses live agents instead of mocks) |
+| `bernstein quickstart [--keep] [--adapter]` | Zero-config demo: 3 tasks on a Flask TODO API |
+
+### Monitoring & observability
+
+| Command | Description |
+|---------|-------------|
+| `bernstein status [--json]` | Task summary, active agents, cost estimate |
 | `bernstein ps [--json-output]` | Show running agent processes (PID, role, model, runtime) |
-| `bernstein doctor [--json]` | Pre-flight health check: Python, CLI tools, API keys, ports |
-| `bernstein plugins` | List discovered plugins and their hooks |
-| `bernstein dashboard` | Open real-time web dashboard in browser |
-| `bernstein trace TASK_ID` | Show step-by-step agent decision trace |
-| `bernstein replay TRACE_ID [--model M]` | Re-run a task from its trace, optionally with a different model |
-| `bernstein workspace` | Show multi-repo workspace status |
+| `bernstein doctor [--json] [--fix]` | Pre-flight health check; `--fix` auto-repairs issues |
+| `bernstein live [--classic]` | Attach the live TUI dashboard to a running session |
+| `bernstein dashboard [--port N]` | Open real-time web dashboard in browser |
+| `bernstein cost [--json] [--share]` | Show agent spend: cost, tokens, and duration per model |
+| `bernstein trace TASK_ID [--as-json]` | Show step-by-step agent decision trace |
+| `bernstein replay RUN_ID [--limit N]` | Re-run from a recorded trace |
+| `bernstein logs [-f] [-a AGENT] [-n LINES]` | Tail agent log output |
+| `bernstein recap [--as-json]` | Post-run summary: tasks, pass/fail, cost |
+| `bernstein diff TASK_ID [--stat]` | Git diff for what an agent changed for a task |
+| `bernstein retro [--since HOURS] [-o FILE] [--print]` | Generate a retrospective report from task history |
+
+### Task management
+
+| Command | Description |
+|---------|-------------|
+| `bernstein plan [--export] [--status]` | Show task backlog as a table, or export to JSON |
+| `bernstein add-task TITLE [-d DESC] [--role R]` | Inject a task into the running server |
 | `bernstein cancel TASK_ID [-r REASON]` | Cancel a running or queued task |
-| `bernstein cost` | Show agent spend: cost, tokens, and duration per model |
-| `bernstein live [--interval N]` | Attach the live TUI dashboard to a running session |
-| `bernstein logs [AGENT_ID]` | Tail agent log output (all agents, or a specific one) |
-| `bernstein plan [--json]` | Show task backlog as a table, or export to JSON |
-| `bernstein benchmark run [--tier smoke\|capability\|stretch\|all]` | Run the tiered golden benchmark suite |
-| `bernstein agents sync` | Refresh all agent catalogs and update the cache |
+| `bernstein list-tasks [--status-filter] [--role]` | List tasks with optional filters |
+| `bernstein sync [--port N] [--dir D]` | Sync `.sdd/backlog/open/` with the task server |
+| `bernstein review` | Trigger an immediate manager queue review |
+| `bernstein approve TASK_ID` | Approve a pending task review |
+| `bernstein reject TASK_ID` | Reject a pending task review |
+| `bernstein pending` | List tasks waiting for approval review |
+
+### Agent management
+
+| Command | Description |
+|---------|-------------|
+| `bernstein agents sync [--force]` | Force-refresh all agent catalogs |
 | `bernstein agents list [--source local\|agency\|all]` | List available agents from loaded catalogs |
 | `bernstein agents validate` | Validate all agent catalog files and report issues |
+| `bernstein agents showcase` | Show agent capabilities showcase |
+| `bernstein agents match QUERY` | Find the best agent for a task description |
+| `bernstein agents discover` | Discover CLI agents installed on the system |
+
+### Evolution & ideation
+
+| Command | Description |
+|---------|-------------|
+| `bernstein evolve run [--window N] [--max-proposals N]` | Run the autoresearch evolution loop |
 | `bernstein evolve review` | List evolution proposals awaiting human review |
 | `bernstein evolve approve PROPOSAL_ID` | Approve a specific evolution proposal |
-| `bernstein evolve run [--window N] [--max-proposals N]` | Run the autoresearch evolution loop |
-| `bernstein demo [--dry-run] [--adapter NAME] [--timeout N]` | Zero-to-running demo: Flask starter project with 3 tasks |
-| `bernstein ideate --proposals FILE --verdicts FILE [--dry-run] [--threshold N]` | Creative evolution pipeline: proposals → verdicts → tasks |
-| `bernstein retro [--since HOURS] [-o FILE] [--print]` | Generate a retrospective report from task history |
+| `bernstein evolve status` | Show evolution pipeline status |
+| `bernstein evolve export` | Export evolution proposals |
+| `bernstein ideate [--count N] [--focus AREA]` | Generate improvement ideas for the project |
+
+### CI/CD & GitHub
+
+| Command | Description |
+|---------|-------------|
+| `bernstein ci fix <run-url>` | Parse a failing CI run, create a fix task |
+| `bernstein ci watch <repo> [--interval N]` | Continuous monitoring, auto-fix on failure |
+| `bernstein github setup` | Configure GitHub App integration |
+| `bernstein github test-webhook` | Verify webhook configuration |
+
+### Governance & audit
+
+| Command | Description |
+|---------|-------------|
+| `bernstein audit show [--limit N]` | Show recent audit log events |
+| `bernstein audit seal` | Create Merkle seal of audit log |
+| `bernstein audit verify` | Verify Merkle proof integrity |
+| `bernstein audit verify-hmac` | Validate HMAC chain integrity |
+| `bernstein audit query [--event-type E] [--since S]` | Search audit log |
+| `bernstein verify --wal-integrity` | Verify WAL hash chain |
+| `bernstein verify --determinism` | Check execution fingerprint reproducibility |
+| `bernstein verify --memory-audit` | Detect memory leaks in agent processes |
+| `bernstein verify --formal` | Formal verification mode (experimental) |
+| `bernstein manifest list` | List all run manifests |
+| `bernstein manifest show <run-id>` | Display run manifest |
+| `bernstein manifest diff <a> <b>` | Compare two run configurations |
+
+### Benchmarks & evaluation
+
+| Command | Description |
+|---------|-------------|
+| `bernstein benchmark run [--tier T]` | Run tiered golden benchmark suite |
+| `bernstein benchmark compare` | Orchestrated vs. single-agent comparison |
+| `bernstein benchmark swe-bench` | Run SWE-bench harness |
+| `bernstein eval run` | Run evaluation suite with multiplicative scoring |
+| `bernstein eval report` | Generate evaluation report |
+| `bernstein eval failures` | Show evaluation failures |
+
+### Advanced features
+
+| Command | Description |
+|---------|-------------|
+| `bernstein chaos agent-kill\|rate-limit\|file-remove` | Fault injection for resilience testing |
+| `bernstein chaos status` | Show chaos experiment status |
+| `bernstein chaos slo` | Check SLO compliance under chaos |
+| `bernstein gateway start [--upstream U]` | Start MCP gateway proxy |
+| `bernstein gateway replay <run-id>` | Replay recorded MCP tool calls |
+| `bernstein workflow validate FILE` | Validate a workflow YAML |
+| `bernstein workflow list` | List workflow DSL files |
+| `bernstein workflow show NAME` | Show workflow details |
+| `bernstein mcp [--transport T] [--port N]` | Run Bernstein as an MCP tool server |
+| `bernstein watch [DIR] [--glob G]` | Monitor directory, re-run on file changes |
+| `bernstein listen [--dry-run]` | Voice command session (offline STT, experimental) |
+| `bernstein checkpoint [--goal G]` | Snapshot session progress |
+| `bernstein wrap-up [--stop]` | End session with a structured wrap-up brief |
+
+### Configuration & workspace
+
+| Command | Description |
+|---------|-------------|
+| `bernstein workspace` | Show multi-repo workspace status |
+| `bernstein workspace clone` | Clone all missing repos |
+| `bernstein workspace validate` | Check workspace health |
+| `bernstein config set KEY VALUE` | Set a global config value |
+| `bernstein config get KEY` | Show effective config value |
+| `bernstein config list` | List all config keys and values |
+| `bernstein config validate` | Validate project configuration |
+
+### Utilities
+
+| Command | Description |
+|---------|-------------|
+| `bernstein plugins` | List discovered plugins and their hooks |
+| `bernstein install-hooks [--force]` | Install git hooks for automated checks |
+| `bernstein completions [--shell S]` | Generate shell completion scripts |
+| `bernstein self-update [--check] [--rollback]` | Upgrade Bernstein from PyPI |
+| `bernstein worker --server URL` | Join a cluster as a worker node |
+| `bernstein quarantine list` | List quarantined tasks |
+| `bernstein quarantine clear` | Clear all quarantined tasks |
+| `bernstein help-all` | Comprehensive help for all commands |
 
 ---
 
 ## Next steps
 
 - See `docs/DESIGN.md` for the full architecture
+- See `docs/FEATURE_MATRIX.md` for documentation coverage status
+- See `docs/plugin-sdk.md` for the plugin SDK
+- See `docs/compatibility.md` for MCP/A2A/ACP protocol support
 - Add role templates in `templates/roles/` to customise agent prompts
 - Review `.sdd/runtime/server.log` if anything behaves unexpectedly

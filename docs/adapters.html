@@ -39,7 +39,7 @@
 <div class="page-hero">
   <div class="container">
     <h1>Adapters</h1>
-    <p>Bernstein is model-agnostic. Use Claude, Codex, Gemini, Qwen — or any CLI agent — without changing your orchestration. Switch providers without rewriting anything.</p>
+    <p>Bernstein is model-agnostic. Use Aider, Amp, Claude Code, Codex, Cursor, Gemini CLI, Qwen, Roo Code — or any CLI agent — without changing your orchestration. Switch providers without rewriting anything.</p>
   </div>
 </div>
 
@@ -52,11 +52,14 @@
     <ul>
       <li><a href="#why">Why model-agnostic</a></li>
       <li><a href="#matrix">Feature matrix</a></li>
+      <li><a href="#aider">Aider</a></li>
+      <li><a href="#amp">Amp</a></li>
       <li><a href="#claude">Claude Code</a></li>
       <li><a href="#codex">Codex CLI</a></li>
       <li><a href="#cursor">Cursor</a></li>
       <li><a href="#gemini">Gemini CLI</a></li>
       <li><a href="#qwen">Qwen</a></li>
+      <li><a href="#roo-code">Roo Code</a></li>
       <li><a href="#generic">Generic adapter</a></li>
       <li><a href="#custom">Add a custom adapter</a></li>
       <li><a href="#mixing">Mixing adapters in one run</a></li>
@@ -85,27 +88,36 @@
       <thead>
         <tr>
           <th>Feature</th>
+          <th>Aider</th>
+          <th>Amp</th>
           <th>Claude Code</th>
           <th>Codex CLI</th>
           <th>Cursor</th>
           <th>Gemini CLI</th>
           <th>Qwen</th>
+          <th>Roo Code</th>
           <th>Generic</th>
         </tr>
       </thead>
       <tbody>
         <tr>
           <td>Model selection</td>
+          <td>Any (via --model)</td>
+          <td>opus 4.6 / gpt-5.4</td>
           <td>opus / sonnet / haiku</td>
           <td>gpt-5.4 / o3 / o4-mini</td>
           <td>sonnet 4.6 / opus 4.6 / gpt-5.4</td>
           <td>gemini-3-pro / 3-flash / 2.5-pro</td>
           <td>qwen3-coder / qwen-max</td>
+          <td>opus 4.6 / sonnet 4.6 / gpt-4o</td>
           <td>Pass-through</td>
         </tr>
         <tr>
           <td>Effort levels</td>
+          <td>—</td>
+          <td>—</td>
           <td>max / high / medium / low</td>
+          <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
@@ -114,16 +126,22 @@
         </tr>
         <tr>
           <td>MCP config injection</td>
+          <td>—</td>
+          <td>—</td>
           <td>✓</td>
           <td>—</td>
           <td>✓ (--add-mcp)</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
         </tr>
         <tr>
           <td>Structured JSON output</td>
+          <td>—</td>
+          <td>—</td>
           <td>✓ (stream-json)</td>
+          <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
@@ -132,51 +150,88 @@
         </tr>
         <tr>
           <td>Tier detection</td>
+          <td>—</td>
+          <td>—</td>
           <td>✓ (API key prefix)</td>
           <td>✓ (org ID / key prefix)</td>
           <td>✓ (~/.cursor/ present)</td>
           <td>✓ (GCP project / key format)</td>
           <td>✓ (provider env vars)</td>
           <td>—</td>
+          <td>—</td>
         </tr>
         <tr>
           <td>Auto-approval</td>
+          <td><code>--yes</code></td>
+          <td>Built-in</td>
           <td><code>--dangerously-skip-permissions</code></td>
           <td><code>--approval-mode full-auto</code></td>
           <td>Built-in agent mode</td>
           <td><code>--sandbox none</code></td>
           <td><code>-y</code></td>
+          <td>Via config</td>
           <td>Via <code>extra_args</code></td>
         </tr>
         <tr>
           <td>Web search</td>
+          <td>Depends on model</td>
+          <td>Native</td>
           <td>Via MCP</td>
           <td>Native</td>
           <td>Native</td>
           <td>Native</td>
           <td>Via Tavily (optional)</td>
+          <td>Via MCP</td>
           <td>Depends on CLI</td>
         </tr>
         <tr>
           <td>OpenAI-compatible backends</td>
+          <td>✓</td>
+          <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>✓ (OpenRouter, Together, Oxen)</td>
+          <td>✓</td>
           <td>—</td>
         </tr>
         <tr>
           <td>Local / offline models</td>
+          <td>✓ (via OpenAI-compat server)</td>
+          <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>✓ (via OpenAI-compatible server)</td>
           <td>✓</td>
+          <td>✓</td>
         </tr>
       </tbody>
     </table>
+
+    <h2 id="aider">Aider</h2>
+
+    <p><strong>Provider:</strong> OpenAI / Anthropic / any OpenAI-compatible &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli aider</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash">pip install aider-chat
+export OPENAI_API_KEY=sk-...   # or ANTHROPIC_API_KEY</code></pre>
+    </div>
+
+    <p>Aider is a popular open-source coding assistant that works with any model provider. Bernstein runs it with <code>--yes --no-git --message &lt;prompt&gt;</code> for non-interactive headless operation. Model selection is passed through via <code>--model</code>. Aider supports local models through any OpenAI-compatible API server (LM Studio, Ollama, vLLM).</p>
+
+    <h2 id="amp">Amp</h2>
+
+    <p><strong>Provider:</strong> Sourcegraph &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli amp</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash">brew install amp
+# Auth via Sourcegraph account</code></pre>
+    </div>
+
+    <p>Amp is Sourcegraph's coding agent. Bernstein uses its headless mode for autonomous operation. Model selection depends on the user's Sourcegraph subscription tier.</p>
 
     <h2 id="claude">Claude Code</h2>
 
@@ -261,6 +316,17 @@ export GOOGLE_API_KEY=AIza...</code></pre>
     </table>
 
     <p>This makes Qwen a good choice for cost-sensitive runs: route simple tasks to OpenRouter free-tier, keep expensive capacity for complex ones.</p>
+
+    <h2 id="roo-code">Roo Code</h2>
+
+    <p><strong>Provider:</strong> Anthropic / OpenAI / any &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli roo-code</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash"># Install Roo Code VS Code extension from https://github.com/RooVetGit/Roo-Code
+# Headless CLI mode available via the extension's CLI interface</code></pre>
+    </div>
+
+    <p>Roo Code is a VS Code extension with a headless CLI mode. It supports multiple providers (Anthropic, OpenAI, and OpenAI-compatible backends) and can use local models. Bernstein spawns it in headless mode for autonomous task execution.</p>
 
     <h2 id="generic">Generic adapter</h2>
 
