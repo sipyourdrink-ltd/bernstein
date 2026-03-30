@@ -70,6 +70,7 @@ from bernstein.cli.task_cmd import (
     review_cmd,
     sync,
 )
+from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.verify_cmd import verify_cmd
 from bernstein.cli.voice_cmd import listen_cmd
 from bernstein.cli.watch_cmd import watch_cmd
@@ -109,6 +110,7 @@ __all__ = [
     "console",
     "dashboard",
     "detect_available_adapter",
+    "diff_cmd",
     "doctor",
     "eval_group",
     "find_seed_file",
@@ -589,3 +591,4 @@ cli.add_command(watch_cmd, "watch")
 cli.add_command(listen_cmd, "listen")
 cli.add_command(self_update_cmd, "self-update")
 cli.add_command(worker, "worker")
+cli.add_command(diff_cmd, "diff")
