@@ -427,7 +427,7 @@ def run(
       bernstein conduct --container            # run agents in containers
       bernstein conduct --container --two-phase-sandbox  # two-phase sandboxed execution
     """
-    print_banner()
+    # Banner already printed by cli() — don't duplicate
 
     # Set process title so orchestrator is visible in Activity Monitor / ps
     try:
@@ -550,9 +550,14 @@ def run(
             md = builder.render_to_markdown()
             console.print(Markdown(md))
 
-        if not click.confirm("\nProceed with execution?", default=True):
-            console.print("[dim]Cancelled.[/dim]")
-            return
+        if not auto_approve:
+            try:
+                if not click.confirm("\nProceed with execution?", default=True):
+                    console.print("[dim]Cancelled.[/dim]")
+                    return
+            except (UnicodeDecodeError, EOFError):
+                # Non-ASCII input (e.g. Cyrillic keyboard) — treat as "yes"
+                pass
 
     if goal is not None:
         # Inline goal mode -- no YAML needed
