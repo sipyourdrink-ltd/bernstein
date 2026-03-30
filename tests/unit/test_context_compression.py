@@ -204,3 +204,163 @@ class TestContextCompressor:
         compressor = ContextCompressor(project)
         tokens = compressor.estimate_tokens(["src/myapp/models.py"])
         assert tokens >= 1
+
+
+# --- TestSectionPriority ---
+
+
+class TestSectionPriority:
+    def test_essential_sections_have_max_priority(self) -> None:
+        from bernstein.core.context_compression import _section_priority
+
+        assert _section_priority("role") == 10
+        assert _section_priority("tasks") == 10
+        assert _section_priority("instructions") == 10
+        assert _section_priority("signal files") == 10
+
+    def test_low_value_sections_have_low_priority(self) -> None:
+        from bernstein.core.context_compression import _section_priority
+
+        assert _section_priority("specialists") < 5
+        assert _section_priority("team awareness") <= 3
+
+    def test_unknown_section_returns_default(self) -> None:
+        from bernstein.core.context_compression import _section_priority
+
+        assert _section_priority("unknown_xyz_section") == 5
+
+    def test_case_insensitive(self) -> None:
+        from bernstein.core.context_compression import _section_priority
+
+        assert _section_priority("ROLE PROMPT") == _section_priority("role prompt")
+
+
+# --- TestPromptCompressor ---
+
+
+class TestPromptCompressor:
+    def _make_section(self, name: str, char_count: int) -> tuple[str, str]:
+        return (name, "x" * char_count)
+
+    def test_no_compression_under_budget(self) -> None:
+        from bernstein.core.context_compression import PromptCompressor
+
+        compressor = PromptCompressor(token_budget=10_000)
+        sections = [
+            ("role", "You are a backend engineer. " * 10),
+            ("tasks", "Fix the auth bug. " * 5),
+            ("instructions", "Complete and mark done. " * 5),
+        ]
+        compressed, orig, compressed_tok, dropped = compressor.compress_sections(sections)
+
+        assert dropped == []
+        assert compressed_tok == orig
+        assert compressed == "".join(c for _, c in sections)
+
+    def test_drops_low_priority_sections_first(self) -> None:
+        from bernstein.core.context_compression import PromptCompressor
+
+        # Budget of 100 tokens (~400 chars).
+        # specialists section is 300 chars (75 tokens) — should be dropped.
+        # role + tasks are essential (priority 10) — must be kept.
+        compressor = PromptCompressor(token_budget=100)
+        sections = [
+            ("role", "You are a specialist. " * 5),          # ~110 chars, 27 tokens
+            ("specialists", "Available: agentA agentB " * 12),  # ~300 chars, 75 tokens
+            ("tasks", "Implement feature X. " * 5),          # ~105 chars, 26 tokens
+            ("instructions", "Mark complete when done. " * 3), # ~75 chars, 18 tokens
+        ]
+        _compressed, _orig, compressed_tok, dropped = compressor.compress_sections(sections)
+
+        assert "specialists" in dropped
+        assert compressed_tok <= 100 + 10  # small tolerance for char-boundary rounding
+
+    def test_essential_sections_never_dropped(self) -> None:
+        from bernstein.core.context_compression import PromptCompressor
+
+        # Tiny budget: only essential sections survive.
+        compressor = PromptCompressor(token_budget=10)
+        sections = [
+            ("role", "r" * 200),          # 50 tokens
+            ("tasks", "t" * 200),         # 50 tokens
+            ("instructions", "i" * 200),  # 50 tokens
+            ("signal", "s" * 200),        # 50 tokens
+            ("specialists", "a" * 400),   # 100 tokens — droppable
+            ("lessons", "l" * 400),       # 100 tokens — droppable
+        ]
+        _compressed, _orig, _compressed_tok, dropped = compressor.compress_sections(sections)
+
+        assert "role" not in dropped
+        assert "tasks" not in dropped
+        assert "instructions" not in dropped
+        assert "signal" not in dropped
+
+    def test_empty_sections_returns_empty(self) -> None:
+        from bernstein.core.context_compression import PromptCompressor
+
+        compressor = PromptCompressor(token_budget=50_000)
+        compressed, orig, compressed_tok, dropped = compressor.compress_sections([])
+
+        assert compressed == ""
+        assert orig == 0
+        assert compressed_tok == 0
+        assert dropped == []
+
+    def test_compress_returns_compression_result(self) -> None:
+        from bernstein.core.context_compression import PromptCompressor
+
+        compressor = PromptCompressor(token_budget=50_000)
+        sections = [
+            ("role", "You are a backend engineer."),
+            ("tasks", "Implement task X."),
+            ("instructions", "Complete and exit."),
+        ]
+        result = compressor.compress(sections)
+
+        assert result.original_tokens >= 1
+        assert result.compressed_tokens >= 1
+        assert 0.0 <= result.compression_ratio <= 1.0
+        assert isinstance(result.selected_files, list)
+        assert isinstance(result.dropped_files, list)
+
+    def test_achieves_30_percent_reduction_on_bloated_prompt(self) -> None:
+        from bernstein.core.context_compression import PromptCompressor
+
+        # Budget set to 50% of a large prompt — simulates small-task target.
+        role_content = "You are a backend engineer." * 50        # ~1350 chars
+        tasks_content = "Implement feature X." * 20              # ~400 chars
+        instructions_content = "Mark complete when done." * 20   # ~480 chars
+        specialists_content = "Available: " + "agentX " * 200    # ~1400 chars — droppable
+        lessons_content = "Lesson: do X not Y. " * 100          # ~2000 chars — droppable
+        team_content = "Team: agentA working on Y. " * 100      # ~2700 chars — droppable
+
+        total_chars = sum(
+            len(c)
+            for c in [
+                role_content,
+                tasks_content,
+                instructions_content,
+                specialists_content,
+                lessons_content,
+                team_content,
+            ]
+        )
+        total_tokens_est = total_chars // 4
+
+        # Set budget to 50% of total
+        budget = total_tokens_est // 2
+        compressor = PromptCompressor(token_budget=budget)
+
+        sections = [
+            ("role", role_content),
+            ("tasks", tasks_content),
+            ("instructions", instructions_content),
+            ("specialists", specialists_content),
+            ("lessons", lessons_content),
+            ("team awareness", team_content),
+        ]
+        _compressed, orig, compressed_tok, dropped = compressor.compress_sections(sections)
+
+        reduction = 1.0 - compressed_tok / max(1, orig)
+        assert reduction >= 0.30, f"Expected ≥30% reduction, got {reduction:.1%}"
+        assert len(dropped) >= 1
