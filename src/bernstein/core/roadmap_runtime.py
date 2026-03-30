@@ -38,7 +38,7 @@ def emit_roadmap_wave(workdir: Path, *, max_open_tickets: int = 10) -> list[Path
     backlog_open = workdir / ".sdd" / "backlog" / "open"
     if not backlog_open.exists():
         return []
-    current_open = len(list(backlog_open.glob("*.md")))
+    current_open = len(list(backlog_open.glob("*.yaml")))
     if current_open >= max_open_tickets:
         return []
 

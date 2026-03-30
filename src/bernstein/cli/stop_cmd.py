@@ -87,14 +87,14 @@ def return_claimed_to_open() -> int:
     closed_nums: set[str] = set()
     closed_dir = Path(".sdd/backlog/closed")
     if closed_dir.exists():
-        closed_nums = {f.name.split("-")[0] for f in closed_dir.glob("*.md")}
+        closed_nums = {f.name.split("-")[0] for f in closed_dir.glob("*.yaml")}
     # Also check backlog/done/ which some codepaths use
     done_dir = Path(".sdd/backlog/done")
     if done_dir.exists():
-        closed_nums |= {f.name.split("-")[0] for f in done_dir.glob("*.md")}
+        closed_nums |= {f.name.split("-")[0] for f in done_dir.glob("*.yaml")}
 
     count = 0
-    for f in claimed_dir.glob("*.md"):
+    for f in claimed_dir.glob("*.yaml"):
         num = f.name.split("-")[0]
         if num in closed_nums:
             f.unlink()  # already completed — remove duplicate
@@ -143,10 +143,10 @@ def save_session_on_stop(workdir: Path) -> None:
         runtime_dir.mkdir(parents=True, exist_ok=True)
         fallback: dict[str, Any] = {
             "stopped_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "open_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "open").glob("*.md"))
+            "open_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "open").glob("*.yaml"))
             if (workdir / ".sdd" / "backlog" / "open").exists()
             else 0,
-            "claimed_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "claimed").glob("*.md"))
+            "claimed_tasks": sum(1 for _ in (workdir / ".sdd" / "backlog" / "claimed").glob("*.yaml"))
             if (workdir / ".sdd" / "backlog" / "claimed").exists()
             else 0,
         }

@@ -1547,7 +1547,7 @@ def _move_backlog_ticket(workdir: Any, task: Any) -> None:
 
     # --- Strategy 2: exact normalised-title match (no substring!) ---
     title_slug = re.sub(r"[^a-z0-9]+", "-", task.title.lower()).strip("-")
-    for md_file in open_dir.glob("*.md"):
+    for md_file in [*open_dir.glob("*.yaml"), *open_dir.glob("*.md")]:
         # Parse the ticket heading and normalise it
         try:
             text = md_file.read_text(encoding="utf-8")
