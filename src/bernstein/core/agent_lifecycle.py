@@ -315,6 +315,7 @@ def handle_orphaned_task(
                 logger.error("Failed to complete orphaned task %s: %s", task_id, exc)
                 error_type = "complete_failed"
         else:
+            runtime = int(time.time() - start_ts)
             try:
                 retry_or_fail_task(
                     task_id,
@@ -324,9 +325,13 @@ def handle_orphaned_task(
                     max_task_retries=orch._config.max_task_retries,
                     retried_task_ids=orch._retried_task_ids,
                 )
-                logger.info(
-                    "Orphaned task %s retry/failed (no signals, no output) after agent %s died",
-                    task_id,
+                logger.warning(
+                    "Task '%s' failed — agent died without output. "
+                    "Reason: process exited (PID %s, %ds runtime). "
+                    "Check log: .sdd/runtime/%s.log",
+                    task.title,
+                    session.pid or "unknown",
+                    runtime,
                     session.id,
                 )
             except httpx.HTTPError as exc:

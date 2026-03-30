@@ -783,10 +783,10 @@ class Orchestrator:
         elif self._cost_tracker.budget_usd > 0 and self._cost_tracker.status().should_stop:
             _bs = self._cost_tracker.status()
             logger.warning(
-                "Budget cap ($%.2f) reached ($%.2f spent, %.0f%%), skipping agent spawning",
-                _bs.budget_usd,
+                "Budget exhausted — $%.2f spent of $%.2f budget. "
+                "Fix: increase budget with --budget N or wait for running tasks to complete",
                 _bs.spent_usd,
-                _bs.percentage_used * 100,
+                _bs.budget_usd,
             )
             self._notify(
                 "budget.warning",

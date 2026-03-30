@@ -1030,10 +1030,23 @@ class BernsteinApp(App[None]):
             if pid:
                 with contextlib.suppress(OSError):
                     os.killpg(os.getpgid(pid), signal.SIGTERM)
+        self._show_run_summary()
         self.exit(message="Bernstein stopped.")
 
     def _clear_stop_pending(self) -> None:
         self._stop_pending = False  # type: ignore[attr-defined]
+
+    def _show_run_summary(self) -> None:
+        """Show a run completion summary before exit."""
+        stats = self.query_one("#stats-row", BigStats)
+        elapsed = time.time() - self._start_ts
+        minutes = int(elapsed // 60)
+        summary = (
+            f"[bold]Run complete[/bold] — {stats.done} task(s) in {minutes} min\n"
+            f"[green]\u2713 {stats.done} done[/green]  "
+            f"[red]\u2717 {stats.failed} failed[/red]\n"
+        )
+        self.notify(summary, title="Bernstein", severity="information", timeout=10)
 
     _SYSTEM_COMMANDS: ClassVar[dict[str, str]] = {}
 

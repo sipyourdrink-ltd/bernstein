@@ -616,7 +616,9 @@ class AgentSpawner:
                 self._worktree_paths[session_id] = spawn_cwd
             except WorktreeError as exc:
                 logger.warning(
-                    "Worktree creation failed for %s, falling back to workdir: %s",
+                    "Cannot create workspace for agent %s. "
+                    "Reason: %s. "
+                    "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually",
                     session_id,
                     exc,
                 )
