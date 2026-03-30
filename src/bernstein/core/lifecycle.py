@@ -8,9 +8,11 @@ transitions raise ``IllegalTransitionError``; legal ones emit a typed
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 import logging
 import time
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core.models import AgentSession, LifecycleEvent, Task, TaskStatus
 
@@ -36,6 +38,16 @@ def set_audit_log(audit_log: AuditLog) -> None:
     """
     global _audit_log
     _audit_log = audit_log
+
+
+def get_audit_log() -> AuditLog | None:
+    """Return the currently wired AuditLog, or None."""
+    return _audit_log
+
+
+def _content_hash(data: Any) -> str:
+    """SHA-256 hash of canonical JSON representation."""
+    return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -207,15 +219,20 @@ def transition_task(
     _emit(event)
 
     if _audit_log is not None:
+        input_state = {"task_id": task.id, "status": old_status.value}
+        output_state = {"task_id": task.id, "status": new_status.value}
         _audit_log.log(
             event_type="task.transition",
             actor=actor,
             resource_type="task",
             resource_id=task.id,
             details={
+                "action": f"{old_status.value}->{new_status.value}",
                 "from_status": old_status.value,
                 "to_status": new_status.value,
                 "reason": reason,
+                "input_hash": _content_hash(input_state),
+                "output_hash": _content_hash(output_state),
             },
         )
 
@@ -267,15 +284,20 @@ def transition_agent(
     _emit(event)
 
     if _audit_log is not None:
+        input_state = {"agent_id": agent.id, "status": old_status}
+        output_state = {"agent_id": agent.id, "status": new_status}
         _audit_log.log(
             event_type="agent.transition",
             actor=actor,
             resource_type="agent",
             resource_id=agent.id,
             details={
+                "action": f"{old_status}->{new_status}",
                 "from_status": old_status,
                 "to_status": new_status,
                 "reason": reason,
+                "input_hash": _content_hash(input_state),
+                "output_hash": _content_hash(output_state),
             },
         )
 

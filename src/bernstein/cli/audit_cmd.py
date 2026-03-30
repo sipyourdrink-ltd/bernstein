@@ -65,13 +65,15 @@ def show_cmd(limit: int) -> None:
     table = Table(show_header=True, header_style="bold magenta", show_lines=False)
     table.add_column("Timestamp", style="dim", no_wrap=True)
     table.add_column("Event", style="bold")
-    table.add_column("Detail")
+    table.add_column("Actor")
+    table.add_column("Resource")
 
     for ev in events:
-        ts = str(ev.get("timestamp", ev.get("ts", "—")))[:19]
-        event_type = str(ev.get("event", ev.get("type", "—")))
-        detail = str(ev.get("detail", ev.get("message", ev.get("msg", ""))))[:80]
-        table.add_row(ts, event_type, detail)
+        ts = str(ev.get("timestamp", "—"))[:19]
+        event_type = str(ev.get("event_type", "—"))
+        actor = str(ev.get("actor", ""))
+        resource = f"{ev.get('resource_type', '')}/{ev.get('resource_id', '')}"
+        table.add_row(ts, event_type, actor, resource)
 
     console.print()
     console.print(table)
@@ -129,51 +131,86 @@ def seal_cmd(anchor_git: bool) -> None:
 
 
 @audit_group.command("verify")
-@click.option("--merkle", is_flag=True, default=False, help="Verify Merkle tree integrity across log files.")
-def verify_cmd(merkle: bool) -> None:
-    """Verify audit log integrity.
+@click.option("--merkle-only", is_flag=True, default=False, help="Only verify Merkle tree (skip HMAC chain).")
+@click.option("--hmac-only", is_flag=True, default=False, help="Only verify HMAC chain (skip Merkle tree).")
+def verify_cmd(merkle_only: bool, hmac_only: bool) -> None:
+    """Verify audit log integrity (HMAC chain + Merkle tree).
 
     \b
-      bernstein audit verify --merkle   Validate the Merkle tree
+      bernstein audit verify              Verify both HMAC chain and Merkle tree
+      bernstein audit verify --hmac-only  Verify HMAC chain only
+      bernstein audit verify --merkle-only  Verify Merkle tree only
     """
-    if not merkle:
-        console.print("[dim]Use --merkle to verify Merkle tree integrity.[/dim]")
-        console.print("[dim]Use 'bernstein audit verify-hmac' for HMAC chain verification.[/dim]")
-        return
+    if not AUDIT_DIR.is_dir():
+        console.print(f"[red]Audit directory not found:[/red] {AUDIT_DIR}")
+        raise SystemExit(1)
 
-    from bernstein.core.merkle import verify_merkle
+    all_passed = True
 
-    result = verify_merkle(AUDIT_DIR, MERKLE_DIR)
+    # HMAC chain verification
+    if not merkle_only:
+        from bernstein.core.audit import AuditLog
+
+        audit_log = AuditLog(AUDIT_DIR)
+        hmac_valid, hmac_errors = audit_log.verify()
+
+        console.print()
+        if hmac_valid:
+            console.print(
+                Panel(
+                    "[bold green]HMAC Chain Verification Passed[/bold green]",
+                    border_style="green",
+                    expand=False,
+                )
+            )
+        else:
+            all_passed = False
+            console.print(
+                Panel(
+                    "[bold red]HMAC Chain Verification FAILED[/bold red]",
+                    border_style="red",
+                    expand=False,
+                )
+            )
+            for err in hmac_errors:
+                console.print(f"  [red]![/red] {err}")
+
+    # Merkle tree verification
+    if not hmac_only:
+        from bernstein.core.merkle import verify_merkle
+
+        result = verify_merkle(AUDIT_DIR, MERKLE_DIR)
+
+        console.print()
+        if result.valid:
+            console.print(
+                Panel(
+                    "[bold green]Merkle Verification Passed[/bold green]",
+                    border_style="green",
+                    expand=False,
+                )
+            )
+            table = Table(show_header=False, box=None, padding=(0, 2))
+            table.add_column("Key", style="dim", no_wrap=True, min_width=14)
+            table.add_column("Value")
+            table.add_row("Root hash", result.root_hash)
+            if result.seal_path:
+                table.add_row("Seal file", str(result.seal_path))
+            console.print(table)
+        else:
+            all_passed = False
+            console.print(
+                Panel(
+                    "[bold red]Merkle Verification FAILED[/bold red]",
+                    border_style="red",
+                    expand=False,
+                )
+            )
+            for err in result.errors:
+                console.print(f"  [red]![/red] {err}")
 
     console.print()
-    if result.valid:
-        console.print(
-            Panel(
-                "[bold green]Merkle Verification Passed[/bold green]",
-                border_style="green",
-                expand=False,
-            )
-        )
-        table = Table(show_header=False, box=None, padding=(0, 2))
-        table.add_column("Key", style="dim", no_wrap=True, min_width=14)
-        table.add_column("Value")
-        table.add_row("Root hash", result.root_hash)
-        if result.seal_path:
-            table.add_row("Seal file", str(result.seal_path))
-        console.print(table)
-    else:
-        console.print(
-            Panel(
-                "[bold red]Merkle Verification FAILED[/bold red]",
-                border_style="red",
-                expand=False,
-            )
-        )
-        for err in result.errors:
-            console.print(f"  [red]![/red] {err}")
-
-    console.print()
-    raise SystemExit(0 if result.valid else 1)
+    raise SystemExit(0 if all_passed else 1)
 
 
 @audit_group.command("verify-hmac")

@@ -549,6 +549,29 @@ class TaskStore:
             self._tasks[task.id] = task
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
+
+        # SOC 2 audit: log task creation (not a status transition, so lifecycle doesn't cover it)
+        from bernstein.core.lifecycle import _content_hash, get_audit_log
+
+        audit = get_audit_log()
+        if audit is not None:
+            input_data = {"title": task.title, "role": task.role, "priority": task.priority}
+            output_data = {"task_id": task.id, "status": task.status.value}
+            audit.log(
+                event_type="task.created",
+                actor="task_store",
+                resource_type="task",
+                resource_id=task.id,
+                details={
+                    "action": "create",
+                    "title": task.title,
+                    "role": task.role,
+                    "priority": task.priority,
+                    "input_hash": _content_hash(input_data),
+                    "output_hash": _content_hash(output_data),
+                },
+            )
+
         return task
 
     async def claim_next(self, role: str) -> Task | None:

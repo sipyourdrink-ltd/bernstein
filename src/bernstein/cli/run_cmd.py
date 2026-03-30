@@ -396,6 +396,15 @@ def _show_run_summary() -> None:
     default=False,
     help="Suppress the end-of-run summary card.",
 )
+@click.option(
+    "--audit",
+    is_flag=True,
+    default=False,
+    help=(
+        "Enable SOC 2 audit mode: append-only HMAC-chained audit log for every "
+        "task lifecycle event, with Merkle tree seal on shutdown."
+    ),
+)
 def run(
     goal: str | None,
     seed_file: str | None,
@@ -414,6 +423,7 @@ def run(
     from_plan: Path | None,
     auto_approve: bool,
     quiet: bool,
+    audit: bool,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
@@ -433,6 +443,7 @@ def run(
       bernstein conduct --compliance standard  # compliance mode (development/standard/regulated)
       bernstein conduct --container            # run agents in containers
       bernstein conduct --container --two-phase-sandbox  # two-phase sandboxed execution
+      bernstein conduct --audit                # SOC 2 audit mode (HMAC-chained log + Merkle seal)
     """
     # Banner already printed by cli() — don't duplicate
 
@@ -470,6 +481,10 @@ def run(
     # Propagate quiet flag so the orchestrator suppresses the summary card
     if quiet:
         os.environ["BERNSTEIN_QUIET"] = "1"
+
+    # Propagate audit mode so the orchestrator enables SOC 2 audit logging
+    if audit:
+        os.environ["BERNSTEIN_AUDIT"] = "1"
 
     workdir = Path.cwd()
 

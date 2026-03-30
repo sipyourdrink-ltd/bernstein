@@ -511,6 +511,21 @@ class Orchestrator:
                 ", ".join(features),
             )
 
+        # SOC 2 audit mode: enable via --audit flag or compliance preset
+        self._audit_mode = os.environ.get("BERNSTEIN_AUDIT") == "1" or (
+            self._compliance is not None and self._compliance.audit_logging
+        )
+        if self._audit_mode:
+            from bernstein.core.audit import AuditLog
+            from bernstein.core.lifecycle import set_audit_log
+
+            audit_dir = workdir / ".sdd" / "audit"
+            self._audit_log = AuditLog(audit_dir)
+            set_audit_log(self._audit_log)
+            logger.info("SOC 2 audit mode active — logging to %s", audit_dir)
+        else:
+            self._audit_log = None
+
         # Progress-snapshot stall detection state (see check_stalled_tasks).
         # Tracks how many consecutive identical snapshots each task has had.
         self._stall_counts: dict[str, int] = {}  # task_id -> consecutive identical count
@@ -1417,6 +1432,19 @@ class Orchestrator:
         """Release resources held by the orchestrator."""
         # Save session state before releasing resources
         self._save_session_state()
+
+        # SOC 2: generate Merkle seal on shutdown when audit mode is active
+        if self._audit_mode and self._audit_log is not None:
+            try:
+                from bernstein.core.merkle import compute_seal, save_seal
+
+                audit_dir = self._workdir / ".sdd" / "audit"
+                merkle_dir = audit_dir / "merkle"
+                _tree, seal = compute_seal(audit_dir)
+                seal_path = save_seal(seal, merkle_dir)
+                logger.info("Merkle audit seal written: %s (root=%s)", seal_path, seal["root_hash"])
+            except Exception:
+                logger.warning("Merkle seal generation on shutdown failed", exc_info=True)
 
         # Full git hygiene on shutdown
         try:
