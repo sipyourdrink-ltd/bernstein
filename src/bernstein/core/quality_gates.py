@@ -107,7 +107,7 @@ def _run_command(command: str, cwd: Path, timeout_s: int) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
             command,
-            shell=True,
+            shell=True,  # SECURITY: shell=True required because quality gate commands are admin-configured shell strings (e.g. "ruff check src/") that may use pipes or globs; not user input
             cwd=cwd,
             capture_output=True,
             text=True,
