@@ -761,6 +761,7 @@ class BernsteinApp(App[None]):
         Binding("x", "cancel_task", "Cancel"),
         Binding("p", "prioritize_task", "P0"),
         Binding("t", "retry_task", "Retry"),
+        Binding("d", "compare_task", "Compare"),
         Binding("i", "inspect_task", "Inspect", show=False),
     ]
 
@@ -773,6 +774,7 @@ class BernsteinApp(App[None]):
         self._task_titles: dict[str, str] = {}
         self._task_progress: dict[str, int] = {}
         self._last_activity: list[str] = []
+        self._compare_mark: str | None = None  # first task ID for compare
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1216,6 +1218,48 @@ class BernsteinApp(App[None]):
         if task_id:
             _post(f"/tasks/{task_id}/retry")
             self.notify(f"Task {task_id[:8]} re-queued", severity="information")
+
+    def action_compare_task(self) -> None:
+        """Mark a task for comparison. First press marks, second press opens compare view."""
+        table = self.query_one("#tasks-table", DataTable)
+        try:
+            row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
+            task_id = str(row_key.value) if row_key.value else ""
+        except Exception:
+            return
+        if not task_id:
+            return
+
+        if self._compare_mark is None:
+            # First selection
+            self._compare_mark = task_id
+            title = self._task_titles.get(task_id, task_id[:8])
+            self.notify(
+                f"Marked [cyan]{title}[/cyan] for compare. Press [bold]d[/bold] on another task.",
+                severity="information",
+                timeout=5,
+            )
+        else:
+            if self._compare_mark == task_id:
+                # Same task — cancel
+                self._compare_mark = None
+                self.notify("Compare cancelled.", severity="information", timeout=3)
+                return
+
+            # Second selection — open compare screen
+            from bernstein.cli.compare_screen import CompareScreen
+
+            agents = _load_agents()
+            root = Path.cwd()
+            self.push_screen(
+                CompareScreen(
+                    left_id=self._compare_mark,
+                    right_id=task_id,
+                    agents=agents,
+                    root=root,
+                )
+            )
+            self._compare_mark = None
 
     def action_refresh(self) -> None:
         self._schedule_poll()
