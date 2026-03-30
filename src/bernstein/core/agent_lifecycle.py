@@ -562,8 +562,8 @@ def check_stalled_tasks(orch: Any) -> None:
             except Exception:
                 continue  # Server unavailable or task not found — skip
 
-            if not snapshots_data:
-                continue  # No snapshots yet
+            if not snapshots_data or not isinstance(snapshots_data, list):
+                continue  # No snapshots yet or unexpected format
 
             # Parse the latest snapshot
             latest_raw = snapshots_data[-1]
