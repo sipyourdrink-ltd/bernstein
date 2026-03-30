@@ -17,20 +17,15 @@ if TYPE_CHECKING:
 
 # ── ASCII logo ──────────────────────────────────────────────────
 # Compact 5-line logo. No emoji, no box-drawing — just clean type.
-LOGO = r"""
- ▄▄▄▄    ▓█████  ██▀███   ███▄    █   ██████ ▄▄▄█████▓▓█████  ██▓ ███▄    █
-▓█████▄  ▓█   ▀ ▓██ ▒ ██▒ ██ ▀█   █ ▒██    ▒ ▓  ██▒ ▓▒▓█   ▀ ▓██▒ ██ ▀█   █
-▒██▒ ▄██▒▒███   ▓██ ░▄█ ▒▓██  ▀█ ██▒░ ▓██▄   ▒ ▓██░ ▒░▒███   ▒██▒▓██  ▀█ ██▒
-▒██░█▀   ▒▓█  ▄ ▒██▀▀█▄  ▓██▒  ▐▌██▒  ▒   ██▒░ ▓██▓ ░ ▒▓█  ▄ ░██░▓██▒  ▐▌██▒
-░▓█  ▀█▓ ░▒████▒░██▓ ▒██▒▒██░   ▓██░▒██████▒▒  ▒██▒ ░ ░▒████▒░██░▒██░   ▓██░
- ▒▓███▀▒ ░░ ▒░ ░░ ▒▓ ░▒▓░░ ▒░   ▒ ▒ ▒ ▒▓▒ ▒ ░  ▒ ░░   ░░ ▒░ ░░▓  ░ ▒░   ▒ ▒
-"""
+LOGO = """\
+    ▄▄▄
+   ██▀▀█▄                        █▄
+   ██ ▄█▀       ▄    ▄          ▄██▄      ▀▀ ▄
+   ██▀▀█▄ ▄█▀█▄ ████▄████▄ ▄██▀█ ██ ▄█▀█▄ ██ ████▄
+ ▄ ██  ▄█ ██▄█▀ ██   ██ ██ ▀███▄ ██ ██▄█▀ ██ ██ ██
+ ▀██████▀▄▀█▄▄▄▄█▀  ▄██ ▀██▄▄██▀▄██▄▀█▄▄▄▄██▄██ ▀█"""
 
-LOGO_SMALL = """\
-╔══════════════════════════════════╗
-║     BERNSTEIN — v{version:<14s}║
-║     multi-agent orchestration    ║
-╚══════════════════════════════════╝"""
+LOGO_SMALL = "  [bold]BERNSTEIN[/bold] — multi-agent orchestration"
 
 
 def _detect_terminal_width(console: Console) -> int:
@@ -88,7 +83,7 @@ def _print_static(
     if use_big_logo:
         console.print(f"[bold blue]{LOGO}[/bold blue]")
     else:
-        console.print(f"[bold blue]{LOGO_SMALL.format(version=version or '?')}[/bold blue]")
+        console.print(f"[bold blue]{LOGO_SMALL}[/bold blue]")
 
     if agents:
         names = ", ".join(a.get("name", "?") for a in agents)
@@ -120,7 +115,7 @@ def _print_animated(
     if use_big_logo:
         console.print(f"[bold blue]{LOGO}[/bold blue]")
     else:
-        console.print(f"[bold blue]{LOGO_SMALL.format(version=version or '?')}[/bold blue]")
+        console.print(f"[bold blue]{LOGO_SMALL}[/bold blue]")
 
     # Phase 2: Scanning effect for agent detection
     scan_items: list[tuple[str, str]] = []
