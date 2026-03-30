@@ -1254,6 +1254,7 @@ class BernsteinApp(App[None]):
         # 1. Try real-time IPC shutdown first
         try:
             from bernstein.core.agent_ipc import shutdown_all
+
             workdir = Path.cwd()
             ipc_results = shutdown_all(reason="user quit TUI", workdir=workdir)
             pipe_count = sum(1 for v in ipc_results.values() if v == "pipe")
@@ -1265,6 +1266,7 @@ class BernsteinApp(App[None]):
         # 2. Write file-based SHUTDOWN signals
         try:
             from bernstein.cli.stop_cmd import write_shutdown_signals
+
             write_shutdown_signals()
         except Exception:
             pass

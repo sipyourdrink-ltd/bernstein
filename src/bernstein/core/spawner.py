@@ -676,6 +676,7 @@ class AgentSpawner:
             proc_stdin = getattr(result.proc, "stdin", None)
             if proc_stdin is not None:
                 from bernstein.core.agent_ipc import register_stdin_pipe
+
                 register_stdin_pipe(session_id, proc_stdin)
 
         # Create and persist the initial trace
@@ -1022,6 +1023,7 @@ class AgentSpawner:
 
         proc = self._procs.pop(session.id, None)
         from bernstein.core.agent_ipc import unregister_stdin_pipe
+
         unregister_stdin_pipe(session.id)
         if proc is not None:
             try:
