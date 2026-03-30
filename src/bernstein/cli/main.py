@@ -543,6 +543,7 @@ cli.add_command(approve)
 cli.add_command(reject)
 cli.add_command(pending)
 cli.add_command(plan)
+cli.add_command(plan, "tasks")
 cli.add_command(logs_cmd, "logs")
 cli.add_command(list_tasks, "list-tasks")
 

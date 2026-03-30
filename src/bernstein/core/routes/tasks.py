@@ -266,6 +266,31 @@ async def get_archive(request: Request, limit: int = 50) -> list[ArchiveRecord]:
     return store.read_archive(limit=limit)
 
 
+@router.get("/tasks/graph")
+async def get_task_graph(request: Request) -> JSONResponse:
+    """Return the task dependency graph as JSON (nodes + edges + critical path).
+
+    Builds a DAG from all current tasks and returns:
+    - ``nodes``: list of {id, role, status, estimated_minutes, title}
+    - ``edges``: list of {from, to, type, semantic_type}
+    - ``critical_path``: ordered list of task IDs on the longest chain
+    - ``critical_path_minutes``: total estimated minutes on the critical path
+    - ``parallel_width``: max tasks that can run concurrently
+    - ``bottlenecks``: task IDs that block the most downstream work
+    """
+    from bernstein.core.graph import TaskGraph
+
+    store = _get_store(request)
+    tasks = store.list_tasks()
+    graph = TaskGraph(tasks)
+    data = graph.to_dict()
+    # Enrich nodes with title for CLI rendering
+    task_map = {t.id: t for t in tasks}
+    for node in data["nodes"]:
+        node["title"] = task_map[node["id"]].title if node["id"] in task_map else ""
+    return JSONResponse(content=data)
+
+
 @router.get("/tasks/{task_id}", response_model=TaskResponse)
 async def get_task(task_id: str, request: Request) -> TaskResponse:
     """Get a single task by ID."""

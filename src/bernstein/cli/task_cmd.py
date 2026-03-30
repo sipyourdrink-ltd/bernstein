@@ -252,6 +252,96 @@ def pending(workdir: str) -> None:
     console.print("[dim]Reject with:[/dim]  bernstein reject <task_id>")
 
 
+def _render_graph() -> None:
+    """Render ASCII task dependency graph using rich.tree.Tree."""
+    from rich.text import Text
+    from rich.tree import Tree
+
+    raw = server_get("/tasks/graph")
+    if raw is None:
+        from bernstein.cli.errors import server_unreachable
+
+        server_unreachable().print()
+        raise SystemExit(1)
+
+    data: dict[str, Any] = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
+    nodes: list[dict[str, Any]] = data.get("nodes", [])
+    edges: list[dict[str, Any]] = data.get("edges", [])
+    critical_path: list[str] = data.get("critical_path", [])
+
+    if not nodes:
+        console.print("[dim]No tasks found.[/dim]")
+        return
+
+    # Build maps
+    task_map: dict[str, dict[str, Any]] = {n["id"]: n for n in nodes}
+    # forward adjacency: source -> [targets]
+    forward: dict[str, list[str]] = {n["id"]: [] for n in nodes}
+    for e in edges:
+        src: str = e["from"]
+        tgt: str = e["to"]
+        if src in forward:
+            forward[src].append(tgt)
+
+    critical_set: set[str] = set(critical_path)
+
+    def _node_text(tid: str) -> Text:
+        t = task_map.get(tid, {})
+        short_id = tid[:8]
+        title = str(t.get("title", "?"))
+        status = str(t.get("status", "?"))
+        status_color = STATUS_COLORS.get(status, "white")
+        text = Text()
+        if tid in critical_set:
+            text.append(f"[{short_id}] {title}", style="bold yellow")
+            text.append(" ★", style="bold yellow")
+        else:
+            text.append(f"[{short_id}] {title}")
+        text.append(f" ({status})", style=status_color)
+        return text
+
+    # Nodes that have an incoming edge
+    has_incoming: set[str] = {e["to"] for e in edges}
+    roots = [n["id"] for n in nodes if n["id"] not in has_incoming]
+
+    tree = Tree("[bold cyan]Task Dependency Graph[/bold cyan]")
+    visited: set[str] = set()
+
+    def _add_branch(parent: Any, tid: str) -> None:
+        visited.add(tid)
+        branch = parent.add(_node_text(tid))
+        for child in forward.get(tid, []):
+            if child not in visited:
+                _add_branch(branch, child)
+            else:
+                # Already shown elsewhere — add a reference stub
+                branch.add(Text(f"  ↳ [{child[:8]}] (shown above)", style="dim italic"))
+
+    for root_id in sorted(roots):
+        _add_branch(tree, root_id)
+
+    # Nodes with no edges at all (isolated)
+    edge_nodes: set[str] = {e["from"] for e in edges} | {e["to"] for e in edges}
+    for n in nodes:
+        if n["id"] not in visited and n["id"] not in edge_nodes:
+            tree.add(_node_text(n["id"]))
+
+    console.print(tree)
+
+    if critical_path:
+        console.print()
+        cp_ids = " → ".join(tid[:8] for tid in critical_path)
+        console.print(f"[bold yellow]Critical path:[/bold yellow] {cp_ids}")
+        minutes: int = int(data.get("critical_path_minutes", 0))
+        if minutes:
+            console.print(f"[dim]Estimated duration: {minutes} min[/dim]")
+
+    bottlenecks: list[str] = data.get("bottlenecks", [])
+    if bottlenecks:
+        console.print()
+        console.print("[bold red]Bottlenecks:[/bold red] " + ", ".join(b[:8] for b in bottlenecks))
+
+
 @click.command("plan")
 @click.option(
     "--export",
@@ -267,14 +357,20 @@ def pending(workdir: str) -> None:
     type=click.Choice(["open", "claimed", "in_progress", "done", "failed", "blocked", "cancelled"]),
     help="Filter tasks by status.",
 )
-def plan(export_file: str | None, status_filter: str | None) -> None:
+@click.option("--graph", "show_graph", is_flag=True, default=False, help="Show ASCII dependency graph.")
+def plan(export_file: str | None, status_filter: str | None, show_graph: bool) -> None:
     """Show task backlog as a table, or export to JSON.
 
     \b
       bernstein plan                          # show all tasks
       bernstein plan --status open            # show only open tasks
       bernstein plan --export plan.json       # export full backlog to JSON
+      bernstein plan --graph                  # show ASCII dependency graph
     """
+    if show_graph:
+        _render_graph()
+        return
+
     from rich.table import Table
 
     path = "/tasks"

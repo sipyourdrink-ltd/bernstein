@@ -272,14 +272,25 @@ def _build_tasks_table(tasks: list[dict[str, Any]]) -> Table:
     table.add_column("Role", min_width=8)
     table.add_column("Title")
 
+    # Build set of done task IDs for blocked-by annotation
+    done_ids: set[str] = {str(t.get("id", "")) for t in tasks if t.get("status") == "done"}
+
     for t in tasks:
         raw_status = str(t.get("status", "open"))
         color = STATUS_COLORS.get(raw_status, "white")
         icon = {"done": "\u2713", "failed": "\u2717", "claimed": "\u25b6", "open": "\u00b7"}.get(raw_status, " ")
+        title = str(t.get("title", "\u2014"))
+
+        # Annotate blocked tasks with their unmet dependencies
+        depends_on: list[str] = t.get("depends_on") or []
+        blocking = [dep[:8] for dep in depends_on if dep not in done_ids]
+        if blocking and raw_status not in ("done", "failed", "cancelled"):
+            title += f" [dim][blocked by #{', #'.join(blocking)}][/dim]"
+
         table.add_row(
             f"[{color}]{icon} {raw_status}[/{color}]",
             str(t.get("role", "\u2014")),
-            str(t.get("title", "\u2014")),
+            title,
         )
     return table
 
