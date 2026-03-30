@@ -208,7 +208,7 @@ class CompareScreen(Screen[None]):
             self._agents,
             self._root,
         )
-        self.call_from_thread(
+        self.app.call_from_thread(
             self._render_comparison,
             left_diff,
             left_stat,
