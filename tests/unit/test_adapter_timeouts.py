@@ -66,7 +66,6 @@ class TestWatchdogFiresSigterm:
             patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock),
             patch("bernstein.adapters.base.os.getpgid", return_value=9001),
             patch("bernstein.adapters.base.os.killpg") as mock_killpg,
-            patch("bernstein.adapters.base.subprocess.run"),  # suppress git calls
         ):
             result = adapter.spawn(
                 prompt="sleep forever",
@@ -79,8 +78,8 @@ class TestWatchdogFiresSigterm:
 
         mock_killpg.assert_called_with(9001, signal.SIGTERM)
         # Clean up
-        if result.timer:
-            result.timer.cancel()
+        if result.timeout_timer:
+            result.timeout_timer.cancel()
 
     def test_timer_stored_in_spawn_result(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -95,8 +94,8 @@ class TestWatchdogFiresSigterm:
                 timeout_seconds=1800,
             )
 
-        assert result.timer is not None
-        result.timer.cancel()
+        assert result.timeout_timer is not None
+        result.timeout_timer.cancel()
 
     def test_cancel_prevents_kill(self, tmp_path: Path) -> None:
         """Cancelling timer before it fires must prevent SIGTERM."""
@@ -114,8 +113,8 @@ class TestWatchdogFiresSigterm:
                 session_id="cancel-test",
                 timeout_seconds=_SHORT_TIMEOUT,
             )
-            assert result.timer is not None
-            result.timer.cancel()
+            assert result.timeout_timer is not None
+            result.timeout_timer.cancel()
             time.sleep(_SHORT_TIMEOUT * 5)  # wait past timeout
 
         mock_killpg.assert_not_called()
@@ -140,8 +139,8 @@ class TestWatchdogFiresSigterm:
             time.sleep(_SHORT_TIMEOUT * 5)
 
         mock_killpg.assert_not_called()
-        if result.timer:
-            result.timer.cancel()
+        if result.timeout_timer:
+            result.timeout_timer.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +186,8 @@ class TestAllAdaptersHaveTimeout:
                     session_id=session_id,
                     timeout_seconds=3600,
                 )
-        assert result.timer is not None
-        result.timer.cancel()
+        assert result.timeout_timer is not None
+        result.timeout_timer.cancel()
 
     def test_aider_has_timer(self, tmp_path: Path) -> None:
         self._assert_has_timer(AiderAdapter, "bernstein.adapters.aider.subprocess.Popen", tmp_path)
@@ -230,8 +229,8 @@ class TestAllAdaptersHaveTimeout:
                 session_id="qwen-timer",
                 timeout_seconds=3600,
             )
-        assert result.timer is not None
-        result.timer.cancel()
+        assert result.timeout_timer is not None
+        result.timeout_timer.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +255,7 @@ class TestDefaultTimeout:
                 # no timeout_seconds → uses default 1800
             )
 
-        assert result.timer is not None
-        assert isinstance(result.timer, threading.Timer)
-        assert result.timer.interval == 1800.0
-        result.timer.cancel()
+        assert result.timeout_timer is not None
+        assert isinstance(result.timeout_timer, threading.Timer)
+        assert result.timeout_timer.interval == 1800.0
+        result.timeout_timer.cancel()
