@@ -591,6 +591,7 @@ class AgentSession:
     timeout_s: int | None = None  # Per-agent wall-clock timeout; None = use OrchestratorConfig default
     log_path: str = ""  # Path to agent log file for live streaming
     tokens_used: int = 0  # Running total of input+output tokens consumed by this agent
+    token_budget: int = 0  # Per-task token budget computed from scope (0 = unlimited)
     parent_id: str | None = None  # ID of the agent session that spawned this one (delegation tree)
     isolation: str = "none"  # "none", "worktree", or "container"
     container_id: str | None = None  # Container ID when isolation=container
@@ -700,6 +701,9 @@ class OrchestratorConfig:
         default_factory=ContainerIsolationConfig,
     )  # Container-based agent isolation settings
     compliance: Any | None = None  # ComplianceConfig | None — compliance preset configuration
+    max_tokens_per_task: dict[str, int] = field(
+        default_factory=lambda: {"small": 10_000, "medium": 50_000, "large": 200_000},
+    )  # Per-task token budget by scope; agents warned at 80%, hard-killed at 2x
 
 
 # ---------------------------------------------------------------------------
