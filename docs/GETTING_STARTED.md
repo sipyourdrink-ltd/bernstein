@@ -749,6 +749,15 @@ documentation coverage status, see [`docs/FEATURE_MATRIX.md`](FEATURE_MATRIX.md)
 | `bernstein github setup` | Configure GitHub App integration |
 | `bernstein github test-webhook` | Verify webhook configuration |
 
+**Built-in CI pipeline** — the repository ships a production-grade GitHub Actions pipeline:
+
+- **Quality gates**: ruff lint + format, pyright type check, pytest with Codecov (85% project / 70% patch), spelling (`typos`), dead code (`vulture`), workflow lint (`actionlint`), wheel size check (<10MB)
+- **Security**: CodeQL, Semgrep SAST, license compliance (`pilosus`), Dependabot alerts + auto-merge for patch/minor updates
+- **AI review**: three-tier PR review — GitHub Models (zero-key), Gemini CLI (optional), Bernstein self-review (deep)
+- **DX automation**: PR auto-labeling by file path, PR size warnings, stale issue cleanup, Release Drafter for changelogs
+- **Notifications**: Telegram bot notifications on CI completion
+- **Concurrency**: all workflows cancel in-progress runs on new pushes to the same ref
+
 ### Governance & audit
 
 | Command | Description |

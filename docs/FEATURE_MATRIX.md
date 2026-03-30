@@ -84,12 +84,27 @@ Last audited: 2026-03-30
 
 ## CI/CD Integration
 
-| Feature | CLI Command | README | GETTING_STARTED | Site Page | Status |
-|---------|-------------|--------|-----------------|-----------|--------|
+| Feature | CLI Command / Config | README | GETTING_STARTED | Site Page | Status |
+|---------|---------------------|--------|-----------------|-----------|--------|
 | CI autofix | `ci fix` | Full | No | No | Gap |
 | CI watch | `ci watch` | Full | No | No | Gap |
 | GitHub App | `github setup/test-webhook` | Full | No | No | Gap |
 | GitHub Action | (external) | Brief | No | No | Gap |
+| CI pipeline | `.github/workflows/ci.yml` | Badge | N/A | N/A | OK |
+| Codecov gating | `codecov.yml` (85%/70%) | Badge | N/A | N/A | OK |
+| AI PR review (GitHub Models) | `ai-pr-review.yml` | N/A | N/A | N/A | OK |
+| AI PR review (Gemini CLI) | `ai-pr-review-gemini.yml` | N/A | N/A | N/A | OK |
+| Telegram notifications | `telegram-notify.yml` | N/A | N/A | N/A | OK |
+| PR auto-labeling | `labeler.yml` | N/A | N/A | N/A | OK |
+| PR size warnings | `pr-size.yml` | N/A | N/A | N/A | OK |
+| Stale cleanup | `stale.yml` | N/A | N/A | N/A | OK |
+| Dependabot auto-merge | `dependabot-auto-merge.yml` | N/A | N/A | N/A | OK |
+| Semgrep SAST | `semgrep.yml` | N/A | N/A | N/A | OK |
+| License compliance | `license-compliance.yml` | N/A | N/A | N/A | OK |
+| Release Drafter | `release-drafter.yml` | N/A | N/A | N/A | OK |
+| Spelling (typos) | CI job | N/A | N/A | N/A | OK |
+| Dead code (Vulture) | CI job | N/A | N/A | N/A | OK |
+| Workflow lint (actionlint) | CI job | N/A | N/A | N/A | OK |
 
 ## Benchmarking & Evaluation
 
@@ -155,8 +170,8 @@ Last audited: 2026-03-30
 | Monitoring | 12 | 0 | 9 | 3 |
 | Governance & Audit | 10 | 0 | 0 | 10 |
 | Evolution | 7 | 0 | 5 | 2 |
-| CI/CD | 4 | 0 | 0 | 4 |
+| CI/CD | 19 | 15 | 0 | 4 |
 | Benchmarking | 6 | 0 | 1 | 5 |
 | Advanced Features | 17 | 0 | 2 | 15 |
 | Task Management CLI | 8 | 0 | 0 | 8 |
-| **Total** | **82** | **5** | **24** | **54** |
+| **Total** | **97** | **20** | **24** | **54** |

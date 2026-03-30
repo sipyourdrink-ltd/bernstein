@@ -2,6 +2,24 @@
 
 All notable documentation changes are tracked here.
 
+## [1.0.3] — 2026-03-30
+
+### Added
+- State-of-the-art CI/CD pipeline: 11 new GitHub Actions workflows
+- Three-tier AI PR review (GitHub Models + Gemini CLI + Bernstein deep review)
+- Semgrep SAST, license compliance, spelling, dead code analysis, workflow linting
+- PR auto-labeling, size warnings, stale cleanup, Dependabot auto-merge
+- Release Drafter for automated changelog generation
+- Telegram bot notifications on CI completion
+- Codecov coverage gating (85% project / 70% patch)
+- Concurrency groups on all workflows with cancel-in-progress
+- CI and Codecov badges in README
+
+### Changed
+- FEATURE_MATRIX updated with CI/CD section (15 new entries)
+- GETTING_STARTED expanded with CI pipeline documentation
+- Manual backlog index updated with all setup tickets and status tracking
+
 ## [1.0.2] — 2026-03-28
 
 ### Changed
