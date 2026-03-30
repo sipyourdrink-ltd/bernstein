@@ -195,7 +195,7 @@ async def shutdown_server(request: Request) -> JSONResponse:
     try:
         body = await request.json()
         reason = body.get("reason", reason) if isinstance(body, dict) else reason
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
     logger = logging.getLogger("bernstein.server")

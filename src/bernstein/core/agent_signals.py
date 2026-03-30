@@ -203,9 +203,8 @@ class AgentSignalManager:
             return 0
         count = 0
         for child in self._signals_dir.iterdir():
-            if child.is_dir():
-                if self.write_command_signal(child.name, message):
-                    count += 1
+            if child.is_dir() and self.write_command_signal(child.name, message):
+                count += 1
         return count
 
     # ------------------------------------------------------------------
