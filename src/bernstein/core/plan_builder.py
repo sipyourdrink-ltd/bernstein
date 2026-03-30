@@ -15,12 +15,8 @@ Typical flow:
 from __future__ import annotations
 
 import datetime
-from typing import TYPE_CHECKING
 
 from bernstein.core.models import PlanStatus, Task, TaskPlan
-
-if TYPE_CHECKING:
-    pass
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -150,7 +146,7 @@ class PlanBuilder:
 
     def _header(self) -> str:
         plan = self._plan
-        created = datetime.datetime.fromtimestamp(plan.created_at, tz=datetime.timezone.utc)
+        created = datetime.datetime.fromtimestamp(plan.created_at, tz=datetime.UTC)
         status_label = _STATUS_LABEL.get(plan.status.value, plan.status.value)
         lines = [
             f"# Execution Plan: {plan.id}",
@@ -192,10 +188,7 @@ class PlanBuilder:
             effort = (task.effort or "auto") if task else "auto"
             scope = task.scope.value if task else "medium"
             depends_on_ids = task.depends_on if task else []
-            if depends_on_ids:
-                dep_str = ", ".join(depends_on_ids)
-            else:
-                dep_str = "none"
+            dep_str = ", ".join(depends_on_ids) if depends_on_ids else "none"
 
             risk_icon = _RISK_ICON.get(est.risk_level, "?")
             risk_reasons_str = "; ".join(est.risk_reasons) if est.risk_reasons else "none"

@@ -41,7 +41,7 @@ def _parse_timestamp(value: Any) -> float:
     if isinstance(value, str):
         try:
             # Try parsing ISO 8601 format (with or without timezone)
-            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
             return dt.timestamp()
         except (ValueError, AttributeError):
             return 0.0
