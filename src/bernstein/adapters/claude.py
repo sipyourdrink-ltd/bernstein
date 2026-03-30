@@ -204,6 +204,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                     cmd,
                     cwd=workdir,
                     env=env,
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,

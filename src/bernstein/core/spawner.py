@@ -672,6 +672,11 @@ class AgentSpawner:
             session.log_path = str(result.log_path)
         if result.proc is not None:
             self._procs[session_id] = result.proc  # type: ignore[assignment]
+            # Register stdin pipe for real-time IPC (if available)
+            proc_stdin = getattr(result.proc, "stdin", None)
+            if proc_stdin is not None:
+                from bernstein.core.agent_ipc import register_stdin_pipe
+                register_stdin_pipe(session_id, proc_stdin)
 
         # Create and persist the initial trace
         # Serialize task fields to JSON-safe types (convert Enums to their values)
@@ -1016,6 +1021,8 @@ class AgentSpawner:
             logger.info("Agent %s container destroyed", session.id)
 
         proc = self._procs.pop(session.id, None)
+        from bernstein.core.agent_ipc import unregister_stdin_pipe
+        unregister_stdin_pipe(session.id)
         if proc is not None:
             try:
                 proc.terminate()
