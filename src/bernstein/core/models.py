@@ -25,6 +25,7 @@ class ProviderType(Enum):
     """Supported API provider types."""
 
     CLAUDE = "claude"
+    CURSOR = "cursor"
     GEMINI = "gemini"
     CODEX = "codex"
     QWEN = "qwen"

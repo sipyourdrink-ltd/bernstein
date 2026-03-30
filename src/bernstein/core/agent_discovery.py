@@ -284,6 +284,45 @@ def _detect_qwen() -> tuple[AgentCapabilities | None, list[str]]:
     ), warnings
 
 
+def _detect_cursor() -> tuple[AgentCapabilities | None, list[str]]:
+    """Detect Cursor Agent CLI."""
+    warnings: list[str] = []
+    binary = shutil.which("cursor")
+    if binary is None:
+        return None, []
+
+    # Version
+    version = _extract_version(_run_probe(["cursor", "--version"]))
+
+    # Login check: Cursor stores OAuth session in ~/.cursor/
+    logged_in = False
+    login_method = ""
+    cursor_dir = Path.home() / ".cursor"
+    if cursor_dir.exists():
+        logged_in = True
+        login_method = "Cursor app"
+
+    if binary and not logged_in:
+        warnings.append("cursor found but not logged in — open the Cursor app and sign in")
+
+    return AgentCapabilities(
+        name="cursor",
+        binary=binary,
+        version=version,
+        logged_in=logged_in,
+        login_method=login_method,
+        available_models=["claude-sonnet-4-6", "claude-opus-4-6", "gpt-5.4", "cursor-small"],
+        default_model="claude-sonnet-4-6",
+        supports_headless=True,
+        supports_sandbox=False,
+        supports_mcp=True,  # --add-mcp flag
+        max_context_tokens=200_000,
+        reasoning_strength="very_high",  # uses Claude/GPT under the hood
+        best_for=["full-stack", "refactoring", "code-generation"],
+        cost_tier="moderate",  # $20/mo Pro subscription
+    ), warnings
+
+
 def _detect_aider() -> tuple[AgentCapabilities | None, list[str]]:
     """Detect Aider CLI."""
     warnings: list[str] = []
@@ -349,7 +388,7 @@ def discover_agents() -> DiscoveryResult:
     agents: list[AgentCapabilities] = []
     warnings: list[str] = []
 
-    for detector in (_detect_claude, _detect_codex, _detect_gemini, _detect_qwen, _detect_aider):
+    for detector in (_detect_claude, _detect_codex, _detect_cursor, _detect_gemini, _detect_qwen, _detect_aider):
         try:
             agent, agent_warnings = detector()
             if agent is not None:
@@ -411,7 +450,7 @@ def detect_auth_status() -> dict[str, tuple[bool, bool]]:
     discovery = discover_agents_cached()
 
     # All known agents to report on, even if not found
-    all_agents = {"claude", "codex", "gemini", "qwen", "aider"}
+    all_agents = {"claude", "codex", "cursor", "gemini", "qwen", "aider"}
 
     result: dict[str, tuple[bool, bool]] = {}
 
