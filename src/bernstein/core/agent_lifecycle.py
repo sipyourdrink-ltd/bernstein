@@ -218,6 +218,7 @@ def handle_orphaned_task(
 
     # Rate-limit 429 detection: scan the agent's log before deciding how to retry.
     # If a 429 pattern is found, throttle the provider so subsequent spawns avoid it.
+    # Then attempt cascade fallback to another installed agent.
     _rl_tracker = getattr(orch, "_rate_limit_tracker", None)
     if _rl_tracker is not None and session.provider:
         _log_path = orch._workdir / ".sdd" / "runtime" / f"{session.id}.log"
@@ -229,6 +230,37 @@ def handle_orphaned_task(
                 session.provider,
                 task_id,
             )
+
+            # Cascade fallback: find an alternative agent for this task.
+            from bernstein.core.cascade import CascadeDecision, CascadeFallbackManager
+
+            _cascade = getattr(orch, "_cascade_manager", None)
+            if _cascade is None:
+                _cascade = CascadeFallbackManager(rate_limit_tracker=_rl_tracker)
+                orch._cascade_manager = _cascade  # type: ignore[attr-defined]
+
+            # Collect all currently throttled providers
+            _throttled = frozenset(
+                p for p in _rl_tracker.throttle_summary() if _rl_tracker.is_throttled(p)
+            )
+            _decision = _cascade.find_fallback(task.complexity, _throttled)
+
+            if isinstance(_decision, CascadeDecision):
+                logger.info(
+                    "Cascade fallback: task %s reassigned from %s → %s (%s)",
+                    task_id,
+                    session.provider,
+                    _decision.fallback_provider,
+                    _decision.reason,
+                )
+                # Override the task's model to use the fallback agent's default
+                task.model = _decision.fallback_model
+            else:
+                logger.warning(
+                    "Cascade exhausted for task %s: %s — task will wait for throttle recovery",
+                    task_id,
+                    _decision.reason,
+                )
 
     # Escalate strategy: block task when crash limit exceeded
     if orch._config.recovery == "escalate" and orch._crash_counts.get(task_id, 0) >= orch._config.max_crash_retries:
