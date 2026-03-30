@@ -17,6 +17,18 @@ from bernstein.adapters.qwen import QwenAdapter
 from bernstein.core.models import ModelConfig
 
 # ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_watchdog_threads() -> None:  # type: ignore[misc]
+    """Disable watchdog threads in tests to avoid 'can't start new thread' on CI."""
+    with patch("bernstein.adapters.base.CLIAdapter._start_timeout_watchdog", return_value=None):
+        yield  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

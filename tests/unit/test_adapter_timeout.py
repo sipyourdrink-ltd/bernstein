@@ -67,9 +67,7 @@ class TestTimeoutTimerSet:
         ],
         ids=["codex", "gemini", "generic"],
     )
-    def test_timer_is_set(
-        self, adapter_factory: object, popen_path: str, tmp_path: Path
-    ) -> None:
+    def test_timer_is_set(self, adapter_factory: object, popen_path: str, tmp_path: Path) -> None:
         adapter = adapter_factory()  # type: ignore[operator]
         result = _spawn_with_timeout(adapter, tmp_path, timeout=1800, popen_path=popen_path)
         assert result.timeout_timer is not None
@@ -88,9 +86,7 @@ class TestTimeoutTimerSet:
         ],
         ids=["codex", "gemini", "generic"],
     )
-    def test_timer_not_set_when_zero(
-        self, adapter_factory: object, popen_path: str, tmp_path: Path
-    ) -> None:
+    def test_timer_not_set_when_zero(self, adapter_factory: object, popen_path: str, tmp_path: Path) -> None:
         adapter = adapter_factory()  # type: ignore[operator]
         result = _spawn_with_timeout(adapter, tmp_path, timeout=0, popen_path=popen_path)
         assert result.timeout_timer is None

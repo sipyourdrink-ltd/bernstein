@@ -94,16 +94,15 @@ def broadcast_message(message: str, workdir: Any = None) -> dict[str, str]:
     if workdir is not None:
         signal_mgr = AgentSignalManager(workdir)
         # Get all signal directories (sessions with signal dirs but no pipe)
-        import os
-
         signals_dir = workdir / ".sdd" / "runtime" / "signals"
         if signals_dir.exists():
-            for entry in os.listdir(signals_dir):
-                if entry not in results:
-                    if signal_mgr.write_command_signal(entry, message):
-                        results[entry] = "file"
+            for entry_path in signals_dir.iterdir():
+                session_id = entry_path.name
+                if session_id not in results:
+                    if signal_mgr.write_command_signal(session_id, message):
+                        results[session_id] = "file"
                     else:
-                        results[entry] = "failed"
+                        results[session_id] = "failed"
 
     pipe_count = sum(1 for v in results.values() if v == "pipe")
     file_count = sum(1 for v in results.values() if v == "file")

@@ -28,7 +28,7 @@ class TestAuthRateLimiter:
         for i in range(11):
             result = limiter.check("10.0.0.1")
             if i < 10:
-                assert result is None, f"Request {i+1} should be allowed"
+                assert result is None, f"Request {i + 1} should be allowed"
             else:
                 assert result is not None, "11th request must be blocked"
                 assert result >= 1.0
