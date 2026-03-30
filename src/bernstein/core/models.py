@@ -12,6 +12,14 @@ from typing import Any, Literal
 logger = logging.getLogger(__name__)
 
 
+class TaskStoreUnavailable(Exception):
+    """Raised when the task store cannot operate after exhausting retries.
+
+    The orchestrator should catch this and degrade gracefully (e.g. switch
+    to read-only mode or pause task dispatch).
+    """
+
+
 class KillReason(StrEnum):
     """Reasons for killing an agent session."""
 
