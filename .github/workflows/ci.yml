@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint
@@ -44,6 +48,7 @@ jobs:
         if: matrix.python-version == '3.13' && always()
         run: |
           uv run pytest tests/unit/ --cov=bernstein --cov-report=xml:coverage.xml \
+            --cov-fail-under=85 \
             -x -q --tb=no --no-header 2>/dev/null || true
       - name: Upload coverage
         if: matrix.python-version == '3.13' && always()
@@ -52,6 +57,53 @@ jobs:
           files: coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  spelling:
+    name: Spelling (typos)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: crate-ci/typos@v1
+
+  dead-code:
+    name: Dead code (Vulture)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv run vulture src/ --min-confidence 80 --exclude "tests,docs"
+
+  actionlint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: reviewdog/action-actionlint@v1
+        with:
+          reporter: github-check
+
+  dist-size:
+    name: Package size check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Build and check size
+        run: |
+          uv build
+          MAX_SIZE=$((10 * 1024 * 1024))
+          for f in dist/*.whl; do
+            SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+            echo "$f: $SIZE bytes"
+            if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+              echo "::error::Wheel $f exceeds 10MB limit ($SIZE bytes)"
+              exit 1
+            fi
+          done
 
   # Auto-fix lint issues and push a fix commit (only on main, only if lint fails)
   autofix:
@@ -79,12 +131,11 @@ jobs:
           git commit -m "style: auto-fix ruff lint and format"
           git push
 
-
   # Auto-close ci-fix issues when CI passes
   close-ci-issues:
     name: Close resolved CI issues
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, test, spelling, dead-code]
     if: >
       success() &&
       github.ref == 'refs/heads/main' &&
@@ -126,3 +177,55 @@ jobs:
           if [ "$OPEN" = "0" ]; then
             gh issue create --title "$TITLE" --body "$BODY" --label "bug,ci-fix" || true
           fi
+
+  # PR summary comment aggregating all job results
+  pr-summary:
+    name: PR CI summary
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'pull_request'
+    needs: [lint, typecheck, test, spelling, dead-code, actionlint, dist-size]
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- ci-summary -->';
+            const jobs = [
+              { name: 'Lint', result: '${{ needs.lint.result }}' },
+              { name: 'Type check', result: '${{ needs.typecheck.result }}' },
+              { name: 'Tests', result: '${{ needs.test.result }}' },
+              { name: 'Spelling', result: '${{ needs.spelling.result }}' },
+              { name: 'Dead code', result: '${{ needs.dead-code.result }}' },
+              { name: 'Workflow lint', result: '${{ needs.actionlint.result }}' },
+              { name: 'Dist size', result: '${{ needs.dist-size.result }}' },
+            ];
+            const icon = (r) => r === 'success' ? '✅' : r === 'failure' ? '❌' : r === 'skipped' ? '⏭️' : '⚠️';
+            let body = `${marker}\n### CI Summary\n\n`;
+            body += '| Check | Result |\n|-------|--------|\n';
+            for (const j of jobs) {
+              body += `| ${j.name} | ${icon(j.result)} ${j.result} |\n`;
+            }
+            body += '\nCoverage and detailed reports are available via Codecov and the Checks tab.';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

@@ -20,8 +20,9 @@
 <p align="center"><strong>Web dashboard</strong> — real-time task monitoring, cost tracking, agent status</p>
 <p align="center"><img alt="Bernstein Web Dashboard" src="docs/assets/web-dashboard.png" width="700" style="border-radius:8px"></p>
 
+[![CI](https://github.com/chernistry/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/chernistry/bernstein/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/chernistry/bernstein/graph/badge.svg)](https://codecov.io/gh/chernistry/bernstein)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/tests-4250+-2ea44f)]()
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
 [![Benchmark](https://img.shields.io/badge/benchmark-1.78x_faster-brightgreen)](benchmarks/README.md)
 [![MCP Compatible](https://img.shields.io/badge/MCP-1.0%2C%201.1-blue)](docs/compatibility.md)

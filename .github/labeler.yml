@@ -1,0 +1,47 @@
+core:
+  - changed-files:
+      - any-glob-to-any-file: "src/bernstein/**"
+
+cli:
+  - changed-files:
+      - any-glob-to-any-file: "src/bernstein/cli/**"
+
+adapters:
+  - changed-files:
+      - any-glob-to-any-file: "src/bernstein/adapters/**"
+
+evolution:
+  - changed-files:
+      - any-glob-to-any-file: "src/bernstein/evolution/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ".github/workflows/**"
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "**/*.md"
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: "tests/**"
+
+vscode-extension:
+  - changed-files:
+      - any-glob-to-any-file: "packages/vscode/**"
+
+sdk:
+  - changed-files:
+      - any-glob-to-any-file: "sdk/**"
+
+templates:
+  - changed-files:
+      - any-glob-to-any-file: "templates/**"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "pyproject.toml"
+          - "requirements*.txt"

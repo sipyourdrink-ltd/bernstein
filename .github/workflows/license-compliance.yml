@@ -1,0 +1,43 @@
+name: License Compliance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1"
+
+jobs:
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Export dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip freeze > requirements-all.txt
+
+      - name: Check licenses
+        id: license_check_report
+        uses: pilosus/action-pip-license-checker@v2
+        with:
+          requirements: "requirements-all.txt"
+          report-format: "json-pretty"
+          fail: "StrongCopyleft,NetworkCopyleft,Other,Error"
+
+      - name: Save report
+        if: always()
+        run: echo '${{ steps.license_check_report.outputs.report }}' > license-report.json
+
+      - name: Upload license report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: license-report.json

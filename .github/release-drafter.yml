@@ -1,0 +1,70 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+
+categories:
+  - title: "Breaking Changes"
+    labels:
+      - "breaking"
+  - title: "New Features"
+    labels:
+      - "enhancement"
+      - "feature"
+  - title: "Bug Fixes"
+    labels:
+      - "bug"
+      - "fix"
+  - title: "Security"
+    labels:
+      - "security"
+  - title: "Documentation"
+    labels:
+      - "docs"
+      - "documentation"
+  - title: "Dependencies"
+    labels:
+      - "dependencies"
+  - title: "CI / Infrastructure"
+    labels:
+      - "ci"
+  - title: "Other Changes"
+    labels:
+      - "*"
+
+version-resolver:
+  major:
+    labels:
+      - "breaking"
+  minor:
+    labels:
+      - "enhancement"
+      - "feature"
+  patch:
+    labels:
+      - "bug"
+      - "fix"
+      - "dependencies"
+      - "ci"
+      - "docs"
+  default: patch
+
+exclude-labels:
+  - "skip-changelog"
+  - "stale"
+
+autolabeler:
+  - label: "ci"
+    files:
+      - ".github/**"
+  - label: "docs"
+    files:
+      - "docs/**"
+      - "*.md"
+  - label: "dependencies"
+    files:
+      - "pyproject.toml"

@@ -1,0 +1,54 @@
+name: Telegram CI Notifications
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Telegram notification
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATUS: ${{ github.event.workflow_run.conclusion }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          HTML_URL: ${{ github.event.workflow_run.html_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram not configured; skipping."
+            exit 0
+          fi
+
+          SHORT_SHA="${SHA:0:7}"
+
+          case "$STATUS" in
+            success)    ICON="✅" ;;
+            failure)    ICON="❌" ;;
+            cancelled)  ICON="⚪" ;;
+            *)          ICON="🔵" ;;
+          esac
+
+          if [ "$EVENT" = "push" ] && { [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; }; then
+            TITLE="${ICON} CI on ${BRANCH}: ${STATUS}"
+          elif [ "$EVENT" = "pull_request" ]; then
+            TITLE="${ICON} PR CI: ${STATUS}"
+          else
+            TITLE="${ICON} CI: ${STATUS}"
+          fi
+
+          TEXT="${TITLE}
+          Repo: ${REPO}
+          Branch: ${BRANCH}
+          Commit: ${SHORT_SHA}
+          ${HTML_URL}"
+
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="${TEXT}" \
+            -d parse_mode="" || echo "Telegram notification failed"
