@@ -436,7 +436,7 @@ class TaskStore:
             "assigned_agent": task.assigned_agent,
             "result_summary": task.result_summary,
             "cell_id": task.cell_id,
-            "batch_eligible": task.batch_eligible,
+            "batch_eligible": task.batch_eligible is True,
             "slack_context": task.slack_context,
             "version": task.version,
         }
