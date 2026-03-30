@@ -5,6 +5,10 @@ on:
     workflows: ["CI"]
     types: [completed]
 
+concurrency:
+  group: telegram-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
 jobs:
   notify:
     runs-on: ubuntu-latest

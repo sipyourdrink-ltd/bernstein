@@ -8,6 +8,10 @@ on:
   schedule:
     - cron: "0 4 * * 1"  # Weekly Monday 4 AM UTC
 
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   security-events: write
   contents: read

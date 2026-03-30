@@ -6,6 +6,10 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

@@ -7,6 +7,10 @@ on:
   schedule:
     - cron: "0 5 * * 1"
 
+concurrency:
+  group: license-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   license-check:
     runs-on: ubuntu-latest
