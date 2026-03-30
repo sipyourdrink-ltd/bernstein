@@ -70,6 +70,7 @@ from bernstein.cli.task_cmd import (
     review_cmd,
     sync,
 )
+from bernstein.cli.explain_cmd import explain_cmd
 from bernstein.cli.verify_cmd import verify_cmd
 from bernstein.cli.watch_cmd import watch_cmd
 from bernstein.cli.workflow_cmd import workflow_group
@@ -109,6 +110,7 @@ __all__ = [
     "detect_available_adapter",
     "doctor",
     "eval_group",
+    "explain_cmd",
     "find_seed_file",
     "gateway_group",
     "github_group",
@@ -582,3 +584,4 @@ cli.add_command(workflow_group, "workflow")
 cli.add_command(quickstart_cmd, "quickstart")
 cli.add_command(watch_cmd, "watch")
 cli.add_command(self_update_cmd, "self-update")
+cli.add_command(explain_cmd, "explain")
