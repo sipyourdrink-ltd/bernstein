@@ -17,6 +17,7 @@ import json
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.models import Task, TaskStatus
@@ -33,13 +34,40 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+class EdgeType(StrEnum):
+    """Semantic type for task graph edges.
+
+    Controls scheduling and context injection behaviour:
+
+    - ``BLOCKS`` — hard dependency. Successor cannot start until predecessor
+      completes.  This is the default for all existing edges.
+    - ``INFORMS`` — soft dependency. Predecessor output is available to the
+      successor but does **not** block scheduling.
+    - ``VALIDATES`` — successor verifies predecessor output. A validator
+      failure triggers predecessor retry.  Blocks scheduling like ``BLOCKS``.
+    - ``TRANSFORMS`` — predecessor output is input to successor with an
+      optional mapping. Does **not** block scheduling.
+    """
+
+    BLOCKS = "blocks"
+    INFORMS = "informs"
+    VALIDATES = "validates"
+    TRANSFORMS = "transforms"
+
+
+# Edge types that prevent a successor from starting until the predecessor
+# completes.  INFORMS and TRANSFORMS are non-blocking.
+BLOCKING_EDGE_TYPES: frozenset[EdgeType] = frozenset({EdgeType.BLOCKS, EdgeType.VALIDATES})
+
+
 @dataclass(frozen=True)
 class Edge:
     """A directed edge in the task graph."""
 
     source: str  # dependency (must finish first)
     target: str  # dependent task
-    edge_type: str  # "depends_on" or "file_overlap"
+    edge_type: str  # origin: "depends_on" or "file_overlap"
+    semantic_type: EdgeType = EdgeType.BLOCKS  # scheduling behaviour
 
 
 @dataclass
@@ -73,6 +101,8 @@ class TaskGraph:
         # Adjacency: reverse (child → parents it depends on)
         self._reverse: dict[str, list[str]] = defaultdict(list)
         self._edges: list[Edge] = []
+        # Reverse lookup: (target) → list of edges pointing into it
+        self._edges_by_target: dict[str, list[Edge]] = defaultdict(list)
 
         self._build(tasks)
 
@@ -104,10 +134,44 @@ class TaskGraph:
                 if tgt.id not in self._forward.get(src.id, []):
                     self._add_edge(src.id, tgt.id, "file_overlap")
 
-    def _add_edge(self, source: str, target: str, edge_type: str) -> None:
+    def _add_edge(
+        self,
+        source: str,
+        target: str,
+        edge_type: str,
+        semantic_type: EdgeType = EdgeType.BLOCKS,
+    ) -> None:
         self._forward[source].append(target)
         self._reverse[target].append(source)
-        self._edges.append(Edge(source=source, target=target, edge_type=edge_type))
+        edge = Edge(source=source, target=target, edge_type=edge_type, semantic_type=semantic_type)
+        self._edges.append(edge)
+        self._edges_by_target[target].append(edge)
+
+    def add_dependency(
+        self,
+        source: str,
+        target: str,
+        edge_type: EdgeType = EdgeType.BLOCKS,
+    ) -> None:
+        """Add a typed dependency between two tasks already in the graph.
+
+        This is the public API for adding edges after construction. Use it
+        to express richer relationships than the default ``BLOCKS`` edges
+        built from ``Task.depends_on``.
+
+        Args:
+            source: Predecessor task ID.
+            target: Successor task ID.
+            edge_type: Semantic relationship (default ``BLOCKS``).
+
+        Raises:
+            KeyError: If either task ID is not in the graph.
+        """
+        if source not in self._tasks:
+            raise KeyError(f"Source task {source!r} not in graph")
+        if target not in self._tasks:
+            raise KeyError(f"Target task {target!r} not in graph")
+        self._add_edge(source, target, edge_type="typed", semantic_type=edge_type)
 
     # -- Queries ------------------------------------------------------------
 
@@ -128,6 +192,44 @@ class TaskGraph:
     def dependencies(self, task_id: str) -> list[str]:
         """Task IDs that *task_id* directly depends on."""
         return list(self._reverse.get(task_id, []))
+
+    def edges_to(self, task_id: str) -> list[Edge]:
+        """All incoming edges for *task_id*."""
+        return list(self._edges_by_target.get(task_id, []))
+
+    def edges_to_by_type(self, task_id: str, semantic_type: EdgeType) -> list[Edge]:
+        """Incoming edges of a specific semantic type."""
+        return [e for e in self._edges_by_target.get(task_id, []) if e.semantic_type == semantic_type]
+
+    def validated_by(self, task_id: str) -> list[str]:
+        """Task IDs that validate *task_id* (successors via VALIDATES edges)."""
+        return [
+            e.target
+            for e in self._edges
+            if e.source == task_id and e.semantic_type == EdgeType.VALIDATES
+        ]
+
+    def predecessor_context(self, task_id: str) -> list[dict[str, Any]]:
+        """Collect result summaries from INFORMS and TRANSFORMS predecessors.
+
+        Returns a list of dicts with ``task_id``, ``title``,
+        ``result_summary``, and ``edge_type`` for each non-blocking
+        predecessor that has completed.
+        """
+        context: list[dict[str, Any]] = []
+        for edge in self._edges_by_target.get(task_id, []):
+            if edge.semantic_type not in (EdgeType.INFORMS, EdgeType.TRANSFORMS):
+                continue
+            pred = self._tasks.get(edge.source)
+            if pred is None or pred.status != TaskStatus.DONE:
+                continue
+            context.append({
+                "task_id": pred.id,
+                "title": pred.title,
+                "result_summary": pred.result_summary or "",
+                "edge_type": edge.semantic_type.value,
+            })
+        return context
 
     # -- Topological sort ---------------------------------------------------
 
@@ -266,14 +368,48 @@ class TaskGraph:
     # -- Ready tasks (dependency-aware) -------------------------------------
 
     def ready_tasks(self) -> list[str]:
-        """Task IDs whose dependencies are all DONE (or have no deps)."""
+        """Task IDs whose *blocking* dependencies are all DONE.
+
+        Only ``BLOCKS`` and ``VALIDATES`` edges prevent a task from being
+        ready.  ``INFORMS`` and ``TRANSFORMS`` edges are non-blocking: the
+        successor may start even if the predecessor is not yet done.
+        """
         done_ids = {tid for tid, t in self._tasks.items() if t.status == TaskStatus.DONE}
+
+        def _blocking_deps_met(tid: str) -> bool:
+            """Check that every blocking incoming edge has a done source."""
+            for edge in self._edges_by_target.get(tid, []):
+                if edge.semantic_type in BLOCKING_EDGE_TYPES and edge.source not in done_ids:
+                    return False
+            # Also check Task.depends_on for deps not captured as graph
+            # edges (e.g. referencing tasks outside this graph).
+            task = self._tasks[tid]
+            return all(dep in done_ids for dep in task.depends_on if dep not in self._tasks)
+
         return [
             tid
             for tid, t in self._tasks.items()
-            if t.status == TaskStatus.OPEN
-            and all(dep in done_ids for dep in self._reverse.get(tid, []))
-            and all(dep in done_ids for dep in t.depends_on)
+            if t.status == TaskStatus.OPEN and _blocking_deps_met(tid)
+        ]
+
+    # -- Validation failure handling -----------------------------------------
+
+    def tasks_to_retry_on_validation_failure(self, failed_validator_id: str) -> list[str]:
+        """Return task IDs that should be retried when a validator fails.
+
+        When a task connected via a ``VALIDATES`` edge fails, the
+        *validated* predecessor should be retried.
+
+        Args:
+            failed_validator_id: The task ID of the failed validator.
+
+        Returns:
+            List of predecessor task IDs that should be retried.
+        """
+        return [
+            edge.source
+            for edge in self._edges_by_target.get(failed_validator_id, [])
+            if edge.semantic_type == EdgeType.VALIDATES
         ]
 
     # -- Full analysis ------------------------------------------------------
@@ -308,6 +444,7 @@ class TaskGraph:
                     "from": e.source,
                     "to": e.target,
                     "type": e.edge_type,
+                    "semantic_type": e.semantic_type.value,
                 }
                 for e in self._edges
             ],
