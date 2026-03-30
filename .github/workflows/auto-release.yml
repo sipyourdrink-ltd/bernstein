@@ -90,6 +90,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Build notes from recent commit messages since last tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            NOTES=$(git log --oneline "$PREV_TAG"..HEAD | head -10)
+          else
+            NOTES=$(git log --oneline -5)
+          fi
           gh release create "v${{ steps.final.outputs.version }}" dist/* \
             --title "v${{ steps.final.outputs.version }}" \
-            --generate-notes
+            --notes "Patch release. Changes since previous version:
+
+          $NOTES"

@@ -5,6 +5,10 @@ Commands:
   bernstein triggers history  — Show recent trigger fire log
   bernstein triggers fire     — Manually fire a trigger (for testing)
 """
+# TODO(D6): Not yet wired into main.py CLI group. WIP — `fire` subcommand
+# uses hard-coded http://127.0.0.1:8052 instead of helpers.SERVER_URL.
+# Fix URL handling and wire `cli.add_command(triggers_group, "triggers")`
+# in main.py. See p0-documentation-overhaul.md.
 
 from __future__ import annotations
 

@@ -5,6 +5,10 @@ Provides:
 - bernstein auth status  — show current auth status
 - bernstein auth logout  — revoke the current token
 """
+# TODO(D6): Not yet wired into main.py CLI group. Ready to ship — add
+# `cli.add_command(auth_group, "auth")` in main.py once server-side auth
+# routes (/auth/providers, /auth/cli/device, /auth/cli/token, /auth/me,
+# /auth/logout) are deployed and tested. See p0-documentation-overhaul.md.
 
 from __future__ import annotations
 
