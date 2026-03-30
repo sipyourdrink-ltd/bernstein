@@ -390,6 +390,12 @@ def _show_run_summary() -> None:
     default=False,
     help="Skip the confirmation prompt before execution.",
 )
+@click.option(
+    "--quiet",
+    is_flag=True,
+    default=False,
+    help="Suppress the end-of-run summary card.",
+)
 def run(
     goal: str | None,
     seed_file: str | None,
@@ -407,6 +413,7 @@ def run(
     plan_only: bool,
     from_plan: Path | None,
     auto_approve: bool,
+    quiet: bool,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
@@ -459,6 +466,10 @@ def run(
         os.environ["BERNSTEIN_CONTAINER_IMAGE"] = container_image
     if two_phase_sandbox:
         os.environ["BERNSTEIN_TWO_PHASE_SANDBOX"] = "1"
+
+    # Propagate quiet flag so the orchestrator suppresses the summary card
+    if quiet:
+        os.environ["BERNSTEIN_QUIET"] = "1"
 
     workdir = Path.cwd()
 
