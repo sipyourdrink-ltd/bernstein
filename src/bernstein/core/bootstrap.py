@@ -175,10 +175,11 @@ def bootstrap_from_seed(
     _clean_stale_runtime(workdir)
     _discover_catalog(workdir)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(_build_codebase_index, workdir)
-        with contextlib.suppress(concurrent.futures.TimeoutError):
-            future.result(timeout=10)
+    _idx_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    _idx_future = _idx_pool.submit(_build_codebase_index, workdir)
+    with contextlib.suppress(concurrent.futures.TimeoutError):
+        _idx_future.result(timeout=10)
+    _idx_pool.shutdown(wait=False)
 
     # Safety invariants (silent unless violations)
     try:
@@ -442,15 +443,18 @@ def bootstrap_from_goal(
         _discover_catalog(workdir)
     console.print("[green]→[/green] Agent catalog loaded")
 
-    with (
-        Status("[bold]Indexing codebase...[/bold]", console=console),
-        concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool,
-    ):
-        future = pool.submit(_build_codebase_index, workdir)
+    # Index codebase with a hard 10s deadline — don't block startup.
+    # We must NOT use ThreadPoolExecutor as a context manager because its
+    # __exit__ calls shutdown(wait=True), which blocks until the thread
+    # finishes even after the timeout fires.
+    _index_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    _index_future = _index_pool.submit(_build_codebase_index, workdir)
+    with Status("[bold]Indexing codebase...[/bold]", console=console):
         try:
-            future.result(timeout=10)
+            _index_future.result(timeout=10)
         except concurrent.futures.TimeoutError:
             console.print("[yellow]→[/yellow] Indexing taking too long — continuing in background")
+    _index_pool.shutdown(wait=False)
     console.print("[green]→[/green] Codebase indexed")
 
     with Status("[bold]Checking safety invariants...[/bold]", console=console):

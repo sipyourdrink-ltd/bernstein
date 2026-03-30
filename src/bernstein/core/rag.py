@@ -48,9 +48,7 @@ INDEXABLE_EXTENSIONS: frozenset[str] = frozenset(
 # Directories to always skip (relative path parts).
 SKIP_DIRS: frozenset[str] = frozenset(
     {
-        ".sdd/runtime",
-        ".sdd/traces",
-        ".sdd/archive",
+        ".sdd",
         "benchmarks",
         ".claude",
         "__pycache__",
