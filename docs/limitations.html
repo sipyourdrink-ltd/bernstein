@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Known Limitations — Bernstein</title>
+  <meta name="description" content="Honest documentation of known constraints, their practical impact, and plans to address them." />
+  <link rel="stylesheet" href="style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="script.js"></script>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <span id="theme-icon">&#9681;</span>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+    </div>
+  </div>
+</nav>
+
+<!-- Content -->
+<main class="main">
+  <div class="container">
+
+    <h1>Known Limitations</h1>
+    <p class="subtitle">Honest documentation of known constraints, their practical impact, and our plans to address them.</p>
+
+    <!-- Agent Communication Latency -->
+    <section class="card" id="agent-communication-latency">
+      <h2>Agent Communication Latency</h2>
+      <table class="props-table">
+        <tr><td><strong>What</strong></td><td>Commands sent to running agents are delivered via file-based signal polling with up to 60-second delay.</td></tr>
+        <tr><td><strong>Impact</strong></td><td>When you issue a broadcast command or stop signal, agents may not respond for up to a minute. Work in progress during that window continues unsupervised.</td></tr>
+        <tr><td><strong>Workaround</strong></td><td>Use <code>bernstein stop</code> which writes SHUTDOWN signals and waits up to 30s. For immediate termination: <code>bernstein stop --force</code>.</td></tr>
+        <tr><td><strong>Plan</strong></td><td>Replace file polling with stdin pipe IPC for supported adapters (Claude Code first). Target: sub-2-second command delivery.</td></tr>
+      </table>
+    </section>
+
+    <!-- Single-Machine Orchestration -->
+    <section class="card" id="single-machine">
+      <h2>Single-Machine Orchestration</h2>
+      <table class="props-table">
+        <tr><td><strong>What</strong></td><td>Bernstein currently runs on a single machine. All agents, the task server, and the orchestrator share one host.</td></tr>
+        <tr><td><strong>Impact</strong></td><td>Parallelism is bounded by local CPU, memory, and API rate limits. For 50+ tasks, a single machine may bottleneck.</td></tr>
+        <tr><td><strong>Workaround</strong></td><td>Increase <code>--max-agents</code> cautiously (default: 6). Most workflows complete well within single-machine capacity.</td></tr>
+        <tr><td><strong>Plan</strong></td><td>Distributed cluster mode with multi-node orchestration, worker heartbeats, and task stealing.</td></tr>
+      </table>
+    </section>
+
+    <!-- Rate Limit Detection -->
+    <section class="card" id="rate-limits">
+      <h2>Rate Limit Detection is Reactive</h2>
+      <table class="props-table">
+        <tr><td><strong>What</strong></td><td>Bernstein detects rate limits by scanning agent logs for 429 patterns <em>after</em> the agent fails. It cannot predict limits before they occur.</td></tr>
+        <tr><td><strong>Impact</strong></td><td>The first task on a rate-limited provider will fail before cascading to alternatives. One task&rsquo;s worth of time and tokens is lost.</td></tr>
+        <tr><td><strong>Workaround</strong></td><td>Set conservative <code>--budget</code> limits. The cascade fallback system automatically reassigns subsequent tasks to other available agents.</td></tr>
+        <tr><td><strong>Plan</strong></td><td>Investigating adapter-level quota detection via provider APIs where available.</td></tr>
+      </table>
+    </section>
+
+    <!-- Context Window -->
+    <section class="card" id="context-window">
+      <h2>Context Window Boundaries</h2>
+      <table class="props-table">
+        <tr><td><strong>What</strong></td><td>Each agent spawns fresh with no memory of previous tasks. Context is limited to the system prompt, task description, and relevant file content.</td></tr>
+        <tr><td><strong>Impact</strong></td><td>Agents cannot reference decisions from earlier tasks. Related tasks may produce inconsistent approaches.</td></tr>
+        <tr><td><strong>Workaround</strong></td><td>Write detailed task descriptions with relevant context. Use <code>depends_on</code> to order tasks so later agents see earlier commits.</td></tr>
+        <tr><td><strong>Plan</strong></td><td>Context compression engine and cross-session knowledge propagation.</td></tr>
+      </table>
+    </section>
+
+    <!-- Progress Streaming -->
+    <section class="card" id="progress-streaming">
+      <h2>No Real-Time Progress Streaming</h2>
+      <table class="props-table">
+        <tr><td><strong>What</strong></td><td>Agent progress is observed via log files, not real-time streaming. The TUI dashboard reads logs on a polling interval.</td></tr>
+        <tr><td><strong>Impact</strong></td><td>Brief delay between an agent completing work and the dashboard reflecting it.</td></tr>
+        <tr><td><strong>Workaround</strong></td><td>Use <code>bernstein logs -f &lt;task-id&gt;</code> for near-real-time log tailing.</td></tr>
+        <tr><td><strong>Plan</strong></td><td>Agent heartbeat frequency improvements and event-driven TUI updates.</td></tr>
+      </table>
+    </section>
+
+    <!-- Verification -->
+    <section class="card" id="verification">
+      <h2>Verification Depends on Test Quality</h2>
+      <table class="props-table">
+        <tr><td><strong>What</strong></td><td>The janitor verifies output by running tests and linting. If the project has poor test coverage, verification is weaker.</td></tr>
+        <tr><td><strong>Impact</strong></td><td>On low-coverage projects, the janitor may mark tasks &ldquo;done&rdquo; even when the implementation has subtle bugs.</td></tr>
+        <tr><td><strong>Workaround</strong></td><td>Ensure reasonable test coverage before running Bernstein. Add <code>completion_signals</code> to <code>bernstein.yaml</code> with specific verification commands.</td></tr>
+        <tr><td><strong>Plan</strong></td><td>Mutation testing validation to verify tests actually catch bugs, not just achieve coverage.</td></tr>
+      </table>
+    </section>
+
+    <!-- File-Based State -->
+    <section class="card" id="file-state">
+      <h2>File-Based State Storage</h2>
+      <table class="props-table">
+        <tr><td><strong>What</strong></td><td>All state lives in <code>.sdd/</code> as flat files. No database.</td></tr>
+        <tr><td><strong>Impact</strong></td><td>Concurrent access is coordinated via file locks but is less robust than a database. Very large backlogs (1000+ tasks) may experience slower reads.</td></tr>
+        <tr><td><strong>Workaround</strong></td><td>This is deliberate — simpler, more portable, no infrastructure. Works well for most projects.</td></tr>
+        <tr><td><strong>Plan</strong></td><td>Optional database adapter for Bernstein Cloud. File-based remains the default for self-hosted.</td></tr>
+      </table>
+    </section>
+
+    <!-- Budget Estimation -->
+    <section class="card" id="budget-estimation">
+      <h2>Budget Estimation is Approximate</h2>
+      <table class="props-table">
+        <tr><td><strong>What</strong></td><td>Cost estimates are based on token count projections, which can vary 2-3x from actual usage.</td></tr>
+        <tr><td><strong>Impact</strong></td><td>Pre-execution cost projections may be significantly off for complex tasks where agents iterate.</td></tr>
+        <tr><td><strong>Workaround</strong></td><td>Always set a <code>--budget</code> cap. Budget enforcement is exact — it tracks actual spend and stops at the limit.</td></tr>
+        <tr><td><strong>Plan</strong></td><td>ML-based cost prediction using historical task data.</td></tr>
+      </table>
+    </section>
+
+    <p class="last-updated"><em>Last updated: 2026-03-30</em></p>
+
+  </div>
+</main>
+
+</body>
+</html>
