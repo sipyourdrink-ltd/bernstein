@@ -1,6 +1,6 @@
 # Getting Started with Bernstein
 
-Bernstein orchestrates short-lived CLI coding agents (Claude Code, Codex, Gemini CLI, etc.)
+Bernstein orchestrates short-lived CLI coding agents (Claude Code, Codex, Cursor, Gemini CLI, etc.)
 around a central task server.  One command starts the whole orchestra.
 
 ---
@@ -450,7 +450,7 @@ bernstein demo --timeout 60
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--dry-run` | `false` | Show the demo plan without spawning any agents |
-| `--adapter NAME` | auto-detect | CLI adapter to use (`claude`, `codex`, `gemini`, `qwen`) |
+| `--adapter NAME` | auto-detect | CLI adapter to use (`claude`, `codex`, `cursor`, `gemini`, `qwen`) |
 | `--timeout N` | `120` | Maximum seconds to wait for tasks to complete |
 
 The demo creates a throwaway directory under `$TMPDIR`.  Nothing is written to
