@@ -28,6 +28,7 @@ class MetricType(Enum):
     PROVIDER_HEALTH = "provider_health"
     FREE_TIER_USAGE = "free_tier_usage"
     FAST_PATH = "fast_path"
+    PARALLELISM_LEVEL = "parallelism_level"
 
 
 class ProviderStatus(Enum):

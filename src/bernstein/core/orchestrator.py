@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
 
+from bernstein.core.adaptive_parallelism import AdaptiveParallelism
 from bernstein.core.agent_lifecycle import (
     check_kill_signals,
     check_stale_agents,
@@ -421,6 +422,10 @@ class Orchestrator:
         self._incident_manager = IncidentManager()
         self._consecutive_failures: int = 0
 
+        # Adaptive parallelism: dynamically adjusts effective max_agents based
+        # on error rate and CPU load.  See adaptive_parallelism.py.
+        self._adaptive_parallelism = AdaptiveParallelism(configured_max=config.max_agents)
+
         # Governed workflow mode: when config.workflow is set (e.g. "governed"),
         # the executor drives the run through deterministic phases, filtering
         # tasks and blocking advancement until guards pass.
@@ -770,10 +775,26 @@ class Orchestrator:
             if agent.status != "dead":
                 assigned_task_ids.update(agent.task_ids)
 
-        # 3b. Error budget tracking (informational only — does NOT throttle agents).
-        # Previously this reduced max_agents when error budget was depleted, but
-        # stale historical data caused permanent throttling across runs.
+        # 3b. Adaptive parallelism: adjust effective max_agents based on
+        # recent error rate and system CPU load.
         _orig_max_agents = self._config.max_agents
+        _effective_max = self._adaptive_parallelism.effective_max_agents()
+        self._config.max_agents = _effective_max
+
+        # Record parallelism_level metric for time-series dashboards
+        from bernstein.core.metric_collector import MetricType
+
+        _ap_status = self._adaptive_parallelism.status()
+        get_collector()._write_metric_point(
+            MetricType.PARALLELISM_LEVEL,
+            float(_effective_max),
+            {
+                "configured_max": str(_ap_status.configured_max),
+                "error_rate": f"{_ap_status.error_rate:.3f}",
+                "cpu_percent": f"{_ap_status.cpu_percent:.1f}",
+                "reason": _ap_status.last_adjustment_reason,
+            },
+        )
 
         # 3c. Claim tasks and spawn agents for ready batches (skip if budget is exhausted)
         if self._config.dry_run:
@@ -808,7 +829,7 @@ class Orchestrator:
         else:
             claim_and_spawn_batches(self, batches, alive_count, assigned_task_ids, done_ids, result)
 
-        # Restore max_agents after error-budget-adjusted spawning
+        # Restore max_agents after adaptive-parallelism-adjusted spawning
         self._config.max_agents = _orig_max_agents
 
         # 4. Check done tasks, run janitor, record evolution metrics
@@ -847,7 +868,14 @@ class Orchestrator:
             if self._maybe_retry_task(task):
                 result.retried.append(task.id)
 
-        # 4b.5 Track completions/failures for manager review trigger
+        # 4b.5 Feed outcomes to adaptive parallelism controller
+        for _task_id in result.verified:
+            self._adaptive_parallelism.record_outcome(success=True)
+        for _ft in failed_tasks:
+            if _ft.id not in self._retried_task_ids:
+                self._adaptive_parallelism.record_outcome(success=False)
+
+        # 4b.6 Track completions/failures for manager review trigger
         self._completions_since_review += len(result.verified)
         self._failures_since_review += len([t for t in failed_tasks if t.id not in self._retried_task_ids])
 
