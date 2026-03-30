@@ -14,9 +14,7 @@ extend-exclude = [
   "*.lock",
   "*.jsonl",
   "*.db",
-  ".sdd/index/",
-  ".sdd/runtime/",
-  ".sdd/archive/",
+  ".sdd/",
   "dist/",
   "*.egg-info/",
 ]
@@ -36,3 +34,4 @@ architec = "architec"
 PN = "PN"
 seeked = "seeked"
 ded = "ded"
+Hashi = "Hashi"
