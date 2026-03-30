@@ -739,7 +739,7 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
         return ModelConfig(model="opus", effort="max")
 
     if task.priority == 1:
-        return ModelConfig(model="sonnet", effort="max")
+        return ModelConfig(model="opus", effort="max")
 
     # L1 fast-path: route simple tasks to the cheapest model
     from bernstein.core.fast_path import TaskLevel, classify_task, get_l1_model_config
