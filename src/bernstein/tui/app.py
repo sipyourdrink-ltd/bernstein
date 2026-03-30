@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 from bernstein.tui.widgets import (
     ActionBar,
     AgentLogWidget,
+    ShortcutsFooter,
     StatusBar,
     TaskListWidget,
     TaskRow,
@@ -190,8 +191,11 @@ class BernsteinApp(App[None]):
         Binding("s", "spawn_now", "Spawn now", show=False),
         Binding("p", "prioritize", "Prioritize", show=False),
         Binding("k", "kill_agent", "Kill agent", show=False),
-        Binding("c", "cancel_task", "Cancel task", show=False),
+        Binding("x", "cancel_task", "Cancel task", show=False),
+        Binding("t", "retry_task", "Retry task", show=False),
         Binding("escape", "close_action_bar", "Close", show=False),
+        Binding("up", "cursor_up", "Up", show=False),
+        Binding("down", "cursor_down", "Down", show=False),
         Binding("j", "cursor_down", "Down", show=False),
     ]
 
@@ -211,12 +215,13 @@ class BernsteinApp(App[None]):
     # -- layout ---------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        """Build the widget tree: status bar, task table, action bar, log."""
+        """Build the widget tree: status bar, task table, action bar, log, shortcuts footer."""
         yield StatusBar(id="top-bar")
         with Vertical(id="main-body"):
             yield TaskListWidget(id="task-list")
             yield ActionBar(id="action-bar")
             yield AgentLogWidget(id="agent-log")
+        yield ShortcutsFooter(id="shortcuts-footer")
 
     def on_mount(self) -> None:
         """Start the periodic poll timer after mounting."""
@@ -262,8 +267,6 @@ class BernsteinApp(App[None]):
 
     def action_prioritize(self) -> None:
         """Bump the selected task to priority 0 (next in queue)."""
-        if not self._action_bar_visible:
-            return
         task_id = self._selected_task_id()
         if not task_id:
             return
@@ -276,9 +279,7 @@ class BernsteinApp(App[None]):
         self.action_close_action_bar()
 
     def action_cancel_task(self) -> None:
-        """Cancel the selected task."""
-        if not self._action_bar_visible:
-            return
+        """Cancel the selected task (bound to 'x')."""
         task_id = self._selected_task_id()
         if not task_id:
             return
@@ -288,6 +289,19 @@ class BernsteinApp(App[None]):
             log_widget.append_line(f"[dim]Task {task_id} cancelled[/dim]")
         else:
             log_widget.append_line(f"[red]Cancel failed for task {task_id}[/red]")
+        self.action_close_action_bar()
+
+    def action_retry_task(self) -> None:
+        """Retry the selected task by resetting it to open with priority 0 (bound to 't')."""
+        task_id = self._selected_task_id()
+        if not task_id:
+            return
+        log_widget = self.query_one("#agent-log", AgentLogWidget)
+        result = _post(f"/tasks/{task_id}/force-claim")
+        if result is not None:
+            log_widget.append_line(f"[green]Task {task_id} reset to open (priority 0)[/green]")
+        else:
+            log_widget.append_line(f"[red]Retry failed for task {task_id} \u2014 may be terminal[/red]")
         self.action_close_action_bar()
 
     def action_hard_stop(self) -> None:

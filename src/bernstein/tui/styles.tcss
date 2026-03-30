@@ -54,6 +54,17 @@ Screen {
     scrollbar-size: 1 1;
 }
 
+/* Shortcuts footer — docked at the bottom */
+#shortcuts-footer {
+    dock: bottom;
+    height: 1;
+    background: $primary-darken-3;
+    color: $text-muted;
+    padding: 0 1;
+    content-align: left middle;
+    overflow: hidden;
+}
+
 /* Status colour classes (kept for any custom usage) */
 .status-open {
     color: white;

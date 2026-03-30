@@ -189,6 +189,34 @@ class AgentLogWidget(RichLog):
         self.write(Text.from_markup(f"[dim]{ts}[/dim] {line}"))
 
 
+class ShortcutsFooter(Static):
+    """Single-line footer bar showing keyboard shortcuts."""
+
+    _SHORTCUTS = (
+        "\u2191\u2192 navigate",
+        "Enter detail",
+        "x cancel",
+        "p prioritize",
+        "t retry",
+        "k kill",
+        "s spawn",
+        "r refresh",
+        "S hard-stop",
+        "q quit",
+    )
+
+    def on_mount(self) -> None:
+        """Render shortcut hints on mount."""
+        self._render()
+
+    def _render(self) -> None:
+        parts = "  [dim]\u2502[/dim]  ".join(
+            f"[bold]{hint.split()[0]}[/bold] [dim]{' '.join(hint.split()[1:])}[/dim]"
+            for hint in self._SHORTCUTS
+        )
+        self.update(Text.from_markup(f"  {parts}  "))
+
+
 class StatusBar(Static):
     """Compact single-line status bar: name, agents, tasks, cost, time, keys."""
 
