@@ -70,9 +70,7 @@ def prompts_list() -> None:
         meta = registry.get_meta(name)
         if meta is None:
             continue
-        total_obs = sum(
-            v.get("metrics", {}).get("observations", 0) for v in meta.versions.values()
-        )
+        total_obs = sum(v.get("metrics", {}).get("observations", 0) for v in meta.versions.values())
         ab_status = (
             f"v{meta.ab_versions[0]} vs v{meta.ab_versions[1]}"
             if meta.ab_enabled and len(meta.ab_versions) == 2
@@ -115,8 +113,7 @@ def prompts_show(name: str) -> None:
         Panel(
             f"[bold]Prompt:[/bold] {name}\n"
             f"[bold]Active:[/bold] v{meta.active_version}\n"
-            f"[bold]Versions:[/bold] {len(meta.versions)}"
-            + ab_info,
+            f"[bold]Versions:[/bold] {len(meta.versions)}" + ab_info,
             title=f"Prompt: {name}",
             border_style="cyan",
         )

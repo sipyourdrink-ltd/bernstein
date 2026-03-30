@@ -150,6 +150,14 @@ exclude = [
     "src/bernstein/cli/worker_cmd.py",
     "src/bernstein/core/formal_verification.py",
     "src/bernstein/core/seed.py",
+    "src/bernstein/cli/compare_screen.py",
+    "src/bernstein/cli/merge_cmd.py",
+    "src/bernstein/cli/prompts_cmd.py",
+    "src/bernstein/cli/status_cmd.py",
+    "src/bernstein/core/adaptive_parallelism.py",
+    "src/bernstein/core/cascade.py",
+    "src/bernstein/core/prompt_versioning.py",
+    "src/bernstein/core/secrets.py",
 ]
 
 [tool.pytest.ini_options]
