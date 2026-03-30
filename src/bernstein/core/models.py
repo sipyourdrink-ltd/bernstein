@@ -29,6 +29,7 @@ class ProviderType(Enum):
     GEMINI = "gemini"
     CODEX = "codex"
     QWEN = "qwen"
+    KILO = "kilo"
 
 
 class ApiTier(Enum):

@@ -58,6 +58,7 @@
       <li><a href="#codex">Codex CLI</a></li>
       <li><a href="#cursor">Cursor</a></li>
       <li><a href="#gemini">Gemini CLI</a></li>
+      <li><a href="#kilo">Kilo</a></li>
       <li><a href="#qwen">Qwen</a></li>
       <li><a href="#roo-code">Roo Code</a></li>
       <li><a href="#generic">Generic adapter</a></li>
@@ -94,6 +95,7 @@
           <th>Codex CLI</th>
           <th>Cursor</th>
           <th>Gemini CLI</th>
+          <th>Kilo</th>
           <th>Qwen</th>
           <th>Roo Code</th>
           <th>Generic</th>
@@ -108,6 +110,7 @@
           <td>gpt-5.4 / o3 / o4-mini</td>
           <td>sonnet 4.6 / opus 4.6 / gpt-5.4</td>
           <td>gemini-3-pro / 3-flash / 2.5-pro</td>
+          <td>Any (provider/model)</td>
           <td>qwen3-coder / qwen-max</td>
           <td>opus 4.6 / sonnet 4.6 / gpt-4o</td>
           <td>Pass-through</td>
@@ -123,6 +126,7 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
         </tr>
         <tr>
           <td>MCP config injection</td>
@@ -132,6 +136,7 @@
           <td>—</td>
           <td>✓ (--add-mcp)</td>
           <td>—</td>
+          <td>✓ (--mcp)</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
@@ -147,6 +152,7 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
         </tr>
         <tr>
           <td>Tier detection</td>
@@ -156,6 +162,7 @@
           <td>✓ (org ID / key prefix)</td>
           <td>✓ (~/.cursor/ present)</td>
           <td>✓ (GCP project / key format)</td>
+          <td>✓ (~/.kilo/ or API key)</td>
           <td>✓ (provider env vars)</td>
           <td>—</td>
           <td>—</td>
@@ -168,6 +175,7 @@
           <td><code>--approval-mode full-auto</code></td>
           <td>Built-in agent mode</td>
           <td><code>--sandbox none</code></td>
+          <td><code>--yes</code></td>
           <td><code>-y</code></td>
           <td>Via config</td>
           <td>Via <code>extra_args</code></td>
@@ -180,6 +188,7 @@
           <td>Native</td>
           <td>Native</td>
           <td>Native</td>
+          <td>Depends on model</td>
           <td>Via Tavily (optional)</td>
           <td>Via MCP</td>
           <td>Depends on CLI</td>
@@ -192,6 +201,7 @@
           <td>—</td>
           <td>—</td>
           <td>—</td>
+          <td>—</td>
           <td>✓ (OpenRouter, Together, Oxen)</td>
           <td>✓</td>
           <td>—</td>
@@ -199,6 +209,7 @@
         <tr>
           <td>Local / offline models</td>
           <td>✓ (via OpenAI-compat server)</td>
+          <td>—</td>
           <td>—</td>
           <td>—</td>
           <td>—</td>
@@ -291,6 +302,20 @@ export GOOGLE_API_KEY=AIza...</code></pre>
     </div>
 
     <p>Runs with <code>--sandbox none</code>. The default model is <code>gemini-3-pro</code> (preview, Mar 2026). Gemini 2.5 Pro/Flash are GA but <a href="https://ai.google.dev/gemini-api/docs/models" target="_blank" rel="noopener">deprecating June 2026</a>. For Vertex AI / enterprise use, set <code>GOOGLE_CLOUD_PROJECT</code> — tier detection will pick this up and apply higher rate limits accordingly.</p>
+
+    <h2 id="kilo">Kilo</h2>
+
+    <p><strong>Provider:</strong> Stackblitz (multi-provider) &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli kilo</code></p>
+
+    <div class="code-block">
+      <pre><code class="language-bash"># Install from https://kilocode.ai
+export KILO_API_KEY=...
+kilo --version</code></pre>
+    </div>
+
+    <p>Kilo is a multi-provider agent CLI from Stackblitz. It supports headless mode, ACP/MCP protocols, and session management. Bernstein invokes it as <code>kilo run --prompt "&lt;task&gt;" --model &lt;provider/model&gt; --yes</code>. Pass any <code>provider/model</code> string — e.g. <code>anthropic/claude-sonnet-4-6</code>, <code>openai/gpt-5.4</code>, or <code>google/gemini-2.5-pro</code>.</p>
+
+    <p>Authentication is via <code>KILO_API_KEY</code> (preferred) or OAuth session stored in <code>~/.kilo/</code>. MCP server config is injected via <code>--mcp</code>. Tier detection reports Pro when any auth is found.</p>
 
     <h2 id="qwen">Qwen</h2>
 
