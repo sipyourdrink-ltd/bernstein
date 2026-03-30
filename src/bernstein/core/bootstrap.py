@@ -101,8 +101,13 @@ def _send_webhook(config: NotifyConfig, payload: dict[str, Any]) -> None:
     try:
         resp = httpx.post(config.webhook_url, json=payload, timeout=10.0)
         logger.info("Webhook POST %s -> %d", config.webhook_url, resp.status_code)
-    except Exception:
-        logger.exception("Webhook POST to %s failed (ignored)", config.webhook_url)
+    except httpx.RequestError as exc:
+        logger.error(
+            "Webhook POST to %s failed (%s: %s) — continuing without notification",
+            config.webhook_url,
+            type(exc).__name__,
+            exc,
+        )
 
 
 def bootstrap_from_seed(
@@ -158,8 +163,14 @@ def bootstrap_from_seed(
         from bernstein.core.git_hygiene import run_hygiene
 
         run_hygiene(workdir, full=True)
-    except Exception:
-        pass
+    except ImportError as exc:
+        logger.warning("Git hygiene module unavailable — skipping: %s", exc)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(
+            "Pre-startup git hygiene failed (%s: %s) — continuing",
+            type(exc).__name__,
+            exc,
+        )
 
     # 1. Parse seed
     seed = parse_seed(seed_path)
@@ -189,8 +200,14 @@ def bootstrap_from_seed(
         if not ok:
             console.print(f"[bold red]⚠ {len(violations)} locked file(s) modified[/bold red]")
         write_lockfile(workdir)
-    except Exception:
-        pass
+    except ImportError as exc:
+        logger.warning("Invariants module unavailable — skipping check: %s", exc)
+    except OSError as exc:
+        logger.warning(
+            "Invariant check failed (%s: %s) — continuing",
+            type(exc).__name__,
+            exc,
+        )
 
     # Storage + cluster config (env vars, no output)
     if seed.storage is not None:
@@ -367,8 +384,12 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
                 logger.info("Server restarted (PID %d)", new_pid)
                 server_restarts += 1
                 _wait_for_server(port)
-            except Exception:
-                logger.exception("Failed to restart server")
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.error(
+                    "Failed to restart server (%s: %s) — will retry next cycle",
+                    type(exc).__name__,
+                    exc,
+                )
 
         # Check orchestrator/spawner
         spawner_pid = _read_pid(spawner_pid_path)
@@ -384,8 +405,12 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
                     new_pid = _start_spawner(workdir, port)
                     logger.info("Orchestrator restarted (PID %d)", new_pid)
                     spawner_restarts += 1
-                except Exception:
-                    logger.exception("Failed to restart orchestrator")
+                except (OSError, subprocess.SubprocessError) as exc:
+                    logger.error(
+                        "Failed to restart orchestrator (%s: %s) — will retry next cycle",
+                        type(exc).__name__,
+                        exc,
+                    )
 
 
 def bootstrap_from_goal(
