@@ -28,6 +28,7 @@ from prometheus_client import (
 __all__ = [
     "agents_active",
     "cost_usd_total",
+    "evolution_errors_by_type",
     "evolve_proposals_total",
     "generate_latest",
     "registry",
@@ -85,6 +86,13 @@ evolve_proposals_total: Counter = Counter(
     "bernstein_evolve_proposals_total",
     "Evolution proposals by verdict (accepted/rejected/pending).",
     labelnames=["verdict"],
+    registry=registry,
+)
+
+evolution_errors_by_type: Counter = Counter(
+    "bernstein_evolution_errors_by_type",
+    "Evolution loop errors by error type.",
+    labelnames=["error_type"],
     registry=registry,
 )
 

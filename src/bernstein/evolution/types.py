@@ -119,3 +119,50 @@ class SandboxResult:
     duration_seconds: float
     log_path: str
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Evolution error taxonomy
+# ---------------------------------------------------------------------------
+
+
+class EvolutionError(Exception):
+    """Base class for evolution loop errors.
+
+    Carries structured context for audit logging.
+
+    Args:
+        msg: Human-readable error description.
+        proposal_id: ID of the proposal being processed when the error occurred.
+        focus_area: Cycle focus area (e.g. "code_quality", "test_coverage").
+        risk_level: Risk level string of the proposal (e.g. "config", "template").
+    """
+
+    def __init__(
+        self,
+        msg: str,
+        *,
+        proposal_id: str | None = None,
+        focus_area: str = "",
+        risk_level: str = "",
+    ) -> None:
+        super().__init__(msg)
+        self.proposal_id = proposal_id
+        self.focus_area = focus_area
+        self.risk_level = risk_level
+
+
+class ProposalGenerationError(EvolutionError):
+    """Raised when proposal generation fails in the evolution loop."""
+
+
+class SandboxValidationError(EvolutionError):
+    """Raised when sandbox validation encounters an unexpected error."""
+
+
+class ApplyError(EvolutionError):
+    """Raised when applying a proposal fails unexpectedly."""
+
+
+class RollbackError(EvolutionError):
+    """Raised when rolling back a failed proposal fails."""
