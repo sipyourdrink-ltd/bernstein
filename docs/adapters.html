@@ -372,6 +372,24 @@ cli_options:
 
     <p>Bernstein calls: <code>aider --model &lt;model&gt; --yes --no-git --message &lt;prompt&gt;</code>. Any coding agent with a non-interactive mode works.</p>
 
+    <h2 id="openclaw">OpenClaw <span style="font-size:0.6em;padding:2px 6px;border-radius:4px;background:#6d28d9;color:white;vertical-align:middle;">experimental</span></h2>
+
+    <p><strong>Type:</strong> Runtime bridge (not a CLI adapter) &nbsp;|&nbsp; <strong>Status:</strong> Stub ready, awaiting OpenClaw API GA</p>
+
+    <p>OpenClaw provides ephemeral, network-isolated cloud sandboxes for running CLI coding agents remotely. Instead of spawning agents on your local machine, Bernstein can delegate execution to OpenClaw containers — useful for CI/CD, resource-constrained machines, or security-sensitive runs.</p>
+
+    <p>Configuration in <code>bernstein.yaml</code>:</p>
+
+    <div class="code-block">
+      <pre><code class="language-yaml">bridges:
+  openclaw:
+    endpoint: https://api.openclaw.dev/v1
+    region: us-east-1
+    sandbox_class: large</code></pre>
+    </div>
+
+    <p><strong>Note:</strong> The OpenClaw bridge is currently a stub (<code>NotImplementedError</code>). It will be fully wired when the OpenClaw API reaches general availability. Track progress in the project roadmap.</p>
+
     <h2 id="custom">Add a custom adapter</h2>
 
     <p>If you need deeper integration than the generic adapter provides (structured output parsing, custom tier detection, etc.), implement the <code>CLIAdapter</code> interface:</p>
