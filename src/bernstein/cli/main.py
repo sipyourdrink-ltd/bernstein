@@ -70,6 +70,7 @@ from bernstein.cli.task_cmd import (
     sync,
 )
 from bernstein.cli.verify_cmd import verify_cmd
+from bernstein.cli.watch_cmd import watch_cmd
 from bernstein.cli.workflow_cmd import workflow_group
 from bernstein.cli.workspace_cmd import config_group, workspace_group
 from bernstein.cli.wrap_up_cmd import wrap_up
@@ -146,6 +147,7 @@ __all__ = [
     "soft_stop",
     "sync",
     "trace_cmd",
+    "watch_cmd",
     "workspace_group",
     "wrap_up",
     "write_pid",
@@ -576,3 +578,4 @@ cli.add_command(ci_group, "ci")
 cli.add_command(gateway_group, "gateway")
 cli.add_command(workflow_group, "workflow")
 cli.add_command(quickstart_cmd, "quickstart")
+cli.add_command(watch_cmd, "watch")
