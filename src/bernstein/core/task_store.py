@@ -28,6 +28,7 @@ from bernstein.core.models import (
     RollbackPlan,
     Task,
     TaskStatus,
+    TaskStoreUnavailable,
     TaskType,
     UpgradeProposalDetails,
 )
@@ -114,6 +115,40 @@ def _parse_upgrade_dict(raw: dict[str, Any] | None) -> UpgradeProposalDetails | 
         cost_estimate_usd=raw.get("cost_estimate_usd", 0.0),
         performance_impact=raw.get("performance_impact", ""),
     )
+
+
+_MAX_IO_RETRIES: int = 3
+
+
+async def _retry_io(fn: Any, *args: Any) -> Any:
+    """Retry a sync file I/O function with exponential backoff.
+
+    Retries on transient OSError (e.g. EAGAIN, NFS stale handle).
+    Raises TaskStoreUnavailable after exhausting retries.
+    Raises OSError immediately for non-transient errors (ENOSPC, EROFS).
+    """
+    import errno
+
+    non_transient = {errno.ENOSPC, errno.EROFS, errno.EACCES, errno.EPERM}
+    last_exc: OSError | None = None
+    for attempt in range(_MAX_IO_RETRIES):
+        try:
+            return await asyncio.to_thread(fn, *args)
+        except OSError as exc:
+            if exc.errno in non_transient:
+                raise
+            last_exc = exc
+            if attempt < _MAX_IO_RETRIES - 1:
+                await asyncio.sleep(0.1 * (2**attempt))
+                logger.warning(
+                    "Transient I/O error (attempt %d/%d): %s",
+                    attempt + 1,
+                    _MAX_IO_RETRIES,
+                    exc,
+                )
+    raise TaskStoreUnavailable(
+        f"File I/O failed after {_MAX_IO_RETRIES} retries: {last_exc}"
+    ) from last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -213,8 +248,10 @@ class TaskStore:
                     "total_completions": bandit_data.get("total_completions", 0),
                     "selection_frequency": bandit_data.get("selection_counts", {}),
                 }
-            except Exception:
-                pass
+            except json.JSONDecodeError:
+                logger.warning("Corrupted bandit state at %s — skipping", bandit_state_path)
+            except OSError as exc:
+                logger.warning("Cannot read bandit state at %s: %s", bandit_state_path, exc)
         return summary
 
     # -- index helpers -------------------------------------------------------
@@ -248,13 +285,25 @@ class TaskStore:
         """
         if not self._jsonl_path.exists():
             return
-        for raw_line in self._jsonl_path.read_text().splitlines():
+        try:
+            lines = self._jsonl_path.read_text().splitlines()
+        except OSError as exc:
+            raise TaskStoreUnavailable(
+                f"Cannot read task JSONL at {self._jsonl_path}: {exc}"
+            ) from exc
+        for line_num, raw_line in enumerate(lines, 1):
             line = raw_line.strip()
             if not line:
                 continue
             try:
                 record: TaskRecord = json.loads(line)
             except json.JSONDecodeError:
+                logger.error(
+                    "Corrupted JSONL record at %s:%d — skipping: %s",
+                    self._jsonl_path,
+                    line_num,
+                    raw_line[:500],
+                )
                 continue
             task_id: str = record.get("id", "")
             if not task_id:
@@ -274,7 +323,12 @@ class TaskStore:
     _BUFFER_MAX: int = 10
 
     async def _flush_buffer_unlocked(self) -> None:
-        """Write buffered JSONL records to disk. Caller must hold self._lock."""
+        """Write buffered JSONL records to disk. Caller must hold self._lock.
+
+        Raises:
+            TaskStoreUnavailable: After exhausting retries on transient I/O errors.
+            OSError: Immediately on non-transient errors (disk full, permission denied).
+        """
         if not self._write_buffer:
             return
         self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
@@ -285,7 +339,7 @@ class TaskStore:
             with self._jsonl_path.open("a") as f:
                 f.write(data)
 
-        await asyncio.to_thread(_write)
+        await _retry_io(_write)
 
     async def _append_jsonl(self, record: TaskRecord) -> None:
         """Buffer a JSON record for batch JSONL writing.
@@ -321,21 +375,32 @@ class TaskStore:
         records: list[ArchiveRecord] = []
         try:
             with self._archive_path.open() as f:
-                for line in f:
-                    line = line.strip()
+                for line_num, raw_line in enumerate(f, 1):
+                    line = raw_line.strip()
                     if not line:
                         continue
                     try:
                         records.append(json.loads(line))
                     except json.JSONDecodeError:
-                        continue
-        except OSError:
+                        logger.error(
+                            "Corrupted archive record at %s:%d — skipping: %s",
+                            self._archive_path,
+                            line_num,
+                            raw_line[:500],
+                        )
+        except OSError as exc:
+            logger.warning("Cannot read archive at %s: %s", self._archive_path, exc)
             return []
 
         return records[-limit:]
 
     async def _append_archive(self, task: Task, completed_at: float) -> None:
-        """Append a completed/failed task record to the archive JSONL."""
+        """Append a completed/failed task record to the archive JSONL.
+
+        Raises:
+            TaskStoreUnavailable: After exhausting retries on transient I/O errors.
+            OSError: Immediately on non-transient errors (disk full, permission denied).
+        """
         self._archive_path.parent.mkdir(parents=True, exist_ok=True)
         record: ArchiveRecord = {
             "task_id": task.id,
@@ -354,7 +419,7 @@ class TaskStore:
             with self._archive_path.open("a") as f:
                 f.write(line)
 
-        await asyncio.to_thread(_write)
+        await _retry_io(_write)
 
     def _task_to_record(self, task: Task) -> TaskRecord:
         """Serialise a Task to a dict suitable for JSONL storage."""
@@ -1007,6 +1072,11 @@ class TaskStore:
             try:
                 record_data: dict[str, Any] = json.loads(line)
             except json.JSONDecodeError:
+                logger.error(
+                    "Corrupted metrics record in %s — skipping: %s",
+                    self._metrics_jsonl_path,
+                    raw_line[:500],
+                )
                 continue
             role = record_data.get("role", "")
             cost = record_data.get("cost_usd")
