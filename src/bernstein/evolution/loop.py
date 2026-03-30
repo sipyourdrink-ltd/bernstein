@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.prometheus import evolution_errors_by_type
 from bernstein.evolution.aggregator import (
     FileMetricsCollector,
     MetricsAggregator,
@@ -55,7 +56,6 @@ from bernstein.evolution.proposals import (
 )
 from bernstein.evolution.risk import ProposalRiskScore, RiskScorer
 from bernstein.evolution.sandbox import SandboxValidator
-from bernstein.core.prometheus import evolution_errors_by_type
 from bernstein.evolution.types import (
     ApplyError,
     ProposalGenerationError,
