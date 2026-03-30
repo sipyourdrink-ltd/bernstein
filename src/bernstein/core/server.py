@@ -801,6 +801,12 @@ def create_app(
 
     application.include_router(plans_router)
 
+    # Gateway metrics — active only when a gateway session is running
+    from bernstein.core.routes.gateway import router as gateway_router
+
+    application.include_router(gateway_router)
+    application.state.mcp_gateway = None  # type: ignore[attr-defined]
+
     return application
 
 

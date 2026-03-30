@@ -67,6 +67,7 @@ from bernstein.cli.task_cmd import (
     review_cmd,
     sync,
 )
+from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.verify_cmd import verify_cmd
 from bernstein.cli.workspace_cmd import config_group, workspace_group
 from bernstein.cli.wrap_up_cmd import wrap_up
@@ -105,6 +106,7 @@ __all__ = [
     "doctor",
     "eval_group",
     "find_seed_file",
+    "gateway_group",
     "github_group",
     "hard_stop",
     "help_all",
@@ -497,3 +499,4 @@ cli.add_command(verify_cmd, "verify")
 cli.add_command(chaos_group, "chaos")
 cli.add_command(manifest_group, "manifest")
 cli.add_command(ci_group, "ci")
+cli.add_command(gateway_group, "gateway")
