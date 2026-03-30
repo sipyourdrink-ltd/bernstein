@@ -97,10 +97,12 @@ async def github_webhook(request: Request) -> JSONResponse:
     """
     from bernstein.github_app.ci_router import MAX_CI_RETRIES
     from bernstein.github_app.mapper import (
+        SlashCommandHandler,
         issue_to_tasks,
         label_to_action,
         pr_review_to_task,
         push_to_tasks,
+        trigger_label_to_task,
         workflow_run_to_task,
     )
     from bernstein.github_app.webhooks import parse_webhook, verify_signature
@@ -128,19 +130,32 @@ async def github_webhook(request: Request) -> JSONResponse:
             content={"detail": f"Bad webhook payload: {exc}"},
         )
 
-    # Map event to tasks based on event type
+    # Map event to tasks based on event type — use handler classes for new events,
+    # keep direct calls for legacy event types that already have tests.
     task_payloads: list[dict[str, Any]] = []
 
     if event.event_type == "issues" and event.action == "opened":
         task_payloads.extend(issue_to_tasks(event))
     elif event.event_type == "issues" and event.action == "labeled":
-        action_task = label_to_action(event)
-        if action_task is not None:
-            task_payloads.append(action_task)
+        # Handle bernstein/agent-fix trigger labels first, then evolve-candidate
+        trigger_task = trigger_label_to_task(event)
+        if trigger_task is not None:
+            task_payloads.append(trigger_task)
+        else:
+            action_task = label_to_action(event)
+            if action_task is not None:
+                task_payloads.append(action_task)
     elif event.event_type in ("pull_request_review_comment", "issue_comment"):
-        review_task = pr_review_to_task(event)
-        if review_task is not None:
-            task_payloads.append(review_task)
+        # Check for slash commands first, then fall back to actionable review heuristic
+        comment: dict[str, Any] = event.payload.get("comment", {})
+        comment_body = comment.get("body", "") or ""
+        slash_task = SlashCommandHandler().handle(event, comment_body)
+        if slash_task is not None:
+            task_payloads.append(slash_task)
+        else:
+            review_task = pr_review_to_task(event)
+            if review_task is not None:
+                task_payloads.append(review_task)
     elif event.event_type == "push":
         task_payloads.extend(push_to_tasks(event))
     elif event.event_type == "workflow_run" and event.action == "completed":

@@ -18,11 +18,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Labels that trigger automatic Bernstein task creation (in addition to opened issues)
+TRIGGER_LABELS: frozenset[str] = frozenset({"bernstein", "agent-fix", "agent-task"})
+
 # Label → priority mapping (lower = higher priority)
 _LABEL_PRIORITY: dict[str, int] = {
     "bug": 1,
     "critical": 1,
     "security": 1,
+    "bernstein": 2,
+    "agent-fix": 1,
+    "agent-task": 2,
     "enhancement": 2,
     "feature": 2,
     "docs": 3,
@@ -349,6 +355,64 @@ def workflow_run_to_task(
     return [payload]
 
 
+def trigger_label_to_task(event: WebhookEvent) -> dict[str, Any] | None:
+    """Convert a ``bernstein`` / ``agent-fix`` label event into a task.
+
+    Only triggers when a ``TRIGGER_LABELS`` label is *added* to an issue that
+    is not already assigned as a task.
+
+    Args:
+        event: A webhook event with ``event_type == "issues"`` and
+            ``action == "labeled"``.
+
+    Returns:
+        Task creation dict, or ``None`` if the label is not a trigger label.
+    """
+    if event.action != "labeled":
+        return None
+
+    label: dict[str, Any] = event.payload.get("label", {})
+    label_name = label.get("name", "").lower()
+
+    if label_name not in TRIGGER_LABELS:
+        return None
+
+    issue: dict[str, Any] = event.payload.get("issue", {})
+    title = issue.get("title", "Untitled issue")
+    body = issue.get("body", "") or ""
+    number = issue.get("number", 0)
+
+    # Infer priority and role from all issue labels
+    all_labels = _extract_labels(event.payload)
+    priority = _priority_from_labels(all_labels)
+    role = _role_from_labels(all_labels)
+    scope = "small" if len(body) < 200 else ("large" if len(body) > 1000 else "medium")
+
+    description = (
+        f"GitHub issue #{number} assigned to Bernstein via `{label_name}` label "
+        f"by @{event.sender} in {event.repo_full_name}.\n\n{body[:2000]}"
+    )
+
+    task: dict[str, Any] = {
+        "title": f"[GH#{number}] {title}"[:120],
+        "description": description,
+        "role": role,
+        "priority": priority,
+        "scope": scope,
+        "task_type": "fix" if label_name == "agent-fix" else "standard",
+    }
+
+    logger.info(
+        "Mapped trigger label %r on issue #%d to task: role=%s priority=%d",
+        label_name,
+        number,
+        role,
+        priority,
+    )
+
+    return task
+
+
 def label_to_action(event: WebhookEvent) -> dict[str, Any] | None:
     """Convert a label event for ``evolve-candidate`` into an evolution task.
 
@@ -395,3 +459,108 @@ def label_to_action(event: WebhookEvent) -> dict[str, Any] | None:
     )
 
     return task
+
+
+# ---------------------------------------------------------------------------
+# Handler classes — typed wrappers over the functional mappers above
+# ---------------------------------------------------------------------------
+
+
+class IssueHandler:
+    """Handles GitHub ``issues`` events and maps them to Bernstein tasks."""
+
+    def handle(self, event: WebhookEvent) -> list[dict[str, Any]]:
+        """Process a single issues event.
+
+        Args:
+            event: Parsed webhook event.
+
+        Returns:
+            List of task creation dicts (may be empty).
+        """
+        if event.action == "opened":
+            return issue_to_tasks(event)
+        if event.action == "labeled":
+            # Handle both trigger labels and evolve-candidate
+            trigger = trigger_label_to_task(event)
+            if trigger is not None:
+                return [trigger]
+            evolve = label_to_action(event)
+            if evolve is not None:
+                return [evolve]
+        return []
+
+
+class PRCommentHandler:
+    """Handles ``pull_request_review_comment`` and ``issue_comment`` events."""
+
+    def handle(self, event: WebhookEvent) -> list[dict[str, Any]]:
+        """Process a PR review or issue comment event.
+
+        Checks for actionable review language and slash commands.
+
+        Args:
+            event: Parsed webhook event.
+
+        Returns:
+            List of task creation dicts (may be empty).
+        """
+        from bernstein.github_app.slash_commands import parse_slash_command, slash_command_to_task
+
+        comment: dict[str, Any] = event.payload.get("comment", {})
+        body = comment.get("body", "") or ""
+
+        # Slash command takes precedence over review heuristic
+        parsed = parse_slash_command(body)
+        if parsed is not None:
+            action, args = parsed
+            task = slash_command_to_task(event, action, args)
+            if task is not None:
+                return [task]
+            return []
+
+        task = pr_review_to_task(event)
+        if task is not None:
+            return [task]
+        return []
+
+
+class PushHandler:
+    """Handles GitHub ``push`` events and creates QA verification tasks."""
+
+    def handle(self, event: WebhookEvent) -> list[dict[str, Any]]:
+        """Process a push event.
+
+        Args:
+            event: Parsed webhook event.
+
+        Returns:
+            List of task creation dicts (may be empty).
+        """
+        return push_to_tasks(event)
+
+
+class SlashCommandHandler:
+    """Handles slash commands from any comment event type.
+
+    A thin pass-through that explicitly handles ``/bernstein`` commands
+    regardless of whether the comment is on an issue or PR.
+    """
+
+    def handle(self, event: WebhookEvent, comment_body: str) -> dict[str, Any] | None:
+        """Parse and convert a slash command from *comment_body*.
+
+        Args:
+            event: Parsed webhook event (provides context like repo, sender).
+            comment_body: The full comment body text to search for commands.
+
+        Returns:
+            Task creation dict, or ``None`` if no command found or unsupported.
+        """
+        from bernstein.github_app.slash_commands import parse_slash_command, slash_command_to_task
+
+        parsed = parse_slash_command(comment_body)
+        if parsed is None:
+            return None
+        action, args = parsed
+        return slash_command_to_task(event, action, args)
