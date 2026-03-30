@@ -1,8 +1,11 @@
-"""Status, health, metrics, dashboard, and SSE event routes."""
+"""Status, health, metrics, dashboard, lifecycle, and SSE event routes."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+import signal
 import time
 from datetime import UTC
 from pathlib import Path  # noqa: TC003 — used at runtime in dashboard_data
@@ -177,6 +180,34 @@ async def health_check(request: Request) -> HealthResponse:
         task_count=len(store.list_tasks()),
         agent_count=store.agent_count,
         is_readonly=is_readonly,
+    )
+
+
+@router.post("/shutdown")
+async def shutdown_server(request: Request) -> JSONResponse:
+    """Initiate graceful server shutdown.
+
+    Accepts an optional JSON body ``{"reason": "..."}``.  Schedules a
+    SIGTERM to the current process shortly after the response is sent so
+    that the Uvicorn server exits cleanly.
+    """
+    reason = "unknown"
+    try:
+        body = await request.json()
+        reason = body.get("reason", reason) if isinstance(body, dict) else reason
+    except Exception:  # noqa: BLE001
+        pass
+
+    logger = logging.getLogger("bernstein.server")
+    logger.info("Shutdown requested via /shutdown endpoint (reason=%s)", reason)
+
+    # Schedule SIGTERM to self after a short delay so the HTTP response
+    # is delivered before the process starts tearing down.
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.5, os.kill, os.getpid(), signal.SIGTERM)
+
+    return JSONResponse(
+        content={"status": "shutting_down", "message": "Shutdown signal received"},
     )
 
 
@@ -673,6 +704,42 @@ async def memory_audit(request: Request) -> JSONResponse:
             ],
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Broadcast
+# ---------------------------------------------------------------------------
+
+
+@router.post("/broadcast")
+async def broadcast_command(request: Request) -> JSONResponse:
+    """Send a COMMAND signal to all running agents.
+
+    Expects JSON body: ``{"message": "some instruction"}``.
+    Returns ``{"status": "broadcast_sent", "recipients": <count>}``.
+    """
+    from bernstein.core.agent_signals import AgentSignalManager
+
+    body = await request.json()
+    message: str = body.get("message", "")
+    if not message:
+        return JSONResponse(
+            content={"error": "message is required"},
+            status_code=400,
+        )
+
+    sdd_dir: Path | None = getattr(request.app.state, "sdd_dir", None)
+    if sdd_dir is None:
+        return JSONResponse(
+            content={"error": "sdd_dir not configured"},
+            status_code=500,
+        )
+
+    workdir = sdd_dir.parent
+    signal_mgr = AgentSignalManager(workdir)
+    count = signal_mgr.write_command_signals_all(message)
+
+    return JSONResponse(content={"status": "broadcast_sent", "recipients": count})
 
 
 # ---------------------------------------------------------------------------
