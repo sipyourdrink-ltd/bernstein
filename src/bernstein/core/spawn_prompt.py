@@ -201,17 +201,13 @@ def _render_predecessor_context(tasks: list[Task], task_graph: TaskGraph | None)
             if not summary:
                 continue
             edge_label = "informed by" if item["edge_type"] == "informs" else "transforms output of"
-            lines.append(
-                f"- **{item['title']}** ({edge_label}): {summary}"
-            )
+            lines.append(f"- **{item['title']}** ({edge_label}): {summary}")
 
     if not lines:
         return ""
     return (
         "\n## Predecessor context\n"
-        "The following completed tasks provide context for your work:\n"
-        + "\n".join(lines)
-        + "\n"
+        "The following completed tasks provide context for your work:\n" + "\n".join(lines) + "\n"
     )
 
 

@@ -203,11 +203,7 @@ class TaskGraph:
 
     def validated_by(self, task_id: str) -> list[str]:
         """Task IDs that validate *task_id* (successors via VALIDATES edges)."""
-        return [
-            e.target
-            for e in self._edges
-            if e.source == task_id and e.semantic_type == EdgeType.VALIDATES
-        ]
+        return [e.target for e in self._edges if e.source == task_id and e.semantic_type == EdgeType.VALIDATES]
 
     def predecessor_context(self, task_id: str) -> list[dict[str, Any]]:
         """Collect result summaries from INFORMS and TRANSFORMS predecessors.
@@ -223,12 +219,14 @@ class TaskGraph:
             pred = self._tasks.get(edge.source)
             if pred is None or pred.status != TaskStatus.DONE:
                 continue
-            context.append({
-                "task_id": pred.id,
-                "title": pred.title,
-                "result_summary": pred.result_summary or "",
-                "edge_type": edge.semantic_type.value,
-            })
+            context.append(
+                {
+                    "task_id": pred.id,
+                    "title": pred.title,
+                    "result_summary": pred.result_summary or "",
+                    "edge_type": edge.semantic_type.value,
+                }
+            )
         return context
 
     # -- Topological sort ---------------------------------------------------
@@ -386,11 +384,7 @@ class TaskGraph:
             task = self._tasks[tid]
             return all(dep in done_ids for dep in task.depends_on if dep not in self._tasks)
 
-        return [
-            tid
-            for tid, t in self._tasks.items()
-            if t.status == TaskStatus.OPEN and _blocking_deps_met(tid)
-        ]
+        return [tid for tid, t in self._tasks.items() if t.status == TaskStatus.OPEN and _blocking_deps_met(tid)]
 
     # -- Validation failure handling -----------------------------------------
 
