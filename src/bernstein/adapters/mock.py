@@ -8,7 +8,7 @@ import sys
 import tempfile
 from typing import TYPE_CHECKING, Any
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -31,6 +31,7 @@ class MockAgentAdapter(CLIAdapter):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> SpawnResult:
         """Spawn a mock agent subprocess that applies demo changes.
 
@@ -85,7 +86,10 @@ class MockAgentAdapter(CLIAdapter):
             cwd=str(workdir),
         )
 
-        return SpawnResult(pid=proc.pid, log_path=log_path, proc=proc)
+        result = SpawnResult(pid=proc.pid, log_path=log_path, proc=proc)
+        if timeout_seconds > 0:
+            result.timeout_timer = self._start_timeout_watchdog(proc.pid, timeout_seconds, session_id)
+        return result
 
     def name(self) -> str:
         """Return adapter name."""

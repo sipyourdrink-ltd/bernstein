@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
@@ -243,6 +243,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> SpawnResult:
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,7 +271,10 @@ class ClaudeCodeAdapter(CLIAdapter):
         # Also track wrapper so we can kill both
         self._wrapper_pids[claude_proc.pid] = wrapper_proc.pid
 
-        return SpawnResult(pid=claude_proc.pid, log_path=log_path, proc=claude_proc)
+        result = SpawnResult(pid=claude_proc.pid, log_path=log_path, proc=claude_proc)
+        if timeout_seconds > 0:
+            result.timeout_timer = self._start_timeout_watchdog(claude_proc.pid, timeout_seconds, session_id)
+        return result
 
     def is_alive(self, pid: int) -> bool:
         # Use poll() to detect zombies — os.kill(pid, 0) can't

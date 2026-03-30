@@ -3,17 +3,28 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import signal
 import sys
+import threading
+import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.models import ApiTierInfo, ModelConfig
+
+logger = logging.getLogger(__name__)
+
+# Default timeout for spawned agent processes (30 minutes).
+DEFAULT_TIMEOUT_SECONDS: int = 1800
+
+# Grace period between SIGTERM and SIGKILL (seconds).
+_SIGTERM_GRACE_SECONDS: int = 30
 
 
 @dataclass
@@ -23,6 +34,7 @@ class SpawnResult:
     pid: int
     log_path: Path
     proc: object | None = None  # subprocess.Popen, kept for poll()-based alive check
+    timeout_timer: threading.Timer | None = field(default=None, repr=False)
 
 
 def build_worker_cmd(
@@ -80,9 +92,71 @@ class CLIAdapter(ABC):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> SpawnResult:
         """Launch an agent process with the given prompt."""
         ...
+
+    def _start_timeout_watchdog(
+        self,
+        pid: int,
+        timeout_seconds: int,
+        session_id: str,
+    ) -> threading.Timer:
+        """Start a watchdog timer that kills the process on timeout.
+
+        Sends SIGTERM first, waits 30s for graceful shutdown, then SIGKILL.
+
+        Args:
+            pid: Process ID to monitor.
+            timeout_seconds: Seconds before triggering timeout.
+            session_id: Session identifier for structured logging.
+
+        Returns:
+            The started Timer — caller should store it for cancellation.
+        """
+
+        def _kill_on_timeout() -> None:
+            logger.warning(
+                "Timeout after %ds: pid=%d session=%s — sending SIGTERM",
+                timeout_seconds,
+                pid,
+                session_id,
+            )
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            except OSError:
+                return  # Already dead
+
+            # Grace period for agent to commit partial work
+            deadline = time.monotonic() + _SIGTERM_GRACE_SECONDS
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    return  # Exited cleanly after SIGTERM
+                time.sleep(1)
+
+            logger.warning(
+                "Agent did not exit after SIGTERM grace period: pid=%d session=%s — sending SIGKILL",
+                pid,
+                session_id,
+            )
+            with contextlib.suppress(OSError):
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+
+        timer = threading.Timer(timeout_seconds, _kill_on_timeout)
+        timer.daemon = True
+        timer.name = f"timeout-watchdog-{session_id}"
+        timer.start()
+        return timer
+
+    @staticmethod
+    def cancel_timeout(result: SpawnResult) -> None:
+        """Cancel the timeout watchdog for a completed process."""
+        if result.timeout_timer is not None:
+            result.timeout_timer.cancel()
+            result.timeout_timer = None
 
     def is_alive(self, pid: int) -> bool:
         """Check if the agent process is still running."""
