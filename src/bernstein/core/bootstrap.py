@@ -279,7 +279,6 @@ def bootstrap_from_seed(
     )
     _start_watchdog(workdir, port)
     console.print(f"  [dim]agents[/dim]  spawning (max {seed.max_agents})")
-    console.print()
 
     result = BootstrapResult(
         seed=seed,
