@@ -88,11 +88,11 @@ See [`examples/quickstart/`](examples/quickstart/) for a ready-to-run example wi
 
 > **[The Bernstein Way](docs/the-bernstein-way.md)** — architecture tenets and default workflow
 
-<!-- <details>
+<details>
 <summary><strong>Watch: terminal demo (GIF)</strong></summary>
 <br>
-<img alt="Bernstein terminal demo" src="docs/assets/demo.gif" width="700">
-</details> -->
+<img alt="Bernstein terminal demo" src="docs/assets/loading.gif" width="700">
+</details>
 
 <details>
 <summary><strong>All CLI commands</strong></summary>
