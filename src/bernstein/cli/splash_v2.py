@@ -87,15 +87,15 @@ class SplashRenderer:
         sys.stdout.write("\033[?25l\033[2J\033[H")
         sys.stdout.flush()
 
-        # 4. Diagonal reveal: lines appear along diagonal wavefront
-        #    (top-left → bottom-right), matching the gradient direction.
-        #    Each row is assigned a "wave" index = row + stagger, and rows
-        #    with the same wave index appear in the same animation frame.
-        total_waves = h + 4  # slight spread
-        wave_groups: list[list[int]] = [[] for _ in range(total_waves)]
+        # 4. Diamond reveal: expand from center outward diagonally.
+        #    Distance = |row - mid_row| + |col_frac - 0.5| mapped to waves.
+        #    Rows closer to center appear first, edges last.
+        mid = h // 2
+        max_dist = mid + 1
+        wave_groups: list[list[int]] = [[] for _ in range(max_dist + 1)]
         for row in range(h):
-            wave = min(row, total_waves - 1)
-            wave_groups[wave].append(row)
+            dist = abs(row - mid)
+            wave_groups[min(dist, max_dist)].append(row)
 
         total_time = 0.8
         non_empty = [g for g in wave_groups if g]
