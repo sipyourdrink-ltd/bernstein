@@ -1618,11 +1618,12 @@ class BernsteinApp(App[None]):
         self._stop_pending = False  # type: ignore[attr-defined]
 
     def action_hot_restart(self) -> None:
-        """Hot restart: exit TUI and re-exec bernstein (agents keep running)."""
-        self.notify("Restarting UI... agents continue running", severity="information", timeout=2)
-        # Write restart flag so orchestrator knows to expect reconnection
-        Path(".sdd/runtime/restart_requested").touch()
-        self.exit(message="Hot restart — run `bernstein live` to reconnect to running agents.")
+        """Hot restart: re-exec into `bernstein live` (agents keep running)."""
+        import sys
+
+        self.exit()
+        # Re-exec into bernstein live — reconnects to running server/agents
+        os.execv(sys.executable, [sys.executable, "-m", "bernstein.cli.main", "live"])
 
     def action_graceful_quit(self) -> None:
         """Exit TUI only — agents and server keep running in background."""
