@@ -324,6 +324,13 @@ class HeartbeatResponse(BaseModel):
     server_ts: float
 
 
+class ComponentStatus(BaseModel):
+    """Status of an individual system component."""
+
+    status: Literal["ok", "degraded", "down", "unknown"]
+    detail: str = ""
+
+
 class HealthResponse(BaseModel):
     """Response for GET /health."""
 
@@ -335,6 +342,7 @@ class HealthResponse(BaseModel):
     memory_mb: float = 0.0
     restart_count: int = 0
     is_readonly: bool = False
+    components: dict[str, ComponentStatus] = Field(default_factory=dict)
 
 
 class BulletinPostRequest(BaseModel):

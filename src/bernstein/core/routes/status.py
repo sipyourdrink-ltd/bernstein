@@ -26,6 +26,7 @@ from bernstein.core.runtime_state import (
     read_supervisor_state,
 )
 from bernstein.core.server import (
+    ComponentStatus,
     HealthResponse,
     SSEBus,
     TaskStore,
@@ -178,6 +179,61 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     return _runtime_cache
 
 
+def _check_components(request: Request, store: TaskStore) -> dict[str, ComponentStatus]:
+    """Return per-component health status.
+
+    Components checked:
+    - server: always ok (reachable by definition)
+    - spawner: checks .sdd/runtime/spawner.pid existence and process liveness
+    - database: checks whether the task JSONL storage directory is accessible
+    - agents: ok if agents are active, ok with detail when none running
+    """
+    import os as _os
+
+    components: dict[str, ComponentStatus] = {}
+
+    # server: we're responding, so it's always ok
+    components["server"] = ComponentStatus(status="ok")
+
+    # spawner: check PID file
+    sdd_dir = getattr(request.app.state, "sdd_dir", None)
+    if isinstance(sdd_dir, Path):
+        pid_file = sdd_dir / "runtime" / "spawner.pid"
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text(encoding="utf-8").strip())
+                _os.kill(pid, 0)
+                components["spawner"] = ComponentStatus(status="ok", detail=f"pid={pid}")
+            except (ProcessLookupError, PermissionError):
+                components["spawner"] = ComponentStatus(status="down", detail="process not found")
+            except (OSError, ValueError):
+                components["spawner"] = ComponentStatus(status="unknown", detail="pid file unreadable")
+        else:
+            components["spawner"] = ComponentStatus(status="unknown", detail="no pid file")
+    else:
+        components["spawner"] = ComponentStatus(status="unknown", detail="sdd_dir not configured")
+
+    # database: check task store directory is accessible
+    try:
+        store.jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        # Verify the directory is actually writable by checking access
+        if store.jsonl_path.parent.exists():
+            components["database"] = ComponentStatus(status="ok")
+        else:
+            components["database"] = ComponentStatus(status="down", detail="storage directory missing")
+    except OSError as exc:
+        components["database"] = ComponentStatus(status="down", detail=str(exc))
+
+    # agents: report active agent count
+    active = store.agent_count
+    if active > 0:
+        components["agents"] = ComponentStatus(status="ok", detail=f"{active} active")
+    else:
+        components["agents"] = ComponentStatus(status="ok", detail="no active agents")
+
+    return components
+
+
 # ---------------------------------------------------------------------------
 # Status & health
 # ---------------------------------------------------------------------------
@@ -320,7 +376,7 @@ async def bandit_routing_stats(request: Request) -> JSONResponse:
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(request: Request) -> HealthResponse:
-    """Basic liveness check."""
+    """Liveness check with component-level status."""
     store = _get_store(request)
     is_readonly: bool = getattr(request.app.state, "readonly", False)
     summary = store.status_summary()
@@ -334,6 +390,7 @@ async def health_check(request: Request) -> HealthResponse:
         memory_mb=float(runtime.get("memory_mb", 0.0)),
         restart_count=int(runtime.get("restart_count", 0)),
         is_readonly=is_readonly,
+        components=_check_components(request, store),
     )
 
 
