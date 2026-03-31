@@ -467,10 +467,8 @@ def _finalize_run_output(*, quiet: bool) -> None:
             from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
             app = DashboardApp()
-            try:
+            with contextlib.suppress(SystemExit):
                 app.run()
-            except SystemExit:
-                pass
             # Hot restart: Textual has restored terminal, re-exec safely
             if getattr(app, "_restart_on_exit", False):
                 os.execv(sys.executable, [sys.executable, "-m", "bernstein.cli.main", "live"])

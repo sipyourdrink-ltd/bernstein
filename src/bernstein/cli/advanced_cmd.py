@@ -13,6 +13,7 @@ All commands and groups are registered with the main CLI group in main.py.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import os
@@ -61,10 +62,8 @@ def live(interval: float, classic: bool) -> None:
         from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
         app = DashboardApp()
-        try:
+        with contextlib.suppress(SystemExit):
             app.run()
-        except SystemExit:
-            pass
         # Hot restart: Textual has cleanly restored terminal, now re-exec
         if getattr(app, "_restart_on_exit", False):
             os.execv(sys.executable, [sys.executable, "-m", "bernstein.cli.main", "live"])
