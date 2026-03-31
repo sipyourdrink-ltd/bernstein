@@ -28,11 +28,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Restart policy
-MAX_RESTARTS = 5           # Max restarts within the window
-RESTART_WINDOW_S = 600     # 10 minutes -- reset counter after this
-RESTART_DELAY_S = 2        # Wait before restart (backoff: 2, 4, 8, 16, 30)
+MAX_RESTARTS = 5  # Max restarts within the window
+RESTART_WINDOW_S = 600  # 10 minutes -- reset counter after this
+RESTART_DELAY_S = 2  # Wait before restart (backoff: 2, 4, 8, 16, 30)
 HEALTH_CHECK_INTERVAL_S = 10  # Check server health every 10s
-HEALTH_CHECK_TIMEOUT_S = 3    # HTTP timeout for health check
+HEALTH_CHECK_TIMEOUT_S = 3  # HTTP timeout for health check
 MAX_CONSECUTIVE_FAILURES = 6  # 6 x 10s = 60s of failures -- restart
 
 
@@ -130,10 +130,14 @@ def _launch_server(state: _SupervisorState) -> int:
             env[var] = os.environ[var]
 
     server_cmd = [
-        sys.executable, "-m", "uvicorn",
+        sys.executable,
+        "-m",
+        "uvicorn",
         "bernstein.core.server:app",
-        "--host", bind_host,
-        "--port", str(port),
+        "--host",
+        bind_host,
+        "--port",
+        str(port),
     ]
     if state.evolve_mode:
         src_dir = str(workdir / "src" / "bernstein")
@@ -184,16 +188,13 @@ def _supervisor_loop(state: _SupervisorState) -> None:
         now = time.monotonic()
         with state.lock:
             # Prune old timestamps outside window
-            state.restart_timestamps = [
-                t for t in state.restart_timestamps
-                if now - t < RESTART_WINDOW_S
-            ]
+            state.restart_timestamps = [t for t in state.restart_timestamps if now - t < RESTART_WINDOW_S]
 
             if len(state.restart_timestamps) >= MAX_RESTARTS:
                 logger.error(
-                    "Server crashed %d times in %ds — giving up. "
-                    "Check .sdd/runtime/server.log for root cause.",
-                    MAX_RESTARTS, RESTART_WINDOW_S,
+                    "Server crashed %d times in %ds — giving up. Check .sdd/runtime/server.log for root cause.",
+                    MAX_RESTARTS,
+                    RESTART_WINDOW_S,
                 )
                 state.stopped = True
                 return
@@ -255,7 +256,8 @@ def _health_check_loop(state: _SupervisorState) -> None:
                 # Server alive but unresponsive — kill it so supervisor restarts
                 logger.warning(
                     "Server unresponsive for %ds (PID %d) — killing for restart",
-                    failures * HEALTH_CHECK_INTERVAL_S, pid,
+                    failures * HEALTH_CHECK_INTERVAL_S,
+                    pid,
                 )
                 try:
                     os.kill(pid, signal.SIGTERM)
