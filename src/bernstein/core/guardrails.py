@@ -1,7 +1,8 @@
-"""Output guardrails: secret detection, scope enforcement, dangerous operations.
+"""Output guardrails: secret detection, scope enforcement, file permissions, dangerous operations.
 
 Runs automated pre-merge checks on git diffs produced by completed agents.
-Hard-blocks on secrets; flags scope violations and dangerous deletions.
+Hard-blocks on secrets and file permission violations; flags scope violations
+and dangerous deletions.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Any
 
 from bernstein.core.license_scanner import check_license_obligations
 from bernstein.core.models import GuardrailResult, Task
+from bernstein.core.permissions import AgentPermissions, check_file_permissions
 
 
 @dataclass(frozen=True)
@@ -30,8 +32,10 @@ class GuardrailsConfig:
 
     secrets: bool = True
     scope: bool = True
+    file_permissions: bool = True
     license_scan: bool = True
     max_deletion_pct: int = 50
+    permission_overrides: dict[str, AgentPermissions] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +406,11 @@ def run_guardrails(
 
     if config.scope:
         for r in check_scope(diff, task):
+            results.append(r)
+            _record_result(task.id, r, workdir)
+
+    if config.file_permissions:
+        for r in check_file_permissions(diff, task.role, config.permission_overrides):
             results.append(r)
             _record_result(task.id, r, workdir)
 
