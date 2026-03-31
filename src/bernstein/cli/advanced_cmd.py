@@ -810,9 +810,29 @@ def mcp_server(transport: str, host: str, port: int, server_url: str) -> None:
     """Run MCP server for external tool integrations.
 
     Exposes Bernstein APIs over Model Context Protocol (MCP).
+
+    \b
+    Tools exposed:
+      create_task   — queue work for a coding agent
+      list_tasks    — monitor task progress
+      get_status    — dashboard summary
+
+    \b
+    Examples:
+        # stdio (for Claude Code --mcp-config)
+        bernstein mcp
+
+        # HTTP/SSE (for browser-based clients)
+        bernstein mcp --transport http --port 8053
     """
-    console.print(f"[cyan]MCP Server[/cyan] starting on {transport} ({host}:{port})")
-    console.print(f"[dim]Backend: {server_url}[/dim]")
+    from bernstein.mcp.server import run_sse, run_stdio
+
+    if transport == "stdio":
+        run_stdio(server_url=server_url)
+    else:
+        console.print(f"[cyan]MCP Server[/cyan] starting on SSE ({host}:{port})")
+        console.print(f"[dim]Backend: {server_url}[/dim]")
+        run_sse(server_url=server_url, host=host, port=port)
 
 
 # ---------------------------------------------------------------------------
