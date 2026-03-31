@@ -161,10 +161,12 @@ class SplashRenderer:
 
         sys.stdout.flush()
 
-        # Pause to admire, then restore cursor and clear for dashboard.
+        # Pause to admire, then restore cursor. Do NOT clear screen — let the
+        # next screen (config/plan approval) overwrite seamlessly so there's
+        # no black flash between splash and the next content.
         if not self._skip:
             time.sleep(2.0)
-        sys.stdout.write("\033[0m\033[?25h\033[2J\033[H")
+        sys.stdout.write("\033[0m\033[?25h\033[H")
         sys.stdout.flush()
 
     def _render_tier3(self, context: SplashContext) -> None:
