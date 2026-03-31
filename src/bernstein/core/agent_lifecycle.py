@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -704,6 +705,19 @@ def check_stalled_tasks(orch: Any) -> None:
     heartbeat_protocol.check_stalled_tasks(orch)
 
 
+def _is_process_alive(pid: int) -> bool:
+    """Check if a process with the given PID is still running."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Reap dead / timed-out agents
 # ---------------------------------------------------------------------------
@@ -766,7 +780,7 @@ def reap_dead_agents(
         # log file growth as proxy signals.  This prevents premature reaping
         # of agents that are legitimately working (Claude Code sessions can
         # take 5+ minutes for complex tasks).
-        if orch._spawner.is_alive(session.pid):
+        if _is_process_alive(session.pid):
             session.heartbeat_ts = now
         else:
             # Process is dead — check if log file grew recently.
