@@ -523,6 +523,16 @@ def auto_write_bernstein_yaml(workdir: Path) -> None:
         lines.append("constraints:")
         for c in constraints:
             lines.append(f'  - "{c}"')
+    lines.extend(
+        [
+            "",
+            "visual:",
+            "  splash: true",
+            "  crt_effects: true",
+            "  scanlines: false",
+            "  splash_tier: auto",
+        ]
+    )
     lines.append("")
 
     (workdir / "bernstein.yaml").write_text("\n".join(lines))

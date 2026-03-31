@@ -1673,6 +1673,7 @@ class BernsteinApp(App[None]):
         self.action_graceful_quit()
 
     _restart_on_exit: bool = False
+    _play_power_off_on_exit: bool = False
 
     def action_hot_restart(self) -> None:
         """Hot restart: exit TUI cleanly, then re-exec into `bernstein live`."""
@@ -1688,6 +1689,7 @@ class BernsteinApp(App[None]):
     def _on_drain_complete(self, report: object) -> None:
         """Handle drain screen dismissal."""
         if report is not None:
+            self._play_power_off_on_exit = True
             self.exit(message="Bernstein drained.")
         # If report is None, drain was cancelled -- stay on dashboard
 
