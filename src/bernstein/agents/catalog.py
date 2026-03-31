@@ -482,9 +482,9 @@ class CatalogRegistry:
         keywords = {w for w in desc_lower.split() if len(w) > 3}
 
         # 1. Exact role match — rank by capability overlap then priority.
-        #    When all capability scores are zero (e.g. Agency agents with no
-        #    capabilities defined), fall back to description keyword overlap
-        #    so the best-matching agent is selected, not just the first one.
+        #    Require a minimum match quality to avoid assigning irrelevant
+        #    Agency agents (e.g. "Email Intelligence Engineer" for a coding task).
+        _MIN_MATCH_SCORE = 3  # At least 3 keyword overlaps required.
         exact: list[CatalogAgent] = [a for a in self.loaded_agents if a.role == role]
         if exact:
             if keywords:
@@ -494,22 +494,34 @@ class CatalogRegistry:
                         (len(keywords & {w for w in a.description.lower().split() if len(w) > 3}), a) for a in exact
                     ]
                 scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
-                winner = scored_exact[0][1]
+                best_score = scored_exact[0][0] if scored_exact else 0
+                if best_score >= _MIN_MATCH_SCORE:
+                    winner = scored_exact[0][1]
+                    logger.debug(
+                        "Catalog exact match: '%s' (score=%d) for '%s'",
+                        winner.name, best_score, role,
+                    )
+                    return winner
+                # Score too low — skip catalog, use role template instead.
+                logger.debug(
+                    "Catalog: best score %d < %d for '%s', using template",
+                    best_score, _MIN_MATCH_SCORE, role,
+                )
+                return None
             else:
-                winner = min(exact, key=lambda a: a.priority)
-            logger.debug("Catalog exact match: agent '%s' for role '%s'", winner.name, role)
-            return winner
+                return None  # No keywords — can't score, use role template.
 
         if not keywords:
             return None
 
-        # 2. Fuzzy match: capabilities (x2) + description keyword overlap
+        # 2. Fuzzy match: capabilities (x2) + description keyword overlap.
+        #    Require minimum score to avoid irrelevant cross-role matches.
         scored: list[tuple[int, CatalogAgent]] = []
         for agent in self.loaded_agents:
             cap_score = _capability_score(agent, desc_lower, keywords) * 2
-            desc_score = len(keywords & set(agent.description.lower().split()))
+            desc_score = len(keywords & {w for w in agent.description.lower().split() if len(w) > 3})
             total = cap_score + desc_score
-            if total > 0:
+            if total >= _MIN_MATCH_SCORE:
                 scored.append((total, agent))
 
         if not scored:
