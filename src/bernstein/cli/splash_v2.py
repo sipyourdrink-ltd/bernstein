@@ -87,28 +87,26 @@ class SplashRenderer:
         sys.stdout.write("\033[?25l\033[2J\033[H")
         sys.stdout.flush()
 
-        # 4. Scanline reveal: draw gradient from center outward.
-        mid = h // 2
-        reveal_order: list[int] = []
-        for offset in range(mid + 1):
-            if mid + offset < h:
-                reveal_order.append(mid + offset)
-            if offset > 0 and mid - offset >= 0:
-                reveal_order.append(mid - offset)
+        # 4. Diagonal reveal: lines appear along diagonal wavefront
+        #    (top-left → bottom-right), matching the gradient direction.
+        #    Each row is assigned a "wave" index = row + stagger, and rows
+        #    with the same wave index appear in the same animation frame.
+        total_waves = h + 4  # slight spread
+        wave_groups: list[list[int]] = [[] for _ in range(total_waves)]
+        for row in range(h):
+            wave = min(row, total_waves - 1)
+            wave_groups[wave].append(row)
 
         total_time = 0.8
-        batch = max(1, len(reveal_order) // 20)
-        step = total_time / max(len(reveal_order) / batch, 1)
-        buf: list[str] = []
+        non_empty = [g for g in wave_groups if g]
+        step = total_time / max(len(non_empty), 1)
 
-        for i, row in enumerate(reveal_order):
-            buf.append(f"\033[{row + 1};1H{bg_lines[row]}")
-            if (i + 1) % batch == 0 or i == len(reveal_order) - 1:
-                sys.stdout.write("".join(buf))
-                sys.stdout.flush()
-                buf.clear()
-                if not _key_pressed():
-                    time.sleep(step)
+        for group in non_empty:
+            buf_part = "".join(f"\033[{r + 1};1H{bg_lines[r]}" for r in group)
+            sys.stdout.write(buf_part)
+            sys.stdout.flush()
+            if not _key_pressed():
+                time.sleep(step)
 
         # 5. Overlay logo char-by-char (skip spaces → gradient shows through).
         out: list[str] = []
