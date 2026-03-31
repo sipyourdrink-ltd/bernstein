@@ -109,9 +109,7 @@ async def revoke_identity(request: Request, identity_id: str) -> JSONResponse:
 
 
 @router.get("/identities/{identity_id}/audit")
-async def identity_audit(
-    request: Request, identity_id: str, limit: int = 100
-) -> JSONResponse:
+async def identity_audit(request: Request, identity_id: str, limit: int = 100) -> JSONResponse:
     """Return the audit trail for an agent identity."""
     store = _identity_store(request)
     events = store.get_audit_trail(identity_id, limit=limit)
