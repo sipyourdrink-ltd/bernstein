@@ -28,6 +28,7 @@ import httpx
 from bernstein.core.adaptive_parallelism import AdaptiveParallelism
 from bernstein.core.agent_lifecycle import (
     check_kill_signals,
+    check_loops_and_deadlocks,
     check_stale_agents,
     check_stalled_tasks,
     reap_dead_agents,
@@ -257,6 +258,10 @@ class Orchestrator:
         self._agents: dict[str, AgentSession] = {}
         self._lock_manager = FileLockManager(workdir)
         self._file_ownership: dict[str, str] = {}  # filepath -> agent_id (legacy alias; use _lock_manager)
+        from bernstein.core.loop_detector import LoopDetector
+
+        self._loop_detector = LoopDetector()
+        self._loop_mtime_cache: dict[str, float] = {}  # file_path -> last observed mtime
         self._task_to_session: dict[str, str] = {}  # task_id -> agent_id (reverse index)
         self._processed_done_tasks: set[str] = set()  # avoid re-processing done tasks
         self._retried_task_ids: set[str] = set()  # tasks that already have a retry queued
@@ -391,6 +396,12 @@ class Orchestrator:
             run_id=run_id,
             budget_usd=config.budget_usd,
         )
+
+        # Cost anomaly detector: layered on top of cost_tracker, fires
+        # AnomalySignals the orchestrator acts on (log/stop/kill).
+        from bernstein.core.cost_anomaly import CostAnomalyDetector
+
+        self._anomaly_detector = CostAnomalyDetector(config.cost_anomaly, workdir)
 
         # Deterministic replay recorder: appends events to
         # .sdd/runs/{run_id}/replay.jsonl for post-hoc debugging.
@@ -1022,7 +1033,14 @@ class Orchestrator:
         # 4d-ii. Token growth monitor: alert on quadratic growth, kill runaway agents
         check_token_growth(self)
 
-        # 4d-iii. Real-time cost recording: update budget status from live tokens
+        # 4d-ii.5 Loop and deadlock detection: kill looping agents, break lock cycles
+        check_loops_and_deadlocks(self)
+
+        # 4d-iii. Cost anomaly detection: burn rate projection, stop on budget overrun
+        for sig in self._anomaly_detector.check_tick(list(self._agents.values()), self._cost_tracker):
+            self._handle_anomaly_signal(sig)
+
+        # 4d-iv. Real-time cost recording: update budget status from live tokens
         self._record_live_costs()
 
         # 4e. Recycle idle agents (task already resolved but process still alive,
@@ -1268,6 +1286,26 @@ class Orchestrator:
             workdir=self._workdir,
             session_id=session.id if session is not None else None,
         )
+
+    def _handle_anomaly_signal(self, signal: object) -> None:
+        """Dispatch an anomaly signal: log, stop spawning, or kill agent."""
+        import contextlib
+
+        from bernstein.core.cost_anomaly import AnomalySignal
+
+        assert isinstance(signal, AnomalySignal)
+        self._anomaly_detector.record_signal(signal)
+        if signal.action == "kill_agent" and signal.agent_id:
+            log.warning("Anomaly [%s]: %s — killing agent", signal.rule, signal.message)
+            session = self._agents.get(signal.agent_id)
+            if session:
+                with contextlib.suppress(Exception):
+                    self._spawner.kill(session)
+        elif signal.action == "stop_spawning":
+            log.warning("Anomaly [%s]: %s — stopping new spawns", signal.rule, signal.message)
+            self._stop_spawning = True
+        else:
+            log.info("Anomaly [%s]: %s", signal.rule, signal.message)
 
     def _record_live_costs(self) -> None:
         """Update live cost tracker from active agent token usage.
@@ -2631,7 +2669,8 @@ class Orchestrator:
                 "agent_source": s.agent_source,
                 "cell_id": s.cell_id,
                 "parent_id": s.parent_id,
-                "log_path": getattr(s, "log_path", ""),
+                "log_path": str(getattr(s, "log_path", "")),
+                "worktree_path": str(getattr(s, "worktree_path", "")),
             }
             for s in self._agents.values()
         ]
@@ -2639,7 +2678,7 @@ class Orchestrator:
         try:
             with state_path.open("w") as f:
                 json.dump({"ts": time.time(), "agents": agents_snapshot}, f)
-        except OSError:
+        except Exception:
             pass
 
 
