@@ -68,18 +68,19 @@ async def run_benchmark():
     print(f"  Completions: {len(task_ids) / complete_duration:.2f} tasks/sec")
 
     # 4. Flush Latency
-    await store.flush_buffer() # ensure empty
+    await store.flush_buffer()  # ensure empty
 
     # Buffer some and measure flush
     for _ in range(store._BUFFER_MAX - 1):
         await store.create(req)
 
     start_time = time.perf_counter()
-    await store.create(req) # This triggers flush
+    await store.create(req)  # This triggers flush
     flush_duration = time.perf_counter() - start_time
     print(f"  Flush Latency (buffer size {store._BUFFER_MAX}): {flush_duration * 1000:.2f} ms")
 
     shutil.rmtree(test_dir)
+
 
 if __name__ == "__main__":
     asyncio.run(run_benchmark())

@@ -47,6 +47,8 @@ from benchmarks.swe_bench.metrics import ResultStore, ScenarioSummary  # noqa: E
 from benchmarks.swe_bench.report import generate_from_results_dir  # noqa: E402
 from benchmarks.swe_bench.scenarios import ALL_SCENARIOS, SCENARIO_BY_NAME  # noqa: E402
 
+from bernstein.benchmark.head_to_head import CANONICAL_COMPARISON, generate_full_report  # noqa: E402
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s — %(message)s",
@@ -327,6 +329,38 @@ def status(results_dir: Path) -> None:
             f"{resolved} resolved ({resolved / len(results) * 100:.1f}%), "
             f"{errors} errors, ${total_cost:.2f} spent"
         )
+
+
+@cli.command()
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output path for the report (default: benchmarks/swe_bench/results/head_to_head.md).",
+)
+def compare(output: Path | None) -> None:
+    """Generate the head-to-head comparison report: Bernstein vs. CrewAI vs. LangGraph.
+
+    Uses static competitor estimates from community benchmarks since neither CrewAI
+    nor LangGraph publish official SWE-Bench numbers.  Bernstein figures come from
+    benchmarks/swe_bench/results/ (simulated by default; replace with real runs).
+
+    To replace simulated Bernstein figures with real results, run:
+        benchmarks/swe_bench/run.py eval
+    then re-run this command — the canonical comparison will pick up real data
+    from benchmarks/swe_bench/results/*_summary.json automatically.
+    """
+    if output is None:
+        output = _DEFAULT_RESULTS_DIR / "head_to_head.md"
+
+    report_md = generate_full_report(CANONICAL_COMPARISON)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(report_md, encoding="utf-8")
+    click.echo(f"Head-to-head comparison written to: {output}")
+    click.echo("")
+    click.echo("NOTE: Bernstein figures are simulated. Competitor figures are estimated")
+    click.echo("      from community benchmarks. See the Data Sources section for details.")
 
 
 def _print_summary_table(summaries: list[ScenarioSummary]) -> None:

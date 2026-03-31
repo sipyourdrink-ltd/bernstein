@@ -40,6 +40,7 @@ def setup_benchmark_env():
 
     return tmp_dir
 
+
 def run_benchmark():
     workdir = setup_benchmark_env()
     app = create_app(jsonl_path=workdir / ".sdd" / "tasks.jsonl")
@@ -47,18 +48,11 @@ def run_benchmark():
 
     print("Adding 100 tasks to server...")
     for i in range(100):
-        client.post("/tasks", json={
-            "title": f"Task {i}",
-            "description": "benchmark task",
-            "role": "backend",
-            "priority": 2
-        })
+        client.post(
+            "/tasks", json={"title": f"Task {i}", "description": "benchmark task", "role": "backend", "priority": 2}
+        )
 
-    config = OrchestratorConfig(
-        server_url="http://benchmark",
-        max_agents=10,
-        poll_interval_s=1
-    )
+    config = OrchestratorConfig(server_url="http://benchmark", max_agents=10, poll_interval_s=1)
     adapter = MockAgentAdapter()
     spawner = AgentSpawner(
         adapter=adapter,
@@ -67,7 +61,7 @@ def run_benchmark():
         use_worktrees=False,
     )
     orch = Orchestrator(config, spawner, workdir=workdir)
-    orch._client = client # Direct injection
+    orch._client = client  # Direct injection
     orch._approval_gate = None
     orch._incident_manager.auto_pause = False
 
@@ -91,6 +85,7 @@ def run_benchmark():
     print(f"  Max Tick Latency:     {p95_lat:.2f} ms")
 
     shutil.rmtree(workdir)
+
 
 if __name__ == "__main__":
     run_benchmark()
