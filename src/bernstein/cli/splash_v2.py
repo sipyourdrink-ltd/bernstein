@@ -8,7 +8,10 @@ import select
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from rich.align import Align
 from rich.console import Console
@@ -149,7 +152,7 @@ class SplashRenderer:
 
         # Render background, then overlay logo char-by-char (skip spaces
         # so the gradient shows through — transparent logo effect).
-        buf = []
+        buf: list[str] = []
         for i, bg_line in enumerate(bg_lines):
             buf.append(f"\033[{i + 1};1H{bg_line}")
         # Overlay non-space logo characters individually.
@@ -315,7 +318,7 @@ def render_startup_splash(
     )
 
 
-def _render_figlet_raw(text: str, max_width: int = 80) -> str:
+def _render_figlet_raw(text: str, max_width: int = 80) -> str:  # pyright: ignore[reportUnusedFunction]
     """Render FIGlet text as plain ASCII (no Rich markup, no color)."""
     try:
         import pyfiglet
@@ -333,25 +336,25 @@ def _render_figlet_raw(text: str, max_width: int = 80) -> str:
     return text
 
 
-def _sample_ansi_gradient(count: int, colors: object) -> list[str]:
+def _sample_ansi_gradient(
+    count: int,
+    colors: Sequence[str | tuple[int, int, int] | list[int]],
+) -> list[str]:
     """Return ANSI bold+foreground escape codes sampled across a color gradient.
 
     Accepts colors as RGB tuples ``(r, g, b)`` or hex strings ``#RRGGBB``.
     """
-    color_list = list(colors) if not isinstance(colors, list) else colors
-    if count <= 0 or not color_list:
+    if count <= 0 or not colors:
         return []
 
     # Normalise each color to (r, g, b) int tuple.
     rgb: list[tuple[int, int, int]] = []
-    for c in color_list:
+    for c in colors:
         if isinstance(c, (list, tuple)):
             rgb.append((int(c[0]), int(c[1]), int(c[2])))
-        elif isinstance(c, str):
+        else:
             h = c.lstrip("#")
             rgb.append((int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)))
-        else:
-            rgb.append((255, 255, 255))
 
     # Use a brighter gradient for the logo: white → cyan → teal.
     logo_gradient: list[tuple[int, int, int]] = [

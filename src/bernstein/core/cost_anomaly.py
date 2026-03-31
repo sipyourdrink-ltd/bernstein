@@ -51,7 +51,7 @@ class TierStats:
 class CostBaseline:
     """Rolling baseline of cost and token-ratio statistics."""
 
-    per_tier: dict[str, TierStats] = field(default_factory=dict)
+    per_tier: dict[str, TierStats] = field(default_factory=lambda: {})  # pyright: ignore[reportUnknownVariableType]
     token_ratio_median: float = 0.0
     token_ratio_p95: float = 0.0
     sample_count: int = 0

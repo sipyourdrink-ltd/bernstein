@@ -83,7 +83,7 @@ def _drain_stdin() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _strip_hash(color: str) -> str:
+def _strip_hash(color: str) -> str:  # pyright: ignore[reportUnusedFunction]
     """Convert ``#rrggbb`` → ``rrggbb`` for TTE color strings."""
     return color.lstrip("#")
 
