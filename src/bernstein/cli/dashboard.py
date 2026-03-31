@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from textual import events
 
 import httpx
+from rich.markup import escape
+from rich.table import Table
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
@@ -28,7 +30,6 @@ from textual.reactive import reactive
 from textual.widgets import (
     DataTable,
     Footer,
-    Header,
     Input,
     RichLog,
     Sparkline,
@@ -37,6 +38,7 @@ from textual.widgets import (
 from textual.worker import Worker, WorkerState
 
 from bernstein.cli.icons import get_agent_icon, get_icons, get_status_icon
+from bernstein.cli.visual_theme import PALETTE, budget_color, model_color, role_color, sample_gradient, status_color
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +300,50 @@ def _summarize_agent_errors(agents: list[dict[str, Any]]) -> tuple[int, list[str
     return len(lines), lines[:3]
 
 
+def _gradient_text(text: str) -> Text:
+    """Build gradient-styled Rich text for premium header branding."""
+    rendered = Text()
+    colors = sample_gradient((PALETTE.teal, PALETTE.cyan, PALETTE.glow), max(len(text), 1))
+    for idx, char in enumerate(text):
+        rendered.append(char, style=f"bold {colors[idx]}")
+    return rendered
+
+
+def _role_glyph(role: str) -> str:
+    """Return a best-fit icon for a task role."""
+    icons = get_icons()
+    normalized = role.lower()
+    if normalized in {"backend", "devops", "ops"}:
+        return icons.agent_codex
+    if normalized in {"qa", "tester"}:
+        return icons.agent_gemini
+    return icons.agent_claude
+
+
+def _priority_cell(priority: int) -> Text:
+    """Render a compact color-coded priority label."""
+    style = {0: "bold bright_red", 1: "bold bright_yellow", 2: f"bold {PALETTE.text_dim}"}.get(priority, "dim")
+    return Text(f"P{priority}", style=style)
+
+
+def _format_activity_line(role: str, line: str) -> str:
+    """Style an activity line with timestamp, role color, and severity highlighting."""
+    clean = line[:100] + "\u2026" if len(line) > 100 else line
+    timestamp = time.strftime("%H:%M:%S")
+    severity_style = ""
+    lowered = clean.lower()
+    if "error" in lowered or "failed" in lowered:
+        severity_style = f"bold {PALETTE.danger}"
+    elif "warning" in lowered:
+        severity_style = f"bold {PALETTE.warning}"
+    elif "merged" in lowered or "completed" in lowered or "spawned" in lowered:
+        severity_style = f"bold {PALETTE.success}"
+    message = escape(clean)
+    if severity_style:
+        message = f"[{severity_style}]{message}[/]"
+    return f"[dim]{timestamp}[/] [bold {role_color(role)}]{role.upper()}[/] {message}"
+
+
 # -- UX-010: Visual premium status icons (via icons module, Nerd Font aware) --
 
 
@@ -351,6 +397,41 @@ def _tail_log(session_id: str, n: int = 5, log_path: str = "") -> list[str]:
 # -- Widgets -------------------------------------------------------
 
 
+class DashboardHeader(Static):
+    """Premium gradient header with runtime badges."""
+
+    can_focus = False
+
+    git_branch = reactive("")
+    spent_usd = reactive(0.0)
+    budget_usd = reactive(0.0)
+    elapsed = reactive(0)
+
+    def render(self) -> Table:
+        left = Text()
+        left.append(" 🎼 ", style=f"bold {PALETTE.glow}")
+        left.append_text(_gradient_text("BERNSTEIN"))
+        left.append("  Agent Orchestra", style=f"bold {PALETTE.text_dim}")
+
+        right = Text()
+        if self.git_branch:
+            right.append(self.git_branch, style=f"bold {PALETTE.glow}")
+            right.append("  ", style="")
+        right.append(time.strftime("%H:%M:%S"), style=f"bold {PALETTE.text_dim}")
+        right.append("  ", style="")
+        if self.budget_usd > 0:
+            ratio = self.spent_usd / self.budget_usd if self.budget_usd > 0 else 0.0
+            right.append(f"${self.spent_usd:.2f}/${self.budget_usd:.2f}", style=f"bold {budget_color(ratio)}")
+        else:
+            right.append(f"${self.spent_usd:.2f}", style=f"bold {PALETTE.success}")
+
+        grid = Table.grid(expand=True)
+        grid.add_column(justify="left")
+        grid.add_column(justify="right")
+        grid.add_row(left, right)
+        return grid
+
+
 class AgentWidget(Static):
     """Single agent: header + live log tail."""
 
@@ -378,9 +459,7 @@ class AgentWidget(Static):
         m, s = divmod(runtime, 60)
         aid = a.get("id", "")
 
-        color = {"working": "bright_green", "starting": "bright_yellow", "dead": "bright_red"}.get(
-            status, "bright_green"
-        )
+        color = status_color(str(status))
         dot = {"working": get_status_icon("running"), "starting": "\u25ce", "dead": "\u25cc"}.get(status, "\u25cf")
 
         agent_source = a.get("agent_source", "built-in")
@@ -394,11 +473,11 @@ class AgentWidget(Static):
 
         t = Text()
         t.append(f" {dot} ", style=f"bold {color}")
-        t.append(f"{agent_icon} ", style=f"bold {color}")
-        t.append(f"{role.upper()}", style=f"bold {color}")
+        t.append(f"{agent_icon} ", style=f"bold {role_color(str(role))}")
+        t.append(f"{role.upper()}", style=f"bold {role_color(str(role))}")
         if source_suffix:
             t.append(source_suffix, style=f"italic {color}")
-        t.append(f"  {model}", style="bold dim")
+        t.append(f"  {model}", style=f"bold {model_color(adapter)}")
         t.append(f"  {m}:{s:02d}", style="dim")
 
         # Per-agent cost ticker
@@ -461,6 +540,7 @@ class BigStats(Static):
         pct = int(self.done / self.total * 100) if self.total > 0 else 0
         m, s = divmod(self.elapsed, 60)
         h, m = divmod(m, 60)
+        progress_colors = sample_gradient((PALETTE.teal, PALETTE.cyan, PALETTE.glow), 35)
 
         t = Text()
 
@@ -477,17 +557,15 @@ class BigStats(Static):
         t.append("\u2590", style="dim")
         for i in range(bar_w):
             if i < filled:
-                r = i / max(bar_w - 1, 1)
-                style = "bold bright_red" if r < 0.3 else ("bold bright_yellow" if r < 0.6 else "bold bright_green")
-                t.append("\u2588", style=style)
+                t.append("\u2588", style=f"bold {progress_colors[i]}")
             else:
                 t.append("\u2591", style="dim")
         t.append("\u258c", style="dim")
-        t.append(f" {pct}%", style="bold bright_green" if pct == 100 else "bold")
+        t.append(f" {pct}%", style=f"bold {PALETTE.glow}" if pct == 100 else "bold")
 
-        t.append(f"  {self.agents} agents", style="bold bright_cyan")
+        t.append(f"  {self.agents} agents", style=f"bold {PALETTE.glow}")
         if self.failed:
-            t.append(f"  {self.failed} failed", style="bold bright_red")
+            t.append(f"  {self.failed} failed", style=f"bold {PALETTE.danger}")
 
         if h:
             t.append(f"  {h}h{m:02d}m", style="dim")
@@ -496,7 +574,8 @@ class BigStats(Static):
 
         # -- Cost row --
         t.append("\n")
-        t.append(f" ${self.spent_usd:.4f}", style="bold bright_green")
+        usage_ratio = self.budget_pct if self.budget_usd > 0 else 0.0
+        t.append(f" ${self.spent_usd:.4f}", style=f"bold {budget_color(usage_ratio)}")
 
         if self.budget_usd > 0:
             t.append(f" / ${self.budget_usd:.2f}", style="bold")
@@ -504,11 +583,7 @@ class BigStats(Static):
             bw = 20
             bp = min(self.budget_pct, 1.0)
             bf = int(bp * bw)
-            bar_color = (
-                "bold bright_red"
-                if self.budget_pct >= 0.95
-                else ("bold bright_yellow" if self.budget_pct >= 0.80 else "bold bright_green")
-            )
+            bar_color = f"bold {budget_color(self.budget_pct)}"
             t.append("  \u2590", style="dim")
             for i in range(bw):
                 t.append("\u2588" if i < bf else "\u2591", style=bar_color if i < bf else "dim")
@@ -820,10 +895,12 @@ class BernsteinApp(App[None]):
         background: $background;
     }
 
-    Header {
-        background: $accent 15%;
-        color: $accent;
-        text-style: bold;
+    #header-bar {
+        height: 1;
+        padding: 0 1;
+        background: #08121F;
+        color: #E8F6FF;
+        border-bottom: tall #18435B;
     }
 
     #top-panels {
@@ -960,7 +1037,7 @@ class BernsteinApp(App[None]):
         self._compare_mark: str | None = None  # first task ID for compare
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield DashboardHeader(id="header-bar")
         with Horizontal(id="top-panels"):
             with Vertical(id="col-agents"):
                 yield Static("AGENTS", classes="col-header")
@@ -994,7 +1071,7 @@ class BernsteinApp(App[None]):
 
     def on_mount(self) -> None:
         t: DataTable[Any] = self.query_one("#tasks-table", DataTable)  # pyright: ignore[reportUnknownVariableType]
-        t.add_columns("", "ROLE", "TASK")
+        t.add_columns("", "P", "ROLE", "TASK")
         t.cursor_type = "row"
         t.zebra_stripes = True
         t.focus()  # Arrow keys work immediately without clicking
@@ -1009,24 +1086,24 @@ class BernsteinApp(App[None]):
 
         # Write startup messages to activity log
         log = self.query_one("#activity-log", RichLog)
-        log.write("[bold]Bernstein starting...[/bold]")
-        log.write("[dim]Connecting to task server on :8052[/dim]")
+        log.write(_format_activity_line("system", "Bernstein starting..."))
+        log.write(_format_activity_line("system", "Connecting to task server on :8052"))
 
         # Immediate agent display from local file (no HTTP wait)
         agents = _load_agents()
         if agents:
             alive = sum(1 for a in agents if a.get("status") != "dead")
-            log.write(f"[green]{alive} agent(s) active[/green]")
+            log.write(_format_activity_line("system", f"{alive} agent(s) active"))
             costs: dict[str, Any] = {}
             self._update_agents(agents, costs)
         else:
-            log.write("[dim]Spawning agents...[/dim]")
+            log.write(_format_activity_line("system", "Spawning agents..."))
             # Show worktree count as early signal of activity
             wt_dir = Path(".sdd/worktrees")
             if wt_dir.exists():
                 wt_count = sum(1 for _ in wt_dir.iterdir() if _.is_dir())
                 if wt_count > 0:
-                    log.write(f"[dim]{wt_count} worktree(s) detected[/dim]")
+                    log.write(_format_activity_line("system", f"{wt_count} worktree(s) detected"))
 
         # File watcher for agents.json (500ms — instant agent visibility)
         self.set_interval(0.5, self._check_agents_file)
@@ -1077,15 +1154,16 @@ class BernsteinApp(App[None]):
                     for line in new_lines.strip().split("\n"):
                         if not line:
                             continue
+                        message = line.split("] ")[-1] if "] " in line else line
                         # Filter to important events
                         if "agent_spawned" in line or "Spawning" in line or "spawned" in line.lower():
-                            log.write(f"[green]→ {line.split('] ')[-1] if '] ' in line else line}[/green]")
+                            log.write(_format_activity_line("system", f"spawned: {message}"))
                         elif "ERROR" in line or "error" in line:
-                            log.write(f"[red]{line.split('] ')[-1] if '] ' in line else line}[/red]")
+                            log.write(_format_activity_line("system", message))
                         elif "WARNING" in line:
-                            log.write(f"[yellow]{line.split('] ')[-1] if '] ' in line else line}[/yellow]")
+                            log.write(_format_activity_line("system", f"warning: {message}"))
                         elif "completed" in line.lower() or "reaped" in line.lower() or "merged" in line.lower():
-                            log.write(f"[cyan]{line.split('] ')[-1] if '] ' in line else line}[/cyan]")
+                            log.write(_format_activity_line("system", message))
             except Exception:
                 pass
 
@@ -1262,19 +1340,24 @@ class BernsteinApp(App[None]):
         for key in existing_ids - incoming_ids:
             table.remove_row(key)
 
-        columns = ("", "ROLE", "TASK")
+        columns = ("", "P", "ROLE", "TASK")
         for t in tasks:
             st: str = t.get("status", "open")
             icon = plain_icons.get(st, "\u25cb")
             color = status_colors.get(st, "white")
             tid = str(t.get("id", ""))
             retry_count = _task_retry_count(t)
+            priority = int(t.get("priority", 2) or 2)
+            role_name = str(t.get("role", "-"))
+            role_style = role_color(role_name)
+            role_label = f"{_role_glyph(role_name)} {role_name.upper()}"
             title = str(t.get("title", "-"))
             if retry_count > 0:
                 title = f"{title} ({retry_count} retries)"
             cells = (
                 Text(f" {icon}", style=f"bold {color}"),
-                Text(str(t.get("role", "-")).upper().ljust(9), style=color),
+                _priority_cell(priority),
+                Text(role_label.ljust(11), style=f"bold {role_style}"),
                 Text(title, style=color if st != "open" else ""),
             )
             if tid in existing_ids:
@@ -1295,6 +1378,7 @@ class BernsteinApp(App[None]):
         monitoring: dict[str, Any] | None = None,
     ) -> None:
         bar = self.query_one("#stats-row", BigStats)
+        header = self.query_one("#header-bar", DashboardHeader)
 
         if sd:
             bar.total = sd.get("total", 0)
@@ -1363,6 +1447,10 @@ class BernsteinApp(App[None]):
 
         bar.retry_count = sum(_task_retry_count(task) for task in (tasks or []) if isinstance(task, dict))
         bar.agent_error_count = _summarize_agent_errors(agents)[0]
+        header.git_branch = bar.git_branch
+        header.spent_usd = bar.spent_usd
+        header.budget_usd = bar.budget_usd
+        header.elapsed = bar.elapsed
 
         spark = self.query_one("#spark", Sparkline)
         spark.data = list(self._history) if self._history else [0.0]
@@ -1393,14 +1481,14 @@ class BernsteinApp(App[None]):
             )
 
     ROLE_COLORS: ClassVar[dict[str, str]] = {
-        "backend": "bright_green",
-        "frontend": "bright_cyan",
-        "qa": "bright_green",
-        "security": "bright_yellow",
-        "devops": "bright_cyan",
-        "architect": "bright_magenta",
-        "manager": "bright_white",
-        "docs": "bright_blue",
+        "backend": role_color("backend"),
+        "frontend": role_color("frontend"),
+        "qa": role_color("qa"),
+        "security": PALETTE.warning,
+        "devops": role_color("devops"),
+        "architect": "#C084FC",
+        "manager": role_color("manager"),
+        "docs": "#93C5FD",
     }
 
     # -- Activity --
@@ -1429,15 +1517,13 @@ class BernsteinApp(App[None]):
                 continue
             aid = a.get("id", "")
             role = a.get("role", "?")
-            role_color = self.ROLE_COLORS.get(role.lower(), "bright_white")
             lines = _tail_log(aid, 2, log_path=a.get("log_path", ""))
             for line in lines:
                 # UX-007: Filter routine/noisy events from activity log
                 lower = line.lower()
                 if any(noise in lower for noise in self._NOISE_PATTERNS):
                     continue
-                clean = line[:100] + "\u2026" if len(line) > 100 else line
-                new_lines.append(f"[bold {role_color}]{role.upper()}[/] {clean}")
+                new_lines.append(_format_activity_line(str(role), line))
 
         for line in new_lines:
             if line not in self._last_activity:
