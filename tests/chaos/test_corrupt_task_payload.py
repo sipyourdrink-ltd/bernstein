@@ -28,6 +28,7 @@ async def test_corrupt_task_payload(test_client: TestClient, orchestrator_factor
     corrupt_mode = False
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path
@@ -37,13 +38,15 @@ async def test_corrupt_task_payload(test_client: TestClient, orchestrator_factor
                 resp = test_client.get("/tasks")
                 data = resp.json()
                 # Add a corrupt task
-                data.append({
-                    "id": "corrupt-1",
-                    "title": "Corrupt Task",
-                    "status": "open",
-                    "description": 12345, # SHOULD BE STRING
-                    # Missing other required fields
-                })
+                data.append(
+                    {
+                        "id": "corrupt-1",
+                        "title": "Corrupt Task",
+                        "status": "open",
+                        "description": 12345,  # SHOULD BE STRING
+                        # Missing other required fields
+                    }
+                )
                 return Response(200, json=data)
 
             content = request.read()

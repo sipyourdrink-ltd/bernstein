@@ -87,8 +87,6 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
     gc.collect()
 
 
-
-
 @pytest.fixture
 def make_task():
     """Factory fixture for Task objects with sensible defaults.
@@ -158,6 +156,7 @@ def sdd_dir(tmp_path: Path) -> Path:
 # Integration & Chaos Engineering Fixtures
 # ---------------------------------------------------------------------------
 
+
 class IntegrationMockAdapter(CLIAdapter):
     """A flexible mock adapter that executes python commands from task descriptions."""
 
@@ -190,15 +189,13 @@ class IntegrationMockAdapter(CLIAdapter):
         if not script_body:
             # Default: just commit and write a marker file for conftest to pick up
             import re
+
             task_ids = re.findall(r"id=([A-Za-z0-9\-_]+)", prompt)
 
             marker_dir = self.sdd_path.resolve() / "runtime"
             marker_dir.mkdir(parents=True, exist_ok=True)
 
-            markers = "\n".join(
-                f"(Path('{marker_dir}') / 'DONE_{tid}').write_text('done')"
-                for tid in task_ids
-            )
+            markers = "\n".join(f"(Path('{marker_dir}') / 'DONE_{tid}').write_text('done')" for tid in task_ids)
 
             script_body = f"""
 import os
@@ -312,6 +309,7 @@ def orchestrator_factory(integration_sdd: Path):
         )
 
         from bernstein.adapters.registry import register_adapter
+
         adapter = IntegrationMockAdapter(integration_sdd)
         register_adapter("integration-mock", adapter)
 
@@ -322,4 +320,5 @@ def orchestrator_factory(integration_sdd: Path):
             use_worktrees=use_worktrees,
         )
         return Orchestrator(config, spawner, workdir=integration_sdd.parent)
+
     return _create

@@ -246,7 +246,9 @@ class TestAgentIdentityStore:
     def test_revoke_nonexistent(self, store: AgentIdentityStore) -> None:
         assert not store.revoke("no-such-id")
 
-    def test_revoke_and_suspend_logs_escape_newlines(self, store: AgentIdentityStore, caplog: pytest.LogCaptureFixture) -> None:
+    def test_revoke_and_suspend_logs_escape_newlines(
+        self, store: AgentIdentityStore, caplog: pytest.LogCaptureFixture
+    ) -> None:
         store.create_identity("backend-abc", "backend")
         store.create_identity("backend-def", "backend")
 

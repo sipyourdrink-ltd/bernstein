@@ -149,7 +149,9 @@ def test_plan_uses_llm_output_and_posts_created_tasks(monkeypatch: pytest.Monkey
     async def _fake_fetch_existing_tasks(_client: object, _server_url: str) -> list[Task]:
         return []
 
-    async def _fake_post_task_to_server(_client: object, _server_url: str, task: Task, *, plan_mode: bool = False) -> str:
+    async def _fake_post_task_to_server(
+        _client: object, _server_url: str, task: Task, *, plan_mode: bool = False
+    ) -> str:
         posted_titles.append(task.title)
         return f"server-{len(posted_titles)}"
 
@@ -162,7 +164,9 @@ def test_plan_uses_llm_output_and_posts_created_tasks(monkeypatch: pytest.Monkey
                     "title": "Implement planner test",
                     "description": "Add planner coverage",
                     "role": "backend",
-                    "completion_signals": [{"type": "test_passes", "value": "uv run pytest tests/unit/test_planner.py"}],
+                    "completion_signals": [
+                        {"type": "test_passes", "value": "uv run pytest tests/unit/test_planner.py"}
+                    ],
                 }
             ]
         )

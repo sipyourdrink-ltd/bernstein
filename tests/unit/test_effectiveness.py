@@ -95,4 +95,3 @@ def test_trends_returns_direction_by_role(tmp_path: Path, make_task: Any) -> Non
     trends = scorer.trends(window=6)
     assert "backend" in trends
     assert trends["backend"] in {"improving", "declining", "stable"}
-

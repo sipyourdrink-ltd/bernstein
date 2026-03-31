@@ -21,14 +21,7 @@ if TYPE_CHECKING:
 @pytest.mark.asyncio
 async def test_zombie_agent_process(test_client: TestClient, orchestrator_factory, integration_sdd: Path, monkeypatch):
     # 1. Create a task with a script that sleeps forever (zombie)
-    desc = (
-        "```python\n"
-        "# INTEGRATION-MOCK\n"
-        "import time\n"
-        "print('Zombie started')\n"
-        "time.sleep(60)\n"
-        "```"
-    )
+    desc = "```python\n# INTEGRATION-MOCK\nimport time\nprint('Zombie started')\ntime.sleep(60)\n```"
     resp = test_client.post("/tasks", json={"title": "Zombie Task", "description": desc, "role": "backend"})
     task_id = resp.json()["id"]
 
@@ -39,20 +32,24 @@ async def test_zombie_agent_process(test_client: TestClient, orchestrator_factor
 
     # Speed up recycling
     import bernstein.core.agent_lifecycle
+
     monkeypatch.setattr(bernstein.core.agent_lifecycle, "_IDLE_GRACE_S", 1.0)
 
     # WORKAROUND: Monkeypatch adapter.kill to avoid killing the test process group
     from bernstein.adapters.registry import get_adapter
+
     adapter = get_adapter("integration-mock")
 
     def safe_kill(pid):
         import contextlib
+
         with contextlib.suppress(OSError):
             os.kill(pid, signal.SIGKILL)
 
     monkeypatch.setattr(adapter, "kill", safe_kill)
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path

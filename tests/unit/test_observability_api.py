@@ -20,7 +20,9 @@ def _app(tmp_path: Path):
     return create_app(jsonl_path=tmp_path / ".sdd" / "runtime" / "tasks.jsonl")
 
 
-def _record_score(tmp_path: Path, *, role: str = "backend", total: int = 85, model: str = "opus", effort: str = "max") -> None:
+def _record_score(
+    tmp_path: Path, *, role: str = "backend", total: int = 85, model: str = "opus", effort: str = "max"
+) -> None:
     scorer = EffectivenessScorer(tmp_path)
     scorer.record(
         EffectivenessScore(

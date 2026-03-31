@@ -20,7 +20,9 @@ async def test_malformed_roadmap(test_client: TestClient, orchestrator_factory, 
     roadmaps_dir.mkdir(parents=True, exist_ok=True)
 
     malformed_file = roadmaps_dir / "bad_roadmap.yaml"
-    malformed_file.write_text("id: bad\ntitle: Bad\nscenarios:\n  - scenario1\n  - : missing colon value") # INVALID YAML
+    malformed_file.write_text(
+        "id: bad\ntitle: Bad\nscenarios:\n  - scenario1\n  - : missing colon value"
+    )  # INVALID YAML
 
     # 2. Run orchestrator
     orch: Orchestrator = orchestrator_factory(max_agents=1, use_worktrees=True)

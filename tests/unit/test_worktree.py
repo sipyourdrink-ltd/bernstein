@@ -68,8 +68,10 @@ def test_worktree_manager_cleanup(manager: WorktreeManager, repo_root: Path) -> 
     worktree_path = repo_root / ".sdd/worktrees" / session_id
     branch_name = f"agent/{session_id}"
 
-    with patch("bernstein.core.worktree.worktree_remove") as mock_remove, \
-            patch("bernstein.core.worktree.branch_delete") as mock_delete:
+    with (
+        patch("bernstein.core.worktree.worktree_remove") as mock_remove,
+        patch("bernstein.core.worktree.branch_delete") as mock_delete,
+    ):
         mock_remove.return_value = GitResult(0, "", "")
         mock_delete.return_value = GitResult(0, "", "")
 
@@ -89,11 +91,7 @@ def test_worktree_manager_shutdown_event(manager: WorktreeManager) -> None:
 
 
 def test_worktree_setup_config_application(repo_root: Path) -> None:
-    config = WorktreeSetupConfig(
-        symlink_dirs=("node_modules",),
-        copy_files=(".env",),
-        setup_command="echo 'hello'"
-    )
+    config = WorktreeSetupConfig(symlink_dirs=("node_modules",), copy_files=(".env",), setup_command="echo 'hello'")
     manager = WorktreeManager(repo_root=repo_root, setup_config=config)
 
     session_id = "test-session"
@@ -103,8 +101,8 @@ def test_worktree_setup_config_application(repo_root: Path) -> None:
     (repo_root / "node_modules").mkdir()
     (repo_root / ".env").write_text("FOO=BAR")
 
-    with patch("bernstein.core.worktree.worktree_add") as mock_add, \
-            patch("subprocess.run") as mock_run:
+    with patch("bernstein.core.worktree.worktree_add") as mock_add, patch("subprocess.run") as mock_run:
+
         def mock_add_side_effect(root: Path, path: Path, branch: str) -> GitResult:
             path.mkdir(parents=True)
             return GitResult(0, "", "")

@@ -18,7 +18,9 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.asyncio
-async def test_worktree_creation_failure(test_client: TestClient, orchestrator_factory, integration_sdd: Path, monkeypatch):
+async def test_worktree_creation_failure(
+    test_client: TestClient, orchestrator_factory, integration_sdd: Path, monkeypatch
+):
     # 1. Create a task
     test_client.post("/tasks", json={"title": "Worktree Task", "description": "I need a worktree", "role": "backend"})
 
@@ -36,14 +38,18 @@ async def test_worktree_creation_failure(test_client: TestClient, orchestrator_f
     # Track where the adapter was spawned
     spawned_workdirs = []
     from bernstein.adapters.registry import get_adapter
+
     adapter = get_adapter("integration-mock")
     original_spawn = adapter.spawn
+
     def tracked_spawn(**kwargs):
         spawned_workdirs.append(kwargs.get("workdir"))
         return original_spawn(**kwargs)
+
     monkeypatch.setattr(adapter, "spawn", tracked_spawn)
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path

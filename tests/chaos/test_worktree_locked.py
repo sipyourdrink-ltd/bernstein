@@ -41,6 +41,7 @@ async def test_worktree_locked(test_client: TestClient, orchestrator_factory, in
     orch._incident_manager.auto_pause = False
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path

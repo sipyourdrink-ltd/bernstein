@@ -55,10 +55,9 @@ def test_build_semantic_graph_and_extract_context(tmp_path: Path, monkeypatch: p
     _write(tmp_path / "src" / "pkg" / "helpers.py", "def helper() -> int:\n    return 1\n")
     _write(
         tmp_path / "src" / "pkg" / "service.py",
-        "from pkg.helpers import helper\n\n"
-        "def run() -> int:\n"
-        "    return helper()\n",
+        "from pkg.helpers import helper\n\ndef run() -> int:\n    return helper()\n",
     )
+
     def _fake_ls_files(_workdir: Path) -> list[str]:
         return ["src/pkg/helpers.py", "src/pkg/service.py"]
 

@@ -89,11 +89,7 @@ def test_message_board_delegation_lifecycle() -> None:
     mb = MessageBoard()
 
     # 1. Post
-    d = mb.post_delegation(
-        origin_agent="agent-origin",
-        target_role="reviewer",
-        description="Please review my code"
-    )
+    d = mb.post_delegation(origin_agent="agent-origin", target_role="reviewer", description="Please review my code")
     assert d.status == DelegationStatus.PENDING
     assert mb.count == 1
 

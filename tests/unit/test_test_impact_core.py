@@ -15,9 +15,18 @@ def _write(path: Path, content: str) -> None:
 def test_analyze_expands_transitive_source_dependencies(tmp_path: Path) -> None:
     _write(tmp_path / "src" / "demo" / "__init__.py", "")
     _write(tmp_path / "src" / "demo" / "models.py", "class Model: pass\n")
-    _write(tmp_path / "src" / "demo" / "service.py", "from demo.models import Model\n\ndef use() -> Model:\n    return Model()\n")
-    _write(tmp_path / "tests" / "unit" / "test_models.py", "from demo.models import Model\n\ndef test_model() -> None:\n    assert Model\n")
-    _write(tmp_path / "tests" / "unit" / "test_service.py", "from demo.service import use\n\ndef test_use() -> None:\n    assert use()\n")
+    _write(
+        tmp_path / "src" / "demo" / "service.py",
+        "from demo.models import Model\n\ndef use() -> Model:\n    return Model()\n",
+    )
+    _write(
+        tmp_path / "tests" / "unit" / "test_models.py",
+        "from demo.models import Model\n\ndef test_model() -> None:\n    assert Model\n",
+    )
+    _write(
+        tmp_path / "tests" / "unit" / "test_service.py",
+        "from demo.service import use\n\ndef test_use() -> None:\n    assert use()\n",
+    )
 
     analyzer = ImpactAnalyzer(tmp_path, test_dirs=[tmp_path / "tests" / "unit"])
     analysis = analyzer.analyze(["src/demo/models.py"])

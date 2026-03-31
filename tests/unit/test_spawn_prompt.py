@@ -67,6 +67,7 @@ def test_extract_tags_from_tasks_filters_stop_words(make_task: Any) -> None:
 def test_render_predecessor_context_formats_informs_and_transforms(make_task: Any) -> None:
     """_render_predecessor_context formats predecessor summaries with their edge semantics."""
     task = make_task(id="T-1")
+
     def _predecessor_context(task_id: str) -> list[dict[str, str]]:
         if task_id != "T-1":
             return []
@@ -92,6 +93,7 @@ def test_render_prompt_falls_back_and_includes_context_sections(tmp_path: Path, 
     project_md = tmp_path / ".sdd" / "project.md"
     project_md.parent.mkdir(parents=True)
     project_md.write_text("Project context here.", encoding="utf-8")
+
     def _predecessor_context(task_id: str) -> list[dict[str, str]]:
         del task_id
         return [{"title": "Research auth", "edge_type": "informs", "result_summary": "Use token auth."}]
@@ -100,7 +102,9 @@ def test_render_prompt_falls_back_and_includes_context_sections(tmp_path: Path, 
 
     with (
         patch("bernstein.core.spawn_prompt.render_role_prompt", side_effect=TemplateError("missing")),
-        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value="## Lessons\nPrefer exact parsing."),
+        patch(
+            "bernstein.core.spawn_prompt.gather_lessons_for_context", return_value="## Lessons\nPrefer exact parsing."
+        ),
         patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend", "qa"]),
     ):
         prompt = _render_prompt(

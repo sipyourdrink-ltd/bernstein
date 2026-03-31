@@ -25,9 +25,7 @@ async def test_full_lifecycle(test_client: TestClient, orchestrator_factory, int
         "role": "backend",
         "scope": "small",
         "model": "sonnet",
-        "completion_signals": [
-            {"type": "path_exists", "value": "mock_output.txt"}
-        ]
+        "completion_signals": [{"type": "path_exists", "value": "mock_output.txt"}],
     }
 
     # We'll use respx to route orchestrator's httpx calls to the TestClient

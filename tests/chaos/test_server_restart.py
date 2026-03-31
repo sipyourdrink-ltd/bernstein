@@ -25,12 +25,11 @@ async def test_server_restart_resilience(test_client: TestClient, orchestrator_f
         "role": "backend",
         "scope": "small",
         "model": "sonnet",
-        "completion_signals": [
-            {"type": "path_exists", "value": "mock_output.txt"}
-        ]
+        "completion_signals": [{"type": "path_exists", "value": "mock_output.txt"}],
     }
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path
@@ -42,6 +41,7 @@ async def test_server_restart_resilience(test_client: TestClient, orchestrator_f
             return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
 
         outage_active = [False]
+
         def chaos_handler(request):
             if outage_active[0]:
                 raise ConnectError("Server is restarting (simulated chaos)...")

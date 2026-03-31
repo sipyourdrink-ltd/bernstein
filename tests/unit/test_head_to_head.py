@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
+import sys
+from pathlib import Path
+
 from bernstein.benchmark.head_to_head import (
     BERNSTEIN_MIXED_METRICS,
     BERNSTEIN_PROFILE,
@@ -329,3 +333,76 @@ def test_cost_ratio_when_baseline_is_zero_returns_none() -> None:
     )
     ratio = comparison.cost_ratio("zero", "other")
     assert ratio is None
+
+
+# ---------------------------------------------------------------------------
+# compare CLI command
+# ---------------------------------------------------------------------------
+
+_RUN_PY = Path(__file__).parent.parent.parent / "benchmarks" / "swe_bench" / "run.py"
+
+
+def _load_run_cli():  # type: ignore[return]
+    """Import the run.py CLI module, skipping if unavailable."""
+    import pytest
+
+    if not _RUN_PY.exists():
+        pytest.skip("benchmarks/swe_bench/run.py not found")
+    spec = importlib.util.spec_from_file_location("swe_bench_run", _RUN_PY)
+    if spec is None or spec.loader is None:
+        pytest.skip("could not load benchmarks/swe_bench/run.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["swe_bench_run"] = mod
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def test_compare_command_writes_markdown_file(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    mod = _load_run_cli()
+    output = tmp_path / "h2h.md"
+    runner = CliRunner()
+    result = runner.invoke(mod.cli, ["compare", "--output", str(output)])
+    assert result.exit_code == 0, result.output
+    assert output.exists()
+    content = output.read_text()
+    assert "Bernstein" in content
+    assert "CrewAI" in content
+    assert "LangGraph" in content
+
+
+def test_compare_command_report_contains_resolve_rates(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    mod = _load_run_cli()
+    output = tmp_path / "h2h.md"
+    runner = CliRunner()
+    result = runner.invoke(mod.cli, ["compare", "--output", str(output)])
+    assert result.exit_code == 0, result.output
+    content = output.read_text()
+    assert "39.0%" in content  # bernstein-sonnet resolve rate
+    assert "26.5%" in content  # crewai-gpt4 resolve rate
+
+
+def test_compare_command_includes_simulated_notice(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    mod = _load_run_cli()
+    output = tmp_path / "h2h.md"
+    runner = CliRunner()
+    result = runner.invoke(mod.cli, ["compare", "--output", str(output)])
+    assert result.exit_code == 0, result.output
+    content = output.read_text()
+    assert "simulated" in content.lower()
+
+
+def test_compare_command_outputs_path_to_stdout(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    mod = _load_run_cli()
+    output = tmp_path / "comparison.md"
+    runner = CliRunner()
+    result = runner.invoke(mod.cli, ["compare", "--output", str(output)])
+    assert result.exit_code == 0
+    assert str(output) in result.output

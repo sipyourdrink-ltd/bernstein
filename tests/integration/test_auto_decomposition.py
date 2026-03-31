@@ -19,12 +19,10 @@ if TYPE_CHECKING:
 @pytest.mark.asyncio
 async def test_auto_decomposition(test_client: TestClient, orchestrator_factory, integration_sdd: Path):
     # 1. Create a large task
-    test_client.post("/tasks", json={
-        "title": "Large Feature",
-        "description": "A very large task.",
-        "role": "backend",
-        "scope": "large"
-    })
+    test_client.post(
+        "/tasks",
+        json={"title": "Large Feature", "description": "A very large task.", "role": "backend", "scope": "large"},
+    )
 
     # 2. Run orchestrator
     orch: Orchestrator = orchestrator_factory(max_agents=2, use_worktrees=True)
@@ -35,6 +33,7 @@ async def test_auto_decomposition(test_client: TestClient, orchestrator_factory,
     handled_decompose_ids = set()
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path
@@ -44,7 +43,11 @@ async def test_auto_decomposition(test_client: TestClient, orchestrator_factory,
                 resp = test_client.get("/tasks")
                 tasks_data = resp.json()
                 for t in tasks_data:
-                    if t["title"].startswith("[DECOMPOSE]") and t["status"] == "claimed" and t["id"] not in handled_decompose_ids:
+                    if (
+                        t["title"].startswith("[DECOMPOSE]")
+                        and t["status"] == "claimed"
+                        and t["id"] not in handled_decompose_ids
+                    ):
                         handled_decompose_ids.add(t["id"])
                         # Create subtasks with unique scripts to avoid conflicts
                         for i in range(1, 3):
@@ -61,12 +64,15 @@ async def test_auto_decomposition(test_client: TestClient, orchestrator_factory,
                                 "time.sleep(2)\n"
                                 "```"
                             )
-                            test_client.post("/tasks", json={
-                                "title": f"Subtask {i}",
-                                "description": desc,
-                                "role": "backend",
-                                "scope": "small"
-                            })
+                            test_client.post(
+                                "/tasks",
+                                json={
+                                    "title": f"Subtask {i}",
+                                    "description": desc,
+                                    "role": "backend",
+                                    "scope": "small",
+                                },
+                            )
                         # Complete the manager task
                         test_client.post(f"/tasks/{t['id']}/complete", json={"result_summary": "decomposed"})
 

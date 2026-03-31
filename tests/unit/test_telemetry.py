@@ -9,6 +9,7 @@ from bernstein.core.telemetry import init_telemetry, start_span
 def reset_telemetry() -> None:
     """Reset the global telemetry state before each test."""
     import bernstein.core.telemetry
+
     bernstein.core.telemetry._enabled = False  # pyright: ignore[reportPrivateUsage]
     bernstein.core.telemetry._tracer = None  # pyright: ignore[reportPrivateUsage]
 
@@ -30,21 +31,17 @@ def test_start_span_recording_when_enabled() -> None:
     # Mock the context manager behavior of tracer.start_as_current_span
     mock_tracer.start_as_current_span.return_value.__enter__.return_value = mock_span
 
-    with patch("bernstein.core.telemetry._enabled", True), \
-         patch("bernstein.core.telemetry._tracer", mock_tracer):
-
+    with patch("bernstein.core.telemetry._enabled", True), patch("bernstein.core.telemetry._tracer", mock_tracer):
         with start_span("active-span", attributes={"key": "value"}) as span:
             assert span == mock_span
-            mock_tracer.start_as_current_span.assert_called_once_with(
-                "active-span",
-                attributes={"key": "value"}
-            )
+            mock_tracer.start_as_current_span.assert_called_once_with("active-span", attributes={"key": "value"})
 
 
 def test_init_telemetry_disabled_by_default() -> None:
     """Test that init_telemetry with no endpoint leaves it disabled."""
     init_telemetry(None)
     import bernstein.core.telemetry
+
     assert not bernstein.core.telemetry._enabled  # pyright: ignore[reportPrivateUsage]
     assert bernstein.core.telemetry._tracer is None  # pyright: ignore[reportPrivateUsage]
 
@@ -55,6 +52,7 @@ def test_init_telemetry_import_error_handling() -> None:
     with patch("opentelemetry.trace", side_effect=ImportError, create=True):
         init_telemetry("http://localhost:4317")
         import bernstein.core.telemetry
+
         assert not bernstein.core.telemetry._enabled  # pyright: ignore[reportPrivateUsage]
 
 
@@ -65,6 +63,7 @@ def test_init_telemetry_general_exception_handling() -> None:
         # But wait, init_telemetry does: from opentelemetry import trace
         # So we patch the trace module's function
         with patch("opentelemetry.sdk.trace.TracerProvider", MagicMock()):
-             init_telemetry("http://localhost:4317")
-             import bernstein.core.telemetry
-             assert not bernstein.core.telemetry._enabled  # pyright: ignore[reportPrivateUsage]
+            init_telemetry("http://localhost:4317")
+            import bernstein.core.telemetry
+
+            assert not bernstein.core.telemetry._enabled  # pyright: ignore[reportPrivateUsage]

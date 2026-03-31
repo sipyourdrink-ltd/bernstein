@@ -65,7 +65,12 @@ def test_for_role_filters_by_role(tmp_path: Path) -> None:
         {
             "recommendations": [
                 {"id": "all", "text": "Always use `uv run`", "severity": "critical", "applies_to": []},
-                {"id": "backend", "text": "Run backend smoke tests", "severity": "important", "applies_to": ["backend"]},
+                {
+                    "id": "backend",
+                    "text": "Run backend smoke tests",
+                    "severity": "important",
+                    "applies_to": ["backend"],
+                },
                 {"id": "qa", "text": "Use QA fixtures", "severity": "important", "applies_to": ["qa"]},
             ]
         },

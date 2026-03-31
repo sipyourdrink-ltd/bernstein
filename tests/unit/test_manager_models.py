@@ -43,4 +43,3 @@ def test_queue_review_result_defaults_and_serialization() -> None:
     assert result.skipped is False
     assert payload["reasoning"] == "Queue is healthy"
     assert payload["corrections"] == []
-

@@ -39,9 +39,15 @@ def test_analyze_quarantines_new_flaky_test(tmp_path: Path) -> None:
                 (now - timedelta(minutes=4)).isoformat(),
                 "1",
             ),
-            FlakyRunRecord("tests/unit/test_demo.py::test_flaky", False, 11, (now - timedelta(minutes=3)).isoformat(), "2"),
-            FlakyRunRecord("tests/unit/test_demo.py::test_flaky", True, 12, (now - timedelta(minutes=2)).isoformat(), "3"),
-            FlakyRunRecord("tests/unit/test_demo.py::test_flaky", False, 13, (now - timedelta(minutes=1)).isoformat(), "4"),
+            FlakyRunRecord(
+                "tests/unit/test_demo.py::test_flaky", False, 11, (now - timedelta(minutes=3)).isoformat(), "2"
+            ),
+            FlakyRunRecord(
+                "tests/unit/test_demo.py::test_flaky", True, 12, (now - timedelta(minutes=2)).isoformat(), "3"
+            ),
+            FlakyRunRecord(
+                "tests/unit/test_demo.py::test_flaky", False, 13, (now - timedelta(minutes=1)).isoformat(), "4"
+            ),
         ]
     )
 
@@ -69,8 +75,12 @@ def test_analyze_resolves_stable_quarantined_test(tmp_path: Path) -> None:
                 (now - timedelta(minutes=3)).isoformat(),
                 "1",
             ),
-            FlakyRunRecord("tests/unit/test_demo.py::test_stable", True, 11, (now - timedelta(minutes=2)).isoformat(), "2"),
-            FlakyRunRecord("tests/unit/test_demo.py::test_stable", True, 12, (now - timedelta(minutes=1)).isoformat(), "3"),
+            FlakyRunRecord(
+                "tests/unit/test_demo.py::test_stable", True, 11, (now - timedelta(minutes=2)).isoformat(), "2"
+            ),
+            FlakyRunRecord(
+                "tests/unit/test_demo.py::test_stable", True, 12, (now - timedelta(minutes=1)).isoformat(), "3"
+            ),
         ]
     )
 

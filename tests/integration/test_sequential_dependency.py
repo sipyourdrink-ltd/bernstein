@@ -52,12 +52,10 @@ runtime_dir = Path(__file__).parent
 (runtime_dir / 'DONE_frontend').write_text('done')
 time.sleep(2)
 ```"""
-    test_client.post("/tasks", json={
-        "title": "Frontend",
-        "description": desc_frontend,
-        "role": "frontend",
-        "depends_on": [backend_id]
-    })
+    test_client.post(
+        "/tasks",
+        json={"title": "Frontend", "description": desc_frontend, "role": "frontend", "depends_on": [backend_id]},
+    )
 
     # 3. Run orchestrator
     orch: Orchestrator = orchestrator_factory(max_agents=2, use_worktrees=True)
@@ -75,12 +73,14 @@ time.sleep(2)
         done_tasks = [Task.from_dict(t) for t in resp.json() if t["status"] == "done"]
         from bernstein.core.orchestrator import TickResult
         from bernstein.core.task_lifecycle import process_completed_tasks
+
         process_completed_tasks(orch, done_tasks, TickResult())
         return original_spawn(tasks)
 
     orch._spawner.spawn_for_tasks = fixed_spawn
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path

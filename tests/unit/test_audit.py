@@ -88,7 +88,7 @@ def test_audit_log_integrity_check_broken_chain(tmp_path: Path) -> None:
     log_files = list(audit_dir.glob("*.jsonl"))
     lines = log_files[0].read_text().splitlines()
     data = json.loads(lines[1])
-    data["prev_hmac"] = "0" * 64 # Incorrect prev_hmac
+    data["prev_hmac"] = "0" * 64  # Incorrect prev_hmac
     lines[1] = json.dumps(data, sort_keys=True)
     log_files[0].write_text("\n".join(lines) + "\n")
 

@@ -20,4 +20,3 @@ def test_sanitize_replaces_both() -> None:
 def test_sanitize_passthrough_for_safe_content() -> None:
     value = "safe content 123"
     assert sanitize_log(value) == value
-

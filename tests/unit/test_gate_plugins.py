@@ -50,7 +50,9 @@ def test_registry_discovers_file_plugin(tmp_path: Path) -> None:
     assert [item.name for item in registry.all_plugins()] == ["custom_gate"]
 
 
-def test_registry_rejects_builtin_name_collision_from_discovery(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_registry_rejects_builtin_name_collision_from_discovery(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     gates_dir = tmp_path / ".bernstein" / "gates"
     gates_dir.mkdir(parents=True)
     (gates_dir / "lint.py").write_text(

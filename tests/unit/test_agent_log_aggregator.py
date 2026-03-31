@@ -18,9 +18,7 @@ def test_parse_rate_limit_events(tmp_path: Path) -> None:
     _write_log(
         tmp_path,
         session_id,
-        "429 Too Many Requests\n"
-        "rate limit exceeded\n"
-        "provider overloaded\n",
+        "429 Too Many Requests\nrate limit exceeded\nprovider overloaded\n",
     )
 
     summary = AgentLogAggregator(tmp_path).parse_log(session_id)
@@ -44,9 +42,7 @@ def test_parse_test_failures(tmp_path: Path) -> None:
     _write_log(
         tmp_path,
         session_id,
-        "Running tests\n"
-        "FAILED tests/unit/test_foo.py::test_bar - AssertionError\n"
-        "1 failed, 2 passed in 0.42s\n",
+        "Running tests\nFAILED tests/unit/test_foo.py::test_bar - AssertionError\n1 failed, 2 passed in 0.42s\n",
     )
 
     summary = AgentLogAggregator(tmp_path).parse_log(session_id)
@@ -61,9 +57,7 @@ def test_parse_file_modifications(tmp_path: Path) -> None:
     _write_log(
         tmp_path,
         session_id,
-        "Modified: src/foo.py\n"
-        "Created: src/bar.py\n"
-        "Updated: src/foo.py\n",
+        "Modified: src/foo.py\nCreated: src/bar.py\nUpdated: src/foo.py\n",
     )
 
     summary = AgentLogAggregator(tmp_path).parse_log(session_id)
@@ -134,8 +128,7 @@ def test_parse_log_tail_incremental(tmp_path: Path) -> None:
 
     log_path = tmp_path / ".sdd" / "runtime" / f"{session_id}.log"
     log_path.write_text(
-        "429 Too Many Requests\n"
-        "SyntaxError: invalid syntax\n",
+        "429 Too Many Requests\nSyntaxError: invalid syntax\n",
         encoding="utf-8",
     )
 

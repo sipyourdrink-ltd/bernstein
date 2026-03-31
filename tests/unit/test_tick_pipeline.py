@@ -64,7 +64,8 @@ def test_compute_total_spent_uses_cache_and_updates_when_file_changes(tmp_path: 
     metrics_dir.mkdir(parents=True)
     cost_file = metrics_dir / "cost_efficiency_2026-03-31.jsonl"
     cost_file.write_text(
-        json.dumps({"value": 1.5, "labels": {"task_id": "T-1"}}) + "\n"
+        json.dumps({"value": 1.5, "labels": {"task_id": "T-1"}})
+        + "\n"
         + json.dumps({"value": 7.0, "labels": {"agent_id": "A-1"}})
         + "\n",
         encoding="utf-8",

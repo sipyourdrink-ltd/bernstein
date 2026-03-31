@@ -89,11 +89,7 @@ def test_trend_reads_historic_totals(tmp_path: Path) -> None:
     history_path = tmp_path / ".sdd" / "metrics" / "quality_scores.jsonl"
     history_path.parent.mkdir(parents=True, exist_ok=True)
     history_path.write_text(
-        "\n".join(
-            json.dumps({"total": total})
-            for total in (50, 58, 67, 76, 87)
-        )
-        + "\n",
+        "\n".join(json.dumps({"total": total}) for total in (50, 58, 67, 76, 87)) + "\n",
         encoding="utf-8",
     )
 

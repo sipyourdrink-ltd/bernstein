@@ -46,6 +46,7 @@ def _collector_for(task_id: str, agent_id: str) -> MagicMock:
 
 def _orch(tmp_path: Path, session: AgentSession) -> Any:
     """Build a small orchestrator stub for process_completed_tasks tests."""
+
     def _find_session_for_task(task_id: str) -> AgentSession | None:
         return session if task_id in session.task_ids else None
 
@@ -60,6 +61,8 @@ def _orch(tmp_path: Path, session: AgentSession) -> Any:
         _notify=MagicMock(),
         _sync_backlog_file=MagicMock(),
         _cost_tracker=MagicMock(),
+        _anomaly_detector=MagicMock(),
+        _handle_anomaly_signal=MagicMock(),
         _evolution=MagicMock(),
         _client=MagicMock(),
         _config=SimpleNamespace(

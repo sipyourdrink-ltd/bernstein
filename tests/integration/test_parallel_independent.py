@@ -45,10 +45,12 @@ async def test_parallel_independent(test_client: TestClient, orchestrator_factor
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
         spawn_count = 0
         original_spawn = orch._spawner.spawn_for_tasks
+
         def counted_spawn(tasks):
             nonlocal spawn_count
             spawn_count += 1
             return original_spawn(tasks)
+
         orch._spawner.spawn_for_tasks = counted_spawn
 
         def handler(request):

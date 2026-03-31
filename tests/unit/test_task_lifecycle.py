@@ -85,6 +85,7 @@ def _collector_for(task_id: str, agent_id: str) -> MagicMock:
 
 def _process_orch(tmp_path: Path, session: AgentSession) -> Any:
     """Build a small orchestrator stub for process_completed_tasks tests."""
+
     def _find_session_for_task(task_id: str) -> AgentSession | None:
         return session if task_id in session.task_ids else None
 
@@ -145,7 +146,9 @@ def test_claim_and_spawn_batches_respects_max_agent_cap(tmp_path: Path, make_tas
     task = make_task(id="T-cap", role="backend")
     result = TickResult()
 
-    claim_and_spawn_batches(orch, [[task]], alive_count=orch._config.max_agents, assigned_task_ids=set(), done_ids=set(), result=result)
+    claim_and_spawn_batches(
+        orch, [[task]], alive_count=orch._config.max_agents, assigned_task_ids=set(), done_ids=set(), result=result
+    )
 
     orch._client.post.assert_not_called()
     orch._spawner.spawn_for_tasks.assert_not_called()

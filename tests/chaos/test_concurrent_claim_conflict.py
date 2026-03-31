@@ -34,6 +34,7 @@ async def test_concurrent_claim_conflict(test_client: TestClient, orchestrator_f
     stale_mode = False
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path
@@ -53,7 +54,9 @@ async def test_concurrent_claim_conflict(test_client: TestClient, orchestrator_f
             content = request.read()
             headers = dict(request.headers)
             # CRITICAL: Pass query params (like expected_version) to test_client
-            resp = test_client.request(method, api_path, content=content, headers=headers, params=dict(request.url.params))
+            resp = test_client.request(
+                method, api_path, content=content, headers=headers, params=dict(request.url.params)
+            )
             return Response(resp.status_code, content=resp.content, headers=dict(resp.headers))
 
         respx_mock.route().mock(side_effect=handler)

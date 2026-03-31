@@ -14,7 +14,7 @@ def test_session_state_to_from_dict() -> None:
         goal="test goal",
         completed_task_ids=["task-1", "task-2"],
         pending_task_ids=["task-3"],
-        cost_spent=1.5
+        cost_spent=1.5,
     )
     data = state.to_dict()
     assert data["saved_at"] == 123456789.0
@@ -47,11 +47,7 @@ def test_save_and_load_session_round_trip(tmp_path: Path) -> None:
     """Test saving and then loading a session from disk."""
     workdir = tmp_path
     state = SessionState(
-        saved_at=time.time(),
-        goal="persistent goal",
-        completed_task_ids=["A"],
-        pending_task_ids=["B"],
-        cost_spent=2.0
+        saved_at=time.time(), goal="persistent goal", completed_task_ids=["A"], pending_task_ids=["B"], cost_spent=2.0
     )
 
     save_session(workdir, state)

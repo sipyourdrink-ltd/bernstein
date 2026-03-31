@@ -67,6 +67,7 @@ def test_export_metrics_with_dp_uses_privatized_payload(tmp_path: Path) -> None:
 
 def test_export_metrics_empty_collections(tmp_path: Path) -> None:
     output = tmp_path / "empty.json"
+
     def _summary() -> dict[str, int]:
         return {}
 

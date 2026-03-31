@@ -20,6 +20,7 @@ def _no_watchdog_threads() -> None:  # type: ignore[misc]
     with patch("bernstein.adapters.base.CLIAdapter._start_timeout_watchdog", return_value=None):
         yield  # type: ignore[misc]
 
+
 if TYPE_CHECKING:
     from pathlib import Path
 

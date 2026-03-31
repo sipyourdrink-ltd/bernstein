@@ -18,10 +18,13 @@ def test_manager_init_fails_when_runtime_binary_missing(tmp_path: Path) -> None:
 
 
 def test_create_invokes_runtime_with_workspace_and_env(tmp_path: Path) -> None:
-    with patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"), patch(
-        "bernstein.core.container.subprocess.run",
-        return_value=SimpleNamespace(returncode=0, stdout="container-id\n", stderr=""),
-    ) as run_mock:
+    with (
+        patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"),
+        patch(
+            "bernstein.core.container.subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stdout="container-id\n", stderr=""),
+        ) as run_mock,
+    ):
         manager = ContainerManager(ContainerConfig(), tmp_path)
         handle = manager.create("S-1", env={"API_KEY": "x"})
 
@@ -34,9 +37,12 @@ def test_create_invokes_runtime_with_workspace_and_env(tmp_path: Path) -> None:
 
 
 def test_create_raises_on_nonzero_exit(tmp_path: Path) -> None:
-    with patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"), patch(
-        "bernstein.core.container.subprocess.run",
-        return_value=SimpleNamespace(returncode=1, stdout="", stderr="boom"),
+    with (
+        patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"),
+        patch(
+            "bernstein.core.container.subprocess.run",
+            return_value=SimpleNamespace(returncode=1, stdout="", stderr="boom"),
+        ),
     ):
         manager = ContainerManager(ContainerConfig(), tmp_path)
         with pytest.raises(ContainerError, match="Container creation failed"):
@@ -44,9 +50,12 @@ def test_create_raises_on_nonzero_exit(tmp_path: Path) -> None:
 
 
 def test_destroy_untracks_handle(tmp_path: Path) -> None:
-    with patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"), patch(
-        "bernstein.core.container.subprocess.run",
-        return_value=SimpleNamespace(returncode=0, stdout="container-id\n", stderr="", strip=lambda: ""),
+    with (
+        patch("bernstein.core.container._resolve_runtime_cmd", return_value="docker"),
+        patch(
+            "bernstein.core.container.subprocess.run",
+            return_value=SimpleNamespace(returncode=0, stdout="container-id\n", stderr="", strip=lambda: ""),
+        ),
     ):
         manager = ContainerManager(ContainerConfig(), tmp_path)
         handle = manager.create("S-3")

@@ -61,7 +61,9 @@ def test_check_stalled_tasks_writes_wakeup_after_three_identical_snapshots() -> 
         _config=SimpleNamespace(server_url="http://server"),
         _client=MagicMock(),
         _last_snapshot_ts={},
-        _last_snapshot={"T-1": ProgressSnapshot(timestamp=9.0, files_changed=1, tests_passing=2, errors=0, last_file="src/a.py")},
+        _last_snapshot={
+            "T-1": ProgressSnapshot(timestamp=9.0, files_changed=1, tests_passing=2, errors=0, last_file="src/a.py")
+        },
         _stall_counts={"T-1": 2},
         _signal_mgr=MagicMock(),
         _spawner=MagicMock(),
@@ -84,7 +86,9 @@ def test_check_stalled_tasks_kills_agent_after_seven_identical_snapshots() -> No
         _config=SimpleNamespace(server_url="http://server"),
         _client=MagicMock(),
         _last_snapshot_ts={},
-        _last_snapshot={"T-1": ProgressSnapshot(timestamp=9.0, files_changed=1, tests_passing=2, errors=0, last_file="src/a.py")},
+        _last_snapshot={
+            "T-1": ProgressSnapshot(timestamp=9.0, files_changed=1, tests_passing=2, errors=0, last_file="src/a.py")
+        },
         _stall_counts={"T-1": 6},
         _signal_mgr=MagicMock(),
         _spawner=MagicMock(),

@@ -96,7 +96,7 @@ def test_parse_review_response_requires_valid_verdict() -> None:
 
 
 def test_parse_tasks_response_accepts_fenced_json_array() -> None:
-    raw = "```json\n[{\"title\":\"Task A\", \"role\":\"backend\"}]\n```"
+    raw = '```json\n[{"title":"Task A", "role":"backend"}]\n```'
 
     tasks = parse_tasks_response(raw)
 

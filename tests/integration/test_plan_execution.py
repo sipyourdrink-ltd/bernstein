@@ -53,6 +53,7 @@ async def test_plan_execution(test_client: TestClient, orchestrator_factory, int
     # 3. Bootstrap (inject tasks into server)
     # We'll use a global respx mock to handle all orchestrator calls
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path
@@ -91,7 +92,7 @@ async def test_plan_execution(test_client: TestClient, orchestrator_factory, int
                 "role": t.role,
                 "scope": t.scope.value,
                 "depends_on": t.depends_on,
-                "model": "sonnet", # Force mock
+                "model": "sonnet",  # Force mock
             }
             resp = test_client.post("/tasks", json=payload)
             assert resp.status_code == 201
@@ -124,7 +125,6 @@ async def test_plan_execution(test_client: TestClient, orchestrator_factory, int
             print(f"Tick {i}: Done {done_count}/2")
             if done_count == 2:
                 break
-
 
         resp = test_client.get("/tasks")
         assert sum(1 for t in resp.json() if t["status"] == "done") == 2

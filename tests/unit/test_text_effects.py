@@ -156,9 +156,7 @@ def test_typing_effect_empty_list_no_output(
     assert captured.out == ""
 
 
-def test_typing_effect_single_line(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_typing_effect_single_line(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
     typing_effect(["only one"])
     captured = capsys.readouterr()
@@ -180,17 +178,13 @@ def test_tte_available_returns_bool() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_logo_reveal_signature_defaults(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_logo_reveal_signature_defaults(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """logo_reveal(text) works with only the required argument."""
     monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
     logo_reveal("BERNSTEIN")  # should not raise
 
 
-def test_typing_effect_signature_defaults(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_typing_effect_signature_defaults(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """typing_effect(lines) works with only the required argument."""
     monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
     typing_effect(["boot"])  # should not raise

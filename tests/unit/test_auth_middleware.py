@@ -67,6 +67,7 @@ def test_missing_bearer_header_returns_401() -> None:
 
 def test_jwt_user_without_permission_gets_403() -> None:
     """A validated JWT still gets 403 when the user lacks the required permission."""
+
     def _deny(permission: str) -> bool:
         del permission
         return False

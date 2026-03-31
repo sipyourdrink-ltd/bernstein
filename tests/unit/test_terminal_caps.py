@@ -42,9 +42,7 @@ def _make(
 
 def _detect_with_tty(env: dict[str, str]) -> TerminalCaps:
     """Run TerminalCaps.detect() with the given env vars and stdout=TTY."""
-    with patch.dict("os.environ", env, clear=False), patch.object(
-        sys.stdout, "isatty", return_value=True
-    ):
+    with patch.dict("os.environ", env, clear=False), patch.object(sys.stdout, "isatty", return_value=True):
         return TerminalCaps.detect()
 
 
@@ -259,10 +257,13 @@ class TestDetect:
 
     def test_non_tty_all_new_props_false(self) -> None:
         """Non-TTY → all new capability properties are False."""
-        with patch.object(sys.stdout, "isatty", return_value=False), patch.dict(
-            "os.environ",
-            {"KITTY_WINDOW_ID": "1", "COLORTERM": "truecolor", "TERM_PROGRAM": "WezTerm"},
-            clear=False,
+        with (
+            patch.object(sys.stdout, "isatty", return_value=False),
+            patch.dict(
+                "os.environ",
+                {"KITTY_WINDOW_ID": "1", "COLORTERM": "truecolor", "TERM_PROGRAM": "WezTerm"},
+                clear=False,
+            ),
         ):
             caps = TerminalCaps.detect()
         assert caps.is_tty is False

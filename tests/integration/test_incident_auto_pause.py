@@ -39,6 +39,7 @@ async def test_incident_auto_pause(test_client: TestClient, orchestrator_factory
     orch._incident_manager.auto_pause = True
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path

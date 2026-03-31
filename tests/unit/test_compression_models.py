@@ -47,4 +47,3 @@ def test_compression_result_supports_empty_file_lists() -> None:
 
     assert result.selected_files == []
     assert result.dropped_files == []
-

@@ -235,9 +235,7 @@ class TestCheckFilePermissions:
             allowed_paths=("docs/*",),
             denied_paths=("src/*",),
         )
-        results = check_file_permissions(
-            DIFF_ONLY_SRC, "backend", overrides={"backend": custom}
-        )
+        results = check_file_permissions(DIFF_ONLY_SRC, "backend", overrides={"backend": custom})
         assert len(results) == 1
         assert not results[0].passed
         assert results[0].blocked

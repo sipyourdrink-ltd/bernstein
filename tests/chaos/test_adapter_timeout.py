@@ -33,6 +33,7 @@ async def test_adapter_timeout(test_client: TestClient, orchestrator_factory, in
 
     # CHAOS: Mock adapter spawn failure
     from bernstein.adapters.registry import get_adapter
+
     adapter = get_adapter("integration-mock")
 
     def failing_spawn(*args, **kwargs):
@@ -41,6 +42,7 @@ async def test_adapter_timeout(test_client: TestClient, orchestrator_factory, in
     monkeypatch.setattr(adapter, "spawn", failing_spawn)
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path

@@ -52,6 +52,7 @@ async def test_multi_agent_merge(test_client: TestClient, orchestrator_factory, 
     orch._incident_manager.auto_pause = False
 
     with respx.mock(base_url="http://127.0.0.1:8052") as respx_mock:
+
         def handler(request):
             method = request.method
             path = request.url.path
@@ -88,7 +89,7 @@ async def test_multi_agent_merge(test_client: TestClient, orchestrator_factory, 
 
             resp = test_client.get("/tasks")
             if all(t["status"] == "done" for t in resp.json()):
-                orch.tick() # final pass
+                orch.tick()  # final pass
                 break
 
         # 3. Verify
