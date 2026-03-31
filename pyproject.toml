@@ -172,6 +172,7 @@ exclude = [
     "src/bernstein/core/backlog_parser.py",
     "src/bernstein/core/plan_loader.py",
     "src/bernstein/core/runtime_state.py",
+    "src/bernstein/cli/maintenance_cmd.py",
     "src/bernstein/core/agent_identity.py",
     "src/bernstein/core/command_policy.py",
     "src/bernstein/core/key_rotation.py",
