@@ -445,9 +445,7 @@ class AgentIdentityStore:
         )
         return identity
 
-    def authorize(
-        self, identity_id: str, permission: str, *, actor: str = "authz"
-    ) -> bool:
+    def authorize(self, identity_id: str, permission: str, *, actor: str = "authz") -> bool:
         """Check if an identity has a specific permission. Logs the result."""
         identity = self._load(identity_id)
         if identity is None:
@@ -466,9 +464,7 @@ class AgentIdentityStore:
         )
         return granted
 
-    def revoke(
-        self, identity_id: str, *, reason: str = "", actor: str = "admin"
-    ) -> bool:
+    def revoke(self, identity_id: str, *, reason: str = "", actor: str = "admin") -> bool:
         """Revoke an agent identity. Returns True if the identity was found."""
         identity = self._load(identity_id)
         if identity is None:
@@ -499,9 +495,7 @@ class AgentIdentityStore:
         logger.info("Revoked agent identity %s: %s", identity_id, reason)
         return True
 
-    def suspend(
-        self, identity_id: str, *, reason: str = "", actor: str = "admin"
-    ) -> bool:
+    def suspend(self, identity_id: str, *, reason: str = "", actor: str = "admin") -> bool:
         """Suspend an agent identity (reversible). Returns True if found."""
         identity = self._load(identity_id)
         if identity is None:
@@ -522,9 +516,7 @@ class AgentIdentityStore:
         logger.info("Suspended agent identity %s: %s", identity_id, reason)
         return True
 
-    def reactivate(
-        self, identity_id: str, *, actor: str = "admin"
-    ) -> bool:
+    def reactivate(self, identity_id: str, *, actor: str = "admin") -> bool:
         """Reactivate a suspended identity. Returns True if found and was suspended."""
         identity = self._load(identity_id)
         if identity is None:
@@ -571,9 +563,7 @@ class AgentIdentityStore:
                 logger.warning("Skipping corrupt identity file: %s", path)
         return results
 
-    def get_audit_trail(
-        self, identity_id: str | None = None, *, limit: int = 100
-    ) -> list[IdentityAuditEvent]:
+    def get_audit_trail(self, identity_id: str | None = None, *, limit: int = 100) -> list[IdentityAuditEvent]:
         """Read audit events, optionally filtered to a single identity."""
         events: list[IdentityAuditEvent] = []
         if not self._audit_path.exists():

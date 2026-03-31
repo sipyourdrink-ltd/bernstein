@@ -144,6 +144,7 @@ class JiraAdapter:
     def _validate_issue_key(key: str) -> str:
         """Validate that an issue key matches the expected Jira format."""
         import re
+
         if not re.match(r"^[A-Z][A-Z0-9_]+-\d+$", key):
             raise ValueError(f"Invalid Jira issue key format: {key!r}")
         return key

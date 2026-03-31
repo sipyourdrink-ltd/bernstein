@@ -13,7 +13,6 @@ from bernstein.core.batch_router import (
 )
 from bernstein.core.models import Complexity, Scope, Task, TaskType
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -44,7 +43,7 @@ def _task(**kwargs: object) -> Task:
 
 class TestBatchDiscountFactor:
     def test_discount_is_50_percent(self) -> None:
-        assert BATCH_DISCOUNT_FACTOR == pytest.approx(0.50)
+        assert pytest.approx(0.50) == BATCH_DISCOUNT_FACTOR
 
 
 # ---------------------------------------------------------------------------

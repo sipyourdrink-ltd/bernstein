@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 BACKLOG = Path(".sdd/backlog/open")
 
 # Map ticket ID prefix to default tags
@@ -194,7 +193,7 @@ def convert_ticket(path: Path) -> None:
             if next_section > 0:
                 summary = text[body_start:next_section].strip()
             else:
-                summary = text[body_start:body_start + 500].strip()
+                summary = text[body_start : body_start + 500].strip()
 
     dod = sections.get("Acceptance Criteria", sections.get("Objective & Definition of Done", ""))
     steps = sections.get("Implementation", sections.get("Steps", ""))
@@ -251,7 +250,7 @@ def convert_ticket(path: Path) -> None:
     if janitor:
         janitor_lines = ["janitor_signals:"]
         for s in janitor:
-            janitor_lines.append(f'  - type: {s["type"]}')
+            janitor_lines.append(f"  - type: {s['type']}")
             janitor_lines.append(f'    value: "{s["value"]}"')
         janitor_block = "\n".join(janitor_lines)
     else:

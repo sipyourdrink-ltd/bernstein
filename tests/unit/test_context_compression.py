@@ -265,10 +265,10 @@ class TestPromptCompressor:
         # role + tasks are essential (priority 10) — must be kept.
         compressor = PromptCompressor(token_budget=100)
         sections = [
-            ("role", "You are a specialist. " * 5),          # ~110 chars, 27 tokens
+            ("role", "You are a specialist. " * 5),  # ~110 chars, 27 tokens
             ("specialists", "Available: agentA agentB " * 12),  # ~300 chars, 75 tokens
-            ("tasks", "Implement feature X. " * 5),          # ~105 chars, 26 tokens
-            ("instructions", "Mark complete when done. " * 3), # ~75 chars, 18 tokens
+            ("tasks", "Implement feature X. " * 5),  # ~105 chars, 26 tokens
+            ("instructions", "Mark complete when done. " * 3),  # ~75 chars, 18 tokens
         ]
         _compressed, _orig, compressed_tok, dropped = compressor.compress_sections(sections)
 
@@ -281,12 +281,12 @@ class TestPromptCompressor:
         # Tiny budget: only essential sections survive.
         compressor = PromptCompressor(token_budget=10)
         sections = [
-            ("role", "r" * 200),          # 50 tokens
-            ("tasks", "t" * 200),         # 50 tokens
+            ("role", "r" * 200),  # 50 tokens
+            ("tasks", "t" * 200),  # 50 tokens
             ("instructions", "i" * 200),  # 50 tokens
-            ("signal", "s" * 200),        # 50 tokens
-            ("specialists", "a" * 400),   # 100 tokens — droppable
-            ("lessons", "l" * 400),       # 100 tokens — droppable
+            ("signal", "s" * 200),  # 50 tokens
+            ("specialists", "a" * 400),  # 100 tokens — droppable
+            ("lessons", "l" * 400),  # 100 tokens — droppable
         ]
         _compressed, _orig, _compressed_tok, dropped = compressor.compress_sections(sections)
 
@@ -327,12 +327,12 @@ class TestPromptCompressor:
         from bernstein.core.context_compression import PromptCompressor
 
         # Budget set to 50% of a large prompt — simulates small-task target.
-        role_content = "You are a backend engineer." * 50        # ~1350 chars
-        tasks_content = "Implement feature X." * 20              # ~400 chars
-        instructions_content = "Mark complete when done." * 20   # ~480 chars
-        specialists_content = "Available: " + "agentX " * 200    # ~1400 chars — droppable
-        lessons_content = "Lesson: do X not Y. " * 100          # ~2000 chars — droppable
-        team_content = "Team: agentA working on Y. " * 100      # ~2700 chars — droppable
+        role_content = "You are a backend engineer." * 50  # ~1350 chars
+        tasks_content = "Implement feature X." * 20  # ~400 chars
+        instructions_content = "Mark complete when done." * 20  # ~480 chars
+        specialists_content = "Available: " + "agentX " * 200  # ~1400 chars — droppable
+        lessons_content = "Lesson: do X not Y. " * 100  # ~2000 chars — droppable
+        team_content = "Team: agentA working on Y. " * 100  # ~2700 chars — droppable
 
         total_chars = sum(
             len(c)
