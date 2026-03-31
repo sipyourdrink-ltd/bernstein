@@ -1023,6 +1023,12 @@ class BernsteinApp(App[None]):
             self._update_agents(agents, costs)
         else:
             log.write("[dim]Spawning agents...[/dim]")
+            # Show worktree count as early signal of activity
+            wt_dir = Path(".sdd/worktrees")
+            if wt_dir.exists():
+                wt_count = sum(1 for _ in wt_dir.iterdir() if _.is_dir())
+                if wt_count > 0:
+                    log.write(f"[dim]{wt_count} worktree(s) detected[/dim]")
 
         # File watcher for agents.json (500ms — instant agent visibility)
         self.set_interval(0.5, self._check_agents_file)
@@ -1039,22 +1045,51 @@ class BernsteinApp(App[None]):
     # -- Fast agent updates via file watcher (no HTTP needed) --
 
     _agents_mtime: float = 0.0
+    _spawner_size: int = 0
 
     def _check_agents_file(self) -> None:
-        """Check if agents.json was modified since last check."""
+        """Check agents.json + spawner.log for real-time updates."""
+        # 1. Check agents.json for agent state
         p = Path(".sdd/runtime/agents.json")
-        if not p.exists():
-            return
-        try:
-            mtime = p.stat().st_mtime
-            if mtime > self._agents_mtime:
-                self._agents_mtime = mtime
-                agents = _load_agents()
-                if agents:
-                    costs: dict[str, Any] = {}
-                    self._update_agents(agents, costs)
-        except Exception:
-            pass
+        if p.exists():
+            try:
+                mtime = p.stat().st_mtime
+                if mtime > self._agents_mtime:
+                    self._agents_mtime = mtime
+                    agents = _load_agents()
+                    if agents:
+                        costs: dict[str, Any] = {}
+                        self._update_agents(agents, costs)
+                        self._update_activity(agents)
+            except Exception:
+                pass
+
+        # 2. Check spawner.log for real-time activity feed
+        sp = Path(".sdd/runtime/spawner.log")
+        if sp.exists():
+            try:
+                size = sp.stat().st_size
+                if size > self._spawner_size:
+                    # Read new lines
+                    with sp.open() as f:
+                        f.seek(self._spawner_size)
+                        new_lines = f.read()
+                    self._spawner_size = size
+                    log = self.query_one("#activity-log", RichLog)
+                    for line in new_lines.strip().split("\n"):
+                        if not line:
+                            continue
+                        # Filter to important events
+                        if "agent_spawned" in line or "Spawning" in line or "spawned" in line.lower():
+                            log.write(f"[green]→ {line.split('] ')[-1] if '] ' in line else line}[/green]")
+                        elif "ERROR" in line or "error" in line:
+                            log.write(f"[red]{line.split('] ')[-1] if '] ' in line else line}[/red]")
+                        elif "WARNING" in line:
+                            log.write(f"[yellow]{line.split('] ')[-1] if '] ' in line else line}[/yellow]")
+                        elif "completed" in line.lower() or "reaped" in line.lower() or "merged" in line.lower():
+                            log.write(f"[cyan]{line.split('] ')[-1] if '] ' in line else line}[/cyan]")
+            except Exception:
+                pass
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         worker: Worker[dict[str, Any]] = event.worker  # type: ignore[assignment]
