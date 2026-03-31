@@ -20,11 +20,8 @@ from bernstein.cli.helpers import (
     auth_headers,
     console,
     is_alive,
-    kill_pid,
     kill_pid_hard,
     print_banner,
-    server_get,
-    server_post,
 )
 
 # ---------------------------------------------------------------------------
@@ -198,80 +195,38 @@ def register_sigint_handler() -> None:
 
 
 def soft_stop(timeout: int) -> None:
-    """Soft stop: signal agents, wait, save state, return tickets, kill.
+    """Graceful drain via DrainCoordinator.
 
     Args:
         timeout: Maximum seconds to wait for agents to exit gracefully.
     """
-    # 1a. Try real-time IPC first (sub-second for agents with stdin pipes)
+    import asyncio
+
+    from bernstein.core.drain import DrainConfig, DrainCoordinator
+
     workdir = Path.cwd()
-    from bernstein.core.agent_ipc import shutdown_all as ipc_shutdown
+    config = DrainConfig(wait_timeout_s=timeout)
+    coordinator = DrainCoordinator(workdir, config=config)
 
-    ipc_results = ipc_shutdown(reason="user requested stop", workdir=workdir)
-    pipe_count = sum(1 for v in ipc_results.values() if v == "pipe")
-    if pipe_count:
-        console.print(f"  Sent shutdown via pipe to {pipe_count} agent(s).")
+    def on_update(phase: object, agents: object) -> None:
+        # Print progress to stdout.
+        name = getattr(phase, "name", "")
+        number = getattr(phase, "number", 0)
+        detail = getattr(phase, "detail", "")
+        print(f"\r  Phase {number}/6: {name} -- {detail}    ", end="", flush=True)
 
-    # 1b. Also write file-based signals as belt-and-suspenders
-    signaled = write_shutdown_signals(reason="User requested stop")
-    if signaled:
-        console.print(f"[dim]Wrote SHUTDOWN signals for {len(signaled)} agent(s).[/dim]")
+    report = asyncio.run(coordinator.run(callback=on_update))
+    print()  # newline after carriage returns
 
-    # 2. Ask the server to initiate graceful shutdown
-    data = server_post("/shutdown", {})
-    if data is not None:
-        console.print("[dim]Shutdown signal sent to task server.[/dim]")
-    else:
-        console.print("[dim]Task server not reachable — skipping server shutdown.[/dim]")
-
-    # 3. Wait for agents to wind down
-    if timeout > 0:
-        console.print(f"[dim]Waiting up to {timeout}s for agents…[/dim]")
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            status_data = server_get("/status")
-            if status_data is None:
-                break
-            active = [a for a in status_data.get("agents", []) if a.get("status") in {"working", "starting"}]
-            if not active:
-                break
-            time.sleep(1)
-
-    # 4. Save session state
-    save_session_on_stop(Path.cwd())
-    console.print("[dim]Session state saved.[/dim]")
-
-    # 5. Return claimed tickets to open
-    moved = return_claimed_to_open()
-    if moved:
-        console.print(f"[dim]Returned {moved} claimed ticket(s) to open.[/dim]")
-
-    # 6. Kill watchdog first so it doesn't restart things we're stopping
-    kill_pid(SDD_PID_WATCHDOG, "Watchdog")
-
-    # 7. Kill spawner
-    kill_pid(SDD_PID_SPAWNER, "Spawner")
-
-    # 8. Kill all spawned agents (they run in separate process groups)
-    agents_json = Path(".sdd/runtime/agents.json")
-    if agents_json.exists():
-        try:
-            agent_data = json.loads(agents_json.read_text())
-            for agent in agent_data.get("agents", []):
-                pid = agent.get("pid")
-                if pid and is_alive(pid):
-                    try:
-                        os.killpg(os.getpgid(pid), signal.SIGTERM)
-                        console.print(f"[dim]Sent SIGTERM to agent {agent.get('id', '?')} (PID {pid})[/dim]")
-                    except OSError:
-                        pass
-        except (OSError, ValueError):
-            pass
-
-    # 9. Kill server
-    kill_pid(SDD_PID_SERVER, "Task server")
-
-    console.print("\n[green]Bernstein stopped (soft).[/green]")
+    # Print summary.
+    merged_count = sum(1 for m in report.merges if m.action == "merged")
+    console.print("\n[bold]Drain complete:[/bold]")
+    console.print(f"  Tasks: {report.tasks_done} done, {report.tasks_partial} partial")
+    console.print(f"  Merged: {merged_count} branches")
+    console.print(
+        f"  Cleanup: {report.worktrees_removed} worktrees, {report.branches_deleted} branches"
+    )
+    console.print(f"  Duration: {report.total_duration_s:.0f}s")
 
 
 def hard_stop() -> None:

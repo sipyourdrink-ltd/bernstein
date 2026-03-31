@@ -481,11 +481,19 @@ class CatalogRegistry:
         desc_lower = task_description.lower()
         keywords = {w for w in desc_lower.split() if len(w) > 3}
 
-        # 1. Exact role match — rank by capability overlap then priority
+        # 1. Exact role match — rank by capability overlap then priority.
+        #    When all capability scores are zero (e.g. Agency agents with no
+        #    capabilities defined), fall back to description keyword overlap
+        #    so the best-matching agent is selected, not just the first one.
         exact: list[CatalogAgent] = [a for a in self.loaded_agents if a.role == role]
         if exact:
             if keywords:
                 scored_exact = [(_capability_score(a, desc_lower, keywords), a) for a in exact]
+                if all(score == 0 for score, _ in scored_exact):
+                    scored_exact = [
+                        (len(keywords & {w for w in a.description.lower().split() if len(w) > 3}), a)
+                        for a in exact
+                    ]
                 scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
                 winner = scored_exact[0][1]
             else:

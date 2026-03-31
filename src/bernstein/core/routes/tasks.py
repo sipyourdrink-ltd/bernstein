@@ -112,6 +112,11 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
 @router.get("/tasks/next/{role}", response_model=TaskResponse)
 async def next_task(role: str, request: Request) -> TaskResponse:
     """Claim the next available task for *role*."""
+    if request.app.state.draining:  # type: ignore[attr-defined]
+        return JSONResponse(  # type: ignore[return-value]
+            {"error": "Server is draining -- no new claims accepted"},
+            status_code=503,
+        )
     store = _get_store(request)
     task = await store.claim_next(role)
     if task is None:
@@ -122,6 +127,11 @@ async def next_task(role: str, request: Request) -> TaskResponse:
 @router.post("/tasks/claim-batch", response_model=BatchClaimResponse)
 async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimResponse:
     """Atomically claim multiple tasks by ID for an agent."""
+    if request.app.state.draining:  # type: ignore[attr-defined]
+        return JSONResponse(  # type: ignore[return-value]
+            {"error": "Server is draining -- no new claims accepted"},
+            status_code=503,
+        )
     store = _get_store(request)
     claimed, failed = await store.claim_batch(body.task_ids, body.agent_id)
     return BatchClaimResponse(claimed=claimed, failed=failed)
@@ -134,6 +144,11 @@ async def claim_task(task_id: str, request: Request, expected_version: int | Non
     Pass ``expected_version`` as a query param for optimistic locking
     (CAS). If the task's version doesn't match, returns 409 Conflict.
     """
+    if request.app.state.draining:  # type: ignore[attr-defined]
+        return JSONResponse(  # type: ignore[return-value]
+            {"error": "Server is draining -- no new claims accepted"},
+            status_code=503,
+        )
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     try:

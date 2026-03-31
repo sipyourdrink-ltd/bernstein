@@ -871,6 +871,7 @@ def create_app(
     application.state.sdd_dir = jsonl_path.parent.parent  # type: ignore[attr-defined]  # .sdd/
     application.state.workdir = workdir  # type: ignore[attr-defined]
     application.state.reload_seed_config = _reload_seed_config  # type: ignore[attr-defined]
+    application.state.draining = False  # type: ignore[attr-defined]
     application.state.readonly = readonly  # type: ignore[attr-defined]
     application.state.slack_signing_secret = (  # type: ignore[attr-defined]
         slack_signing_secret or os.environ.get("SLACK_SIGNING_SECRET") or ""
@@ -898,6 +899,11 @@ def create_app(
     application.include_router(costs_router)
     application.include_router(dashboard_router)
     application.include_router(quality_router)
+
+    # Graceful drain routes — freeze/unfreeze claim acceptance
+    from bernstein.core.routes.drain import router as drain_router
+
+    application.include_router(drain_router)
 
     # Agent identity lifecycle routes
     from bernstein.core.routes.identities import router as identities_router

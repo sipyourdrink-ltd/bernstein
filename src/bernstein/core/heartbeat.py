@@ -1,92 +1,214 @@
-"""Agent heartbeat and stall detection."""
+"""Heartbeat monitoring and adaptive stall detection."""
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import time
-from typing import Any
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
-from bernstein.core.models import ProgressSnapshot
+from bernstein.core.agent_log_aggregator import AgentLogAggregator, AgentLogSummary
+from bernstein.core.agent_signals import AgentSignalManager
+from bernstein.core.models import AgentHeartbeat, ProgressSnapshot, Task
+
+if TYPE_CHECKING:
+    from bernstein.core.models import AgentSession
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class HeartbeatStatus:
+    """Status of an agent heartbeat signal."""
+
+    session_id: str
+    last_heartbeat: datetime | None
+    age_seconds: float
+    phase: str
+    progress_pct: int
+    is_alive: bool
+    is_stale: bool
+
+
+@dataclass(frozen=True)
+class StallProfile:
+    """Adaptive snapshot thresholds for one agent session."""
+
+    wakeup_threshold: int
+    shutdown_threshold: int
+    kill_threshold: int
+    reason: str
+
+
+class HeartbeatMonitor:
+    """Monitor agent liveness via heartbeat files."""
+
+    def __init__(self, workdir: Path, *, timeout_s: float = 120.0) -> None:
+        self._workdir = workdir
+        self._timeout_s = timeout_s
+        self._signal_mgr = AgentSignalManager(workdir)
+
+    def check(self, session_id: str) -> HeartbeatStatus:
+        """Check one session's heartbeat."""
+        heartbeat = self._read_heartbeat(session_id)
+        if heartbeat is None:
+            return HeartbeatStatus(
+                session_id=session_id,
+                last_heartbeat=None,
+                age_seconds=0.0,
+                phase="",
+                progress_pct=0,
+                is_alive=False,
+                is_stale=False,
+            )
+        last_heartbeat = datetime.fromtimestamp(heartbeat.timestamp, tz=UTC)
+        age_seconds = max(time.time() - heartbeat.timestamp, 0.0)
+        return HeartbeatStatus(
+            session_id=session_id,
+            last_heartbeat=last_heartbeat,
+            age_seconds=age_seconds,
+            phase=heartbeat.phase or heartbeat.status,
+            progress_pct=max(0, min(int(heartbeat.progress_pct), 100)),
+            is_alive=age_seconds < self._timeout_s,
+            is_stale=age_seconds >= self._timeout_s,
+        )
+
+    def check_all(self, session_ids: list[str]) -> list[HeartbeatStatus]:
+        """Check all session IDs in order."""
+        return [self.check(session_id) for session_id in session_ids]
+
+    def inject_heartbeat_instructions(self, session_id: str) -> str:
+        """Return a shell snippet that writes heartbeats in the background."""
+        heartbeat_path = self._workdir / ".sdd" / "runtime" / "heartbeats" / f"{session_id}.json"
+        escaped_path = str(heartbeat_path)
+        return (
+            f"(mkdir -p '{heartbeat_path.parent}' && "
+            f"while true; do "
+            f"printf '{{\"timestamp\":%s,\"phase\":\"implementing\",\"progress_pct\":0,\"current_file\":\"\",\"message\":\"working\"}}' \"$(date +%s)\" > '{escaped_path}'; "
+            f"sleep 15; "
+            f"done) >/dev/null 2>&1 &"
+        )
+
+    def _read_heartbeat(self, session_id: str) -> AgentHeartbeat | None:
+        """Read a heartbeat from the primary or fallback location."""
+        heartbeat = self._signal_mgr.read_heartbeat(session_id)
+        if heartbeat is not None:
+            return heartbeat
+
+        fallback = self._workdir / ".sdd" / "runtime" / "signals" / session_id / "HEARTBEAT"
+        if not fallback.exists():
+            return None
+        try:
+            raw = json.loads(fallback.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        raw_timestamp = raw.get("timestamp")
+        timestamp: float
+        if isinstance(raw_timestamp, str):
+            try:
+                timestamp = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return None
+        else:
+            try:
+                timestamp = float(raw_timestamp)
+            except (TypeError, ValueError):
+                return None
+
+        return AgentHeartbeat(
+            timestamp=timestamp,
+            files_changed=int(raw.get("files_changed", 0)),
+            status=str(raw.get("status", "working")),
+            current_file=str(raw.get("current_file", "")),
+            phase=str(raw.get("phase", raw.get("status", ""))),
+            progress_pct=int(raw.get("progress_pct", 0)),
+            message=str(raw.get("message", "")),
+        )
+
+
+def compute_stall_profile(
+    task: Task | None,
+    heartbeat_status: HeartbeatStatus | None,
+    log_summary: AgentLogSummary | None,
+) -> StallProfile:
+    """Compute adaptive snapshot thresholds from runtime context."""
+    if heartbeat_status is not None and heartbeat_status.phase.lower() in {"testing", "tests", "pytest"}:
+        return StallProfile(8, 12, 16, "heartbeat indicates testing phase")
+    if log_summary is not None and log_summary.rate_limit_hits > 0:
+        return StallProfile(6, 10, 14, "recent rate-limit activity detected")
+    if heartbeat_status is not None and heartbeat_status.last_heartbeat is None:
+        no_log_activity = log_summary is None or log_summary.last_activity_line == 0
+        if no_log_activity:
+            return StallProfile(2, 3, 5, "no heartbeat and no log activity")
+    if task is not None and (task.scope.value == "large" or task.complexity.value == "high"):
+        return StallProfile(5, 8, 12, "large/high-complexity task")
+    return StallProfile(3, 5, 7, "default profile")
+
+
 def check_stale_agents(orch: Any) -> None:
-    """Write WAKEUP / SHUTDOWN signals for agents that stopped heartbeating.
+    """Write WAKEUP / SHUTDOWN signals for agents with stale heartbeats."""
+    if not bool(getattr(orch._config, "heartbeat_enabled", True)):
+        return
 
-    Thresholds:
-    - 60s without a heartbeat  -> WAKEUP
-    - 120s without a heartbeat -> SHUTDOWN
-    - 180s without a heartbeat -> handled by wall-clock kill in reap_dead_agents
-
-    Only fires when an agent has at least one heartbeat on record (agents
-    that never wrote a heartbeat are assumed to not support the protocol).
-
-    Args:
-        orch: Orchestrator instance.
-    """
-    now = time.time()
+    timeout_s = float(getattr(orch._config, "heartbeat_timeout_s", 120))
+    wakeup_after_s = max(timeout_s / 2.0, 60.0)
+    monitor = HeartbeatMonitor(orch._workdir, timeout_s=timeout_s)
     for session in orch._agents.values():
         if session.status == "dead":
             continue
-        hb = orch._signal_mgr.read_heartbeat(session.id)
-        if hb is None:
-            continue  # Agent never wrote a heartbeat -- skip
-        age = now - hb.timestamp
+        hb_status = monitor.check(session.id)
+        if hb_status.last_heartbeat is not None:
+            session.heartbeat_ts = hb_status.last_heartbeat.timestamp()
+        else:
+            continue
+
         task_title = ", ".join(session.task_ids) if session.task_ids else "unknown task"
-        elapsed = now - session.spawn_ts
-        if age >= 120:
+        elapsed = time.time() - session.spawn_ts
+        if hb_status.age_seconds >= timeout_s:
             with contextlib.suppress(OSError):
-                orch._signal_mgr.write_shutdown(session.id, reason="no_heartbeat_120s", task_title=task_title)
-        elif age >= 60:
+                orch._signal_mgr.write_shutdown(session.id, reason="no_heartbeat", task_title=task_title)
+        elif hb_status.age_seconds >= wakeup_after_s:
             with contextlib.suppress(OSError):
                 orch._signal_mgr.write_wakeup(
                     session.id,
                     task_title=task_title,
                     elapsed_s=elapsed,
-                    last_activity_ago_s=age,
+                    last_activity_ago_s=hb_status.age_seconds,
                 )
 
 
-# ------------------------------------------------------------------
-# Stall detection via progress snapshots
-# ------------------------------------------------------------------
-
-
 def check_stalled_tasks(orch: Any) -> None:
-    """Detect agents making no progress via consecutive identical snapshots.
-
-    Fetches the latest progress snapshot for each active agent's tasks.
-    Compares against the last seen snapshot tracked in the orchestrator.
-    Escalates through WAKEUP → SHUTDOWN → kill based on stall count.
-
-    Thresholds (each snapshot = ~60s):
-    - 3 identical consecutive snapshots → WAKEUP signal
-    - 5 identical consecutive snapshots → SHUTDOWN signal
-    - 7 identical consecutive snapshots → kill process
-
-    Only fires when a task has at least one snapshot on record.
-
-    Args:
-        orch: Orchestrator instance.
-    """
+    """Detect stalled agents via snapshots, heartbeat, and recent log activity."""
+    timeout_s = float(getattr(orch._config, "heartbeat_timeout_s", 120))
+    monitor = HeartbeatMonitor(orch._workdir, timeout_s=timeout_s)
+    aggregator = AgentLogAggregator(orch._workdir)
+    latest_tasks = getattr(orch, "_latest_tasks_by_id", {})
     base = orch._config.server_url
+
     for session in orch._agents.values():
         if session.status == "dead":
             continue
+        hb_status = monitor.check(session.id)
+        if hb_status.last_heartbeat is not None:
+            session.heartbeat_ts = hb_status.last_heartbeat.timestamp()
+        log_summary = aggregator.parse_log(session.id)
+
         for task_id in session.task_ids:
             try:
                 resp = orch._client.get(f"{base}/tasks/{task_id}/snapshots")
                 resp.raise_for_status()
-                snapshots_data: list[dict[str, Any]] = resp.json()
+                snapshots_raw: Any = resp.json()
             except Exception:
-                continue  # Server unavailable or task not found — skip
+                continue
 
-            if not snapshots_data:
-                continue  # No snapshots yet
-
-            # Parse the latest snapshot
+            if not isinstance(snapshots_raw, list) or not snapshots_raw:
+                continue
+            snapshots_data = cast("list[dict[str, Any]]", snapshots_raw)
             latest_raw = snapshots_data[-1]
             latest = ProgressSnapshot(
                 timestamp=float(latest_raw["timestamp"]),
@@ -96,54 +218,60 @@ def check_stalled_tasks(orch: Any) -> None:
                 last_file=str(latest_raw.get("last_file", "")),
             )
 
-            # Skip if we have already processed this snapshot (same timestamp)
             last_ts = orch._last_snapshot_ts.get(task_id, 0.0)
             if latest.timestamp <= last_ts:
                 continue
 
-            # Compare with previous snapshot to track stall count
             prev: ProgressSnapshot | None = orch._last_snapshot.get(task_id)
             orch._last_snapshot_ts[task_id] = latest.timestamp
             orch._last_snapshot[task_id] = latest
+
+            if hb_status.is_alive:
+                orch._stall_counts[task_id] = 0
+                continue
 
             if prev is not None and prev.is_same_progress(latest):
                 orch._stall_counts[task_id] = orch._stall_counts.get(task_id, 0) + 1
             else:
                 orch._stall_counts[task_id] = 0
 
+            task = latest_tasks.get(task_id) if isinstance(latest_tasks, dict) else None
+            profile = compute_stall_profile(task, hb_status, log_summary)
             count = orch._stall_counts[task_id]
             elapsed = time.time() - session.spawn_ts
 
-            if count >= 7:
+            if count >= profile.kill_threshold:
                 logger.warning(
-                    "Stall-killing agent %s (task %s): %d identical snapshots",
+                    "Stall-killing agent %s (task %s): %d identical snapshots (%s)",
                     session.id,
                     task_id,
                     count,
+                    profile.reason,
                 )
                 with contextlib.suppress(Exception):
                     orch._spawner.kill(session)
-                # Reset to prevent repeated kill calls before process exits
                 orch._stall_counts[task_id] = 0
-            elif count >= 5:
+            elif count >= profile.shutdown_threshold:
                 logger.warning(
-                    "Stall-shutdown agent %s (task %s): %d identical snapshots",
+                    "Stall-shutdown agent %s (task %s): %d identical snapshots (%s)",
                     session.id,
                     task_id,
                     count,
+                    profile.reason,
                 )
                 with contextlib.suppress(OSError):
                     orch._signal_mgr.write_shutdown(
                         session.id,
-                        reason="stalled_5min",
+                        reason=f"stalled:{profile.reason}",
                         task_title=task_id,
                     )
-            elif count >= 3:
+            elif count >= profile.wakeup_threshold:
                 logger.info(
-                    "Stall-wakeup agent %s (task %s): %d identical snapshots",
+                    "Stall-wakeup agent %s (task %s): %d identical snapshots (%s)",
                     session.id,
                     task_id,
                     count,
+                    profile.reason,
                 )
                 with contextlib.suppress(OSError):
                     orch._signal_mgr.write_wakeup(
