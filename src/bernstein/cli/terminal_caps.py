@@ -132,6 +132,7 @@ class TerminalCaps:
             term_program_lower == "wezterm"
             or term_program_lower == "foot"
             or term_program_lower == "mlterm"
+            or term_program_lower == "vscode"
             or bool(os.environ.get("WT_SESSION"))
             or bool(os.environ.get("KONSOLE_VERSION"))
         )
