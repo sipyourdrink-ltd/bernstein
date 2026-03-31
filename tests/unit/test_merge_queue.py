@@ -1,13 +1,95 @@
-"""Tests for MergeQueue and create_conflict_resolution_task."""
+"""Tests for MergeQueue, conflict detection, and create_conflict_resolution_task."""
 
 from __future__ import annotations
 
 import threading
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, call, patch
 
-from bernstein.core.merge_queue import MergeJob, MergeQueue
+from bernstein.core.git_basic import GitResult
+from bernstein.core.merge_queue import (
+    ConflictCheckResult,
+    MergeJob,
+    MergeQueue,
+    _parse_merge_tree_conflicts,
+    detect_merge_conflicts,
+)
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus, TaskType
 from bernstein.core.task_lifecycle import create_conflict_resolution_task
+
+# ---------------------------------------------------------------------------
+# Sample git merge-tree outputs
+# ---------------------------------------------------------------------------
+
+_SHA = "a" * 40  # dummy 40-char SHA
+
+_ONE_CONFLICT = f"""\
+changed in both
+  base   100644 {_SHA} src/auth.py
+  our    100644 {_SHA} src/auth.py
+  their  100644 {_SHA} src/auth.py
+@@ -1,3 +1,7 @@
+ def foo():
++<<<<<<< .our
++    return 1
++=======
++    return 2
++>>>>>>> .their
+     pass
+"""
+
+_TWO_CONFLICTS = f"""\
+changed in both
+  base   100644 {_SHA} src/auth.py
+  our    100644 {_SHA} src/auth.py
+  their  100644 {_SHA} src/auth.py
+@@ -1,3 +1,7 @@
++<<<<<<< .our
++    return 1
++=======
++    return 2
++>>>>>>> .their
+changed in both
+  base   100644 {_SHA} src/utils.py
+  our    100644 {_SHA} src/utils.py
+  their  100644 {_SHA} src/utils.py
+@@ -1,3 +1,7 @@
++<<<<<<< .our
++    x = 1
++=======
++    x = 2
++>>>>>>> .their
+"""
+
+_CLEAN_MERGE = f"""\
+changed in both
+  base   100644 {_SHA} src/models.py
+  our    100644 {_SHA} src/models.py
+  their  100644 {_SHA} src/models.py
+@@ -1,3 +1,4 @@
+ class Foo:
++    pass
+"""
+
+_MIXED = f"""\
+changed in both
+  base   100644 {_SHA} src/models.py
+  our    100644 {_SHA} src/models.py
+  their  100644 {_SHA} src/models.py
+@@ -1,3 +1,4 @@
+ class Foo:
++    pass
+changed in both
+  base   100644 {_SHA} src/auth.py
+  our    100644 {_SHA} src/auth.py
+  their  100644 {_SHA} src/auth.py
+@@ -1,3 +1,7 @@
++<<<<<<< .our
++    return 1
++=======
++    return 2
++>>>>>>> .their
+"""
 
 # ---------------------------------------------------------------------------
 # MergeJob
@@ -120,6 +202,136 @@ class TestMergeQueue:
             t.join()
         # All three should have acquired the lock (just not simultaneously)
         assert len(acquired) == 3
+
+
+class TestMergeQueueSnapshot:
+    def test_empty_snapshot(self) -> None:
+        q = MergeQueue()
+        snap = q.snapshot()
+        assert snap["depth"] == 0
+        assert snap["jobs"] == []
+        assert snap["is_merging"] is False
+
+    def test_snapshot_includes_job_fields(self) -> None:
+        q = MergeQueue()
+        q.enqueue("session-1", task_id="T-1", task_title="Fix auth")
+        snap = q.snapshot()
+        assert snap["depth"] == 1
+        job = snap["jobs"][0]
+        assert job["session_id"] == "session-1"
+        assert job["task_id"] == "T-1"
+        assert job["task_title"] == "Fix auth"
+        assert job["branch_name"] == "agent/session-1"
+
+    def test_snapshot_is_merging_while_lock_held(self) -> None:
+        q = MergeQueue()
+        with q.merge_lock:
+            snap = q.snapshot()
+            assert snap["is_merging"] is True
+
+
+# ---------------------------------------------------------------------------
+# _parse_merge_tree_conflicts
+# ---------------------------------------------------------------------------
+
+
+class TestParseMergeTreeConflicts:
+    def test_empty_output(self) -> None:
+        assert _parse_merge_tree_conflicts("") == []
+
+    def test_clean_merge_no_conflicts(self) -> None:
+        assert _parse_merge_tree_conflicts(_CLEAN_MERGE) == []
+
+    def test_single_conflict(self) -> None:
+        result = _parse_merge_tree_conflicts(_ONE_CONFLICT)
+        assert result == ["src/auth.py"]
+
+    def test_two_conflicts(self) -> None:
+        result = _parse_merge_tree_conflicts(_TWO_CONFLICTS)
+        assert "src/auth.py" in result
+        assert "src/utils.py" in result
+        assert len(result) == 2
+
+    def test_mixed_returns_only_conflicted_file(self) -> None:
+        result = _parse_merge_tree_conflicts(_MIXED)
+        assert result == ["src/auth.py"]
+        assert "src/models.py" not in result
+
+    def test_no_duplicate_paths(self) -> None:
+        # base/our/their lines all reference the same path — must dedupe
+        result = _parse_merge_tree_conflicts(_ONE_CONFLICT)
+        assert result.count("src/auth.py") == 1
+
+
+# ---------------------------------------------------------------------------
+# detect_merge_conflicts
+# ---------------------------------------------------------------------------
+
+
+class TestDetectMergeConflicts:
+    def test_no_conflicts(self, tmp_path: Path) -> None:
+        base_r = GitResult(returncode=0, stdout="abc123\n", stderr="")
+        tree_r = GitResult(returncode=0, stdout=_CLEAN_MERGE, stderr="")
+
+        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]):
+            result = detect_merge_conflicts("agent/backend-abc", "main", tmp_path)
+
+        assert not result.has_conflicts
+        assert result.conflicting_files == []
+        assert result.branch == "agent/backend-abc"
+        assert result.base == "main"
+
+    def test_conflict_detected(self, tmp_path: Path) -> None:
+        base_r = GitResult(returncode=0, stdout="abc123\n", stderr="")
+        tree_r = GitResult(returncode=0, stdout=_ONE_CONFLICT, stderr="")
+
+        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]):
+            result = detect_merge_conflicts("agent/backend-abc", "main", tmp_path)
+
+        assert result.has_conflicts
+        assert result.conflicting_files == ["src/auth.py"]
+
+    def test_two_files_conflict(self, tmp_path: Path) -> None:
+        base_r = GitResult(returncode=0, stdout="deadbeef\n", stderr="")
+        tree_r = GitResult(returncode=0, stdout=_TWO_CONFLICTS, stderr="")
+
+        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]):
+            result = detect_merge_conflicts("agent/backend-abc", "main", tmp_path)
+
+        assert result.has_conflicts
+        assert len(result.conflicting_files) == 2
+
+    def test_merge_base_failure_returns_no_conflict(self, tmp_path: Path) -> None:
+        """Unrelated histories / missing branch → skip conflict check."""
+        fail_r = GitResult(returncode=1, stdout="", stderr="fatal: no common ancestor\n")
+
+        with patch("bernstein.core.merge_queue.run_git", return_value=fail_r):
+            result = detect_merge_conflicts("agent/orphan", "main", tmp_path)
+
+        assert not result.has_conflicts
+        assert result.conflicting_files == []
+
+    def test_git_commands_use_correct_args(self, tmp_path: Path) -> None:
+        base_r = GitResult(returncode=0, stdout="deadbeef\n", stderr="")
+        tree_r = GitResult(returncode=0, stdout="", stderr="")
+
+        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]) as mock:
+            detect_merge_conflicts("agent/backend-xyz", "main", tmp_path)
+
+        calls = mock.call_args_list
+        assert calls[0] == call(["merge-base", "main", "agent/backend-xyz"], tmp_path)
+        assert calls[1] == call(["merge-tree", "deadbeef", "main", "agent/backend-xyz"], tmp_path)
+
+    def test_result_fields_populated(self, tmp_path: Path) -> None:
+        base_r = GitResult(returncode=0, stdout="abc123\n", stderr="")
+        tree_r = GitResult(returncode=0, stdout=_ONE_CONFLICT, stderr="")
+
+        with patch("bernstein.core.merge_queue.run_git", side_effect=[base_r, tree_r]):
+            result = detect_merge_conflicts("agent/qa-xyz", "main", tmp_path)
+
+        assert isinstance(result, ConflictCheckResult)
+        assert result.branch == "agent/qa-xyz"
+        assert result.base == "main"
 
 
 # ---------------------------------------------------------------------------
