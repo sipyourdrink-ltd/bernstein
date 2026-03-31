@@ -2,6 +2,37 @@
 
 All notable documentation changes are tracked here.
 
+## [1.4.0] — 2026-03-31
+
+### Added
+- **Plan Files**: loadable YAML project plans with stages and steps (`bernstein run plan.yaml`)
+- **Server Supervisor**: auto-restart on crash with exponential backoff (max 5 restarts / 10 min)
+- **CrashGuard Middleware**: catches unhandled exceptions → 500 instead of process death
+- **Orchestrator drain mode**: loop continues while agents are active, even after stop signal
+- **Quality gates**: PII scan, mutation testing, benchmark regression detection
+- **Gate Runner**: parallel execution of all quality gates (asyncio)
+- **Persistent memory**: SQLite-backed cross-session agent memory
+- **Context handoff**: structured context briefs for subtask delegation
+- **Zero-config mode**: auto-detect project type, no bernstein.yaml required
+- **Worktree environment hooks**: auto-symlink node_modules, copy .env
+- **FIFO merge queue**: sequential merge with git merge-tree conflict pre-check
+- **Ticket Format v1**: YAML frontmatter with model routing, janitor signals, tags
+- **10 adapters**: Claude, Codex, Cursor, Gemini, Kiro, OpenCode, Aider, Amp, Roo Code, Generic
+- **Futuristic splash screen**: full-screen animated boot sequence
+- **Plan display**: mission-briefing style execution plan approval
+- **test_cli_run_params.py**: catches cli() → run() parameter sync bugs
+
+### Fixed
+- Manager always uses opus/max (was falling back to haiku via fast_path)
+- Orchestrator no longer exits while agents still running
+- Server failure backoff: 5s per failure instead of constant polling
+- Startup crash: missing pii_scan fields in QualityGatesConfig
+- .yaml/.md backward compatibility in all backlog parsers
+
+### Changed
+- Ticket format migrated from .md to .yaml (YAML frontmatter)
+- Version bump 1.3.x → 1.4.0
+
 ## [1.0.3] — 2026-03-30
 
 ### Added
