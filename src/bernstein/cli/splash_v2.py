@@ -144,38 +144,44 @@ class SplashRenderer:
         content_height = len(logo_lines) + 6
         logo_start_row = max(1, (len(bg_lines) - content_height) // 2)
 
-        # Render background with logo overlaid.
+        # Render background, then overlay logo char-by-char (skip spaces
+        # so the gradient shows through — transparent logo effect).
+        buf = []
         for i, bg_line in enumerate(bg_lines):
-            if logo_start_row <= i < logo_start_row + len(logo_lines):
-                logo_idx = i - logo_start_row
-                logo_line = logo_lines[logo_idx]
-                pad = max(0, (w - len(logo_line)) // 2)
-                color = logo_colors[logo_idx] if logo_idx < len(logo_colors) else "\033[1;97m"
-                sys.stdout.write(f"\033[{i + 1};1H{bg_line}")
-                # Overlay bold logo on top of gradient.
-                sys.stdout.write(f"\033[{i + 1};{pad + 1}H{color}{logo_line}\033[0m")
-            else:
-                sys.stdout.write(f"\033[{i + 1};1H{bg_line}")
+            buf.append(f"\033[{i + 1};1H{bg_line}")
+        # Overlay non-space logo characters individually.
+        for logo_idx, logo_line in enumerate(logo_lines):
+            row = logo_start_row + logo_idx
+            if row >= len(bg_lines):
+                break
+            pad = max(0, (w - len(logo_line)) // 2)
+            color = logo_colors[logo_idx] if logo_idx < len(logo_colors) else "\033[1;97m"
+            for col_offset, ch in enumerate(logo_line):
+                if ch != " ":
+                    buf.append(f"\033[{row + 1};{pad + col_offset + 1}H{color}{ch}")
+        buf.append("\033[0m")
 
-        # Subtitle — bold green, centered.
+        # Subtitle — bold cyan, centered.
         subtitle_row = logo_start_row + len(logo_lines) + 1
         subtitle = "A G E N T   O R C H E S T R A"
         pad_s = max(0, (w - len(subtitle)) // 2)
-        sys.stdout.write(f"\033[{subtitle_row};{pad_s + 1}H\033[1;38;2;0;212;255m{subtitle}\033[0m")
+        buf.append(f"\033[{subtitle_row};{pad_s + 1}H\033[1;38;2;0;212;255m{subtitle}\033[0m")
 
         # Probe lines — instant, centered, dim cyan.
         probes = self._probe_lines(context, use_icons=False)
         for j, probe in enumerate(probes):
             clean = re.sub(r"\[.*?\]", "", probe)
             pad_p = max(0, (w - len(clean)) // 2)
-            sys.stdout.write(f"\033[{subtitle_row + 2 + j};{pad_p + 1}H\033[38;2;100;180;200m{clean}\033[0m")
+            buf.append(f"\033[{subtitle_row + 2 + j};{pad_p + 1}H\033[38;2;100;180;200m{clean}\033[0m")
 
+        # Single atomic write for flicker-free rendering.
+        sys.stdout.write("".join(buf))
         sys.stdout.flush()
 
-        # Pause to admire, then clear and restore cursor.
+        # Hold splash for 3.5 seconds (user admires; background imports happen).
         if not self._skip:
-            time.sleep(2.0)
-        # Clear screen in one atomic write — minimal flicker.
+            time.sleep(3.5)
+        # Clear screen and restore cursor.
         sys.stdout.write("\033[0m\033[2J\033[H\033[?25h")
         sys.stdout.flush()
 

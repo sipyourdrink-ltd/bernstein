@@ -444,7 +444,15 @@ def cli(
     _splash_future: concurrent.futures.Future[dict[str, object]] | None = None
 
     def _background_startup() -> dict[str, object]:
-        """Run slow startup tasks in a background thread."""
+        """Run slow startup tasks + pre-import heavy modules in background thread.
+
+        While the splash is showing (3.5s), this thread:
+        1. Discovers installed agents (checks PATH, runs --version)
+        2. Counts backlog tasks
+        3. Gets bernstein version
+        4. Pre-imports heavy modules (run_cmd, bootstrap, httpx, yaml)
+           so they're cached by the time splash ends and config screen renders.
+        """
         result: dict[str, object] = {"agents": [], "task_count": 0, "version": "", "goal": ""}
         try:
             from bernstein.core.agent_discovery import discover_agents_cached
@@ -459,6 +467,14 @@ def cli(
             _open_dir = workdir / ".sdd" / "backlog" / "open"
             if _open_dir.exists():
                 result["task_count"] = sum(1 for f in _open_dir.iterdir() if f.suffix in (".yaml", ".yml", ".md"))
+        except Exception:
+            pass
+        # Pre-import heavy modules while user admires the splash.
+        # These imports take 1-2s but will be instant when needed later.
+        try:
+            import bernstein.cli.run_cmd
+            import bernstein.core.bootstrap
+            import bernstein.core.seed  # noqa: F401
         except Exception:
             pass
         try:
