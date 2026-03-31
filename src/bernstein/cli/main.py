@@ -431,43 +431,67 @@ def cli(
     if ctx.invoked_subcommand is not None:
         return
 
+    import concurrent.futures
+
     from bernstein.cli.splash_screen import splash
 
     seed_path = find_seed_file()
     workdir = Path.cwd()
     port = 8052
 
-    # Detect agents for splash screen
-    _splash_agents: list[dict[str, object]] = []
-    try:
-        from bernstein.core.agent_discovery import discover_agents_cached
+    # Show splash IMMEDIATELY with minimal data — heavy work runs in background.
+    # This eliminates the 5-second blank screen before the splash appears.
+    _splash_future: concurrent.futures.Future[dict[str, object]] | None = None
 
-        _disc = discover_agents_cached()
-        _splash_agents = [
-            {"name": a.name, "logged_in": a.logged_in, "default_model": a.default_model} for a in _disc.agents
-        ]
-    except Exception:
-        pass
+    def _background_startup() -> dict[str, object]:
+        """Run slow startup tasks in a background thread."""
+        result: dict[str, object] = {"agents": [], "task_count": 0, "version": "", "goal": ""}
+        try:
+            from bernstein.core.agent_discovery import discover_agents_cached
 
-    # Count backlog tasks
-    _task_count = 0
-    try:
-        _open_dir = workdir / ".sdd" / "backlog" / "open"
-        if _open_dir.exists():
-            _task_count = sum(1 for f in _open_dir.iterdir() if f.suffix in (".yaml", ".yml", ".md"))
-    except Exception:
-        pass
+            _disc = discover_agents_cached()
+            result["agents"] = [
+                {"name": a.name, "logged_in": a.logged_in, "default_model": a.default_model} for a in _disc.agents
+            ]
+        except Exception:
+            pass
+        try:
+            _open_dir = workdir / ".sdd" / "backlog" / "open"
+            if _open_dir.exists():
+                result["task_count"] = sum(1 for f in _open_dir.iterdir() if f.suffix in (".yaml", ".yml", ".md"))
+        except Exception:
+            pass
+        try:
+            from importlib.metadata import version as _get_version
 
-    # Get version
-    _version = ""
-    try:
-        from importlib.metadata import version as _get_version
+            result["version"] = _get_version("bernstein")
+        except Exception:
+            pass
+        return result
 
-        _version = _get_version("bernstein")
-    except Exception:
-        pass
+    # Start background work, then show splash concurrently.
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    _splash_future = executor.submit(_background_startup)
 
-    # Read goal from seed
+    # Show splash immediately (gradient + logo) — no agent data needed for visuals.
+    splash(
+        console,
+        version="",
+        agents=[],
+        seed_file=str(seed_path) if seed_path else None,
+        goal_preview=goal or "",
+        budget=budget,
+        task_count=0,
+    )
+
+    # Collect background results (should be done by now — splash took 2-3 seconds).
+    _bg = _splash_future.result(timeout=10)
+    executor.shutdown(wait=False)
+    _splash_agents = list(_bg.get("agents", []))  # type: ignore[arg-type]
+    _task_count = int(_bg.get("task_count", 0))
+    _version = str(_bg.get("version", ""))
+
+    # Read goal from seed (fast, no need for background).
     _goal_preview = goal or ""
     if not _goal_preview and seed_path:
         try:
@@ -478,16 +502,6 @@ def cli(
             _goal_preview = str(_seed_data.get("goal", ""))[:80]
         except Exception:
             pass
-
-    splash(
-        console,
-        version=_version,
-        agents=_splash_agents,  # type: ignore[arg-type]
-        seed_file=str(seed_path) if seed_path else None,
-        goal_preview=_goal_preview,
-        budget=budget,
-        task_count=_task_count,
-    )
 
     if dry_run:
         print_dry_run_table(workdir)

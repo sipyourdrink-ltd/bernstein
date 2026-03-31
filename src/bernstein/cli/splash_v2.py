@@ -312,23 +312,47 @@ def _render_figlet_raw(text: str, max_width: int = 80) -> str:
     return text
 
 
-def _sample_ansi_gradient(count: int, colors: tuple[str, ...]) -> list[str]:
-    """Return ANSI bold+foreground escape codes sampled across a color gradient."""
-    if count <= 0:
+def _sample_ansi_gradient(count: int, colors: object) -> list[str]:
+    """Return ANSI bold+foreground escape codes sampled across a color gradient.
+
+    Accepts colors as RGB tuples ``(r, g, b)`` or hex strings ``#RRGGBB``.
+    """
+    color_list = list(colors) if not isinstance(colors, list) else colors
+    if count <= 0 or not color_list:
         return []
+
+    # Normalise each color to (r, g, b) int tuple.
+    rgb: list[tuple[int, int, int]] = []
+    for c in color_list:
+        if isinstance(c, (list, tuple)):
+            rgb.append((int(c[0]), int(c[1]), int(c[2])))
+        elif isinstance(c, str):
+            h = c.lstrip("#")
+            rgb.append((int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)))
+        else:
+            rgb.append((255, 255, 255))
+
+    # Use a brighter gradient for the logo: white → cyan → teal.
+    logo_gradient: list[tuple[int, int, int]] = [
+        (220, 240, 255),  # near-white
+        (100, 220, 255),  # bright cyan
+        (0, 180, 220),    # teal
+        (50, 210, 255),   # cyan
+        (200, 235, 255),  # near-white again
+    ]
+
     results: list[str] = []
     for i in range(count):
         t = i / max(1, count - 1)
-        # Interpolate between gradient colors.
-        idx = t * (len(colors) - 1)
+        idx = t * (len(logo_gradient) - 1)
         lo = int(idx)
-        hi = min(lo + 1, len(colors) - 1)
+        hi = min(lo + 1, len(logo_gradient) - 1)
         frac = idx - lo
-        c1 = colors[lo].lstrip("#")
-        c2 = colors[hi].lstrip("#")
-        r = int(int(c1[0:2], 16) * (1 - frac) + int(c2[0:2], 16) * frac)
-        g = int(int(c1[2:4], 16) * (1 - frac) + int(c2[2:4], 16) * frac)
-        b = int(int(c1[4:6], 16) * (1 - frac) + int(c2[4:6], 16) * frac)
+        r1, g1, b1 = logo_gradient[lo]
+        r2, g2, b2 = logo_gradient[hi]
+        r = int(r1 * (1 - frac) + r2 * frac)
+        g = int(g1 * (1 - frac) + g2 * frac)
+        b = int(b1 * (1 - frac) + b2 * frac)
         results.append(f"\033[1;38;2;{r};{g};{b}m")
     return results
 
