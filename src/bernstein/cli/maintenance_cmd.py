@@ -13,7 +13,7 @@ from rich.table import Table
 from bernstein.cli.helpers import console
 from bernstein.core.git_hygiene import run_hygiene
 from bernstein.core.models import TaskStatus
-from bernstein.core.task_store import ArchiveRecord, TaskStore
+from bernstein.core.task_store import TaskStore
 from bernstein.core.worktree import WorktreeManager
 
 _ACTIVE_TASK_STATUSES = frozenset(
@@ -74,20 +74,6 @@ def _normalize_repo_path(workdir: Path, target: Path | str) -> str:
         except ValueError:
             return candidate.as_posix()
     return candidate.as_posix().lstrip("./")
-
-
-def _archive_matches_file(record: ArchiveRecord, normalized_path: str) -> bool:
-    """Return True when an archive record touched *normalized_path*.
-
-    Args:
-        record: Archive JSONL record.
-        normalized_path: Repo-relative POSIX path.
-
-    Returns:
-        True when ``owned_files`` contains the target path.
-    """
-    owned_files = record.get("owned_files", [])
-    return any(_normalize_repo_path(Path.cwd(), path) == normalized_path for path in owned_files)
 
 
 def _history_rows(workdir: Path, file_path: Path, *, limit: int) -> list[HistoryRow]:
