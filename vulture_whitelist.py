@@ -19,3 +19,6 @@ bold  # noqa
 # Called dynamically or exported for external use
 _strip_hash  # noqa
 _render_figlet_raw  # noqa
+_run_animated  # noqa
+_print_static  # noqa
+_agents_from_dicts  # noqa

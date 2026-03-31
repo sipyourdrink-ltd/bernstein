@@ -472,9 +472,9 @@ def cli(
         # Pre-import heavy modules while user admires the splash.
         # These imports take 1-2s but will be instant when needed later.
         try:
-            import bernstein.cli.run_cmd
-            import bernstein.core.bootstrap
-            import bernstein.core.seed  # noqa: F401
+            import bernstein.cli.run_cmd  # pyright: ignore[reportUnusedImport]
+            import bernstein.core.bootstrap  # pyright: ignore[reportUnusedImport]
+            import bernstein.core.seed  # noqa: F401  # pyright: ignore[reportUnusedImport]
         except Exception:
             pass
         try:
@@ -507,7 +507,8 @@ def cli(
     _bg = _splash_future.result(timeout=10)
     executor.shutdown(wait=False)
     _splash_agents = list(_bg.get("agents", []))  # type: ignore[arg-type]
-    _task_count = int(_bg.get("task_count", 0))
+    _raw_count = _bg.get("task_count", 0)
+    _task_count = int(_raw_count) if isinstance(_raw_count, (int, float, str)) else 0
     _version = str(_bg.get("version", ""))
 
     # Read goal from seed (fast, no need for background).

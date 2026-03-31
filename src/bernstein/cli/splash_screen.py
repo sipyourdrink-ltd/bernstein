@@ -416,7 +416,7 @@ class SplashRenderer:
 # ---------------------------------------------------------------------------
 
 
-def _run_animated(console: Console, data: BootData) -> None:
+def _run_animated(console: Console, data: BootData) -> None:  # pyright: ignore[reportUnusedFunction]
     """Run the full animated splash sequence using Rich Live."""
     width = min(console.size.width, 120)
     height = console.size.height
@@ -577,7 +577,7 @@ def _print_static_summary(console: Console, data: BootData) -> None:
     console.print(sep)
 
 
-def _print_static(console: Console, data: BootData) -> None:
+def _print_static(console: Console, data: BootData) -> None:  # pyright: ignore[reportUnusedFunction]
     """Non-animated fallback for non-TTY or skip_animation mode."""
     _print_static_summary(console, data)
 
@@ -587,7 +587,7 @@ def _print_static(console: Console, data: BootData) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _agents_from_dicts(agents: list[dict[str, Any]] | None) -> list[AgentProbe]:
+def _agents_from_dicts(agents: list[dict[str, Any]] | None) -> list[AgentProbe]:  # pyright: ignore[reportUnusedFunction]
     """Convert the legacy dict-based agent list to AgentProbe objects."""
     if not agents:
         return []
