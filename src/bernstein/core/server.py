@@ -818,6 +818,11 @@ def create_app(
     application.include_router(dashboard_router)
     application.include_router(quality_router)
 
+    # Agent identity lifecycle routes
+    from bernstein.core.routes.identities import router as identities_router
+
+    application.include_router(identities_router)
+
     # ACP (Agent Communication Protocol) routes — editor ecosystem visibility
     from bernstein.core.routes.acp import router as acp_router
 

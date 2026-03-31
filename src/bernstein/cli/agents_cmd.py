@@ -101,6 +101,57 @@ def agents_sync(definitions_dir: str, force: bool) -> None:
     console.print("\n[green]Sync complete.[/green]")
 
 
+def _list_identities(status_filter: str) -> None:
+    """Display agent identities from the identity store."""
+    from rich.table import Table
+
+    from bernstein.core.agent_identity import AgentIdentityStatus, AgentIdentityStore
+
+    store = AgentIdentityStore(Path(".sdd/auth"))
+    filter_status = AgentIdentityStatus(status_filter) if status_filter != "all" else None
+    identities = store.list_identities(status=filter_status)
+
+    if not identities:
+        console.print("[dim]No agent identities found.[/dim]")
+        return
+
+    table = Table(
+        title="Agent Identities",
+        show_lines=False,
+        header_style="bold cyan",
+    )
+    table.add_column("ID", style="dim", min_width=20)
+    table.add_column("ROLE", min_width=10)
+    table.add_column("STATUS", min_width=10)
+    table.add_column("PERMISSIONS", min_width=30)
+    table.add_column("CREATED", min_width=20)
+    table.add_column("PARENT", min_width=16)
+
+    from datetime import UTC, datetime
+
+    for ident in identities:
+        status_color = {
+            AgentIdentityStatus.ACTIVE: "green",
+            AgentIdentityStatus.SUSPENDED: "yellow",
+            AgentIdentityStatus.REVOKED: "red",
+        }.get(ident.status, "dim")
+        created = datetime.fromtimestamp(ident.created_at, tz=UTC).strftime("%Y-%m-%d %H:%M")
+        perms = ", ".join(sorted(ident.permissions)[:4])
+        if len(ident.permissions) > 4:
+            perms += f" (+{len(ident.permissions) - 4})"
+        table.add_row(
+            ident.id,
+            ident.role,
+            f"[{status_color}]{ident.status.value}[/{status_color}]",
+            perms or "[dim]---[/dim]",
+            created,
+            ident.parent_identity_id or "[dim]---[/dim]",
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]{len(identities)} identity(ies) total[/dim]")
+
+
 @agents_group.command("list")
 @click.option(
     "--source",
@@ -116,8 +167,24 @@ def agents_sync(definitions_dir: str, force: bool) -> None:
     show_default=True,
     help="Local agent definitions directory.",
 )
-def agents_list(source: str, definitions_dir: str) -> None:
+@click.option(
+    "--identities",
+    is_flag=True,
+    default=False,
+    help="Show agent identities instead of catalog agents.",
+)
+@click.option(
+    "--identity-status",
+    type=click.Choice(["active", "suspended", "revoked", "all"]),
+    default="all",
+    show_default=True,
+    help="Filter identities by status (only with --identities).",
+)
+def agents_list(source: str, definitions_dir: str, identities: bool, identity_status: str) -> None:
     """List all available agents from loaded catalogs."""
+    if identities:
+        _list_identities(identity_status)
+        return
     from bernstein.agents.agency_provider import AgencyProvider
     from bernstein.agents.registry import AgentRegistry
 
