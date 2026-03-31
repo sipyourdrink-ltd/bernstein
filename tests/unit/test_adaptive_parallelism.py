@@ -167,6 +167,7 @@ class TestCpuOverload:
     def test_pause_when_cpu_over_80(self, mock_cpu: object) -> None:
         mock_cpu.return_value = 85.0  # type: ignore[union-attr]
         ap = AdaptiveParallelism(configured_max=6)
+        ap._created_at -= 300  # move past the 2-min startup grace period
 
         result = ap.effective_max_agents()
         assert result == 0
@@ -176,6 +177,7 @@ class TestCpuOverload:
         # First: CPU high → pause
         mock_cpu.return_value = 90.0  # type: ignore[union-attr]
         ap = AdaptiveParallelism(configured_max=6)
+        ap._created_at -= 300  # move past the 2-min startup grace period
         assert ap.effective_max_agents() == 0
 
         # Then: CPU drops → restore
@@ -195,6 +197,7 @@ class TestCpuOverload:
     def test_cpu_overload_resets_low_error_timer(self, mock_cpu: object) -> None:
         mock_cpu.return_value = 90.0  # type: ignore[union-attr]
         ap = AdaptiveParallelism(configured_max=6)
+        ap._created_at -= 300  # move past the 2-min startup grace period
         ap._low_error_since = time.time()
 
         ap.effective_max_agents()
@@ -272,6 +275,7 @@ class TestRulePriority:
     def test_cpu_overload_overrides_error_rate_reduction(self, mock_cpu: object) -> None:
         mock_cpu.return_value = 95.0  # type: ignore[union-attr]
         ap = AdaptiveParallelism(configured_max=6)
+        ap._created_at -= 300  # move past the 2-min startup grace period
 
         # High error rate too
         for _ in range(5):

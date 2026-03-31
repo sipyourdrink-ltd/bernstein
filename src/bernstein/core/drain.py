@@ -25,7 +25,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
@@ -383,7 +383,7 @@ class DrainCoordinator:
         if agents_file.exists():
             try:
                 raw = json.loads(agents_file.read_text(encoding="utf-8"))
-                agents_data: list[dict[str, object]] = raw if isinstance(raw, list) else []
+                agents_data = cast("list[dict[str, object]]", raw) if isinstance(raw, list) else []
                 for entry in agents_data:
                     session_id = str(entry.get("session_id", entry.get("id", "")))
                     if any(a.session_id == session_id for a in self._agents):

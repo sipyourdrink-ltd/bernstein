@@ -1296,16 +1296,16 @@ class Orchestrator:
         assert isinstance(signal, AnomalySignal)
         self._anomaly_detector.record_signal(signal)
         if signal.action == "kill_agent" and signal.agent_id:
-            log.warning("Anomaly [%s]: %s — killing agent", signal.rule, signal.message)
+            logger.warning("Anomaly [%s]: %s — killing agent", signal.rule, signal.message)
             session = self._agents.get(signal.agent_id)
             if session:
                 with contextlib.suppress(Exception):
                     self._spawner.kill(session)
         elif signal.action == "stop_spawning":
-            log.warning("Anomaly [%s]: %s — stopping new spawns", signal.rule, signal.message)
+            logger.warning("Anomaly [%s]: %s — stopping new spawns", signal.rule, signal.message)
             self._stop_spawning = True
         else:
-            log.info("Anomaly [%s]: %s", signal.rule, signal.message)
+            logger.info("Anomaly [%s]: %s", signal.rule, signal.message)
 
     def _record_live_costs(self) -> None:
         """Update live cost tracker from active agent token usage.

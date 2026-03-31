@@ -213,12 +213,13 @@ class BenchmarkGate:
         benchmarks_raw = data.get("benchmarks")
         if not isinstance(benchmarks_raw, list):
             raise RuntimeError("Benchmark results missing 'benchmarks' list")
+        benchmarks_list = cast("list[object]", benchmarks_raw)
 
         metrics: dict[str, BenchmarkMetrics] = {}
-        for bench in benchmarks_raw:
-            if not isinstance(bench, dict):
+        for bench_item in benchmarks_list:
+            if not isinstance(bench_item, dict):
                 continue
-            bench_map = cast("dict[str, object]", bench)
+            bench_map = cast("dict[str, object]", bench_item)
             name = bench_map.get("name")
             if not isinstance(name, str):
                 continue
