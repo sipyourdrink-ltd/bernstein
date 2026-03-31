@@ -1,13 +1,13 @@
 # Getting Started with Bernstein
 
-Bernstein orchestrates short-lived CLI coding agents (Claude Code, Codex, Cursor, Gemini CLI, etc.)
+Bernstein orchestrates short-lived CLI coding agents (Claude Code, Codex, Cursor, Gemini CLI, OpenCode, etc.)
 around a central task server.  One command starts the whole orchestra.
 
 ---
 
 ## Install
 
-Requires Python 3.12+ and at least one AI coding agent (Claude Code, Codex, Cursor, or Gemini CLI).
+Requires Python 3.12+ and at least one AI coding agent (Claude Code, Codex, Cursor, Gemini CLI, or OpenCode).
 
 ```bash
 # Recommended (fastest)
