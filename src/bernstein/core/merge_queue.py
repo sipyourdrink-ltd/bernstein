@@ -3,15 +3,24 @@
 Ensures only one git merge runs at a time and provides a queue structure
 for processing agent branches in completion order.  Conflict routing
 (creating resolver tasks) is handled by the orchestrator after dequeuing.
+
+Pre-merge conflict detection uses ``git merge-tree`` so the working tree and
+index are never touched during the check.
 """
 
 from __future__ import annotations
 
 import collections
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from bernstein.core.git_basic import run_git
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +43,152 @@ class MergeJob:
 
     def __post_init__(self) -> None:
         self.branch_name = f"agent/{self.session_id}"
+
+
+@dataclass
+class ConflictCheckResult:
+    """Outcome of a pre-merge conflict check via ``git merge-tree``.
+
+    Attributes:
+        has_conflicts: True when merge-tree detected at least one conflict.
+        conflicting_files: File paths that would conflict (empty when clean).
+        branch: The feature branch that was checked.
+        base: The target branch being merged into.
+    """
+
+    has_conflicts: bool
+    conflicting_files: list[str]
+    branch: str
+    base: str
+
+
+# ---------------------------------------------------------------------------
+# merge-tree output parsing
+# ---------------------------------------------------------------------------
+
+_SECTION_HEADER_RE = re.compile(
+    r"^(changed in both|added in both|both added|both removed|removed in both)",
+    re.IGNORECASE,
+)
+_DESCRIPTOR_RE = re.compile(r"^\s+(?:base|our|their)\s+\d+\s+[0-9a-f]+\s+(.+)$")
+_CONFLICT_MARKER = "<<<<<<< "
+
+
+def _parse_merge_tree_conflicts(output: str) -> list[str]:
+    """Extract conflicting file paths from ``git merge-tree`` output.
+
+    The old-style ``git merge-tree <base> <ours> <theirs>`` command writes
+    sections for each changed file.  A section that contains a conflict
+    marker (``<<<<<<< .our``) has a real conflict.  File paths appear on the
+    ``base``/``our``/``their`` descriptor lines that open each section.
+
+    Args:
+        output: Raw stdout from ``git merge-tree <base> <ours> <theirs>``.
+
+    Returns:
+        Deduplicated list of file paths where conflicts were found.
+    """
+    if _CONFLICT_MARKER not in output:
+        return []
+
+    files: list[str] = []
+    seen: set[str] = set()
+    current_paths: set[str] = set()
+    current_has_conflict = False
+
+    for line in output.splitlines():
+        if _SECTION_HEADER_RE.match(line):
+            # Finalize the previous section before starting a new one.
+            if current_has_conflict:
+                for p in sorted(current_paths):
+                    if p not in seen:
+                        seen.add(p)
+                        files.append(p)
+            current_paths = set()
+            current_has_conflict = False
+        else:
+            m = _DESCRIPTOR_RE.match(line)
+            if m:
+                current_paths.add(m.group(1).strip())
+            elif _CONFLICT_MARKER in line:
+                current_has_conflict = True
+
+    # Finalize the last section.
+    if current_has_conflict:
+        for p in sorted(current_paths):
+            if p not in seen:
+                seen.add(p)
+                files.append(p)
+
+    return files
+
+
+# ---------------------------------------------------------------------------
+# Public conflict-detection API
+# ---------------------------------------------------------------------------
+
+
+def detect_merge_conflicts(branch: str, base: str, cwd: Path) -> ConflictCheckResult:
+    """Pre-flight conflict check using ``git merge-tree`` (no working-tree changes).
+
+    Simulates a 3-way merge without touching the working tree or index.
+    Returns which files would conflict if the merge were attempted now.
+
+    Steps:
+
+    1. ``git merge-base <base> <branch>`` — find the common ancestor.
+    2. ``git merge-tree <ancestor> <base> <branch>`` — simulate the merge.
+    3. Parse the output for conflict markers.
+
+    When ``merge-base`` fails (e.g. unrelated histories) the function returns
+    a clean result rather than blocking the queue.
+
+    Args:
+        branch: Feature branch to check (e.g. ``"agent/backend-abc123"``).
+        base: Target branch being merged into (e.g. ``"main"``).
+        cwd: Repository root.
+
+    Returns:
+        :class:`ConflictCheckResult` with conflict status and file list.
+    """
+    base_r = run_git(["merge-base", base, branch], cwd)
+    if not base_r.ok:
+        logger.warning(
+            "detect_merge_conflicts: merge-base failed for %s..%s: %s",
+            base,
+            branch,
+            base_r.stderr.strip(),
+        )
+        return ConflictCheckResult(
+            has_conflicts=False, conflicting_files=[], branch=branch, base=base
+        )
+
+    merge_base = base_r.stdout.strip()
+
+    tree_r = run_git(["merge-tree", merge_base, base, branch], cwd)
+    conflicting_files = _parse_merge_tree_conflicts(tree_r.stdout)
+
+    if conflicting_files:
+        logger.info(
+            "detect_merge_conflicts: %d conflict(s) in %s → %s: %s",
+            len(conflicting_files),
+            branch,
+            base,
+            ", ".join(conflicting_files),
+        )
+    else:
+        logger.debug(
+            "detect_merge_conflicts: no conflicts for %s → %s",
+            branch,
+            base,
+        )
+
+    return ConflictCheckResult(
+        has_conflicts=bool(conflicting_files),
+        conflicting_files=conflicting_files,
+        branch=branch,
+        base=base,
+    )
 
 
 class MergeQueue:
