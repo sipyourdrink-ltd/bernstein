@@ -543,7 +543,10 @@ def cli(
         from_plan=Path(from_plan) if from_plan else None,
         auto_approve=auto_approve or yes,
         quiet=False,
+        skip_gate=(),
+        skip_gate_reason=None,
         audit=False,
+        ab_test=False,
     )
 
 
