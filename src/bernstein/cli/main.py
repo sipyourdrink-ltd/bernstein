@@ -244,6 +244,7 @@ def print_rich_help() -> None:
     c.print("\n  [bold cyan]Quick start[/bold cyan]")
     c.print('  [dim]$[/dim] bernstein -g [green]"Add JWT auth with tests"[/green]     [dim]# inline goal[/dim]')
     c.print("  [dim]$[/dim] bernstein                                    [dim]# from bernstein.yaml[/dim]")
+    c.print("  [dim]$[/dim] bernstein run plan.yaml                      [dim]# execute a plan file[/dim]")
     c.print("  [dim]$[/dim] bernstein init                               [dim]# set up a new project[/dim]")
     c.print()
 
@@ -253,6 +254,7 @@ def print_rich_help() -> None:
             [
                 ("bernstein -g [dim]GOAL[/dim]", "Orchestrate agents for an inline goal"),
                 ("bernstein", "Run from bernstein.yaml or backlog"),
+                ("run [dim]plan.yaml[/dim]", "Execute a plan file (stages + steps)"),
                 ("init", "Initialize project (.sdd/ + bernstein.yaml)"),
                 ("stop", "Graceful stop (agents save work first)"),
                 ("stop --force", "Hard stop (kill immediately)"),
@@ -520,6 +522,7 @@ def cli(
     # Main orchestration flow — call run's callback directly with mapped params
     assert run.callback is not None
     run.callback(
+        plan_file=None,
         goal=goal,
         seed_file=str(seed_path) if seed_path else None,
         port=port,
@@ -591,6 +594,7 @@ cli.add_command(status)
 cli.add_command(ps_cmd, "ps")
 cli.add_command(stop)
 cli.add_command(test_adapter, "test-adapter")
+cli.add_command(run, "run")  # visible: `bernstein run [plan.yaml]`
 cli.add_command(init)
 cli.add_command(start)
 cli.add_command(demo)

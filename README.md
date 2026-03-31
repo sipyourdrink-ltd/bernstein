@@ -87,6 +87,16 @@ bernstein                       # reads from bernstein.yaml
 
 See [`examples/quickstart/`](examples/quickstart/) for a ready-to-run example with a Flask app and pre-configured `bernstein.yaml`.
 
+### Plan files
+
+For multi-stage projects, define stages and steps in a YAML plan file — like an Ansible playbook:
+
+```bash
+bernstein run plan.yaml
+```
+
+The plan skips manager decomposition and goes straight to execution. See [`templates/plan.yaml`](templates/plan.yaml) for the format spec and [`examples/plans/flask-api.yaml`](examples/plans/flask-api.yaml) for a working example.
+
 > **[The Bernstein Way](docs/the-bernstein-way.md)** — architecture tenets and default workflow
 
 <details>
@@ -102,6 +112,7 @@ See [`examples/quickstart/`](examples/quickstart/) for a ready-to-run example wi
 # Core
 bernstein -g "goal"                # start orchestration with inline goal
 bernstein                          # start from bernstein.yaml
+bernstein run plan.yaml            # execute a plan file (stages + steps)
 bernstein init                     # initialize .sdd/ workspace
 bernstein stop [--timeout N]       # graceful shutdown (--force for hard kill)
 bernstein ps                       # show running agent processes

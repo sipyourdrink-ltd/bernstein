@@ -58,6 +58,7 @@
       <li><a href="#completion-signals">Completion signals</a></li>
       <li><a href="#self-evolution">Self-evolution</a></li>
       <li><a href="#agent-catalogs">Agent catalogs</a></li>
+      <li><a href="#plan-files">Plan files</a></li>
       <li><a href="#file-state">File-based state</a></li>
     </ul>
   </aside>
@@ -279,6 +280,79 @@ system_prompt: |
   well-documented ETL code. You prefer streaming over batch where
   possible, and always profile query performance.</code></pre>
     </div>
+
+    <h2 id="plan-files">Plan files</h2>
+    <p>A plan file is a YAML document that defines a multi-stage project using standard DevOps vocabulary: <strong>plan</strong>, <strong>stage</strong>, <strong>step</strong>. Think Ansible playbook or K8s manifest. Instead of giving Bernstein a goal and letting the manager agent decompose it, you define the full task graph upfront.</p>
+
+    <div class="code-block">
+      <pre><code class="language-bash"># Execute a plan file
+bernstein run plan.yaml</code></pre>
+    </div>
+
+    <h3>Plan structure</h3>
+    <p>A plan file has three levels:</p>
+    <table>
+      <thead>
+        <tr><th>Level</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Plan</strong></td><td>Top-level metadata: name, description, orchestration config (cli, budget, constraints).</td></tr>
+        <tr><td><strong>Stage</strong></td><td>An ordered phase of work. Stages can declare dependencies on other stages. Steps within a stage run in parallel.</td></tr>
+        <tr><td><strong>Step</strong></td><td>A single task assigned to one agent. Specifies role, scope, complexity, files, and completion signals.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Example</h3>
+    <div class="code-block">
+      <pre><code class="language-yaml">name: "Flask REST API"
+description: "Build a Flask API with auth and tests"
+cli: auto
+budget: "$15"
+constraints:
+  - "Python 3.12+"
+  - "pytest for tests"
+
+stages:
+  - name: "Foundation"
+    steps:
+      - title: "Create Flask app with factory pattern"
+        role: backend
+        scope: small
+        complexity: low
+        completion_signals:
+          - type: path_exists
+            path: "app.py"
+
+  - name: "Features"
+    depends_on: ["Foundation"]
+    steps:
+      - title: "Implement auth endpoints"
+        role: backend
+        scope: medium
+        complexity: medium
+
+  - name: "Quality"
+    depends_on: ["Features"]
+    steps:
+      - title: "Write integration tests"
+        role: qa
+        scope: medium
+        complexity: medium
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/ -x -q"</code></pre>
+    </div>
+
+    <h3>How it works</h3>
+    <p>When you run <code>bernstein run plan.yaml</code>:</p>
+    <ol>
+      <li>Bernstein parses the plan and creates one backlog task per step.</li>
+      <li>Stage dependencies are wired into task <code>depends_on</code> fields — all steps in a dependent stage wait for all steps in the prerequisite stage.</li>
+      <li>A synthetic seed is generated from the plan's config (cli, budget, constraints).</li>
+      <li>The normal bootstrap starts: task server, spawner, janitor. No manager agent is needed — the plan <em>is</em> the decomposition.</li>
+    </ol>
+
+    <p>See <a href="https://github.com/chernistry/bernstein/tree/main/templates/plan.yaml"><code>templates/plan.yaml</code></a> for the full format spec and <a href="https://github.com/chernistry/bernstein/tree/main/examples/plans/flask-api.yaml"><code>examples/plans/flask-api.yaml</code></a> for a working example.</p>
 
     <h2 id="file-state">File-based state</h2>
     <p>All state lives in <code>.sdd/</code> — structured files that can be committed, diffed, and read by any tool. There is no hidden database.</p>

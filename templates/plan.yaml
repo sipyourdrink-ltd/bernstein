@@ -1,0 +1,104 @@
+# ── Bernstein Plan File ──
+#
+# A plan defines a multi-stage project as stages and steps.
+# Standard DevOps vocabulary — like Ansible playbooks or K8s manifests.
+#
+# Usage:
+#   bernstein run plan.yaml
+#
+# Bernstein reads the stages, creates tasks from each step,
+# wires up the dependency graph, and starts execution.
+# No manager agent needed — the plan IS the decomposition.
+
+# ---------------------------------------------------------------------------
+# Plan metadata (required)
+# ---------------------------------------------------------------------------
+
+# Short name for this plan. Used as the orchestration goal.
+name: "Your Plan Name"
+
+# Longer description of what the plan achieves.
+description: >
+  What this plan builds or changes, in one or two sentences.
+
+# ---------------------------------------------------------------------------
+# Orchestration config (optional — same fields as bernstein.yaml)
+# ---------------------------------------------------------------------------
+
+# Which CLI agent to use. auto detects installed agents.
+# cli: auto
+
+# Spending cap in USD. Accepts "$N", "$N.NN", or plain numbers.
+# budget: "$10"
+
+# Max concurrent agent processes.
+# max_agents: 4
+
+# Constraints passed to every agent.
+# constraints:
+#   - "Python 3.12+"
+#   - "pytest for tests"
+
+# Extra files injected into agent context.
+# context_files:
+#   - "docs/spec.md"
+#   - "CLAUDE.md"
+
+# ---------------------------------------------------------------------------
+# Stages (required)
+# ---------------------------------------------------------------------------
+#
+# Stages run sequentially by default. Steps within a stage run in parallel.
+# Use depends_on to express cross-stage dependencies.
+#
+# Each step maps to one task assigned to one agent.
+
+stages:
+  - name: "Stage Name"
+
+    # Optional description of what this stage accomplishes.
+    # description: "Set up the project skeleton"
+
+    # Stage names this stage depends on. All steps from those stages
+    # must complete before any step in this stage can start.
+    # depends_on: []
+
+    steps:
+      - title: "Short step title"
+
+        # What the agent should do.
+        description: >
+          Detailed instructions for the agent.
+
+        # Specialist role: backend | qa | frontend | security | devops | docs
+        role: backend
+
+        # Duration estimate: small (<30min) | medium (30-90min) | large (90min+)
+        scope: medium
+
+        # Reasoning difficulty: low | medium | high
+        complexity: medium
+
+        # Model override (optional): auto | opus | sonnet | haiku
+        # model: auto
+
+        # Effort level (optional): low | normal | high | max
+        # effort: normal
+
+        # Estimated minutes for the agent to complete.
+        # estimated_minutes: 30
+
+        # Files the agent will read or modify.
+        # files:
+        #   - "src/app.py"
+        #   - "tests/test_app.py"
+
+        # Janitor verification — machine-checkable completion criteria.
+        # completion_signals:
+        #   - type: path_exists
+        #     path: "src/app.py"
+        #   - type: test_passes
+        #     command: "pytest tests/test_app.py -x -q"
+        #   - type: file_contains
+        #     path: "src/app.py"
+        #     contains: "def create_app"

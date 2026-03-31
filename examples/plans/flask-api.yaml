@@ -1,0 +1,139 @@
+# Bernstein Plan — Flask REST API
+#
+# A three-stage plan that builds a Flask REST API from scratch:
+#   1. Foundation: project skeleton and database models
+#   2. Features:   CRUD endpoints and auth
+#   3. Quality:    tests, docs, and linting
+#
+# Run:
+#   bernstein run examples/plans/flask-api.yaml
+
+name: "Flask REST API"
+description: >
+  Build a production-ready Flask REST API with user management,
+  JWT authentication, and comprehensive test coverage.
+
+cli: auto
+budget: "$15"
+max_agents: 4
+constraints:
+  - "Python 3.12+"
+  - "Flask with Blueprints"
+  - "pytest for tests"
+  - "SQLite for development database"
+
+stages:
+  # ── Stage 1: Foundation ──
+  - name: "Foundation"
+    description: "Project skeleton, models, and configuration"
+    steps:
+      - title: "Create Flask app with factory pattern"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Create app.py with a create_app() factory, config.py for settings,
+          and requirements.txt with flask, flask-sqlalchemy, flask-jwt-extended.
+        files:
+          - "app.py"
+          - "config.py"
+          - "requirements.txt"
+        completion_signals:
+          - type: path_exists
+            path: "app.py"
+          - type: file_contains
+            path: "app.py"
+            contains: "def create_app"
+
+      - title: "Define User model and database setup"
+        role: backend
+        scope: small
+        complexity: medium
+        description: >
+          Create models/user.py with a User SQLAlchemy model (id, username,
+          email, password_hash, created_at). Add db initialization in app factory.
+        files:
+          - "models/__init__.py"
+          - "models/user.py"
+        completion_signals:
+          - type: path_exists
+            path: "models/user.py"
+          - type: file_contains
+            path: "models/user.py"
+            contains: "class User"
+
+  # ── Stage 2: Features ──
+  - name: "Features"
+    description: "API endpoints for auth and user management"
+    depends_on: ["Foundation"]
+    steps:
+      - title: "Implement registration and login endpoints"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create routes/auth.py with POST /register (username, email, password)
+          and POST /login (returns JWT access token). Hash passwords with
+          werkzeug.security. Return proper HTTP status codes.
+        files:
+          - "routes/__init__.py"
+          - "routes/auth.py"
+        completion_signals:
+          - type: path_exists
+            path: "routes/auth.py"
+          - type: file_contains
+            path: "routes/auth.py"
+            contains: "def register"
+
+      - title: "Implement user CRUD endpoints"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create routes/users.py with GET /users (list), GET /users/<id>,
+          PUT /users/<id> (update profile), DELETE /users/<id>.
+          All endpoints require JWT authentication.
+        files:
+          - "routes/users.py"
+        completion_signals:
+          - type: path_exists
+            path: "routes/users.py"
+
+  # ── Stage 3: Quality ──
+  - name: "Quality"
+    description: "Tests, documentation, and code quality"
+    depends_on: ["Features"]
+    steps:
+      - title: "Write integration tests for auth and users"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Create tests/conftest.py with app fixture and test client.
+          Create tests/test_auth.py (register, login, invalid credentials).
+          Create tests/test_users.py (CRUD operations, auth required).
+        files:
+          - "tests/conftest.py"
+          - "tests/test_auth.py"
+          - "tests/test_users.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/test_auth.py"
+          - type: test_passes
+            command: "pytest tests/ -x -q"
+
+      - title: "Add API documentation and README"
+        role: docs
+        scope: small
+        complexity: low
+        description: >
+          Create README.md with project overview, setup instructions,
+          and API endpoint documentation (method, path, request/response).
+        files:
+          - "README.md"
+        completion_signals:
+          - type: path_exists
+            path: "README.md"
+          - type: file_contains
+            path: "README.md"
+            contains: "## API Endpoints"

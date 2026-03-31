@@ -286,6 +286,12 @@ def _show_run_summary() -> None:
 
 
 @click.command("conduct", hidden=True)
+@click.argument(
+    "plan_file",
+    required=False,
+    default=None,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
 @click.option(
     "--goal",
     default=None,
@@ -412,6 +418,7 @@ def _show_run_summary() -> None:
     help="A/B testing mode: spawn two agents with different models for each task.",
 )
 def run(
+    plan_file: Path | None,
     goal: str | None,
     seed_file: str | None,
     port: int,
@@ -435,6 +442,7 @@ def run(
     """Parse seed, init workspace, start server, launch agents.
 
     \b
+      bernstein run plan.yaml                  # execute a plan file
       bernstein conduct                        # reads bernstein.yaml
       bernstein conduct --goal "Build X"       # inline goal
       bernstein conduct --seed custom.yaml     # custom seed file
@@ -494,6 +502,32 @@ def run(
         os.environ["BERNSTEIN_AUDIT"] = "1"
 
     workdir = Path.cwd()
+
+    # Plan file: `bernstein run plan.yaml` or `--seed plan.yaml` with stages
+    _plan_path = plan_file
+    if _plan_path is None and seed_file is not None:
+        # Check if --seed points to a plan file instead of a seed file
+        from bernstein.core.plan_loader import is_plan_file
+
+        if is_plan_file(Path(seed_file)):
+            _plan_path = Path(seed_file)
+
+    if _plan_path is not None:
+        from bernstein.core.plan_loader import PlanLoadError, is_plan_file, load_plan
+
+        if is_plan_file(_plan_path):
+            try:
+                syn_seed_path, task_ids = load_plan(_plan_path, workdir)
+                console.print(f"[dim]Plan file:[/dim]  {_plan_path}")
+                console.print(f"[dim]Tasks:[/dim]     {len(task_ids)} steps across stages")
+                # Replace seed_file with the synthetic seed so bootstrap picks it up
+                seed_file = str(syn_seed_path)
+                # Clear goal/from_plan — the plan provides everything
+                goal = None
+                from_plan = None
+            except PlanLoadError as exc:
+                console.print(f"[red]Plan error:[/red] {exc}")
+                raise SystemExit(1) from exc
 
     # --from-plan: load goal from saved plan file, override inline goal
     if from_plan is not None:
