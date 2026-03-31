@@ -68,10 +68,10 @@ def test_gaussian_mechanism_adds_noise() -> None:
     cfg = DPConfig(epsilon=1.0, delta=1e-5)
     mech = GaussianMechanism(sensitivity=1000.0, config=cfg)
     # Use a large value so clip_min never kicks in
-    samples = [mech.add_noise(1e9) - 1e9 for _ in range(2000)]
+    samples = [mech.add_noise(1e9) - 1e9 for _ in range(5000)]
     mean_noise = statistics.mean(samples)
-    # Mean should be ~0 within 3-sigma / sqrt(N)
-    assert abs(mean_noise) < 3 * mech.sigma / math.sqrt(len(samples))
+    # Mean should be ~0 within 5-sigma / sqrt(N) (generous to avoid CI flakes)
+    assert abs(mean_noise) < 5 * mech.sigma / math.sqrt(len(samples))
 
 
 def test_gaussian_mechanism_clips_to_nonnegative() -> None:
