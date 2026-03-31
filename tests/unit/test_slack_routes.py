@@ -125,6 +125,18 @@ async def test_events_url_verification_challenge(client: AsyncClient) -> None:
     assert resp.json()["challenge"] == challenge_token
 
 
+@pytest.mark.anyio
+async def test_events_bad_payload_hides_parse_details(client: AsyncClient) -> None:
+    """POST /webhooks/slack/events does not echo JSON parse internals."""
+    resp = await client.post(
+        "/webhooks/slack/events",
+        content=b"{",
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "Bad events payload"}
+
+
 # ---------------------------------------------------------------------------
 # Test: invalid signature returns 401
 # ---------------------------------------------------------------------------

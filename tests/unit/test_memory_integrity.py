@@ -341,6 +341,21 @@ class TestVerifyChain:
         assert not result.valid
         assert result.broken_at == 1
 
+    def test_invalid_json_error_is_generic(self, tmp_path: Path) -> None:
+        p = tmp_path / "lessons.jsonl"
+        p.write_text("{", encoding="utf-8")
+
+        result = verify_chain(p)
+
+        assert not result.valid
+        assert result.errors == ["Line 1: invalid JSON entry"]
+
+    def test_read_error_is_generic(self, tmp_path: Path) -> None:
+        result = verify_chain(tmp_path)
+
+        assert not result.valid
+        assert result.errors == ["Failed to read lessons file"]
+
 
 # ---------------------------------------------------------------------------
 # get_last_chain_hash

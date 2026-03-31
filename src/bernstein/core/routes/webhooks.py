@@ -125,9 +125,10 @@ async def github_webhook(request: Request) -> JSONResponse:
     try:
         event = parse_webhook(headers, body)
     except ValueError as exc:
+        logger.debug("Bad GitHub webhook payload", exc_info=exc)
         return JSONResponse(
             status_code=400,
-            content={"detail": f"Bad webhook payload: {exc}"},
+            content={"detail": "Bad webhook payload"},
         )
 
     # Map event to tasks based on event type — use handler classes for new events,

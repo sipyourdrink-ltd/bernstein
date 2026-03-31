@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.sanitize import sanitize_log
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -492,7 +494,11 @@ class AgentIdentityStore:
                 details={"reason": reason},
             )
         )
-        logger.info("Revoked agent identity %s: %s", identity_id, reason)
+        logger.info(
+            "Revoked agent identity %s: %s",
+            sanitize_log(identity_id),
+            sanitize_log(reason),
+        )
         return True
 
     def suspend(self, identity_id: str, *, reason: str = "", actor: str = "admin") -> bool:
@@ -513,7 +519,11 @@ class AgentIdentityStore:
                 details={"reason": reason},
             )
         )
-        logger.info("Suspended agent identity %s: %s", identity_id, reason)
+        logger.info(
+            "Suspended agent identity %s: %s",
+            sanitize_log(identity_id),
+            sanitize_log(reason),
+        )
         return True
 
     def reactivate(self, identity_id: str, *, actor: str = "admin") -> bool:

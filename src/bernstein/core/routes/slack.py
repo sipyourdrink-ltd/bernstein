@@ -158,9 +158,10 @@ async def slack_events(request: Request) -> JSONResponse:
 
         payload: dict[str, Any] = _json.loads(body)
     except Exception as exc:
+        logger.debug("Bad Slack events payload", exc_info=exc)
         return JSONResponse(
             status_code=400,
-            content={"detail": f"Bad events payload: {exc}"},
+            content={"detail": "Bad events payload"},
         )
 
     event_type = payload.get("type", "")

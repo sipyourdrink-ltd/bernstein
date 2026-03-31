@@ -662,6 +662,7 @@ async def test_webhook_bad_payload_returns_400(client: AsyncClient) -> None:
         },
     )
     assert resp.status_code == 400
+    assert resp.json() == {"detail": "Bad webhook payload"}
 
 
 @pytest.mark.anyio

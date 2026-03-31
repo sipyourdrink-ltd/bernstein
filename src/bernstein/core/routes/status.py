@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _get_store(request: Request) -> TaskStore:
@@ -57,6 +58,21 @@ def _get_workdir(request: Request) -> Path:
     if isinstance(sdd_dir, Path) and sdd_dir.name == ".sdd":
         return sdd_dir.parent
     return Path.cwd()
+
+
+def _internal_error_response(
+    message: str,
+    *,
+    exc: BaseException,
+    status_code: int = 500,
+    extra: dict[str, Any] | None = None,
+) -> JSONResponse:
+    """Log internal exception details and return a generic public error."""
+    logger.warning(message, exc_info=exc)
+    content: dict[str, Any] = {"error": message}
+    if extra:
+        content.update(extra)
+    return JSONResponse(content=content, status_code=status_code)
 
 
 def _read_provider_status(request: Request) -> dict[str, Any] | None:
@@ -272,7 +288,11 @@ async def bandit_routing_stats(request: Request) -> JSONResponse:
             }
         )
     except Exception as exc:
-        return JSONResponse(content={"mode": "bandit", "active": True, "error": str(exc)})
+        return _internal_error_response(
+            "Failed to read routing bandit state",
+            exc=exc,
+            extra={"mode": "bandit", "active": True},
+        )
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -373,10 +393,7 @@ async def cache_stats(request: Request) -> JSONResponse:
         line = manifest_path.read_text(encoding="utf-8").strip()
         manifest = CacheManifest.from_json_line(line) if line else CacheManifest()
     except (OSError, json.JSONDecodeError) as exc:
-        return JSONResponse(
-            content={"error": f"Failed to read cache manifest: {exc}"},
-            status_code=500,
-        )
+        return _internal_error_response("Failed to read cache manifest", exc=exc, status_code=500)
 
     return JSONResponse(
         content={

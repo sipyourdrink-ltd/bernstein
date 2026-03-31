@@ -246,6 +246,20 @@ class TestAgentIdentityStore:
     def test_revoke_nonexistent(self, store: AgentIdentityStore) -> None:
         assert not store.revoke("no-such-id")
 
+    def test_revoke_and_suspend_logs_escape_newlines(self, store: AgentIdentityStore, caplog: pytest.LogCaptureFixture) -> None:
+        store.create_identity("backend-abc", "backend")
+        store.create_identity("backend-def", "backend")
+
+        with caplog.at_level("INFO", logger="bernstein.core.agent_identity"):
+            assert store.revoke("backend-abc", reason="line1\nline2")
+            assert store.suspend("backend-def", reason="line3\rline4")
+
+        messages = [record.getMessage() for record in caplog.records if record.name == "bernstein.core.agent_identity"]
+        assert any("line1\\nline2" in message for message in messages)
+        assert any("line3\\rline4" in message for message in messages)
+        assert all("line1\nline2" not in message for message in messages)
+        assert all("line3\rline4" not in message for message in messages)
+
     def test_suspend_and_reactivate(self, store: AgentIdentityStore) -> None:
         store.create_identity("backend-abc", "backend")
         assert store.suspend("backend-abc", reason="investigation")

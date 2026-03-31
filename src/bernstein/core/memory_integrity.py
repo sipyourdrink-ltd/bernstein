@@ -324,7 +324,7 @@ def verify_chain(lessons_path: Path) -> ChainVerifyResult:
     result = ChainVerifyResult(valid=False)
 
     if not lessons_path.exists():
-        result.errors.append(f"Lessons file not found: {lessons_path}")
+        result.errors.append("Lessons file not found")
         return result
 
     expected_prev_hash = GENESIS_HASH
@@ -339,8 +339,8 @@ def verify_chain(lessons_path: Path) -> ChainVerifyResult:
 
                 try:
                     data = json.loads(raw)
-                except json.JSONDecodeError as exc:
-                    result.errors.append(f"Line {lineno}: JSON parse error — {exc}")
+                except json.JSONDecodeError:
+                    result.errors.append(f"Line {lineno}: invalid JSON entry")
                     result.broken_at = lineno
                     result.entries_checked = count
                     return result
@@ -405,8 +405,8 @@ def verify_chain(lessons_path: Path) -> ChainVerifyResult:
 
                 count += 1
 
-    except OSError as exc:
-        result.errors.append(f"Failed to read {lessons_path}: {exc}")
+    except OSError:
+        result.errors.append("Failed to read lessons file")
         result.entries_checked = count
         return result
 
