@@ -1,0 +1,15 @@
+Source: bernstein
+Section: devel
+Priority: optional
+Maintainer: Alex Chernysh <alex@alexchernysh.com>
+Build-Depends: debhelper-compat (= 13), python3, python3-pip, python3-venv
+Standards-Version: 4.6.2
+Homepage: https://github.com/chernistry/bernstein
+
+Package: bernstein
+Architecture: all
+Depends: python3 (>= 3.12), python3-pip, ${misc:Depends}
+Description: Declarative agent orchestration for engineering teams
+ Bernstein orchestrates multiple AI coding agents (Claude Code, Codex,
+ Gemini CLI, Cursor) in parallel. One YAML config, deterministic
+ scheduling, verified output.

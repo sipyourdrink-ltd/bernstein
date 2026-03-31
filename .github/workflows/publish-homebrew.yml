@@ -1,0 +1,95 @@
+name: Publish Homebrew Formula
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 1.4.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  update-formula:
+    name: Update Homebrew formula
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get version and SHA
+        id: meta
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Get SHA256 of PyPI tarball
+          URL="https://files.pythonhosted.org/packages/source/b/bernstein/bernstein-${VERSION}.tar.gz"
+          for i in 1 2 3 4 5; do
+            SHA=$(curl -sL "$URL" | sha256sum | cut -d' ' -f1)
+            if [ -n "$SHA" ] && [ "$SHA" != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]; then
+              echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+              echo "Found SHA: $SHA"
+              break
+            fi
+            echo "Waiting for PyPI to propagate... (attempt $i)"
+            sleep 30
+          done
+
+      - name: Generate formula
+        run: |
+          cat > /tmp/bernstein.rb << 'FORMULA'
+          class Bernstein < Formula
+            include Language::Python::Virtualenv
+
+            desc "Declarative agent orchestration for engineering teams"
+            homepage "https://github.com/chernistry/bernstein"
+            url "https://files.pythonhosted.org/packages/source/b/bernstein/bernstein-VERSION.tar.gz"
+            sha256 "SHA256"
+            license "Apache-2.0"
+            head "https://github.com/chernistry/bernstein.git", branch: "main"
+
+            depends_on "python@3.12"
+
+            def install
+              virtualenv_install_with_resources
+            end
+
+            test do
+              assert_match "bernstein", shell_output("#{bin}/bernstein --version")
+            end
+          end
+          FORMULA
+
+          sed -i "s/VERSION/${{ steps.meta.outputs.version }}/g" /tmp/bernstein.rb
+          sed -i "s/SHA256/${{ steps.meta.outputs.sha256 }}/g" /tmp/bernstein.rb
+          cat /tmp/bernstein.rb
+
+      - name: Push to homebrew-tap repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Clone or create tap repo
+          if gh repo view chernistry/homebrew-tap > /dev/null 2>&1; then
+            gh repo clone chernistry/homebrew-tap /tmp/homebrew-tap
+          else
+            echo "::warning::homebrew-tap repo not found. Create it: gh repo create chernistry/homebrew-tap --public"
+            exit 0
+          fi
+
+          mkdir -p /tmp/homebrew-tap/Formula
+          cp /tmp/bernstein.rb /tmp/homebrew-tap/Formula/bernstein.rb
+
+          cd /tmp/homebrew-tap
+          git config user.name "bernstein[bot]"
+          git config user.email "bernstein-bot@users.noreply.github.com"
+          git add Formula/bernstein.rb
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "bernstein ${{ steps.meta.outputs.version }}"
+          git push
