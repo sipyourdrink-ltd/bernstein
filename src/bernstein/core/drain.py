@@ -337,50 +337,73 @@ class DrainCoordinator:
         phase.detail = "New task spawning disabled"
 
     async def _phase_signal(self) -> None:
-        """Phase 2: Signal — write SHUTDOWN files for all live agents."""
+        """Phase 2: Signal — write SHUTDOWN to all live agents.
+
+        Discovers agents from multiple sources (HTTP API, PID files, worktrees)
+        since agents.json may not exist.
+        """
         phase = self._phases[1]
-        agents_file = self._workdir / ".sdd" / "runtime" / "agents.json"
 
-        if not agents_file.exists():
-            phase.detail = "No agents running"
-            return
-
+        # Source 1: HTTP API — most reliable when server is running.
         try:
-            raw = json.loads(agents_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Could not read agents.json: %s", exc)
-            phase.detail = "Failed to read agents.json"
-            return
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{self._server_url}/status")
+                if resp.status_code == 200:
+                    status_data = resp.json()
+                    claimed = int(status_data.get("claimed", 0))
+                    logger.info("Server reports %d claimed tasks", claimed)
+        except Exception:
+            pass
 
-        agents_data: list[dict[str, object]] = raw if isinstance(raw, list) else []  # type: ignore[reportUnknownVariableType]
+        # Source 2: PID files in .sdd/runtime/pids/.
+        pids_dir = self._workdir / ".sdd" / "runtime" / "pids"
+        if pids_dir.is_dir():
+            for pid_file in pids_dir.glob("*.json"):
+                try:
+                    meta = json.loads(pid_file.read_text(encoding="utf-8"))
+                    session_id = str(meta.get("session_id", pid_file.stem))
+                    role = str(meta.get("role", "unknown"))
+                    pid = int(meta.get("pid", 0))
+                    if pid and _is_process_alive(pid):
+                        already = any(a.session_id == session_id for a in self._agents)
+                        if not already:
+                            wt = self._workdir / ".sdd" / "worktrees" / session_id
+                            self._agents.append(AgentDrainStatus(
+                                session_id=session_id, role=role, pid=pid,
+                                status="running", worktree_path=str(wt) if wt.exists() else "",
+                            ))
+                except (json.JSONDecodeError, OSError, ValueError):
+                    continue
 
-        for entry in agents_data:
-            session_id = str(entry.get("session_id", ""))
-            role = str(entry.get("role", "unknown"))
-            raw_pid = entry.get("pid", 0)
-            pid = int(raw_pid) if isinstance(raw_pid, (int, str, float)) else 0
-            worktree = str(entry.get("worktree_path", ""))
+        # Source 3: agents.json (legacy fallback).
+        agents_file = self._workdir / ".sdd" / "runtime" / "agents.json"
+        if agents_file.exists():
+            try:
+                raw = json.loads(agents_file.read_text(encoding="utf-8"))
+                agents_data: list[dict[str, object]] = raw if isinstance(raw, list) else []
+                for entry in agents_data:
+                    session_id = str(entry.get("session_id", entry.get("id", "")))
+                    if any(a.session_id == session_id for a in self._agents):
+                        continue
+                    role = str(entry.get("role", "unknown"))
+                    raw_pid = entry.get("pid", 0)
+                    pid = int(raw_pid) if isinstance(raw_pid, (int, str, float)) else 0
+                    worktree = str(entry.get("worktree_path", ""))
+                    if session_id and pid:
+                        self._agents.append(AgentDrainStatus(
+                            session_id=session_id, role=role, pid=pid,
+                            status="running", worktree_path=worktree,
+                        ))
+            except (json.JSONDecodeError, OSError):
+                pass
 
-            if not session_id or pid == 0:
-                continue
-
-            # Write SHUTDOWN file.
-            signal_dir = self._workdir / ".sdd" / "runtime" / "signals" / session_id
+        # Write SHUTDOWN signals for discovered agents.
+        for agent in self._agents:
+            signal_dir = self._workdir / ".sdd" / "runtime" / "signals" / agent.session_id
             signal_dir.mkdir(parents=True, exist_ok=True)
-            shutdown_file = signal_dir / "SHUTDOWN"
-            shutdown_file.write_text(
+            (signal_dir / "SHUTDOWN").write_text(
                 "DRAIN: Save all work, commit changes, and exit cleanly",
                 encoding="utf-8",
-            )
-
-            self._agents.append(
-                AgentDrainStatus(
-                    session_id=session_id,
-                    role=role,
-                    pid=pid,
-                    status="running",
-                    worktree_path=worktree,
-                )
             )
 
         count = len(self._agents)

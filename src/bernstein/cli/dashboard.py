@@ -1006,8 +1006,9 @@ class BernsteinApp(App[None]):
 
     #no-agents {
         color: $text-muted;
-        text-align: center;
-        padding: 2;
+        text-align: left;
+        padding: 0 1;
+        overflow-y: auto;
     }
     """
 
@@ -1264,11 +1265,15 @@ class BernsteinApp(App[None]):
 
         if not alive:
             # Show live orchestrator boot log instead of static "Waiting..." text.
+            # Only update when content actually changes to prevent flickering.
             boot_text = self._get_boot_log()
             existing_boot = next(iter(col.query("Static#no-agents")), None)
             if isinstance(existing_boot, Static):
-                existing_boot.update(boot_text)
+                if getattr(self, "_last_boot_text", "") != boot_text:
+                    self._last_boot_text = boot_text
+                    existing_boot.update(boot_text)
             else:
+                self._last_boot_text = boot_text
                 col.mount(Static(boot_text, id="no-agents"))
         else:
             for w in col.query("Static#no-agents"):
