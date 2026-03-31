@@ -27,20 +27,20 @@ class NerdFontIcons:
     """
 
     # Agent icons
-    agent_claude: str = "\uf5dc"   # nf-md-brain
-    agent_codex: str = "\uf872"    # nf-md-robot
-    agent_gemini: str = "\uf80d"   # nf-md-star_four_points
-    agent_cursor: str = "\uf061"   # nf-fa-arrow_right
+    agent_claude: str = "\uf5dc"  # nf-md-brain
+    agent_codex: str = "\uf872"  # nf-md-robot
+    agent_gemini: str = "\uf80d"  # nf-md-star_four_points
+    agent_cursor: str = "\uf061"  # nf-fa-arrow_right
 
     # Status icons
     status_running: str = "\uf110"  # nf-fa-spinner
-    status_done: str = "\uf058"     # nf-fa-check_circle
-    status_failed: str = "\uf057"   # nf-fa-times_circle
+    status_done: str = "\uf058"  # nf-fa-check_circle
+    status_failed: str = "\uf057"  # nf-fa-times_circle
     status_blocked: str = "\uf023"  # nf-fa-lock
 
     # Quality gate icons
-    gate_lint: str = "\uf8e3"   # nf-md-broom
-    gate_test: str = "\uf0c3"   # nf-md-flask
+    gate_lint: str = "\uf8e3"  # nf-md-broom
+    gate_test: str = "\uf0c3"  # nf-md-flask
     gate_security: str = "\uf9be"  # nf-md-shield_check
 
 
@@ -49,20 +49,20 @@ class UnicodeFallbackIcons:
     """Icon set using standard Unicode characters (works in any terminal)."""
 
     # Agent icons
-    agent_claude: str = "\u25c9"   # ◉  (fisheye)
-    agent_codex: str = "\u25ce"    # ◎  (bullseye)
-    agent_gemini: str = "\u2726"   # ✦  (four-pointed star)
-    agent_cursor: str = "\u2192"   # →  (right arrow)
+    agent_claude: str = "\u25c9"  # ◉  (fisheye)
+    agent_codex: str = "\u25ce"  # ◎  (bullseye)
+    agent_gemini: str = "\u2726"  # ✦  (four-pointed star)
+    agent_cursor: str = "\u2192"  # →  (right arrow)
 
     # Status icons
     status_running: str = "\u25c9"  # ◉
-    status_done: str = "\u2713"     # ✓
-    status_failed: str = "\u2717"   # ✗
+    status_done: str = "\u2713"  # ✓
+    status_failed: str = "\u2717"  # ✗
     status_blocked: str = "\u2298"  # ⊘
 
     # Quality gate icons
-    gate_lint: str = "\u21ba"    # ↺  (counterclockwise arrow)
-    gate_test: str = "\u2697"    # ⚗  (alembic / flask)
+    gate_lint: str = "\u21ba"  # ↺  (counterclockwise arrow)
+    gate_test: str = "\u2697"  # ⚗  (alembic / flask)
     gate_security: str = "\u25c8"  # ◈  (diamond with dot)
 
 

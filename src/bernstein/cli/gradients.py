@@ -12,8 +12,10 @@ Performance target: <20ms for an 80×24 gradient.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # ── Type alias ─────────────────────────────────────────────────────────────────
 
@@ -76,7 +78,7 @@ def _make_stops(
             raise ValueError(f"stops length {len(stops)} != colors length {n}")
         positions = list(stops)
 
-    return sorted(zip(positions, colors), key=lambda s: s[0])
+    return sorted(zip(positions, colors, strict=False), key=lambda s: s[0])
 
 
 def _lerp_color(t: float, color_stops: list[tuple[float, RGB]]) -> RGB:
