@@ -124,12 +124,14 @@ class TerminalCaps:
             or bool(os.environ.get("KONSOLE_VERSION"))
         )
 
-        # Sixel: WezTerm, xterm, VS Code (1.80+), Windows Terminal (1.23+),
-        #        Konsole (22.04+), foot
+        # Sixel: WezTerm, foot, mlterm, Windows Terminal (1.23+),
+        #        Konsole (22.04+).  TERM=xterm-256color is too broad — hundreds
+        #        of emulators set it without sixel support (Tabby, Alacritty,
+        #        Terminal.app, etc.).  Only match explicit TERM_PROGRAM values.
         sixel = (
             term_program_lower == "wezterm"
-            or term in ("xterm-256color", "xterm")
-            or term_program_lower == "vscode"
+            or term_program_lower == "foot"
+            or term_program_lower == "mlterm"
             or bool(os.environ.get("WT_SESSION"))
             or bool(os.environ.get("KONSOLE_VERSION"))
         )
