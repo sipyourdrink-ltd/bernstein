@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 import yaml
 
 from bernstein.core.plan_loader import PlanLoadError, load_plan_from_yaml
-
-if TYPE_CHECKING:
-    from bernstein.core.models import Task
 
 
 def test_load_plan_valid(tmp_path: Path) -> None:

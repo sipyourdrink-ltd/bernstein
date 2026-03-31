@@ -80,7 +80,7 @@ def test_run_params_match_cli_call() -> None:
     # Check each param appears in the call
     missing_in_source = []
     for name in param_names:
-        if f"{name}=" not in source and f"**" not in source:
+        if f"{name}=" not in source and "**" not in source:
             missing_in_source.append(name)
 
     assert not missing_in_source, (

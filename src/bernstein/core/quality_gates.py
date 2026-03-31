@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from bernstein.core.gate_runner import GatePipelineStep, GateReport
     from bernstein.core.models import Task
+    from bernstein.core.quality_score import QualityScore
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +146,22 @@ class QualityGatesConfig:
     pii_allowlist_prefixes: list[str] = field(
         default_factory=lambda: ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "LOCALHOST"]
     )
+    security_scan: bool = False
     security_scan_command: str | None = None
+    coverage_delta: bool = False
     coverage_delta_command: str | None = None
+    complexity_check: bool = False
+    complexity_threshold: float = 0.20
     complexity_check_command: str | None = None
+    dead_code_check: bool = False
+    dead_code_command: str = "vulture"
+    dead_code_min_confidence: int = 80
+    import_cycle_check: bool = False
     import_cycle_command: str | None = None
+    merge_conflict_check: bool = False
+    flaky_detection: bool = False
+    flaky_min_runs: int = 5
+    flaky_threshold: float = 0.15
 
 
 @dataclass
@@ -166,6 +179,7 @@ class QualityGateCheckResult:
     passed: bool
     blocked: bool
     detail: str
+    status: str = "pass"
 
 
 @dataclass
@@ -181,6 +195,7 @@ class QualityGatesResult:
     task_id: str
     passed: bool
     gate_results: list[QualityGateCheckResult] = field(default_factory=list[QualityGateCheckResult])
+    quality_score: QualityScore | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -632,7 +647,17 @@ def run_quality_gates(
             bypass_reason=explicit_bypass_reason,
         )
     )
-    result = _legacy_result_from_report(report)
+    quality_score = None
+    try:
+        from bernstein.core.quality_score import QualityScorer
+
+        scorer = QualityScorer(workdir)
+        quality_score = scorer.score(report)
+        scorer.record(task.id, quality_score)
+    except Exception as exc:  # pragma: no cover - best-effort telemetry only
+        logger.warning("Failed to record quality score for task %s: %s", task.id, exc)
+
+    result = _legacy_result_from_report(report, quality_score=quality_score)
     for gate_result in report.results:
         _record_gate_event(
             task.id,
@@ -763,7 +788,7 @@ def get_quality_gate_stats(workdir: Path) -> dict[str, Any]:
     return {"total": total, "blocked": blocked, "by_gate": by_gate}
 
 
-def _legacy_result_from_report(report: GateReport) -> QualityGatesResult:
+def _legacy_result_from_report(report: GateReport, *, quality_score: QualityScore | None = None) -> QualityGatesResult:
     """Convert a detailed gate report back to the legacy wrapper result."""
     return QualityGatesResult(
         task_id=report.task_id,
@@ -774,9 +799,11 @@ def _legacy_result_from_report(report: GateReport) -> QualityGatesResult:
                 passed=result.status in {"pass", "skipped", "bypassed"},
                 blocked=result.blocked,
                 detail=result.details,
+                status=result.status,
             )
             for result in report.results
         ],
+        quality_score=quality_score,
     )
 
 

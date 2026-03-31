@@ -7,14 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
+import bernstein.cli.terminal_caps as _caps_module
 from bernstein.cli.terminal_caps import (
     Protocol,
     TerminalCaps,
     detect_capabilities,
-    _caps_cache,
 )
-import bernstein.cli.terminal_caps as _caps_module
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 

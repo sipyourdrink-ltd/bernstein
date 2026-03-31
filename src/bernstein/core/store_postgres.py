@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from bernstein.core.models import (
     CompletionSignal,
     Complexity,
+    RiskAssessment,
+    RollbackPlan,
     Scope,
     Task,
     TaskStatus,
@@ -174,7 +176,16 @@ def _row_to_task(row: Any) -> Task:
 
     upgrade_details: UpgradeProposalDetails | None = None
     if raw.get("upgrade_details"):
-        upgrade_details = UpgradeProposalDetails(**raw["upgrade_details"])
+        raw_upgrade = cast("dict[str, Any]", raw["upgrade_details"])
+        upgrade_details = UpgradeProposalDetails(
+            current_state=raw_upgrade.get("current_state", ""),
+            proposed_change=raw_upgrade.get("proposed_change", ""),
+            benefits=list(raw_upgrade.get("benefits", [])),
+            risk_assessment=RiskAssessment(**raw_upgrade.get("risk_assessment", {})),
+            rollback_plan=RollbackPlan(**raw_upgrade.get("rollback_plan", {})),
+            cost_estimate_usd=float(raw_upgrade.get("cost_estimate_usd", 0.0)),
+            performance_impact=raw_upgrade.get("performance_impact", ""),
+        )
 
     return Task(
         id=raw["id"],

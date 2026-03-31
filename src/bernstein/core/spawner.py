@@ -390,7 +390,7 @@ def _render_prompt(
 
         indexer = CodebaseIndexer(workdir)
         if indexer.file_count() > 0:
-            query = " ".join(t.description for t in tasks)
+            query = " ".join(t.title for t in tasks)
             # Find top N relevant files
             rag_cfg = getattr(spawner_config, "rag", None)
             max_files = rag_cfg.max_files if rag_cfg else 5

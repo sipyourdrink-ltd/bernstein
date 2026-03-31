@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -149,7 +149,7 @@ class ApiUsageTracker:
         record = ApiCallRecord(
             provider=provider,
             model=model,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_usd=cost_usd,
@@ -289,7 +289,7 @@ class ApiUsageTracker:
             "total_cost_usd": round(self.total_cost(), 4),
             "providers": {k: asdict(v) for k, v in self.provider_summary().items()},
             "tiers": {k: asdict(v) for k, v in self.tier_consumption.items()},
-            "last_updated": datetime.utcnow().isoformat(),
+            "last_updated": datetime.now(UTC).isoformat(),
         }
         summary_file.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
 

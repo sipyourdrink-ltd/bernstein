@@ -130,6 +130,17 @@ def build_filtered_env(
     allowed = _BASE_ALLOWLIST | frozenset(extra_keys)
     env = {k: v for k, v in os.environ.items() if k in allowed}
 
+    # Ensure PYTHONPATH includes directories needed by bernstein-worker.
+    # When the orchestrator runs via ``uv run``, sys.executable may point
+    # to the framework Python rather than the venv Python.  Without an
+    # explicit PYTHONPATH the worker subprocess cannot import bernstein.
+    if "PYTHONPATH" not in env:
+        import sys
+
+        src_dirs = [p for p in sys.path if p and os.path.isdir(p)]
+        if src_dirs:
+            env["PYTHONPATH"] = os.pathsep.join(src_dirs)
+
     # Overlay secrets from external provider (if configured).
     if secrets_config is not None:
         from bernstein.core.secrets import load_secrets

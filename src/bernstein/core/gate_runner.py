@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import json
 import logging
 import shlex
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -17,12 +19,13 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from bernstein.core.gate_plugins import GatePluginRegistry
     from bernstein.core.models import Task
     from bernstein.core.quality_gates import QualityGatesConfig
 
 logger = logging.getLogger(__name__)
 
-GateStatus = Literal["pass", "fail", "timeout", "skipped", "bypassed"]
+GateStatus = Literal["pass", "fail", "warn", "timeout", "skipped", "bypassed"]
 
 VALID_GATE_NAMES = frozenset(
     {
@@ -35,7 +38,9 @@ VALID_GATE_NAMES = frozenset(
         "security_scan",
         "coverage_delta",
         "complexity_check",
+        "dead_code",
         "import_cycle",
+        "merge_conflict",
     }
 )
 VALID_GATE_CONDITIONS = frozenset({"always", "python_changed", "tests_changed", "any_changed"})
@@ -55,6 +60,36 @@ def normalize_gate_condition(condition: str) -> str:
     if normalized not in VALID_GATE_CONDITIONS:
         raise ValueError(f"Unsupported gate condition: {condition!r}")
     return normalized
+
+
+def _module_name_from_path(path: Path, root: Path) -> str:
+    """Return the dotted module name for a Python file relative to ``root``."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return ""
+    parts = list(rel.parts)
+    if not parts:
+        return ""
+    if parts[-1] == "__init__.py":
+        parts = parts[:-1]
+    elif parts[-1].endswith(".py"):
+        parts[-1] = parts[-1][:-3]
+    return ".".join(parts)
+
+
+def _resolve_import_from(module_name: str, level: int, imported_module: str | None) -> str:
+    """Resolve an ``ImportFrom`` target against a current module name."""
+    if level <= 0:
+        return imported_module or ""
+    parts = module_name.split(".")
+    package_parts = parts[:-1]
+    if level > len(package_parts):
+        return imported_module or ""
+    base_parts = package_parts[: len(package_parts) - level + 1]
+    if imported_module:
+        base_parts.extend(imported_module.split("."))
+    return ".".join(part for part in base_parts if part)
 
 
 @dataclass(frozen=True)
@@ -110,6 +145,18 @@ def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]
         pipeline.append(GatePipelineStep(name="type_check", required=True, condition="python_changed"))
     if config.tests:
         pipeline.append(GatePipelineStep(name="tests", required=True, condition="python_changed"))
+    if config.security_scan:
+        pipeline.append(GatePipelineStep(name="security_scan", required=True, condition="python_changed"))
+    if config.complexity_check:
+        pipeline.append(GatePipelineStep(name="complexity_check", required=True, condition="python_changed"))
+    if config.dead_code_check:
+        pipeline.append(GatePipelineStep(name="dead_code", required=False, condition="python_changed"))
+    if config.import_cycle_check:
+        pipeline.append(GatePipelineStep(name="import_cycle", required=True, condition="python_changed"))
+    if config.coverage_delta:
+        pipeline.append(GatePipelineStep(name="coverage_delta", required=True, condition="python_changed"))
+    if config.merge_conflict_check:
+        pipeline.append(GatePipelineStep(name="merge_conflict", required=True, condition="any_changed"))
     if config.pii_scan:
         pipeline.append(GatePipelineStep(name="pii_scan", required=True, condition="any_changed"))
     if config.mutation_testing:
@@ -136,6 +183,7 @@ class GateRunner:
         self._cache_loaded = False
         self._cache_entries: dict[str, dict[str, Any]] = {}
         self._changed_files_resolved = True
+        self._gate_plugin_registry: GatePluginRegistry | None = None
 
     async def run_all(
         self,
@@ -272,15 +320,18 @@ class GateRunner:
             )
 
         if step.name == "tests":
-            command = self._tests_command(step, run_dir, changed_files)
+            return await self._run_tests_gate(step, task, run_dir, changed_files)
+
+        if step.name == "security_scan":
+            command = self._optional_command("security_scan", step.command_override)
             if command is None:
-                return self._skipped(step, "No impacted tests detected.")
+                return self._skipped(step, "No security scan command configured.")
             return await self._run_command_gate(
                 step,
                 command,
                 run_dir,
                 self._config.timeout_s,
-                pass_detail="all tests passing",
+                pass_detail="no security issues found",
             )
 
         if step.name == "pii_scan":
@@ -333,11 +384,53 @@ class GateRunner:
                 metadata={"verdict": verdict.verdict, "model": verdict.model},
             )
 
-        if step.name in {"security_scan", "coverage_delta", "complexity_check", "import_cycle"}:
-            command = self._optional_command(step.name, step.command_override)
-            if command is None:
-                return self._skipped(step, f"{step.name} is not configured.")
-            return await self._run_command_gate(step, command, run_dir, self._config.timeout_s)
+        if step.name == "complexity_check":
+            return await asyncio.to_thread(self._run_complexity_gate_sync, step, run_dir, changed_files)
+
+        if step.name == "dead_code":
+            return await asyncio.to_thread(self._run_dead_code_gate_sync, step, run_dir, changed_files)
+
+        if step.name == "import_cycle":
+            return await asyncio.to_thread(self._run_import_cycle_gate_sync, step, run_dir, changed_files)
+
+        if step.name == "coverage_delta":
+            return await asyncio.to_thread(self._run_coverage_delta_gate_sync, step, run_dir, changed_files)
+
+        if step.name == "merge_conflict":
+            return await asyncio.to_thread(self._run_merge_conflict_gate_sync, step, run_dir, changed_files)
+
+        plugin = self._plugin_registry().get(step.name)
+        if plugin is not None:
+            try:
+                plugin_result = await asyncio.to_thread(
+                    plugin.run,
+                    changed_files,
+                    run_dir,
+                    task.title,
+                    task.description,
+                )
+            except Exception as exc:
+                return GateResult(
+                    name=step.name,
+                    status="fail",
+                    required=step.required,
+                    blocked=step.required,
+                    cached=False,
+                    duration_ms=0,
+                    details=f"Gate plugin {step.name!r} failed: {exc}",
+                    metadata={},
+                )
+            blocked = plugin_result.blocked or (step.required and plugin_result.status == "fail")
+            return GateResult(
+                name=step.name,
+                status=plugin_result.status,
+                required=step.required,
+                blocked=blocked,
+                cached=False,
+                duration_ms=0,
+                details=plugin_result.details,
+                metadata=dict(plugin_result.metadata),
+            )
 
         raise ValueError(f"Unsupported gate name: {step.name!r}")
 
@@ -375,11 +468,516 @@ class GateRunner:
             metadata={"command": command},
         )
 
+    async def _run_tests_gate(
+        self,
+        step: GatePipelineStep,
+        task: Task,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Run the tests gate, optionally recording flaky-test telemetry."""
+        from bernstein.core import quality_gates as qg
+        from bernstein.core.flaky_detector import FlakyDetector, parse_pytest_output
+
+        command = self._tests_command(step, run_dir, changed_files)
+        if command is None:
+            return self._skipped(step, "No impacted tests detected.")
+
+        ok, detail = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
+        metadata: dict[str, Any] = {"command": command}
+        if detail.startswith("Timed out after "):
+            return GateResult(
+                name=step.name,
+                status="timeout",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=detail,
+                metadata=metadata,
+            )
+
+        status: GateStatus = "pass" if ok else "fail"
+        blocked = step.required and not ok
+        details = "all tests passing" if ok else detail
+
+        if self._config.flaky_detection:
+            detector = FlakyDetector(
+                self._workdir,
+                min_runs=self._config.flaky_min_runs,
+                flaky_threshold=self._config.flaky_threshold,
+            )
+            runs = parse_pytest_output(detail, run_id=task.id)
+            if runs:
+                await asyncio.to_thread(detector.record_run, runs)
+                flaky_result = await asyncio.to_thread(detector.analyze)
+                if flaky_result.newly_detected:
+                    metadata["new_flaky_tests"] = flaky_result.newly_detected
+                    if ok:
+                        status = "warn"
+                        blocked = False
+                        details = (
+                            "all tests passing"
+                            f"; newly detected flaky tests: {', '.join(flaky_result.newly_detected)}"
+                        )
+
+        return GateResult(
+            name=step.name,
+            status=status,
+            required=step.required,
+            blocked=blocked,
+            cached=False,
+            duration_ms=0,
+            details=details,
+            metadata=metadata,
+        )
+
+    def _run_complexity_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Run the complexity delta gate."""
+        python_files = self._python_files(changed_files)
+        command = self._complexity_gate_command(step, python_files)
+        if command is None:
+            return self._skipped(step, "No Python files changed.")
+
+        current_score, detail = self._measure_complexity_sync(command, run_dir)
+        if current_score is None:
+            return self._command_failure_result(step, detail, command)
+
+        baseline_score, baseline_detail = self._measure_complexity_base_sync(command)
+        if baseline_score is None:
+            return GateResult(
+                name=step.name,
+                status="warn",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=f"Complexity average: {current_score:.2f}; baseline unavailable ({baseline_detail})",
+                metadata={"command": command, "average_complexity": current_score},
+            )
+
+        delta_ratio = 0.0 if baseline_score == 0 else (current_score - baseline_score) / baseline_score
+        passed = delta_ratio <= self._config.complexity_threshold
+        detail_text = (
+            f"Complexity average: {baseline_score:.2f} -> {current_score:.2f} "
+            f"(delta {delta_ratio:+.1%}, threshold {self._config.complexity_threshold:.1%})"
+        )
+        return GateResult(
+            name=step.name,
+            status="pass" if passed else "fail",
+            required=step.required,
+            blocked=step.required and not passed,
+            cached=False,
+            duration_ms=0,
+            details=detail_text,
+            metadata={"command": command, "average_complexity": current_score, "baseline_complexity": baseline_score},
+        )
+
+    def _run_dead_code_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Run the dead-code gate via vulture-compatible output."""
+        from bernstein.core import quality_gates as qg
+
+        python_files = self._python_files(changed_files)
+        if not python_files:
+            return self._skipped(step, "No Python files changed.")
+
+        command = self._dead_code_command(step, python_files)
+        ok, detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        if detail.startswith("Timed out after "):
+            return GateResult(
+                name=step.name,
+                status="timeout",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=detail,
+                metadata={"command": command},
+            )
+        if ok and detail == "(no output)":
+            return GateResult(
+                name=step.name,
+                status="pass",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details="no dead code detected",
+                metadata={"command": command},
+            )
+        if not ok and detail.startswith("Command error:"):
+            return GateResult(
+                name=step.name,
+                status="fail",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=detail,
+                metadata={"command": command},
+            )
+        status: GateStatus = "fail" if step.required else "warn"
+        return GateResult(
+            name=step.name,
+            status=status,
+            required=step.required,
+            blocked=step.required,
+            cached=False,
+            duration_ms=0,
+            details=detail,
+            metadata={"command": command},
+        )
+
+    def _run_import_cycle_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Run the import-cycle gate with a built-in AST fallback."""
+        command = self._optional_command("import_cycle", step.command_override)
+        python_files = self._python_files(changed_files)
+        if not python_files:
+            return self._skipped(step, "No Python files changed.")
+        if command is not None:
+            ok, detail = self._run_command_and_capture(command, run_dir)
+            if ok:
+                return GateResult(
+                    name=step.name,
+                    status="pass",
+                    required=step.required,
+                    blocked=False,
+                    cached=False,
+                    duration_ms=0,
+                    details="no import cycles detected",
+                    metadata={"command": command},
+                )
+            return self._command_failure_result(step, detail, command)
+
+        has_cycles, detail = self._detect_import_cycles_builtin(python_files, run_dir)
+        return GateResult(
+            name=step.name,
+            status="fail" if has_cycles else "pass",
+            required=step.required,
+            blocked=step.required and has_cycles,
+            cached=False,
+            duration_ms=0,
+            details=detail,
+            metadata={},
+        )
+
+    def _run_coverage_delta_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Run the coverage-delta gate."""
+        from bernstein.core.coverage_gate import CoverageGate
+
+        python_files = self._python_files(changed_files)
+        if not python_files:
+            return self._skipped(step, "No Python files changed.")
+
+        command = self._optional_command("coverage_delta", step.command_override)
+        if command is not None:
+            ok, detail = self._run_command_and_capture(command, run_dir)
+            if ok:
+                return GateResult(
+                    name=step.name,
+                    status="pass",
+                    required=step.required,
+                    blocked=False,
+                    cached=False,
+                    duration_ms=0,
+                    details=detail,
+                    metadata={"command": command},
+                )
+            return self._command_failure_result(step, detail, command)
+
+        try:
+            evaluation = CoverageGate(self._workdir, run_dir, base_ref=self._base_ref).evaluate()
+        except Exception as exc:
+            return GateResult(
+                name=step.name,
+                status="fail",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=str(exc),
+                metadata={},
+            )
+        return GateResult(
+            name=step.name,
+            status="pass" if evaluation.passed else "fail",
+            required=step.required,
+            blocked=step.required and not evaluation.passed,
+            cached=False,
+            duration_ms=0,
+            details=evaluation.detail,
+            metadata={
+                "baseline_pct": evaluation.baseline_pct,
+                "current_pct": evaluation.current_pct,
+                "delta_pct": evaluation.delta_pct,
+            },
+        )
+
+    def _run_merge_conflict_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Run the merge-conflict prediction gate."""
+        from bernstein.core.git_basic import is_git_repo, run_git
+        from bernstein.core.merge_queue import detect_merge_conflicts
+
+        if not changed_files:
+            return self._skipped(step, "No changed files detected.")
+        if not is_git_repo(run_dir):
+            return self._skipped(step, "Not a git repository.")
+
+        branch_result = run_git(["rev-parse", "--abbrev-ref", "HEAD"], run_dir)
+        if not branch_result.ok:
+            return GateResult(
+                name=step.name,
+                status="fail",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=branch_result.stderr.strip() or "Failed to resolve current branch",
+                metadata={},
+            )
+        branch = branch_result.stdout.strip()
+        if not branch or branch == "HEAD":
+            return self._skipped(step, "Detached HEAD; merge conflict prediction skipped.")
+
+        result = detect_merge_conflicts(branch, self._base_ref, run_dir)
+        if result.has_conflicts:
+            return GateResult(
+                name=step.name,
+                status="fail",
+                required=step.required,
+                blocked=step.required,
+                cached=False,
+                duration_ms=0,
+                details=f"Conflicts predicted in: {', '.join(result.conflicting_files)}",
+                metadata={"branch": branch, "base_ref": self._base_ref},
+            )
+        return GateResult(
+            name=step.name,
+            status="pass",
+            required=step.required,
+            blocked=False,
+            cached=False,
+            duration_ms=0,
+            details="No merge conflicts predicted.",
+            metadata={"branch": branch, "base_ref": self._base_ref},
+        )
+
+    def _run_command_and_capture(self, command: str, run_dir: Path) -> tuple[bool, str]:
+        """Execute a command gate synchronously and capture its output."""
+        from bernstein.core import quality_gates as qg
+
+        return qg.run_command_sync(command, run_dir, self._config.timeout_s)
+
+    def _command_failure_result(self, step: GatePipelineStep, detail: str, command: str) -> GateResult:
+        """Translate a command failure into a gate result."""
+        if detail.startswith("Timed out after "):
+            return GateResult(
+                name=step.name,
+                status="timeout",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=detail,
+                metadata={"command": command},
+            )
+        return GateResult(
+            name=step.name,
+            status="fail",
+            required=step.required,
+            blocked=step.required,
+            cached=False,
+            duration_ms=0,
+            details=detail,
+            metadata={"command": command},
+        )
+
+    def _complexity_gate_command(self, step: GatePipelineStep, python_files: list[str]) -> str | None:
+        """Build the complexity gate command for changed Python files."""
+        if not python_files:
+            return None
+        command = step.command_override or self._config.complexity_check_command
+        if not command:
+            return None
+        return f"{command} {self._quote_paths(python_files)}"
+
+    def _dead_code_command(self, step: GatePipelineStep, python_files: list[str]) -> str:
+        """Build the dead-code command line."""
+        command = step.command_override or self._config.dead_code_command
+        return f"{command} {self._quote_paths(python_files)} --min-confidence {self._config.dead_code_min_confidence}"
+
+    def _measure_complexity_sync(self, command: str, cwd: Path) -> tuple[float | None, str]:
+        """Execute a complexity command and parse its average score."""
+        ok, detail = self._run_command_and_capture(command, cwd)
+        if not ok:
+            return None, detail
+        score = self._parse_complexity_average(detail)
+        if score is None:
+            return None, "Could not parse complexity output."
+        return score, detail
+
+    def _measure_complexity_base_sync(self, command: str) -> tuple[float | None, str]:
+        """Measure complexity against the configured base ref in a temporary worktree."""
+        temp_parent = self._workdir / ".sdd" / "tmp"
+        temp_parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="complexity-base-", dir=temp_parent) as temp_dir:
+            temp_path = Path(temp_dir)
+            add_proc = subprocess.run(
+                ["git", "worktree", "add", "--detach", str(temp_path), self._base_ref],
+                cwd=self._workdir,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if add_proc.returncode != 0:
+                return None, add_proc.stderr.strip() or f"Failed to create baseline worktree for {self._base_ref}"
+            try:
+                return self._measure_complexity_sync(command, temp_path)
+            finally:
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", str(temp_path)],
+                    cwd=self._workdir,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+
+    def _parse_complexity_average(self, output: str) -> float | None:
+        """Parse an average complexity score from command output."""
+        try:
+            raw: object = json.loads(output)
+        except json.JSONDecodeError:
+            raw = None
+        if isinstance(raw, dict):
+            raw_map = cast("dict[str, object]", raw)
+            for key in ("average_complexity", "average", "mean_complexity"):
+                value = raw_map.get(key)
+                if isinstance(value, (int, float)):
+                    return float(value)
+            complexities: list[float] = []
+            for value in raw_map.values():
+                if isinstance(value, list):
+                    items = cast("list[object]", value)
+                    for item in items:
+                        if isinstance(item, dict):
+                            item_map = cast("dict[str, object]", item)
+                            complexity = item_map.get("complexity")
+                            if isinstance(complexity, (int, float)):
+                                complexities.append(float(complexity))
+            if complexities:
+                return sum(complexities) / len(complexities)
+        stripped = output.strip()
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
+
+    def _detect_import_cycles_builtin(self, changed_files: list[str], run_dir: Path) -> tuple[bool, str]:
+        """Detect import cycles with a simple AST-based resolver."""
+        source_root = run_dir / "src"
+        search_root = source_root if source_root.exists() else run_dir
+        module_to_path: dict[str, Path] = {}
+        for py_file in sorted(search_root.rglob("*.py")):
+            if any(part.startswith(".") for part in py_file.relative_to(run_dir).parts):
+                continue
+            if "tests" in py_file.relative_to(run_dir).parts:
+                continue
+            module = _module_name_from_path(py_file, source_root if source_root.exists() else run_dir)
+            if module:
+                module_to_path[module] = py_file
+
+        graph: dict[str, set[str]] = {module: set() for module in module_to_path}
+        for module, path in module_to_path.items():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name in module_to_path:
+                            graph[module].add(alias.name)
+                elif isinstance(node, ast.ImportFrom):
+                    target = _resolve_import_from(module, node.level, node.module)
+                    if target and target in module_to_path:
+                        graph[module].add(target)
+
+        changed_modules = {
+            _module_name_from_path(run_dir / rel_path, source_root if source_root.exists() else run_dir)
+            for rel_path in changed_files
+            if rel_path.endswith(".py")
+        }
+        changed_modules.discard("")
+
+        cycles: set[tuple[str, ...]] = set()
+        visited: set[str] = set()
+        stack: list[str] = []
+        in_stack: set[str] = set()
+
+        def visit(node: str) -> None:
+            visited.add(node)
+            stack.append(node)
+            in_stack.add(node)
+            for neighbor in graph.get(node, set()):
+                if neighbor not in visited:
+                    visit(neighbor)
+                elif neighbor in in_stack:
+                    start = stack.index(neighbor)
+                    cycle = tuple([*stack[start:], neighbor])
+                    if changed_modules.intersection(cycle):
+                        cycles.add(cycle)
+            stack.pop()
+            in_stack.discard(node)
+
+        for module in graph:
+            if module not in visited:
+                visit(module)
+
+        if not cycles:
+            return False, "No import cycles detected."
+        cycle_lines = [" -> ".join(cycle) for cycle in sorted(cycles)]
+        return True, "Import cycles detected: " + "; ".join(cycle_lines)
+
+    def _plugin_registry(self) -> GatePluginRegistry:
+        """Return a cached quality-gate plugin registry."""
+        from bernstein.core.gate_plugins import GatePluginRegistry
+
+        if self._gate_plugin_registry is None:
+            registry = GatePluginRegistry(self._workdir, built_in_names=VALID_GATE_NAMES)
+            registry.discover()
+            self._gate_plugin_registry = registry
+        return self._gate_plugin_registry
+
     def _resolve_pipeline(self) -> list[GatePipelineStep]:
         pipeline = self._config.pipeline if self._config.pipeline is not None else build_default_pipeline(self._config)
         normalized: list[GatePipelineStep] = []
         for step in pipeline:
-            if step.name not in VALID_GATE_NAMES:
+            if step.name not in VALID_GATE_NAMES and self._plugin_registry().get(step.name) is None:
                 raise ValueError(f"Unsupported gate name: {step.name!r}")
             normalized.append(
                 GatePipelineStep(
@@ -425,14 +1023,33 @@ class GateRunner:
         return self._config.type_check_command
 
     def _tests_command(self, step: GatePipelineStep, run_dir: Path, changed_files: list[str]) -> str | None:
+        from bernstein.core.flaky_detector import FlakyDetector
+        from bernstein.core.test_impact import TestImpactAnalyzer
+
         if step.command_override is not None:
-            return step.command_override
-        if not self._changed_files_resolved:
-            return self._config.test_command
-        impacted = self._impacted_tests(run_dir, self._python_files(changed_files))
-        if impacted:
-            return f"uv run pytest {self._quote_paths(impacted)}"
-        return self._config.test_command if self._python_files(changed_files) else None
+            command = step.command_override
+        elif not self._changed_files_resolved:
+            command = self._config.test_command
+        else:
+            analyzer = TestImpactAnalyzer(run_dir)
+            analysis = analyzer.analyze(changed_files)
+            if analysis.fallback_used:
+                command = self._config.test_command
+            elif analysis.affected_tests:
+                command = f"uv run pytest {self._quote_paths(analysis.affected_tests)} -x -q"
+            else:
+                command = self._config.test_command if self._python_files(changed_files) else None
+        if command is None:
+            return None
+        if self._config.flaky_detection:
+            deselect = FlakyDetector(
+                self._workdir,
+                min_runs=self._config.flaky_min_runs,
+                flaky_threshold=self._config.flaky_threshold,
+            ).pytest_deselect_args()
+            if deselect:
+                command = f"{command} {deselect}"
+        return command
 
     def _optional_command(self, gate_name: str, command_override: str | None) -> str | None:
         if command_override is not None:
@@ -516,6 +1133,12 @@ class GateRunner:
         run_dir: Path,
         changed_files: list[str],
     ) -> str | None:
+        if step.name not in VALID_GATE_NAMES:
+            return None
+        if step.name in {"coverage_delta", "complexity_check", "merge_conflict"}:
+            return None
+        if step.name == "tests" and self._config.flaky_detection:
+            return None
         if not self._config.cache_enabled or not self._changed_files_resolved:
             return None
         hashed_files: list[dict[str, str]] = []
@@ -538,15 +1161,27 @@ class GateRunner:
             "lint_command": self._config.lint_command if step.name == "lint" else None,
             "type_check_command": self._config.type_check_command if step.name == "type_check" else None,
             "test_command": self._config.test_command if step.name == "tests" else None,
+            "flaky_detection": self._config.flaky_detection if step.name == "tests" else None,
+            "flaky_min_runs": self._config.flaky_min_runs if step.name == "tests" else None,
+            "flaky_threshold": self._config.flaky_threshold if step.name == "tests" else None,
             "pii_scan_paths": self._config.pii_scan_paths if step.name == "pii_scan" else None,
             "pii_ignore_paths": self._config.pii_ignore_paths if step.name == "pii_scan" else None,
             "pii_allowlist_prefixes": self._config.pii_allowlist_prefixes if step.name == "pii_scan" else None,
+            "security_scan": self._config.security_scan if step.name == "security_scan" else None,
             "security_scan_command": self._config.security_scan_command if step.name == "security_scan" else None,
+            "coverage_delta": self._config.coverage_delta if step.name == "coverage_delta" else None,
             "coverage_delta_command": self._config.coverage_delta_command if step.name == "coverage_delta" else None,
+            "complexity_check": self._config.complexity_check if step.name == "complexity_check" else None,
+            "complexity_threshold": self._config.complexity_threshold if step.name == "complexity_check" else None,
             "complexity_check_command": (
                 self._config.complexity_check_command if step.name == "complexity_check" else None
             ),
+            "dead_code_check": self._config.dead_code_check if step.name == "dead_code" else None,
+            "dead_code_command": self._config.dead_code_command if step.name == "dead_code" else None,
+            "dead_code_min_confidence": self._config.dead_code_min_confidence if step.name == "dead_code" else None,
+            "import_cycle_check": self._config.import_cycle_check if step.name == "import_cycle" else None,
             "import_cycle_command": self._config.import_cycle_command if step.name == "import_cycle" else None,
+            "merge_conflict_check": self._config.merge_conflict_check if step.name == "merge_conflict" else None,
         }
         payload = {"step": relevant_config, "files": hashed_files}
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
@@ -557,7 +1192,7 @@ class GateRunner:
         if raw is None:
             return None
         status = raw.get("status")
-        if status not in {"pass", "fail", "skipped"}:
+        if status not in {"pass", "fail", "warn", "skipped"}:
             return None
         return GateResult(
             name=str(raw["name"]),

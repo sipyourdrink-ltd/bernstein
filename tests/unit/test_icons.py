@@ -5,14 +5,11 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-import pytest
-
 from bernstein.cli.icons import (
     NerdFontIcons,
     UnicodeFallbackIcons,
     get_icons,
 )
-
 
 # -- Detection ---------------------------------------------------------------
 

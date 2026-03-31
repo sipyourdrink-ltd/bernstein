@@ -537,10 +537,22 @@ def parse_seed(path: Path) -> SeedConfig:
                 "pii_allowlist_prefixes",
                 ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "LOCALHOST"],
             ),
+            security_scan=_qg_bool("security_scan", False),
             security_scan_command=_qg_optional_str("security_scan_command"),
+            coverage_delta=_qg_bool("coverage_delta", False),
             coverage_delta_command=_qg_optional_str("coverage_delta_command"),
+            complexity_check=_qg_bool("complexity_check", False),
+            complexity_threshold=float(qg_dict.get("complexity_threshold", 0.20)),
             complexity_check_command=_qg_optional_str("complexity_check_command"),
+            dead_code_check=_qg_bool("dead_code_check", False),
+            dead_code_command=_qg_str("dead_code_command", "vulture"),
+            dead_code_min_confidence=_qg_int("dead_code_min_confidence", 80),
+            import_cycle_check=_qg_bool("import_cycle_check", False),
             import_cycle_command=_qg_optional_str("import_cycle_command"),
+            merge_conflict_check=_qg_bool("merge_conflict_check", False),
+            flaky_detection=_qg_bool("flaky_detection", False),
+            flaky_min_runs=_qg_int("flaky_min_runs", 5),
+            flaky_threshold=float(qg_dict.get("flaky_threshold", 0.15)),
         )
 
     formal_verification_raw: object = data.get("formal_verification")

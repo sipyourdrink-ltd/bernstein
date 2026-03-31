@@ -23,7 +23,6 @@ from bernstein.cli.image_renderer import (
 )
 from bernstein.cli.terminal_caps import Protocol, TerminalCaps
 
-
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
 
