@@ -11,6 +11,14 @@ All notable documentation changes are tracked here.
 - **Orchestrator drain mode**: loop continues while agents are active, even after stop signal
 - **Quality gates**: PII scan, mutation testing, benchmark regression detection
 - **Gate Runner**: parallel execution of all quality gates (asyncio)
+- **Benchmark regression gate**: block merge when performance degrades beyond threshold
+- **PII log redaction**: auto-installed filter scrubs emails, phones, SSNs, credit cards from all log output
+- **Agent loop detection**: kills agents caught in edit-loop cycles (same file edited N+ times in window)
+- **Deadlock detection**: wait-for graph cycle detection with automatic victim selection
+- **Cost anomaly detection**: Z-score based cost anomaly signaling with configurable thresholds
+- **Per-agent file/command permissions**: role-based matrix restricting which files and commands each role may use
+- **Premium visual theme**: CRT power-off effects, gradient splash, block-art logo
+- **Live boot log**: orchestrator boot progress shown in Agents panel while no agents spawned
 - **Persistent memory**: SQLite-backed cross-session agent memory
 - **Context handoff**: structured context briefs for subtask delegation
 - **Zero-config mode**: auto-detect project type, no bernstein.yaml required

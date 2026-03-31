@@ -251,6 +251,10 @@ All three must pass before committing. No exceptions, no "fix later."
 | `reviewer.py` | Task review: LLM-powered completion review and queue correction |
 | `semantic_cache.py` | Semantic caching layer for LLM requests |
 | `semantic_graph.py` | Semantic code graph — symbol-level dependency graph for context routing |
+| `benchmark_gate.py` | Benchmark regression gate — block merge when performance degrades |
+| `cost_anomaly.py` | Cost anomaly detection with Z-score signaling |
+| `log_redact.py` | PII redaction filter for Python logging |
+| `loop_detector.py` | Agent loop and file-lock deadlock detection |
 | `spawn_prompt.py` | Prompt rendering utilities for agent spawning |
 | `task_completion.py` | Task completion, retry, and post-completion processing |
 | `trigger_manager.py` | Event-driven trigger manager — evaluates incoming events against user-defined rules |
@@ -622,6 +626,15 @@ The circuit breaker monitors agent output for purpose violations. When it fires,
 
 ### `reviewer.py` is separate from `janitor.py`
 `janitor.py` verifies task completion via concrete signals (file exists, tests pass). `reviewer.py` uses an LLM to review the quality of what was produced and can push corrections back into the queue. Both run post-task, in that order.
+
+### `loop_detector.py` runs inside the orchestrator tick
+`check_loops_and_deadlocks()` in `agent_lifecycle.py` polls file modification times each tick. When the same agent edits the same file more than `LOOP_EDIT_THRESHOLD` times within `LOOP_WINDOW_SECONDS`, the agent is killed. Deadlock detection builds a wait-for graph from `FileLockManager` and breaks cycles by releasing the oldest lock holder.
+
+### `log_redact.py` is installed globally at bootstrap
+`install_pii_filter()` is called in `bootstrap.py` and attaches to the root logger. All log handlers (file, console, structured) receive sanitised messages — emails, phone numbers, SSNs, and credit card numbers are replaced with `[REDACTED]`.
+
+### `cost_anomaly.py` signals are acted on in `task_completion.py`
+After task completion, cost data is checked against historical Z-scores. `AnomalySignal.LOG` just logs, `AnomalySignal.PAUSE_SPAWNING` stops new agent spawning, and `AnomalySignal.KILL_AGENT` terminates the expensive agent.
 
 ---
 

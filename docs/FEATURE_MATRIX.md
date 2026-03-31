@@ -8,7 +8,7 @@ This document tracks documentation parity between shipped capabilities and publi
 - **No** — not mentioned at all
 - **N/A** — not applicable to this surface
 
-Last audited: 2026-03-30
+Last audited: 2026-03-31
 
 ## Core Orchestration
 
@@ -54,6 +54,9 @@ Last audited: 2026-03-30
 | Retrospective report | `retro` | Brief | Full | No | Partial |
 | Recap (post-run summary) | `recap` | No | No | No | Gap |
 | Prometheus metrics | `/metrics` endpoint | Brief | Brief | No | Partial |
+| PII log redaction | auto-installed at startup | No | No | No | Gap |
+| Cost anomaly detection | orchestrator signal | No | No | No | Gap |
+| Agent loop/deadlock detection | orchestrator tick | No | No | No | Gap |
 
 ## Governance & Audit
 
@@ -112,6 +115,7 @@ Last audited: 2026-03-30
 |---------|-------------|--------|-----------------|-----------|--------|
 | Benchmark run | `benchmark run` | Full | Full | No | Partial |
 | Benchmark compare | `benchmark compare` | Full | No | No | Gap |
+| Benchmark regression gate | quality pipeline step | No | No | No | Gap |
 | SWE-bench harness | `benchmark swe-bench` | No | No | No | Gap |
 | Eval run | `eval run` | No | No | No | Gap |
 | Eval report | `eval report` | No | No | No | Gap |
@@ -136,6 +140,8 @@ Last audited: 2026-03-30
 | Quickstart | `quickstart` | No | No | No | Gap |
 | Shell completions | `completions` | No | No | No | Gap |
 | Git hooks | `install-hooks` | No | No | No | Gap |
+| Per-agent file/command permissions | role-based matrix | No | No | No | Gap |
+| Premium visual theme | splash, CRT effects | No | No | No | Gap |
 | Plugin system | `plugins` | Brief | No | No | Gap |
 | Demo mode | `demo` | Full | Full | No | Partial |
 
@@ -167,11 +173,11 @@ Last audited: 2026-03-30
 |----------|---------------|------------------|---------|-----|
 | Core Orchestration | 11 | 3 | 4 | 4 |
 | Agent Management | 7 | 2 | 3 | 3 (discovery/showcase/match undocumented) |
-| Monitoring | 12 | 0 | 9 | 3 |
+| Monitoring | 15 | 0 | 9 | 6 |
 | Governance & Audit | 10 | 0 | 0 | 10 |
 | Evolution | 7 | 0 | 5 | 2 |
 | CI/CD | 19 | 15 | 0 | 4 |
-| Benchmarking | 6 | 0 | 1 | 5 |
-| Advanced Features | 17 | 0 | 2 | 15 |
+| Benchmarking | 7 | 0 | 1 | 6 |
+| Advanced Features | 19 | 0 | 2 | 17 |
 | Task Management CLI | 8 | 0 | 0 | 8 |
-| **Total** | **97** | **20** | **24** | **54** |
+| **Total** | **103** | **20** | **24** | **60** |
