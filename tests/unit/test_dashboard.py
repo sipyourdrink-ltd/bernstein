@@ -9,10 +9,11 @@ from typing import TYPE_CHECKING
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from bernstein.cli.dashboard import _format_gate_report_lines, _gate_status_color
 from bernstein.cli.dashboard import (
     _build_runtime_subtitle,
+    _format_gate_report_lines,
     _format_relative_age,
+    _gate_status_color,
     _summarize_agent_errors,
     _task_retry_count,
 )
