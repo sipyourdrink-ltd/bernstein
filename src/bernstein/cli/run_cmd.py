@@ -466,7 +466,11 @@ def _finalize_run_output(*, quiet: bool) -> None:
         try:
             from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
-            DashboardApp().run()
+            app = DashboardApp()
+            app.run()
+            # Hot restart: Textual has restored terminal, re-exec safely
+            if getattr(app, "_restart_on_exit", False):
+                os.execv(sys.executable, [sys.executable, "-m", "bernstein.cli.main", "live"])
         except Exception:
             _show_run_summary()
     else:

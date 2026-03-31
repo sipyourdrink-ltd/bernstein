@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,11 @@ def live(interval: float, classic: bool) -> None:
 
         app = DashboardApp()
         app.run()
+        # Hot restart: Textual has cleanly restored terminal, now re-exec
+        if getattr(app, "_restart_on_exit", False):
+            import sys
+
+            os.execv(sys.executable, [sys.executable, "-m", "bernstein.cli.main", "live"])
         return
 
     # -- classic Rich Live display --

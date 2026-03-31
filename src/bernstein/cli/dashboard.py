@@ -1617,13 +1617,12 @@ class BernsteinApp(App[None]):
     def _clear_stop_pending(self) -> None:
         self._stop_pending = False  # type: ignore[attr-defined]
 
-    def action_hot_restart(self) -> None:
-        """Hot restart: re-exec into `bernstein live` (agents keep running)."""
-        import sys
+    _restart_on_exit: bool = False
 
-        self.exit()
-        # Re-exec into bernstein live — reconnects to running server/agents
-        os.execv(sys.executable, [sys.executable, "-m", "bernstein.cli.main", "live"])
+    def action_hot_restart(self) -> None:
+        """Hot restart: exit TUI cleanly, then re-exec into `bernstein live`."""
+        self._restart_on_exit = True
+        self.exit(message="Restarting...")
 
     def action_graceful_quit(self) -> None:
         """Exit TUI only — agents and server keep running in background."""
