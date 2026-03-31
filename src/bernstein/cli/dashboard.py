@@ -10,7 +10,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import re
 import time
 from collections import deque
@@ -936,8 +935,7 @@ class BernsteinApp(App[None]):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("q", "graceful_quit", "Exit"),
-        Binding("s", "stop_bernstein", "Stop All"),
+        Binding("q", "graceful_quit", "Drain"),
         Binding("r", "hot_restart", "Restart"),
         Binding("enter", "inspect_task", "Open"),
         Binding("x", "cancel_task", "Cancel"),
@@ -1585,37 +1583,8 @@ class BernsteinApp(App[None]):
         bar.display = self._activity_visible
 
     def action_stop_bernstein(self) -> None:
-        # Require double-press: first press shows a confirmation notification.
-        if not getattr(self, "_stop_pending", False):
-            self._stop_pending = True  # type: ignore[attr-defined]
-            self.notify(
-                "Press [bold]s[/bold] again to stop all agents, or any other key to cancel.",
-                severity="warning",
-                timeout=4,
-            )
-            # Auto-clear the flag after 4s so a stray keypress doesn't linger
-            self.set_timer(4.0, self._clear_stop_pending)
-            return
-
-        self._stop_pending = False
-        import signal
-
-        for name in ("watchdog", "spawner", "server"):
-            pp = Path(f".sdd/runtime/{name}.pid")
-            if pp.exists():
-                with contextlib.suppress(ValueError, OSError):
-                    os.kill(int(pp.read_text().strip()), signal.SIGTERM)
-                pp.unlink(missing_ok=True)
-        for a in _load_agents():
-            pid = a.get("pid")
-            if pid:
-                with contextlib.suppress(OSError):
-                    os.killpg(os.getpgid(pid), signal.SIGTERM)
-        self._show_run_summary()
-        self.exit(message="Bernstein stopped.")
-
-    def _clear_stop_pending(self) -> None:
-        self._stop_pending = False  # type: ignore[attr-defined]
+        """Backward-compatible stop -- delegates to drain."""
+        self.action_graceful_quit()
 
     _restart_on_exit: bool = False
 
@@ -1625,53 +1594,16 @@ class BernsteinApp(App[None]):
         self.exit(message="Restarting...")
 
     def action_graceful_quit(self) -> None:
-        """Exit TUI only — agents and server keep running in background."""
-        self.exit(
-            message="TUI closed. Agents still running. Use `bernstein live` to reconnect or `bernstein stop` to halt."
-        )
+        """Start graceful drain with progress overlay."""
+        from bernstein.cli.drain_screen import DrainScreen
 
-        # 1. Try real-time IPC shutdown first
-        try:
-            from bernstein.core.agent_ipc import shutdown_all
+        self.push_screen(DrainScreen(), callback=self._on_drain_complete)
 
-            workdir = Path.cwd()
-            ipc_results = shutdown_all(reason="user quit TUI", workdir=workdir)
-            pipe_count = sum(1 for v in ipc_results.values() if v == "pipe")
-            if pipe_count:
-                self.notify(f"Sent shutdown via pipe to {pipe_count} agent(s)")
-        except Exception:
-            pass
-
-        # 2. Write file-based SHUTDOWN signals
-        try:
-            from bernstein.cli.stop_cmd import write_shutdown_signals
-
-            write_shutdown_signals()
-        except Exception:
-            pass
-
-        # 3. Send SIGTERM to orchestrator processes
-        import signal
-
-        for name in ("watchdog", "spawner", "server"):
-            pp = Path(f".sdd/runtime/{name}.pid")
-            if pp.exists():
-                with contextlib.suppress(ValueError, OSError):
-                    os.kill(int(pp.read_text().strip()), signal.SIGTERM)
-                pp.unlink(missing_ok=True)
-
-        # 4. Give agents time, then kill survivors
-        def _finish_shutdown() -> None:
-            for a in _load_agents():
-                pid = a.get("pid")
-                if pid:
-                    with contextlib.suppress(OSError):
-                        os.killpg(os.getpgid(pid), signal.SIGTERM)
-            self._show_run_summary()
-            self.exit(message="Bernstein stopped.")
-
-        # Wait 5 seconds for graceful shutdown, then force-kill and exit
-        self.set_timer(5.0, _finish_shutdown)
+    def _on_drain_complete(self, report: object) -> None:
+        """Handle drain screen dismissal."""
+        if report is not None:
+            self.exit(message="Bernstein drained.")
+        # If report is None, drain was cancelled -- stay on dashboard
 
     def _show_run_summary(self) -> None:
         """Show a run completion summary before exit."""

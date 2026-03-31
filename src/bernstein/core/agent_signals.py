@@ -120,6 +120,9 @@ class AgentSignalManager:
             "files_changed": heartbeat.files_changed,
             "status": heartbeat.status,
             "current_file": heartbeat.current_file,
+            "phase": heartbeat.phase,
+            "progress_pct": heartbeat.progress_pct,
+            "message": heartbeat.message,
         }
         hb_file = self._heartbeats_dir / f"{session_id}.json"
         hb_file.write_text(json.dumps(payload), encoding="utf-8")
@@ -143,6 +146,9 @@ class AgentSignalManager:
                 files_changed=int(raw.get("files_changed", 0)),
                 status=str(raw.get("status", "working")),
                 current_file=str(raw.get("current_file", "")),
+                phase=str(raw.get("phase", "")),
+                progress_pct=int(raw.get("progress_pct", 0)),
+                message=str(raw.get("message", "")),
             )
         except Exception as exc:
             logger.warning("Failed to parse heartbeat for %s: %s", session_id, exc)

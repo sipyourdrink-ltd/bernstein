@@ -567,12 +567,18 @@ class AgentHeartbeat:
         files_changed: Number of files modified since the agent started.
         status: Agent self-reported status ("working", "idle", "stuck").
         current_file: File currently being edited, or empty string.
+        phase: Optional richer phase label ("planning", "implementing", "testing").
+        progress_pct: Optional rough completion percentage (0-100).
+        message: Optional human-readable status message.
     """
 
     timestamp: float
     files_changed: int = 0
     status: str = "working"
     current_file: str = ""
+    phase: str = ""
+    progress_pct: int = 0
+    message: str = ""
 
 
 @dataclass
@@ -694,6 +700,7 @@ class OrchestratorConfig:
         max_agents: Maximum concurrent agent processes.
         poll_interval_s: Seconds between orchestrator ticks.
         heartbeat_timeout_s: Seconds before an agent is considered stale.
+        heartbeat_enabled: Whether the file-based heartbeat protocol is enabled.
         max_tasks_per_agent: Maximum tasks batched into one agent spawn.
         server_url: Base URL of the Bernstein task server.
         evolution_enabled: Whether the self-evolution feedback loop is active.
@@ -705,7 +712,8 @@ class OrchestratorConfig:
 
     max_agents: int = 6
     poll_interval_s: int = 3
-    heartbeat_timeout_s: int = 900  # effectively disabled — agents can't heartbeat
+    heartbeat_timeout_s: int = 120
+    heartbeat_enabled: bool = True
     max_agent_runtime_s: int = 600  # 10 min wall-clock kill
     max_tasks_per_agent: int = 1  # one task per agent = focused, fast
     server_url: str = "http://localhost:8052"
