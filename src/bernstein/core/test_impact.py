@@ -355,9 +355,7 @@ class TestImpactAnalyzer:
         affected: set[str] = set()
         mappings: list[TestMapping] = []
         changed_sources = [
-            path
-            for path in normalized
-            if path.endswith(".py") and (self._root / path).is_relative_to(self._src_root)
+            path for path in normalized if path.endswith(".py") and (self._root / path).is_relative_to(self._src_root)
         ]
         covered_sources = 0
 

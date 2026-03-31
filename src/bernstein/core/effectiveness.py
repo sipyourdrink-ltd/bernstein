@@ -253,9 +253,7 @@ class EffectivenessScorer:
         if hasattr(report, "results"):
             results = list(cast("list[Any]", report.results))
             passes = sum(
-                1
-                for result in results
-                if str(getattr(result, "status", "")) in {"pass", "skipped", "bypassed"}
+                1 for result in results if str(getattr(result, "status", "")) in {"pass", "skipped", "bypassed"}
             )
             return ((passes / len(results)) if results else 0.0, total)
         if hasattr(report, "gate_results"):

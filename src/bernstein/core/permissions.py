@@ -246,10 +246,7 @@ def check_file_permissions(
                 check="file_permissions",
                 passed=False,
                 blocked=True,
-                detail=(
-                    f"Role '{role}' is not permitted to modify {len(violations)} file(s): "
-                    f"{', '.join(violations)}"
-                ),
+                detail=(f"Role '{role}' is not permitted to modify {len(violations)} file(s): {', '.join(violations)}"),
                 files=violations,
             )
         ]

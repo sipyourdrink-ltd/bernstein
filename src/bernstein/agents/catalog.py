@@ -491,8 +491,7 @@ class CatalogRegistry:
                 scored_exact = [(_capability_score(a, desc_lower, keywords), a) for a in exact]
                 if all(score == 0 for score, _ in scored_exact):
                     scored_exact = [
-                        (len(keywords & {w for w in a.description.lower().split() if len(w) > 3}), a)
-                        for a in exact
+                        (len(keywords & {w for w in a.description.lower().split() if len(w) > 3}), a) for a in exact
                     ]
                 scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
                 winner = scored_exact[0][1]

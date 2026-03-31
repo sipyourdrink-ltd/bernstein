@@ -196,9 +196,7 @@ async def observability_deps(request: Request) -> dict[str, Any]:
     return {
         "valid": validation.valid,
         "cycles": validation.cycles,
-        "missing_deps": [
-            {"task_id": task_id, "missing_dep_id": dep_id} for task_id, dep_id in validation.missing_deps
-        ],
+        "missing_deps": [{"task_id": task_id, "missing_dep_id": dep_id} for task_id, dep_id in validation.missing_deps],
         "stuck_deps": [
             {"task_id": task_id, "dep_id": dep_id, "dep_status": dep_status}
             for task_id, dep_id, dep_status in validation.stuck_deps

@@ -357,8 +357,8 @@ def _sample_ansi_gradient(count: int, colors: object) -> list[str]:
     logo_gradient: list[tuple[int, int, int]] = [
         (220, 240, 255),  # near-white
         (100, 220, 255),  # bright cyan
-        (0, 180, 220),    # teal
-        (50, 210, 255),   # cyan
+        (0, 180, 220),  # teal
+        (50, 210, 255),  # cyan
         (200, 235, 255),  # near-white again
     ]
 

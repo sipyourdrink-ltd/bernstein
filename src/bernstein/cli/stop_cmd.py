@@ -223,9 +223,7 @@ def soft_stop(timeout: int) -> None:
     console.print("\n[bold]Drain complete:[/bold]")
     console.print(f"  Tasks: {report.tasks_done} done, {report.tasks_partial} partial")
     console.print(f"  Merged: {merged_count} branches")
-    console.print(
-        f"  Cleanup: {report.worktrees_removed} worktrees, {report.branches_deleted} branches"
-    )
+    console.print(f"  Cleanup: {report.worktrees_removed} worktrees, {report.branches_deleted} branches")
     console.print(f"  Duration: {report.total_duration_s:.0f}s")
 
 

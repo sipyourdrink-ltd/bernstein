@@ -85,11 +85,11 @@ class HeartbeatMonitor:
         return (
             f"(mkdir -p '{heartbeat_path.parent}' && "
             f"while true; do "
-            f"printf '{{\"timestamp\":%s,"
-            f"\"phase\":\"implementing\","
-            f"\"progress_pct\":0,"
-            f"\"current_file\":\"\","
-            f"\"message\":\"working\"}}' "
+            f'printf \'{{"timestamp":%s,'
+            f'"phase":"implementing",'
+            f'"progress_pct":0,'
+            f'"current_file":"",'
+            f'"message":"working"}}\' '
             f"\"$(date +%s)\" > '{escaped_path}'; "
             f"sleep 15; "
             f"done) >/dev/null 2>&1 &"

@@ -260,9 +260,7 @@ class RecommendationEngine:
                 continue
             applies_to_raw = item.get("applies_to", item.get("applies_to_roles", []))
             applies_to = (
-                [str(role) for role in cast("list[object]", applies_to_raw)]
-                if isinstance(applies_to_raw, list)
-                else []
+                [str(role) for role in cast("list[object]", applies_to_raw)] if isinstance(applies_to_raw, list) else []
             )
             self._recommendations.append(
                 Recommendation(
@@ -323,12 +321,10 @@ class RecommendationEngine:
             "lint": "Recent lint failures suggest running `uv run ruff check` before completing the task.",
             "type_check": "Recent type-check failures suggest running `uv run pyright` before completing the task.",
             "tests": (
-                "Recent test failures suggest running targeted "
-                "`uv run pytest ... -x -q` before completing the task."
+                "Recent test failures suggest running targeted `uv run pytest ... -x -q` before completing the task."
             ),
             "coverage_delta": (
-                "Recent coverage regressions suggest running the coverage command "
-                "locally before completion."
+                "Recent coverage regressions suggest running the coverage command locally before completion."
             ),
         }
         return mapping.get(gate, "")

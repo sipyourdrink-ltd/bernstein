@@ -330,9 +330,7 @@ class DrainCoordinator:
                 flag = self._workdir / ".sdd" / "runtime" / "draining"
                 flag.parent.mkdir(parents=True, exist_ok=True)
                 flag.write_text("draining", encoding="utf-8")
-                logger.warning(
-                    "Task server unreachable; wrote draining flag file instead"
-                )
+                logger.warning("Task server unreachable; wrote draining flag file instead")
 
         phase.detail = "New task spawning disabled"
 
@@ -368,10 +366,15 @@ class DrainCoordinator:
                         already = any(a.session_id == session_id for a in self._agents)
                         if not already:
                             wt = self._workdir / ".sdd" / "worktrees" / session_id
-                            self._agents.append(AgentDrainStatus(
-                                session_id=session_id, role=role, pid=pid,
-                                status="running", worktree_path=str(wt) if wt.exists() else "",
-                            ))
+                            self._agents.append(
+                                AgentDrainStatus(
+                                    session_id=session_id,
+                                    role=role,
+                                    pid=pid,
+                                    status="running",
+                                    worktree_path=str(wt) if wt.exists() else "",
+                                )
+                            )
                 except (json.JSONDecodeError, OSError, ValueError):
                     continue
 
@@ -390,10 +393,15 @@ class DrainCoordinator:
                     pid = int(raw_pid) if isinstance(raw_pid, (int, str, float)) else 0
                     worktree = str(entry.get("worktree_path", ""))
                     if session_id and pid:
-                        self._agents.append(AgentDrainStatus(
-                            session_id=session_id, role=role, pid=pid,
-                            status="running", worktree_path=worktree,
-                        ))
+                        self._agents.append(
+                            AgentDrainStatus(
+                                session_id=session_id,
+                                role=role,
+                                pid=pid,
+                                status="running",
+                                worktree_path=worktree,
+                            )
+                        )
             except (json.JSONDecodeError, OSError):
                 pass
 
@@ -425,18 +433,14 @@ class DrainCoordinator:
             for agent in remaining:
                 if not _is_process_alive(agent.pid):
                     agent.status = "exited"
-                    logger.info(
-                        "Agent %s (pid %d) exited cleanly", agent.session_id, agent.pid
-                    )
+                    logger.info("Agent %s (pid %d) exited cleanly", agent.session_id, agent.pid)
                     continue
 
                 # Check worktree for recent commits.
                 if agent.worktree_path:
                     wt = Path(agent.worktree_path)
                     if wt.exists():
-                        result = _run_git(
-                            ["status", "--porcelain"], cwd=wt
-                        )
+                        result = _run_git(["status", "--porcelain"], cwd=wt)
                         if result.returncode == 0 and not result.stdout.strip():
                             agent.status = "committing"
 
@@ -453,9 +457,7 @@ class DrainCoordinator:
         # Timeout: escalate remaining agents.
         still_alive = [a for a in self._agents if a.status in ("running", "committing")]
         if still_alive:
-            logger.warning(
-                "Timeout: sending SIGTERM to %d remaining agents", len(still_alive)
-            )
+            logger.warning("Timeout: sending SIGTERM to %d remaining agents", len(still_alive))
             for agent in still_alive:
                 _send_signal(agent.pid, signal.SIGTERM)
 
@@ -502,9 +504,7 @@ class DrainCoordinator:
             # Stage and commit.
             add_result = _run_git(["add", "-A"], cwd=wt)
             if add_result.returncode != 0:
-                logger.warning(
-                    "git add failed in %s: %s", wt, add_result.stderr.strip()
-                )
+                logger.warning("git add failed in %s: %s", wt, add_result.stderr.strip())
                 continue
 
             commit_result = _run_git(
@@ -512,9 +512,7 @@ class DrainCoordinator:
                 cwd=wt,
             )
             if commit_result.returncode != 0:
-                logger.warning(
-                    "git commit failed in %s: %s", wt, commit_result.stderr.strip()
-                )
+                logger.warning("git commit failed in %s: %s", wt, commit_result.stderr.strip())
                 continue
 
             # Count files in the commit.
@@ -532,18 +530,14 @@ class DrainCoordinator:
             if not wt.exists():
                 continue
 
-            branch_result = _run_git(
-                ["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt
-            )
+            branch_result = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt)
             if branch_result.returncode != 0:
                 continue
             branch = branch_result.stdout.strip()
             if not branch or branch == "main":
                 continue
 
-            log_result = _run_git(
-                ["log", f"main..{branch}", "--oneline"], cwd=self._workdir
-            )
+            log_result = _run_git(["log", f"main..{branch}", "--oneline"], cwd=self._workdir)
             if log_result.returncode == 0 and log_result.stdout.strip():
                 self._branches_ahead.append(branch)
 
@@ -633,17 +627,13 @@ class DrainCoordinator:
         _run_git(["worktree", "prune"], cwd=self._workdir)
 
         # Delete agent/* branches.
-        branch_result = _run_git(
-            ["branch", "--list", "agent/*"], cwd=self._workdir
-        )
+        branch_result = _run_git(["branch", "--list", "agent/*"], cwd=self._workdir)
         if branch_result.returncode == 0:
             for line in branch_result.stdout.strip().splitlines():
                 branch_name = line.strip().lstrip("*+ ")
                 if not branch_name:
                     continue
-                del_result = _run_git(
-                    ["branch", "-D", branch_name], cwd=self._workdir
-                )
+                del_result = _run_git(["branch", "-D", branch_name], cwd=self._workdir)
                 if del_result.returncode == 0:
                     branches_deleted += 1
                 else:
@@ -682,10 +672,7 @@ class DrainCoordinator:
     def _build_phases() -> list[DrainPhase]:
         """Create the initial list of pending phases."""
         names = ["freeze", "signal", "wait", "commit", "merge", "cleanup"]
-        return [
-            DrainPhase(number=i + 1, name=name, status="pending", detail="")
-            for i, name in enumerate(names)
-        ]
+        return [DrainPhase(number=i + 1, name=name, status="pending", detail="") for i, name in enumerate(names)]
 
     def _move_tickets(self) -> None:
         """Move ticket YAML files between backlog directories."""
@@ -699,11 +686,7 @@ class DrainCoordinator:
         done_dir.mkdir(parents=True, exist_ok=True)
         open_dir.mkdir(parents=True, exist_ok=True)
 
-        completed_sessions = {
-            a.session_id
-            for a in self._agents
-            if a.status == "exited" and a.committed_files > 0
-        }
+        completed_sessions = {a.session_id for a in self._agents if a.status == "exited" and a.committed_files > 0}
 
         for ticket_path in claimed_dir.iterdir():
             if ticket_path.suffix not in (".yaml", ".yml"):
