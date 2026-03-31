@@ -1,34 +1,21 @@
-"""Shared pytest fixtures for the bernstein test suite."""
+"""Shared fixtures for integration tests."""
 
 from __future__ import annotations
 
-import gc
 import json
-import os
-import platform
-import resource
 import subprocess
 import sys
 import tempfile
 import time
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
-from bernstein.core.adaptive_parallelism import AdaptiveParallelism
-from bernstein.core.models import (
-    Complexity,
-    ModelConfig,
-    OrchestratorConfig,
-    Scope,
-    Task,
-    TaskStatus,
-    TaskType,
-)
+from bernstein.core.models import ModelConfig, OrchestratorConfig
 from bernstein.core.server import create_app
 from bernstein.core.spawner import AgentSpawner
 from bernstein.core.orchestrator import Orchestrator
@@ -36,138 +23,6 @@ from bernstein.core.orchestrator import Orchestrator
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-# ---------------------------------------------------------------------------
-# Memory guard: prevent any single pytest run from eating >2 GB RAM.
-# ---------------------------------------------------------------------------
-
-_MAX_RSS_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
-
-if platform.system() != "Windows":
-    try:
-        _soft, _hard = resource.getrlimit(resource.RLIMIT_AS)
-        resource.setrlimit(resource.RLIMIT_AS, (_MAX_RSS_BYTES, _hard))
-    except (ValueError, AttributeError):
-        pass  # RLIMIT_AS not available on all platforms
-
-
-@pytest.fixture(autouse=True)
-def _memory_guard():
-    """Force GC before and after every test; abort if RSS exceeds limit."""
-    yield
-    # Aggressive garbage collection to prevent accumulation
-    gc.collect()
-    if platform.system() == "Darwin":
-        usage = resource.getrusage(resource.RUSAGE_SELF)
-        rss_bytes = usage.ru_maxrss  # macOS reports bytes
-        if rss_bytes > _MAX_RSS_BYTES:
-            print(
-                f"\n\nFATAL: pytest RSS exceeded {_MAX_RSS_BYTES // (1024**3)} GB "
-                f"(actual: {rss_bytes / (1024**3):.1f} GB). Aborting.\n",
-                file=sys.stderr,
-            )
-            sys.exit(137)
-
-
-@pytest.fixture(autouse=True)
-def _stable_adaptive_parallelism(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep adaptive parallelism deterministic across the test suite.
-
-    Integration tests should not depend on ambient machine load. Individual
-    adaptive-parallelism tests can still override this with their own patches.
-    """
-
-    monkeypatch.setattr(AdaptiveParallelism, "_get_cpu_percent", lambda self: 0.0)
-
-
-def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
-    """Aggressively clear references that pytest holds onto after each test."""
-    # Clear funcargs/fixtures that may hold large mock objects or tmp_path data
-    if hasattr(item, "funcargs"):
-        item.funcargs.clear()
-    # Clear report sections (captured stdout/stderr per test)
-    if hasattr(item, "_report_sections"):
-        item._report_sections.clear()
-    gc.collect()
-
-
-from bernstein.adapters.base import CLIAdapter, SpawnResult
-from bernstein.core.models import (
-    Complexity,
-    Scope,
-    Task,
-    TaskStatus,
-    TaskType,
-)
-
-
-@pytest.fixture
-def make_task():
-    """Factory fixture for Task objects with sensible defaults.
-
-    Supports all common Task fields; tests override only what they care about.
-    """
-
-    def _factory(
-        *,
-        id: str = "T-001",
-        role: str = "backend",
-        title: str = "Implement feature",
-        description: str = "Write the code.",
-        scope: Scope = Scope.MEDIUM,
-        complexity: Complexity = Complexity.MEDIUM,
-        status: TaskStatus = TaskStatus.OPEN,
-        task_type: TaskType = TaskType.STANDARD,
-        priority: int = 2,
-        owned_files: list[str] | None = None,
-        mcp_servers: list[str] | None = None,
-    ) -> Task:
-        return Task(
-            id=id,
-            title=title,
-            description=description,
-            role=role,
-            scope=scope,
-            complexity=complexity,
-            status=status,
-            task_type=task_type,
-            priority=priority,
-            owned_files=owned_files or [],
-            mcp_servers=mcp_servers or [],
-        )
-
-    return _factory
-
-
-@pytest.fixture
-def mock_adapter_factory():
-    """Factory fixture for CLIAdapter mocks with configurable PID."""
-
-    def _factory(pid: int = 42) -> CLIAdapter:
-        adapter = MagicMock(spec=CLIAdapter)
-        adapter.spawn.return_value = SpawnResult(pid=pid, log_path=Path("/tmp/test.log"))
-        adapter.is_alive.return_value = True
-        adapter.kill.return_value = None
-        adapter.name.return_value = "MockCLI"
-        return adapter
-
-    return _factory
-
-
-@pytest.fixture
-def sdd_dir(tmp_path: Path) -> Path:
-    """Temporary .sdd directory with standard subdirectories pre-created."""
-    sdd = tmp_path / ".sdd"
-    (sdd / "backlog" / "open").mkdir(parents=True)
-    (sdd / "backlog" / "done").mkdir(parents=True)
-    (sdd / "runtime").mkdir(parents=True)
-    (sdd / "metrics").mkdir(parents=True)
-    (sdd / "upgrades").mkdir(parents=True)
-    return sdd
-
-
-# ---------------------------------------------------------------------------
-# Integration & Chaos Engineering Fixtures
-# ---------------------------------------------------------------------------
 
 class IntegrationMockAdapter(CLIAdapter):
     """A flexible mock adapter that executes python commands from task descriptions."""
@@ -203,6 +58,7 @@ class IntegrationMockAdapter(CLIAdapter):
             import re
             task_ids = re.findall(r"id=([A-Za-z0-9\-_]+)", prompt)
             
+            # Use absolute path for marker IN THE PROJECT ROOT SDD
             marker_dir = self.sdd_path.resolve() / "runtime"
             marker_dir.mkdir(parents=True, exist_ok=True)
             
@@ -238,8 +94,9 @@ try:
 
     # Completion markers
     print(f"Writing markers to {marker_dir}...")
-    {{markers}}
+    {markers}
     print("Wrote markers successfully")
+    # Hold alive a bit longer
     time.sleep(1.0)
 except Exception as e:
     print(f"Error in mock script: {{e}}", file=sys.stderr)
