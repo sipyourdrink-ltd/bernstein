@@ -83,6 +83,9 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "RUF"]
 "src/bernstein/core/memory_integrity.py" = ["E501", "RUF003"]
 "src/bernstein/core/server_supervisor.py" = ["TC003"]
 "src/bernstein/core/runtime_state.py" = ["TC003"]
+"src/bernstein/cli/frame_buffer.py" = ["TC003", "RUF002"]
+"src/bernstein/cli/gradients.py" = ["TC003", "RUF002", "RUF003"]
+"src/bernstein/cli/image_renderer.py" = ["TC003"]
 "benchmarks/run_benchmark.py" = ["E501", "RUF002"]
 "scripts/generate_roadmap_tickets.py" = ["E501", "RUF001"]
 "sdk/python/src/bernstein_sdk/adapters/github_actions.py" = ["E501"]
@@ -175,6 +178,7 @@ exclude = [
     "src/bernstein/core/plan_loader.py",
     "src/bernstein/core/runtime_state.py",
     "src/bernstein/cli/maintenance_cmd.py",
+    "src/bernstein/cli/image_renderer.py",
     "src/bernstein/core/agent_identity.py",
     "src/bernstein/core/command_policy.py",
     "src/bernstein/core/key_rotation.py",
