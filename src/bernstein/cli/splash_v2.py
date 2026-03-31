@@ -231,18 +231,6 @@ def _build_frame(
             + f"\033[38;2;100;180;200m{probe}\033[0m"
         )
 
-    # 3D depth: vignette — darken top and bottom 3 rows.
-    for i in range(min(3, h)):
-        dark = 30 + i * 15  # 30, 45, 60 brightness
-        vignette = f"\033[38;2;{dark};{dark};{dark}m"
-        # Top vignette (decorative sub-pixel line).
-        bar = "".join("▁" if (c + i) % 3 == 0 else " " for c in range(w))
-        frame[i] = f"\033[{i + 1};1H{vignette}{bar}\033[0m"
-        # Bottom vignette.
-        bi = h - 1 - i
-        bar_b = "".join("▔" if (c + i) % 3 == 0 else " " for c in range(w))
-        frame[bi] = f"\033[{bi + 1};1H{vignette}{bar_b}\033[0m"
-
     return frame
 
 
