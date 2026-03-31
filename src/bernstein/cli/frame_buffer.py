@@ -96,7 +96,7 @@ class FrameBuffer:
         self._stream.write(self._SHOW_CURSOR)
         self._stream.flush()
 
-    def __enter__(self) -> "FrameBuffer":
+    def __enter__(self) -> FrameBuffer:
         self.hide_cursor()
         return self
 
