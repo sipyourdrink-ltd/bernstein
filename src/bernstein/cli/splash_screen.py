@@ -626,44 +626,32 @@ def splash(
     task_count: int = 0,
     skip_animation: bool = False,
 ) -> None:
-    """Show the futuristic boot-sequence splash screen.
+    """Show the startup splash via the premium splash v2 renderer."""
+    from pathlib import Path
 
-    Drop-in replacement for bernstein.cli.splash.splash(). Uses Rich Live
-    display for full-screen animated boot sequence, with graceful fallback
-    to static output for non-TTY environments.
+    from bernstein.cli.splash_v2 import render_startup_splash
+    from bernstein.core.visual_config import resolve_visual_config
 
-    Args:
-        console: Rich Console instance.
-        version: Bernstein version string.
-        agents: List of agent dicts with 'name', 'logged_in', 'default_model' keys.
-        seed_file: Path to seed file (for display).
-        goal_preview: Short goal description.
-        budget: Budget in USD.
-        task_count: Number of queued tasks.
-        skip_animation: If True, skip animation and print static summary.
-    """
-    agent_probes = _agents_from_dicts(agents)
+    config = None
+    if seed_file:
+        try:
+            from bernstein.core.seed import parse_seed
 
-    data = BootData(
+            seed_cfg = parse_seed(Path(seed_file))
+            config = resolve_visual_config(getattr(seed_cfg, "visual", None))
+        except Exception:
+            config = resolve_visual_config(None)
+    else:
+        config = resolve_visual_config(None)
+
+    render_startup_splash(
+        console,
         version=version,
-        agents=agent_probes,
+        agents=agents,
         seed_file=seed_file,
         goal_preview=goal_preview,
         budget=budget,
         task_count=task_count,
+        skip_animation=skip_animation,
+        config=config,
     )
-
-    # Decide whether to animate
-    is_tty = console.is_terminal
-    is_ci = bool(os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"))
-    should_animate = is_tty and not skip_animation and not is_ci
-
-    if should_animate:
-        try:
-            _run_animated(console, data)
-        except Exception:
-            # If animation fails (e.g. terminal doesn't support raw mode),
-            # fall back to static output silently.
-            _print_static(console, data)
-    else:
-        _print_static(console, data)

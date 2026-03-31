@@ -27,11 +27,13 @@ import httpx
 from bernstein.cli.helpers import (
     SERVER_URL,
     console,
+    find_seed_file,
     print_banner,
     server_get,
     server_post,
 )
 from bernstein.core.runtime_state import read_session_replay_metadata
+from bernstein.core.visual_config import VisualConfig, resolve_visual_config
 
 # ---------------------------------------------------------------------------
 # live
@@ -51,19 +53,40 @@ from bernstein.core.runtime_state import read_session_replay_metadata
     default=False,
     help="Use the classic Rich Live display instead of the interactive TUI.",
 )
-def live(interval: float, classic: bool) -> None:
+@click.option(
+    "--no-splash",
+    is_flag=True,
+    default=False,
+    help="Skip the premium startup splash.",
+)
+def live(interval: float, classic: bool, no_splash: bool) -> None:
     """Live dashboard: active agents, task events, and stats (Ctrl+C to exit).
 
     Launches the 3-column interactive Textual TUI by default:
     Agents | Tasks | Activity feed + sparkline + chat input.
     Mouse + keyboard. Pass --classic for the simpler Rich Live display.
     """
+    seed_path = find_seed_file()
+    seed_cfg = _load_live_seed_config(seed_path)
+    visual_cfg = _resolve_live_visual_config(seed_cfg, no_splash=no_splash)
+
     if not classic:
+        if visual_cfg.splash:
+            from bernstein.cli.splash_v2 import render_startup_splash
+
+            render_startup_splash(console, config=visual_cfg, **_build_live_splash_context(seed_path, seed_cfg))
+
         from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
         app = DashboardApp()
         with contextlib.suppress(SystemExit):
             app.run()
+        if getattr(app, "_play_power_off_on_exit", False) and visual_cfg.crt_effects:
+            from bernstein.cli.crt_effects import CRTConfig, power_off_effect
+            from bernstein.cli.terminal_caps import detect_capabilities
+
+            caps = detect_capabilities()
+            power_off_effect(config=CRTConfig(width=caps.term_width, height=min(caps.term_height, 24)))
         # Hot restart: Textual has cleanly restored terminal, now re-exec
         if getattr(app, "_restart_on_exit", False):
             os.execv(sys.executable, [sys.executable, "-m", "bernstein.cli.main", "live"])
@@ -79,6 +102,67 @@ def live(interval: float, classic: bool) -> None:
         interval=interval,
     )
     view.run()
+
+
+def _load_live_seed_config(seed_path: Path | None) -> Any:
+    """Load seed config for splash/context wiring when available."""
+    if seed_path is None:
+        return None
+    try:
+        from bernstein.core.seed import parse_seed
+
+        return parse_seed(seed_path)
+    except Exception:
+        return None
+
+
+def _resolve_live_visual_config(seed_cfg: Any, *, no_splash: bool) -> VisualConfig:
+    """Resolve premium visual settings for ``bernstein live``."""
+    raw_visual = getattr(seed_cfg, "visual", None) if seed_cfg is not None else None
+    return resolve_visual_config(raw_visual, no_splash=no_splash)
+
+
+def _build_live_splash_context(seed_path: Path | None, seed_cfg: Any) -> dict[str, Any]:
+    """Build startup splash context for the live dashboard command."""
+    version = ""
+    try:
+        from importlib.metadata import version as get_version
+
+        version = get_version("bernstein")
+    except Exception:
+        pass
+
+    agents: list[dict[str, object]] = []
+    try:
+        from bernstein.core.agent_discovery import discover_agents_cached
+
+        discovery = discover_agents_cached()
+        agents = [
+            {"name": agent.name, "logged_in": agent.logged_in, "default_model": agent.default_model}
+            for agent in discovery.agents
+        ]
+    except Exception:
+        pass
+
+    task_count = 0
+    try:
+        open_dir = Path.cwd() / ".sdd" / "backlog" / "open"
+        if open_dir.exists():
+            task_count = sum(1 for file in open_dir.iterdir() if file.suffix in (".yaml", ".yml", ".md"))
+    except Exception:
+        pass
+
+    goal_preview = str(getattr(seed_cfg, "goal", "") or "")[:80]
+    budget = float(getattr(seed_cfg, "budget_usd", 0.0) or 0.0)
+
+    return {
+        "version": version,
+        "agents": agents,
+        "seed_file": str(seed_path) if seed_path else None,
+        "goal_preview": goal_preview,
+        "budget": budget,
+        "task_count": task_count,
+    }
 
 
 # ---------------------------------------------------------------------------

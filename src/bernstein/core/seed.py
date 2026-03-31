@@ -20,6 +20,7 @@ from bernstein.core.key_rotation import KeyRotationConfig, _parse_interval
 from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
 from bernstein.core.quality_gates import QualityGatesConfig
 from bernstein.core.secrets import SecretsConfig
+from bernstein.core.visual_config import VisualConfig, parse_visual_config
 from bernstein.core.workspace import Workspace
 from bernstein.core.worktree import WorktreeSetupConfig
 
@@ -125,6 +126,7 @@ class SeedConfig:
     model_policy: dict[str, Any] | None = None
     role_model_policy: dict[str, dict[str, str]] | None = None
     compliance: ComplianceConfig | None = None
+    visual: VisualConfig | None = None
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -712,6 +714,14 @@ def parse_seed(path: Path) -> SeedConfig:
         else:
             raise SeedError(f"compliance must be a string or mapping, got: {type(compliance_raw).__name__}")
 
+    visual_raw: object = data.get("visual")
+    visual: VisualConfig | None = None
+    if visual_raw is not None:
+        try:
+            visual = parse_visual_config(visual_raw)
+        except ValueError as exc:
+            raise SeedError(str(exc)) from exc
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -738,6 +748,7 @@ def parse_seed(path: Path) -> SeedConfig:
         model_policy=model_policy,
         role_model_policy=role_model_policy,
         compliance=compliance,
+        visual=visual,
     )
 
 
