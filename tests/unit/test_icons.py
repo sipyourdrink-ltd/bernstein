@@ -192,3 +192,213 @@ def test_get_status_icon_returns_fallback_for_unknown_status() -> None:
 
     icon = get_status_icon("some_unknown_status")
     assert isinstance(icon, str) and len(icon) > 0
+
+
+# -- _is_truthy direct tests -------------------------------------------------
+
+
+def test_is_truthy_accepts_1() -> None:
+    from bernstein.cli.icons import _is_truthy
+
+    assert _is_truthy("1") is True
+
+
+def test_is_truthy_accepts_true() -> None:
+    from bernstein.cli.icons import _is_truthy
+
+    assert _is_truthy("true") is True
+
+
+def test_is_truthy_accepts_yes() -> None:
+    from bernstein.cli.icons import _is_truthy
+
+    assert _is_truthy("yes") is True
+
+
+def test_is_truthy_accepts_on() -> None:
+    from bernstein.cli.icons import _is_truthy
+
+    assert _is_truthy("on") is True
+
+
+def test_is_truthy_rejects_0() -> None:
+    from bernstein.cli.icons import _is_truthy
+
+    assert _is_truthy("0") is False
+
+
+def test_is_truthy_rejects_false() -> None:
+    from bernstein.cli.icons import _is_truthy
+
+    assert _is_truthy("false") is False
+
+
+def test_is_truthy_rejects_empty() -> None:
+    from bernstein.cli.icons import _is_truthy
+
+    assert _is_truthy("") is False
+
+
+# -- get_icons with all truthy string variants --------------------------------
+
+
+def test_get_icons_activates_on_true_string() -> None:
+    env = {k: v for k, v in os.environ.items() if k not in ("NERD_FONT", "BERNSTEIN_NERD_FONT")}
+    env["NERD_FONT"] = "true"
+    with patch.dict(os.environ, env, clear=True):
+        icons = get_icons()
+    assert isinstance(icons, NerdFontIcons)
+
+
+def test_get_icons_activates_on_yes_string() -> None:
+    env = {k: v for k, v in os.environ.items() if k not in ("NERD_FONT", "BERNSTEIN_NERD_FONT")}
+    env["NERD_FONT"] = "yes"
+    with patch.dict(os.environ, env, clear=True):
+        icons = get_icons()
+    assert isinstance(icons, NerdFontIcons)
+
+
+def test_get_icons_activates_on_on_string() -> None:
+    env = {k: v for k, v in os.environ.items() if k not in ("NERD_FONT", "BERNSTEIN_NERD_FONT")}
+    env["BERNSTEIN_NERD_FONT"] = "on"
+    with patch.dict(os.environ, env, clear=True):
+        icons = get_icons()
+    assert isinstance(icons, NerdFontIcons)
+
+
+# -- get_agent_icon for all named adapters ------------------------------------
+
+
+def test_get_agent_icon_codex() -> None:
+    from bernstein.cli.icons import get_agent_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_agent_icon("codex")
+    nf = NerdFontIcons()
+    assert icon == nf.agent_codex
+
+
+def test_get_agent_icon_gemini() -> None:
+    from bernstein.cli.icons import get_agent_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_agent_icon("gemini")
+    nf = NerdFontIcons()
+    assert icon == nf.agent_gemini
+
+
+def test_get_agent_icon_cursor() -> None:
+    from bernstein.cli.icons import get_agent_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_agent_icon("cursor")
+    nf = NerdFontIcons()
+    assert icon == nf.agent_cursor
+
+
+def test_get_agent_icon_is_case_insensitive() -> None:
+    from bernstein.cli.icons import get_agent_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon_lower = get_agent_icon("claude")
+        icon_upper = get_agent_icon("CLAUDE")
+    assert icon_lower == icon_upper
+
+
+# -- get_status_icon for all status aliases -----------------------------------
+
+
+def test_get_status_icon_working_maps_to_running() -> None:
+    from bernstein.cli.icons import get_status_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_status_icon("working")
+    nf = NerdFontIcons()
+    assert icon == nf.status_running
+
+
+def test_get_status_icon_starting_maps_to_running() -> None:
+    from bernstein.cli.icons import get_status_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_status_icon("starting")
+    nf = NerdFontIcons()
+    assert icon == nf.status_running
+
+
+def test_get_status_icon_in_progress_maps_to_running() -> None:
+    from bernstein.cli.icons import get_status_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_status_icon("in_progress")
+    nf = NerdFontIcons()
+    assert icon == nf.status_running
+
+
+def test_get_status_icon_completed_maps_to_done() -> None:
+    from bernstein.cli.icons import get_status_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_status_icon("completed")
+    nf = NerdFontIcons()
+    assert icon == nf.status_done
+
+
+def test_get_status_icon_error_maps_to_failed() -> None:
+    from bernstein.cli.icons import get_status_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_status_icon("error")
+    nf = NerdFontIcons()
+    assert icon == nf.status_failed
+
+
+def test_get_status_icon_blocked_maps_to_blocked() -> None:
+    from bernstein.cli.icons import get_status_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_status_icon("blocked")
+    nf = NerdFontIcons()
+    assert icon == nf.status_blocked
+
+
+def test_get_status_icon_pending_approval_maps_to_blocked() -> None:
+    from bernstein.cli.icons import get_status_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon = get_status_icon("pending_approval")
+    nf = NerdFontIcons()
+    assert icon == nf.status_blocked
+
+
+def test_get_status_icon_is_case_insensitive() -> None:
+    from bernstein.cli.icons import get_status_icon
+
+    with patch.dict(os.environ, {"NERD_FONT": "1"}, clear=False):
+        icon_lower = get_status_icon("done")
+        icon_upper = get_status_icon("DONE")
+    assert icon_lower == icon_upper
+
+
+# -- Frozen dataclass — icon sets are immutable -------------------------------
+
+
+def test_nerd_font_icons_are_immutable() -> None:
+    """NerdFontIcons is a frozen dataclass; normal attribute assignment must raise."""
+    import dataclasses
+    import pytest
+
+    nf = NerdFontIcons()
+    assert dataclasses.fields(nf)  # is a dataclass
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        nf.status_done = "x"  # type: ignore[misc]
+
+
+def test_unicode_fallback_icons_are_immutable() -> None:
+    """UnicodeFallbackIcons is a frozen dataclass; normal attribute assignment must raise."""
+    import dataclasses
+    import pytest
+
+    uf = UnicodeFallbackIcons()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        uf.status_done = "x"  # type: ignore[misc]
