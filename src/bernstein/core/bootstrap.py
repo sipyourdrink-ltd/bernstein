@@ -51,6 +51,7 @@ from bernstein.core.server_launch import (
     create_router,
     ensure_sdd,
 )
+from bernstein.core.server_supervisor import supervised_server
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -249,7 +250,7 @@ def bootstrap_from_seed(
             raise SystemExit(1) from sec_exc
 
     # 4. Start server (compact output — single line)
-    server_pid = _start_server(
+    server_pid = supervised_server(
         workdir,
         port,
         bind_host=bind_host,
@@ -533,7 +534,7 @@ def bootstrap_from_goal(
     server_url = _resolve_server_url(port)
 
     with Status(f"[bold]Starting task server on {bind_host}:{port}...[/bold]", console=console):
-        server_pid = _start_server(workdir, port, bind_host=bind_host)
+        server_pid = supervised_server(workdir, port, bind_host=bind_host)
         if not _wait_for_server(port, server_url=server_url):
             from bernstein.cli.errors import BernsteinError
 

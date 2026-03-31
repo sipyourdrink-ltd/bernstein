@@ -699,8 +699,22 @@ class Orchestrator:
         try:
             tasks_by_status = fetch_all_tasks(self._client, base)
             _tick_http_reads += 1  # single GET /tasks (no status filter)
+            self._consecutive_server_failures = 0  # Reset on success
         except httpx.HTTPError as exc:
-            logger.error("Failed to fetch tasks: %s", exc)
+            self._consecutive_server_failures = getattr(self, "_consecutive_server_failures", 0) + 1
+            if self._consecutive_server_failures >= 12:  # 12 ticks x ~30s = ~6 min
+                logger.critical(
+                    "Server unreachable for %d consecutive ticks — orchestrator stopping to prevent waste",
+                    self._consecutive_server_failures,
+                )
+                self._running = False
+            elif self._consecutive_server_failures >= 3:
+                logger.warning(
+                    "Server unreachable for %d ticks (%s). Supervisor should restart it.",
+                    self._consecutive_server_failures, exc,
+                )
+            else:
+                logger.error("Failed to fetch tasks: %s", exc)
             result.errors.append(f"fetch_all: {exc}")
             return result
 
