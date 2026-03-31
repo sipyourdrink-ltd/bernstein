@@ -1263,8 +1263,13 @@ class BernsteinApp(App[None]):
             child.remove()
 
         if not alive:
-            if not col.query("Static#no-agents"):
-                col.mount(Static("[dim]Waiting for agents...[/]", id="no-agents"))
+            # Show live orchestrator boot log instead of static "Waiting..." text.
+            boot_text = self._get_boot_log()
+            existing_boot = next(iter(col.query("Static#no-agents")), None)
+            if isinstance(existing_boot, Static):
+                existing_boot.update(boot_text)
+            else:
+                col.mount(Static(boot_text, id="no-agents"))
         else:
             for w in col.query("Static#no-agents"):
                 w.remove()
@@ -1289,6 +1294,62 @@ class BernsteinApp(App[None]):
             summary_widget.update(summary_text)
         else:
             col.mount(Static(summary_text, id="agent-errors"))
+
+    def _get_boot_log(self) -> str:
+        """Read recent orchestrator/spawner logs for the boot sequence display.
+
+        Shows what's happening under the hood while no agents are visible yet:
+        task decomposition, claim attempts, RAG indexing, worktree setup, etc.
+        Formatted like a Linux boot log for visual consistency.
+        """
+        lines: list[str] = []
+        max_lines = 18
+
+        for log_name in ("orchestrator-debug.log", "spawner.log"):
+            log_path = Path.cwd() / ".sdd" / "runtime" / log_name
+            if not log_path.exists():
+                continue
+            try:
+                raw = log_path.read_text(encoding="utf-8", errors="replace")
+                for raw_line in raw.splitlines()[-50:]:
+                    # Extract timestamp + message, skip noise.
+                    stripped = raw_line.strip()
+                    if not stripped or "HTTP Request:" in stripped:
+                        continue
+                    # Parse: "2026-03-31 17:48:55,723 INFO module: message"
+                    parts = stripped.split(" ", 3)
+                    if len(parts) < 4:
+                        continue
+                    time_part = parts[1].split(",")[0] if len(parts) > 1 else ""
+                    level = parts[2] if len(parts) > 2 else ""
+                    msg = parts[3] if len(parts) > 3 else stripped
+                    # Truncate module prefix for readability.
+                    if ": " in msg:
+                        msg = msg.split(": ", 1)[1]
+                    msg = msg[:80]
+                    # Color by level.
+                    if level == "ERROR":
+                        lines.append(f"[red]{time_part}[/] [bold red]ERR[/]  {msg}")
+                    elif level == "WARNING":
+                        lines.append(f"[yellow]{time_part}[/] [yellow]WARN[/] {msg}")
+                    else:
+                        lines.append(f"[dim]{time_part}[/] [dim green]OK[/]   [dim]{msg}[/]")
+            except OSError:
+                continue
+
+        if not lines:
+            return "[dim]Initializing orchestrator...[/]"
+
+        # Deduplicate and take the most recent lines.
+        seen: set[str] = set()
+        unique: list[str] = []
+        for line in lines:
+            if line not in seen:
+                seen.add(line)
+                unique.append(line)
+
+        display = unique[-max_lines:]
+        return "\n".join(display)
 
     # -- Tasks --
 
