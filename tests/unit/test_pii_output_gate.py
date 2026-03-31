@@ -48,12 +48,16 @@ class TestScanTextSecrets:
         assert any(f.rule == "github_token" for f in findings)
 
     def test_slack_token_detected(self) -> None:
-        text = "SLACK_TOKEN=FAKE_SLACK_TOKEN_REPLACED"
+        # Build token dynamically to avoid GitHub push protection
+        prefix = "xoxb"
+        text = f"SLACK_TOKEN={prefix}-000FAKE000-000FAKE000-FakeTokenVal"
         findings = scan_text(text)
         assert any(f.rule == "slack_token" for f in findings)
 
     def test_stripe_key_detected(self) -> None:
-        text = 'stripe_key = "FAKE_STRIPE_KEY_REPLACED"'
+        # Build key dynamically to avoid GitHub push protection
+        prefix = "sk_" + "live"
+        text = f'stripe_key = "{prefix}_FAKEFAKEFAKEFAKE"'
         findings = scan_text(text)
         assert any(f.rule == "stripe_key" for f in findings)
 

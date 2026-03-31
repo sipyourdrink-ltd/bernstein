@@ -44,3 +44,4 @@ node_modules/
 *.log
 docs/social/
 docs/content-calendar.md
+marketing/*
