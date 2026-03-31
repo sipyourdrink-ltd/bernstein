@@ -61,11 +61,12 @@ def live(interval: float, classic: bool) -> None:
         from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
         app = DashboardApp()
-        app.run()
+        try:
+            app.run()
+        except SystemExit:
+            pass
         # Hot restart: Textual has cleanly restored terminal, now re-exec
         if getattr(app, "_restart_on_exit", False):
-            import sys
-
             os.execv(sys.executable, [sys.executable, "-m", "bernstein.cli.main", "live"])
         return
 
