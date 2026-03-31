@@ -23,6 +23,8 @@ from bernstein.cli.helpers import (
 )
 from bernstein.cli.run import render_run_summary_from_dict
 from bernstein.cli.ui import make_console
+from bernstein.core.manager_parsing import _resolve_depends_on  # pyright: ignore[reportPrivateUsage]
+from bernstein.core.plan_loader import load_plan_from_yaml
 
 # ---------------------------------------------------------------------------
 # Plan helpers
@@ -280,6 +282,47 @@ def _show_run_summary() -> None:
     render_run_summary_from_dict(data, console=con)
 
 
+def _configure_quality_gate_bypass(
+    *,
+    goal: str | None,
+    seed_file: str | None,
+    skip_gate: tuple[str, ...],
+    skip_gate_reason: str | None,
+) -> None:
+    """Validate and export quality-gate bypass settings for the orchestrator."""
+    if not skip_gate and not skip_gate_reason:
+        os.environ.pop("BERNSTEIN_SKIP_GATES", None)
+        os.environ.pop("BERNSTEIN_SKIP_GATE_REASON", None)
+        return
+    if skip_gate_reason and not skip_gate:
+        raise click.UsageError("--skip-gate-reason requires at least one --skip-gate")
+    if goal is not None:
+        raise click.UsageError("--skip-gate requires a seed file with quality_gates.allow_bypass: true")
+
+    from bernstein.core.seed import SeedError, parse_seed
+
+    seed_path = Path(seed_file) if seed_file is not None else find_seed_file()
+    if seed_path is None:
+        raise click.UsageError("--skip-gate requires a seed file with quality_gates.allow_bypass: true")
+
+    try:
+        seed = parse_seed(seed_path)
+    except SeedError as exc:
+        raise click.UsageError(str(exc)) from exc
+
+    if seed.quality_gates is None or not seed.quality_gates.allow_bypass:
+        raise click.UsageError("quality_gates.allow_bypass must be true to use --skip-gate")
+
+    normalized = sorted({gate.strip() for gate in skip_gate if gate.strip()})
+    if not normalized:
+        raise click.UsageError("At least one non-empty --skip-gate is required")
+    os.environ["BERNSTEIN_SKIP_GATES"] = ",".join(normalized)
+    if skip_gate_reason:
+        os.environ["BERNSTEIN_SKIP_GATE_REASON"] = skip_gate_reason
+    else:
+        os.environ.pop("BERNSTEIN_SKIP_GATE_REASON", None)
+
+
 # ---------------------------------------------------------------------------
 # run  (the "one command" Seed UX)
 # ---------------------------------------------------------------------------
@@ -397,6 +440,17 @@ def _show_run_summary() -> None:
     help="Suppress the end-of-run summary card.",
 )
 @click.option(
+    "--skip-gate",
+    "skip_gate",
+    multiple=True,
+    help="Bypass a named quality gate for this run (requires quality_gates.allow_bypass: true).",
+)
+@click.option(
+    "--skip-gate-reason",
+    default=None,
+    help="Operator-visible reason recorded for quality-gate bypasses.",
+)
+@click.option(
     "--audit",
     is_flag=True,
     default=False,
@@ -412,6 +466,7 @@ def _show_run_summary() -> None:
     help="A/B testing mode: spawn two agents with different models for each task.",
 )
 def run(
+    plan_file: Path | None,
     goal: str | None,
     seed_file: str | None,
     port: int,
@@ -429,12 +484,15 @@ def run(
     from_plan: Path | None,
     auto_approve: bool,
     quiet: bool,
+    skip_gate: tuple[str, ...],
+    skip_gate_reason: str | None,
     audit: bool,
     ab_test: bool = False,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
     \b
+      bernstein run plan.yaml                  # loadable YAML plan (stages + steps)
       bernstein conduct                        # reads bernstein.yaml
       bernstein conduct --goal "Build X"       # inline goal
       bernstein conduct --seed custom.yaml     # custom seed file
@@ -462,7 +520,10 @@ def run(
     except ImportError:
         pass
 
-    from bernstein.core.bootstrap import bootstrap_from_goal, bootstrap_from_seed
+    from bernstein.core.bootstrap import (  # pyright: ignore[reportUnknownVariableType]
+        bootstrap_from_goal,
+        bootstrap_from_seed,
+    )
     from bernstein.core.seed import SeedError
 
     # Propagate workflow mode to orchestrator subprocess via env var
@@ -489,14 +550,66 @@ def run(
     if quiet:
         os.environ["BERNSTEIN_QUIET"] = "1"
 
+    _configure_quality_gate_bypass(
+        goal=goal,
+        seed_file=seed_file,
+        skip_gate=skip_gate,
+        skip_gate_reason=skip_gate_reason,
+    )
+
     # Propagate audit mode so the orchestrator enables SOC 2 audit logging
     if audit:
         os.environ["BERNSTEIN_AUDIT"] = "1"
 
     workdir = Path.cwd()
 
+    # --plan_file: loadable YAML plan (stages + steps)
+    if plan_file is not None:
+        try:
+            tasks = load_plan_from_yaml(plan_file)
+            _resolve_depends_on(tasks)
+            # Create a synthetic goal from the plan name
+            try:
+                import yaml as _yaml
+
+                plan_data = _yaml.safe_load(plan_file.read_text())
+                goal = plan_data.get("name", str(plan_file))
+            except Exception:
+                goal = str(plan_file)
+
+            console.print(f"[dim]Loaded plan from:[/dim] {plan_file}")
+            console.print(f"[dim]Plan name:[/dim] {goal}")
+            loaded_goal = goal or str(plan_file)
+
+            bootstrap_from_goal(
+                goal=loaded_goal,
+                workdir=workdir,
+                port=port,
+                cells=cells,
+                cli=cli or "auto",
+                model=model,
+                tasks=tasks,
+                ab_test=ab_test,
+            )
+
+            import sys as _sys
+
+            if _sys.stdout.isatty():
+                try:
+                    from bernstein.cli.dashboard import BernsteinApp as DashboardApp
+
+                    DashboardApp().run()
+                except Exception:
+                    _show_run_summary()
+            else:
+                _show_run_summary()
+            return
+        except Exception as exc:
+            console.print(f"[red]Failed to load plan file:[/red] {exc}")
+            raise SystemExit(1) from exc
+
     # --from-plan: load goal from saved plan file, override inline goal
-    if from_plan is not None:
+    elif from_plan is not None:
         try:
             goal = _load_plan_goal(from_plan)
             console.print(f"[dim]Loaded plan from:[/dim] {from_plan}")
@@ -700,7 +813,10 @@ def start(goal: str | None, seed_file: str, port: int) -> None:
     except ImportError:
         pass
 
-    from bernstein.core.bootstrap import bootstrap_from_goal, bootstrap_from_seed
+    from bernstein.core.bootstrap import (  # pyright: ignore[reportUnknownVariableType]
+        bootstrap_from_goal,
+        bootstrap_from_seed,
+    )
     from bernstein.core.seed import SeedError
 
     workdir = Path.cwd()
@@ -1107,7 +1223,7 @@ def demo(dry_run: bool, real: bool, adapter: str | None, timeout: int) -> None:
     try:
         # Bootstrap: start server + spawner in the demo project dir
         console.print("\n[bold]Starting orchestration…[/bold]")
-        from bernstein.core.bootstrap import bootstrap_from_goal
+        from bernstein.core.bootstrap import bootstrap_from_goal  # pyright: ignore[reportUnknownVariableType]
 
         bootstrap_from_goal(
             goal="Fix the four bugs in the demo Flask app.",

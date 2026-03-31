@@ -12,13 +12,25 @@ branch, Bernstein will attempt to fix it automatically.
 
 | Input            | Required | Default   | Description                                             |
 |------------------|----------|-----------|---------------------------------------------------------|
-| `task`           | yes      | —         | Task description, or `"fix-ci"` for auto-fix mode       |
+| `task`           | no       | —         | Task description, or `"fix-ci"` for auto-fix mode       |
+| `plan`           | no       | —         | Path to a YAML plan file (e.g. `plans/api.yaml`)        |
 | `budget`         | no       | `"5.00"`  | Dollar cap for the run                                  |
 | `cli`            | no       | `"claude"`| Agent CLI to use (`claude`, `codex`, `gemini`, `qwen`)  |
 | `max-retries`    | no       | `"3"`     | Retry count in fix-ci mode                              |
 | `python-version` | no       | `"3.12"`  | Python version to install                               |
 
 ## Modes
+
+### Plan mode (`plan: path/to/plan.yaml`)
+
+When `plan` is provided, the action runs the specified YAML project plan:
+
+```
+bernstein run <plan> --budget <budget> --headless
+```
+
+Use this for complex multi-stage migrations, refactorings, or new feature
+build-outs described in a YAML plan file.
 
 ### Fix-CI mode (`task: fix-ci`)
 

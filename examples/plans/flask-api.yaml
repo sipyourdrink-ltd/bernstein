@@ -1,0 +1,37 @@
+# examples/plans/flask-api.yaml
+name: "Flask REST API"
+description: "Production-ready backend with auth, API, tests"
+
+stages:
+  - name: "Infrastructure"
+    steps:
+      - goal: "Set up PostgreSQL with SQLAlchemy models"
+        role: backend
+      - goal: "Configure Alembic for database migrations"
+        role: backend
+      - goal: "Docker Compose with Postgres and Redis"
+        role: backend
+
+  - name: "Auth"
+    depends_on: ["Infrastructure"]
+    steps:
+      - goal: "JWT auth middleware with refresh tokens"
+        role: backend
+      - goal: "User registration and login endpoints"
+        role: backend
+
+  - name: "API"
+    depends_on: ["Infrastructure"]
+    steps:
+      - goal: "RESTful endpoints for item CRUD"
+        role: backend
+      - goal: "Implement rate limiting for API"
+        role: security
+
+  - name: "Quality"
+    depends_on: ["Auth", "API"]
+    steps:
+      - goal: "Unit and integration tests (>80% coverage)"
+        role: qa
+      - goal: "OpenAPI specification and Swagger UI"
+        role: architect

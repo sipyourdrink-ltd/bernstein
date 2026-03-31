@@ -1,0 +1,27 @@
+# examples/plans/cli-tool.yaml
+name: "CLI Tool"
+description: "A robust CLI tool with tests and documentation"
+
+stages:
+  - name: "Bootstrap"
+    steps:
+      - goal: "Initialize project with pyproject.toml and click dependency"
+        role: architect
+      - goal: "Basic CLI skeleton with help text"
+        role: backend
+
+  - name: "Commands"
+    depends_on: ["Bootstrap"]
+    steps:
+      - goal: "Implement core business logic as click commands"
+        role: backend
+      - goal: "Add configuration management (YAML/JSON)"
+        role: backend
+
+  - name: "Quality"
+    depends_on: ["Commands"]
+    steps:
+      - goal: "Integration tests for CLI interface using CliRunner"
+        role: qa
+      - goal: "Generate man pages or CLI documentation"
+        role: docs

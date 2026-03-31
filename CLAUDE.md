@@ -12,12 +12,20 @@ You are working on Bernstein, a multi-agent orchestration system for CLI coding 
 
 ## Architecture
 - `src/bernstein/` — Python package (3.12+, hatchling build)
-- `src/bernstein/core/` — task server, spawner, orchestrator, janitor, evolution, routes/, agent_discovery, quality_gates, token_monitor
+- `src/bernstein/core/` — task server, spawner, orchestrator, janitor, evolution, routes/, agent_discovery, quality_gates, token_monitor, plan_loader
 - `src/bernstein/adapters/` — CLI agent adapters (claude, codex, gemini, qwen, aider, amp, roo_code, generic)
 - `src/bernstein/cli/` — CLI entry points (run_cmd, stop_cmd, status_cmd, agents_cmd, evolve_cmd, advanced_cmd, workspace_cmd, etc.)
 - `templates/roles/` — role system prompts (manager, backend, qa, security, etc.)
 - `templates/prompts/` — prompt templates for planning and review
+- `templates/plan.yaml` — project plan template
 - `.sdd/` — file-based state (backlog, runtime, metrics, config)
+
+## Plan Files (YAML)
+- Describe multi-step projects with `stages` and `steps`
+- Stages can have `depends_on: [stage_name]`
+- Steps can have `goal`, `role`, `priority`, `scope`, `complexity`
+- Execute with: `bernstein run plans/my-project.yaml`
+- Skips LLM planning, deterministic task injection
 
 ## Task server API (http://127.0.0.1:8052)
 - POST /tasks — create task

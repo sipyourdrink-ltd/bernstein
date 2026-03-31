@@ -19,11 +19,14 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from rich.console import Console
 from rich.status import Status
+
+if TYPE_CHECKING:
+    from bernstein.core.models import Task
 
 # Import from sub-modules (facade re-exports)
 from bernstein.core.preflight import (
@@ -444,6 +447,7 @@ def bootstrap_from_goal(
     force_fresh: bool = False,
     model: str | None = None,
     ab_test: bool = False,
+    tasks: list[Task] | None = None,
 ) -> BootstrapResult:
     """Bootstrap from an inline goal string (no YAML file needed).
 
@@ -459,6 +463,7 @@ def bootstrap_from_goal(
         cells: Number of parallel orchestration cells.
         force_fresh: Ignore any saved session and start from scratch.
         model: Optional model override (e.g. "opus", "sonnet").
+        tasks: Pre-defined tasks to execute (skips LLM planning).
 
     Returns:
         BootstrapResult with PIDs and task ID.
@@ -563,6 +568,30 @@ def bootstrap_from_goal(
             f"[bold cyan]Resuming from previous session[/bold cyan] "
             f"({completed_count} task(s) already completed — skipping re-planning)"
         )
+    elif tasks:
+        # Pre-defined tasks from plan file
+        with Status(f"[bold]Posting {len(tasks)} tasks to server...[/bold]", console=console):
+            from bernstein.core.planner import _post_task_to_server
+
+            async def _post_all():
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    # Map: temporary plan ID -> server-assigned ID
+                    id_map: dict[str, str] = {}
+                    for t in tasks:
+                        # Update depends_on using the map
+                        t.depends_on = [id_map.get(dep, dep) for dep in t.depends_on]
+
+                        # Post to server
+                        old_id = t.id
+                        server_id = await _post_task_to_server(client, server_url, t)
+                        t.id = server_id
+                        id_map[old_id] = server_id
+
+            import asyncio
+
+            asyncio.run(_post_all())
+        console.print(f"[green]→[/green] Posted {len(tasks)} tasks from plan file")
+        backlog_count = len(tasks)
     elif backlog_count > 0:
         console.print(
             f"[green]→[/green] Planning tasks ({backlog_count} found in backlog"

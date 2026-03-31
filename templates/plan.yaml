@@ -1,0 +1,48 @@
+# Bernstein Plan Template
+# A Plan is a YAML file describing a multi-step project.
+# Use this template to define structured goals with stages and steps.
+#
+# Usage:
+#   bernstein run plan.yaml
+
+name: "My Project Plan"
+description: "A description of what this plan achieves"
+
+# Global constraints for all tasks in this plan
+constraints:
+  - "Use Python 3.12+"
+  - "Maintain 100% test coverage"
+  - "Follow PEP 8 style guide"
+
+stages:
+  - name: "Foundation"
+    description: "Set up the project structure and basic dependencies"
+    steps:
+      - goal: "Initialize project structure with pyproject.toml and README.md"
+        role: architect
+      - goal: "Set up basic CI/CD pipeline with GitHub Actions"
+        role: devops
+
+  - name: "Core Features"
+    depends_on: ["Foundation"]
+    steps:
+      - goal: "Implement the primary data model"
+        role: backend
+      - goal: "Add core business logic and services"
+        role: backend
+
+  - name: "Interface"
+    depends_on: ["Core Features"]
+    steps:
+      - goal: "Implement REST API endpoints"
+        role: backend
+      - goal: "Add OpenAPI documentation"
+        role: backend
+
+  - name: "Quality Assurance"
+    depends_on: ["Interface"]
+    steps:
+      - goal: "Add integration tests for all API endpoints"
+        role: qa
+      - goal: "Perform security audit of the codebase"
+        role: security

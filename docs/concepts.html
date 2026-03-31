@@ -58,6 +58,7 @@
       <li><a href="#completion-signals">Completion signals</a></li>
       <li><a href="#self-evolution">Self-evolution</a></li>
       <li><a href="#agent-catalogs">Agent catalogs</a></li>
+      <li><a href="#plan-files">Plan Files</a></li>
       <li><a href="#file-state">File-based state</a></li>
     </ul>
   </aside>
@@ -66,7 +67,7 @@
   <main class="doc-content">
 
     <h2 id="architecture">Architecture</h2>
-    <p>Bernstein has four main components, all running as separate processes:</p>
+    <p>Bernstein has five main components, all running as separate processes:</p>
 
     <table>
       <thead>
@@ -76,7 +77,8 @@
         <tr><td><strong>Task Server</strong></td><td>FastAPI HTTP server at <code>:8052</code>. The single source of truth for task state. Agents talk to it via REST.</td></tr>
         <tr><td><strong>Agent Spawner</strong></td><td>Polls the task server, picks up open tasks, routes model/effort, and launches CLI agent sessions.</td></tr>
         <tr><td><strong>Janitor</strong></td><td>Runs completion signal checks before marking tasks done. Prevents false positives.</td></tr>
-        <tr><td><strong>CLI Adapter</strong></td><td>A thin wrapper per agent CLI (Claude Code, Codex, Gemini). Handles subprocess launch, env setup, and output parsing.</td></tr>
+        <tr><td><strong>Plan Loader</strong></td><td>Parses YAML plan files (stages + steps) and injects them into the task server. Skips LLM planning.</td></tr>
+        <tr><td><strong>CLI Adapter</strong></td><td>A thin wrapper per agent CLI (Claude Code, Codex, Gemini, Aider, Amp, Roo Code). Handles subprocess launch, env setup, and output parsing.</td></tr>
       </tbody>
     </table>
 
@@ -278,6 +280,43 @@ system_prompt: |
   You are a data engineering specialist. You write clean, tested,
   well-documented ETL code. You prefer streaming over batch where
   possible, and always profile query performance.</code></pre>
+    </div>
+
+    <h2 id="plan-files">Plan Files</h2>
+    <p>A <strong>Plan</strong> is a loadable YAML file describing a multi-step project. Think of it as an Ansible playbook or a GitHub Actions workflow, but for coding agents.</p>
+    <p>Using a plan file skips the LLM-based planning step (Manager agent), giving you full control over the task decomposition and dependencies.</p>
+
+    <div class="code-block">
+      <pre><code class="language-yaml"># plans/saas-backend.yaml
+name: "SaaS Backend"
+description: "Production-ready backend with auth, API, tests"
+
+stages:
+  - name: "Infrastructure"
+    steps:
+      - goal: "Set up PostgreSQL with SQLAlchemy models"
+        role: backend
+      - goal: "Configure Alembic for database migrations"
+        role: backend
+
+  - name: "Auth"
+    depends_on: ["Infrastructure"]
+    steps:
+      - goal: "JWT auth middleware with refresh tokens"
+        role: backend
+      - goal: "User registration and login endpoints"
+        role: backend
+
+  - name: "Quality"
+    depends_on: ["Auth"]
+    steps:
+      - goal: "Unit and integration tests (>80% coverage)"
+        role: qa</code></pre>
+    </div>
+
+    <p>To run a plan:</p>
+    <div class="code-block">
+      <pre><code class="language-bash">bernstein run plans/saas-backend.yaml</code></pre>
     </div>
 
     <h2 id="file-state">File-based state</h2>

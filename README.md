@@ -45,7 +45,7 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 
 Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and commits the results. You come back to working code, passing tests, and a clean git history.
 
-**No framework to learn. No vendor lock-in.** If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), [Cursor](https://www.cursor.com), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Kiro](https://kiro.dev), [OpenCode](https://opencode.ai), or [Qwen](https://github.com/QwenLM/Qwen-Agent) installed, Bernstein uses them. Mix models in the same run - cheap free-tier agents for boilerplate, heavy models for architecture. Switch providers without rewriting anything. Agents spawn, work, exit. No context drift. No babysitting.
+**No framework to learn. No vendor lock-in.** If you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), [Cursor](https://www.cursor.com), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Aider](https://aider.chat), [Amp](https://github.com/withamp/amp), [Roo Code](https://github.com/RooVetGit/Roo-Code), [Kiro](https://kiro.dev), [Kilo](https://kilo.dev), [OpenCode](https://opencode.ai), or [Qwen](https://github.com/QwenLM/Qwen-Agent) installed, Bernstein uses them. Mix models in the same run - cheap free-tier agents for boilerplate, heavy models for architecture. Switch providers without rewriting anything. Agents spawn, work, exit. No context drift. No babysitting.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture.svg">
