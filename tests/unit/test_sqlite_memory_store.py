@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bernstein.core.memory.sqlite_store import MemoryEntry, SQLiteMemoryStore
+from bernstein.core.memory.sqlite_store import SQLiteMemoryStore
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -136,8 +136,7 @@ class TestSQLiteMemoryStorePrune:
         old_ts = _time.time() - (40 * 86400)  # 40 days ago
         with sqlite3.connect(store.db_path) as conn:
             conn.execute(
-                "INSERT INTO memory (type, content, tags, importance, task_id, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO memory (type, content, tags, importance, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 ("learning", "Old lesson", "", 1.0, None, old_ts),
             )
 

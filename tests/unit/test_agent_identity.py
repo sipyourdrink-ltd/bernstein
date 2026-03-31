@@ -121,9 +121,7 @@ class TestAgentIdentity:
 
     def test_is_active_property(self) -> None:
         active = AgentIdentity(id="a", role="backend", session_id="a")
-        revoked = AgentIdentity(
-            id="b", role="backend", session_id="b", status=AgentIdentityStatus.REVOKED
-        )
+        revoked = AgentIdentity(id="b", role="backend", session_id="b", status=AgentIdentityStatus.REVOKED)
         assert active.is_active
         assert not revoked.is_active
 
@@ -193,23 +191,17 @@ class TestAgentIdentityStore:
         assert len(token) > 0
 
     def test_create_with_extra_permissions(self, store: AgentIdentityStore) -> None:
-        identity, _ = store.create_identity(
-            "mgr-1", "manager", extra_permissions=frozenset({"admin:override"})
-        )
+        identity, _ = store.create_identity("mgr-1", "manager", extra_permissions=frozenset({"admin:override"}))
         assert "admin:override" in identity.permissions
         assert "agents:spawn" in identity.permissions
 
     def test_create_with_parent_identity(self, store: AgentIdentityStore) -> None:
         parent, _ = store.create_identity("parent-1", "manager")
-        child, _ = store.create_identity(
-            "child-1", "backend", parent_identity_id=parent.id
-        )
+        child, _ = store.create_identity("child-1", "backend", parent_identity_id=parent.id)
         assert child.parent_identity_id == "parent-1"
 
     def test_create_with_metadata(self, store: AgentIdentityStore) -> None:
-        identity, _ = store.create_identity(
-            "s-1", "backend", metadata={"cell_id": "cell-x", "provider": "claude"}
-        )
+        identity, _ = store.create_identity("s-1", "backend", metadata={"cell_id": "cell-x", "provider": "claude"})
         assert identity.metadata["cell_id"] == "cell-x"
 
     def test_authenticate_valid_token(self, store: AgentIdentityStore) -> None:
@@ -327,9 +319,7 @@ class TestAgentIdentityStore:
         assert trail == []
 
     def test_token_with_expiry(self, store: AgentIdentityStore) -> None:
-        identity, token = store.create_identity(
-            "s-1", "backend", token_expiry_s=3600
-        )
+        identity, token = store.create_identity("s-1", "backend", token_expiry_s=3600)
         assert identity.credential is not None
         assert identity.credential.expires_at > 0
         authed = store.authenticate(token)
