@@ -22,8 +22,6 @@ if TYPE_CHECKING:
 
 import httpx
 from rich.text import Text
-
-from bernstein.cli.icons import get_agent_icon, get_icons, get_status_icon
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
@@ -38,6 +36,8 @@ from textual.widgets import (
     Static,
 )
 from textual.worker import Worker, WorkerState
+
+from bernstein.cli.icons import get_agent_icon, get_icons, get_status_icon
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +301,7 @@ def _summarize_agent_errors(agents: list[dict[str, Any]]) -> tuple[int, list[str
 
 # -- UX-010: Visual premium status icons (via icons module, Nerd Font aware) --
 
+
 def _build_status_icons() -> dict[str, str]:
     """Build status icon map using the active icon set (Nerd Font or Unicode)."""
     _ic = get_icons()
@@ -310,7 +311,7 @@ def _build_status_icons() -> dict[str, str]:
         "in_progress": "\u25cf",
         "done": f"[green]{_ic.status_done}[/green]",
         "failed": f"[red]{_ic.status_failed}[/red]",
-        "cancelled": f"[dim]\u2298[/dim]",
+        "cancelled": "[dim]\u2298[/dim]",
         "blocked": f"[yellow]{_ic.status_blocked}[/yellow]",
     }
 
@@ -381,9 +382,7 @@ class AgentWidget(Static):
         color = {"working": "bright_green", "starting": "bright_yellow", "dead": "bright_red"}.get(
             status, "bright_green"
         )
-        dot = {"working": get_status_icon("running"), "starting": "\u25ce", "dead": "\u25cc"}.get(
-            status, "\u25cf"
-        )
+        dot = {"working": get_status_icon("running"), "starting": "\u25ce", "dead": "\u25cc"}.get(status, "\u25cf")
 
         agent_source = a.get("agent_source", "built-in")
         # Show catalog agent ID when not built-in, e.g. "(agency:code-reviewer)"
