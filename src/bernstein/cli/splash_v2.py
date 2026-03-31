@@ -14,7 +14,6 @@ from rich.align import Align
 from rich.console import Console
 
 from bernstein.cli.crt_effects import CRTConfig, power_on_effect
-from bernstein.cli.figlet_logo import render_logo
 from bernstein.cli.gradients import BERNSTEIN_COLORS, linear_gradient
 from bernstein.cli.image_renderer import render_image
 from bernstein.cli.splash import splash as compact_splash
@@ -114,53 +113,58 @@ class SplashRenderer:
         """Render the premium truecolor splash — full-screen gradient + centered logo."""
         w = self._caps.term_width
         h = self._caps.term_height
-        self._console.clear()
 
-        # Full-screen gradient background rendered as half-block chars.
-        # This gives sub-cell vertical resolution (2 pixels per row).
+        # Hide cursor, clear screen.
+        sys.stdout.write("\033[?25l\033[2J\033[H")
+        sys.stdout.flush()
+
+        # Full-screen gradient background (half-block chars → sub-cell resolution).
         bg = linear_gradient(w, h, BERNSTEIN_COLORS, direction="diagonal")
-
-        # Render the FIGlet logo.
-        logo_text = render_logo(max_width=max(32, w - 4))
-        logo_lines = logo_text.rstrip().splitlines()
-
-        # Overlay logo onto the gradient — center vertically and horizontally.
         bg_lines = bg.splitlines()
-        logo_start_row = max(1, (len(bg_lines) - len(logo_lines) - 6) // 2)
 
-        # Print background with logo overlaid using cursor positioning.
-        sys.stdout.write("\033[H")  # cursor home
+        # FIGlet logo — get raw ASCII (no Rich markup).
+        raw_logo = _render_figlet_raw("BERNSTEIN", max_width=max(32, w - 4))
+        logo_lines = raw_logo.rstrip().splitlines()
+
+        # Gradient colors for logo lines (ANSI escape codes, not Rich markup).
+        logo_colors = _sample_ansi_gradient(len(logo_lines), BERNSTEIN_COLORS)
+
+        # Vertical centering: logo + subtitle + 3 probe lines + spacing.
+        content_height = len(logo_lines) + 6
+        logo_start_row = max(1, (len(bg_lines) - content_height) // 2)
+
+        # Render background with logo overlaid.
         for i, bg_line in enumerate(bg_lines):
             if logo_start_row <= i < logo_start_row + len(logo_lines):
-                # Overlay logo line (centered) on this row.
-                logo_line = logo_lines[i - logo_start_row]
-                # Strip ANSI from logo to measure width, then center.
-                clean_logo = re.sub(r"\033\[[^m]*m", "", logo_line)
-                pad = max(0, (w - len(clean_logo)) // 2)
-                # Print: background start + gap + bold white logo + reset
-                sys.stdout.write(f"\033[{i + 1};1H\033[1;97m{' ' * pad}{logo_line}\033[0m")
+                logo_idx = i - logo_start_row
+                logo_line = logo_lines[logo_idx]
+                pad = max(0, (w - len(logo_line)) // 2)
+                color = logo_colors[logo_idx] if logo_idx < len(logo_colors) else "\033[1;97m"
+                sys.stdout.write(f"\033[{i + 1};1H{bg_line}")
+                # Overlay bold logo on top of gradient.
+                sys.stdout.write(f"\033[{i + 1};{pad + 1}H{color}{logo_line}\033[0m")
             else:
                 sys.stdout.write(f"\033[{i + 1};1H{bg_line}")
-        sys.stdout.flush()
 
-        # Subtitle and probes below the logo — fast, no animation.
+        # Subtitle — bold green, centered.
         subtitle_row = logo_start_row + len(logo_lines) + 1
-        subtitle = "AGENT ORCHESTRA"
-        pad = max(0, (w - len(subtitle)) // 2)
-        sys.stdout.write(f"\033[{subtitle_row};1H\033[1;38;2;0;255;65m{' ' * pad}{subtitle}\033[0m\n")
+        subtitle = "A G E N T   O R C H E S T R A"
+        pad_s = max(0, (w - len(subtitle)) // 2)
+        sys.stdout.write(f"\033[{subtitle_row};{pad_s + 1}H\033[1;38;2;0;212;255m{subtitle}\033[0m")
 
-        # Probe lines — instant, no typing effect.
-        lines = self._probe_lines(context, use_icons=False)
-        for j, line in enumerate(lines):
-            clean = re.sub(r"\[.*?\]", "", line)
-            pad_l = max(0, (w - len(clean)) // 2)
-            sys.stdout.write(f"\033[{subtitle_row + 2 + j};1H{' ' * pad_l}{clean}")
+        # Probe lines — instant, centered, dim cyan.
+        probes = self._probe_lines(context, use_icons=False)
+        for j, probe in enumerate(probes):
+            clean = re.sub(r"\[.*?\]", "", probe)
+            pad_p = max(0, (w - len(clean)) // 2)
+            sys.stdout.write(f"\033[{subtitle_row + 2 + j};{pad_p + 1}H\033[38;2;100;180;200m{clean}\033[0m")
+
         sys.stdout.flush()
 
-        # Brief pause then continue.
+        # Pause to admire, then restore cursor and clear for dashboard.
         if not self._skip:
-            time.sleep(1.5)
-        sys.stdout.write("\033[0m")
+            time.sleep(2.0)
+        sys.stdout.write("\033[0m\033[?25h\033[2J\033[H")
         sys.stdout.flush()
 
     def _render_tier3(self, context: SplashContext) -> None:
@@ -288,6 +292,45 @@ def render_startup_splash(
             task_count=task_count,
         )
     )
+
+
+def _render_figlet_raw(text: str, max_width: int = 80) -> str:
+    """Render FIGlet text as plain ASCII (no Rich markup, no color)."""
+    try:
+        import pyfiglet
+    except ImportError:
+        return text
+    for font in ("slant", "small", "standard", "mini"):
+        try:
+            figlet = pyfiglet.Figlet(font=font)
+            rendered = str(figlet.renderText(text))
+            lines = [line.rstrip() for line in rendered.splitlines()]
+            if all(len(line) <= max_width for line in lines if line):
+                return "\n".join(lines)
+        except Exception:
+            continue
+    return text
+
+
+def _sample_ansi_gradient(count: int, colors: tuple[str, ...]) -> list[str]:
+    """Return ANSI bold+foreground escape codes sampled across a color gradient."""
+    if count <= 0:
+        return []
+    results: list[str] = []
+    for i in range(count):
+        t = i / max(1, count - 1)
+        # Interpolate between gradient colors.
+        idx = t * (len(colors) - 1)
+        lo = int(idx)
+        hi = min(lo + 1, len(colors) - 1)
+        frac = idx - lo
+        c1 = colors[lo].lstrip("#")
+        c2 = colors[hi].lstrip("#")
+        r = int(int(c1[0:2], 16) * (1 - frac) + int(c2[0:2], 16) * frac)
+        g = int(int(c1[2:4], 16) * (1 - frac) + int(c2[2:4], 16) * frac)
+        b = int(int(c1[4:6], 16) * (1 - frac) + int(c2[4:6], 16) * frac)
+        results.append(f"\033[1;38;2;{r};{g};{b}m")
+    return results
 
 
 def _key_pressed() -> bool:
