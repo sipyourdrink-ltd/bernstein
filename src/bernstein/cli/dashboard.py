@@ -1249,6 +1249,9 @@ class BernsteinApp(App[None]):
                 continue
             if child.has_class("col-header"):
                 continue
+            # Keep #no-agents widget — don't remove/recreate it every tick.
+            if isinstance(child, Static) and child.id == "no-agents":
+                continue
             if isinstance(child, AgentWidget):
                 aid = child.agent_data.get("id", "")
                 if aid in alive_ids:
@@ -1265,7 +1268,7 @@ class BernsteinApp(App[None]):
 
         if not alive:
             # Show live orchestrator boot log instead of static "Waiting..." text.
-            # Only update when content actually changes to prevent flickering.
+            # Only update content when it actually changes — no mount/remove churn.
             boot_text = self._get_boot_log()
             existing_boot = next(iter(col.query("Static#no-agents")), None)
             if isinstance(existing_boot, Static):
