@@ -202,13 +202,13 @@ class DrainScreen(Screen[DrainReport | None]):
                     else ""
                 )
                 lines.append(
-                    f"[green]\\u2713 {agent.session_id} exited{files_note}[/green]"
+                    f"[green]\u2713 {agent.session_id} exited{files_note}[/green]"
                 )
             elif agent.status == "killed":
-                lines.append(f"[red]\\u2717 {agent.session_id} killed[/red]")
+                lines.append(f"[red]\u2717 {agent.session_id} killed[/red]")
             else:
                 lines.append(
-                    f"[yellow]\\u25c9 {agent.session_id} {agent.status}...[/yellow]"
+                    f"[yellow]\u25c9 {agent.session_id} {agent.status}...[/yellow]"
                 )
 
         self.query_one("#agent-list-content", Static).update(
@@ -234,12 +234,12 @@ class DrainScreen(Screen[DrainReport | None]):
 
         # Task stats.
         lines.append(
-            f"Tasks: {report.tasks_done} done  \\u00b7  "
-            f"{report.tasks_partial} partial  \\u00b7  "
+            f"Tasks: {report.tasks_done} done  \u00b7  "
+            f"{report.tasks_partial} partial  \u00b7  "
             f"{report.tasks_failed} failed"
         )
         lines.append(
-            f"Cost: ${report.cost_usd:.2f}  \\u00b7  Duration: {duration}"
+            f"Cost: ${report.cost_usd:.2f}  \u00b7  Duration: {duration}"
         )
 
         # Merge results.
@@ -250,12 +250,12 @@ class DrainScreen(Screen[DrainReport | None]):
             lines.append("Merge results (Opus):")
             if merged:
                 lines.append(
-                    f"[green]\\u2713 {merged} branch{'es' if merged != 1 else ''}"
+                    f"[green]\u2713 {merged} branch{'es' if merged != 1 else ''}"
                     " cherry-picked to main[/green]"
                 )
             if skipped:
                 lines.append(
-                    f"[dim]\\u2298 {skipped} branch{'es' if skipped != 1 else ''}"
+                    f"[dim]\u2298 {skipped} branch{'es' if skipped != 1 else ''}"
                     " skipped[/dim]"
                 )
 
@@ -263,12 +263,12 @@ class DrainScreen(Screen[DrainReport | None]):
         lines.append("")
         lines.append("Cleanup:")
         lines.append(
-            f"[green]\\u2713 {report.worktrees_removed} worktrees removed  "
-            f"\\u00b7  {report.branches_deleted} branches deleted[/green]"
+            f"[green]\u2713 {report.worktrees_removed} worktrees removed  "
+            f"\u00b7  {report.branches_deleted} branches deleted[/green]"
         )
         if report.tasks_partial:
             lines.append(
-                f"[green]\\u2713 {report.tasks_partial} partial tickets"
+                f"[green]\u2713 {report.tasks_partial} partial tickets"
                 " annotated[/green]"
             )
 

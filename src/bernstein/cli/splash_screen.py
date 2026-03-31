@@ -626,32 +626,46 @@ def splash(
     task_count: int = 0,
     skip_animation: bool = False,
 ) -> None:
-    """Show the startup splash via the premium splash v2 renderer."""
-    from pathlib import Path
+    """Show the startup splash, falling back to compact on any error."""
+    try:
+        from pathlib import Path
 
-    from bernstein.cli.splash_v2 import render_startup_splash
-    from bernstein.core.visual_config import resolve_visual_config
+        from bernstein.cli.splash_v2 import render_startup_splash
+        from bernstein.core.visual_config import resolve_visual_config
 
-    config = None
-    if seed_file:
-        try:
-            from bernstein.core.seed import parse_seed
+        config = None
+        if seed_file:
+            try:
+                from bernstein.core.seed import parse_seed
 
-            seed_cfg = parse_seed(Path(seed_file))
-            config = resolve_visual_config(getattr(seed_cfg, "visual", None))
-        except Exception:
+                seed_cfg = parse_seed(Path(seed_file))
+                config = resolve_visual_config(getattr(seed_cfg, "visual", None))
+            except Exception:
+                config = resolve_visual_config(None)
+        else:
             config = resolve_visual_config(None)
-    else:
-        config = resolve_visual_config(None)
 
-    render_startup_splash(
-        console,
-        version=version,
-        agents=agents,
-        seed_file=seed_file,
-        goal_preview=goal_preview,
-        budget=budget,
-        task_count=task_count,
-        skip_animation=skip_animation,
-        config=config,
-    )
+        render_startup_splash(
+            console,
+            version=version,
+            agents=agents,
+            seed_file=seed_file,
+            goal_preview=goal_preview,
+            budget=budget,
+            task_count=task_count,
+            skip_animation=skip_animation,
+            config=config,
+        )
+    except Exception:
+        # Premium splash failed — fall back to compact splash.
+        from bernstein.cli.splash import splash as compact_splash
+
+        compact_splash(
+            console,
+            version=version,
+            agents=agents or [],
+            seed_file=seed_file,
+            goal_preview=goal_preview,
+            budget=budget,
+            task_count=task_count,
+        )

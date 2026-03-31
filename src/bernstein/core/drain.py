@@ -612,7 +612,7 @@ class DrainCoordinator:
         )
         if branch_result.returncode == 0:
             for line in branch_result.stdout.strip().splitlines():
-                branch_name = line.strip().lstrip("* ")
+                branch_name = line.strip().lstrip("*+ ")
                 if not branch_name:
                     continue
                 del_result = _run_git(
