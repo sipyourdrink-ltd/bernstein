@@ -507,7 +507,7 @@ class BigStats(Static):
         )
         runtime_parts: list[tuple[str, str]] = []
         if self.git_branch:
-            runtime_parts.append((f"\ue0a0 {self.git_branch}", "bold bright_cyan"))
+            runtime_parts.append((f"branch {self.git_branch}", "bold bright_cyan"))
         if self.active_worktrees > 0:
             runtime_parts.append((f"\u2398 {self.active_worktrees} worktrees", "dim"))
         if self.restart_count > 0:
