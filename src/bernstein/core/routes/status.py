@@ -127,8 +127,28 @@ def _last_completion(store: TaskStore) -> dict[str, Any] | None:
     }
 
 
+_runtime_cache: dict[str, Any] = {}
+_runtime_cache_ts: float = 0.0
+_RUNTIME_CACHE_TTL: float = 10.0  # Cache expensive ops for 10s
+
+
 def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
-    """Build runtime operational metadata for status and TUI consumers."""
+    """Build runtime operational metadata for status and TUI consumers.
+
+    Expensive ops (disk scan, git subprocess) are cached for 10 seconds
+    to prevent them from blocking every 1s dashboard poll.
+    """
+    import time as _time
+
+    global _runtime_cache, _runtime_cache_ts
+    now = _time.monotonic()
+
+    # Fast path: return cached result if fresh
+    if _runtime_cache and (now - _runtime_cache_ts) < _RUNTIME_CACHE_TTL:
+        # Update only the cheap fields
+        _runtime_cache["last_completed"] = _last_completion(store)
+        return _runtime_cache
+
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
     workdir = _get_workdir(request)
     restart_count = 0
@@ -141,7 +161,8 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     else:
         disk_usage_bytes = 0
         config_state = None
-    return {
+
+    _runtime_cache = {
         "git_branch": current_git_branch(workdir),
         "restart_count": restart_count,
         "memory_mb": memory_usage_mb(),
@@ -153,6 +174,8 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
         else 0.0,
         "config_hash": str(config_state.get("config_hash", "")) if config_state else "",
     }
+    _runtime_cache_ts = now
+    return _runtime_cache
 
 
 # ---------------------------------------------------------------------------

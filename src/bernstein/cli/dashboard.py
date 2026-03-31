@@ -1024,12 +1024,10 @@ class BernsteinApp(App[None]):
         else:
             log.write("[dim]Spawning agents...[/dim]")
 
-        # Start SSE listener for real-time updates (instant, no polling)
-        self.run_worker(self._sse_listener, thread=True, group="sse", exclusive=True)
-        # File watcher for agents.json (200ms interval — faster than HTTP)
+        # File watcher for agents.json (500ms — instant agent visibility)
         self.set_interval(0.5, self._check_agents_file)
-        # HTTP poll as fallback (slower, but gets full state)
-        self.set_interval(3.0, self._schedule_poll)
+        # HTTP poll every 1s for full state (tasks + status + costs)
+        self.set_interval(1.0, self._schedule_poll)
         self._schedule_poll()
 
     # -- Polling via background worker (non-blocking) --
@@ -1038,38 +1036,7 @@ class BernsteinApp(App[None]):
         """Kick off data fetch in a background thread so the event loop stays free."""
         self.run_worker(_fetch_all, thread=True, group="poll", exclusive=True)
 
-    # -- Real-time: SSE listener (instant task/agent updates) --
-
-    def _sse_listener(self) -> None:
-        """Listen to SSE /events stream for real-time updates.
-
-        Runs in a background thread. On each event, triggers a fast
-        file-based refresh (not full HTTP poll). Reconnects on disconnect.
-        """
-        while True:
-            try:
-                with httpx.stream("GET", f"{SERVER_URL}/events", timeout=None) as resp:
-                    for line in resp.iter_lines():
-                        if line.startswith("event:"):
-                            event_type = line[7:].strip()
-                            # On any task or agent event, trigger fast refresh
-                            if event_type in ("task_update", "agent_update", "cost_update"):
-                                self.app.call_from_thread(self._fast_refresh)
-            except Exception:
-                time.sleep(2)  # Reconnect after 2s on disconnect
-
-    def _fast_refresh(self) -> None:
-        """Fast refresh: load agents from file + schedule HTTP poll."""
-        try:
-            agents = _load_agents()
-            if agents:
-                costs: dict[str, Any] = {}
-                self._update_agents(agents, costs)
-                self._update_activity(agents)
-        except Exception:
-            pass
-
-    # -- Real-time: file watcher for agents.json (200ms updates) --
+    # -- Fast agent updates via file watcher (no HTTP needed) --
 
     _agents_mtime: float = 0.0
 
