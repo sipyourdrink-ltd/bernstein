@@ -37,7 +37,15 @@
 ---
 
 ```bash
-pipx install bernstein   # or: uv tool install bernstein
+pip install bernstein                    # any platform
+# or
+brew tap chernistry/tap && brew install bernstein  # macOS / Linux
+# or
+pipx install bernstein                   # isolated install
+# or
+uv tool install bernstein                # fastest (Rust-based)
+
+# Run:
 bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 ```
 

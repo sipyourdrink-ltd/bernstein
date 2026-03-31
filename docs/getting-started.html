@@ -72,8 +72,17 @@
     <h2 id="install">Installation</h2>
     <p>Requires Python 3.12+ and at least one CLI coding agent (<a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a>, <a href="https://github.com/openai/codex">Codex CLI</a>, <a href="https://www.cursor.com">Cursor</a>, <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a>, <a href="https://aider.chat">Aider</a>, <a href="https://github.com/withamp/amp">Amp</a>, <a href="https://github.com/RooVetGit/Roo-Code">Roo Code</a>, or <a href="https://github.com/QwenLM/Qwen-Agent">Qwen</a>).</p>
     <div class="code-block">
-      <pre><code class="language-bash"># Install from PyPI
-pipx install bernstein   # or: uv tool install bernstein
+      <pre><code class="language-bash"># Recommended (any platform with Python 3.12+)
+pip install bernstein
+
+# macOS / Linux (Homebrew)
+brew tap chernistry/tap && brew install bernstein
+
+# Isolated install
+pipx install bernstein
+
+# Rust-based installer (fastest)
+uv tool install bernstein
 
 # Verify
 bernstein --version</code></pre>

@@ -7,15 +7,26 @@ around a central task server.  One command starts the whole orchestra.
 
 ## Install
 
-Requires Python 3.12+.
+Requires Python 3.12+ and at least one AI coding agent (Claude Code, Codex, Cursor, or Gemini CLI).
 
 ```bash
-# Install from PyPI
-pipx install bernstein   # or: uv tool install bernstein
+# Recommended (fastest)
+pip install bernstein
+
+# macOS / Linux (Homebrew)
+brew tap chernistry/tap && brew install bernstein
+
+# Isolated install (pipx)
+pipx install bernstein
+
+# Rust-based installer (uv)
+uv tool install bernstein
 
 # Verify
 bernstein --version
 ```
+
+> **One-liner**: `pip install bernstein && bernstein -g "add tests"` — works on any platform with Python 3.12+.
 
 ### Development install
 
