@@ -1,8 +1,106 @@
 # AGENTS.md
 
-## Project
+## Mission
 
-Bernstein — multi-agent orchestration for CLI coding agents. Python 3.12+, FastAPI task server, deterministic scheduler. Agents are SHORT-LIVED (1–3 tasks each), spawned fresh per task, with all state in `.sdd/` files.
+Bernstein is a **multi-agent orchestration platform** for CLI coding agents.
+It is the Kubernetes of AI software engineering — spawn agents, assign tasks,
+verify output, merge results, learn from failures, repeat. The goal is to build
+the most reliable, observable, and effective orchestrator in the ecosystem.
+
+Bernstein orchestrates SHORT-LIVED agents (1–3 tasks each, then exit). State
+lives in FILES (`.sdd/`), not in agent memory. Agents are spawned fresh per
+task — no "sleep" problem. The orchestrator itself is DETERMINISTIC CODE, not
+an LLM. It works with ANY CLI agent (Claude Code, Codex, Gemini CLI, etc.).
+
+**Stack:** Python 3.12+, Starlette/FastAPI task server, Textual TUI, git
+worktree isolation, YAML-based task specs, JSONL metrics/traces.
+
+## Doctrine
+
+Optimize for: reliability, agent effectiveness, observability, safe iteration,
+and user trust. Do not optimize for: clever abstractions nobody asked for,
+premature generalization, architecture theater, or broad refactors without
+measured gain.
+
+### Engineering principles
+
+1. **Smallest safe delta.** Isolate one change per commit. Preserve rollback
+   clarity. If a change touches 5+ files, consider splitting.
+
+2. **No monoliths.** Do not create or extend god-files. Split by capability.
+   Triggers: >400 LOC (soft), >600 LOC (hard stop unless justified), mixed
+   concerns, multiple reasons to change. The orchestrator is already split
+   across `orchestrator.py`, `tick_pipeline.py`, `task_lifecycle.py`, and
+   `agent_lifecycle.py` — follow this pattern.
+
+3. **Structure.** Thin orchestration facade, isolated core logic, separate
+   adapters, explicit schemas, prompt building separate from retrieval.
+
+4. **OOP where useful, pure funcs where better.** Small classes for stateful
+   collaborators; pure functions for deterministic transforms, parsing, scoring.
+   Prefer composition over inheritance. Use Protocols/ABCs only at real seams.
+
+5. **Strict typing.** No dict soup, loose `Any`, or silent `Optional` misuse
+   in core paths. Type all public APIs. Use `TypedDict`/`@dataclass` for
+   internal records, Pydantic only for FastAPI request/response boundaries.
+   Pyright strict is mandatory for all touched code.
+
+6. **Async for IO, sync for CPU.** No blocking sync IO in async paths. No
+   fire-and-forget without owned lifecycle. Use explicit timeouts. Do not
+   break SSE, streaming, or telemetry.
+
+7. **Observability.** Preserve or improve logging, metrics, traces, token
+   accounting, and agent signal files. No hidden globals, silent fallbacks,
+   or unauditable magic.
+
+8. **Performance.** Avoid repeated parsing, N+1 HTTP calls, needless
+   serialization, duplicate work. Cache only when invalidation is safe.
+
+9. **Testing.** Add the smallest deterministic tests proving the change works.
+   No fake-green tests. Always mock the CLI adapter and HTTP calls. Use
+   `tmp_path` for filesystem.
+
+10. **YAGNI.** Don't build for hypothetical future requirements. Three similar
+    lines is better than a premature abstraction.
+
+### Change classification
+
+| Class | What | Example |
+|-------|------|---------|
+| **A** | Tiny low-risk patch (1-2 files, <50 lines) | Fix typo, add log line, extract constant |
+| **B** | Narrow feature or fix (2-5 files, <200 lines) | New quality gate, adapter fix, endpoint |
+| **C** | Bounded refactor + logic (5-10 files) | Split module, new subsystem, drain system |
+| **D** | Major feature branch | New TUI screen, protocol support, provider |
+| **E** | Investigate / needs discussion | Conflict, unclear requirement, risky change |
+
+For C and D changes: write a plan before coding. For A and B: just do it.
+
+### Zero-tolerance failures
+
+- Ignoring Pyright strict on touched code
+- Leaving Ruff/pytest failures for "later"
+- Blocking sync IO in async paths
+- Breaking SSE, telemetry, or agent signal protocol
+- Creating new god-files (>600 LOC)
+- Untyped new core logic (`Any` soup)
+- `pkill -f bernstein` or `pgrep bernstein` (use PID files)
+- Running `pytest tests/` without the isolated runner
+- Committing `.sdd/runtime/` contents
+- Pushing to `master` (branch is `main`)
+
+### Conflict protocol
+
+If you discover conflicting behavior between code, docs, tests, or specs:
+
+```
+[CONFLICT DETECTED]
+File(s): ...
+Conflict: ...
+Why it matters: ...
+Smallest safe resolution: ...
+```
+
+Do not paper over conflicts. Report and resolve explicitly.
 
 ## Setup
 
@@ -13,12 +111,14 @@ uv venv && uv pip install -e ".[dev]"
 ## Testing
 
 ```bash
-uv run python scripts/run_tests.py -x        # all unit tests (isolated per-file, stops on first failure)
-uv run python scripts/run_tests.py -k router # filter by keyword
-uv run pytest tests/unit/test_foo.py -x -q  # single file (fast)
+uv run python scripts/run_tests.py -x        # all tests (isolated per-file, stops on first failure)
+uv run python scripts/run_tests.py -k router  # filter by keyword
+uv run pytest tests/unit/test_foo.py -x -q    # single file (fast)
 ```
 
-**NEVER run `uv run pytest tests/ -x -q`** — the full suite keeps references across 2000+ tests and can leak 100+ GB RAM. The isolated runner in `scripts/run_tests.py` caps each file at ~200 MB.
+**NEVER run `uv run pytest tests/ -x -q`** — the full suite keeps references
+across 2000+ tests and can leak 100+ GB RAM. The isolated runner in
+`scripts/run_tests.py` caps each file at ~200 MB.
 
 ## Linting & type checking
 
@@ -28,7 +128,7 @@ uv run ruff format src/
 uv run pyright src/
 ```
 
-All three must pass before committing.
+All three must pass before committing. No exceptions, no "fix later."
 
 ## Code style
 
@@ -40,6 +140,7 @@ All three must pass before committing.
 - Enums over string literals for any value that has a fixed set of options
 - Google-style docstrings on all public symbols
 - Async only for IO-bound code; sync for CPU-bound/pure logic
+- Concise inline comments only for non-obvious logic or dangerous edges
 
 ---
 
@@ -524,12 +625,54 @@ The circuit breaker monitors agent output for purpose violations. When it fires,
 
 ---
 
-## PR instructions
+## Strategic context
+
+Bernstein is an **open-source project** aiming to become the standard
+orchestrator for AI coding agents. Key competitive advantages to protect:
+
+1. **Agent-agnostic** — works with any CLI agent, not locked to one vendor
+2. **Deterministic orchestrator** — scheduling is code, not LLM (predictable, auditable)
+3. **File-based state** — `.sdd/` is git-friendly, inspectable, recoverable
+4. **Self-evolving** — Bernstein develops itself via `bernstein evolve`
+5. **Enterprise-ready** — approval gates, audit trails, cost tracking, compliance
+
+When making decisions, ask: does this make Bernstein more reliable for users
+who trust it with their codebase? Does this make agents more effective at
+completing tasks? Does this make the system more observable when things go wrong?
+
+### Architecture invariants (do not violate)
+
+- The orchestrator is deterministic code. No LLM in the scheduling loop.
+- Agents are short-lived. No persistent agent processes.
+- State lives in `.sdd/` files. No hidden in-memory-only state.
+- Every agent runs in a git worktree. Main branch is never dirty.
+- Task completion is verified by concrete signals, not trust.
+- Git branch is `main`. Never `master`.
+
+### What makes a good contribution
+
+- Fixes a real failure mode observed in production
+- Improves agent success rate (fewer retries, better prompts)
+- Improves observability (better logs, metrics, traces)
+- Reduces cost (smarter model selection, caching, batching)
+- Reduces time-to-completion (parallelism, fast path, scheduling)
+- Has tests proving it works
+- Is small enough to review in 5 minutes
+
+### What does NOT make a good contribution
+
+- Refactoring that doesn't fix a bug or enable a feature
+- Adding abstractions for one caller
+- Config options nobody asked for
+- "Improving" code style in files you didn't otherwise touch
+- Architecture changes without a design doc
+
+## Commit & PR instructions
 
 - Branch from `main`
 - Title: imperative mood ("Add X", "Fix Y", "Refactor Z")
 - Run `uv run ruff check src/ && uv run pyright src/ && uv run python scripts/run_tests.py -x` before committing
-- One logical change per PR
+- One logical change per PR/commit
 - Mark task complete on the task server when done:
   ```bash
   curl -s -X POST http://127.0.0.1:8052/tasks/<id>/complete \
@@ -539,4 +682,10 @@ The circuit breaker monitors agent output for purpose violations. When it fires,
 
 ## What to work on
 
-Check `.sdd/backlog/open/` for YAML task specs. Each file has a role, priority, and description. Take tasks matching your role. Use `bernstein status` to see what's running.
+Check `.sdd/backlog/open/` for YAML task specs. Each file has a role, priority,
+and description. Take tasks matching your role. Use `bernstein status` to see
+what's running. Prioritize by priority field (1=critical, 2=normal, 3=nice).
+
+When picking tasks: prefer tasks where you can make measurable progress in
+15-30 minutes. If a task seems too large, decompose it into subtasks. If a
+task is blocked by another task, skip it and take the next one.
