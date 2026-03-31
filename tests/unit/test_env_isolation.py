@@ -66,7 +66,10 @@ class TestBuildFilteredEnv:
 
     def test_empty_environment(self) -> None:
         """Returns empty dict when os.environ is empty."""
-        with patch("bernstein.adapters.env_isolation.os.environ", {}):
+        with (
+            patch("bernstein.adapters.env_isolation.os.environ", {}),
+            patch("sys.path", []),
+        ):
             result = build_filtered_env(["ANTHROPIC_API_KEY"])
         assert result == {}
 
