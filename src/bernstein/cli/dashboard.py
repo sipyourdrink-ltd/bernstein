@@ -1050,7 +1050,7 @@ class BernsteinApp(App[None]):
         self._prev_alive = alive  # type: ignore[attr-defined]
 
         self._update_tasks(data.get("tasks"))
-        tasks = data.get("tasks", [])
+        tasks = data.get("tasks") or []
         costs: dict[str, Any] = data.get("costs") or {}
         self._update_agents(data.get("agents", []), costs)
         monitoring = {
@@ -1266,7 +1266,7 @@ class BernsteinApp(App[None]):
             cache_stats: dict[str, Any] = monitoring.get("cache_stats", {})
             bar.cache_hit_rate = float(cache_stats.get("hit_rate", 0.0))
 
-        bar.retry_count = sum(_task_retry_count(task) for task in tasks if isinstance(task, dict))
+        bar.retry_count = sum(_task_retry_count(task) for task in (tasks or []) if isinstance(task, dict))
         bar.agent_error_count = _summarize_agent_errors(agents)[0]
 
         spark = self.query_one("#spark", Sparkline)
