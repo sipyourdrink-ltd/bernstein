@@ -23,6 +23,18 @@ from bernstein.cli.text_effects import logo_reveal, typing_effect
 from bernstein.cli.visual_theme import PALETTE
 from bernstein.core.visual_config import VisualConfig
 
+# Custom block-art logo using Unicode half/quarter block characters.
+# fmt: off
+_LOGO_LINES: list[str] = [
+    "    \u2584\u2584\u2584",
+    "   \u2588\u2588\u2580\u2580\u2588\u2584                        \u2588\u2584",
+    "   \u2588\u2588 \u2584\u2588\u2580       \u2584    \u2584          \u2584\u2588\u2588\u2584      \u2580\u2580 \u2584",  # noqa: E501
+    "   \u2588\u2588\u2580\u2580\u2588\u2584 \u2584\u2588\u2580\u2588\u2584 \u2588\u2588\u2588\u2588\u2584\u2588\u2588\u2588\u2588\u2584 \u2584\u2588\u2588\u2580\u2588 \u2588\u2588 \u2584\u2588\u2580\u2588\u2584 \u2588\u2588 \u2588\u2588\u2588\u2588\u2584",  # noqa: E501
+    " \u2584 \u2588\u2588  \u2584\u2588 \u2588\u2588\u2584\u2588\u2580 \u2588\u2588   \u2588\u2588 \u2588\u2588 \u2580\u2588\u2588\u2588\u2584 \u2588\u2588 \u2588\u2588\u2584\u2588\u2580 \u2588\u2588 \u2588\u2588 \u2588\u2588",  # noqa: E501
+    " \u2580\u2588\u2588\u2588\u2588\u2588\u2588\u2580\u2584\u2580\u2588\u2584\u2584\u2584\u2588\u2580  \u2584\u2588\u2588 \u2580\u2588\u2588\u2584\u2584\u2588\u2588\u2580\u2584\u2588\u2588\u2584\u2580\u2588\u2584\u2584\u2584\u2588\u2588\u2584\u2588\u2588 \u2580\u2588",  # noqa: E501
+]
+# fmt: on
+
 
 def _empty_agents() -> list[dict[str, object]]:
     """Return a correctly typed empty agent list for dataclass defaults."""
@@ -122,9 +134,8 @@ class SplashRenderer:
         bg = linear_gradient(w, h, BERNSTEIN_COLORS, direction="diagonal")
         bg_lines = bg.splitlines()
 
-        # FIGlet logo — get raw ASCII (no Rich markup).
-        raw_logo = _render_figlet_raw("BERNSTEIN", max_width=max(32, w - 4))
-        logo_lines = raw_logo.rstrip().splitlines()
+        # Custom block-art logo (Unicode half/quarter blocks for sub-cell detail).
+        logo_lines = list(_LOGO_LINES)
 
         # Gradient colors for logo lines (ANSI escape codes, not Rich markup).
         logo_colors = _sample_ansi_gradient(len(logo_lines), BERNSTEIN_COLORS)
@@ -161,12 +172,11 @@ class SplashRenderer:
 
         sys.stdout.flush()
 
-        # Pause to admire, then restore cursor. Do NOT clear screen — let the
-        # next screen (config/plan approval) overwrite seamlessly so there's
-        # no black flash between splash and the next content.
+        # Pause to admire, then clear and restore cursor.
         if not self._skip:
             time.sleep(2.0)
-        sys.stdout.write("\033[0m\033[?25h\033[H")
+        # Clear screen in one atomic write — minimal flicker.
+        sys.stdout.write("\033[0m\033[2J\033[H\033[?25h")
         sys.stdout.flush()
 
     def _render_tier3(self, context: SplashContext) -> None:
