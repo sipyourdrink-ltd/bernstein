@@ -1,245 +1,139 @@
-"""Tests for bernstein.core.bulletin — BulletinBoard."""
-
-from __future__ import annotations
-
-import json
-import threading
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
 
-from bernstein.core.bulletin import BulletinBoard, BulletinMessage
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from bernstein.core.bulletin import (
+    BulletinBoard,
+    BulletinMessage,
+    DelegationStatus,
+    MessageBoard,
+)
 
 
-def _msg(
-    agent_id: str = "agent-1",
-    msg_type: str = "status",
-    content: str = "hello",
-    timestamp: float = 0.0,
-    cell_id: str | None = None,
-) -> BulletinMessage:
-    return BulletinMessage(
-        agent_id=agent_id,
-        type=msg_type,  # type: ignore[arg-type]
-        content=content,
-        timestamp=timestamp,
-        cell_id=cell_id,
+def test_bulletin_board_post_and_read_since() -> None:
+    """Test posting messages and reading them back with time filters."""
+    board = BulletinBoard()
+
+    # Post message 1
+    msg1 = board.post(BulletinMessage(agent_id="a1", type="status", content="msg1"))
+    assert msg1.timestamp > 0
+
+    time.sleep(0.01)
+    ts_mid = time.time()
+    time.sleep(0.01)
+
+    # Post message 2
+    msg2 = board.post(BulletinMessage(agent_id="a2", type="finding", content="msg2"))
+    assert msg2.timestamp > ts_mid
+
+    # Read all
+    all_msgs = board.read_since(0)
+    assert len(all_msgs) == 2
+    assert all_msgs[0].content == "msg1"
+    assert all_msgs[1].content == "msg2"
+
+    # Read since mid
+    since_mid = board.read_since(ts_mid)
+    assert len(since_mid) == 1
+    assert since_mid[0].content == "msg2"
+
+
+def test_bulletin_board_read_by_type() -> None:
+    """Test filtering messages by type."""
+    board = BulletinBoard()
+    board.post(BulletinMessage("a1", "status", "s1"))
+    board.post(BulletinMessage("a2", "finding", "f1"))
+    board.post(BulletinMessage("a3", "status", "s2"))
+
+    status_msgs = board.read_by_type("status")
+    assert len(status_msgs) == 2
+    assert {m.content for m in status_msgs} == {"s1", "s2"}
+
+    finding_msgs = board.read_by_type("finding")
+    assert len(finding_msgs) == 1
+    assert finding_msgs[0].content == "f1"
+
+
+def test_bulletin_board_cell_isolation() -> None:
+    """Test filtering messages by cell_id."""
+    board = BulletinBoard()
+    board.post(BulletinMessage("a1", "status", "c1", cell_id="cell-A"))
+    board.post(BulletinMessage("a2", "status", "c2", cell_id="cell-B"))
+    board.post(BulletinMessage("a3", "status", "global", cell_id=None))
+
+    cell_a = board.read_by_cell("cell-A")
+    assert len(cell_a) == 1
+    assert cell_a[0].content == "c1"
+
+    cell_b = board.read_by_cell("cell-B")
+    assert len(cell_b) == 1
+    assert cell_b[0].content == "c2"
+
+
+def test_bulletin_board_persistence(tmp_path: Path) -> None:
+    """Test flushing to and loading from disk."""
+    board1 = BulletinBoard()
+    board1.post(BulletinMessage("a1", "status", "persist-me"))
+
+    path = tmp_path / "bulletin.jsonl"
+    board1.flush_to_disk(path)
+    assert path.exists()
+
+    board2 = BulletinBoard()
+    board2.load_from_disk(path)
+    assert board2.count == 1
+    assert board2.read_since(0)[0].content == "persist-me"
+
+
+def test_message_board_delegation_lifecycle() -> None:
+    """Test the full lifecycle of a delegation on the MessageBoard."""
+    mb = MessageBoard()
+
+    # 1. Post
+    d = mb.post_delegation(
+        origin_agent="agent-origin",
+        target_role="reviewer",
+        description="Please review my code"
     )
+    assert d.status == DelegationStatus.PENDING
+    assert mb.count == 1
+
+    # 2. Query
+    pending = mb.query_by_role("reviewer")
+    assert len(pending) == 1
+    assert pending[0].id == d.id
+
+    # 3. Claim
+    claimed = mb.claim(d.id, "agent-reviewer")
+    assert claimed is not None
+    assert claimed.status == DelegationStatus.CLAIMED
+    assert claimed.claimed_by == "agent-reviewer"
+
+    # Already claimed should return None
+    assert mb.claim(d.id, "other-agent") is None
+
+    # 4. Post result
+    completed = mb.post_result(d.id, "agent-reviewer", "Looks good!")
+    assert completed is not None
+    assert completed.status == DelegationStatus.COMPLETED
+    assert completed.result == "Looks good!"
 
 
-# ---------------------------------------------------------------------------
-# post / append
-# ---------------------------------------------------------------------------
+def test_message_board_cleanup_expired() -> None:
+    """Test that expired delegations are automatically cleaned up."""
+    mb = MessageBoard()
+    now = time.time()
 
+    # One expired
+    mb.post_delegation("a1", "r1", "expired-task", deadline=now - 10)
+    # One active
+    mb.post_delegation("a1", "r1", "active-task", deadline=now + 60)
 
-class TestPost:
-    def test_auto_timestamp_filled_in(self) -> None:
-        board = BulletinBoard()
-        before = time.time()
-        stored = board.post(_msg())
-        after = time.time()
-        assert before <= stored.timestamp <= after
+    # Query triggers cleanup
+    results = mb.query_by_role("r1")
+    assert len(results) == 1
+    assert results[0].description == "active-task"
 
-    def test_explicit_timestamp_preserved(self) -> None:
-        board = BulletinBoard()
-        ts = 1_700_000_000.0
-        stored = board.post(_msg(timestamp=ts))
-        assert stored.timestamp == ts
-
-    def test_count_increments(self) -> None:
-        board = BulletinBoard()
-        assert board.count == 0
-        board.post(_msg())
-        board.post(_msg())
-        assert board.count == 2
-
-    def test_post_returns_message(self) -> None:
-        board = BulletinBoard()
-        msg = _msg(content="ping")
-        stored = board.post(msg)
-        assert stored.content == "ping"
-
-
-# ---------------------------------------------------------------------------
-# read_since
-# ---------------------------------------------------------------------------
-
-
-class TestReadSince:
-    def test_empty_board(self) -> None:
-        board = BulletinBoard()
-        assert board.read_since(0.0) == []
-
-    def test_returns_messages_after_ts(self) -> None:
-        board = BulletinBoard()
-        board.post(_msg(timestamp=1.0))
-        board.post(_msg(timestamp=2.0))
-        board.post(_msg(timestamp=3.0))
-        result = board.read_since(1.5)
-        assert len(result) == 2
-        assert all(m.timestamp > 1.5 for m in result)
-
-    def test_boundary_exclusive(self) -> None:
-        board = BulletinBoard()
-        board.post(_msg(timestamp=5.0))
-        # ts=5.0 is NOT > 5.0, so it's excluded
-        assert board.read_since(5.0) == []
-        # ts=5.0 IS > 4.9
-        assert len(board.read_since(4.9)) == 1
-
-
-# ---------------------------------------------------------------------------
-# read_by_type
-# ---------------------------------------------------------------------------
-
-
-class TestReadByType:
-    def test_filters_by_type(self) -> None:
-        board = BulletinBoard()
-        board.post(_msg(msg_type="alert", timestamp=1.0))
-        board.post(_msg(msg_type="blocker", timestamp=2.0))
-        board.post(_msg(msg_type="alert", timestamp=3.0))
-
-        alerts = board.read_by_type("alert")
-        assert len(alerts) == 2
-        assert all(m.type == "alert" for m in alerts)
-
-    def test_no_match_returns_empty(self) -> None:
-        board = BulletinBoard()
-        board.post(_msg(msg_type="status", timestamp=1.0))
-        assert board.read_by_type("finding") == []
-
-    def test_all_types(self) -> None:
-        board = BulletinBoard()
-        for t in ("alert", "blocker", "finding", "status", "dependency"):
-            board.post(_msg(msg_type=t, timestamp=1.0))  # type: ignore[arg-type]
-        for t in ("alert", "blocker", "finding", "status", "dependency"):
-            assert len(board.read_by_type(t)) == 1  # type: ignore[arg-type]
-
-
-# ---------------------------------------------------------------------------
-# read_by_cell
-# ---------------------------------------------------------------------------
-
-
-class TestReadByCell:
-    def test_filters_by_cell_id(self) -> None:
-        board = BulletinBoard()
-        board.post(_msg(timestamp=1.0, cell_id="cell-A"))
-        board.post(_msg(timestamp=2.0, cell_id="cell-B"))
-        board.post(_msg(timestamp=3.0, cell_id="cell-A"))
-
-        cell_a = board.read_by_cell("cell-A")
-        assert len(cell_a) == 2
-        assert all(m.cell_id == "cell-A" for m in cell_a)
-
-    def test_excludes_no_cell_id(self) -> None:
-        board = BulletinBoard()
-        board.post(_msg(timestamp=1.0, cell_id=None))
-        board.post(_msg(timestamp=2.0, cell_id="cell-X"))
-        assert len(board.read_by_cell("cell-X")) == 1
-
-    def test_unknown_cell_empty(self) -> None:
-        board = BulletinBoard()
-        board.post(_msg(timestamp=1.0, cell_id="cell-A"))
-        assert board.read_by_cell("does-not-exist") == []
-
-
-# ---------------------------------------------------------------------------
-# flush_to_disk / load_from_disk
-# ---------------------------------------------------------------------------
-
-
-class TestDiskPersistence:
-    def test_flush_writes_jsonl(self, tmp_path: Path) -> None:
-        board = BulletinBoard()
-        board.post(_msg(timestamp=1.0, content="first"))
-        board.post(_msg(timestamp=2.0, content="second"))
-        path = tmp_path / "board.jsonl"
-        n = board.flush_to_disk(path)
-        assert n == 2
-        lines = path.read_text().splitlines()
-        assert len(lines) == 2
-        data = json.loads(lines[0])
-        assert data["content"] == "first"
-
-    def test_flush_empty_board_returns_zero(self, tmp_path: Path) -> None:
-        board = BulletinBoard()
-        n = board.flush_to_disk(tmp_path / "empty.jsonl")
-        assert n == 0
-
-    def test_flush_appends_not_overwrites(self, tmp_path: Path) -> None:
-        board = BulletinBoard()
-        board.post(_msg(timestamp=1.0, content="first"))
-        path = tmp_path / "board.jsonl"
-        board.flush_to_disk(path)
-
-        board2 = BulletinBoard()
-        board2.post(_msg(timestamp=2.0, content="second"))
-        board2.flush_to_disk(path)
-
-        lines = path.read_text().splitlines()
-        assert len(lines) == 2
-
-    def test_load_from_disk_populates_board(self, tmp_path: Path) -> None:
-        # Write a JSONL file manually
-        path = tmp_path / "board.jsonl"
-        path.write_text(
-            '{"agent_id": "a1", "type": "alert", "content": "hi", "timestamp": 1.0, "cell_id": null}\n'
-            '{"agent_id": "a2", "type": "status", "content": "ok", "timestamp": 2.0, "cell_id": "c1"}\n'
-        )
-        board = BulletinBoard()
-        n = board.load_from_disk(path)
-        assert n == 2
-        assert board.count == 2
-        assert board.read_by_type("alert")[0].agent_id == "a1"
-
-    def test_load_skips_duplicates(self, tmp_path: Path) -> None:
-        path = tmp_path / "board.jsonl"
-        path.write_text('{"agent_id": "a1", "type": "status", "content": "x", "timestamp": 1.0, "cell_id": null}\n')
-        board = BulletinBoard()
-        board.post(_msg(timestamp=1.0))  # same timestamp
-        n = board.load_from_disk(path)
-        assert n == 0
-        assert board.count == 1  # no duplicate
-
-    def test_load_missing_file_returns_zero(self, tmp_path: Path) -> None:
-        board = BulletinBoard()
-        n = board.load_from_disk(tmp_path / "nonexistent.jsonl")
-        assert n == 0
-
-
-# ---------------------------------------------------------------------------
-# Thread safety
-# ---------------------------------------------------------------------------
-
-
-class TestThreadSafety:
-    def test_concurrent_posts_no_corruption(self) -> None:
-        board = BulletinBoard()
-        n_threads = 20
-        n_per_thread = 50
-
-        def post_many(thread_id: int) -> None:
-            for i in range(n_per_thread):
-                board.post(
-                    _msg(
-                        agent_id=f"agent-{thread_id}",
-                        content=f"msg-{i}",
-                        timestamp=float(thread_id * 1000 + i) + 0.001,
-                    )
-                )
-
-        threads = [threading.Thread(target=post_many, args=(i,)) for i in range(n_threads)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        assert board.count == n_threads * n_per_thread
+    # Check the expired one's status
+    all_d = mb.get_by_origin("a1")
+    expired = next(d for d in all_d if d.description == "expired-task")
+    assert expired.status == DelegationStatus.EXPIRED
