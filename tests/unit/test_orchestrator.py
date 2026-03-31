@@ -1389,14 +1389,14 @@ class TestSpawnResiliency:
 
 
 class TestReaping:
-    def test_reaps_stale_heartbeat(self, tmp_path: Path) -> None:
+    @patch("bernstein.core.agent_lifecycle._is_process_alive", return_value=False)
+    def test_reaps_stale_heartbeat(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
         transport = _mock_transport(
             {
                 "GET /tasks": httpx.Response(200, json=[]),
             }
         )
         adapter = _mock_adapter()
-        adapter.is_alive.return_value = True  # process is alive but heartbeat stale
         config = OrchestratorConfig(
             max_agents=6,
             poll_interval_s=1,
@@ -1499,7 +1499,8 @@ class TestReaping:
 
         assert session.status == "dead"
 
-    def test_zero_heartbeat_not_reaped_if_alive(self, tmp_path: Path) -> None:
+    @patch("bernstein.core.agent_lifecycle._is_process_alive", return_value=True)
+    def test_zero_heartbeat_not_reaped_if_alive(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
         """An agent that never heartbeated but whose process is alive is NOT reaped."""
         transport = _mock_transport(
             {
@@ -1507,7 +1508,6 @@ class TestReaping:
             }
         )
         adapter = _mock_adapter()
-        adapter.is_alive.return_value = True
         config = OrchestratorConfig(
             heartbeat_timeout_s=60,
             server_url="http://testserver",
@@ -1867,7 +1867,8 @@ class TestFileOwnership:
         r2 = orch.tick()
         assert len(r2.spawned) == 1  # no conflict, spawns fine
 
-    def test_ownership_released_on_reap(self, tmp_path: Path) -> None:
+    @patch("bernstein.core.agent_lifecycle._is_process_alive", return_value=False)
+    def test_ownership_released_on_reap(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
         """File ownership released when a stale agent is reaped."""
         transport = _mock_transport(
             {
@@ -1876,7 +1877,6 @@ class TestFileOwnership:
             }
         )
         adapter = _mock_adapter()
-        adapter.is_alive.return_value = True
         config = OrchestratorConfig(
             heartbeat_timeout_s=60,
             server_url="http://testserver",
@@ -5125,7 +5125,8 @@ class TestEvolutionAgentLifetimeRecording:
         assert kw["role"] == "qa"
         assert kw["tasks_completed"] == 0  # timed out before completing
 
-    def test_heartbeat_reap_records_agent_lifetime(self, tmp_path: Path) -> None:
+    @patch("bernstein.core.agent_lifecycle._is_process_alive", return_value=False)
+    def test_heartbeat_reap_records_agent_lifetime(self, _mock_alive: MagicMock, tmp_path: Path) -> None:
         """_reap_dead_agents (heartbeat path) calls record_agent_lifetime."""
         transport = _mock_transport({"GET /tasks": httpx.Response(200, json=[])})
         cfg = OrchestratorConfig(
@@ -5145,7 +5146,6 @@ class TestEvolutionAgentLifetimeRecording:
         evolution.execute_pending_upgrades.return_value = []
 
         adp = _mock_adapter()
-        adp.is_alive.return_value = True
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         spawner = AgentSpawner(adp, templates_dir, tmp_path)
