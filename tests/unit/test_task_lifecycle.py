@@ -21,6 +21,18 @@ from bernstein.core.task_lifecycle import (
 )
 
 
+def _never_quarantined(title: str) -> bool:
+    """Return False for all task titles in claim-path tests."""
+    del title
+    return False
+
+
+def _no_quarantine_entry(title: str) -> None:
+    """Return no quarantine metadata for claim-path tests."""
+    del title
+    return None
+
+
 def _claim_orch(tmp_path: Path) -> Any:
     """Build a small orchestrator stub for claim_and_spawn_batches tests."""
     return SimpleNamespace(
@@ -37,8 +49,8 @@ def _claim_orch(tmp_path: Path) -> Any:
         _file_ownership={},
         _spawn_failures={},
         _quarantine=SimpleNamespace(
-            is_quarantined=lambda title: False,
-            get_entry=lambda title: None,
+            is_quarantined=_never_quarantined,
+            get_entry=_no_quarantine_entry,
         ),
         _decomposed_task_ids=set(),
         _idle_shutdown_ts=set(),
@@ -73,10 +85,13 @@ def _collector_for(task_id: str, agent_id: str) -> MagicMock:
 
 def _process_orch(tmp_path: Path, session: AgentSession) -> Any:
     """Build a small orchestrator stub for process_completed_tasks tests."""
+    def _find_session_for_task(task_id: str) -> AgentSession | None:
+        return session if task_id in session.task_ids else None
+
     return SimpleNamespace(
         _processed_done_tasks=set(),
         _executor=MagicMock(),
-        _find_session_for_task=lambda task_id: session if task_id in session.task_ids else None,
+        _find_session_for_task=_find_session_for_task,
         _spawner=MagicMock(),
         _record_provider_health=MagicMock(),
         _approval_gate=None,
