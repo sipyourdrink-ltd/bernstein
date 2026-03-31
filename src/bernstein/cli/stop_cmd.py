@@ -227,6 +227,18 @@ def soft_stop(timeout: int) -> None:
     console.print(f"  Duration: {report.total_duration_s:.0f}s")
 
 
+def _kill_agent_pid(pid: int, label: str, killed: set[int]) -> None:
+    """SIGKILL an agent process group, tracking killed PIDs."""
+    try:
+        pgid = os.getpgid(pid)
+        os.killpg(pgid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGKILL)
+    killed.add(pid)
+    console.print(f"[red]Killed agent {label} (PID {pid}) with SIGKILL[/red]")
+
+
 def hard_stop() -> None:
     """Hard stop: SIGKILL everything, best-effort save, return tickets."""
     # 1. Kill watchdog immediately
@@ -235,7 +247,11 @@ def hard_stop() -> None:
     # 2. Kill spawner immediately
     kill_pid_hard(SDD_PID_SPAWNER, "Spawner")
 
-    # 3. Kill all spawned agents with SIGKILL
+    # 3. Kill all spawned agents with SIGKILL.
+    #    Try multiple sources: agents.json, PID files, and process scan.
+    killed_pids: set[int] = set()
+
+    # Source A: agents.json
     agents_json = Path(".sdd/runtime/agents.json")
     if agents_json.exists():
         try:
@@ -243,15 +259,37 @@ def hard_stop() -> None:
             for agent in agent_data.get("agents", []):
                 pid = agent.get("pid")
                 if pid and is_alive(pid):
-                    try:
-                        pgid = os.getpgid(pid)
-                        os.killpg(pgid, signal.SIGKILL)
-                    except (OSError, ProcessLookupError):
-                        with contextlib.suppress(OSError):
-                            os.kill(pid, signal.SIGKILL)
-                    console.print(f"[red]Killed agent {agent.get('id', '?')} (PID {pid}) with SIGKILL[/red]")
+                    _kill_agent_pid(pid, agent.get("id", "?"), killed_pids)
         except (OSError, ValueError):
             pass
+
+    # Source B: PID metadata files
+    pids_dir = Path(".sdd/runtime/pids")
+    if pids_dir.is_dir():
+        for pid_file in pids_dir.glob("*.json"):
+            try:
+                meta = json.loads(pid_file.read_text())
+                pid = int(meta.get("pid", 0))
+                if pid and pid not in killed_pids and is_alive(pid):
+                    _kill_agent_pid(pid, meta.get("session_id", pid_file.stem), killed_pids)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+
+    # Source C: scan for claude agent processes (catches anything missed above)
+    import subprocess as _sp
+
+    try:
+        result = _sp.run(
+            ["pgrep", "-f", "claude.*--dangerously-skip-permissions"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.strip().split():
+            if line.isdigit():
+                pid = int(line)
+                if pid not in killed_pids:
+                    _kill_agent_pid(pid, f"orphan-{pid}", killed_pids)
+    except Exception:
+        pass
 
     # 4. Kill server immediately
     kill_pid_hard(SDD_PID_SERVER, "Task server")
