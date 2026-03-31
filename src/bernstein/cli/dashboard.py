@@ -936,15 +936,15 @@ class BernsteinApp(App[None]):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("q", "graceful_quit", "Quit"),
-        Binding("r", "refresh", "Refresh"),
-        Binding("s", "stop_bernstein", "Stop"),
-        Binding("l", "toggle_activity", "Activity"),
-        Binding("c", "focus_chat", "Chat"),
+        Binding("q", "graceful_quit", "Exit TUI (agents keep running)"),
+        Binding("s", "stop_bernstein", "Stop ALL (kill agents + server)"),
+        Binding("r", "hot_restart", "Hot Restart (reload UI, keep agents)"),
         Binding("enter", "inspect_task", "Inspect"),
-        Binding("x", "cancel_task", "Cancel"),
-        Binding("p", "prioritize_task", "P0"),
+        Binding("x", "cancel_task", "Cancel Task"),
+        Binding("p", "prioritize_task", "Boost P0"),
         Binding("t", "retry_task", "Retry"),
+        Binding("l", "toggle_activity", "Logs"),
+        Binding("c", "focus_chat", "Chat"),
         Binding("d", "compare_task", "Compare"),
         Binding("v", "compare_task", "Compare", show=False),
         Binding("i", "inspect_task", "Inspect", show=False),
@@ -1573,6 +1573,7 @@ class BernsteinApp(App[None]):
             self._compare_mark = None
 
     def action_refresh(self) -> None:
+        """Legacy refresh — triggers immediate poll."""
         self._schedule_poll()
 
     def action_focus_chat(self) -> None:
@@ -1616,15 +1617,17 @@ class BernsteinApp(App[None]):
     def _clear_stop_pending(self) -> None:
         self._stop_pending = False  # type: ignore[attr-defined]
 
-    def action_graceful_quit(self) -> None:
-        """Graceful quit: stop all agents, wait for cleanup, then exit."""
-        import signal
+    def action_hot_restart(self) -> None:
+        """Hot restart: exit TUI and re-exec bernstein (agents keep running)."""
+        self.notify("Restarting UI... agents continue running", severity="information", timeout=2)
+        # Write restart flag so orchestrator knows to expect reconnection
+        Path(".sdd/runtime/restart_requested").touch()
+        self.exit(message="Hot restart — run `bernstein live` to reconnect to running agents.")
 
-        self.notify(
-            "Stopping agents… (up to 30s)",
-            title="Shutting down",
-            severity="warning",
-            timeout=30,
+    def action_graceful_quit(self) -> None:
+        """Exit TUI only — agents and server keep running in background."""
+        self.exit(
+            message="TUI closed. Agents still running. Use `bernstein live` to reconnect or `bernstein stop` to halt."
         )
 
         # 1. Try real-time IPC shutdown first
@@ -1648,6 +1651,8 @@ class BernsteinApp(App[None]):
             pass
 
         # 3. Send SIGTERM to orchestrator processes
+        import signal
+
         for name in ("watchdog", "spawner", "server"):
             pp = Path(f".sdd/runtime/{name}.pid")
             if pp.exists():
