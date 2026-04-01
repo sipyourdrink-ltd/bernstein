@@ -9,13 +9,15 @@ HMAC key is read from ``.sdd/config/audit-key`` (auto-generated if absent).
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import hmac as _hmac
 import json
 import logging
 import secrets
+import shutil
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -24,6 +26,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _GENESIS_HMAC = "0" * 64
+
+DEFAULT_RETENTION_DAYS = 90
+
+
+@dataclass(frozen=True)
+class RetentionPolicy:
+    """Configurable audit log retention and auto-archive settings.
+
+    Attributes:
+        retention_days: Number of days to keep uncompressed log files.
+            Logs older than this are compressed and moved to the archive.
+        archive_subdir: Name of the subdirectory under audit_dir for archives.
+    """
+
+    retention_days: int = DEFAULT_RETENTION_DAYS
+    archive_subdir: str = "archive"
+
+
+@dataclass(frozen=True)
+class ArchiveResult:
+    """Result of an archive operation.
+
+    Attributes:
+        archived: List of original log file names that were archived.
+        archive_dir: Path to the archive directory.
+        skipped: List of file names skipped (already archived or too recent).
+    """
+
+    archived: list[str] = field(default_factory=list)
+    archive_dir: str = ""
+    skipped: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -204,6 +237,61 @@ class AuditLog:
                 prev_hmac = stored_hmac
 
         return len(errors) == 0, errors
+
+    # -- retention & archive ------------------------------------------------
+
+    def archive(self, policy: RetentionPolicy | None = None) -> ArchiveResult:
+        """Compress and archive log files older than the retention window.
+
+        Files whose date (parsed from the ``YYYY-MM-DD.jsonl`` filename) is
+        older than ``policy.retention_days`` are gzip-compressed into the
+        archive subdirectory.  The original ``.jsonl`` file is removed after
+        a successful compress.
+
+        Args:
+            policy: Retention settings.  Uses defaults if ``None``.
+
+        Returns:
+            An ``ArchiveResult`` describing what was archived.
+        """
+        policy = policy or RetentionPolicy()
+        archive_dir = self._audit_dir / policy.archive_subdir
+        archive_dir.mkdir(parents=True, exist_ok=True)
+
+        cutoff = datetime.now(tz=UTC).date() - timedelta(days=policy.retention_days)
+
+        archived: list[str] = []
+        skipped: list[str] = []
+
+        for log_path in sorted(self._audit_dir.glob("*.jsonl")):
+            stem = log_path.stem  # e.g. "2025-12-01"
+            try:
+                file_date = datetime.strptime(stem, "%Y-%m-%d").replace(tzinfo=UTC).date()
+            except ValueError:
+                skipped.append(log_path.name)
+                continue
+
+            if file_date >= cutoff:
+                skipped.append(log_path.name)
+                continue
+
+            gz_path = archive_dir / f"{log_path.name}.gz"
+            if gz_path.exists():
+                skipped.append(log_path.name)
+                continue
+
+            with log_path.open("rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+
+            log_path.unlink()
+            archived.append(log_path.name)
+            logger.info("Archived audit log %s → %s", log_path.name, gz_path.name)
+
+        return ArchiveResult(
+            archived=archived,
+            archive_dir=str(archive_dir),
+            skipped=skipped,
+        )
 
     # -- query --------------------------------------------------------------
 
