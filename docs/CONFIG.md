@@ -1,65 +1,149 @@
 # Bernstein Configuration Reference
 
-## Runtime Bridges
+Bernstein configuration comes from three places:
 
-A **RuntimeBridge** connects Bernstein to an external execution environment
-where CLI agents can run — cloud sandboxes, container runtimes, Kubernetes
-pods, etc.  Bridges are configured in `.bernstein/config.toml` (or
-`~/.bernstein/config.toml` for global defaults) under `[bridges.<name>]`
-sections.
+1. `bernstein.yaml` (project seed/run config)
+2. `.sdd/config.yaml` (workspace runtime defaults, created by `bernstein init`)
+3. Environment variables (`BERNSTEIN_*`)
 
-### BridgeConfig schema
-
-| Field             | Type     | Required | Default   | Description                                                 |
-|-------------------|----------|----------|-----------|-------------------------------------------------------------|
-| `bridge_type`     | `str`    | yes      | —         | Bridge implementation key, e.g. `"openclaw"`, `"k8s"`       |
-| `endpoint`        | `str`    | yes      | —         | Base URL or socket address of the runtime API               |
-| `api_key`         | `str`    | no       | `""`      | Credential for authenticating with the runtime (never log)  |
-| `timeout_seconds` | `int`    | no       | `30`      | Per-request HTTP timeout                                    |
-| `max_log_bytes`   | `int`    | no       | `1048576` | Maximum bytes returned by a single `logs()` call (1 MiB)    |
-| `extra`           | `dict`   | no       | `{}`      | Bridge-specific options (see per-bridge docs below)         |
-
-### Example — OpenClaw bridge
-
-```toml
-[bridges.openclaw]
-bridge_type     = "openclaw"
-endpoint        = "https://api.openclaw.io"
-api_key         = "${OPENCLAW_API_KEY}"   # resolved from env at runtime
-timeout_seconds = 60
-max_log_bytes   = 2097152                 # 2 MiB
-
-[bridges.openclaw.extra]
-region        = "us-east-1"
-sandbox_class = "small"
-pull_policy   = "if_absent"
-```
-
-### Environment variable substitution
-
-Any field value of the form `"${VAR}"` is replaced with `os.environ["VAR"]`
-at bridge construction time.  If the variable is unset and no default is
-provided, bridge initialisation raises a `BridgeError`.
-
-### OpenClaw extra options
-
-| Key             | Type  | Default       | Description                                              |
-|-----------------|-------|---------------|----------------------------------------------------------|
-| `region`        | `str` | `"us-east-1"` | OpenClaw datacenter region                               |
-| `sandbox_class` | `str` | `"small"`     | Compute tier: `"small"`, `"medium"`, `"large"`           |
-| `pull_policy`   | `str` | `"if_absent"` | Image pull policy: `"always"` or `"if_absent"`           |
+This document focuses on practical settings contributors actually use today.
 
 ---
 
-## Task Server
+## 1) Project config: `bernstein.yaml`
 
-The internal task server listens on `http://127.0.0.1:8052` by default.
-Override with `BERNSTEIN_SERVER_HOST` / `BERNSTEIN_SERVER_PORT` environment
-variables.
+`bernstein.yaml` is the main run-time input. Typical keys include:
 
-| Env var                  | Default         | Description                    |
-|--------------------------|-----------------|--------------------------------|
-| `BERNSTEIN_SERVER_HOST`  | `127.0.0.1`     | Bind address                   |
-| `BERNSTEIN_SERVER_PORT`  | `8052`          | Bind port                      |
-| `BERNSTEIN_STATE_DIR`    | `.sdd/`         | Root for all file-based state  |
-| `BERNSTEIN_LOG_LEVEL`    | `INFO`          | Python logging level           |
+- `goal`
+- `tasks`
+- `workspace`
+- `role_model_policy`
+- `storage`
+- `notify` (webhook/email/desktop notification settings)
+- `network` (IP allowlist)
+
+Minimal example:
+
+```yaml
+goal: "Implement API auth and integration tests"
+
+tasks:
+  - title: "Add auth middleware"
+    role: backend
+    priority: 1
+    scope: medium
+    complexity: medium
+
+role_model_policy:
+  backend:
+    provider: claude_standard
+    model: sonnet
+    effort: high
+
+storage:
+  backend: memory
+```
+
+---
+
+## 2) Workspace runtime defaults: `.sdd/config.yaml`
+
+Created by:
+
+```bash
+bernstein init
+```
+
+Typical defaults:
+
+- server port
+- max workers/agents
+- default model/effort
+
+This file is local runtime state; `bernstein.yaml` remains the portable project config.
+
+---
+
+## 3) Environment variables
+
+Environment variables are useful in CI and automation. Common variables:
+
+| Variable | Purpose |
+|---|---|
+| `BERNSTEIN_SERVER_HOST` | Server bind address |
+| `BERNSTEIN_SERVER_PORT` | Server port (default runtime is `8052`) |
+| `BERNSTEIN_STORAGE_BACKEND` | Storage backend (`memory`, `postgres`, `redis`) |
+| `BERNSTEIN_DATABASE_URL` | PostgreSQL DSN for `postgres`/`redis` backends |
+| `BERNSTEIN_REDIS_URL` | Redis URL for distributed locking backend |
+| `BERNSTEIN_SKIP_GATES` | Skip selected quality gates |
+| `BERNSTEIN_SKIP_GATE_REASON` | Audit reason when gates are skipped |
+| `BERNSTEIN_WORKFLOW` | Workflow mode override |
+| `BERNSTEIN_ROUTING` | Routing policy override |
+| `BERNSTEIN_COMPLIANCE` | Compliance preset override |
+| `BERNSTEIN_QUIET` | Quiet mode (reduced terminal output) |
+| `BERNSTEIN_AUDIT` | Enable extra audit behavior in run flow |
+
+---
+
+## Storage backends
+
+Bernstein supports:
+
+- `memory` (default, JSONL persistence)
+- `postgres`
+- `redis` (Postgres + Redis locking topology)
+
+`bernstein.yaml` example:
+
+```yaml
+storage:
+  backend: redis
+  database_url: postgresql://user:pass@localhost/bernstein
+  redis_url: redis://localhost:6379
+```
+
+You can validate effective connectivity with:
+
+```bash
+bernstein doctor
+```
+
+---
+
+## Telemetry and metrics
+
+- Prometheus metrics are exposed via `GET /metrics` on the server.
+- OTLP endpoint wiring exists via telemetry configuration in the core config model.
+
+Treat telemetry as configurable: enabled only when endpoint/settings are provided.
+
+---
+
+## Notifications
+
+Seed-level notification settings support:
+
+- webhook notifications
+- SMTP email notifications
+- optional desktop notifications
+
+These are consumed by the notification manager and task lifecycle hooks.
+
+---
+
+## Network and safety controls
+
+Configuration surface includes:
+
+- IP allowlist (`network.allowed_ips`)
+- role/model routing policy
+- quality-gate controls
+- audit controls
+
+For security-sensitive deployments, prefer explicit config in `bernstein.yaml` over implicit defaults.
+
+---
+
+## Notes on older bridge docs
+
+If you are looking for runtime bridge details (`.bernstein/config.toml`, bridge-specific `extra` fields), treat that as advanced/experimental integration material. The day-to-day production config surface is currently `bernstein.yaml` + `.sdd/config.yaml` + `BERNSTEIN_*` environment variables.

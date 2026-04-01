@@ -1,6 +1,18 @@
 # Changelog
 
-All notable documentation changes are tracked here.
+All notable project changes are tracked here (code + docs).
+
+## [1.4.9] — 2026-04-01
+
+### Added
+- Process-aware shutdown/drain improvements across CLI and core lifecycle paths.
+- Cost analytics enhancements (additional endpoints/aggregation work and routing transparency updates).
+- Security enhancements including sensitivity-classification and IP-allowlist related hardening.
+- TUI keyboard help (`?`) shortcut support.
+
+### Changed
+- Issue triage and documentation alignment pass to reduce roadmap vs shipped-feature drift.
+- Retry, lifecycle, and observability narratives updated to better reflect current implementation boundaries.
 
 ## [1.4.0] — 2026-03-31
 

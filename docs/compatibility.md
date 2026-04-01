@@ -1,33 +1,52 @@
-# Protocol Compatibility Matrix
+# Compatibility
 
-**Last Updated**: 2026-03-30T00:07:41.797603
-**Commit**: unknown
+This page describes practical compatibility boundaries for Bernstein integrations.
 
-## Summary
-- **Total Combinations Tested**: 8
-- **Passing**: 8
-- **Failing**: 0
-- **Incompatible**: 0
-- **Timeout**: 0
+Last updated: 2026-04-01
 
-## Compatibility Table
+---
 
-| Python | MCP | A2A | ACP | Status |
-|--------|-----|-----|-----|--------|
-| 3.12 | 1.0 | 0.2 | latest | ✅ |
-| 3.12 | 1.0 | 0.3 | latest | ✅ |
-| 3.12 | 1.1 | 0.2 | latest | ✅ |
-| 3.12 | 1.1 | 0.3 | latest | ✅ |
-| 3.13 | 1.0 | 0.2 | latest | ✅ |
-| 3.13 | 1.0 | 0.3 | latest | ✅ |
-| 3.13 | 1.1 | 0.2 | latest | ✅ |
-| 3.13 | 1.1 | 0.3 | latest | ✅ |
+## Runtime compatibility
 
-## Legend
-- ✅ Fully compatible
-- ❌ Not compatible or test failure
-- `latest` for ACP indicates we test against the latest released version
+- Python: project targets Python 3.12+.
+- Task server/API: FastAPI-based local or remote server operation.
+- CLI adapters: multiple agent CLIs supported through adapter abstraction.
 
-## Note
-This table is auto-generated on every CI run. Protocol compatibility is tested
-via 8 matrix combinations to ensure comprehensive coverage.
+Compatibility details can vary by adapter version and local toolchain.
+
+---
+
+## Protocol and integration layers
+
+### MCP
+
+- Bernstein includes MCP server support in `src/bernstein/mcp/server.py`.
+- CLI exposes `bernstein mcp`.
+- Practical compatibility depends on client/runtime transport expectations.
+
+### A2A
+
+- A2A task/artifact routes are implemented in task routes.
+- A2A is available as part of the server API surface.
+
+### ACP
+
+- ACP-related compatibility workflows/spec docs exist.
+- Treat ACP support as integration-dependent rather than one fixed matrix.
+
+---
+
+## How to verify in your environment
+
+Use environment-specific validation instead of relying on static matrices:
+
+1. Run `bernstein doctor`.
+2. Run your target CLI adapter smoke checks (`bernstein test-adapter <name>`).
+3. Validate required API endpoints (`/status`, `/tasks`, `/metrics`, protocol-specific routes).
+4. If using remote workers, validate cluster endpoints and auth paths.
+
+---
+
+## Notes on historical matrices
+
+Older protocol matrices in docs/workflows are useful as references for prior CI checks, but they should not be treated as evergreen compatibility guarantees for all environments.

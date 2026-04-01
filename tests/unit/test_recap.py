@@ -49,6 +49,12 @@ class TestRecapCommand:
                 {"task_id": "t2", "status": "done", "cost_usd": 0.05},
                 {"task_id": "t3", "status": "failed", "cost_usd": 0.03},
             ],
+            "summary": {
+                "total": 3,
+                "completed": 2,
+                "failed": 1,
+                "success_rate": 66.6,
+            }
         }
         runner = CliRunner()
         with patch("bernstein.cli.advanced_cmd.server_get", return_value=server_data):

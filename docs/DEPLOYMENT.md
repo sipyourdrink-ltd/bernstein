@@ -163,7 +163,7 @@ helm upgrade bernstein ./deploy/helm/bernstein \
          ┌─────────────▼─────────┐   ┌────────▼────────────┐
          │  bernstein-orchestrat │   │  bernstein-worker    │
          │  Deployment (1 pod)   │   │  StatefulSet (N pods)│
-         │  conduct --remote     │   │  conduct --worker    │
+         │  run --remote         │   │  worker --server ... │
          └───────────────────────┘   └─────────────────────┘
                        │                      │
               ┌────────▼────────┐   ┌─────────▼──────────┐
@@ -270,7 +270,7 @@ BERNSTEIN_BIND_HOST=0.0.0.0 BERNSTEIN_AUTH_TOKEN=<secret> bernstein run
 # Worker on another machine
 BERNSTEIN_SERVER_URL=https://bernstein.example.com \
   BERNSTEIN_AUTH_TOKEN=<secret> \
-  bernstein run
+  bernstein worker
 ```
 
 The bearer token in `BERNSTEIN_AUTH_TOKEN` is validated on every request; always
