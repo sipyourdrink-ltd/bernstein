@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,10 @@ if TYPE_CHECKING:
     from bernstein.core.agent_log_aggregator import AgentLogSummary
 
 logger = logging.getLogger(__name__)
+
+# Fair scheduling: age threshold in seconds after which lower-priority tasks get boosted
+_PRIORITY_AGE_THRESHOLD_SECONDS = 300  # 5 minutes
+_PRIORITY_BOOST_AMOUNT = 1  # Boost priority by 1 (lower value = higher priority)
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +192,7 @@ def group_by_role(
     max_per_batch: int,
     alive_per_role: dict[str, int] | None = None,
     priority_overrides: dict[str, int] | None = None,
+    task_created_at: dict[str, float] | None = None,
 ) -> list[list[Task]]:
     """Group open tasks by role into batches of up to max_per_batch.
 
@@ -203,6 +209,9 @@ def group_by_role(
     If alive_per_role is provided, batches are further reordered to prioritize
     roles with zero alive agents (starving roles) before well-served roles.
 
+    Fair scheduling: tasks waiting longer than PRIORITY_AGE_THRESHOLD_SECONDS
+    get their effective priority boosted to prevent P1 tasks from starving P2/P3.
+
     Example: backend(5 tasks) + qa(3 tasks) → [b1,q1, b2,q2, b3,q3, b4, b5]
     The orchestrator iterates this list and stops at max_agents, so qa never
     starves even though backend has more work.
@@ -215,6 +224,8 @@ def group_by_role(
         priority_overrides: Optional per-task effective priority overrides.
             Used by the orchestrator for temporary critical-path promotion
             without mutating persisted task priority.
+        task_created_at: Optional map of task_id -> creation timestamp.
+            Used for fair scheduling to age-boost older tasks.
 
     Returns:
         List of batches, each a list of same-role tasks, round-robin interleaved.
@@ -224,13 +235,30 @@ def group_by_role(
     for task in tasks:
         by_role[task.role].append(task)
 
-    def _sort_key(t: Task) -> tuple[int, int]:
+    # Calculate current time for age-based priority boosting
+    current_time = time.time() if task_created_at else None
+
+    def _sort_key(t: Task) -> tuple[int, int, int]:
         # Priority boost for upgrade proposals: subtract 1 from priority value
         # (lower = higher priority). Second element is original priority for ties.
         priority_boost = t.priority - 1 if t.task_type == TaskType.UPGRADE_PROPOSAL else t.priority
+
+        # Apply priority overrides if provided
         if priority_overrides is not None and t.id in priority_overrides:
             priority_boost = priority_overrides[t.id]
-        return (priority_boost, t.priority)
+
+        # Fair scheduling: boost priority of tasks that have been waiting too long
+        age_boost = 0
+        if current_time is not None and task_created_at and t.id in task_created_at:
+            age_seconds = current_time - task_created_at[t.id]
+            if age_seconds > _PRIORITY_AGE_THRESHOLD_SECONDS:
+                # Boost priority by 1 for each threshold period exceeded
+                age_boost = int(age_seconds / _PRIORITY_AGE_THRESHOLD_SECONDS) * _PRIORITY_BOOST_AMOUNT
+
+        # Effective priority: lower is better
+        effective_priority = priority_boost - age_boost
+
+        return (effective_priority, t.priority, -age_boost)  # Third element for stable sort
 
     # Build per-role batch queues, sorted by priority within each role
     role_batch_queues: dict[str, list[list[Task]]] = {}
