@@ -191,6 +191,7 @@ class TaskCreate(BaseModel):
     priority: int = 2
     scope: str = "medium"
     complexity: str = "medium"
+    risk_level: str = "low"
     estimated_minutes: int = 30
     depends_on: list[str] = Field(default_factory=list)
     owned_files: list[str] = Field(default_factory=list)
@@ -220,6 +221,7 @@ class TaskResponse(BaseModel):
     priority: int
     scope: str
     complexity: str
+    risk_level: str
     estimated_minutes: int
     status: str
     depends_on: list[str]
@@ -613,6 +615,7 @@ def task_to_response(task: Task) -> TaskResponse:
         priority=task.priority,
         scope=task.scope.value,
         complexity=task.complexity.value,
+        risk_level=task.risk_level,
         estimated_minutes=task.estimated_minutes,
         status=task.status.value,
         depends_on=task.depends_on,

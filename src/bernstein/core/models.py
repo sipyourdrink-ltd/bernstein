@@ -214,6 +214,7 @@ class Task:
     slack_context: dict[str, Any] | None = None  # Slack slash command or event metadata
     batch_eligible: bool | None = None  # Non-urgent: None=auto-detect, True=explicit batch, False=explicit realtime
     approval_required: bool = False  # Pause after completion until explicitly approved
+    risk_level: Literal["low", "medium", "high", "critical"] = "low"  # Risk for approval workflow routing
     created_at: float = field(default_factory=time.time)
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
@@ -281,6 +282,7 @@ class Task:
             mcp_servers=list(raw.get("mcp_servers", [])),
             batch_eligible=(lambda v: None if v is None else bool(v))(raw.get("batch_eligible")),
             approval_required=bool(raw.get("approval_required", False)),
+            risk_level=raw.get("risk_level", "low"),
             created_at=raw.get("created_at", time.time()),
             progress_log=list(raw.get("progress_log", [])),
             version=raw.get("version", 1),
@@ -741,6 +743,38 @@ class TestAgentConfig:
 
 
 @dataclass
+class ApprovalWorkflowConfig:
+    """Risk-based approval workflow configuration.
+
+    Attributes:
+        enabled: Whether the approval workflow is active.
+        high_risk: Gate for high-risk tasks ("auto", "pr", "review").
+        medium_risk: Gate for medium-risk tasks.
+        low_risk: Gate for low-risk tasks.
+        timeout_hours: Auto-reject tasks if approval takes longer than this.
+        notify_channels: Where to send approval notifications.
+    """
+
+    enabled: bool = True
+    high_risk: str = "review"
+    medium_risk: str = "pr"
+    low_risk: str = "auto"
+    timeout_hours: int = 24
+    notify_channels: list[str] = field(default_factory=lambda: ["slack", "email"])
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ApprovalWorkflowConfig:
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            high_risk=str(data.get("high_risk", "review")),
+            medium_risk=str(data.get("medium_risk", "pr")),
+            low_risk=str(data.get("low_risk", "auto")),
+            timeout_hours=int(data.get("timeout_hours", 24)),
+            notify_channels=list(data.get("notify_channels", ["slack", "email"])),
+        )
+
+
+@dataclass
 class OrchestratorConfig:
     """Configuration for the orchestrator main loop.
 
@@ -775,7 +809,8 @@ class OrchestratorConfig:
     merge_strategy: str = "pr"  # "pr" | "direct" — how agent work reaches the main branch
     auto_merge: bool = True  # Auto-merge PR after code review passes (requires gh CLI)
     pr_labels: list[str] = field(default_factory=lambda: ["bernstein", "auto-generated"])
-    approval: str = "auto"  # "auto" | "review" | "pr" — gate between verification and merge
+    approval: Any = "auto"  # "auto" | "review" | "pr" or dict for workflow
+    approval_workflow: ApprovalWorkflowConfig | None = field(default=None, repr=False)
     recovery: str = "resume"  # "resume" | "restart" | "escalate" — crash recovery strategy
     max_crash_retries: int = 2  # Max times to resume in same worktree before escalating
     cross_model_verify: Any | None = None  # CrossModelVerifierConfig | None
@@ -796,6 +831,12 @@ class OrchestratorConfig:
     batch: BatchConfig = field(default_factory=BatchConfig)
     max_cost_per_agent: float = 0.0  # Hard per-agent spend cap (0 = unlimited)
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
+
+    def __post_init__(self) -> None:
+        """Parse nested workflow config if dict provided."""
+        if isinstance(self.approval, dict):
+            self.approval_workflow = ApprovalWorkflowConfig.from_dict(self.approval)
+            self.approval = "workflow"
 
 
 # ---------------------------------------------------------------------------

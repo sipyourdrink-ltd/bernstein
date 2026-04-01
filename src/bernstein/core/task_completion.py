@@ -543,9 +543,39 @@ def process_completed_tasks(
             orch._record_provider_health(session, success=janitor_passed)
             _skip_merge = False
             if janitor_passed and orch._approval_gate is not None:
+                _override_mode = None
+                _timeout_s = None
+
+                wf = getattr(orch._config, "approval_workflow", None)
+                if wf is not None and wf.enabled:
+                    risk = getattr(task, "risk_level", "low")
+                    mapping = {
+                        "low": wf.low_risk,
+                        "medium": wf.medium_risk,
+                        "high": wf.high_risk,
+                        "critical": getattr(wf, "critical_risk", wf.high_risk),
+                    }
+                    mode_str = mapping.get(risk, "auto")
+
+                    from bernstein.core.approval import ApprovalMode
+                    _override_mode = ApprovalMode(mode_str)
+                    _timeout_s = float(wf.timeout_hours * 3600)
+
+                    if _override_mode in (ApprovalMode.REVIEW, ApprovalMode.PR):
+                        risk_str = risk.upper()
+                        orch._notify(
+                            event="task.approval_needed",
+                            title=f"Approval required ({risk_str} risk): {task.title}",
+                            body=f"Task {task.id} requires {mode_str} approval. Timeout: {wf.timeout_hours}h.",
+                            task_id=task.id,
+                            risk_level=risk,
+                        )
+
                 _approval_result = orch._approval_gate.evaluate(
                     task,
                     session_id=session.id,
+                    override_mode=_override_mode,
+                    timeout_s=_timeout_s,
                 )
                 if _approval_result.rejected:
                     _skip_merge = True

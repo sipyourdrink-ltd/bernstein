@@ -691,12 +691,13 @@ async def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Requ
     return node_to_response(node)
 
 
-@router.delete("/cluster/nodes/{node_id}", status_code=204)
-async def unregister_node(node_id: str, request: Request) -> None:
+@router.delete("/cluster/nodes/{node_id}", status_code=200)
+async def unregister_node(node_id: str, request: Request) -> dict[str, str]:
     """Remove a node from the cluster."""
     node_registry = _get_node_registry(request)
     if not node_registry.unregister(node_id):
         raise HTTPException(status_code=404, detail=f"Node '{node_id}' not found")
+    return {"status": "ok"}
 
 
 @router.get("/cluster/nodes", response_model=list[NodeResponse])

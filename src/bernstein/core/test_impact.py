@@ -12,7 +12,8 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, cast
+from typing_extensions import TypedDict
 
 logger = logging.getLogger(__name__)
 

@@ -15,7 +15,8 @@ import uuid
 from collections import deque
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, cast
+from typing_extensions import TypedDict
 
 from fastapi import HTTPException
 

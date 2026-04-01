@@ -438,24 +438,32 @@ class Orchestrator:
         # held for interactive review, or pushed as a GitHub PR.
         # merge_strategy="pr" activates PR mode by default; "direct" forces auto.
         # An explicit approval override ("review" or "pr") takes precedence.
-        if config.approval != "auto":
-            _effective_approval = config.approval
-        elif config.merge_strategy == "direct":
-            _effective_approval = "auto"
-        else:
-            # merge_strategy="pr" (default) -> PR mode
-            _effective_approval = "pr"
-        _approval_mode = ApprovalMode(_effective_approval)
-        self._approval_gate: ApprovalGate | None = (
-            ApprovalGate(
-                mode=_approval_mode,
+        if config.approval == "workflow":
+            self._approval_gate = ApprovalGate(
+                mode=ApprovalMode.AUTO,  # base mode, overridden per-task in task_completion.py
                 workdir=workdir,
                 auto_merge=config.auto_merge,
                 pr_labels=config.pr_labels,
             )
-            if _approval_mode != ApprovalMode.AUTO
-            else None
-        )
+        else:
+            if config.approval != "auto":
+                _effective_approval = config.approval
+            elif config.merge_strategy == "direct":
+                _effective_approval = "auto"
+            else:
+                # merge_strategy="pr" (default) -> PR mode
+                _effective_approval = "pr"
+            _approval_mode = ApprovalMode(_effective_approval)
+            self._approval_gate: ApprovalGate | None = (
+                ApprovalGate(
+                    mode=_approval_mode,
+                    workdir=workdir,
+                    auto_merge=config.auto_merge,
+                    pr_labels=config.pr_labels,
+                )
+                if _approval_mode != ApprovalMode.AUTO
+                else None
+            )
 
         # Manager queue review: trigger after N completions/failures or stall.
         self._completions_since_review: int = 0

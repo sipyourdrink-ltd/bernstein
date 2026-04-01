@@ -23,10 +23,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
@@ -69,19 +70,21 @@ def _default_poll_decision(
     *,
     poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
     max_wait_s: float = _DEFAULT_MAX_WAIT_S,
+    reject_on_timeout: bool = False,
 ) -> str:
     """Poll for a decision file and return ``"approved"`` or ``"rejected"``.
 
     Reads ``<approvals_dir>/<task_id>.approved`` or
     ``<approvals_dir>/<task_id>.rejected`` until one appears or the timeout
-    expires.  On timeout, defaults to ``"approved"`` so a missed review does
-    not permanently stall the orchestrator.
+    expires.  On timeout, defaults to ``"approved"`` (or "rejected" if configured)
+    so a missed review does not permanently stall the orchestrator.
 
     Args:
         task_id: Task ID to poll for.
         approvals_dir: Directory where decision files are written.
         poll_interval_s: Seconds between file-existence checks.
         max_wait_s: Maximum seconds to wait before defaulting to approved.
+        reject_on_timeout: If True, returns "rejected" on timeout instead of "approved".
 
     Returns:
         ``"approved"`` or ``"rejected"``.
@@ -100,18 +103,19 @@ def _default_poll_decision(
         time.sleep(poll_interval_s)
 
     logger.warning(
-        "Approval gate: task %s timed out after %.0fs — defaulting to approved",
+        "Approval gate: task %s timed out after %.0fs — defaulting to %s",
         task_id,
         max_wait_s,
+        "rejected" if reject_on_timeout else "approved",
     )
-    return "approved"
+    return "rejected" if reject_on_timeout else "approved"
 
 
 # ---------------------------------------------------------------------------
 # ApprovalGate
 # ---------------------------------------------------------------------------
 
-_PollDecisionFn = Callable[[str, Path], str]
+_PollDecisionFn = Callable[..., str]
 _PushBranchFn = Callable[..., Any]
 _CreatePrFn = Callable[..., Any]
 
@@ -144,9 +148,17 @@ class ApprovalGate:
         self._workdir = workdir
         self._auto_merge = auto_merge
         self._pr_labels: list[str] = pr_labels if pr_labels is not None else ["bernstein", "auto-generated"]
-        self._poll_decision: _PollDecisionFn = _poll_decision or (
-            lambda task_id, approvals_dir: _default_poll_decision(task_id, approvals_dir)
-        )
+        def _default_poll(
+            task_id: str,
+            approvals_dir: Path,
+            max_wait_s: float = _DEFAULT_MAX_WAIT_S,
+            reject_on_timeout: bool = False,
+        ) -> str:
+            return _default_poll_decision(
+                task_id, approvals_dir, max_wait_s=max_wait_s, reject_on_timeout=reject_on_timeout
+            )
+
+        self._poll_decision: _PollDecisionFn = _poll_decision or _default_poll
         self._push_branch_fn = _push_branch_fn
         self._create_pr_fn = _create_pr_fn
 
@@ -161,6 +173,8 @@ class ApprovalGate:
         session_id: str,
         diff: str = "",
         test_summary: str = "",
+        override_mode: ApprovalMode | None = None,
+        timeout_s: float | None = None,
     ) -> ApprovalResult:
         """Evaluate the approval gate for a verified task.
 
@@ -175,18 +189,21 @@ class ApprovalGate:
             session_id: Agent session ID (used for logging).
             diff: Optional unified diff string to include in the pending file.
             test_summary: Optional one-line test-results summary.
+            override_mode: Optional mode to override the global configuration.
+            timeout_s: Optional overriding timeout for review mode.
 
         Returns:
             :class:`ApprovalResult` describing the decision.
         """
-        if self._mode == ApprovalMode.AUTO:
+        mode = override_mode if override_mode is not None else self._mode
+        if mode == ApprovalMode.AUTO:
             return ApprovalResult(approved=True)
 
-        if self._mode == ApprovalMode.PR:
+        if mode == ApprovalMode.PR:
             return ApprovalResult(approved=False, rejected=False)
 
         # REVIEW mode
-        return self._review(task, session_id=session_id, diff=diff, test_summary=test_summary)
+        return self._review(task, session_id=session_id, diff=diff, test_summary=test_summary, timeout_s=timeout_s)
 
     def create_pr(
         self,
@@ -272,6 +289,7 @@ class ApprovalGate:
         session_id: str,
         diff: str,
         test_summary: str,
+        timeout_s: float | None = None,
     ) -> ApprovalResult:
         """Write pending file, block on poll, return decision."""
         pending_dir = self._workdir / ".sdd" / "runtime" / "pending_approvals"
@@ -295,7 +313,12 @@ class ApprovalGate:
             task.id,
         )
 
-        decision = self._poll_decision(task.id, approvals_dir)
+        kwargs: dict[str, Any] = {}
+        if timeout_s is not None:
+            kwargs["max_wait_s"] = timeout_s
+            kwargs["reject_on_timeout"] = True
+
+        decision = self._poll_decision(task.id, approvals_dir, **kwargs)
 
         if decision == "rejected":
             return ApprovalResult(approved=False, rejected=True)
