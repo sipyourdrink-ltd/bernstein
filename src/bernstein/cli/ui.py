@@ -15,6 +15,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from bernstein.cli.icons import get_agent_icon, get_status_icon
+
 # ---------------------------------------------------------------------------
 # Status colors — single source of truth
 # ---------------------------------------------------------------------------
@@ -416,10 +418,14 @@ class AgentStatusTable:
             cost_cell = (
                 f"[bold bright_yellow]${cost_usd:.4f}[/bold bright_yellow]" if cost_usd > 0 else "[dim]\u2014[/dim]"
             )
+            status_icon = get_status_icon(agent.status)
+            agent_icon = get_agent_icon(agent.role)
             table.add_row(
-                f"[bold]{agent.role}[/bold] [dim]{agent.agent_id[-8:]}[/dim]" if agent.agent_id else agent.role,
+                f"{agent_icon} [bold]{agent.role}[/bold] [dim]{agent.agent_id[-8:]}[/dim]"
+                if agent.agent_id
+                else f"{agent_icon} {agent.role}",
                 agent.model or "\u2014",
-                f"[{color}]{agent.status}[/{color}]",
+                f"[{color}]{status_icon} {agent.status}[/{color}]",
                 runtime_str,
                 str(len(agent.task_ids)),
                 cost_cell,
@@ -519,18 +525,16 @@ def create_summary_plain(stats: RunStats) -> str:
 
 
 def _status_dot(status: str) -> str:
-    """Return a unicode dot character appropriate for the agent status.
+    """Return an icon appropriate for the agent status.
+
+    Delegates to the icon system so that Nerd Font glyphs are used when
+    NERD_FONT=1 or BERNSTEIN_NERD_FONT=1 is set, falling back to standard
+    Unicode characters otherwise.
 
     Args:
         status: Agent status string (working, starting, dead, etc.).
 
     Returns:
-        A single unicode character.
+        A single unicode character or Nerd Font glyph.
     """
-    dots: dict[str, str] = {
-        "working": "\u25c9",
-        "starting": "\u25ce",
-        "dead": "\u25cc",
-        "done": "\u2713",
-    }
-    return dots.get(status, "\u25cf")
+    return get_status_icon(status)
