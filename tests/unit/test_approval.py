@@ -98,23 +98,22 @@ def test_create_pr_uses_injected_push_and_create(tmp_path: Path, make_task: Any)
 def test_approval_gate_with_override_mode(tmp_path: Path, make_task: Any) -> None:
     gate = ApprovalGate(ApprovalMode.AUTO, tmp_path)
     task = make_task(id="T-override")
-    
+
     # Should evaluate as PR mode because of override
     result = gate.evaluate(task, session_id="S-override", override_mode=ApprovalMode.PR)
     assert result.approved is False
     assert result.rejected is False
     assert result.pr_url == ""
 
+
 def test_approval_gate_reject_on_timeout(tmp_path: Path, make_task: Any) -> None:
-    # Use REVIEW mode with a fast timeout
-    gate = ApprovalGate(ApprovalMode.REVIEW, tmp_path)
     task = make_task(id="T-timeout-reject")
-    
+
     # Evaluate with a tiny timeout and reject_on_timeout=True
     # The default _poll_decision doesn't have an easy mock to bypass sleep, but we can mock it
     # However, since we mock _poll_decision in other tests, let's just assert that reject_on_timeout is passed correctly.
     # We can inject a mock _poll_decision that verifies reject_on_timeout is True
-    
+
     def _mock_poll(task_id: str, approvals_dir: Path, max_wait_s: float = 0, reject_on_timeout: bool = False) -> str:
         assert max_wait_s == 0.01
         assert reject_on_timeout is True
@@ -122,8 +121,8 @@ def test_approval_gate_reject_on_timeout(tmp_path: Path, make_task: Any) -> None
 
     gate_mocked = ApprovalGate(ApprovalMode.REVIEW, tmp_path, _poll_decision=_mock_poll)
     result = gate_mocked.evaluate(
-        task, 
-        session_id="S-timeout-reject", 
-        timeout_s=0.01
+        task,
+        session_id="S-timeout-reject",
+        timeout_s=0.01,
     )
     assert result.rejected is True

@@ -16,9 +16,9 @@ from collections import deque
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, cast
-from typing_extensions import TypedDict
 
 from fastapi import HTTPException
+from typing_extensions import TypedDict
 
 from bernstein.core.lifecycle import IllegalTransitionError, transition_agent, transition_task
 from bernstein.core.models import (
@@ -534,6 +534,7 @@ class TaskStore:
             model=req.model,
             effort=req.effort,
             batch_eligible=batch_eligible,
+            risk_level=getattr(req, "risk_level", "low"),
             completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
             slack_context=req.slack_context,
         )

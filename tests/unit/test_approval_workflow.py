@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from bernstein.core.models import OrchestratorConfig, ApprovalWorkflowConfig
+from bernstein.core.models import OrchestratorConfig
 
 
 def test_orchestrator_config_accepts_workflow_dict() -> None:
@@ -25,6 +23,7 @@ def test_orchestrator_config_accepts_workflow_dict() -> None:
     assert config.approval_workflow.high_risk == "pr"
     assert config.approval_workflow.timeout_hours == 12
     assert config.approval_workflow.notify_channels == ["slack"]
+
 
 def test_orchestrator_config_accepts_string_mode() -> None:
     config = OrchestratorConfig(approval="review")
