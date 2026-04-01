@@ -31,6 +31,14 @@ _DEFAULT_SMOKE_MODELS: dict[str, str] = {
 }
 
 
+def _read_last_lines(log_path: Path, n: int = 40) -> list[str]:
+    """Read the last N lines from a log file."""
+    try:
+        return log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
+    except OSError:
+        return []
+
+
 @click.command("test-adapter")
 @click.option("--adapter", "adapter_name", required=True, help="Adapter to test (e.g. gemini, codex).")
 @click.option("--task", "prompt", required=True, help="Task for the adapter to execute.")
@@ -83,7 +91,7 @@ def test_adapter(adapter_name: str, prompt: str, model: str | None, timeout: int
 
         # Last 40 lines of log
         if result.log_path.exists():
-            lines = CLIAdapter._read_last_lines(result.log_path, n=40)
+            lines = _read_last_lines(result.log_path, n=40)
             console.print("\n[bold]─── Last 40 lines of log ──────────────────────────────────────────[/bold]")
             if not lines:
                 console.print("[dim](log is empty)[/dim]")
