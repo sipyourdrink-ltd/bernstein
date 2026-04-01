@@ -36,9 +36,7 @@ class CodexAdapter(CLIAdapter):
 
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
-            logger.warning(
-                "CodexAdapter: OPENAI_API_KEY is not set — spawn will fail"
-            )
+            logger.warning("CodexAdapter: OPENAI_API_KEY is not set — spawn will fail")
 
         cmd = [
             "codex",

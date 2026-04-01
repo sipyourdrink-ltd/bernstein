@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import re
 import shutil
 import subprocess
@@ -99,7 +98,7 @@ def test_adapter(adapter_name: str, prompt: str, model: str | None, timeout: int
         match = re.search(r'(?:file|path)\s+([^\s\'"]+)', prompt, re.I)
         if not match:
             # Fallback: look for any absolute path or path-like string
-            match = re.search(r'(/[\w\.\-/]+|[\w\.\-/]+\.\w+)', prompt)
+            match = re.search(r"(/[\w\.\-/]+|[\w\.\-/]+\.\w+)", prompt)
 
         if match:
             expected_path_str = match.group(1)
