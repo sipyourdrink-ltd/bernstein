@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from bernstein.core.telemetry import start_span
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -675,14 +677,16 @@ def run_quality_gates(
     explicit_skip_gates = skip_gates if skip_gates is not None else _env_skip_gates()
     explicit_bypass_reason = bypass_reason if bypass_reason is not None else _env_bypass_reason()
     runner = GateRunner(config, workdir, base_ref=config.base_ref)
-    report = asyncio.run(
-        runner.run_all(
-            task,
-            run_dir,
-            skip_gates=explicit_skip_gates,
-            bypass_reason=explicit_bypass_reason,
+
+    with start_span("task.verify", {"task.id": task.id}):
+        report = asyncio.run(
+            runner.run_all(
+                task,
+                run_dir,
+                skip_gates=explicit_skip_gates,
+                bypass_reason=explicit_bypass_reason,
+            )
         )
-    )
     quality_score = None
     try:
         from bernstein.core.quality_score import QualityScorer

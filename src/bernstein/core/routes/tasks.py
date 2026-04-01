@@ -53,6 +53,7 @@ from bernstein.core.server import (
     task_to_response,
 )
 from bernstein.core.task_store import ArchiveRecord, SnapshotEntry
+from bernstein.core.telemetry import start_span
 from bernstein.plugins.manager import get_plugin_manager
 
 if TYPE_CHECKING:
@@ -103,10 +104,11 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
     """Create a new task."""
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
-    task = await store.create(body)
-    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
-    get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
-    return task_to_response(task)
+    with start_span("task.create", {"task.role": body.role, "task.title": body.title}):
+        task = await store.create(body)
+        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
+        get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
+        return task_to_response(task)
 
 
 @router.get("/tasks/next/{role}", response_model=TaskResponse)
@@ -132,9 +134,10 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
             {"error": "Server is draining -- no new claims accepted"},
             status_code=503,
         )
-    store = _get_store(request)
-    claimed, failed = await store.claim_batch(body.task_ids, body.agent_id)
-    return BatchClaimResponse(claimed=claimed, failed=failed)
+    with start_span("task.claim_batch", {"agent_id": body.agent_id, "task_count": len(body.task_ids)}):
+        store = _get_store(request)
+        claimed, failed = await store.claim_batch(body.task_ids, body.agent_id)
+        return BatchClaimResponse(claimed=claimed, failed=failed)
 
 
 @router.post("/tasks/{task_id}/claim", response_model=TaskResponse)
@@ -149,32 +152,34 @@ async def claim_task(task_id: str, request: Request, expected_version: int | Non
             {"error": "Server is draining -- no new claims accepted"},
             status_code=503,
         )
-    store = _get_store(request)
-    sse_bus = _get_sse_bus(request)
-    try:
-        task = await store.claim_by_id(task_id, expected_version=expected_version)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "claimed"}))
-    return task_to_response(task)
+    with start_span("task.claim", {"task.id": task_id}):
+        store = _get_store(request)
+        sse_bus = _get_sse_bus(request)
+        try:
+            task = await store.claim_by_id(task_id, expected_version=expected_version)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "claimed"}))
+        return task_to_response(task)
 
 
 @router.post("/tasks/{task_id}/complete", response_model=TaskResponse)
 async def complete_task(task_id: str, body: TaskCompleteRequest, request: Request) -> TaskResponse:
     """Mark a task as done with a result summary."""
-    store = _get_store(request)
-    sse_bus = _get_sse_bus(request)
-    try:
-        task = await store.complete(task_id, body.result_summary)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
-    except IllegalTransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
-    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))
-    get_plugin_manager().fire_task_completed(task_id=task.id, role=task.role, result_summary=body.result_summary)
-    return task_to_response(task)
+    with start_span("task.complete", {"task.id": task_id}):
+        store = _get_store(request)
+        sse_bus = _get_sse_bus(request)
+        try:
+            task = await store.complete(task_id, body.result_summary)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+        except IllegalTransitionError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from None
+        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))
+        get_plugin_manager().fire_task_completed(task_id=task.id, role=task.role, result_summary=body.result_summary)
+        return task_to_response(task)
 
 
 @router.post("/tasks/{task_id}/fail", response_model=TaskResponse)

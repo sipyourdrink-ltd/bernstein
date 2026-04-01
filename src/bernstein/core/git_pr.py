@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bernstein.core.git_basic import GitResult, run_git
+from bernstein.core.telemetry import start_span
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,13 +72,14 @@ def merge_branch(
     Returns:
         GitResult from the merge command.
     """
-    cmd = ["merge"]
-    if no_ff:
-        cmd.append("--no-ff")
-    cmd.append(branch)
-    if message:
-        cmd.extend(["-m", message])
-    return run_git(cmd, cwd, timeout=60)
+    with start_span("task.merge", {"branch": branch, "no_ff": no_ff}):
+        cmd = ["merge"]
+        if no_ff:
+            cmd.append("--no-ff")
+        cmd.append(branch)
+        if message:
+            cmd.extend(["-m", message])
+        return run_git(cmd, cwd, timeout=60)
 
 
 def merge_with_conflict_detection(
@@ -100,12 +102,13 @@ def merge_with_conflict_detection(
     Returns:
         MergeResult indicating success or listing conflicting files.
     """
-    # 1. Attempt the merge without committing
-    merge_r = run_git(
-        ["merge", "--no-commit", "--no-ff", branch],
-        cwd,
-        timeout=120,
-    )
+    with start_span("task.merge_with_conflict_detection", {"branch": branch}):
+        # 1. Attempt the merge without committing
+        merge_r = run_git(
+            ["merge", "--no-commit", "--no-ff", branch],
+            cwd,
+            timeout=120,
+        )
 
     if merge_r.ok:
         # Clean merge — commit it
