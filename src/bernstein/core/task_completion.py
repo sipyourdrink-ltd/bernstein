@@ -250,7 +250,35 @@ def retry_or_fail_task(
             extra HTTP round-trip when the task is already in cache.
     """
     base = server_url
-    max_retries = max_task_retries
+
+    # Dynamic retry limit based on failure type (T176)
+    reason_lower = reason.lower()
+    transient_markers = (
+        "rate limit",
+        "timeout",
+        "503",
+        "transient",
+        "connection error",
+        "502",
+        "504",
+        "too many requests",
+    )
+    fatal_markers = (
+        "syntaxerror",
+        "syntax error",
+        "fatal",
+        "bug",
+        "typeerror",
+        "valueerror",
+        "nameerror",
+        "attributeerror",
+    )
+    if any(k in reason_lower for k in transient_markers):
+        max_retries = 3
+    elif any(k in reason_lower for k in fatal_markers):
+        max_retries = 0
+    else:
+        max_retries = max_task_retries
 
     # Try the pre-fetched snapshot first to avoid an extra GET
     task: Task | None = None

@@ -495,6 +495,17 @@ def bootstrap_from_goal(
         console.print(agents_note)
 
     console.print(f"[green]→[/green] Goal: [bold]{goal[:80]}[/bold]")
+    try:
+        from bernstein.core.complexity_advisor import ComplexityMode, suggest_goal_execution_mode
+
+        suggestion = suggest_goal_execution_mode(goal)
+        if suggestion is not None and suggestion.mode == ComplexityMode.SINGLE_AGENT:
+            console.print(
+                "[yellow]Suggestion:[/yellow] this goal looks simple enough for a single-agent session "
+                f"({suggestion.reason})."
+            )
+    except Exception:
+        logger.debug("Failed to compute inline goal execution suggestion", exc_info=True)
 
     # Pre-flight: verify binary, API key, and port before touching anything.
     with Status("[bold]Running pre-flight checks...[/bold]", console=console):

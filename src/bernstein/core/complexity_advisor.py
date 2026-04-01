@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -70,6 +71,15 @@ class ComplexityAdvice:
     file_count: int
     cross_file_dep_score: float
     force_parallel: bool = False
+
+
+@dataclass(frozen=True)
+class GoalExecutionSuggestion:
+    """User-facing recommendation for a simple inline goal."""
+
+    mode: ComplexityMode
+    reason: str
+    matched_files: tuple[str, ...] = ()
 
 
 class ComplexityAdvisor:
@@ -154,6 +164,39 @@ class ComplexityAdvisor:
             file_count=file_count,
             cross_file_dep_score=dep_score,
         )
+
+
+_SIMPLE_GOAL_PATTERNS: tuple[str, ...] = (
+    "typo",
+    "readme",
+    "comment",
+    "format",
+    "lint",
+    "doc",
+    "docs",
+)
+_FILE_PATTERN = re.compile(r"\b(?:readme(?:\.[a-z0-9]+)?|[a-z0-9_.-]+\.[a-z0-9]+)\b", re.IGNORECASE)
+
+
+def suggest_goal_execution_mode(goal: str) -> GoalExecutionSuggestion | None:
+    """Return a single-agent suggestion for obviously simple inline goals."""
+    normalized = " ".join(goal.strip().split())
+    if not normalized:
+        return None
+
+    lowered = normalized.lower()
+    matched_files = tuple(dict.fromkeys(match.group(0) for match in _FILE_PATTERN.finditer(normalized)))
+    simple_signal = any(pattern in lowered for pattern in _SIMPLE_GOAL_PATTERNS)
+    single_file = len(matched_files) == 1
+    short_goal = len(normalized.split()) <= 8
+
+    if simple_signal and single_file and short_goal:
+        return GoalExecutionSuggestion(
+            mode=ComplexityMode.SINGLE_AGENT,
+            reason=f"simple low-scope goal touching one file ({matched_files[0]})",
+            matched_files=matched_files,
+        )
+    return None
 
 
 # -----------------------------------------------------------------------
