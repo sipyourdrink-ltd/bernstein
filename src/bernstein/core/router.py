@@ -755,7 +755,12 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
         effort = task.effort or "high"
         logger.info(
             "Task %s: Selected %s/%s (manager override: role=%s, priority=%d, complexity=%s)",
-            task.id, model, effort, task.role, task.priority, task.complexity.value,
+            task.id,
+            model,
+            effort,
+            task.role,
+            task.priority,
+            task.complexity.value,
         )
         return ModelConfig(model=model, effort=effort)
 
@@ -763,28 +768,36 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
     if task.role == "manager":
         logger.info(
             "Task %s: Selected opus/max (high-stakes role: manager, priority=%d)",
-            task.id, task.priority,
+            task.id,
+            task.priority,
         )
         return ModelConfig(model="opus", effort="max")
 
     if task.role in ("architect", "security"):
         logger.info(
             "Task %s: Selected opus/max (high-stakes role: %s, priority=%d)",
-            task.id, task.role, task.priority,
+            task.id,
+            task.role,
+            task.priority,
         )
         return ModelConfig(model="opus", effort="max")
 
     if task.scope == Scope.LARGE:
         logger.info(
             "Task %s: Selected opus/max (large scope: %s, priority=%d, complexity=%s)",
-            task.id, task.scope.value, task.priority, task.complexity.value,
+            task.id,
+            task.scope.value,
+            task.priority,
+            task.complexity.value,
         )
         return ModelConfig(model="opus", effort="max")
 
     if task.priority == 1:
         logger.info(
             "Task %s: Selected opus/max (critical priority: role=%s, complexity=%s)",
-            task.id, task.role, task.complexity.value,
+            task.id,
+            task.role,
+            task.complexity.value,
         )
         return ModelConfig(model="opus", effort="max")
 
@@ -796,7 +809,12 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
         l1_cfg = get_l1_model_config()
         logger.info(
             "Task %s: Selected %s/%s (L1 fast-path: role=%s, scope=%s, %s)",
-            task.id, l1_cfg.model, l1_cfg.effort, task.role, task.scope.value, classification.reason,
+            task.id,
+            l1_cfg.model,
+            l1_cfg.effort,
+            task.role,
+            task.scope.value,
+            classification.reason,
         )
         return l1_cfg
 
@@ -812,7 +830,12 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
             effort = "max" if selected == "opus" else "high"
             logger.info(
                 "Task %s: Selected %s/%s (bandit: role=%s, complexity=%s, priority=%d)",
-                task.id, selected, effort, task.role, task.complexity.value, task.priority,
+                task.id,
+                selected,
+                effort,
+                task.role,
+                task.complexity.value,
+                task.priority,
             )
             return ModelConfig(model=selected, effort=effort)
         except Exception as exc:
@@ -822,13 +845,19 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
     if task.complexity == Complexity.HIGH:
         logger.info(
             "Task %s: Selected sonnet/high (heuristic fallback: complexity=%s, role=%s, priority=%d)",
-            task.id, task.complexity.value, task.role, task.priority,
+            task.id,
+            task.complexity.value,
+            task.role,
+            task.priority,
         )
         return ModelConfig(model="sonnet", effort="high")
 
     logger.info(
         "Task %s: Selected sonnet/high (default: role=%s, complexity=%s, priority=%d)",
-        task.id, task.role, task.complexity.value, task.priority,
+        task.id,
+        task.role,
+        task.complexity.value,
+        task.priority,
     )
     return ModelConfig(model="sonnet", effort="high")
 

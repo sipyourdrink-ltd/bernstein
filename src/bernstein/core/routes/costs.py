@@ -321,15 +321,17 @@ async def export_costs(request: Request, format: str = "json") -> Response:
             continue
         total_spent += tracker.spent_usd
         for u in tracker.usages:
-            all_usages.append({
-                "run_id": run_id,
-                "timestamp": time.time(),
-                "agent_id": u.agent_id,
-                "model": u.model,
-                "cost_usd": round(u.cost_usd, 6),
-                "input_tokens": u.input_tokens,
-                "output_tokens": u.output_tokens,
-            })
+            all_usages.append(
+                {
+                    "run_id": run_id,
+                    "timestamp": time.time(),
+                    "agent_id": u.agent_id,
+                    "model": u.model,
+                    "cost_usd": round(u.cost_usd, 6),
+                    "input_tokens": u.input_tokens,
+                    "output_tokens": u.output_tokens,
+                }
+            )
 
     if format == "csv":
         output = io.StringIO()
@@ -366,12 +368,14 @@ async def forecast_costs(request: Request) -> JSONResponse:
     costs_dir = sdd_dir / "runtime" / "costs"
 
     if not costs_dir.exists():
-        return JSONResponse(content={
-            "forecast_next_hour_usd": 0.0,
-            "burn_rate_usd_per_minute": 0.0,
-            "confidence": "low",
-            "data_points": 0,
-        })
+        return JSONResponse(
+            content={
+                "forecast_next_hour_usd": 0.0,
+                "burn_rate_usd_per_minute": 0.0,
+                "confidence": "low",
+                "data_points": 0,
+            }
+        )
 
     cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
 
@@ -390,13 +394,15 @@ async def forecast_costs(request: Request) -> JSONResponse:
 
     if len(recent_costs) < 2:
         # Not enough data for forecasting
-        return JSONResponse(content={
-            "forecast_next_hour_usd": 0.0,
-            "burn_rate_usd_per_minute": 0.0,
-            "confidence": "low",
-            "data_points": len(recent_costs),
-            "message": "Insufficient data for forecasting",
-        })
+        return JSONResponse(
+            content={
+                "forecast_next_hour_usd": 0.0,
+                "burn_rate_usd_per_minute": 0.0,
+                "confidence": "low",
+                "data_points": len(recent_costs),
+                "message": "Insufficient data for forecasting",
+            }
+        )
 
     # Calculate burn rate from most recent runs
     # Sort by timestamp
@@ -417,15 +423,17 @@ async def forecast_costs(request: Request) -> JSONResponse:
     else:
         confidence = "low"
 
-    return JSONResponse(content={
-        "forecast_next_hour_usd": round(forecast_next_hour, 4),
-        "burn_rate_usd_per_minute": round(burn_rate_per_minute, 6),
-        "burn_rate_usd_per_hour": round(forecast_next_hour, 4),
-        "current_total_usd": round(total_spent, 4),
-        "confidence": confidence,
-        "data_points": len(recent_costs),
-        "time_span_minutes": round(time_span / 60.0, 1),
-    })
+    return JSONResponse(
+        content={
+            "forecast_next_hour_usd": round(forecast_next_hour, 4),
+            "burn_rate_usd_per_minute": round(burn_rate_per_minute, 6),
+            "burn_rate_usd_per_hour": round(forecast_next_hour, 4),
+            "current_total_usd": round(total_spent, 4),
+            "confidence": confidence,
+            "data_points": len(recent_costs),
+            "time_span_minutes": round(time_span / 60.0, 1),
+        }
+    )
 
 
 @router.get("/costs/compare")
@@ -440,16 +448,19 @@ async def compare_model_costs(request: Request) -> JSONResponse:
     costs_dir = sdd_dir / "runtime" / "costs"
 
     # Get current spending by model
-    model_costs: dict[str, dict[str, Any]] = defaultdict(lambda: {
-        "total_cost_usd": 0.0,
-        "total_tokens": 0,
-        "invocation_count": 0,
-    })
+    model_costs: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            "total_cost_usd": 0.0,
+            "total_tokens": 0,
+            "invocation_count": 0,
+        }
+    )
 
     if costs_dir.exists():
         cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         for cost_file in cost_files[:3]:  # Last 3 runs
             from bernstein.core.cost_tracker import CostTracker
+
             tracker = CostTracker.load(sdd_dir, cost_file.stem)
             if tracker is None:
                 continue
@@ -465,15 +476,19 @@ async def compare_model_costs(request: Request) -> JSONResponse:
     for model, data in model_costs_typed.items():
         avg_tokens = data["total_tokens"] / max(1, data["invocation_count"])
 
-        comparison.append({
-            "model": model,
-            "actual_cost_usd": round(data["total_cost_usd"], 4),
-            "total_tokens": data["total_tokens"],
-            "invocations": data["invocation_count"],
-            "avg_tokens_per_invocation": round(avg_tokens, 0),
-        })
+        comparison.append(
+            {
+                "model": model,
+                "actual_cost_usd": round(data["total_cost_usd"], 4),
+                "total_tokens": data["total_tokens"],
+                "invocations": data["invocation_count"],
+                "avg_tokens_per_invocation": round(avg_tokens, 0),
+            }
+        )
 
-    return JSONResponse(content={
-        "model_comparison": comparison,
-        "total_models_used": len(comparison),
-    })
+    return JSONResponse(
+        content={
+            "model_comparison": comparison,
+            "total_models_used": len(comparison),
+        }
+    )
