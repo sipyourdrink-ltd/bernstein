@@ -604,15 +604,17 @@ async def token_efficiency(request: Request) -> JSONResponse:
     efficiency_ranking = []
     for model, stats in model_stats.items():
         lines = max(1, stats["lines_changed"])
-        efficiency_ranking.append({
-            "model": model,
-            "total_tokens": stats["total_tokens"],
-            "total_cost_usd": round(stats["total_cost_usd"], 4),
-            "invocations": stats["invocations"],
-            "tokens_per_line": round(stats["total_tokens"] / lines, 1),
-            "cost_per_line": round(stats["total_cost_usd"] / lines, 6),
-            "lines_changed": stats["lines_changed"],
-        })
+        efficiency_ranking.append(
+            {
+                "model": model,
+                "total_tokens": stats["total_tokens"],
+                "total_cost_usd": round(stats["total_cost_usd"], 4),
+                "invocations": stats["invocations"],
+                "tokens_per_line": round(stats["total_tokens"] / lines, 1),
+                "cost_per_line": round(stats["total_cost_usd"] / lines, 6),
+                "lines_changed": stats["lines_changed"],
+            }
+        )
 
     # Rank by tokens per line (lower is better)
     efficiency_ranking.sort(key=lambda x: x["tokens_per_line"])

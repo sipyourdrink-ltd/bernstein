@@ -20,7 +20,7 @@ _current_correlation_id: ContextVar[str | None] = ContextVar(
 @dataclass
 class CorrelationContext:
     """Correlation context for tracing workflow execution.
-    
+
     Attributes:
         correlation_id: Unique identifier for the workflow instance.
         task_id: Task being processed.
@@ -28,6 +28,7 @@ class CorrelationContext:
         gate_name: Quality gate name (if applicable).
         stage: Current workflow stage.
     """
+
     correlation_id: str
     task_id: str
     agent_id: str | None = None
@@ -82,7 +83,7 @@ class CorrelationContext:
 
 def generate_correlation_id() -> str:
     """Generate a new correlation ID.
-    
+
     Returns:
         UUID-based correlation ID string.
     """
@@ -91,7 +92,7 @@ def generate_correlation_id() -> str:
 
 def get_current_correlation_id() -> str | None:
     """Get current correlation ID from context.
-    
+
     Returns:
         Current correlation ID or None.
     """
@@ -100,7 +101,7 @@ def get_current_correlation_id() -> str | None:
 
 def set_correlation_id(correlation_id: str) -> None:
     """Set correlation ID in context.
-    
+
     Args:
         correlation_id: Correlation ID to set.
     """
@@ -109,10 +110,10 @@ def set_correlation_id(correlation_id: str) -> None:
 
 def create_context(task_id: str) -> CorrelationContext:
     """Create new correlation context for a task.
-    
+
     Args:
         task_id: Task identifier.
-        
+
     Returns:
         New CorrelationContext.
     """
@@ -130,10 +131,10 @@ class CorrelationFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         """Add correlation ID to log record.
-        
+
         Args:
             record: Log record to filter.
-            
+
         Returns:
             True to allow record through.
         """

@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ChecklistItem:
     """A single checklist item for code review."""
+
     id: str
     category: Literal["naming", "error_handling", "logging", "tests", "security", "performance", "documentation"]
     description: str
@@ -24,6 +27,7 @@ class ChecklistItem:
 @dataclass
 class ReviewChecklist:
     """Configurable review checklist for pre-merge validation."""
+
     items: list[ChecklistItem] = field(default_factory=list)
 
     @classmethod
@@ -131,13 +135,15 @@ class ReviewChecklist:
         """Deserialize checklist from dictionary."""
         items = []
         for item_data in data.get("items", []):
-            items.append(ChecklistItem(
-                id=item_data.get("id", ""),
-                category=item_data.get("category", "naming"),
-                description=item_data.get("description", ""),
-                required=item_data.get("required", True),
-                auto_check=item_data.get("auto_check", False),
-            ))
+            items.append(
+                ChecklistItem(
+                    id=item_data.get("id", ""),
+                    category=item_data.get("category", "naming"),
+                    description=item_data.get("description", ""),
+                    required=item_data.get("required", True),
+                    auto_check=item_data.get("auto_check", False),
+                )
+            )
         return cls(items=items)
 
     def load_from_file(self, path: Path) -> None:
@@ -152,6 +158,7 @@ class ReviewChecklist:
             else:
                 # Try YAML
                 import yaml
+
                 data = yaml.safe_load(path.read_text(encoding="utf-8"))
 
             loaded = self.from_dict(data)
@@ -169,6 +176,7 @@ class ReviewChecklist:
             path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         else:
             import yaml
+
             path.write_text(yaml.dump(data), encoding="utf-8")
 
         logger.info("Saved review checklist to %s", path)
@@ -177,6 +185,7 @@ class ReviewChecklist:
 @dataclass
 class ReviewResult:
     """Result of a review checklist check."""
+
     item_id: str
     passed: bool
     auto_checked: bool
@@ -189,12 +198,12 @@ def run_review_checklist(
     diff_text: str = "",
 ) -> list[ReviewResult]:
     """Run review checklist against code changes.
-    
+
     Args:
         workdir: Project working directory.
         checklist: Review checklist to use. Defaults to default checklist.
         diff_text: Git diff text for auto-checking.
-        
+
     Returns:
         List of ReviewResult for each checklist item.
     """
@@ -207,20 +216,24 @@ def run_review_checklist(
         # Auto-check items that support it
         if item.auto_check and diff_text:
             passed, notes = _auto_check_item(item, diff_text, workdir)
-            results.append(ReviewResult(
-                item_id=item.id,
-                passed=passed,
-                auto_checked=True,
-                notes=notes,
-            ))
+            results.append(
+                ReviewResult(
+                    item_id=item.id,
+                    passed=passed,
+                    auto_checked=True,
+                    notes=notes,
+                )
+            )
         else:
             # Manual check required
-            results.append(ReviewResult(
-                item_id=item.id,
-                passed=False,  # Requires manual review
-                auto_checked=False,
-                notes="Requires manual review",
-            ))
+            results.append(
+                ReviewResult(
+                    item_id=item.id,
+                    passed=False,  # Requires manual review
+                    auto_checked=False,
+                    notes="Requires manual review",
+                )
+            )
 
     return results
 
@@ -231,12 +244,12 @@ def _auto_check_item(
     workdir: Path,
 ) -> tuple[bool, str]:
     """Auto-check a single checklist item.
-    
+
     Args:
         item: Checklist item to check.
         diff_text: Git diff text.
         workdir: Project working directory.
-        
+
     Returns:
         Tuple of (passed, notes).
     """
