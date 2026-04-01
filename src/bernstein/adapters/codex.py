@@ -34,8 +34,11 @@ class CodexAdapter(CLIAdapter):
         log_path.parent.mkdir(parents=True, exist_ok=True)
         output_path = workdir / ".sdd" / "runtime" / f"{session_id}.last-message.txt"
 
-        if not os.environ.get("OPENAI_API_KEY"):
-            logger.warning("CodexAdapter: OPENAI_API_KEY is not set — spawn may fail or rely on existing CLI auth")
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            logger.warning(
+                "CodexAdapter: OPENAI_API_KEY is not set — spawn will fail"
+            )
 
         cmd = [
             "codex",
