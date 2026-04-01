@@ -265,7 +265,7 @@ def _parse_category(value: object) -> ChecklistCategory:
         "performance",
         "documentation",
     }:
-        return cast(ChecklistCategory, value)
+        return cast("ChecklistCategory", value)
     return _DEFAULT_CATEGORY
 
 
