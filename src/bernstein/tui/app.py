@@ -197,6 +197,7 @@ class BernsteinApp(App[None]):
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
         Binding("j", "cursor_down", "Down", show=False),
+        Binding("?", "show_help", "Help", show=True),
     ]
 
     def __init__(self, *, poll_interval: float = _POLL_INTERVAL) -> None:
@@ -336,6 +337,43 @@ class BernsteinApp(App[None]):
             action_bar = self.query_one("#action-bar", ActionBar)
             action_bar.display = False
             self._action_bar_visible = False
+
+    def action_show_help(self) -> None:
+        """Show help overlay with keyboard shortcuts (bound to '?')."""
+        from textual.screen import ModalScreen
+        from textual.widgets import Static
+
+        class HelpScreen(ModalScreen[None]):
+            """Help overlay showing keyboard shortcuts."""
+
+            BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "dismiss", "Close")]
+
+            def compose(self) -> ComposeResult:
+                help_text = """
+┌─────────────────────────────────────────────┐
+│         Bernstein TUI Keyboard Shortcuts    │
+├─────────────────────────────────────────────┤
+│  ?  Show this help                          │
+│  q  Quit                                    │
+│  r  Refresh                                 │
+│  S  Hard stop                               │
+│                                             │
+│  ENTER  Open action bar                     │
+│  ESC    Close action bar                    │
+│                                             │
+│  s  Spawn now                               │
+│  p  Prioritize task                         │
+│  k  Kill agent                              │
+│  x  Cancel task                              │
+│  t  Retry task                               │
+│                                             │
+│  ↑/j  Move up                               │
+│  ↓    Move down                             │
+└─────────────────────────────────────────────┘
+"""
+                yield Static(help_text, id="help-text")
+
+        self.push_screen(HelpScreen())
 
     def action_kill_agent(self) -> None:
         """Kill the agent for the currently selected task."""
