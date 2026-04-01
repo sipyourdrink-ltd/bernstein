@@ -7,7 +7,7 @@ import json
 import time
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
@@ -691,13 +691,13 @@ async def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Requ
     return node_to_response(node)
 
 
-@router.delete("/cluster/nodes/{node_id}", status_code=200)
-async def unregister_node(node_id: str, request: Request) -> dict[str, str]:
+@router.delete("/cluster/nodes/{node_id}", status_code=204)
+async def unregister_node(node_id: str, request: Request) -> Response:
     """Remove a node from the cluster."""
     node_registry = _get_node_registry(request)
     if not node_registry.unregister(node_id):
         raise HTTPException(status_code=404, detail=f"Node '{node_id}' not found")
-    return {"status": "ok"}
+    return Response(status_code=204)
 
 
 @router.get("/cluster/nodes", response_model=list[NodeResponse])

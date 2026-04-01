@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import TypedDict, cast
 
 import click
 from rich.console import Console
@@ -16,25 +17,37 @@ logger = logging.getLogger(__name__)
 USERS_DIR = Path(".sdd/auth/users")
 
 
+class UserRecord(TypedDict):
+    """Serialized RBAC user record stored under ``.sdd/auth/users``."""
+
+    id: str
+    email: str
+    display_name: str
+    role: str
+    groups: list[str]
+    created_at: float
+    active: bool
+
+
 def _ensure_users_dir() -> Path:
     USERS_DIR.mkdir(parents=True, exist_ok=True)
     return USERS_DIR
 
 
-def _load_users() -> list[dict]:
+def _load_users() -> list[UserRecord]:
     """Load all user JSON files from the users directory."""
     users_dir = _ensure_users_dir()
-    users = []
+    users: list[UserRecord] = []
     for f in sorted(users_dir.glob("*.json")):
         try:
-            data = json.loads(f.read_text())
+            data = cast("UserRecord", json.loads(f.read_text()))
             users.append(data)
         except (json.JSONDecodeError, OSError):
             logger.warning("Skipping invalid user file: %s", f)
     return users
 
 
-def _save_user(user: dict) -> None:
+def _save_user(user: UserRecord) -> None:
     """Save a user to the users directory."""
     users_dir = _ensure_users_dir()
     filepath = users_dir / f"{user['id']}.json"
@@ -94,7 +107,7 @@ def add_user(email: str, role: str, name: str) -> None:
         console.print(f"[yellow]⚠[/yellow] User with email [bold]{email}[/bold] already exists.")
         return
 
-    user = {
+    user: UserRecord = {
         "id": user_id,
         "email": email,
         "display_name": name or email.split("@")[0],
