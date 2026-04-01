@@ -2825,9 +2825,19 @@ def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
             continue
         targets.append(NotificationTarget(type="webhook", url=url, events=events))
 
+    smtp_cfg = getattr(seed, "smtp", None)
+    if smtp_cfg:
+        targets.append(
+            NotificationTarget(
+                type="email",
+                url="",
+                events=["task.completed", "task.failed", "approval.needed", "run.completed"],
+            )
+        )
+
     if not targets:
         return None
-    return NotificationManager(targets)
+    return NotificationManager(targets, smtp_config=smtp_cfg)
 
 
 if __name__ == "__main__":

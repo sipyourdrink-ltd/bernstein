@@ -25,10 +25,17 @@ Events
 from __future__ import annotations
 
 import logging
+import smtplib
+from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
+
+if TYPE_CHECKING:
+    from bernstein.core.models import SmtpConfig
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +85,7 @@ class NotificationTarget:
         chat_id: Telegram chat/channel ID (required when ``type == "telegram"``).
     """
 
-    type: Literal["slack", "discord", "telegram", "webhook"]
+    type: Literal["slack", "discord", "telegram", "webhook", "email"]
     url: str
     events: list[str] = field(default_factory=list[str])
     token: str | None = None
@@ -227,10 +234,16 @@ class NotificationManager:
 
     Args:
         targets: List of notification destinations to dispatch to.
+        smtp_config: Optional SMTP configuration for email targets.
     """
 
-    def __init__(self, targets: list[NotificationTarget]) -> None:
+    def __init__(
+        self,
+        targets: list[NotificationTarget],
+        smtp_config: SmtpConfig | None = None,
+    ) -> None:
         self._targets = targets
+        self._smtp_config = smtp_config
 
     def notify(self, event: str, payload: NotificationPayload) -> None:
         """Send notifications to all targets subscribed to ``event``.
@@ -274,6 +287,29 @@ class NotificationManager:
                     timeout=10.0,
                 )
                 logger.info("Telegram notification sent: event=%s", payload.event)
+
+            elif target.type == "email" and self._smtp_config:
+                if not self._smtp_config.to_addresses:
+                    return
+
+                msg = MIMEMultipart()
+                msg["From"] = self._smtp_config.from_address
+                msg["To"] = ", ".join(self._smtp_config.to_addresses)
+                msg["Subject"] = payload.title
+
+                body = f"Event: {payload.event}\n\n{payload.body}\n"
+                for k, v in payload.metadata.items():
+                    body += f"\n{k}: {v}"
+
+                msg.attach(MIMEText(body, "plain"))
+
+                with smtplib.SMTP(self._smtp_config.host, self._smtp_config.port) as server:
+                    with suppress(smtplib.SMTPNotSupportedError):
+                        server.starttls()
+                    if self._smtp_config.username and self._smtp_config.password:
+                        server.login(self._smtp_config.username, self._smtp_config.password)
+                    server.send_message(msg)
+                    logger.info("Email notification sent: event=%s", payload.event)
 
             else:  # generic webhook
                 body = format_webhook(payload)

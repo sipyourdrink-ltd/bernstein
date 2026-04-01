@@ -775,6 +775,18 @@ class ApprovalWorkflowConfig:
 
 
 @dataclass
+class SmtpConfig:
+    """SMTP configuration for email notifications (T207)."""
+
+    host: str
+    port: int
+    username: str
+    password: str
+    from_address: str
+    to_addresses: list[str]
+
+
+@dataclass
 class OrchestratorConfig:
     """Configuration for the orchestrator main loop.
 
@@ -790,10 +802,12 @@ class OrchestratorConfig:
         max_task_retries: Max times a task is re-queued after agent crash (0 = no retry).
         cross_model_verify: Cross-model verification config (None = disabled).
         telemetry: OpenTelemetry configuration.
+        smtp: SMTP configuration for email notifications.
     """
 
     max_agents: int = 6
     poll_interval_s: int = 3
+    smtp: SmtpConfig | None = None
     heartbeat_timeout_s: int = 900  # 15 min — generous until agents implement heartbeat writes
     heartbeat_enabled: bool = True
     max_agent_runtime_s: int = 1800  # 30 min wall-clock kill (agents need time for complex tasks)

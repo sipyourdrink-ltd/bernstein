@@ -23,6 +23,7 @@ from bernstein.core.models import (
     ClusterTopology,
     Complexity,
     Scope,
+    SmtpConfig,
     Task,
     TaskStatus,
     TestAgentConfig,
@@ -148,6 +149,7 @@ class SeedConfig:
     max_cost_per_agent: float = 0.0
     webhooks: tuple[WebhookConfig, ...] = ()
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
+    smtp: SmtpConfig | None = None
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -279,6 +281,37 @@ def _normalize_webhook_event(event: str, field_name: str) -> str:
         allowed = ", ".join(sorted(_ALLOWED_WEBHOOK_EVENTS | set(_WEBHOOK_EVENT_ALIASES)))
         raise SeedError(f"{field_name} contains unsupported event {event!r}. Allowed: {allowed}")
     return normalized
+
+
+def _parse_smtp(raw: object) -> SmtpConfig | None:
+    """Parse SMTP configuration for email notifications."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError(f"smtp must be a mapping, got: {type(raw).__name__}")
+
+    data = cast("dict[str, object]", raw)
+    host = data.get("host")
+    if not isinstance(host, str) or not host:
+        raise SeedError("smtp.host is required and must be a string")
+
+    port = data.get("port")
+    if not isinstance(port, int):
+        raise SeedError("smtp.port is required and must be an integer")
+
+    username = data.get("username", "")
+    password = data.get("password", "")
+    from_addr = data.get("from_address", "")
+    to_addrs = _parse_string_list(data.get("to_addresses"), "smtp.to_addresses")
+
+    return SmtpConfig(
+        host=host,
+        port=port,
+        username=str(username),
+        password=str(password),
+        from_address=str(from_addr),
+        to_addresses=list(to_addrs),
+    )
 
 
 def parse_seed(path: Path) -> SeedConfig:
@@ -860,6 +893,7 @@ def parse_seed(path: Path) -> SeedConfig:
         visual=visual,
         batch=batch,
         test_agent=test_agent,
+        smtp=_parse_smtp(data.get("smtp")),
     )
 
 
