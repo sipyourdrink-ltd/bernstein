@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -305,6 +305,27 @@ class TestMetricsRecording:
         assert line["result"] == "flagged"
         assert line["reason"] == "operator override"
         assert line["actor"] == "cli"
+
+    def test_gate_execution_creates_telemetry_span(self, tmp_path: Path) -> None:
+        config = QualityGatesConfig(
+            enabled=True, lint=True, lint_command="exit 0", type_check=False, tests=False, pii_scan=False
+        )
+        task = _make_task(id="T-span")
+        fake_span = MagicMock()
+        fake_ctx = MagicMock()
+        fake_ctx.__enter__.return_value = fake_span
+        fake_ctx.__exit__.return_value = None
+
+        with patch("bernstein.core.gate_runner.start_span", return_value=fake_ctx) as mock_start_span:
+            result = run_quality_gates(task, tmp_path, tmp_path, config)
+
+        assert result.passed
+        mock_start_span.assert_called_once()
+        attrs = mock_start_span.call_args.args[1]
+        assert attrs["task.id"] == "T-span"
+        assert attrs["quality_gate.name"] == "lint"
+        fake_span.set_attribute.assert_any_call("quality_gate.status", "pass")
+        fake_span.set_attribute.assert_any_call("quality_gate.blocked", False)
 
     def test_get_quality_gate_stats_empty(self, tmp_path: Path) -> None:
         stats = get_quality_gate_stats(tmp_path)
