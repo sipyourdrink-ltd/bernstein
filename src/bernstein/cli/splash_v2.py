@@ -17,7 +17,9 @@ from typing import Any
 
 from rich.console import Console
 
+from bernstein.cli.crt_effects import power_on_effect
 from bernstein.cli.gradients import BERNSTEIN_COLORS, linear_gradient
+from bernstein.cli.terminal_caps import TerminalCaps, detect_capabilities
 from bernstein.core.visual_config import VisualConfig
 
 
@@ -53,10 +55,12 @@ class SplashRenderer:
         self,
         console: Console | None = None,
         *,
+        caps: TerminalCaps | None = None,
         skip_animation: bool = False,
         config: VisualConfig | None = None,
     ) -> None:
         self._console = console or Console()
+        self._caps = caps or detect_capabilities()
         self._skip = skip_animation
         self._config = config or VisualConfig()
 
@@ -64,10 +68,37 @@ class SplashRenderer:
         if not self._config.splash:
             return
         ctx = context or SplashContext()
-        if not sys.stdout.isatty() or self._skip or os.environ.get("CI"):
-            self._render_fallback(ctx)
-            return
+        tier = self._select_tier()
+        if self._skip or os.environ.get("CI"):
+            tier = "tier3"
+        if tier == "tier1":
+            self._render_tier1(ctx)
+        elif tier == "tier2":
+            self._render_tier2(ctx)
+        else:
+            self._render_tier3(ctx)
+
+    def _select_tier(self) -> str:
+        if self._config.splash_tier != "auto":
+            return self._config.splash_tier
+        if not self._caps.is_tty:
+            return "tier3"
+        if self._caps.supports_kitty or self._caps.supports_iterm2 or self._caps.supports_sixel:
+            return "tier1"
+        if self._caps.supports_truecolor or self._caps.supports_256color:
+            return "tier2"
+        return "tier3"
+
+    def _render_tier1(self, ctx: SplashContext) -> None:
+        if self._config.crt_effects and not self._skip:
+            power_on_effect()
         self._render_premium(ctx)
+
+    def _render_tier2(self, ctx: SplashContext) -> None:
+        self._render_premium(ctx)
+
+    def _render_tier3(self, ctx: SplashContext) -> None:
+        self._render_fallback(ctx)
 
     def _render_premium(self, ctx: SplashContext) -> None:
         w, h = shutil.get_terminal_size((80, 24))

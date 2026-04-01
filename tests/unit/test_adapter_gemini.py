@@ -301,7 +301,24 @@ class TestGeminiWarnings:
                 model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
                 session_id="warn-missing-key",
             )
-        assert "neither GOOGLE_API_KEY nor GEMINI_API_KEY is set" in caplog.text
+        assert "neither GOOGLE_API_KEY nor GEMINI_API_KEY is set — spawn will fail" in caplog.text
+
+    def test_populates_gemini_api_key_from_google_key(self, tmp_path: Path) -> None:
+        adapter = GeminiAdapter()
+        proc_mock = _make_popen_mock(pid=302)
+        with (
+            patch("bernstein.adapters.gemini.subprocess.Popen", return_value=proc_mock) as popen,
+            patch.dict("os.environ", {"GOOGLE_API_KEY": "AIza-test", "PATH": "/usr/bin"}, clear=True),
+        ):
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                session_id="pop-key",
+            )
+        env = popen.call_args.kwargs.get("env", {})
+        assert env.get("GEMINI_API_KEY") == "AIza-test"
+        assert env.get("GOOGLE_API_KEY") == "AIza-test"
 
 
 # ---------------------------------------------------------------------------

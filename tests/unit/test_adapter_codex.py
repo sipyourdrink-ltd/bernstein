@@ -311,7 +311,7 @@ class TestCodexWarningsAndFastExit:
                 model_config=ModelConfig(model="o3", effort="high"),
                 session_id="warn-missing-key",
             )
-        assert "OPENAI_API_KEY is not set" in caplog.text
+        assert "OPENAI_API_KEY is not set — spawn will fail" in caplog.text
 
     def test_fast_exit_rate_limit_raises(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()

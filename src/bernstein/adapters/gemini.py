@@ -35,7 +35,9 @@ class GeminiAdapter(CLIAdapter):
 
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            logger.warning("GeminiAdapter: neither GOOGLE_API_KEY nor GEMINI_API_KEY is set — spawn will likely fail")
+            logger.warning(
+                "GeminiAdapter: neither GOOGLE_API_KEY nor GEMINI_API_KEY is set — spawn will fail"
+            )
 
         cmd = [
             "gemini",
@@ -66,6 +68,9 @@ class GeminiAdapter(CLIAdapter):
                 "GOOGLE_APPLICATION_CREDENTIALS",
             ]
         )
+        if api_key and not env.get("GEMINI_API_KEY"):
+            env["GEMINI_API_KEY"] = api_key
+
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
-import json
+import re
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -31,62 +33,97 @@ _DEFAULT_SMOKE_MODELS: dict[str, str] = {
 
 
 @click.command("test-adapter")
-@click.argument("adapter_name")
+@click.option("--adapter", "adapter_name", required=True, help="Adapter to test (e.g. gemini, codex).")
+@click.option("--task", "prompt", required=True, help="Task for the adapter to execute.")
 @click.option("--model", default=None, help="Model to use for the smoke run.")
-@click.option("--prompt", default="Reply with a one-line readiness confirmation.", show_default=True)
-@click.option(
-    "--workdir",
-    type=click.Path(path_type=Path, file_okay=False),
-    default=Path("."),
-    show_default=True,
-    help="Working directory for the spawned adapter.",
-)
-@click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
-def test_adapter(adapter_name: str, model: str | None, prompt: str, workdir: Path, as_json: bool) -> None:
-    """Spawn a single headless adapter run and verify it stays alive past startup."""
+@click.option("--timeout", type=int, default=120, help="Wait up to N seconds for exit.")
+def test_adapter(adapter_name: str, prompt: str, model: str | None, timeout: int) -> None:
+    """Spawn a single headless adapter run, wait for exit, and verify output."""
     resolved_model = model or _DEFAULT_SMOKE_MODELS.get(adapter_name, "sonnet")
     adapter = get_adapter(adapter_name)
-    session_id = f"{adapter_name}-smoke-{int(time.time())}"
-    result: Any = None
+    timestamp = int(time.time())
+    session_id = f"test-{adapter_name}-{timestamp}"
 
+    # 1. Create temporary worktree
+    worktree = Path.cwd() / ".sdd" / "worktrees" / session_id
+    worktree.mkdir(parents=True, exist_ok=True)
+
+    # Adapters often expect these dirs to exist
+    (worktree / ".sdd" / "runtime").mkdir(parents=True, exist_ok=True)
+
+    result: Any = None
     try:
+        console.print(f"[bold]Testing adapter:[/bold] {adapter_name} (model={resolved_model})")
+        console.print(f"[dim]Workdir: {worktree}[/dim]")
+        console.print(f"[dim]Task: {prompt}[/dim]\n")
+
+        # 2. Spawn
         result = adapter.spawn(
             prompt=prompt,
-            workdir=workdir.resolve(),
+            workdir=worktree,
             model_config=ModelConfig(model=resolved_model, effort="medium"),
             session_id=session_id,
-            timeout_seconds=30,
+            timeout_seconds=timeout,
         )
-        payload = {
-            "ok": True,
-            "adapter": adapter_name,
-            "model": resolved_model,
-            "session_id": session_id,
-            "pid": result.pid,
-            "log_path": str(result.log_path),
-        }
-        if as_json:
-            click.echo(json.dumps(payload, indent=2))
+
+        # 3. Wait for exit
+        exit_code = "running"
+        if result.proc and hasattr(result.proc, "wait"):
+            try:
+                # Wait for the process to complete
+                exit_code = result.proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                console.print(f"[yellow]Timeout after {timeout}s — killing pid {result.pid}[/yellow]")
+                adapter.kill(result.pid)
+                exit_code = "timed out"
         else:
-            console.print(
-                f"[green]Adapter OK:[/green] {adapter_name} model={resolved_model} pid={result.pid} "
-                f"log={result.log_path}"
-            )
+            console.print("[yellow]Warning: adapter did not return a waitable process handle.[/yellow]")
+
+        # 4. Print results
+        console.print(f"\n[bold]Exit code:[/bold] {exit_code}")
+
+        # Last 40 lines of log
+        if result.log_path.exists():
+            lines = CLIAdapter._read_last_lines(result.log_path, n=40)
+            console.print("\n[bold]─── Last 40 lines of log ──────────────────────────────────────────[/bold]")
+            if not lines:
+                console.print("[dim](log is empty)[/dim]")
+            for line in lines:
+                console.print(line)
+            console.print("[bold]───────────────────────────────────────────────────────────────────[/bold]\n")
+        else:
+            console.print(f"[red]Log file missing:[/red] {result.log_path}")
+
+        # 5. Check if expected file exists
+        # Basic heuristic: look for "file <path>" or "/tmp/<path>" in the prompt
+        match = re.search(r'(?:file|path)\s+([^\s\'"]+)', prompt, re.I)
+        if not match:
+            # Fallback: look for any absolute path or path-like string
+            match = re.search(r'(/[\w\.\-/]+|[\w\.\-/]+\.\w+)', prompt)
+
+        if match:
+            expected_path_str = match.group(1)
+            expected_path = Path(expected_path_str)
+            # If relative, it should be in the worktree
+            if not expected_path.is_absolute():
+                expected_path = worktree / expected_path
+
+            if expected_path.exists():
+                console.print(f"[green]✓ Expected file exists:[/green] {expected_path}")
+            else:
+                console.print(f"[red]✗ Expected file missing:[/red] {expected_path}")
+
     except Exception as exc:
-        payload = {
-            "ok": False,
-            "adapter": adapter_name,
-            "model": resolved_model,
-            "session_id": session_id,
-            "error": str(exc),
-        }
-        if as_json:
-            click.echo(json.dumps(payload, indent=2))
-        else:
-            console.print(f"[red]Adapter failed:[/red] {adapter_name} model={resolved_model} error={exc}")
+        console.print(f"[red]Error during adapter test:[/red] {exc}")
         raise SystemExit(1) from exc
     finally:
         if result is not None:
             CLIAdapter.cancel_timeout(result)
-            with contextlib.suppress(Exception):
-                adapter.kill(result.pid)
+
+        # 6. Cleanup
+        if worktree.exists():
+            try:
+                shutil.rmtree(worktree)
+                console.print(f"[dim]Cleaned up worktree: {worktree}[/dim]")
+            except Exception as e:
+                console.print(f"[yellow]Warning: failed to clean up {worktree}: {e}[/yellow]")
