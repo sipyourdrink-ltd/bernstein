@@ -208,21 +208,44 @@ def _health_components(request: Request, store: TaskStore) -> dict[str, dict[str
     runtime_dir = sdd_dir / "runtime" if isinstance(sdd_dir, Path) else None
 
     spawner_status = "unknown"
+    spawner_detail = ""
     spawner_pid: int | None = None
     if isinstance(runtime_dir, Path):
         spawner_pid = _read_pid(runtime_dir / "spawner.pid")
         if spawner_pid is not None:
-            spawner_status = "ok" if _is_pid_alive(spawner_pid) else "down"
+            if _is_pid_alive(spawner_pid):
+                spawner_status = "ok"
+                spawner_detail = f"pid={spawner_pid}"
+            else:
+                spawner_status = "down"
+                spawner_detail = "process not found"
+        else:
+            spawner_detail = "no pid file"
+    else:
+        spawner_detail = "sdd_dir not configured"
 
-    database_status = "ok" if hasattr(store, "list_tasks") else "unavailable"
+    database_status = "unavailable"
+    database_detail = ""
+    try:
+        jsonl_path = getattr(store, "jsonl_path", None)
+        if isinstance(jsonl_path, Path):
+            jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+            database_status = "ok"
+        elif hasattr(store, "list_tasks"):
+            database_status = "ok"
+            database_detail = "in-memory store"
+    except OSError as exc:
+        database_status = "down"
+        database_detail = str(exc)
+
     agent_count = int(getattr(store, "agent_count", 0))
-    agents_status = "ok" if agent_count > 0 else "idle"
+    agents_detail = f"{agent_count} active" if agent_count > 0 else "no active agents"
 
     return {
         "server": {"status": "ok"},
-        "spawner": {"status": spawner_status, "pid": spawner_pid},
-        "database": {"status": database_status, "type": store.__class__.__name__},
-        "agents": {"status": agents_status, "active": agent_count},
+        "spawner": {"status": spawner_status, "pid": spawner_pid, "detail": spawner_detail},
+        "database": {"status": database_status, "type": store.__class__.__name__, "detail": database_detail},
+        "agents": {"status": "ok", "active": agent_count, "detail": agents_detail},
     }
 
 
@@ -379,13 +402,13 @@ async def bandit_routing_stats(request: Request) -> JSONResponse:
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(request: Request) -> HealthResponse:
-    """Basic liveness check."""
+    """Liveness check with component-level status."""
     store = _get_store(request)
     is_readonly: bool = getattr(request.app.state, "readonly", False)
     summary = store.status_summary()
     runtime = _runtime_summary(request, store)
     components = _health_components(request, store)
-    blocked_components = {"unavailable", "error"}
+    blocked_components = {"unavailable", "error", "down"}
     overall_status = (
         "degraded"
         if any(str(component.get("status", "ok")) in blocked_components for component in components.values())
