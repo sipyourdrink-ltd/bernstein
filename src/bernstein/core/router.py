@@ -753,19 +753,39 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
     if task.model or task.effort:
         model = task.model or "sonnet"
         effort = task.effort or "high"
+        logger.info(
+            "Task %s: Selected %s/%s (manager override: role=%s, priority=%d, complexity=%s)",
+            task.id, model, effort, task.role, task.priority, task.complexity.value,
+        )
         return ModelConfig(model=model, effort=effort)
 
     # High-stakes roles skip bandit — always use premium models
     if task.role == "manager":
+        logger.info(
+            "Task %s: Selected opus/max (high-stakes role: manager, priority=%d)",
+            task.id, task.priority,
+        )
         return ModelConfig(model="opus", effort="max")
 
     if task.role in ("architect", "security"):
+        logger.info(
+            "Task %s: Selected opus/max (high-stakes role: %s, priority=%d)",
+            task.id, task.role, task.priority,
+        )
         return ModelConfig(model="opus", effort="max")
 
     if task.scope == Scope.LARGE:
+        logger.info(
+            "Task %s: Selected opus/max (large scope: %s, priority=%d, complexity=%s)",
+            task.id, task.scope.value, task.priority, task.complexity.value,
+        )
         return ModelConfig(model="opus", effort="max")
 
     if task.priority == 1:
+        logger.info(
+            "Task %s: Selected opus/max (critical priority: role=%s, complexity=%s)",
+            task.id, task.role, task.complexity.value,
+        )
         return ModelConfig(model="opus", effort="max")
 
     # L1 fast-path: route simple tasks to the cheapest model
@@ -774,13 +794,9 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
     classification = classify_task(task)
     if classification.level == TaskLevel.L1:
         l1_cfg = get_l1_model_config()
-        logger.debug(
-            "L1 fast-path routed task %s (role=%s) → %s/%s (%s)",
-            task.id,
-            task.role,
-            l1_cfg.model,
-            l1_cfg.effort,
-            classification.reason,
+        logger.info(
+            "Task %s: Selected %s/%s (L1 fast-path: role=%s, scope=%s, %s)",
+            task.id, l1_cfg.model, l1_cfg.effort, task.role, task.scope.value, classification.reason,
         )
         return l1_cfg
 
@@ -794,12 +810,9 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
             candidates = ["sonnet", "opus"] if task.complexity == Complexity.HIGH else list(CASCADE)
             selected = bandit.select(role=task.role, candidate_models=candidates)
             effort = "max" if selected == "opus" else "high"
-            logger.debug(
-                "Bandit routed task %s (role=%s) → %s/%s",
-                task.id,
-                task.role,
-                selected,
-                effort,
+            logger.info(
+                "Task %s: Selected %s/%s (bandit: role=%s, complexity=%s, priority=%d)",
+                task.id, selected, effort, task.role, task.complexity.value, task.priority,
             )
             return ModelConfig(model=selected, effort=effort)
         except Exception as exc:
@@ -807,8 +820,16 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
 
     # Heuristic fallback
     if task.complexity == Complexity.HIGH:
+        logger.info(
+            "Task %s: Selected sonnet/high (heuristic fallback: complexity=%s, role=%s, priority=%d)",
+            task.id, task.complexity.value, task.role, task.priority,
+        )
         return ModelConfig(model="sonnet", effort="high")
 
+    logger.info(
+        "Task %s: Selected sonnet/high (default: role=%s, complexity=%s, priority=%d)",
+        task.id, task.role, task.complexity.value, task.priority,
+    )
     return ModelConfig(model="sonnet", effort="high")
 
 
