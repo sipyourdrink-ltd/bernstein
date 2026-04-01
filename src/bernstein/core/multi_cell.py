@@ -290,8 +290,9 @@ class MultiCellOrchestrator:
 
         result.open_tasks = len(open_tasks)
 
-        # Group into batches
-        batches = group_by_role(open_tasks, self._config.max_tasks_per_agent)
+        # Group into batches with fair scheduling
+        task_created_at = {task.id: task.created_at for task in open_tasks}
+        batches = group_by_role(open_tasks, self._config.max_tasks_per_agent, task_created_at=task_created_at)
 
         # Count alive agents in this cell
         alive_count = sum(1 for w in cell.workers if w.status not in ("dead",))

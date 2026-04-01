@@ -909,11 +909,14 @@ class Orchestrator:
         priority_overrides = {
             task.id: max(1, task.priority - 1) for task in ready_tasks if task.id in critical_path_ids
         }
+        # Build task creation timestamp map for fair scheduling
+        task_created_at = {task.id: task.created_at for task in ready_tasks}
         batches = group_by_role(
             ready_tasks,
             self._config.max_tasks_per_agent,
             alive_per_role=_alive_per_role,
             priority_overrides=priority_overrides,
+            task_created_at=task_created_at,
         )
 
         # Track which task IDs are already assigned to active agents
@@ -2817,6 +2820,15 @@ def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
                     events=events,
                 )
             )
+
+    if notify_cfg is not None and bool(getattr(notify_cfg, "desktop", False)):
+        targets.append(
+            NotificationTarget(
+                type="desktop",
+                url="",
+                events=["task.completed", "task.failed"],
+            )
+        )
 
     for webhook_cfg in getattr(seed, "webhooks", ()):
         url = str(getattr(webhook_cfg, "url", "")).strip()
