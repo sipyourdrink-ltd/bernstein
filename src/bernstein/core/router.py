@@ -1117,3 +1117,100 @@ def auto_route_task(task: Task) -> AutoRouteDecision:
         effort=task.effort or "high",
         reason="default (no agents discovered)",
     )
+
+
+# ---------------------------------------------------------------------------
+# Free tier prioritization and round-robin distribution
+# ---------------------------------------------------------------------------
+
+# Track last used agent for round-robin distribution
+_last_used_agent_index: int = 0
+
+
+def get_free_tier_providers(providers: list[ProviderConfig]) -> list[ProviderConfig]:
+    """Get providers with free tier availability.
+
+    Prioritizes:
+    1. Gemini (generous free tier)
+    2. Codex (free tier available)
+    3. Other providers with free tier
+
+    Args:
+        providers: List of available providers.
+
+    Returns:
+        List of free tier providers sorted by preference.
+    """
+    free_tier_order = {"gemini": 0, "codex": 1, "qwen": 2}
+
+    free_providers = [
+        p for p in providers
+        if p.tier == Tier.FREE or (p.quota_remaining and p.quota_remaining > 0)
+    ]
+
+    # Sort by free tier preference
+    free_providers.sort(
+        key=lambda p: free_tier_order.get(p.name, 99)
+    )
+
+    return free_providers
+
+
+def select_with_free_tier_priority(
+    task: Task,
+    candidates: list[ProviderConfig],
+) -> ProviderConfig | None:
+    """Select provider with free tier priority.
+
+    Checks for free tier availability first, then falls back to normal routing.
+
+    Args:
+        task: Task to route.
+        candidates: Candidate providers.
+
+    Returns:
+        Selected provider or None if no candidates.
+    """
+    # Get free tier providers
+    free_providers = get_free_tier_providers(candidates)
+
+    if free_providers:
+        # Use first available free tier provider
+        return free_providers[0]
+
+    # No free tier available, return first candidate
+    return candidates[0] if candidates else None
+
+
+def select_round_robin_agent(
+    agents: list[Any],
+    task: Task,
+) -> Any | None:
+    """Select agent using round-robin distribution.
+
+    Distributes tasks evenly across available agents to prevent
+    overloading any single agent type.
+
+    Args:
+        agents: List of available agents.
+        task: Task to route.
+
+    Returns:
+        Selected agent or None if no agents available.
+    """
+    global _last_used_agent_index
+
+    if not agents:
+        return None
+
+    # Filter to logged-in agents
+    active_agents = [a for a in agents if getattr(a, "logged_in", True)]
+
+    if not active_agents:
+        return None
+
+    # Round-robin selection
+    _last_used_agent_index = (_last_used_agent_index + 1) % len(active_agents)
+    selected = active_agents[_last_used_agent_index]
+
+    return selected
