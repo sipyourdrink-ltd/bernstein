@@ -140,7 +140,7 @@ body {
   font-size: var(--text-base);
   line-height: var(--leading);
   font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
-  overflow-x: hidden;
+  overflow-x: clip;
   transition: background var(--dur-normal) var(--ease),
               color var(--dur-normal) var(--ease);
 }
@@ -855,14 +855,35 @@ code:not([class]) {
 .doc-content ul,
 .doc-content ol { margin-bottom: var(--space-4); }
 
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: var(--space-5) 0;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
 .doc-content table {
+  display: block;
   width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border-collapse: collapse;
   margin: var(--space-5) 0;
   font-size: var(--text-sm);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+}
+
+/* When table is inside .table-wrap, the wrapper owns the border/scroll */
+.doc-content .table-wrap table {
+  display: table;
+  overflow-x: visible;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  width: max-content;
+  min-width: 100%;
 }
 .doc-content th {
   background: var(--bg-2);
