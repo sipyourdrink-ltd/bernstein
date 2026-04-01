@@ -1,0 +1,7 @@
+{
+    "gate_name": "my_gate",
+    "gate_class": "MyGate",
+    "description": "A new quality gate for Bernstein",
+    "author_name": "Your Name",
+    "author_email": "your.email@example.com"
+}
