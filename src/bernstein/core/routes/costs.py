@@ -6,12 +6,14 @@ Provides real-time and historical cost data for the dashboard.
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import time
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
@@ -281,3 +283,197 @@ async def get_cost_budget(run_id: str, request: Request) -> JSONResponse:
     result = tracker.status().to_dict()
     result.update(_build_breakdowns(tracker))
     return JSONResponse(content=result)
+
+
+@router.get("/costs/export")
+async def export_costs(request: Request, format: str = "json") -> Response:
+    """Export cost data as CSV or JSON for finance analysis.
+
+    Args:
+        request: FastAPI request.
+        format: Export format ('csv' or 'json').
+
+    Returns:
+        File response with cost data in requested format.
+    """
+    from bernstein.core.cost_tracker import CostTracker
+
+    sdd_dir = _get_sdd_dir(request)
+    costs_dir = sdd_dir / "runtime" / "costs"
+
+    if not costs_dir.exists():
+        if format == "csv":
+            return Response(
+                content="run_id,timestamp,agent_id,model,cost_usd,input_tokens,output_tokens\n",
+                media_type="text/csv",
+            )
+        return JSONResponse(content={"runs": [], "total_spent_usd": 0.0})
+
+    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+
+    all_usages: list[dict[str, Any]] = []
+    total_spent = 0.0
+
+    for cost_file in cost_files:
+        run_id = cost_file.stem
+        tracker = CostTracker.load(sdd_dir, run_id)
+        if tracker is None:
+            continue
+        total_spent += tracker.spent_usd
+        for u in tracker.usages:
+            all_usages.append({
+                "run_id": run_id,
+                "timestamp": time.time(),
+                "agent_id": u.agent_id,
+                "model": u.model,
+                "cost_usd": round(u.cost_usd, 6),
+                "input_tokens": u.input_tokens,
+                "output_tokens": u.output_tokens,
+            })
+
+    if format == "csv":
+        output = io.StringIO()
+        fieldnames = ["run_id", "timestamp", "agent_id", "model", "cost_usd", "input_tokens", "output_tokens"]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(all_usages)
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=costs_export.csv"},
+        )
+    else:
+        return JSONResponse(
+            content={
+                "total_spent_usd": round(total_spent, 6),
+                "total_records": len(all_usages),
+                "runs": all_usages,
+            },
+            headers={"Content-Disposition": "attachment; filename=costs_export.json"},
+        )
+
+
+@router.get("/costs/forecast")
+async def forecast_costs(request: Request) -> JSONResponse:
+    """Forecast cost for next hour based on current burn rate.
+
+    Extrapolates current spending rate to predict next hour's cost.
+    Uses recent task completion rate and average cost per task.
+    """
+    from bernstein.core.cost_tracker import CostTracker
+
+    sdd_dir = _get_sdd_dir(request)
+    costs_dir = sdd_dir / "runtime" / "costs"
+
+    if not costs_dir.exists():
+        return JSONResponse(content={
+            "forecast_next_hour_usd": 0.0,
+            "burn_rate_usd_per_minute": 0.0,
+            "confidence": "low",
+            "data_points": 0,
+        })
+
+    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    # Get most recent run data
+    recent_costs: list[tuple[float, float]] = []  # (timestamp, cumulative_cost)
+    total_spent = 0.0
+
+    for cost_file in cost_files[:5]:  # Last 5 runs
+        run_id = cost_file.stem
+        tracker = CostTracker.load(sdd_dir, run_id)
+        if tracker is None:
+            continue
+        file_mtime = cost_file.stat().st_mtime
+        recent_costs.append((file_mtime, tracker.spent_usd))
+        total_spent += tracker.spent_usd
+
+    if len(recent_costs) < 2:
+        # Not enough data for forecasting
+        return JSONResponse(content={
+            "forecast_next_hour_usd": 0.0,
+            "burn_rate_usd_per_minute": 0.0,
+            "confidence": "low",
+            "data_points": len(recent_costs),
+            "message": "Insufficient data for forecasting",
+        })
+
+    # Calculate burn rate from most recent runs
+    # Sort by timestamp
+    recent_costs.sort(key=lambda x: x[0])
+    time_span = recent_costs[-1][0] - recent_costs[0][0]
+    cost_span = recent_costs[-1][1] - recent_costs[0][1]
+
+    burn_rate_per_minute = cost_span / (time_span / 60.0) if time_span > 0 else 0.0
+
+    # Forecast next hour
+    forecast_next_hour = burn_rate_per_minute * 60.0
+
+    # Confidence based on data points
+    if len(recent_costs) >= 5:
+        confidence = "high"
+    elif len(recent_costs) >= 3:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    return JSONResponse(content={
+        "forecast_next_hour_usd": round(forecast_next_hour, 4),
+        "burn_rate_usd_per_minute": round(burn_rate_per_minute, 6),
+        "burn_rate_usd_per_hour": round(forecast_next_hour, 4),
+        "current_total_usd": round(total_spent, 4),
+        "confidence": confidence,
+        "data_points": len(recent_costs),
+        "time_span_minutes": round(time_span / 60.0, 1),
+    })
+
+
+@router.get("/costs/compare")
+async def compare_model_costs(request: Request) -> JSONResponse:
+    """Return live model cost comparison during execution.
+
+    Shows current costs by model with token usage statistics.
+    """
+    from typing import cast
+
+    sdd_dir = _get_sdd_dir(request)
+    costs_dir = sdd_dir / "runtime" / "costs"
+
+    # Get current spending by model
+    model_costs: dict[str, dict[str, Any]] = defaultdict(lambda: {
+        "total_cost_usd": 0.0,
+        "total_tokens": 0,
+        "invocation_count": 0,
+    })
+
+    if costs_dir.exists():
+        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for cost_file in cost_files[:3]:  # Last 3 runs
+            from bernstein.core.cost_tracker import CostTracker
+            tracker = CostTracker.load(sdd_dir, cost_file.stem)
+            if tracker is None:
+                continue
+            for u in tracker.usages:
+                model_costs[u.model]["total_cost_usd"] += u.cost_usd
+                model_costs[u.model]["total_tokens"] += u.input_tokens + u.output_tokens
+                model_costs[u.model]["invocation_count"] += 1
+
+    # Build comparison
+    comparison: list[dict[str, Any]] = []
+    model_costs_typed = cast("dict[str, dict[str, Any]]", model_costs)
+
+    for model, data in model_costs_typed.items():
+        avg_tokens = data["total_tokens"] / max(1, data["invocation_count"])
+
+        comparison.append({
+            "model": model,
+            "actual_cost_usd": round(data["total_cost_usd"], 4),
+            "total_tokens": data["total_tokens"],
+            "invocations": data["invocation_count"],
+            "avg_tokens_per_invocation": round(avg_tokens, 0),
+        })
+
+    return JSONResponse(content={
+        "model_comparison": comparison,
+        "total_models_used": len(comparison),
+    })

@@ -489,3 +489,68 @@ def _get_cost_breakdown(workdir: Path) -> dict[str, Any]:
             "per_model": [],
             "per_role": {},
         }
+
+
+@router.get("/observability/token-histogram")
+async def token_histogram(request: Request) -> dict[str, Any]:
+    """Return histogram of token usage by task complexity.
+
+    Shows average tokens consumed for small, medium, large tasks.
+    Helps understand token consumption patterns.
+    """
+    workdir = _get_workdir(request)
+
+    # Read trace files to get token usage by task
+    traces_dir = workdir / ".sdd" / "traces"
+
+    complexity_tokens: dict[str, list[int]] = {
+        "small": [],
+        "medium": [],
+        "large": [],
+    }
+
+    if traces_dir.exists():
+        for trace_file in traces_dir.glob("*.json"):
+            try:
+                data = cast("dict[str, Any]", json.loads(trace_file.read_text(encoding="utf-8")))
+                complexity = data.get("complexity", "medium")
+                if isinstance(complexity, dict):
+                    complexity = cast("dict[str, Any]", complexity).get("value", "medium")
+
+                input_tokens = data.get("input_tokens", 0) or 0
+                output_tokens = data.get("output_tokens", 0) or 0
+                total_tokens = int(input_tokens) + int(output_tokens)
+
+                if complexity in complexity_tokens:
+                    complexity_tokens[cast("str", complexity)].append(total_tokens)
+            except (json.JSONDecodeError, OSError, ValueError):
+                continue
+
+    # Calculate statistics
+    histogram = {}
+    for complexity, tokens in complexity_tokens.items():
+        if tokens:
+            histogram[complexity] = {
+                "count": len(tokens),
+                "avg_tokens": round(sum(tokens) / len(tokens), 0),
+                "min_tokens": min(tokens),
+                "max_tokens": max(tokens),
+                "total_tokens": sum(tokens),
+            }
+        else:
+            histogram[complexity] = {
+                "count": 0,
+                "avg_tokens": 0,
+                "min_tokens": 0,
+                "max_tokens": 0,
+                "total_tokens": 0,
+            }
+
+    return {
+        "histogram": histogram,
+        "summary": {
+            "small_avg": histogram["small"]["avg_tokens"],
+            "medium_avg": histogram["medium"]["avg_tokens"],
+            "large_avg": histogram["large"]["avg_tokens"],
+        },
+    }
