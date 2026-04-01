@@ -1,20 +1,14 @@
-"""Head-to-head benchmark comparison: Bernstein vs. CrewAI and LangGraph.
+"""Framework context report: Bernstein vs. CrewAI and LangGraph.
 
 Provides structured data types and report generation for comparing Bernstein's
-architecture and performance against popular multi-agent frameworks.
+architecture against popular multi-agent frameworks.
 
-The core thesis: Bernstein uses deterministic Python code for orchestration,
-so scheduling overhead is $0.  Frameworks that route tasks through an LLM
-(CrewAI manager agents, LangGraph graph nodes) pay an additional inference tax
-at every task delegation step.
+The public report generated from this module intentionally avoids publishing
+numeric cross-framework benchmark claims until Bernstein can reproduce those
+systems under a Bernstein-owned live harness.
 
-Data sources
-------------
-Bernstein figures come from ``benchmarks/swe_bench/results/`` (simulated runs).
-Competitor figures are from published community benchmarks, framework documentation,
-and model pricing pages.  Because neither CrewAI nor LangGraph publish official
-SWE-Bench numbers, competitor resolve-rate estimates should be treated as
-approximate ranges, not point estimates.
+The competitor metric constants remain available for internal analysis, tests,
+and future work, but public report rendering excludes those numeric rows.
 """
 
 from __future__ import annotations
@@ -59,8 +53,7 @@ class CompetitorProfile:
         """Human-readable scheduling overhead label."""
         if self.scheduling_overhead_pct == 0.0:
             return "none (deterministic code)"
-        pct = int(self.scheduling_overhead_pct * 100)
-        return f"~{pct}% (LLM-based routing)"
+        return "present (LLM-based routing)"
 
 
 @dataclass(frozen=True)
@@ -267,7 +260,7 @@ LANGGRAPH_SONNET_METRICS = BenchmarkMetrics(
 # ---------------------------------------------------------------------------
 
 CANONICAL_COMPARISON = HeadToHeadComparison(
-    title="Bernstein vs. CrewAI vs. LangGraph — Head-to-Head Benchmark",
+    title="Bernstein Benchmark Status and Framework Context",
     date="2026-03-31",
     profiles={
         "bernstein": BERNSTEIN_PROFILE,
@@ -343,44 +336,31 @@ def generate_architecture_table(comparison: HeadToHeadComparison) -> str:
 
 
 def generate_swe_bench_table(comparison: HeadToHeadComparison) -> str:
-    """Generate a markdown SWE-Bench Lite results table.
+    """Generate a public-safe publication-status table.
 
     Args:
         comparison: The head-to-head comparison object.
 
     Returns:
-        Markdown string with SWE-Bench Lite results.
+        Markdown string with publication-status information.
     """
     lines: list[str] = []
-    lines.append("| System | Model config | Resolve rate | Mean cost/issue | Sched. overhead | Source |")
-    lines.append("|--------|-------------|--------------|-----------------|-----------------|--------|")
-
-    order = ["bernstein-sonnet", "bernstein-mixed", "crewai-gpt4", "langgraph-sonnet"]
-    display: dict[str, str] = {
-        "bernstein-sonnet": "Bernstein 3x Sonnet",
-        "bernstein-mixed": "Bernstein Mixed",
-        "crewai-gpt4": "CrewAI + GPT-4 Turbo",
-        "langgraph-sonnet": "LangGraph + Sonnet",
-    }
-
-    for key in order:
-        m = comparison.metrics.get(key)
-        if m is None:
-            continue
-        sim_note = " \\*" if m.is_simulated else " †"
-        sched = f"${m.scheduling_cost_per_issue_usd:.2f}" if m.scheduling_cost_per_issue_usd > 0 else "$0.00"
+    lines.append("| System | Public numeric benchmark status | Notes |")
+    lines.append("|--------|--------------------------------|-------|")
+    lines.append(
+        "| Bernstein | Published only from verified `benchmarks/swe_bench/run.py eval` artifacts | "
+        "Public v1 scope is Bernstein vs solo baselines on SWE-Bench Lite. |"
+    )
+    if "crewai" in comparison.profiles:
         lines.append(
-            f"| {display.get(key, key)}{sim_note} "
-            f"| {m.model_config} "
-            f"| {m.resolve_pct} ({m.swe_bench_resolved}/{m.swe_bench_total}) "
-            f"| ${m.mean_cost_per_issue_usd:.2f} "
-            f"| {sched} "
-            f"| {_short_source(m.data_source)} |"
+            "| CrewAI | Withheld from public numeric tables | "
+            "No Bernstein-owned live harness is published yet. Architecture context only. |"
         )
-
-    lines.append("")
-    lines.append("\\* Simulated results — replace with real Docker-based runs via `benchmarks/swe_bench/run.py eval`.")
-    lines.append("† Estimated from community benchmarks — see Data Sources section.")
+    if "langgraph" in comparison.profiles:
+        lines.append(
+            "| LangGraph | Withheld from public numeric tables | "
+            "No Bernstein-owned live harness is published yet. Architecture context only. |"
+        )
 
     return "\n".join(lines)
 
@@ -404,44 +384,21 @@ def generate_key_findings(comparison: HeadToHeadComparison) -> str:
         Markdown string with key findings.
     """
     lines: list[str] = []
-
-    bm = comparison.metrics.get("bernstein-mixed")
-    bs = comparison.metrics.get("bernstein-sonnet")
-    cg = comparison.metrics.get("crewai-gpt4")
-    ls = comparison.metrics.get("langgraph-sonnet")
-
-    if bs and cg:
-        delta_pp = comparison.resolve_rate_delta_pp("bernstein-sonnet", "crewai-gpt4")
-        ratio = comparison.cost_ratio("bernstein-sonnet", "crewai-gpt4")
-        if delta_pp is not None and ratio is not None:
-            lines.append(
-                f"- **Resolve rate**: Bernstein 3x Sonnet resolves {delta_pp:.1f} pp more issues than "
-                f"CrewAI + GPT-4 Turbo ({bs.resolve_pct} vs {cg.resolve_pct}) "
-                f"at {ratio:.1f}x lower cost per issue (${bs.mean_cost_per_issue_usd:.2f} vs "
-                f"${cg.mean_cost_per_issue_usd:.2f})."
-            )
-
-    if bs and ls:
-        delta_pp = comparison.resolve_rate_delta_pp("bernstein-sonnet", "langgraph-sonnet")
-        ratio = comparison.cost_ratio("bernstein-sonnet", "langgraph-sonnet")
-        if delta_pp is not None and ratio is not None:
-            lines.append(
-                f"- **vs LangGraph**: Bernstein 3x Sonnet leads LangGraph + Sonnet by {delta_pp:.1f} pp "
-                f"({bs.resolve_pct} vs {ls.resolve_pct}) at {ratio:.2f}x the cost per issue."
-            )
-
-    if bm:
+    if "bernstein" in comparison.profiles:
         lines.append(
-            f"- **Budget option**: Bernstein Mixed (Haiku/Sonnet/Haiku) resolves {bm.resolve_pct} of issues "
-            f"at ${bm.mean_cost_per_issue_usd:.2f}/issue — cheaper than any competitor config tested."
+            "- Bernstein keeps orchestration in deterministic Python code, "
+            "which removes the need for a manager-model control plane."
         )
-
-    # Scheduling overhead finding
-    if cg and bm:
+    if "crewai" in comparison.profiles or "langgraph" in comparison.profiles:
         lines.append(
-            f"- **Zero scheduling overhead**: Bernstein uses deterministic Python routing — $0.00 "
-            f"orchestration cost per issue. CrewAI manager agents add ~${cg.scheduling_cost_per_issue_usd:.2f} "
-            f"per issue in routing calls alone."
+            "- CrewAI and LangGraph stay in this report as architecture context only. "
+            "Public numeric rankings are withheld until Bernstein can reproduce them "
+            "under a Bernstein-owned live harness."
+        )
+    if comparison.metrics:
+        lines.append(
+            "- Internal benchmark preview data may exist, but public publication is "
+            "limited to verified SWE-Bench eval artifacts and Bernstein-vs-solo baselines."
         )
 
     if not lines:
@@ -463,49 +420,28 @@ def generate_full_report(comparison: HeadToHeadComparison) -> str:
     swe_table = generate_swe_bench_table(comparison)
     findings = generate_key_findings(comparison)
 
-    bs = comparison.metrics.get("bernstein-sonnet")
-    bm = comparison.metrics.get("bernstein-mixed")
-    cg = comparison.metrics.get("crewai-gpt4")
-    ls = comparison.metrics.get("langgraph-sonnet")
-
-    sim_notice = ""
-    if any(m.is_simulated for m in comparison.metrics.values() if m is not None):
-        sim_notice = (
-            "> **NOTE:** Bernstein results marked with \\* are **simulated**. "
-            "Replace with real runs via `benchmarks/swe_bench/run.py eval`.\n\n"
-        )
-
     sections: list[str] = []
     sections.append(f"# {comparison.title}")
     sections.append("")
-    sections.append(f"{sim_notice}**Date:** {comparison.date}")
-    sections.append("**Dataset:** SWE-Bench Lite (300 instances)")
+    sections.append("> **NOTE:** Public numeric framework-vs-framework rankings are intentionally withheld.")
+    sections.append("> Bernstein publishes benchmark claims only from verified SWE-Bench eval artifacts,")
+    sections.append("> and current public scope is Bernstein vs solo baselines rather than CrewAI/LangGraph tables.")
+    sections.append("")
+    sections.append(f"**Date:** {comparison.date}")
     sections.append("")
     sections.append("## TL;DR")
     sections.append("")
-
-    if bs and cg and bm:
-        ls_resolve = ls.resolve_pct if ls else "?"
-        ls_cost = f"${ls.mean_cost_per_issue_usd:.2f}" if ls else "?"
-        tldr = (
-            f"> Bernstein 3x Sonnet resolves {bs.resolve_pct} of SWE-Bench Lite "
-            f"at ${bs.mean_cost_per_issue_usd:.2f}/issue,\n"
-            f"> beating CrewAI + GPT-4 Turbo "
-            f"({cg.resolve_pct}, ${cg.mean_cost_per_issue_usd:.2f}/issue)\n"
-            f"> and LangGraph + Sonnet ({ls_resolve}, {ls_cost}/issue).\n"
-            f"> Bernstein Mixed drops to "
-            f"${bm.mean_cost_per_issue_usd:.2f}/issue — cheaper than any competitor."
-        )
-        sections.append(tldr)
-    else:
-        sections.append("> Run benchmarks to generate TL;DR figures.")
+    sections.append(
+        "> Bernstein keeps CrewAI and LangGraph on this page as architecture context.\n"
+        "> Public benchmark publication is gated on verified SWE-Bench eval artifacts, not simulated or estimated rows."
+    )
 
     sections.append("")
     sections.append("## Architecture Comparison")
     sections.append("")
     sections.append(arch_table)
     sections.append("")
-    sections.append("## SWE-Bench Lite Results")
+    sections.append("## Public Benchmark Publication Status")
     sections.append("")
     sections.append(swe_table)
     sections.append("")

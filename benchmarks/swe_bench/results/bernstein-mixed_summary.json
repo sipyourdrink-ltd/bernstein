@@ -10,5 +10,14 @@
   "median_wall_time_s": 175.9208233886551,
   "total_cost_usd": 48.18352148048561,
   "mean_cost_per_instance_usd": 0.16061173826828537,
-  "mean_tokens_per_instance": 22086.633333333335
+  "mean_tokens_per_instance": 22086.633333333335,
+  "verified": false,
+  "source_type": "mock",
+  "dataset": "princeton-nlp/SWE-bench_Lite",
+  "sample_size": 300,
+  "run_at": "2026-03-31T00:00:00Z",
+  "commit_sha": "mock-preview",
+  "scenarios": ["bernstein-mixed"],
+  "model_family": "haiku, sonnet",
+  "notes": "Checked-in mock preview artifact. Do not use for public benchmark claims."
 }

@@ -1,0 +1,23 @@
+{
+  "scenario_name": "bernstein-sonnet",
+  "total_instances": 50,
+  "resolved": 22,
+  "failed": 28,
+  "errors": 0,
+  "skipped": 0,
+  "resolve_rate": 0.44,
+  "mean_wall_time_s": 184.0,
+  "median_wall_time_s": 181.0,
+  "total_cost_usd": 22.0,
+  "mean_cost_per_instance_usd": 0.44,
+  "mean_tokens_per_instance": 26000.0,
+  "verified": true,
+  "source_type": "eval",
+  "dataset": "princeton-nlp/SWE-bench_Lite",
+  "sample_size": 50,
+  "run_at": "2026-04-01T10:00:00Z",
+  "commit_sha": "abc123def456",
+  "scenarios": ["bernstein-sonnet"],
+  "model_family": "sonnet",
+  "notes": "Verified pilot fixture."
+}

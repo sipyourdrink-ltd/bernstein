@@ -1,4 +1,4 @@
-"""Single-agent vs Bernstein multi-agent benchmark suite.
+"""Single-agent vs Bernstein multi-agent modeling suite.
 
 Measures wall-clock time, cost, and quality for 10 real-world engineering tasks
 under three configurations:
@@ -7,10 +7,14 @@ under three configurations:
   multi-3   — Bernstein orchestrates 3 parallel agents
   multi-5   — Bernstein orchestrates 5 parallel agents
 
+This harness is for internal modeling and workflow exploration. It is not the
+source of public benchmark claims. Public benchmark publication is gated on
+``benchmarks/swe_bench/run.py eval`` instead.
+
 In simulate mode (default) the runner uses a dependency-aware scheduler to
 compute the theoretical minimum completion time and a cost model based on
-published Claude API pricing.  In real mode (--mode real) the runner spawns
-actual Bernstein runs and measures live metrics.
+published Claude API pricing. In real mode (``--mode real``) the runner spawns
+actual Bernstein runs and measures live metrics for the internal task suite.
 
 A separate issues mode benchmarks resolve rates on curated real GitHub issues:
 
@@ -27,10 +31,10 @@ Usage::
     # Run a specific task only
     python benchmarks/run_benchmark.py --task task-004
 
-    # Benchmark on curated real GitHub issues (simulate resolve rates + statistics)
+    # Simulate resolve-rate behavior on curated real GitHub issues
     python benchmarks/run_benchmark.py --issues-file benchmarks/issues.json
 
-    # Real run (requires running Bernstein stack)
+    # Real run for the internal task suite (not SWE-Bench publication)
     python benchmarks/run_benchmark.py --mode real
 """
 
@@ -238,7 +242,7 @@ class SubTask:
     role: str
     description: str
     estimated_minutes: float
-    depends_on: list[str] = field(default_factory=list)
+    depends_on: list[str] = field(default_factory=lambda: list[str]())
 
 
 @dataclass(frozen=True)
@@ -1635,7 +1639,7 @@ def _print_suite(suite: BenchmarkSuite) -> None:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Bernstein benchmark: single agent vs multi-agent",
+        description="Bernstein modeling harness: single agent vs multi-agent",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -1643,7 +1647,7 @@ def _parse_args() -> argparse.Namespace:
         "--mode",
         choices=["simulate", "real"],
         default="simulate",
-        help="simulate (default) or real Bernstein run",
+        help="simulate (default) or run the internal task suite against a live Bernstein stack",
     )
     p.add_argument(
         "--task",
@@ -1676,7 +1680,7 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Path to a JSON issues file (e.g. benchmarks/issues.json). "
-            "When provided, runs the issues benchmark instead of the YAML-task benchmark."
+            "When provided, runs the issues modeling harness instead of the YAML-task benchmark."
         ),
     )
     p.add_argument(

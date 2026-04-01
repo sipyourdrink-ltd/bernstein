@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 InstanceStatus = Literal["resolved", "failed", "error", "skipped"]
+SummarySourceType = Literal["mock", "eval"]
 
 
 @dataclass
@@ -66,9 +67,66 @@ class ScenarioSummary:
     total_cost_usd: float
     mean_cost_per_instance_usd: float
     mean_tokens_per_instance: float
+    verified: bool = False
+    source_type: SummarySourceType = "mock"
+    dataset: str = "princeton-nlp/SWE-bench_Lite"
+    sample_size: int = 0
+    run_at: str = ""
+    commit_sha: str = ""
+    scenarios: list[str] = field(default_factory=lambda: list[str]())
+    model_family: str = ""
+    notes: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+    @property
+    def attempted_instances(self) -> int:
+        """Return the number of non-skipped instances."""
+        return self.total_instances - self.skipped
+
+    @property
+    def is_verified_public_result(self) -> bool:
+        """Return whether this summary is safe for public benchmark claims."""
+        return self.verified and self.source_type == "eval"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> ScenarioSummary:
+        """Create a summary from serialized JSON with safe legacy defaults."""
+        payload = dict(data)
+        scenario_name = str(payload.get("scenario_name", ""))
+        total_instances = _coerce_int(payload.get("total_instances", 0))
+
+        payload.setdefault("verified", False)
+        payload.setdefault("source_type", "mock")
+        payload.setdefault("dataset", "princeton-nlp/SWE-bench_Lite")
+        payload.setdefault("sample_size", total_instances)
+        payload.setdefault("run_at", "")
+        payload.setdefault("commit_sha", "")
+        payload.setdefault("scenarios", [scenario_name] if scenario_name else [])
+        payload.setdefault("model_family", "")
+        payload.setdefault(
+            "notes",
+            "Legacy summary without provenance metadata. Treat as preview data, not a public benchmark claim.",
+        )
+
+        return cls(**payload)  # type: ignore[arg-type]
+
+
+def _coerce_int(value: object) -> int:
+    """Best-effort integer coercion for JSON payload values."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
 
 
 def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
@@ -111,6 +169,8 @@ def aggregate(results: list[InstanceResult]) -> ScenarioSummary:
         total_cost_usd=total_cost,
         mean_cost_per_instance_usd=mean_cost,
         mean_tokens_per_instance=mean_tokens,
+        sample_size=total,
+        scenarios=[scenario_name],
     )
 
 
