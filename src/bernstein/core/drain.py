@@ -29,6 +29,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
+from bernstein.core.process_utils import is_process_alive
+from bernstein.core.runtime_state import read_supervisor_state
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
@@ -169,11 +172,7 @@ def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 
 def _is_process_alive(pid: int) -> bool:
     """Return True if *pid* is still running."""
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
+    return is_process_alive(pid)
 
 
 def _send_signal(pid: int, sig: int) -> None:
@@ -601,6 +600,10 @@ class DrainCoordinator:
         worktrees_removed = 0
         branches_deleted = 0
 
+        # Stop long-lived infrastructure first so the watchdog cannot
+        # respawn the server/spawner while we are tearing runtime state down.
+        await self._stop_infrastructure()
+
         # Remove ALL agent worktrees from .sdd/worktrees/ — not just
         # those in self._agents (which may be empty after a restart).
         wt_dir = self._workdir / ".sdd" / "worktrees"
@@ -708,6 +711,64 @@ class DrainCoordinator:
             except OSError as exc:
                 logger.warning("Failed to move ticket %s: %s", ticket_path.name, exc)
 
+    async def _stop_infrastructure(self) -> None:
+        """Terminate the watchdog, spawner, and server for this run."""
+        await self._terminate_runtime_pid("watchdog.pid", "watchdog")
+        await self._terminate_runtime_pid("spawner.pid", "spawner")
+
+        server_pid = self._read_runtime_pid("server.pid")
+        if server_pid is None:
+            snapshot = read_supervisor_state(self._workdir / ".sdd")
+            if snapshot is not None and snapshot.current_pid > 0:
+                server_pid = snapshot.current_pid
+        await self._terminate_process(server_pid, "task server")
+
+    def _read_runtime_pid(self, filename: str) -> int | None:
+        """Read a runtime PID file, returning None for missing or invalid data."""
+        pid_path = self._workdir / ".sdd" / "runtime" / filename
+        if not pid_path.exists():
+            return None
+        try:
+            return int(pid_path.read_text(encoding="utf-8").strip())
+        except ValueError:
+            return None
+
+    async def _terminate_runtime_pid(self, filename: str, label: str) -> None:
+        """Terminate a runtime-managed process named by *filename*."""
+        await self._terminate_process(self._read_runtime_pid(filename), label)
+
+    async def _terminate_process(self, pid: int | None, label: str) -> None:
+        """Terminate *pid* gracefully, escalating to SIGKILL if needed."""
+        if pid is None or not _is_process_alive(pid):
+            return
+
+        try:
+            pgid = os.getpgid(pid)
+        except OSError:
+            pgid = None
+
+        if pgid is not None:
+            with contextlib.suppress(OSError):
+                os.killpg(pgid, signal.SIGTERM)
+        else:
+            _send_signal(pid, signal.SIGTERM)
+
+        deadline = time.monotonic() + _SIGTERM_GRACE_S
+        while time.monotonic() < deadline:
+            if not _is_process_alive(pid):
+                logger.info("%s exited during drain cleanup", label)
+                return
+            await asyncio.sleep(0.05)
+
+        if pgid is not None:
+            with contextlib.suppress(OSError):
+                os.killpg(pgid, signal.SIGKILL)
+        else:
+            _send_signal(pid, signal.SIGKILL)
+
+        if _is_process_alive(pid):
+            logger.warning("%s (pid %d) survived drain cleanup kill", label, pid)
+
     def _clean_runtime(self) -> None:
         """Remove ephemeral runtime files (agents.json, signals, PIDs)."""
         runtime_dir = self._workdir / ".sdd" / "runtime"
@@ -726,3 +787,7 @@ class DrainCoordinator:
         # Remove PID files.
         for pid_file in runtime_dir.glob("*.pid"):
             pid_file.unlink(missing_ok=True)
+
+        # Remove other shutdown coordination artifacts from the finished run.
+        (runtime_dir / "draining").unlink(missing_ok=True)
+        (runtime_dir / "supervisor_state.json").unlink(missing_ok=True)

@@ -5824,3 +5824,19 @@ def test_build_notification_manager_includes_seed_webhooks() -> None:
     assert any(
         t.url == "https://events.example/hook" and t.events == ["task.completed", "task.failed"] for t in targets
     )
+
+
+def test_build_notification_manager_includes_desktop_target() -> None:
+    """Desktop notify config should create a local task lifecycle target."""
+    from bernstein.core.orchestrator import _build_notification_manager
+
+    seed = SimpleNamespace(
+        notify=SimpleNamespace(webhook_url=None, on_complete=True, on_failure=True, desktop=True),
+        webhooks=(),
+        smtp=None,
+    )
+
+    manager = _build_notification_manager(seed)
+    assert manager is not None
+    targets = manager._targets  # pyright: ignore[reportPrivateUsage]
+    assert any(t.type == "desktop" and t.events == ["task.completed", "task.failed"] for t in targets)

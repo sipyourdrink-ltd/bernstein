@@ -25,6 +25,7 @@ import threading
 import time
 from pathlib import Path
 
+from bernstein.core.process_utils import is_process_alive
 from bernstein.core.runtime_state import SupervisorStateSnapshot, rotate_log_file, write_supervisor_state
 
 logger = logging.getLogger(__name__)
@@ -177,11 +178,7 @@ def _launch_server(state: _SupervisorState) -> int:
 
 def _is_alive(pid: int) -> bool:
     """Check if process is alive."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    return is_process_alive(pid)
 
 
 def _supervisor_loop(state: _SupervisorState) -> None:

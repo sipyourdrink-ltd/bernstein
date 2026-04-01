@@ -11,6 +11,8 @@ from typing import Any
 import httpx
 from rich.console import Console
 
+from bernstein.core.process_utils import is_process_alive as _shared_is_process_alive
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -109,11 +111,7 @@ def write_pid(path: str, pid: int) -> None:  # type: ignore[reportUnusedFunction
 
 
 def is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    return _shared_is_process_alive(pid)
 
 
 def kill_pid(path: str, label: str) -> None:
@@ -291,11 +289,7 @@ def find_seed_file() -> Path | None:
 
 def is_process_alive(pid: int) -> bool:
     """Check if a process with the given PID is alive."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    return is_alive(pid)
 
 
 # ---------------------------------------------------------------------------

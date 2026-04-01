@@ -590,6 +590,7 @@ class AgentSession:
 
     id: str
     role: str
+    trace_id: str = ""  # Correlation ID across task -> agent -> gate -> merge
     pid: int | None = None
     task_ids: list[str] = field(default_factory=list[str])
     model_config: ModelConfig = field(default_factory=lambda: ModelConfig("sonnet", "high"))

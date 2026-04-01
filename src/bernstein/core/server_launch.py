@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from bernstein.core.process_utils import is_process_alive
 from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
 from bernstein.core.runtime_state import rotate_log_file
 from bernstein.core.seed import SeedConfig, seed_to_initial_task
@@ -142,11 +143,7 @@ def _read_pid(pid_path: Path) -> int | None:
 
 def _is_alive(pid: int) -> bool:
     """Check whether a process with the given PID is alive."""
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    return is_process_alive(pid)
 
 
 def _discover_catalog(workdir: Path) -> None:

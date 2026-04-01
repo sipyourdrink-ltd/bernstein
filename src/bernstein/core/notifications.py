@@ -26,10 +26,13 @@ from __future__ import annotations
 
 import logging
 import smtplib
+import subprocess
 from contextlib import suppress
 from dataclasses import dataclass, field
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from shutil import which
+from sys import platform
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
@@ -78,14 +81,14 @@ class NotificationTarget:
     """A single notification destination.
 
     Attributes:
-        type: Formatter to use (``slack``, ``discord``, ``telegram``, ``webhook``).
+        type: Formatter to use (``slack``, ``discord``, ``telegram``, ``webhook``, ``desktop``).
         url: Webhook URL or Telegram API base URL.
         events: List of event names this target cares about.
         token: Telegram bot token (required when ``type == "telegram"``).
         chat_id: Telegram chat/channel ID (required when ``type == "telegram"``).
     """
 
-    type: Literal["slack", "discord", "telegram", "webhook", "email"]
+    type: Literal["slack", "discord", "telegram", "webhook", "email", "desktop"]
     url: str
     events: list[str] = field(default_factory=list[str])
     token: str | None = None
@@ -311,6 +314,9 @@ class NotificationManager:
                     server.send_message(msg)
                     logger.info("Email notification sent: event=%s", payload.event)
 
+            elif target.type == "desktop":
+                self._send_desktop_notification(payload)
+
             else:  # generic webhook
                 body = format_webhook(payload)
                 httpx.post(target.url, json=body, timeout=10.0)
@@ -323,3 +329,36 @@ class NotificationManager:
                 payload.event,
                 target.url,
             )
+
+    def _send_desktop_notification(self, payload: NotificationPayload) -> None:
+        """Send a local OS notification when a supported notifier is available."""
+        body = payload.body
+        if payload.metadata:
+            metadata_lines = [f"{key}: {value}" for key, value in payload.metadata.items()]
+            body = f"{body}\n" + "\n".join(metadata_lines) if body else "\n".join(metadata_lines)
+
+        if platform == "darwin":
+            notifier = which("terminal-notifier")
+            if notifier is None:
+                logger.debug("Desktop notification skipped: terminal-notifier not installed")
+                return
+            subprocess.run(
+                [notifier, "-title", payload.title, "-message", body or payload.event, "-group", "bernstein"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            logger.info("Desktop notification sent via terminal-notifier: event=%s", payload.event)
+            return
+
+        notifier = which("notify-send")
+        if notifier is None:
+            logger.debug("Desktop notification skipped: notify-send not installed")
+            return
+        subprocess.run(
+            [notifier, payload.title, body or payload.event],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        logger.info("Desktop notification sent via notify-send: event=%s", payload.event)

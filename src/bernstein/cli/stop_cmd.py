@@ -5,8 +5,11 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import signal
+import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +25,11 @@ from bernstein.cli.helpers import (
     is_alive,
     kill_pid_hard,
     print_banner,
+    read_pid,
     sigkill_pid,
 )
+from bernstein.core.process_utils import process_cwd
+from bernstein.core.runtime_state import read_supervisor_state
 
 # ---------------------------------------------------------------------------
 # Shared helpers used by stop and the main CLI group
@@ -241,6 +247,27 @@ def _kill_agent_pid(pid: int, label: str, killed: set[int]) -> None:
         console.print(f"[yellow]Agent {label} (PID {pid}) resisted SIGKILL.[/yellow]")
 
 
+def _kill_named_pid(pid: int, label: str, killed: set[int]) -> None:
+    """SIGKILL a non-agent process and track the PID."""
+    if pid in killed or not is_alive(pid):
+        killed.add(pid)
+        return
+    dead = sigkill_pid(pid)
+    killed.add(pid)
+    if dead:
+        console.print(f"[red]Killed {label} (PID {pid}).[/red]")
+    else:
+        console.print(f"[yellow]{label} (PID {pid}) resisted SIGKILL — may need manual cleanup.[/yellow]")
+
+
+def _kill_pid_file(path: str, label: str, killed: set[int]) -> None:
+    """Kill a PID-file-managed process and include it in the killed set."""
+    pid = read_pid(path)
+    if pid is not None and is_alive(pid):
+        killed.add(pid)
+    kill_pid_hard(path, label)
+
+
 def _collect_pids_from_agents_json(killed: set[int]) -> None:
     """Source A: kill agent PIDs from agents.json."""
     agents_json = Path(".sdd/runtime/agents.json")
@@ -280,50 +307,104 @@ def _collect_pids_from_metadata(killed: set[int]) -> None:
         pid_file.unlink(missing_ok=True)
 
 
-_ORPHAN_PATTERNS: list[str] = [
-    "bernstein.core.worker",
-    "bernstein-worker",
-    "claude.*--dangerously-skip-permissions",
-    "codex.*--full-auto",
-    "gemini.*-p",
-    "kiro.*--trust",
-]
+def _collect_pids_from_supervisor_state(killed: set[int]) -> None:
+    """Source C: kill the server from supervisor state when pid files are missing."""
+    snapshot = read_supervisor_state(Path(".sdd"))
+    if snapshot is None or snapshot.current_pid <= 0:
+        return
+    if snapshot.current_pid not in killed and is_alive(snapshot.current_pid):
+        _kill_named_pid(snapshot.current_pid, "Task server", killed)
 
 
-def _collect_orphan_pids(killed: set[int]) -> None:
-    """Source C: scan for orphan agent processes via pgrep."""
-    import subprocess as _sp
+@dataclass(frozen=True)
+class _ProcessSnapshot:
+    """Minimal process metadata used for hard-stop fallback matching."""
 
-    my_pid = os.getpid()
-    for pattern in _ORPHAN_PATTERNS:
-        try:
-            result = _sp.run(
-                ["pgrep", "-f", pattern],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            for line in result.stdout.strip().splitlines():
-                line = line.strip()
-                if not line.isdigit():
-                    continue
-                pid = int(line)
-                if pid == my_pid or pid in killed:
-                    continue
-                _kill_agent_pid(pid, f"orphan-{pid}", killed)
-        except Exception:
+    pid: int
+    ppid: int
+    pgid: int
+    command: str
+
+
+def _list_process_snapshots() -> list[_ProcessSnapshot]:
+    """Return a best-effort snapshot of all local processes."""
+    try:
+        result = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,ppid=,pgid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+
+    snapshots: list[_ProcessSnapshot] = []
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(maxsplit=3)
+        if len(parts) != 4:
             continue
+        try:
+            snapshots.append(
+                _ProcessSnapshot(
+                    pid=int(parts[0]),
+                    ppid=int(parts[1]),
+                    pgid=int(parts[2]),
+                    command=parts[3],
+                )
+            )
+        except ValueError:
+            continue
+    return snapshots
+
+
+def _collect_repo_processes(killed: set[int]) -> None:
+    """Source D: scan repo-owned runtime processes when PID files are gone."""
+    workdir = Path.cwd()
+    my_pid = os.getpid()
+    heartbeat_prefix = str(workdir / ".sdd" / "runtime" / "heartbeats")
+    worktree_prefix = str(workdir / ".sdd" / "worktrees")
+
+    for snapshot in _list_process_snapshots():
+        if snapshot.pid in killed or snapshot.pid == my_pid:
+            continue
+
+        command = snapshot.command
+        if heartbeat_prefix in command or worktree_prefix in command:
+            _kill_agent_pid(snapshot.pid, f"orphan-{snapshot.pid}", killed)
+            continue
+
+        if "bernstein.core.bootstrap" in command and "--watchdog" in command:
+            if process_cwd(snapshot.pid) == workdir:
+                _kill_named_pid(snapshot.pid, "Watchdog", killed)
+            continue
+
+        if "bernstein.core.orchestrator" in command:
+            if process_cwd(snapshot.pid) == workdir:
+                _kill_named_pid(snapshot.pid, "Spawner", killed)
+            continue
+
+        if "uvicorn bernstein.core.server:app" in command and process_cwd(snapshot.pid) == workdir:
+            _kill_named_pid(snapshot.pid, "Task server", killed)
 
 
 def _cleanup_runtime_artifacts() -> None:
     """Remove stale PID files and agents.json so the next stop is clean."""
     for path in (
         Path(".sdd/runtime/agents.json"),
+        Path(".sdd/runtime/draining"),
+        Path(".sdd/runtime/supervisor_state.json"),
+        Path(".sdd/runtime/watchdog_state.json"),
         Path(SDD_PID_SERVER),
         Path(SDD_PID_SPAWNER),
         Path(SDD_PID_WATCHDOG),
     ):
         path.unlink(missing_ok=True)
+    signals_dir = Path(".sdd/runtime/signals")
+    if signals_dir.is_dir():
+        shutil.rmtree(signals_dir, ignore_errors=True)
     pids_dir = Path(".sdd/runtime/pids")
     if pids_dir.is_dir():
         for f in pids_dir.glob("*.json"):
@@ -340,15 +421,16 @@ def hard_stop() -> None:
         console.print("[yellow]Could not save session state.[/yellow]")
 
     # 2. Kill infrastructure: watchdog, spawner, server
-    kill_pid_hard(SDD_PID_WATCHDOG, "Watchdog")
-    kill_pid_hard(SDD_PID_SPAWNER, "Spawner")
-    kill_pid_hard(SDD_PID_SERVER, "Task server")
-
-    # 3. Kill all spawned agents via three sources
     killed_pids: set[int] = set()
+    _kill_pid_file(SDD_PID_WATCHDOG, "Watchdog", killed_pids)
+    _kill_pid_file(SDD_PID_SPAWNER, "Spawner", killed_pids)
+    _kill_pid_file(SDD_PID_SERVER, "Task server", killed_pids)
+    _collect_pids_from_supervisor_state(killed_pids)
+
+    # 3. Kill all spawned agents and repo-owned leftovers
     _collect_pids_from_agents_json(killed_pids)
     _collect_pids_from_metadata(killed_pids)
-    _collect_orphan_pids(killed_pids)
+    _collect_repo_processes(killed_pids)
 
     # 4. Verification sweep — re-scan and retry anything still alive
     time.sleep(0.1)
@@ -356,8 +438,8 @@ def hard_stop() -> None:
     if survivors:
         console.print(f"[yellow]Retrying {len(survivors)} survivor(s)…[/yellow]")
         for pid in survivors:
-            _kill_agent_pid(pid, f"survivor-{pid}", killed_pids)
-    _collect_orphan_pids(killed_pids)
+            _kill_named_pid(pid, f"survivor-{pid}", killed_pids)
+    _collect_repo_processes(killed_pids)
 
     # 5. Clean up stale runtime artifacts
     _cleanup_runtime_artifacts()

@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import os
 import signal
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import patch
 
 from click.testing import CliRunner
 
+import bernstein.cli.stop_cmd as stop_cmd_module
 from bernstein.cli.main import (
     cli,
     kill_pid_hard,
@@ -18,10 +19,6 @@ from bernstein.cli.main import (
     save_session_on_stop,
     write_shutdown_signals,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # write_shutdown_signals
@@ -253,6 +250,100 @@ class TestKillPidHard:
             kill_pid_hard(str(pid_file), "test")
 
         assert not pid_file.exists()
+
+
+class TestHardStopFallbacks:
+    def test_collect_pids_from_supervisor_state_kills_server_when_pid_file_is_missing(self, tmp_path: Path) -> None:
+        os.chdir(tmp_path)
+        runtime = tmp_path / ".sdd" / "runtime"
+        runtime.mkdir(parents=True)
+        (runtime / "supervisor_state.json").write_text(
+            json.dumps(
+                {
+                    "started_at": 1.0,
+                    "restart_count": 0,
+                    "current_pid": 4321,
+                    "last_restart_at": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        killed: set[int] = set()
+        with (
+            patch("bernstein.cli.stop_cmd.is_alive", return_value=True),
+            patch("bernstein.cli.stop_cmd._kill_named_pid") as mock_kill,
+        ):
+            stop_cmd_module._collect_pids_from_supervisor_state(killed)  # pyright: ignore[reportPrivateUsage]
+
+        mock_kill.assert_called_once_with(4321, "Task server", killed)
+
+    def test_collect_repo_processes_targets_repo_owned_runtime_processes(self, tmp_path: Path) -> None:
+        os.chdir(tmp_path)
+        snapshots = [
+            stop_cmd_module._ProcessSnapshot(  # pyright: ignore[reportPrivateUsage]
+                pid=10,
+                ppid=1,
+                pgid=10,
+                command=f"/bin/zsh -c while true; do > '{tmp_path}/.sdd/runtime/heartbeats/a.json'; done",
+            ),
+            stop_cmd_module._ProcessSnapshot(  # pyright: ignore[reportPrivateUsage]
+                pid=11,
+                ppid=1,
+                pgid=11,
+                command="/usr/bin/python -m bernstein.core.bootstrap --watchdog --port 8052",
+            ),
+            stop_cmd_module._ProcessSnapshot(  # pyright: ignore[reportPrivateUsage]
+                pid=12,
+                ppid=1,
+                pgid=12,
+                command="/usr/bin/python -m bernstein.core.orchestrator --port 8052 --cells 1",
+            ),
+            stop_cmd_module._ProcessSnapshot(  # pyright: ignore[reportPrivateUsage]
+                pid=13,
+                ppid=1,
+                pgid=13,
+                command="/usr/bin/python -m uvicorn bernstein.core.server:app --host 127.0.0.1 --port 8052",
+            ),
+            stop_cmd_module._ProcessSnapshot(  # pyright: ignore[reportPrivateUsage]
+                pid=14,
+                ppid=1,
+                pgid=14,
+                command="/usr/bin/python -m bernstein.core.bootstrap --watchdog --port 8052",
+            ),
+        ]
+
+        agent_calls: list[int] = []
+        infra_calls: list[tuple[int, str]] = []
+        killed: set[int] = set()
+
+        def _record_agent(pid: int, label: str, seen: set[int]) -> None:
+            del label, seen
+            agent_calls.append(pid)
+
+        def _record_infra(pid: int, label: str, seen: set[int]) -> None:
+            del seen
+            infra_calls.append((pid, label))
+
+        with (
+            patch("bernstein.cli.stop_cmd._list_process_snapshots", return_value=snapshots),
+            patch(
+                "bernstein.cli.stop_cmd.process_cwd",
+                side_effect=[tmp_path, tmp_path, tmp_path, Path("/tmp")],
+            ),
+            patch(
+                "bernstein.cli.stop_cmd._kill_agent_pid",
+                side_effect=_record_agent,
+            ),
+            patch(
+                "bernstein.cli.stop_cmd._kill_named_pid",
+                side_effect=_record_infra,
+            ),
+        ):
+            stop_cmd_module._collect_repo_processes(killed)  # pyright: ignore[reportPrivateUsage]
+
+        assert agent_calls == [10]
+        assert infra_calls == [(11, "Watchdog"), (12, "Spawner"), (13, "Task server")]
 
 
 # ---------------------------------------------------------------------------

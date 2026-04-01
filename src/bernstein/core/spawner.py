@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -576,6 +577,7 @@ class AgentSpawner:
         self._context_builder = TaskContextBuilder(workdir)
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
         self._shutdown_event: threading.Event | None = None
+        self._agent_failure_timestamps: dict[str, float] = {}  # adapter_name -> last failure ts
         self._use_worktrees = use_worktrees
         self._worktree_mgr: WorktreeManager | None = None
         if use_worktrees:
@@ -649,6 +651,18 @@ class AgentSpawner:
         """Actual spawn implementation."""
         if self._shutdown_event is not None and self._shutdown_event.is_set():
             raise ShutdownInProgress("Orchestrator shutting down — refusing new spawn")
+
+        # 5min cooldown check
+        now = time.time()
+        adapter_name = self._adapter.name()
+        last_fail = self._agent_failure_timestamps.get(adapter_name, 0.0)
+        if now - last_fail < 300:
+            logger.info(
+                "Agent %s in cooldown (%.1fs remaining) — skipping spawn",
+                adapter_name,
+                300 - (now - last_fail),
+            )
+            raise SpawnError(f"Agent {adapter_name} is in cooldown after recent failure")
 
         if not tasks:
             raise ValueError("Cannot spawn agent with empty task list")

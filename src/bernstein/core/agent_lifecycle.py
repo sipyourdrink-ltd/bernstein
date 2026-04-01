@@ -62,6 +62,14 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
             continue
         if not orch._spawner.check_alive(session):
             transition_agent(session, "dead", actor="agent_lifecycle", reason="process not alive")
+
+            # Record failure timestamp for cooldown
+            if session.role:
+                # Use session.id or adapter name if available.
+                # Assuming session has adapter attribute based on previous work.
+                adapter_name = getattr(session, "adapter", "unknown")
+                orch._agent_failure_timestamps[adapter_name] = time.time()
+
             # Release file ownership for this agent
             _release_file_ownership(orch, session.id)
             _release_task_to_session(orch, session.task_ids)

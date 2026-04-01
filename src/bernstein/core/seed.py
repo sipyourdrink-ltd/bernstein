@@ -79,11 +79,13 @@ class NotifyConfig:
         webhook_url: URL to POST to on run events.
         on_complete: Send notification when run completes successfully.
         on_failure: Send notification when run fails.
+        desktop: Enable local OS notifications for task completion/failure.
     """
 
     webhook_url: str | None = None
     on_complete: bool = True
     on_failure: bool = True
+    desktop: bool = False
 
 
 @dataclass(frozen=True)
@@ -406,14 +408,18 @@ def parse_seed(path: Path) -> SeedConfig:
             raise SeedError(f"notify.webhook must be a string, got: {type(webhook_url).__name__}")
         on_complete: object = notify_dict.get("on_complete", True)
         on_failure: object = notify_dict.get("on_failure", True)
+        desktop: object = notify_dict.get("desktop", False)
         if not isinstance(on_complete, bool):
             raise SeedError(f"notify.on_complete must be a bool, got: {type(on_complete).__name__}")
         if not isinstance(on_failure, bool):
             raise SeedError(f"notify.on_failure must be a bool, got: {type(on_failure).__name__}")
+        if not isinstance(desktop, bool):
+            raise SeedError(f"notify.desktop must be a bool, got: {type(desktop).__name__}")
         notify = NotifyConfig(
             webhook_url=webhook_url,
             on_complete=on_complete,
             on_failure=on_failure,
+            desktop=desktop,
         )
 
     webhooks_raw: object = data.get("webhooks")

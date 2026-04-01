@@ -290,6 +290,7 @@ class Orchestrator:
         self._summary_written: bool = False
         self._run_start_ts: float = time.time()
         self._idle_shutdown_ts: dict[str, float] = {}  # agent_id -> shutdown signal sent ts
+        self._agent_failure_timestamps: dict[str, float] = {}  # adapter_name -> last failure ts
         self._shutting_down = threading.Event()
         self._executor_drained = False
         # Background thread pool for non-blocking ruff/pytest runs
@@ -893,6 +894,9 @@ class Orchestrator:
 
         # 2e. Recycle idle agents
         recycle_idle_agents(self, tasks_by_status)
+
+        # Sync failure timestamps to spawner for cooldown enforcement
+        self._spawner._agent_failure_timestamps = self._agent_failure_timestamps
 
         refresh_agent_states(self, tasks_by_status)
         alive_count = sum(1 for a in self._agents.values() if a.status != "dead")

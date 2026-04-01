@@ -8,8 +8,9 @@ and dangerous deletions.
 from __future__ import annotations
 
 import json
+import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,13 @@ from typing import Any
 from bernstein.core.license_scanner import check_license_obligations
 from bernstein.core.models import GuardrailResult, Task
 from bernstein.core.permissions import AgentPermissions, check_file_permissions
+
+logger = logging.getLogger(__name__)
+
+
+def _default_review_checklist() -> list[str]:
+    """Return a typed empty checklist for guardrail reviews."""
+    return []
 
 
 @dataclass(frozen=True)
@@ -36,6 +44,7 @@ class GuardrailsConfig:
     license_scan: bool = True
     max_deletion_pct: int = 50
     permission_overrides: dict[str, AgentPermissions] | None = None
+    review_checklist: list[str] = field(default_factory=_default_review_checklist)
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +431,90 @@ def run_guardrails(
         for r in check_license_obligations(diff):
             results.append(r)
             _record_result(task.id, r, workdir)
+
+    if config.review_checklist:
+        for r in check_review_checklist(diff, task, config.review_checklist, workdir):
+            results.append(r)
+            _record_result(task.id, r, workdir)
+
+    return results
+
+
+def check_review_checklist(
+    diff: str,
+    task: Task,
+    checklist: list[str],
+    workdir: Path,
+) -> list[GuardrailResult]:
+    """Verify a custom review checklist against the git diff using LLM.
+
+    Args:
+        diff: Git diff string.
+        task: The task that produced the diff.
+        checklist: List of items to check (e.g. "Proper error handling").
+        workdir: Project root directory.
+
+    Returns:
+        List of GuardrailResult, one for each checklist item.
+    """
+    from bernstein.core.llm import call_llm
+
+    results: list[GuardrailResult] = []
+    if not checklist:
+        return results
+
+    items_str = "\n".join(f"- {item}" for item in checklist)
+    prompt = (
+        f"Review the following git diff for task '{task.title}' against these criteria:\n"
+        f"{items_str}\n\n"
+        f"Diff:\n{diff[:5000]}\n\n"
+        "For each criterion, respond with PASS or FAIL followed by a brief reason. "
+        "Format: [CRITERION] PASS/FAIL: REASON"
+    )
+
+    try:
+        # Note: In a real implementation, we might want to use a more structured
+        # output format or a dedicated judge model. For this feature, we'll use
+        # a basic LLM call and parse the response.
+        import asyncio
+
+        response = asyncio.run(call_llm(prompt, model="sonnet", provider="auto"))
+
+        for item in checklist:
+            passed = True
+            reason = "Item not mentioned in LLM response"
+
+            # Simple heuristic parsing
+            for line in response.splitlines():
+                if item.lower() in line.lower():
+                    if "FAIL" in line.upper():
+                        passed = False
+                        reason = line.split(":", 1)[1].strip() if ":" in line else "Failed review"
+                        break
+                    elif "PASS" in line.upper():
+                        passed = True
+                        reason = line.split(":", 1)[1].strip() if ":" in line else "Passed review"
+                        break
+
+            results.append(
+                GuardrailResult(
+                    check=f"review_checklist:{item[:30]}",
+                    passed=passed,
+                    blocked=False,  # Checklist violations are usually soft-blocks
+                    detail=reason,
+                )
+            )
+    except Exception as exc:
+        logger.warning("Review checklist failed for task %s: %s", task.id, exc)
+        for item in checklist:
+            results.append(
+                GuardrailResult(
+                    check=f"review_checklist:{item[:30]}",
+                    passed=False,
+                    blocked=False,
+                    detail=f"Check failed due to error: {exc}",
+                )
+            )
 
     return results
 

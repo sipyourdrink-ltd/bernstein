@@ -357,6 +357,7 @@ notify:
   webhook: https://hooks.slack.com/services/T.../B.../xxx
   on_complete: true
   on_failure: false
+  desktop: true
 """
 
 NOTIFY_WEBHOOK_ONLY_YAML = """\
@@ -376,6 +377,7 @@ class TestNotifyConfig:
         assert cfg.notify.webhook_url == "https://hooks.slack.com/services/T.../B.../xxx"
         assert cfg.notify.on_complete is True
         assert cfg.notify.on_failure is False
+        assert cfg.notify.desktop is True
 
     def test_notify_webhook_only_defaults(self, seed_file: Path) -> None:
         seed_file.write_text(NOTIFY_WEBHOOK_ONLY_YAML)
@@ -400,10 +402,16 @@ class TestNotifyConfig:
         with pytest.raises(SeedError, match="notify.webhook must be a string"):
             parse_seed(seed_file)
 
+    def test_notify_desktop_not_bool_raises(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nnotify:\n  desktop: "yes"\n')
+        with pytest.raises(SeedError, match="notify.desktop must be a bool"):
+            parse_seed(seed_file)
+
     def test_notify_config_defaults(self) -> None:
         nc = NotifyConfig(webhook_url="https://example.com")
         assert nc.on_complete is True
         assert nc.on_failure is True
+        assert nc.desktop is False
 
     def test_notify_config_frozen(self) -> None:
         nc = NotifyConfig(webhook_url="https://example.com")
