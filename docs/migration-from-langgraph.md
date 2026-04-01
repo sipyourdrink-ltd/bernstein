@@ -6,7 +6,7 @@ This guide helps teams migrate from LangGraph to Bernstein, mapping concepts and
 
 | LangGraph Concept | Bernstein Equivalent | Notes |
 |------------------|---------------------|-------|
-| **Graph** | **Recipe** | Bernstein recipes define task workflows |
+| **Graph** | **Goal + task backlog + orchestrator run** | Bernstein executes from goal/task state rather than one in-memory graph object |
 | **Node** | **Task** | Individual units of work |
 | **Edge** | **Dependency** | `depends_on` field in tasks |
 | **State** | **Task Context** | Shared via `.sdd/` file system |
@@ -51,22 +51,20 @@ def code_review_node(state):
     return {"review": "..."}
 ```
 
-Bernstein task (`.sdd/backlog/open/code-review.md`):
-```markdown
----
+Bernstein task (`.sdd/backlog/open/p2_qa_code-review.yaml`):
+```yaml
 id: "code-review"
 title: "Review code changes"
 role: qa
 priority: 2
+scope: medium
+complexity: medium
 depends_on: ["implementation"]
----
-
-## Description
-
-Review the implemented code for quality and best practices.
+description: |
+  Review the implemented code for quality and best practices.
 ```
 
-### Step 3: Convert Graph to Recipe
+### Step 3: Convert Graph to dependency-backed tasks (or staged plan)
 
 LangGraph workflow:
 ```python
@@ -75,22 +73,21 @@ workflow.add_edge("implementation", "testing")
 workflow.add_edge("testing", "review")
 ```
 
-Bernstein recipe (`recipes/my-workflow.yaml`):
+Bernstein staged plan (`plans/my-workflow.yaml`) or equivalent dependent tasks:
 ```yaml
-id: my-workflow
-title: My Development Workflow
-steps:
-  - id: planning
-    role: manager
-  - id: implementation
-    role: backend
-    depends_on: [planning]
-  - id: testing
-    role: qa
-    depends_on: [implementation]
-  - id: review
-    role: security
-    depends_on: [testing]
+goal: "Ship my development workflow"
+stages:
+  - name: plan
+    steps:
+      - goal: "Plan implementation"
+        role: manager
+  - name: implement
+    depends_on: [plan]
+    steps:
+      - goal: "Implement feature"
+        role: backend
+      - goal: "Run QA verification"
+        role: qa
 ```
 
 ### Step 4: Migrate State Management
@@ -118,13 +115,15 @@ def run_tests(code: str) -> str:
     return results
 ```
 
-Bernstein quality gates (`.bernstein/quality_gates.yaml`):
+Bernstein quality gates (`bernstein.yaml`):
 ```yaml
-gates:
-  - lint
-  - tests
-  - type_check
-  - security_scan
+quality_gates:
+  lint:
+    enabled: true
+  tests:
+    enabled: true
+  typecheck:
+    enabled: true
 ```
 
 ### Step 6: Configure Agent Roles

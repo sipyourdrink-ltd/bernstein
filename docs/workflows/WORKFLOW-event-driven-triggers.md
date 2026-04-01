@@ -7,6 +7,8 @@
 
 ---
 
+> Note: This spec contains historical draft naming in examples. Current implemented trigger source modules are `github.py`, `slack.py`, `file_watch.py`, and `webhook.py` under `src/bernstein/core/trigger_sources/`.
+
 ## Overview
 
 Bernstein spawns agents in response to external events — git pushes, CI failure webhooks, Slack messages, cron schedules, and file-watch patterns — without requiring manual `bernstein run` invocation. A unified **TriggerManager** evaluates incoming events against user-defined trigger rules, applies filters and conditions, deduplicates, and creates tasks on the task server. The orchestrator picks up these tasks in its normal tick loop. This is the single highest-impact UX improvement: orchestration "just works" when things happen.

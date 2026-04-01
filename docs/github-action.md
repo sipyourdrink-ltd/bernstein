@@ -13,24 +13,13 @@ branch, Bernstein will attempt to fix it automatically.
 | Input            | Required | Default   | Description                                             |
 |------------------|----------|-----------|---------------------------------------------------------|
 | `task`           | no       | —         | Task description, or `"fix-ci"` for auto-fix mode       |
-| `plan`           | no       | —         | Path to a YAML plan file (e.g. `plans/api.yaml`)        |
 | `budget`         | no       | `"5.00"`  | Dollar cap for the run                                  |
 | `cli`            | no       | `"claude"`| Agent CLI to use (`claude`, `codex`, `gemini`, `qwen`)  |
 | `max-retries`    | no       | `"3"`     | Retry count in fix-ci mode                              |
 | `python-version` | no       | `"3.12"`  | Python version to install                               |
+| `post-comment`   | no       | `"true"`  | Post PR comment with orchestration summary              |
 
 ## Modes
-
-### Plan mode (`plan: path/to/plan.yaml`)
-
-When `plan` is provided, the action runs the specified YAML project plan:
-
-```
-bernstein run <plan> --budget <budget> --headless
-```
-
-Use this for complex multi-stage migrations, refactorings, or new feature
-build-outs described in a YAML plan file.
 
 ### Fix-CI mode (`task: fix-ci`)
 
@@ -102,10 +91,8 @@ The action is a composite action (`action.yml` + `action/entrypoint.sh`). Steps:
 
 ## Limitations
 
-- **Agent CLI must be available.** The action installs bernstein but not the
-  agent CLIs themselves. Claude Code, Codex CLI, etc. need to be installed
-  separately or be available in the runner image. For most cases, the API key
-  alone is sufficient since bernstein can invoke agent APIs directly.
+- **Agent CLI must be available.** The action installs bernstein, but selected
+  CLIs still need to be available/authenticated for your chosen mode.
 - **Budget is advisory.** The budget cap relies on bernstein's cost tracking,
   which depends on the agent CLI reporting costs accurately.
 - **Fix-CI mode is best-effort.** Complex failures (infra issues, flaky tests,

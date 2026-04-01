@@ -55,10 +55,12 @@ This creates `.sdd/` — a lightweight file-based state directory:
 .sdd/
   backlog/open/      task files waiting to be claimed
   backlog/closed/    completed and failed task records
-  agents/            per-agent state & heartbeat files
   runtime/           PID files and log files
-  knowledge/         project notes injected as context
-  decisions/         architecture decision records
+  metrics/           run/task/quality/cost metrics (JSON/JSONL)
+  traces/            execution traces and replay artifacts
+  memory/            lessons and memory state
+  agents/            catalog and agent/runtime metadata
+  caching/           prompt/cache artifacts
   config.yaml        server port, model defaults, worker limits
 ```
 
@@ -79,8 +81,8 @@ bernstein
 Bernstein will:
 1. Start the task server on `localhost:8052`
 2. Inject an initial manager task
-3. Spawn a manager agent (Claude Code, Opus, max effort)
-4. The manager decomposes the goal and spawns specialist workers automatically
+3. Spawn manager/worker agents via the configured adapter and routing policy
+4. Decompose and execute tasks with retries, quality gates, and completion checks
 
 ### 3. Monitor progress
 
@@ -92,7 +94,7 @@ bernstein status                    # task summary + provider health/quota when 
 ```
 
 **TUI dashboard** — `bernstein` blocks in a live terminal dashboard by default.
-Press `Ctrl+C` to exit (agents keep running).
+Press `Ctrl+C` to exit the UI; run `bernstein stop` when you want to stop orchestration.
 
 ```bash
 bernstein live                      # attach dashboard to running session
@@ -164,7 +166,7 @@ bernstein stop
 ```
 
 Sends a graceful shutdown signal to the task server, waits up to 10 s for
-in-flight agents to finish, then kills the server and spawner processes.
+in-flight agents to finish/drain, then finalises cleanup of server/spawner and agent processes.
 
 ```bash
 # Shorter timeout if you need to stop quickly

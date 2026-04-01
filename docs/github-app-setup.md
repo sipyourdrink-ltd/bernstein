@@ -18,9 +18,11 @@ server. When GitHub sends a webhook, Bernstein:
 | GitHub event | Condition | Bernstein task |
 |---|---|---|
 | `issues.opened` | New issue filed | Standard task, priority from labels |
-| `issues.labeled` | `evolve-candidate` label added | Evolution/upgrade proposal task |
-| `pull_request_review_comment.created` | Actionable comment (contains fix/change/should/etc.) | Fix task, role inferred from file path |
-| `push` | Push to any branch | QA verification task |
+| `issues.labeled` | Trigger label added | Evolution/upgrade or follow-up task |
+| `pull_request_review_comment.created` | Actionable review comment | Fix task, role inferred from file path |
+| `issue_comment.created` | Actionable issue/PR comment | Follow-up task |
+| `push` | Push to branch | QA verification task |
+| `workflow_run.completed` | Failed workflow run | CI-fix task |
 
 ## Setup
 
@@ -32,7 +34,7 @@ Required settings:
 - **Webhook URL**: `https://<your-server>/webhooks/github`
 - **Webhook secret**: generate a strong random string
 - **Permissions**: Issues (Read & Write), Pull requests (Read & Write), Contents (Read)
-- **Events**: Issues, Pull request, Pull request review comment, Push
+- **Events**: Issues, Issue comment, Pull request review comment, Push, Workflow run
 
 ### 2. Install on your repository
 

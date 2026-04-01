@@ -9,7 +9,7 @@ This guide helps teams migrate from CrewAI to Bernstein, mapping concepts and pr
 | **Agent** | **Role** + **CLI Agent** | Bernstein separates role definition from agent execution |
 | **Task** | **Task** | Similar concept, Bernstein tasks have priority and complexity |
 | **Process** | **Orchestrator** | Bernstein's orchestrator manages task lifecycle |
-| **Crew** | **Recipe** | A collection of tasks to achieve a goal |
+| **Crew** | **Goal + task backlog + orchestrator run** | Bernstein plans/executes from goals and task state |
 | **Tool** | **Quality Gate** | Bernstein uses quality gates for validation |
 
 ## Architecture Differences
@@ -69,23 +69,19 @@ Task(
 )
 ```
 
-Bernstein task (`.sdd/backlog/open/my-task.md`):
-```markdown
----
+Bernstein task (`.sdd/backlog/open/p2_feat_api-endpoint.yaml`):
+```yaml
 id: "api-endpoint"
 title: "Write API endpoint"
 role: backend
 priority: 2
+scope: medium
 complexity: medium
----
-
-## Description
-
-Write API endpoint for user registration.
-
-## Expected Output
-
-Working API endpoint with tests.
+description: |
+  Write API endpoint for user registration.
+completion_signals:
+  - type: test_passes
+    value: uv run pytest tests/unit/test_registration.py -x -q
 ```
 
 ### Step 4: Define Your Goal as a Recipe
@@ -99,26 +95,30 @@ Bernstein will automatically decompose the goal into tasks.
 
 ### Step 5: Configure Quality Gates
 
-CrewAI tools become Bernstein quality gates:
+CrewAI tool/check steps typically map to Bernstein quality gates and completion signals:
 
 ```yaml
-# .bernstein/quality_gates.yaml
-gates:
-  - lint
-  - type_check
-  - tests
-  - security_scan
+quality_gates:
+  lint:
+    enabled: true
+  typecheck:
+    enabled: true
+  tests:
+    enabled: true
 ```
 
 ### Step 6: Set Up Model Routing
 
-Bernstein supports multiple models:
+Bernstein supports role-aware model policy and provider policy:
 ```yaml
 # bernstein.yaml
-model_routing:
-  default: sonnet
-  high_stakes: opus
-  simple: haiku
+role_model_policy:
+  backend:
+    provider: claude_standard
+    model: sonnet
+    effort: high
+model_policy:
+  denied_providers: [example_provider]
 ```
 
 ### Step 7: Migrate Integrations
@@ -184,7 +184,7 @@ Bernstein: Task dependencies and quality gates
 **Solution**: Override in task file: `model: opus`
 
 ### Issue: Quality gates failing
-**Solution**: Review gate configuration in `.bernstein/quality_gates.yaml`
+**Solution**: Review `quality_gates` in `bernstein.yaml` and the task's `completion_signals`
 
 ## Next Steps
 
