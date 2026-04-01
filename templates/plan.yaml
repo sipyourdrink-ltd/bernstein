@@ -1,53 +1,3 @@
-<<<<<<< HEAD
-# Bernstein Plan Template
-# A Plan is a YAML file describing a multi-step project.
-# Use this template to define structured goals with stages and steps.
-#
-# Usage:
-#   bernstein run plan.yaml
-
-name: "My Project Plan"
-description: "A description of what this plan achieves"
-
-# Global constraints for all tasks in this plan
-constraints:
-  - "Use Python 3.12+"
-  - "Maintain 100% test coverage"
-  - "Follow PEP 8 style guide"
-
-stages:
-  - name: "Foundation"
-    description: "Set up the project structure and basic dependencies"
-    steps:
-      - goal: "Initialize project structure with pyproject.toml and README.md"
-        role: architect
-      - goal: "Set up basic CI/CD pipeline with GitHub Actions"
-        role: devops
-
-  - name: "Core Features"
-    depends_on: ["Foundation"]
-    steps:
-      - goal: "Implement the primary data model"
-        role: backend
-      - goal: "Add core business logic and services"
-        role: backend
-
-  - name: "Interface"
-    depends_on: ["Core Features"]
-    steps:
-      - goal: "Implement REST API endpoints"
-        role: backend
-      - goal: "Add OpenAPI documentation"
-        role: backend
-
-  - name: "Quality Assurance"
-    depends_on: ["Interface"]
-    steps:
-      - goal: "Add integration tests for all API endpoints"
-        role: qa
-      - goal: "Perform security audit of the codebase"
-        role: security
-=======
 # ── Bernstein Plan File ──
 #
 # A plan defines a multi-stage project as stages and steps.
@@ -84,7 +34,7 @@ description: >
 # Max concurrent agent processes.
 # max_agents: 4
 
-# Constraints passed to every agent.
+# Global constraints passed to every agent.
 # constraints:
 #   - "Python 3.12+"
 #   - "pytest for tests"
@@ -116,11 +66,11 @@ stages:
     steps:
       - title: "Short step title"
 
-        # What the agent should do.
+        # What the agent should do. Falls back to title when omitted.
         description: >
           Detailed instructions for the agent.
 
-        # Specialist role: backend | qa | frontend | security | devops | docs
+        # Specialist role: backend | qa | frontend | security | devops | docs | architect
         role: backend
 
         # Duration estimate: small (<30min) | medium (30-90min) | large (90min+)
@@ -138,7 +88,7 @@ stages:
         # Estimated minutes for the agent to complete.
         # estimated_minutes: 30
 
-        # Files the agent will read or modify.
+        # Files the agent will read or modify (sets ownership for conflict detection).
         # files:
         #   - "src/app.py"
         #   - "tests/test_app.py"
@@ -152,4 +102,3 @@ stages:
         #   - type: file_contains
         #     path: "src/app.py"
         #     contains: "def create_app"
->>>>>>> agent/architect-a2e185a9

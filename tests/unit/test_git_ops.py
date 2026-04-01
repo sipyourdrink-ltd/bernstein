@@ -32,6 +32,7 @@ from bernstein.core.git_ops import (
     diff_cached_stat,
     diff_head,
     enable_pr_auto_merge,
+    is_conventional_commit_message,
     is_git_repo,
     merge_branch,
     push_branch,
@@ -255,6 +256,31 @@ class TestCommit:
         result = commit(REPO, "test message")
         assert result.ok
         mock.assert_called_once_with(["commit", "-m", "test message"], REPO)
+
+    @patch("bernstein.core.git_basic.run_git")
+    def test_commit_rejects_invalid_conventional_subject(self, mock: MagicMock) -> None:
+        result = commit(REPO, "not conventional", enforce_conventional=True)
+        assert not result.ok
+        assert "conventional format" in result.stderr
+        mock.assert_not_called()
+
+    @patch("bernstein.core.git_basic.run_git")
+    def test_commit_accepts_valid_conventional_subject(self, mock: MagicMock) -> None:
+        mock.return_value = GitResult(0, "", "")
+        result = commit(REPO, "fix(core): tighten parsing", enforce_conventional=True)
+        assert result.ok
+        mock.assert_called_once_with(["commit", "-m", "fix(core): tighten parsing"], REPO)
+
+
+class TestConventionalCommitValidation:
+    """Tests for commit-message validation helper."""
+
+    def test_helper_accepts_optional_scope(self) -> None:
+        assert is_conventional_commit_message("feat: add endpoint")
+        assert is_conventional_commit_message("fix(router): stop retry loop")
+
+    def test_helper_rejects_invalid_subject(self) -> None:
+        assert not is_conventional_commit_message("WIP: temp commit")
 
 
 class TestConventionalCommit:

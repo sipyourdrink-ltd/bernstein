@@ -15,7 +15,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from prometheus_client import (
     CollectorRegistry,
@@ -27,6 +27,7 @@ from prometheus_client import (
 
 __all__ = [
     "agents_active",
+    "cost_usd_by_model_total",
     "cost_usd_total",
     "evolution_errors_by_type",
     "evolve_proposals_total",
@@ -82,6 +83,13 @@ cost_usd_total: Counter = Counter(
     registry=registry,
 )
 
+cost_usd_by_model_total: Counter = Counter(
+    "bernstein_cost_usd_by_model_total",
+    "Total API cost in USD, partitioned by model.",
+    labelnames=["model"],
+    registry=registry,
+)
+
 evolve_proposals_total: Counter = Counter(
     "bernstein_evolve_proposals_total",
     "Evolution proposals by verdict (accepted/rejected/pending).",
@@ -102,6 +110,7 @@ evolution_errors_by_type: Counter = Counter(
 
 _prev_tasks: dict[str, float] = {}
 _prev_cost: float = 0.0
+_prev_cost_by_model: dict[str, float] = {}
 
 
 def update_metrics_from_status(status_data: dict[str, Any]) -> None:
@@ -117,7 +126,7 @@ def update_metrics_from_status(status_data: dict[str, Any]) -> None:
             ``total_cost_usd``, and optionally ``per_role`` (list of dicts
             with ``role``, ``open``, ``claimed`` keys for agent tracking).
     """
-    global _prev_cost
+    global _prev_cost, _prev_cost_by_model
 
     # -- Task counters -------------------------------------------------------
     for status_key in ("open", "claimed", "done", "failed"):
@@ -138,6 +147,22 @@ def update_metrics_from_status(status_data: dict[str, Any]) -> None:
     if cost_delta > 0:
         cost_usd_total.inc(cost_delta)
     _prev_cost = current_cost
+
+    # -- Cost by model counter ----------------------------------------------
+    per_model_raw: Any = status_data.get("cost_by_model_usd", {})
+    per_model: dict[str, float] = {}
+    if isinstance(per_model_raw, dict):
+        raw_map = cast("dict[str, Any]", per_model_raw)
+        for model in raw_map:
+            raw_cost = raw_map[model]
+            per_model[str(model)] = float(raw_cost or 0.0)
+    for model_name, current_model_cost in per_model.items():
+        model_name = model_name.strip() or "unknown"
+        previous_model_cost = _prev_cost_by_model.get(model_name, 0.0)
+        delta_model_cost = current_model_cost - previous_model_cost
+        if delta_model_cost > 0:
+            cost_usd_by_model_total.labels(model=model_name).inc(delta_model_cost)
+        _prev_cost_by_model[model_name] = current_model_cost
 
     # -- Active-agent gauges -------------------------------------------------
     # Derive active-agent counts from per_role claimed tasks as a proxy.

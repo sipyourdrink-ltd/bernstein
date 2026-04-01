@@ -281,7 +281,9 @@ def hard_stop() -> None:
     try:
         result = _sp.run(
             ["pgrep", "-f", "claude.*--dangerously-skip-permissions"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for line in result.stdout.strip().split():
             if line.isdigit():

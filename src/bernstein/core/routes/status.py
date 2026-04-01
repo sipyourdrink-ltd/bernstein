@@ -178,6 +178,65 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     return _runtime_cache
 
 
+def _read_pid(path: Path) -> int | None:
+    """Read an integer PID from a PID file."""
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return None
+        return int(raw)
+    except (OSError, ValueError):
+        return None
+
+
+def _is_pid_alive(pid: int | None) -> bool:
+    """Return True when a process PID appears alive."""
+    if pid is None or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _health_components(request: Request, store: TaskStore) -> dict[str, dict[str, Any]]:
+    """Build component-level health details for /health."""
+    sdd_dir = getattr(request.app.state, "sdd_dir", None)
+    runtime_dir = sdd_dir / "runtime" if isinstance(sdd_dir, Path) else None
+
+    spawner_status = "unknown"
+    spawner_pid: int | None = None
+    if isinstance(runtime_dir, Path):
+        spawner_pid = _read_pid(runtime_dir / "spawner.pid")
+        if spawner_pid is not None:
+            spawner_status = "ok" if _is_pid_alive(spawner_pid) else "down"
+
+    database_status = "ok" if hasattr(store, "list_tasks") else "unavailable"
+    agent_count = int(getattr(store, "agent_count", 0))
+    agents_status = "ok" if agent_count > 0 else "idle"
+
+    return {
+        "server": {"status": "ok"},
+        "spawner": {"status": spawner_status, "pid": spawner_pid},
+        "database": {"status": database_status, "type": store.__class__.__name__},
+        "agents": {"status": agents_status, "active": agent_count},
+    }
+
+
+def _readiness(request: Request) -> tuple[bool, str]:
+    """Return (ready, reason) for claim-readiness checks."""
+    if bool(getattr(request.app.state, "draining", False)):
+        return False, "draining"
+    if bool(getattr(request.app.state, "readonly", False)):
+        return False, "readonly"
+    if getattr(request.app.state, "store", None) is None:
+        return False, "store_unavailable"
+    return True, "ready"
+
+
 # ---------------------------------------------------------------------------
 # Status & health
 # ---------------------------------------------------------------------------
@@ -325,8 +384,15 @@ async def health_check(request: Request) -> HealthResponse:
     is_readonly: bool = getattr(request.app.state, "readonly", False)
     summary = store.status_summary()
     runtime = _runtime_summary(request, store)
+    components = _health_components(request, store)
+    blocked_components = {"unavailable", "error"}
+    overall_status = (
+        "degraded"
+        if any(str(component.get("status", "ok")) in blocked_components for component in components.values())
+        else "ok"
+    )
     return HealthResponse(
-        status="ok",
+        status=overall_status,
         uptime_s=round(time.time() - store.start_ts, 2),
         task_count=len(store.list_tasks()),
         agent_count=store.agent_count,
@@ -334,20 +400,36 @@ async def health_check(request: Request) -> HealthResponse:
         memory_mb=float(runtime.get("memory_mb", 0.0)),
         restart_count=int(runtime.get("restart_count", 0)),
         is_readonly=is_readonly,
+        components=components,
     )
 
 
 @router.get("/health/ready")
 async def ready_check(request: Request) -> JSONResponse:
     """Readiness check for load balancers."""
-    # Ready if store is loaded and server is accepting tasks
-    return JSONResponse(content={"status": "ready"})
+    ready, reason = _readiness(request)
+    status_code = 200 if ready else 503
+    return JSONResponse(
+        content={"status": "ready" if ready else "not_ready", "reason": reason}, status_code=status_code
+    )
+
+
+@router.get("/ready")
+async def ready_alias(request: Request) -> JSONResponse:
+    """Alias for /health/ready."""
+    return await ready_check(request)
 
 
 @router.get("/health/live")
 async def live_check() -> JSONResponse:
     """Liveness check for process monitoring."""
     return JSONResponse(content={"status": "alive"})
+
+
+@router.get("/alive")
+async def live_alias() -> JSONResponse:
+    """Alias for /health/live."""
+    return await live_check()
 
 
 @router.post("/shutdown")
@@ -437,6 +519,10 @@ async def metrics_endpoint(request: Request) -> PlainTextResponse:
     """
     store = _get_store(request)
     status_dict = store.status_summary()
+    live_costs = _load_live_costs(request)
+    per_model = live_costs.get("per_model")
+    if isinstance(per_model, dict):
+        status_dict["cost_by_model_usd"] = per_model
     update_metrics_from_status(status_dict)
     payload = generate_latest(registry)
     return PlainTextResponse(

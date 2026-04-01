@@ -499,13 +499,17 @@ class CatalogRegistry:
                     winner = scored_exact[0][1]
                     logger.debug(
                         "Catalog exact match: '%s' (score=%d) for '%s'",
-                        winner.name, best_score, role,
+                        winner.name,
+                        best_score,
+                        role,
                     )
                     return winner
                 # Score too low — skip catalog, use role template instead.
                 logger.debug(
                     "Catalog: best score %d < %d for '%s', using template",
-                    best_score, _MIN_MATCH_SCORE, role,
+                    best_score,
+                    _MIN_MATCH_SCORE,
+                    role,
                 )
                 return None
             else:

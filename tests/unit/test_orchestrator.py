@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -1560,6 +1561,27 @@ class TestRunStop:
         orch.run()
 
         assert call_count == 3
+
+    def test_tick_does_not_claim_or_spawn_after_stop_requested(self, tmp_path: Path) -> None:
+        task = _make_task(id="T-stop", title="Update docs", description="Refresh docs.")
+        requests: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            key = f"{request.method} {request.url.path}"
+            requests.append(key)
+            if key == "GET /tasks":
+                return httpx.Response(200, json=[_task_as_dict(task)])
+            pytest.fail(f"unexpected request after stop(): {key}")
+
+        orch = _build_orchestrator(tmp_path, httpx.MockTransport(handler))
+        orch._spawner.spawn_for_tasks = MagicMock(side_effect=AssertionError("spawn should not be called"))
+
+        orch.stop()
+        result = orch.tick()
+
+        orch._spawner.spawn_for_tasks.assert_not_called()
+        assert requests == ["GET /tasks"]
+        assert result.spawned == []
 
 
 # --- TickResult ---
@@ -5757,3 +5779,58 @@ class TestRunManagerQueueReview:
 
         # No PATCH/POST/cancel calls — only the ManagerAgent was invoked
         assert not any(m for m in requests_made if "PATCH" in m or "cancel" in m)
+
+
+def test_record_live_costs_enforces_max_cost_per_agent(tmp_path: Path) -> None:
+    """_record_live_costs should kill agents that exceed the per-session cost cap."""
+    config = OrchestratorConfig(
+        max_agents=2,
+        poll_interval_s=1,
+        heartbeat_timeout_s=60,
+        server_url="http://testserver",
+        max_cost_per_agent=0.001,
+    )
+    transport = _mock_transport({})
+    orch = _build_orchestrator(tmp_path, transport=transport, config=config)
+    session = AgentSession(
+        id="agent-cap",
+        role="backend",
+        task_ids=["task-cap"],
+        status="working",
+    )
+    session.tokens_used = 1000  # Sonnet estimate exceeds the 0.001 USD cap
+    orch._agents[session.id] = session
+    orch._spawner.kill = MagicMock()
+    orch._release_file_ownership = MagicMock()
+    orch._release_task_to_session = MagicMock()
+    orch._record_provider_health = MagicMock()
+
+    with patch("bernstein.core.orchestrator.retry_or_fail_task") as mock_retry:
+        orch._record_live_costs()
+
+    assert session.id in orch._cost_cap_killed_agents
+    assert session.status == "dead"
+    orch._spawner.kill.assert_called_once()
+    mock_retry.assert_called_once()
+
+
+def test_build_notification_manager_includes_seed_webhooks() -> None:
+    """Seed-level webhooks should be threaded into NotificationManager targets."""
+    from bernstein.core.orchestrator import _build_notification_manager
+
+    seed = SimpleNamespace(
+        notify=SimpleNamespace(webhook_url="https://legacy.example/hook", on_complete=True, on_failure=False),
+        webhooks=(
+            SimpleNamespace(url="https://events.example/hook", events=("task.completed", "task.failed")),
+        ),
+    )
+    manager = _build_notification_manager(seed)
+    assert manager is not None
+    targets = manager._targets  # pyright: ignore[reportPrivateUsage]
+    assert len(targets) == 2
+    assert any(t.url == "https://legacy.example/hook" and t.events == ["run.completed"] for t in targets)
+    assert any(
+        t.url == "https://events.example/hook"
+        and t.events == ["task.completed", "task.failed"]
+        for t in targets
+    )

@@ -14,6 +14,7 @@ import httpx
 from bernstein.core.models import AgentSession, ModelConfig, Scope, TaskStatus
 from bernstein.core.orchestrator import TickResult
 from bernstein.core.task_lifecycle import (
+    _enqueue_paired_test_task,
     _move_backlog_ticket,
     claim_and_spawn_batches,
     process_completed_tasks,
@@ -35,6 +36,8 @@ def _no_quarantine_entry(title: str) -> None:
 
 def _claim_orch(tmp_path: Path) -> Any:
     """Build a small orchestrator stub for claim_and_spawn_batches tests."""
+    client = MagicMock()
+    client.post.return_value = SimpleNamespace(status_code=200)
     return SimpleNamespace(
         _config=SimpleNamespace(
             server_url="http://server",
@@ -43,7 +46,7 @@ def _claim_orch(tmp_path: Path) -> Any:
             max_agent_runtime_s=900,
             ab_test=False,
         ),
-        _client=MagicMock(),
+        _client=client,
         _spawner=MagicMock(),
         _agents={},
         _file_ownership={},
@@ -56,6 +59,8 @@ def _claim_orch(tmp_path: Path) -> Any:
         _idle_shutdown_ts=set(),
         _workdir=tmp_path,
         _response_cache=None,
+        _batch_api=None,
+        _batch_sessions={},
         _fast_path_stats={},
         _preserved_worktrees={},
         _task_to_session={},
@@ -206,6 +211,26 @@ def test_claim_and_spawn_batches_auto_decomposes_large_task_before_claim(tmp_pat
     orch._spawner.spawn_for_tasks.assert_not_called()
 
 
+def test_claim_and_spawn_batches_submits_provider_batch_without_spawning(tmp_path: Path, make_task: Any) -> None:
+    """Eligible provider-batch work is submitted and skips the local spawn path."""
+    orch = _claim_orch(tmp_path)
+    task = make_task(id="T-batch", title="Update docs", description="Refresh the API docs.")
+    task.batch_eligible = True
+    orch._batch_api = MagicMock()
+    orch._batch_api.try_submit.return_value = SimpleNamespace(
+        handled=True,
+        submitted=True,
+        session_id="batch-T-batch",
+    )
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    orch._batch_api.try_submit.assert_called_once()
+    orch._spawner.spawn_for_tasks.assert_not_called()
+    assert result.spawned == ["batch-T-batch"]
+
+
 def test_process_completed_tasks_moves_ticket_and_caches_verified_result(tmp_path: Path, make_task: Any) -> None:
     """process_completed_tasks closes the backlog ticket and writes a verified cache entry after a clean reap."""
     worktree = tmp_path / "agent-worktree"
@@ -306,3 +331,43 @@ def test_move_backlog_ticket_requires_exact_normalized_title_match(tmp_path: Pat
 
     assert nearby_ticket.exists()
     assert not (tmp_path / ".sdd" / "backlog" / "closed" / "auth-ticket.md").exists()
+
+
+def test_enqueue_paired_test_task_is_idempotent(make_task: Any) -> None:
+    """Dedicated test-agent slot should create at most one paired QA task per implementation task."""
+    list_resp_1 = MagicMock()
+    list_resp_1.raise_for_status.return_value = None
+    list_resp_1.json.return_value = []
+
+    list_resp_2 = MagicMock()
+    list_resp_2.raise_for_status.return_value = None
+    list_resp_2.json.return_value = [{"title": "[TEST:T-impl] Add tests for Implement API endpoint", "description": ""}]
+
+    post_resp = MagicMock()
+    post_resp.raise_for_status.return_value = None
+
+    orch = SimpleNamespace(
+        _config=SimpleNamespace(
+            server_url="http://server",
+            test_agent=SimpleNamespace(always_spawn=True, model="sonnet", trigger="on_task_complete"),
+        ),
+        _client=MagicMock(),
+    )
+    orch._client.get.side_effect = [list_resp_1, list_resp_2]
+    orch._client.post.return_value = post_resp
+
+    completed_task = make_task(
+        id="T-impl",
+        title="Implement API endpoint",
+        description="Ship endpoint behavior.",
+        role="backend",
+    )
+
+    _enqueue_paired_test_task(orch, completed_task)
+    _enqueue_paired_test_task(orch, completed_task)
+
+    assert orch._client.post.call_count == 1
+    payload = orch._client.post.call_args.kwargs["json"]
+    assert payload["role"] == "qa"
+    assert payload["depends_on"] == ["T-impl"]
+    assert payload["model"] == "sonnet"

@@ -39,6 +39,7 @@ from bernstein.core.agent_lifecycle import (
 from bernstein.core.agent_signals import AgentSignalManager
 from bernstein.core.approval import ApprovalGate, ApprovalMode
 from bernstein.core.bandit_router import BanditRouter
+from bernstein.core.batch_api import ProviderBatchManager
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.cluster import NodeHeartbeatClient
 from bernstein.core.context import refresh_knowledge_base
@@ -58,6 +59,7 @@ from bernstein.core.merge_queue import MergeQueue
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
     AgentSession,
+    BatchConfig,
     ClusterConfig,
     ClusterTopology,
     ContainerIsolationConfig,
@@ -66,8 +68,9 @@ from bernstein.core.models import (
     ProgressSnapshot,
     Task,
     TaskType,
+    TestAgentConfig,
 )
-from bernstein.core.notifications import NotificationManager, NotificationPayload
+from bernstein.core.notifications import NotificationManager, NotificationPayload, NotificationTarget
 from bernstein.core.quarantine import QuarantineStore
 from bernstein.core.quota_poller import QuotaPoller
 from bernstein.core.rate_limit_tracker import RateLimitTracker
@@ -263,6 +266,7 @@ class Orchestrator:
         self._loop_detector = LoopDetector()
         self._loop_mtime_cache: dict[str, float] = {}  # file_path -> last observed mtime
         self._task_to_session: dict[str, str] = {}  # task_id -> agent_id (reverse index)
+        self._batch_sessions: dict[str, AgentSession] = {}
         self._processed_done_tasks: set[str] = set()  # avoid re-processing done tasks
         self._retried_task_ids: set[str] = set()  # tasks that already have a retry queued
         self._decomposed_task_ids: set[str] = set()  # large tasks queued for decomposition
@@ -372,6 +376,7 @@ class Orchestrator:
         # Semantic response cache: reuse completed agent results for
         # functionally identical tasks (cosine >= 0.95 skips spawn).
         self._response_cache = ResponseCacheManager(workdir)
+        self._batch_api = ProviderBatchManager(workdir, config.batch) if config.batch.enabled else None
         self._quota_poller = QuotaPoller(router=self._router, workdir=workdir) if self._router is not None else None
         if self._quota_poller is not None:
             self._quota_poller.poll_once()
@@ -396,6 +401,7 @@ class Orchestrator:
             run_id=run_id,
             budget_usd=config.budget_usd,
         )
+        self._cost_cap_killed_agents: set[str] = set()
 
         # Cost anomaly detector: layered on top of cost_tracker, fires
         # AnomalySignals the orchestrator acts on (log/stop/kill).
@@ -941,6 +947,9 @@ class Orchestrator:
         # Restore max_agents after adaptive-parallelism-adjusted spawning
         self._config.max_agents = _orig_max_agents
 
+        if self._batch_api is not None:
+            self._batch_api.poll(self)
+
         # 4. Check done tasks, run janitor, record evolution metrics
         process_completed_tasks(self, done_tasks, result)
 
@@ -1308,39 +1317,89 @@ class Orchestrator:
             logger.info("Anomaly [%s]: %s", signal.rule, signal.message)
 
     def _record_live_costs(self) -> None:
-        """Update live cost tracker from active agent token usage.
-
-        Iterates over all agents (not just dead ones), extracts their
-        live token counts (updated by TokenMonitor), computes current
-        cost, and updates the CostTracker.  This enables the real-time
-        cost counter in the TUI/Dashboard.
-        """
+        """Update live cost tracker from active agent token usage."""
         any_change = False
         for session in self._agents.values():
-            if session.status == "dead" or session.tokens_used == 0:
+            if session.status == "dead" or session.tokens_used <= 0:
                 continue
 
-            # Record into cost tracker.  CostTracker handles deduplication
-            # by agent_id and only increments if tokens increased.
-            from bernstein.core.models import ModelConfig
-
-            m_config = getattr(session, "model_config", ModelConfig(model="sonnet"))
-            cost_usd = self._cost_tracker.record(
+            model_name = session.model_config.model if session.model_config else "sonnet"
+            task_id = session.task_ids[0] if session.task_ids else f"live-{session.id}"
+            delta_cost = self._cost_tracker.record_cumulative(
                 agent_id=session.id,
-                model=m_config.model,
-                tokens=session.tokens_used,
+                task_id=task_id,
+                model=model_name,
+                total_input_tokens=session.tokens_used,
+                total_output_tokens=0,
             )
-            if cost_usd > 0:
+            if delta_cost > 0:
                 any_change = True
 
-        if any_change:
-            self._cost_tracker.save()
-            # Broadcast to TUI/API via bulletin
-            status = self._cost_tracker.status()
-            self._post_bulletin(
-                "status",
-                f"live_cost_update: {status.spent_usd:.4f} USD spent ({status.percentage_used * 100:.1f}%)",
-            )
+            if (
+                self._config.max_cost_per_agent > 0
+                and session.id not in self._cost_cap_killed_agents
+                and self._cost_tracker.spent_for_agent(session.id) >= self._config.max_cost_per_agent
+            ):
+                self._kill_agent_for_cost_cap(session)
+                any_change = True
+
+        if not any_change:
+            return
+
+        try:
+            self._cost_tracker.save(self._workdir / ".sdd")
+        except OSError as exc:
+            logger.warning("Failed to persist live cost tracker: %s", exc)
+        status = self._cost_tracker.status()
+        self._post_bulletin(
+            "status",
+            f"live_cost_update: {status.spent_usd:.4f} USD spent ({status.percentage_used * 100:.1f}%)",
+        )
+
+    def _kill_agent_for_cost_cap(self, session: AgentSession) -> None:
+        """Terminate an agent that exceeded the hard per-session cost cap."""
+        cap = self._config.max_cost_per_agent
+        spent = self._cost_tracker.spent_for_agent(session.id)
+        self._cost_cap_killed_agents.add(session.id)
+        logger.warning(
+            "Killing agent %s: max_cost_per_agent exceeded ($%.4f >= $%.4f)",
+            session.id,
+            spent,
+            cap,
+        )
+        self._post_bulletin(
+            "alert",
+            f"agent {session.id[:12]} exceeded max_cost_per_agent (${spent:.2f} >= ${cap:.2f})",
+        )
+        self._notify(
+            "budget.warning",
+            "Agent cost cap exceeded",
+            f"Agent {session.id} exceeded max_cost_per_agent",
+            agent_id=session.id,
+            spent_usd=round(spent, 6),
+            cap_usd=round(cap, 6),
+        )
+
+        with contextlib.suppress(Exception):
+            self._spawner.kill(session)
+
+        from bernstein.core.lifecycle import transition_agent
+
+        transition_agent(session, "dead", actor="orchestrator", reason="max_cost_per_agent exceeded")
+        self._release_file_ownership(session.id)
+        self._release_task_to_session(session.task_ids)
+        self._record_provider_health(session, success=False)
+
+        for task_id in list(session.task_ids):
+            with contextlib.suppress(Exception):
+                retry_or_fail_task(
+                    task_id,
+                    f"Agent {session.id} exceeded max_cost_per_agent (${cap:.2f})",
+                    client=self._client,
+                    server_url=self._config.server_url,
+                    max_task_retries=self._config.max_task_retries,
+                    retried_task_ids=self._retried_task_ids,
+                )
 
     def _reap_dead_agents(self, result: TickResult, tasks_snapshot: dict[str, list[Task]]) -> None:
         """Delegate to agent_lifecycle.reap_dead_agents."""
@@ -1370,7 +1429,7 @@ class Orchestrator:
         agent_id = self._task_to_session.get(task_id)
         if agent_id is None:
             return None
-        return self._agents.get(agent_id)
+        return self._agents.get(agent_id) or self._batch_sessions.get(agent_id)
 
     def _record_provider_health(
         self,
@@ -2701,6 +2760,41 @@ class TickResult:
         self.dry_run_planned: list[tuple[str, str, str | None, str | None]] = []
 
 
+def _build_notification_manager(seed: Any | None) -> NotificationManager | None:
+    """Build a NotificationManager from seed notify/webhooks settings."""
+    if seed is None:
+        return None
+
+    targets: list[NotificationTarget] = []
+
+    notify_cfg = getattr(seed, "notify", None)
+    if notify_cfg is not None and getattr(notify_cfg, "webhook_url", None):
+        events: list[str] = []
+        if bool(getattr(notify_cfg, "on_complete", True)):
+            events.append("run.completed")
+        if bool(getattr(notify_cfg, "on_failure", True)):
+            events.append("task.failed")
+        if events:
+            targets.append(
+                NotificationTarget(
+                    type="webhook",
+                    url=str(notify_cfg.webhook_url),
+                    events=events,
+                )
+            )
+
+    for webhook_cfg in getattr(seed, "webhooks", ()):
+        url = str(getattr(webhook_cfg, "url", "")).strip()
+        events = [str(event_name) for event_name in getattr(webhook_cfg, "events", ())]
+        if not url or not events:
+            continue
+        targets.append(NotificationTarget(type="webhook", url=url, events=events))
+
+    if not targets:
+        return None
+    return NotificationManager(targets)
+
+
 if __name__ == "__main__":
     import argparse
     import sys
@@ -2945,6 +3039,7 @@ if __name__ == "__main__":
             approval_mode = "review"
 
         _ab_test = os.environ.get("BERNSTEIN_AB_TEST", "0").strip() in ("1", "true", "yes")
+        notifier = _build_notification_manager(seed)
 
         config = OrchestratorConfig(
             server_url=server_url,
@@ -2958,6 +3053,9 @@ if __name__ == "__main__":
             workflow=workflow_mode,
             compliance=compliance_config,
             ab_test=_ab_test,
+            batch=seed.batch if seed else BatchConfig(),
+            max_cost_per_agent=seed.max_cost_per_agent if seed else 0.0,
+            test_agent=seed.test_agent if seed else TestAgentConfig(),
         )
 
         if args.cells > 1:
@@ -3001,6 +3099,7 @@ if __name__ == "__main__":
                 workdir=workdir,
                 router=router,
                 cluster_config=cluster_cfg,
+                notifier=notifier,
                 quality_gate_config=seed.quality_gates if seed else None,
                 formal_verification_config=seed.formal_verification if seed else None,
             )

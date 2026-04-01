@@ -730,7 +730,9 @@ def claim_and_spawn_batches(
             continue
 
         # Skip if any owned files overlap with active agents
-        if check_file_overlap(batch, orch._file_ownership, orch._agents):
+        _batch_sessions = getattr(orch, "_batch_sessions", {})
+        _ownership_sessions = {**orch._agents, **(_batch_sessions if isinstance(_batch_sessions, dict) else {})}
+        if check_file_overlap(batch, orch._file_ownership, _ownership_sessions):
             continue
 
         # Check spawn backoff: skip batches that recently failed
@@ -939,6 +941,21 @@ def claim_and_spawn_batches(
                     l1_cfg.effort,
                     l1_check.reason,
                 )
+
+        # Provider batch: submit eligible low-risk single-task work to
+        # OpenAI/Anthropic batch APIs instead of spawning a local CLI agent.
+        if len(batch) == 1:
+            _batch_api = getattr(orch, "_batch_api", None)
+            if _batch_api is not None:
+                _batch_result = _batch_api.try_submit(orch, batch[0])
+                if _batch_result.handled:
+                    if _batch_result.submitted:
+                        assigned_task_ids.add(batch[0].id)
+                        _claimed_titles.add(_base_title(batch[0].title))
+                        result.spawned.append(_batch_result.session_id or f"provider-batch:{batch[0].id}")
+                    elif _batch_result.reason:
+                        result.errors.append(f"batch:{batch[0].id}: {_batch_result.reason}")
+                    continue
 
         # Adaptive timeout: scale by task complexity/role
         # Architect/security tasks need 3x base, large tasks 2x, etc.
@@ -1335,6 +1352,15 @@ def process_completed_tasks(
             if session.status != "dead":
                 transition_agent(session, "dead", actor="task_lifecycle", reason="task completed, process reaped")
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
+            _batch_sessions = getattr(orch, "_batch_sessions", None)
+            if isinstance(_batch_sessions, dict) and session.id in _batch_sessions:
+                cast("dict[str, AgentSession]", _batch_sessions).pop(session.id, None)
+                _release_tasks = getattr(orch, "_release_task_to_session", None)
+                if callable(_release_tasks):
+                    _release_tasks(session.task_ids)
+                _release_files = getattr(orch, "_release_file_ownership", None)
+                if callable(_release_files):
+                    _release_files(session.id)
             _cache_verified = janitor_passed and session.exit_code == 0 and _cache_diff_lines > 0
 
             # Move backlog ticket file from open/ to closed/ if it exists
@@ -1372,13 +1398,13 @@ def process_completed_tasks(
         _model = session.model_config.model if session else "unknown"
         _tokens_in = _task_m.tokens_prompt if _task_m else 0
         _tokens_out = _task_m.tokens_completion if _task_m else 0
-        orch._cost_tracker.record(
+        orch._cost_tracker.record_cumulative(
             agent_id=_agent_id,
             task_id=task.id,
             model=_model,
-            input_tokens=_tokens_in,
-            output_tokens=_tokens_out,
-            cost_usd=_cost_usd if _cost_usd > 0 else None,
+            total_input_tokens=_tokens_in,
+            total_output_tokens=_tokens_out,
+            total_cost_usd=_cost_usd if _cost_usd > 0 else None,
         )
         try:
             orch._cost_tracker.save(orch._workdir / ".sdd")
@@ -1450,6 +1476,7 @@ def process_completed_tasks(
                 task_id=task.id,
                 role=task.role,
             )
+            _enqueue_paired_test_task(orch, task)
             # Store result in the response cache so future identical tasks can
             # be completed without spawning a new agent.
             if task.result_summary:
@@ -1515,6 +1542,70 @@ def process_completed_tasks(
                 )
             except Exception as exc:
                 logger.warning("Evolution record_task_completion failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Dedicated test-agent slot
+# ---------------------------------------------------------------------------
+
+
+def _enqueue_paired_test_task(orch: Any, completed_task: Task) -> None:
+    """Create a paired QA task for completed implementation work.
+
+    Guarded by ``OrchestratorConfig.test_agent`` and idempotent via a marker
+    embedded in both title and description.
+    """
+    config = getattr(orch, "_config", None)
+    test_agent_cfg = getattr(config, "test_agent", None)
+    if test_agent_cfg is None:
+        return
+    if not bool(getattr(test_agent_cfg, "always_spawn", False)):
+        return
+    if str(getattr(test_agent_cfg, "trigger", "")) != "on_task_complete":
+        return
+    if completed_task.role.lower() in {"qa", "test", "tester"}:
+        return
+
+    marker = f"[TEST:{completed_task.id}]"
+    if marker in completed_task.title or marker in completed_task.description:
+        return
+
+    try:
+        existing_resp = orch._client.get(f"{orch._config.server_url}/tasks")
+        existing_resp.raise_for_status()
+        existing_raw = cast("list[dict[str, Any]]", existing_resp.json())
+    except Exception as exc:
+        logger.warning("test_agent slot: failed to list tasks for idempotency check: %s", exc)
+        return
+
+    for raw in existing_raw:
+        title = str(raw.get("title", ""))
+        description = str(raw.get("description", ""))
+        if marker in title or marker in description:
+            return
+
+    payload: dict[str, Any] = {
+        "title": f"{marker} Add tests for {completed_task.title[:72]}",
+        "description": (
+            f"{marker}\n"
+            f"Implementation task `{completed_task.id}` completed.\n\n"
+            "Write or update tests that validate the implemented behavior, "
+            "cover edge cases, and prevent regressions."
+        ),
+        "role": "qa",
+        "priority": completed_task.priority,
+        "scope": "small",
+        "complexity": "medium",
+        "depends_on": [completed_task.id],
+        "owned_files": completed_task.owned_files,
+        "model": str(getattr(test_agent_cfg, "model", "sonnet")),
+        "effort": "high",
+    }
+    try:
+        orch._client.post(f"{orch._config.server_url}/tasks", json=payload).raise_for_status()
+        logger.info("test_agent slot: queued paired QA task for %s", completed_task.id)
+    except httpx.HTTPError as exc:
+        logger.warning("test_agent slot: failed to queue paired QA task for %s: %s", completed_task.id, exc)
 
 
 # ---------------------------------------------------------------------------

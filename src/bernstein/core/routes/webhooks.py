@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import time
@@ -10,15 +11,34 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from bernstein.core.server import TaskCreate, TaskStore
+from bernstein.core.server import (
+    TaskCreate,
+    TaskStore,
+    WebhookTaskCreate,
+    WebhookTaskResponse,
+    task_to_response,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+_GENERIC_WEBHOOK_SECRET_ENV = "BERNSTEIN_WEBHOOK_SECRET"
+_GENERIC_WEBHOOK_SECRET_HEADER = "x-bernstein-webhook-secret"
 
 
 def _get_store(request: Request) -> TaskStore:
     return request.app.state.store  # type: ignore[no-any-return]
+
+
+def _verify_generic_webhook_secret(request: Request) -> JSONResponse | None:
+    """Validate the optional shared secret for POST /webhook."""
+    configured_secret = os.environ.get(_GENERIC_WEBHOOK_SECRET_ENV, "")
+    if not configured_secret:
+        return None
+    provided_secret = request.headers.get(_GENERIC_WEBHOOK_SECRET_HEADER, "")
+    if provided_secret and hmac.compare_digest(provided_secret, configured_secret):
+        return None
+    return JSONResponse(status_code=401, content={"detail": "Invalid webhook secret"})
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +70,24 @@ async def get_alerts(request: Request) -> JSONResponse:
 
     alerts = build_alerts(store, alive_agents, total_cost, now)
     return JSONResponse(content={"alerts": alerts, "count": len(alerts), "ts": now})
+
+
+@router.post("/webhook", response_model=WebhookTaskResponse, status_code=201)
+async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookTaskResponse | JSONResponse:
+    """Create a task directly from a generic inbound webhook payload.
+
+    The endpoint is intentionally small and separate from the trigger-manager
+    flow: callers POST a task-shaped payload and Bernstein creates one task.
+    When ``BERNSTEIN_WEBHOOK_SECRET`` is configured, callers must also send
+    the same value in ``X-Bernstein-Webhook-Secret``.
+    """
+    denied = _verify_generic_webhook_secret(request)
+    if denied is not None:
+        return denied
+
+    store = _get_store(request)
+    task = await store.create(TaskCreate(**body.model_dump()))
+    return WebhookTaskResponse(task=task_to_response(task))
 
 
 def _count_ci_fix_attempts(store: TaskStore, head_branch: str) -> int:

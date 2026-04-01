@@ -42,10 +42,34 @@ VALID_GATE_NAMES = frozenset(
         "import_cycle",
         "merge_conflict",
         "benchmark",
+        "dep_audit",
     }
 )
-VALID_GATE_CONDITIONS = frozenset({"always", "python_changed", "tests_changed", "any_changed"})
+VALID_GATE_CONDITIONS = frozenset({"always", "python_changed", "tests_changed", "any_changed", "deps_changed"})
+
+_DEP_FILE_NAMES = frozenset(
+    {
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "Pipfile",
+        "Pipfile.lock",
+        "poetry.lock",
+        "uv.lock",
+    }
+)
+_DEP_FILE_PREFIXES = ("requirements",)
 LEGACY_PYTHON_CONDITION = "changed_files.any('.py')"
+
+
+def _is_dep_file(path: str) -> bool:
+    """Return True if ``path`` looks like a dependency/lockfile."""
+    from pathlib import PurePosixPath
+
+    name = PurePosixPath(path).name
+    if name in _DEP_FILE_NAMES:
+        return True
+    return any(name.startswith(prefix) for prefix in _DEP_FILE_PREFIXES)
 
 
 def _empty_metadata() -> dict[str, Any]:
@@ -164,6 +188,8 @@ def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]
         pipeline.append(GatePipelineStep(name="mutation_testing", required=True, condition="python_changed"))
     if config.intent_verification.enabled:
         pipeline.append(GatePipelineStep(name="intent_verification", required=True, condition="any_changed"))
+    if config.dep_audit:
+        pipeline.append(GatePipelineStep(name="dep_audit", required=True, condition="deps_changed"))
     if config.benchmark.enabled:
         pipeline.append(GatePipelineStep(name="benchmark", required=True, condition="always"))
     return pipeline
@@ -401,6 +427,16 @@ class GateRunner:
 
         if step.name == "merge_conflict":
             return await asyncio.to_thread(self._run_merge_conflict_gate_sync, step, run_dir, changed_files)
+
+        if step.name == "dep_audit":
+            command = step.command_override or self._config.dep_audit_command
+            return await self._run_command_gate(
+                step,
+                command,
+                run_dir,
+                self._config.timeout_s,
+                pass_detail="no vulnerable dependencies found",
+            )
 
         if step.name == "benchmark":
             return await asyncio.to_thread(self._run_benchmark_gate_sync, step, run_dir)
@@ -1050,6 +1086,8 @@ class GateRunner:
             return bool(self._python_files(changed_files))
         if condition == "tests_changed":
             return any(self._is_test_path(path) for path in changed_files)
+        if condition == "deps_changed":
+            return any(_is_dep_file(path) for path in changed_files)
         raise ValueError(f"Unsupported gate condition: {condition!r}")
 
     def _lint_command(self, step: GatePipelineStep, changed_files: list[str]) -> str | None:

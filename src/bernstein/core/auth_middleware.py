@@ -31,9 +31,14 @@ logger = logging.getLogger(__name__)
 AUTH_PUBLIC_PATHS = frozenset(
     {
         "/health",
+        "/health/ready",
+        "/health/live",
+        "/ready",
+        "/alive",
         "/.well-known/agent.json",
         "/docs",
         "/openapi.json",
+        "/webhook",
         "/webhooks/github",
         "/dashboard",
         "/dashboard/data",

@@ -11,7 +11,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import httpx
@@ -28,7 +28,7 @@ from bernstein.cli.run import render_run_summary_from_dict
 from bernstein.cli.ui import make_console
 from bernstein.core.cost import estimate_run_cost
 from bernstein.core.manager_parsing import _resolve_depends_on  # pyright: ignore[reportPrivateUsage]
-from bernstein.core.plan_loader import load_plan_from_yaml
+from bernstein.core.plan_loader import PlanLoadError, load_plan, load_plan_from_yaml
 from bernstein.core.runtime_state import directory_size_bytes
 
 # ---------------------------------------------------------------------------
@@ -114,6 +114,178 @@ def _save_plan_markdown(md: str, workdir: Path) -> Path:
     plan_file = plans_dir / f"plan-{ts}.md"
     plan_file.write_text(md)
     return plan_file
+
+
+@dataclass(frozen=True)
+class RecipeStage:
+    """Stage metadata extracted from a recipe/plan file."""
+
+    name: str
+    depends_on: list[str]
+    step_titles: list[str]
+
+
+def _extract_recipe_stages(recipe_path: Path) -> list[RecipeStage]:
+    """Parse recipe stage metadata for dry-run graph and progress reporting."""
+    import yaml
+
+    raw_data = yaml.safe_load(recipe_path.read_text(encoding="utf-8"))
+    if not isinstance(raw_data, dict):
+        return []
+    data = cast("dict[str, Any]", raw_data)
+    raw_stages = data.get("stages")
+    if not isinstance(raw_stages, list):
+        return []
+    stages_raw = cast("list[object]", raw_stages)
+
+    stages: list[RecipeStage] = []
+    for idx, raw_stage in enumerate(stages_raw):
+        if not isinstance(raw_stage, dict):
+            continue
+        stage_map = cast("dict[str, Any]", raw_stage)
+        stage_name_raw = stage_map.get("name")
+        stage_name = str(stage_name_raw).strip() if stage_name_raw else f"Stage {idx + 1}"
+        deps_raw = stage_map.get("depends_on")
+        depends_on: list[str] = []
+        if isinstance(deps_raw, list):
+            for dep in cast("list[object]", deps_raw):
+                depends_on.append(str(dep).strip())
+
+        step_titles: list[str] = []
+        steps_raw = stage_map.get("steps")
+        if isinstance(steps_raw, list):
+            for step in cast("list[object]", steps_raw):
+                if not isinstance(step, dict):
+                    continue
+                step_map = cast("dict[str, Any]", step)
+                title = step_map.get("title") or step_map.get("goal")
+                if title:
+                    step_titles.append(str(title))
+        stages.append(RecipeStage(name=stage_name, depends_on=depends_on, step_titles=step_titles))
+    return stages
+
+
+def _completed_sprints(stages: list[RecipeStage], task_rows: list[dict[str, Any]]) -> int:
+    """Return how many recipe stages are fully complete."""
+    terminal = {"done", "failed", "cancelled"}
+    statuses_by_title: dict[str, set[str]] = {}
+    for row in task_rows:
+        title = str(row.get("title", ""))
+        status = str(row.get("status", ""))
+        if not title:
+            continue
+        statuses_by_title.setdefault(title, set()).add(status)
+
+    completed = 0
+    for stage in stages:
+        if not stage.step_titles:
+            continue
+        if all(any(s in terminal for s in statuses_by_title.get(title, set())) for title in stage.step_titles):
+            completed += 1
+    return completed
+
+
+def _print_cook_dry_run(
+    *,
+    recipe_path: Path,
+    goal: str,
+    stages: list[RecipeStage],
+    tasks: list[Any],
+) -> None:
+    """Render recipe graph and per-task cost estimate without execution."""
+    from rich.table import Table
+
+    from bernstein.core.plan_approval import create_plan
+
+    plan = create_plan(goal, tasks)
+    estimate_by_task = {estimate.task_id: estimate for estimate in plan.task_estimates}
+    stage_by_title: dict[str, str] = {}
+    for stage in stages:
+        for title in stage.step_titles:
+            stage_by_title.setdefault(title, stage.name)
+
+    console.print(f"[bold cyan]Recipe:[/bold cyan] {recipe_path}")
+    console.print(f"[bold cyan]Goal:[/bold cyan] {goal}")
+    console.print("[bold cyan]Mode:[/bold cyan] dry-run (no execution)\n")
+
+    stage_table = Table(show_header=True, header_style="bold magenta")
+    stage_table.add_column("Sprint")
+    stage_table.add_column("Depends On")
+    stage_table.add_column("Tasks", justify="right")
+    for stage in stages:
+        stage_table.add_row(
+            stage.name,
+            ", ".join(stage.depends_on) if stage.depends_on else "-",
+            str(len(stage.step_titles)),
+        )
+    console.print(stage_table)
+
+    task_table = Table(show_header=True, header_style="bold magenta")
+    task_table.add_column("Sprint")
+    task_table.add_column("Role")
+    task_table.add_column("Model")
+    task_table.add_column("Est. Cost", justify="right")
+    task_table.add_column("Task")
+    for task in tasks:
+        estimate = estimate_by_task.get(task.id)
+        model_name = estimate.model if estimate is not None else (task.model or "sonnet")
+        cost_text = f"${estimate.estimated_cost_usd:.4f}" if estimate is not None else "$0.0000"
+        task_table.add_row(
+            stage_by_title.get(task.title, "-"),
+            task.role,
+            model_name,
+            cost_text,
+            task.title,
+        )
+    console.print()
+    console.print(task_table)
+    console.print(
+        f"\n[bold yellow]Estimated total:[/bold yellow] ${plan.total_estimated_cost_usd:.4f} "
+        f"across {len(tasks)} task(s)"
+    )
+
+
+def _wait_for_recipe_completion(
+    *,
+    stages: list[RecipeStage],
+    total_tasks: int,
+    poll_interval_s: float = 2.0,
+    timeout_s: float = 3600.0,
+) -> dict[str, Any] | None:
+    """Wait for recipe run completion while printing live sprint/cost progress."""
+    deadline = time.time() + timeout_s
+    last_status: dict[str, Any] | None = None
+    last_line = ""
+    while time.time() < deadline:
+        status_payload = server_get("/status")
+        health_payload = server_get("/health")
+        tasks_payload = server_get("/tasks")
+        if isinstance(status_payload, dict):
+            last_status = status_payload
+
+        if not (isinstance(status_payload, dict) and isinstance(health_payload, dict)):
+            time.sleep(poll_interval_s)
+            continue
+
+        done_count = int(status_payload.get("done", 0) or 0)
+        failed_count = int(status_payload.get("failed", 0) or 0)
+        open_count = int(status_payload.get("open", 0) or 0)
+        claimed_count = int(status_payload.get("claimed", 0) or 0)
+        agent_count = int(health_payload.get("agent_count", 0) or 0)
+        spent_usd = float(status_payload.get("total_cost_usd", 0.0) or 0.0)
+        completed_tasks = done_count + failed_count
+        pct_complete = round((completed_tasks / max(total_tasks, 1)) * 100)
+        sprint_done = _completed_sprints(stages, tasks_payload) if isinstance(tasks_payload, list) else 0
+        line = f"Sprint {sprint_done}/{max(len(stages), 1)} | {pct_complete}% complete | ${spent_usd:.2f} spent"
+        if line != last_line:
+            console.print(line)
+            last_line = line
+
+        total = int(status_payload.get("total", 0) or 0)
+        if total > 0 and open_count == 0 and claimed_count == 0 and agent_count == 0:
+            return status_payload
+        time.sleep(poll_interval_s)
+    return last_status
 
 
 # ---------------------------------------------------------------------------
@@ -1306,6 +1478,78 @@ def _print_demo_summary(project_dir: Path, server_url: str, elapsed_secs: float 
 
     console.print(f"[dim]Project left at:[/dim] {project_dir}")
     console.print("[dim]  cd <dir> && pip install -r requirements.txt && pytest tests/ -q[/dim]")
+
+
+@click.command("cook")
+@click.argument("recipe", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Parse recipe, show sprint graph + estimated cost, and exit.",
+)
+@click.option("--port", default=8052, show_default=True, help="Task server port in execution mode.")
+@click.option("--cells", default=1, show_default=True, help="Number of cells in execution mode.")
+@click.option("--cli", default=None, help="CLI adapter override (defaults to recipe config or auto).")
+@click.option("--model", default=None, help="Model override for execution.")
+@click.option("--timeout", default=3600, show_default=True, help="Max seconds to wait for completion.")
+def cook(
+    recipe: Path,
+    dry_run: bool,
+    port: int,
+    cells: int,
+    cli: str | None,
+    model: str | None,
+    timeout: int,
+) -> None:
+    """Execute a recipe/plan YAML with optional dry-run planning output."""
+    print_banner()
+    try:
+        plan_config, tasks = load_plan(recipe)
+    except PlanLoadError as exc:
+        console.print(f"[red]Failed to load recipe:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    _resolve_depends_on(tasks)
+    stages = _extract_recipe_stages(recipe)
+    goal = plan_config.name.strip() if plan_config.name.strip() else recipe.stem
+
+    if dry_run:
+        _print_cook_dry_run(recipe_path=recipe, goal=goal, stages=stages, tasks=tasks)
+        console.print("\n[dim]Dry-run only. No agents were spawned.[/dim]")
+        return
+
+    selected_cli = cli or plan_config.cli or "auto"
+    console.print(
+        f"[bold cyan]Executing recipe[/bold cyan] {recipe} "
+        f"[dim](cli={selected_cli}, cells={cells}, port={port})[/dim]"
+    )
+
+    from bernstein.core.bootstrap import bootstrap_from_goal  # pyright: ignore[reportUnknownVariableType]
+
+    bootstrap_from_goal(
+        goal=goal,
+        workdir=Path.cwd(),
+        port=port,
+        cells=cells,
+        cli=selected_cli,
+        model=model,
+        tasks=tasks,
+    )
+    final_status = _wait_for_recipe_completion(
+        stages=stages,
+        total_tasks=len(tasks),
+        timeout_s=float(timeout),
+    )
+    if isinstance(final_status, dict):
+        done = int(final_status.get("done", 0) or 0)
+        failed = int(final_status.get("failed", 0) or 0)
+        spent = float(final_status.get("total_cost_usd", 0.0) or 0.0)
+        console.print(
+            f"[bold green]Recipe finished:[/bold green] done={done}, failed={failed}, spent=${spent:.2f}"
+        )
+    else:
+        console.print("[yellow]Recipe monitor timed out before a final status snapshot was available.[/yellow]")
 
 
 @click.command("demo")

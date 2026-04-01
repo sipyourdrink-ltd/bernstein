@@ -202,6 +202,7 @@ from bernstein.cli.helpers import (
 # Re-export run_cmd helpers used by tests
 from bernstein.cli.run_cmd import (
     DEMO_TASKS,
+    cook,
     demo,
     detect_available_adapter,
     init,
@@ -637,6 +638,7 @@ cli.add_command(ps_cmd, "ps")
 cli.add_command(stop)
 cli.add_command(test_adapter, "test-adapter")
 cli.add_command(run, "run")  # visible: `bernstein run [plan.yaml]`
+cli.add_command(cook, "cook")
 cli.add_command(init)
 cli.add_command(run, "run")
 cli.add_command(start)

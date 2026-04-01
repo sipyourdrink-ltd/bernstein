@@ -964,20 +964,35 @@ def mcp_server(transport: str, host: str, port: int, server_url: str) -> None:
     show_default=True,
     help="Shell type.",
 )
-def completions(shell: str) -> None:
+@click.pass_context
+def completions(ctx: click.Context, shell: str) -> None:
     """Generate shell completion scripts.
 
     \b
-    For bash:
+    For bash — add to ~/.bashrc:
       eval "$(bernstein completions --shell bash)"
 
     \b
-    For zsh:
+    For zsh — add to ~/.zshrc:
       eval "$(bernstein completions --shell zsh)"
+
+    \b
+    For fish — add to ~/.config/fish/completions/bernstein.fish:
+      bernstein completions --shell fish | source
     """
-    # Placeholder: actual completion generation would use click-completion
-    console.print(f"[dim]Completions for {shell}:[/dim]")
-    console.print("# Add to your shell rc file")
+    from click.shell_completion import BashComplete, FishComplete, ZshComplete
+
+    _complete_var = "_BERNSTEIN_COMPLETE"
+    _prog_name = "bernstein"
+
+    shell_cls = {"bash": BashComplete, "zsh": ZshComplete, "fish": FishComplete}[shell]
+    # Walk up to the root CLI group so completions cover all subcommands.
+    root_ctx = ctx
+    while root_ctx.parent is not None:
+        root_ctx = root_ctx.parent
+
+    completer = shell_cls(root_ctx.command, {}, _prog_name, _complete_var)
+    click.echo(completer.source())
 
 
 # ---------------------------------------------------------------------------

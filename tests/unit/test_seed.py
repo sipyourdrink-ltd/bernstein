@@ -118,6 +118,42 @@ class TestParseSeedValid:
         cfg = parse_seed(seed_file)
         assert cfg.role_model_policy == {"backend": {"provider": "codex", "model": "gpt-5.4-mini", "effort": "high"}}
 
+    def test_batch_config_parsed(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nbatch:\n  enabled: true\n  eligible: [docs, style, tests]\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.batch.enabled is True
+        assert cfg.batch.eligible == ["docs", "style", "tests"]
+
+    def test_max_cost_per_agent_parsed(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nmax_cost_per_agent: "$1.25"\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.max_cost_per_agent == pytest.approx(1.25)
+
+    def test_webhooks_parse_and_normalize_aliases(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n'
+            "webhooks:\n"
+            '  - url: "https://example.com/hook"\n'
+            "    events: [task.done, task.failed]\n"
+        )
+        cfg = parse_seed(seed_file)
+        assert len(cfg.webhooks) == 1
+        assert cfg.webhooks[0].url == "https://example.com/hook"
+        assert cfg.webhooks[0].events == ("task.completed", "task.failed")
+
+    def test_test_agent_config_parsed(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n'
+            "test_agent:\n"
+            "  always_spawn: true\n"
+            "  model: gpt-5.4-mini\n"
+            "  trigger: on_task_complete\n"
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.test_agent.always_spawn is True
+        assert cfg.test_agent.model == "gpt-5.4-mini"
+        assert cfg.test_agent.trigger == "on_task_complete"
+
 
 # ---------------------------------------------------------------------------
 # parse_seed — invalid inputs
@@ -174,6 +210,26 @@ class TestParseSeedInvalid:
     def test_invalid_role_model_policy_shape_raises(self, seed_file: Path) -> None:
         seed_file.write_text('goal: "T"\nrole_model_policy: "bad"\n')
         with pytest.raises(SeedError, match="role_model_policy must be a mapping"):
+            parse_seed(seed_file)
+
+    def test_invalid_batch_shape_raises(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nbatch: "bad"\n')
+        with pytest.raises(SeedError, match="batch must be a mapping"):
+            parse_seed(seed_file)
+
+    def test_invalid_webhook_event_raises(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "T"\n'
+            "webhooks:\n"
+            '  - url: "https://example.com/hook"\n'
+            "    events: [task.unknown]\n"
+        )
+        with pytest.raises(SeedError, match="unsupported event"):
+            parse_seed(seed_file)
+
+    def test_invalid_test_agent_trigger_raises(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\ntest_agent:\n  trigger: on_start\n')
+        with pytest.raises(SeedError, match="on_task_complete"):
             parse_seed(seed_file)
 
 

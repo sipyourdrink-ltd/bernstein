@@ -181,6 +181,22 @@ class QualityGatesConfig:
     flaky_detection: bool = False
     flaky_min_runs: int = 5
     flaky_threshold: float = 0.15
+    dep_audit: bool = False
+    dep_audit_command: str = "pip-audit"
+    dep_audit_files: list[str] = field(
+        default_factory=lambda: [
+            "pyproject.toml",
+            "setup.py",
+            "setup.cfg",
+            "requirements.txt",
+            "requirements-dev.txt",
+            "requirements-test.txt",
+            "Pipfile",
+            "Pipfile.lock",
+            "poetry.lock",
+            "uv.lock",
+        ]
+    )
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
 
 

@@ -149,6 +149,37 @@ class TestCostTrackerRecording:
         usages.clear()  # mutate the copy
         assert len(tracker.usages) == 1  # original unchanged
 
+    def test_record_cumulative_is_delta_safe(self) -> None:
+        tracker = CostTracker(run_id="run-1", budget_usd=10.0)
+        first = tracker.record_cumulative(
+            agent_id="a1",
+            task_id="t1",
+            model="sonnet",
+            total_input_tokens=100,
+            total_output_tokens=50,
+            total_cost_usd=0.9,
+        )
+        second = tracker.record_cumulative(
+            agent_id="a1",
+            task_id="t1",
+            model="sonnet",
+            total_input_tokens=100,
+            total_output_tokens=50,
+            total_cost_usd=0.9,
+        )
+        assert first > 0.0
+        assert second == 0.0
+        assert len(tracker.usages) == 1
+
+    def test_spent_helpers_track_agent_and_model(self) -> None:
+        tracker = CostTracker(run_id="run-1", budget_usd=10.0)
+        tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=0.7)
+        tracker.record(agent_id="a2", task_id="t2", model="opus", input_tokens=0, output_tokens=0, cost_usd=0.3)
+        assert tracker.spent_for_agent("a1") == pytest.approx(0.7)
+        by_model = tracker.spent_by_model()
+        assert by_model["sonnet"] == pytest.approx(0.7)
+        assert by_model["opus"] == pytest.approx(0.3)
+
 
 # ---------------------------------------------------------------------------
 # CostTracker — unlimited budget

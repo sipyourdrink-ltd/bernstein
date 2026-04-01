@@ -194,6 +194,13 @@ class CostTracker:
     _usages: list[TokenUsage] = field(default_factory=list[TokenUsage], init=False, repr=False)
     _warned: bool = field(default=False, init=False, repr=False)
     _critical_warned: bool = field(default=False, init=False, repr=False)
+    _spent_by_agent: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
+    _spent_by_model: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
+    _cumulative_tokens: dict[tuple[str, str, str], tuple[int, int]] = field(
+        default_factory=dict[tuple[str, str, str], tuple[int, int]],
+        init=False,
+        repr=False,
+    )
 
     # ---- recording --------------------------------------------------------
 
@@ -235,10 +242,68 @@ class CostTracker:
         )
         self._usages.append(usage)
         self._spent_usd += cost_usd
+        self._spent_by_agent[agent_id] = self._spent_by_agent.get(agent_id, 0.0) + cost_usd
+        self._spent_by_model[model] = self._spent_by_model.get(model, 0.0) + cost_usd
 
         status = self.status()
         self._emit_threshold_warnings(status)
         return status
+
+    def record_cumulative(
+        self,
+        agent_id: str,
+        task_id: str,
+        model: str,
+        total_input_tokens: int,
+        total_output_tokens: int,
+        total_cost_usd: float | None = None,
+    ) -> float:
+        """Record cumulative token usage for one agent/task pair.
+
+        This helper is delta-safe: callers provide running token totals and the
+        tracker records only the previously unseen token delta.
+
+        Args:
+            agent_id: Agent session ID.
+            task_id: Task ID associated with the cumulative counters.
+            model: Model name.
+            total_input_tokens: Total prompt tokens seen so far.
+            total_output_tokens: Total completion tokens seen so far.
+            total_cost_usd: Optional cumulative cost observed so far.
+
+        Returns:
+            Newly-recorded delta cost in USD (0.0 when no new tokens).
+        """
+        key = (agent_id, task_id, model)
+        prev_input, prev_output = self._cumulative_tokens.get(key, (0, 0))
+        cur_input = max(0, int(total_input_tokens))
+        cur_output = max(0, int(total_output_tokens))
+        delta_input = max(0, cur_input - prev_input)
+        delta_output = max(0, cur_output - prev_output)
+        if delta_input == 0 and delta_output == 0:
+            return 0.0
+
+        delta_cost: float | None = None
+        if total_cost_usd is not None:
+            total_tokens = cur_input + cur_output
+            prev_tokens = prev_input + prev_output
+            delta_tokens = (cur_input + cur_output) - prev_tokens
+            if total_tokens > 0 and delta_tokens > 0:
+                delta_cost = float(total_cost_usd) * (delta_tokens / total_tokens)
+            elif prev_tokens == 0:
+                delta_cost = float(total_cost_usd)
+
+        before = self._spent_usd
+        self.record(
+            agent_id=agent_id,
+            task_id=task_id,
+            model=model,
+            input_tokens=delta_input,
+            output_tokens=delta_output,
+            cost_usd=delta_cost,
+        )
+        self._cumulative_tokens[key] = (cur_input, cur_output)
+        return self._spent_usd - before
 
     # ---- status -----------------------------------------------------------
 
@@ -282,6 +347,14 @@ class CostTracker:
     def usages(self) -> list[TokenUsage]:
         """All recorded token usage entries (read-only copy)."""
         return list(self._usages)
+
+    def spent_for_agent(self, agent_id: str) -> float:
+        """Return cumulative spend for one agent session."""
+        return self._spent_by_agent.get(agent_id, 0.0)
+
+    def spent_by_model(self) -> dict[str, float]:
+        """Return cumulative spend by model."""
+        return {model: cost for model, cost in self._spent_by_model.items()}
 
     # ---- persistence ------------------------------------------------------
 
@@ -341,6 +414,10 @@ class CostTracker:
                 usage = TokenUsage.from_dict(u_dict)
                 tracker._usages.append(usage)
                 tracker._spent_usd += usage.cost_usd
+                tracker._spent_by_agent[usage.agent_id] = (
+                    tracker._spent_by_agent.get(usage.agent_id, 0.0) + usage.cost_usd
+                )
+                tracker._spent_by_model[usage.model] = tracker._spent_by_model.get(usage.model, 0.0) + usage.cost_usd
             return tracker
         except Exception as exc:
             from bernstein.core.sanitize import sanitize_log

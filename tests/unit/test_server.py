@@ -521,6 +521,43 @@ async def test_health_reflects_counts(client: AsyncClient) -> None:
     assert data["agent_count"] == 1
 
 
+@pytest.mark.anyio
+async def test_health_includes_component_statuses(client: AsyncClient) -> None:
+    """GET /health exposes component-level status details."""
+    resp = await client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "components" in data
+    assert set(data["components"].keys()) == {"server", "spawner", "database", "agents"}
+
+
+@pytest.mark.anyio
+async def test_ready_returns_200_when_accepting_claims(client: AsyncClient) -> None:
+    """/ready returns 200 when not draining/read-only."""
+    resp = await client.get("/ready")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ready"
+
+
+@pytest.mark.anyio
+async def test_ready_returns_503_when_draining(app, client: AsyncClient) -> None:  # type: ignore[no-untyped-def]
+    """/ready returns 503 when the server is draining."""
+    app.state.draining = True  # pyright: ignore[reportUnknownMemberType]
+    resp = await client.get("/ready")
+    assert resp.status_code == 503
+    payload = resp.json()
+    assert payload["status"] == "not_ready"
+    assert payload["reason"] == "draining"
+
+
+@pytest.mark.anyio
+async def test_alive_returns_200(client: AsyncClient) -> None:
+    """GET /alive returns process liveness."""
+    resp = await client.get("/alive")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "alive"}
+
+
 # -- JSONL persistence ------------------------------------------------------
 
 
@@ -1910,6 +1947,12 @@ async def test_auth_public_paths_bypass_auth(auth_client: AsyncClient) -> None:
     resp = await auth_client.get("/health")
     assert resp.status_code == 200
 
+    ready = await auth_client.get("/ready")
+    assert ready.status_code == 200
+
+    alive = await auth_client.get("/alive")
+    assert alive.status_code == 200
+
 
 @pytest.mark.anyio
 async def test_auth_agent_json_bypass(auth_client: AsyncClient) -> None:
@@ -1972,3 +2015,13 @@ async def test_readonly_allows_status(readonly_client: AsyncClient) -> None:
     """GET /status passes through in readonly mode."""
     resp = await readonly_client.get("/status")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_readonly_ready_reports_not_ready(readonly_client: AsyncClient) -> None:
+    """/ready should fail readiness when readonly mode is active."""
+    resp = await readonly_client.get("/ready")
+    assert resp.status_code == 503
+    payload = resp.json()
+    assert payload["status"] == "not_ready"
+    assert payload["reason"] == "readonly"

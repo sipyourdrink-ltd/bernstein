@@ -722,6 +722,23 @@ class CostAnomalyConfig:
     baseline_min_samples: int = 5
 
 
+@dataclass(frozen=True)
+class BatchConfig:
+    """Provider batch execution configuration."""
+
+    enabled: bool = False
+    eligible: list[str] = field(default_factory=list[str])
+
+
+@dataclass(frozen=True)
+class TestAgentConfig:
+    """Configuration for auto-spawning paired test tasks."""
+
+    always_spawn: bool = False
+    model: str = "sonnet"
+    trigger: Literal["on_task_complete"] = "on_task_complete"
+
+
 @dataclass
 class OrchestratorConfig:
     """Configuration for the orchestrator main loop.
@@ -775,6 +792,9 @@ class OrchestratorConfig:
     ab_test: bool = False
     rag: RAGConfig = field(default_factory=RAGConfig)
     cost_anomaly: CostAnomalyConfig = field(default_factory=CostAnomalyConfig)
+    batch: BatchConfig = field(default_factory=BatchConfig)
+    max_cost_per_agent: float = 0.0  # Hard per-agent spend cap (0 = unlimited)
+    test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
 
 
 # ---------------------------------------------------------------------------

@@ -238,3 +238,28 @@ def is_process_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Standardized color-coded output helpers (p1-0007)
+# ---------------------------------------------------------------------------
+
+
+def print_success(message: str) -> None:
+    """Print a success message in green with a check mark prefix."""
+    console.print(f"[green]✓[/green] {message}")
+
+
+def print_error(message: str) -> None:
+    """Print an error message in red with an x prefix."""
+    console.print(f"[red]✗[/red] {message}")
+
+
+def print_warning(message: str) -> None:
+    """Print a warning message in yellow with a ! prefix."""
+    console.print(f"[yellow]![/yellow] {message}")
+
+
+def print_info(message: str) -> None:
+    """Print an informational message in cyan with an → prefix."""
+    console.print(f"[cyan]→[/cyan] {message}")

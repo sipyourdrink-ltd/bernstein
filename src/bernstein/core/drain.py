@@ -508,7 +508,7 @@ class DrainCoordinator:
                 continue
 
             commit_result = _run_git(
-                ["commit", "-m", "WIP: auto-save during drain"],
+                ["commit", "-m", "chore(drain): auto-save during drain"],
                 cwd=wt,
             )
             if commit_result.returncode != 0:

@@ -51,11 +51,16 @@ if TYPE_CHECKING:
 _PUBLIC_PATHS = frozenset(
     {
         "/health",
+        "/health/ready",
+        "/health/live",
+        "/ready",
+        "/alive",
         "/.well-known/agent.json",
         "/.well-known/acp.json",
         "/acp/v0/agents",
         "/docs",
         "/openapi.json",
+        "/webhook",
         "/webhooks/github",
         "/webhooks/slack/commands",
         "/webhooks/slack/events",
@@ -199,6 +204,12 @@ class TaskCreate(BaseModel):
     slack_context: dict[str, Any] | None = None  # Slack slash command metadata
 
 
+class WebhookTaskCreate(TaskCreate):
+    """Body for POST /webhook."""
+
+    role: str = "backend"
+
+
 class TaskResponse(BaseModel):
     """Serialised task returned by every task endpoint."""
 
@@ -226,6 +237,12 @@ class TaskResponse(BaseModel):
     created_at: float
     progress_log: list[ProgressEntry] = Field(default_factory=lambda: list[ProgressEntry]())
     version: int = 1
+
+
+class WebhookTaskResponse(BaseModel):
+    """Serialized task returned by POST /webhook."""
+
+    task: TaskResponse
 
 
 class TaskCompleteRequest(BaseModel):
@@ -335,6 +352,7 @@ class HealthResponse(BaseModel):
     memory_mb: float = 0.0
     restart_count: int = 0
     is_readonly: bool = False
+    components: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class BulletinPostRequest(BaseModel):

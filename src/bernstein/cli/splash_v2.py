@@ -142,9 +142,7 @@ class SplashRenderer:
             out.append(f"\033[{sub_row + 1};{pad_s + 1}H\033[1;38;2;0;212;255m{subtitle}")
 
         # 8. Probe lines.
-        agent_names = ", ".join(
-            str(a.get("name", "?")).title() for a in ctx.agents[:3]
-        ) or "none detected"
+        agent_names = ", ".join(str(a.get("name", "?")).title() for a in ctx.agents[:3]) or "none detected"
         probes = [
             f"\u2713 Terminal: truecolor, {w}x{h}",
             f"\u2713 Agents: {agent_names}",

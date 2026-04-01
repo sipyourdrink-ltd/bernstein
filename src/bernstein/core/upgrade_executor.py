@@ -419,8 +419,12 @@ class UpgradeExecutor:
             stage_files(self._workdir, paths)
 
             # Commit
-            commit_msg = f"Upgrade {transaction.id}: {transaction.title}\n\n{transaction.description}"
-            result = git_commit(self._workdir, commit_msg)
+            commit_msg = (
+                f"feat(upgrade): {transaction.title[:72]}\n\n"
+                f"Upgrade: {transaction.id}\n\n"
+                f"{transaction.description}"
+            )
+            result = git_commit(self._workdir, commit_msg, enforce_conventional=True)
 
             if result.ok:
                 commit_hash = rev_parse_head(self._workdir)
@@ -461,7 +465,11 @@ class UpgradeExecutor:
             try:
                 result = revert_commit(self._workdir, transaction.git_commit, no_commit=True)
                 if result.ok:
-                    git_commit(self._workdir, f"Revert upgrade {transaction.id}")
+                    git_commit(
+                        self._workdir,
+                        f"fix(upgrade): revert upgrade {transaction.id}",
+                        enforce_conventional=True,
+                    )
                     transaction.status = UpgradeStatus.ROLLED_BACK
                     transaction.rolled_back_at = time.time()
                     logger.info("Upgrade %s rolled back successfully", transaction.id)

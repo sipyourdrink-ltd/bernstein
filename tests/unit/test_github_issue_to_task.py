@@ -70,12 +70,12 @@ def _make_event(payload: dict[str, Any], action: str = "labeled") -> WebhookEven
 
 
 @pytest.fixture()
-def jsonl_path(tmp_path: "Path") -> "Path":
+def jsonl_path(tmp_path: Path) -> Path:
     return tmp_path / "tasks.jsonl"
 
 
 @pytest.fixture()
-def app(jsonl_path: "Path", monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
+def app(jsonl_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     monkeypatch.setenv("GITHUB_WEBHOOK_SECRET", WEBHOOK_SECRET)
     return create_app(jsonl_path=jsonl_path)
 

@@ -11,6 +11,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+_CONVENTIONAL_COMMIT_RE = re.compile(
+    r"^(feat|fix|chore|docs|test|refactor)(\([a-z0-9._/-]+\))?: .+"
+)
+
 # Paths that must NEVER be staged, even via explicit add.
 _NEVER_STAGE: frozenset[str] = frozenset(
     {
@@ -216,8 +220,32 @@ def stage_all_except(cwd: Path, exclude: list[str] | None = None) -> None:
 # ------------------------------------------------------------------
 
 
-def commit(cwd: Path, message: str) -> GitResult:
-    """Create a commit with the given message."""
+def is_conventional_commit_message(message: str) -> bool:
+    """Return True when *message* has a conventional-commit subject line."""
+    subject = ""
+    for line in message.splitlines():
+        if line.strip():
+            subject = line.strip()
+            break
+    if not subject:
+        return False
+    return bool(_CONVENTIONAL_COMMIT_RE.match(subject))
+
+
+def commit(cwd: Path, message: str, *, enforce_conventional: bool = False) -> GitResult:
+    """Create a commit with the given message.
+
+    Args:
+        cwd: Repository root.
+        message: Commit message.
+        enforce_conventional: When True, rejects non-conventional subjects.
+    """
+    if enforce_conventional and not is_conventional_commit_message(message):
+        return GitResult(
+            returncode=1,
+            stdout="",
+            stderr="commit message must follow conventional format: type(scope): summary",
+        )
     return run_git(["commit", "-m", message], cwd)
 
 
@@ -280,7 +308,7 @@ def conventional_commit(
     parts.extend(footer_parts)
 
     message = "\n".join(parts)
-    return commit(cwd, message)
+    return commit(cwd, message, enforce_conventional=True)
 
 
 # ------------------------------------------------------------------

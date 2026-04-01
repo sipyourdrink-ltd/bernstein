@@ -17,7 +17,16 @@ from bernstein.core.compliance import ComplianceConfig, CompliancePreset
 from bernstein.core.formal_verification import FormalProperty, FormalVerificationConfig
 from bernstein.core.gate_runner import VALID_GATE_NAMES, GatePipelineStep, normalize_gate_condition
 from bernstein.core.key_rotation import KeyRotationConfig, _parse_interval
-from bernstein.core.models import ClusterConfig, ClusterTopology, Complexity, Scope, Task, TaskStatus
+from bernstein.core.models import (
+    BatchConfig,
+    ClusterConfig,
+    ClusterTopology,
+    Complexity,
+    Scope,
+    Task,
+    TaskStatus,
+    TestAgentConfig,
+)
 from bernstein.core.quality_gates import QualityGatesConfig
 from bernstein.core.secrets import SecretsConfig
 from bernstein.core.visual_config import VisualConfig, parse_visual_config
@@ -77,6 +86,14 @@ class NotifyConfig:
 
 
 @dataclass(frozen=True)
+class WebhookConfig:
+    """Outbound webhook target for lifecycle notifications."""
+
+    url: str
+    events: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SeedConfig:
     """Validated configuration from bernstein.yaml.
 
@@ -127,10 +144,27 @@ class SeedConfig:
     role_model_policy: dict[str, dict[str, str]] | None = None
     compliance: ComplianceConfig | None = None
     visual: VisualConfig | None = None
+    batch: BatchConfig = field(default_factory=BatchConfig)
+    max_cost_per_agent: float = 0.0
+    webhooks: tuple[WebhookConfig, ...] = ()
+    test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
 _VALID_CLIS = frozenset({"claude", "codex", "gemini", "qwen", "auto"})
+_ALLOWED_WEBHOOK_EVENTS = frozenset(
+    {
+        "run.started",
+        "task.completed",
+        "task.failed",
+        "run.completed",
+        "budget.warning",
+        "approval.needed",
+    }
+)
+_WEBHOOK_EVENT_ALIASES: dict[str, str] = {
+    "task.done": "task.completed",
+}
 
 
 def _parse_budget(raw: str | int | float | None) -> float | None:
@@ -238,6 +272,15 @@ def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
     return parsed
 
 
+def _normalize_webhook_event(event: str, field_name: str) -> str:
+    """Normalize and validate a webhook event name."""
+    normalized = _WEBHOOK_EVENT_ALIASES.get(event, event)
+    if normalized not in _ALLOWED_WEBHOOK_EVENTS:
+        allowed = ", ".join(sorted(_ALLOWED_WEBHOOK_EVENTS | set(_WEBHOOK_EVENT_ALIASES)))
+        raise SeedError(f"{field_name} contains unsupported event {event!r}. Allowed: {allowed}")
+    return normalized
+
+
 def parse_seed(path: Path) -> SeedConfig:
     """Parse a bernstein.yaml seed file into a validated SeedConfig.
 
@@ -289,6 +332,12 @@ def parse_seed(path: Path) -> SeedConfig:
     model_raw: object = data.get("model")
     if model_raw is not None and not isinstance(model_raw, str):
         raise SeedError(f"model must be a string, got: {type(model_raw).__name__}")
+    max_cost_per_agent_raw: object = data.get("max_cost_per_agent")
+    max_cost_per_agent = 0.0
+    if max_cost_per_agent_raw is not None:
+        max_cost_per_agent = _parse_budget(cast("str | int | float | None", max_cost_per_agent_raw)) or 0.0
+        if max_cost_per_agent < 0:
+            raise SeedError(f"max_cost_per_agent must be >= 0, got: {max_cost_per_agent_raw!r}")
 
     constraints = _parse_string_list(data.get("constraints"), "constraints")
     context_files = _parse_string_list(data.get("context_files"), "context_files")
@@ -333,6 +382,29 @@ def parse_seed(path: Path) -> SeedConfig:
             on_complete=on_complete,
             on_failure=on_failure,
         )
+
+    webhooks_raw: object = data.get("webhooks")
+    webhooks: tuple[WebhookConfig, ...] = ()
+    if webhooks_raw is not None:
+        if not isinstance(webhooks_raw, list):
+            raise SeedError(f"webhooks must be a list, got: {type(webhooks_raw).__name__}")
+        parsed_targets: list[WebhookConfig] = []
+        for idx, item in enumerate(webhooks_raw):
+            if not isinstance(item, dict):
+                raise SeedError(f"webhooks[{idx}] must be a mapping")
+            entry = cast("dict[str, object]", item)
+            url_raw: object = entry.get("url")
+            if not isinstance(url_raw, str) or not url_raw.strip():
+                raise SeedError(f"webhooks[{idx}].url must be a non-empty string")
+            events_raw: object = entry.get("events")
+            events = _parse_string_list(events_raw, f"webhooks[{idx}].events")
+            if len(events) == 0:
+                raise SeedError(f"webhooks[{idx}].events must contain at least one event")
+            normalized_events = tuple(
+                _normalize_webhook_event(event_name, f"webhooks[{idx}].events") for event_name in events
+            )
+            parsed_targets.append(WebhookConfig(url=url_raw.strip(), events=normalized_events))
+        webhooks = tuple(parsed_targets)
 
     storage_raw: object = data.get("storage")
     storage: StorageConfig | None = None
@@ -427,6 +499,41 @@ def parse_seed(path: Path) -> SeedConfig:
             symlink_dirs=symlink_dirs,
             copy_files=copy_files,
             setup_command=setup_cmd_raw if isinstance(setup_cmd_raw, str) else None,
+        )
+
+    batch_raw: object = data.get("batch")
+    batch = BatchConfig()
+    if batch_raw is not None:
+        if not isinstance(batch_raw, dict):
+            raise SeedError(f"batch must be a mapping, got: {type(batch_raw).__name__}")
+        batch_dict: dict[str, object] = cast("dict[str, object]", batch_raw)
+        enabled_raw: object = batch_dict.get("enabled", False)
+        if not isinstance(enabled_raw, bool):
+            raise SeedError(f"batch.enabled must be a bool, got: {type(enabled_raw).__name__}")
+        eligible = list(_parse_string_list(batch_dict.get("eligible"), "batch.eligible"))
+        batch = BatchConfig(enabled=enabled_raw, eligible=eligible)
+
+    test_agent_raw: object = data.get("test_agent")
+    test_agent = TestAgentConfig()
+    if test_agent_raw is not None:
+        if not isinstance(test_agent_raw, dict):
+            raise SeedError(f"test_agent must be a mapping, got: {type(test_agent_raw).__name__}")
+        test_agent_dict: dict[str, object] = cast("dict[str, object]", test_agent_raw)
+        always_spawn_raw: object = test_agent_dict.get("always_spawn", False)
+        if not isinstance(always_spawn_raw, bool):
+            raise SeedError(f"test_agent.always_spawn must be a bool, got: {type(always_spawn_raw).__name__}")
+        model_value_raw: object = test_agent_dict.get("model", "sonnet")
+        if not isinstance(model_value_raw, str) or not model_value_raw.strip():
+            raise SeedError("test_agent.model must be a non-empty string")
+        trigger_raw: object = test_agent_dict.get("trigger", "on_task_complete")
+        if not isinstance(trigger_raw, str):
+            raise SeedError(f"test_agent.trigger must be a string, got: {type(trigger_raw).__name__}")
+        if trigger_raw != "on_task_complete":
+            raise SeedError("test_agent.trigger must be 'on_task_complete'")
+        test_agent = TestAgentConfig(
+            always_spawn=always_spawn_raw,
+            model=model_value_raw.strip(),
+            trigger="on_task_complete",
         )
 
     model_policy_raw: object = data.get("model_policy")
@@ -729,12 +836,14 @@ def parse_seed(path: Path) -> SeedConfig:
         cli=cli,
         max_agents=max_agents_raw,
         model=model_raw,
+        max_cost_per_agent=max_cost_per_agent,
         constraints=constraints,
         context_files=context_files,
         agent_catalog=agent_catalog_raw,
         catalogs=catalogs,
         mcp_servers=cast("dict[str, dict[str, Any]] | None", mcp_servers_raw),
         notify=notify,
+        webhooks=webhooks,
         storage=storage,
         cells=cells_raw,
         cluster=cluster,
@@ -749,6 +858,8 @@ def parse_seed(path: Path) -> SeedConfig:
         role_model_policy=role_model_policy,
         compliance=compliance,
         visual=visual,
+        batch=batch,
+        test_agent=test_agent,
     )
 
 

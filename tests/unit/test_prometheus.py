@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 
 from bernstein.core.prometheus import (
     agents_active,
+    cost_usd_by_model_total,
     cost_usd_total,
     evolve_proposals_total,
     registry,
@@ -83,6 +84,12 @@ def test_cost_usd_counter_exists() -> None:
     assert "bernstein_cost_usd" in names
 
 
+def test_cost_usd_by_model_counter_exists() -> None:
+    """Model-labeled cost counter is registered."""
+    names = {m.name for m in registry.collect()}
+    assert "bernstein_cost_usd_by_model" in names
+
+
 def test_evolve_proposals_counter_exists() -> None:
     """bernstein_evolve_proposals_total counter is registered.
 
@@ -136,6 +143,16 @@ def test_update_metrics_from_status_increments_cost_counter() -> None:
     update_metrics_from_status(big_status)
 
     after = cost_usd_total._value.get()  # type: ignore[attr-defined]
+    assert after >= before
+
+
+def test_update_metrics_from_status_increments_model_cost_counter() -> None:
+    """Per-model cost counter is updated from status payload."""
+    before = cost_usd_by_model_total.labels(model="sonnet")._value.get()  # type: ignore[attr-defined]
+    status = dict(_SAMPLE_STATUS)
+    status["cost_by_model_usd"] = {"sonnet": 123.45}
+    update_metrics_from_status(status)
+    after = cost_usd_by_model_total.labels(model="sonnet")._value.get()  # type: ignore[attr-defined]
     assert after >= before
 
 
@@ -203,6 +220,7 @@ async def test_metrics_endpoint_contains_bernstein_metrics(client: AsyncClient) 
     assert "bernstein_agents_active" in body
     assert "bernstein_task_duration_seconds" in body
     assert "bernstein_cost_usd_total" in body
+    assert "bernstein_cost_usd_by_model_total" in body
     assert "bernstein_evolve_proposals_total" in body
     assert "bernstein_task_queue_depth" in body
 

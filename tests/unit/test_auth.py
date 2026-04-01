@@ -478,6 +478,9 @@ class TestSSOAuthMiddleware:
         assert "/auth/oidc/callback" in AUTH_PUBLIC_PATHS
         assert "/auth/saml/acs" in AUTH_PUBLIC_PATHS
         assert "/auth/cli/device" in AUTH_PUBLIC_PATHS
+        assert "/webhook" in AUTH_PUBLIC_PATHS
+        assert "/ready" in AUTH_PUBLIC_PATHS
+        assert "/alive" in AUTH_PUBLIC_PATHS
 
     def test_route_permission_mapping(self) -> None:
         from bernstein.core.auth_middleware import _get_required_permission

@@ -386,6 +386,7 @@ def test_get_status_icon_is_case_insensitive() -> None:
 def test_nerd_font_icons_are_immutable() -> None:
     """NerdFontIcons is a frozen dataclass; normal attribute assignment must raise."""
     import dataclasses
+
     import pytest
 
     nf = NerdFontIcons()
@@ -397,6 +398,7 @@ def test_nerd_font_icons_are_immutable() -> None:
 def test_unicode_fallback_icons_are_immutable() -> None:
     """UnicodeFallbackIcons is a frozen dataclass; normal attribute assignment must raise."""
     import dataclasses
+
     import pytest
 
     uf = UnicodeFallbackIcons()
