@@ -4,6 +4,55 @@
 
   var STORAGE_KEY = 'bernstein-theme';
   var html = document.documentElement;
+  var LEGACY_ICON_MAP = {
+    '\u2139\ufe0f': 'info',
+    '\u2139': 'info',
+    '\u2705': 'check-circle-2',
+    '\u2713': 'check',
+    '\u274c': 'x-circle',
+    '\u26a0\ufe0f': 'triangle-alert',
+    '\u26a0': 'triangle-alert',
+    '\u2630': 'menu',
+    '\u2715': 'x',
+    '\u25d1': 'moon-star',
+    '\u25d0': 'moon',
+    '\u25cf': 'circle',
+    '\u25cb': 'circle'
+  };
+
+  function replaceLegacySymbols(root) {
+    var symbols = Object.keys(LEGACY_ICON_MAP).sort(function (a, b) {
+      return b.length - a.length;
+    });
+    var selector = 'span,td,th,button,a,p,li,h1,h2,h3,h4,h5,h6';
+    root.querySelectorAll(selector).forEach(function (el) {
+      if (el.closest('pre, code') || el.querySelector('svg, [data-lucide]')) {
+        return;
+      }
+      var raw = (el.textContent || '').trim();
+      if (!raw) return;
+
+      var matchedSymbol = '';
+      for (var i = 0; i < symbols.length; i += 1) {
+        if (raw === symbols[i] || raw.indexOf(symbols[i] + ' ') === 0 || raw.indexOf(symbols[i] + '(') === 0) {
+          matchedSymbol = symbols[i];
+          break;
+        }
+      }
+      if (!matchedSymbol) return;
+
+      var iconName = LEGACY_ICON_MAP[matchedSymbol];
+      var remainder = raw.slice(matchedSymbol.length).replace(/^\s+/, '');
+      el.textContent = '';
+      var icon = document.createElement('i');
+      icon.setAttribute('data-lucide', iconName);
+      icon.setAttribute('aria-hidden', 'true');
+      el.appendChild(icon);
+      if (remainder) {
+        el.appendChild(document.createTextNode(' ' + remainder));
+      }
+    });
+  }
 
   function isDark() {
     var saved = localStorage.getItem(STORAGE_KEY);
@@ -35,6 +84,8 @@
   applyTheme(isDark());
 
   document.addEventListener('DOMContentLoaded', function () {
+    replaceLegacySymbols(document);
+
     // Initialize Lucide icons
     if (typeof lucide !== 'undefined') {
       lucide.createIcons();

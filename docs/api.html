@@ -7,6 +7,7 @@
   <meta name="description" content="Task server REST endpoints, CLI commands, and configuration schema for Bernstein." />
   <link rel="stylesheet" href="style.css" />
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
   <script src="script.js"></script>
 </head>
 <body>
@@ -27,12 +28,12 @@
     </div>
     <div class="nav-actions">
       <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
-        <span id="theme-icon">◑</span>
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
       </button>
       <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
         GitHub ↗
       </a>
-      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">☰</button>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
     </div>
   </div>
 </nav>
@@ -78,7 +79,7 @@
     <p>The task server is a FastAPI application running at <code>http://127.0.0.1:8052</code> (port configurable). It is the single source of truth for all task state.</p>
 
     <div class="callout callout-info">
-      <span>ℹ️</span>
+      <i data-lucide="info" aria-hidden="true"></i>
       <p>The server is started automatically by <code>bernstein run</code>. You can also start it standalone with <code>bernstein server start</code> for scripting use cases.</p>
     </div>
 

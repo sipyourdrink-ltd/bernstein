@@ -7,6 +7,7 @@
   <meta name="description" content="Install Bernstein, run your first orchestration session, and understand the core configuration." />
   <link rel="stylesheet" href="style.css" />
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
   <script src="script.js"></script>
 </head>
 <body>
@@ -27,12 +28,12 @@
     </div>
     <div class="nav-actions">
       <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
-        <span id="theme-icon">◑</span>
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
       </button>
       <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
         GitHub ↗
       </a>
-      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">☰</button>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
     </div>
   </div>
 </nav>
@@ -89,7 +90,7 @@ uv tool install bernstein
 bernstein --version</code></pre>
     </div>
     <div class="callout callout-info">
-      <span>ℹ️</span>
+      <i data-lucide="info" aria-hidden="true"></i>
       <p>Bernstein itself is pure Python. The CLI agents it spawns (Claude Code, Codex, etc.) must be installed and authenticated separately. Bernstein auto-detects which agents are available.</p>
     </div>
 
