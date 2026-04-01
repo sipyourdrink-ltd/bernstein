@@ -71,18 +71,24 @@ def test_approval_workflow_e2e(tmp_path: Path) -> None:
     orchestrator._notify = _mock_notify
 
     # 3. Create a low-risk task (acts normal) and a high-risk task
-    r_low = client.post("/tasks", json={
-        "title": "Low risk typo fix",
-        "description": "Fix a typo",
-        "role": "backend",
-        "risk_level": "low",
-    })
-    r_high = client.post("/tasks", json={
-        "title": "Critical DB Drop",
-        "description": "Drop users table",
-        "role": "backend",
-        "risk_level": "high",
-    })
+    r_low = client.post(
+        "/tasks",
+        json={
+            "title": "Low risk typo fix",
+            "description": "Fix a typo",
+            "role": "backend",
+            "risk_level": "low",
+        },
+    )
+    r_high = client.post(
+        "/tasks",
+        json={
+            "title": "Critical DB Drop",
+            "description": "Drop users table",
+            "role": "backend",
+            "risk_level": "high",
+        },
+    )
 
     task_low = r_low.json()["id"]
     task_high = r_high.json()["id"]
@@ -108,7 +114,9 @@ def test_approval_workflow_e2e(tmp_path: Path) -> None:
     evaluations: list[tuple[str, object, object]] = []
     original_eval = orchestrator._approval_gate.evaluate
 
-    def tracked_eval(task: Any, *, session_id: str, override_mode: Any = None, timeout_s: Any = None, **kwargs: Any) -> Any:
+    def tracked_eval(
+        task: Any, *, session_id: str, override_mode: Any = None, timeout_s: Any = None, **kwargs: Any
+    ) -> Any:
         evaluations.append((task.id, override_mode, timeout_s))
         return original_eval(task, session_id=session_id, override_mode=override_mode, timeout_s=timeout_s, **kwargs)
 

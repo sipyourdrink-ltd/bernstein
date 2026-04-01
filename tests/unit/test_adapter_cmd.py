@@ -5,15 +5,11 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
 from bernstein.cli.main import cli
-
-if TYPE_CHECKING:
-    pass
 
 
 def test_test_adapter_success(tmp_path: Path) -> None:
@@ -21,17 +17,13 @@ def test_test_adapter_success(tmp_path: Path) -> None:
     # Mock return value for spawn
     proc_mock = MagicMock()
     proc_mock.wait.return_value = 0
-    
+
     log_file = tmp_path / "test-session.log"
     log_file.write_text("All tests passed\nResult written to file test.txt\n", encoding="utf-8")
-    
-    result_mock = SimpleNamespace(
-        pid=123, 
-        log_path=log_file, 
-        proc=proc_mock
-    )
+
+    result_mock = SimpleNamespace(pid=123, log_path=log_file, proc=proc_mock)
     adapter.spawn.return_value = result_mock
-    
+
     runner = CliRunner()
     # Mock Path.cwd() to return tmp_path so worktree is created there
     with (
@@ -52,17 +44,13 @@ def test_test_adapter_timeout(tmp_path: Path) -> None:
     proc_mock = MagicMock()
     # Raise timeout on wait
     proc_mock.wait.side_effect = subprocess.TimeoutExpired(cmd="gemini", timeout=1)
-    
+
     log_file = tmp_path / "timeout-session.log"
     log_file.touch()
-    
-    result_mock = SimpleNamespace(
-        pid=123, 
-        log_path=log_file, 
-        proc=proc_mock
-    )
+
+    result_mock = SimpleNamespace(pid=123, log_path=log_file, proc=proc_mock)
     adapter.spawn.return_value = result_mock
-    
+
     runner = CliRunner()
     with (
         patch("bernstein.cli.adapter_cmd.get_adapter", return_value=adapter),

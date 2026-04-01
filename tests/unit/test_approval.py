@@ -95,6 +95,7 @@ def test_create_pr_uses_injected_push_and_create(tmp_path: Path, make_task: Any)
     assert "**Role**: backend" in created["body"]
     assert "**Tests**: 12 passed" in created["body"]
 
+
 def test_approval_gate_with_override_mode(tmp_path: Path, make_task: Any) -> None:
     gate = ApprovalGate(ApprovalMode.AUTO, tmp_path)
     task = make_task(id="T-override")
