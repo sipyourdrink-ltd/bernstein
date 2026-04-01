@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from bernstein.core.telemetry import start_span
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -274,8 +276,21 @@ class GateRunner:
                 return cached_result
 
         started = time.perf_counter()
-        result = await self._execute_gate(step, task, run_dir, changed_files)
-        result.duration_ms = int((time.perf_counter() - started) * 1000)
+        with start_span(
+            "quality_gate.execute",
+            {
+                "task.id": task.id,
+                "quality_gate.name": step.name,
+                "quality_gate.required": step.required,
+            },
+        ) as span:
+            result = await self._execute_gate(step, task, run_dir, changed_files)
+            result.duration_ms = int((time.perf_counter() - started) * 1000)
+            if span is not None:
+                span.set_attribute("quality_gate.status", result.status)
+                span.set_attribute("quality_gate.blocked", result.blocked)
+                span.set_attribute("quality_gate.cached", result.cached)
+                span.set_attribute("quality_gate.duration_ms", result.duration_ms)
 
         if cache_key is not None and result.status in {"pass", "fail", "skipped"}:
             await asyncio.to_thread(self._store_cached_result_sync, cache_key, result)
