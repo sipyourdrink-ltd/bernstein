@@ -10,6 +10,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  repo-hygiene:
+    name: Repo hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Assert .sdd is not tracked
+        run: |
+          TRACKED="$(git ls-files '.sdd')"
+          if [ -n "$TRACKED" ]; then
+            echo "::error::.sdd must never be committed to git"
+            printf '%s\n' "$TRACKED"
+            exit 1
+          fi
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -136,7 +150,7 @@ jobs:
   close-ci-issues:
     name: Close resolved CI issues
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test, spelling, dead-code]
+    needs: [repo-hygiene, lint, typecheck, test, spelling, dead-code]
     if: >
       success() &&
       github.ref == 'refs/heads/main' &&
@@ -184,7 +198,7 @@ jobs:
     name: PR CI summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [lint, typecheck, test, spelling, dead-code, actionlint, dist-size]
+    needs: [repo-hygiene, lint, typecheck, test, spelling, dead-code, actionlint, dist-size]
     permissions:
       pull-requests: write
     steps:
@@ -193,6 +207,7 @@ jobs:
           script: |
             const marker = '<!-- ci-summary -->';
             const jobs = [
+              { name: 'Repo hygiene', result: '${{ needs.repo-hygiene.result }}' },
               { name: 'Lint', result: '${{ needs.lint.result }}' },
               { name: 'Type check', result: '${{ needs.typecheck.result }}' },
               { name: 'Tests', result: '${{ needs.test.result }}' },
