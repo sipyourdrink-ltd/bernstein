@@ -887,7 +887,9 @@ def claim_and_spawn_batches(
                     _rc_completed = False
                     try:
                         complete_task(orch._client, base, _rc_task.id, _cached_entry.response)
-                        orch._sync_backlog_file(_rc_task)
+                        # Move backlog file on cache hit
+                        _move_backlog_ticket(orch._workdir, _rc_task)
+
                         assigned_task_ids.add(_rc_task.id)
                         _claimed_titles.add(_base_title(_rc_task.title))
                         result.spawned.append(f"response-cache:{_rc_task.id}")

@@ -19,6 +19,7 @@ from bernstein.core.heartbeat import HeartbeatMonitor
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import AgentSession, IsolationMode, ModelConfig, Task
+from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
@@ -92,10 +93,6 @@ def _list_subdirs_cached(path: Path) -> list[str]:
 
 
 logger = logging.getLogger(__name__)
-
-
-class ShutdownInProgress(RuntimeError):
-    """Raised when a spawn is attempted after shutdown has started."""
 
 
 def _render_signal_check(session_id: str) -> str:

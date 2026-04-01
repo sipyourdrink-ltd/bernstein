@@ -561,11 +561,12 @@ class TierAwareRouter:
         return not (requires_large_context and provider.max_context_tokens < 100000)
 
     def _provider_supports_model(self, provider: ProviderConfig, model: str) -> bool:
-        """Check if a provider supports a given model."""
-        # Normalize model name (e.g., "opus" matches "claude-opus")
+        """Check if a provider supports a given model or its aliases."""
         model_lower = model.lower()
-        for provider_model in provider.models:
+        for provider_model, config in provider.models.items():
             if model_lower in provider_model.lower() or provider_model.lower() in model_lower:
+                return True
+            if any(model_lower in alias.lower() or alias.lower() in model_lower for alias in config.aliases):
                 return True
         return False
 
@@ -597,15 +598,20 @@ class TierAwareRouter:
         provider: ProviderConfig,
         base_config: ModelConfig,
     ) -> ModelConfig:
-        """Resolve the actual model config from provider's available models."""
+        """Resolve the actual model config from provider's available models/aliases."""
         model_lower = base_config.model.lower()
         for provider_model, config in provider.models.items():
-            if model_lower in provider_model.lower() or provider_model.lower() in model_lower:
+            if (
+                model_lower in provider_model.lower()
+                or provider_model.lower() in model_lower
+                or any(model_lower in alias.lower() or alias.lower() in model_lower for alias in config.aliases)
+            ):
                 # Use provider's config but preserve effort level from base
                 return ModelConfig(
                     model=config.model,
                     effort=base_config.effort,
                     max_tokens=base_config.max_tokens,
+                    aliases=config.aliases,
                 )
         # Fallback to base config
         return base_config
@@ -897,6 +903,7 @@ def load_providers_from_yaml(path: Path, router: TierAwareRouter) -> None:
                         models[str(model_id)] = ModelConfig(
                             model=str(mc.get("model", model_id)),
                             effort=str(mc.get("effort", "high")),
+                            aliases=list(mc.get("aliases", [])),
                         )
             free_tier_limit_raw: Any = cfg.get("free_tier_limit")
             free_tier_limit: int | None = int(free_tier_limit_raw) if free_tier_limit_raw is not None else None

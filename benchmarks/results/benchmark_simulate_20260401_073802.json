@@ -1,0 +1,359 @@
+{
+  "run_at": "2026-04-01T07:38:02.875657+00:00",
+  "mode": "simulate",
+  "mean_speedup_3": 1.782,
+  "mean_speedup_5": 2.181,
+  "mean_cost_savings_3": 0.2346999999999999,
+  "task_results": [
+    {
+      "task_id": "task-001",
+      "task_name": "Add REST endpoints (3 routes) + tests",
+      "category": "feature",
+      "subtask_count": 4,
+      "results": [
+        {
+          "task_id": "task-001",
+          "scenario": "single",
+          "wall_time_minutes": 41.0,
+          "cost_usd": 0.0656,
+          "test_pass_rate": 0.82,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-001",
+          "scenario": "multi-3",
+          "wall_time_minutes": 25.0,
+          "cost_usd": 0.0524,
+          "test_pass_rate": 0.9,
+          "speedup": 1.64,
+          "cost_ratio": 0.799
+        },
+        {
+          "task_id": "task-001",
+          "scenario": "multi-5",
+          "wall_time_minutes": 25.0,
+          "cost_usd": 0.0524,
+          "test_pass_rate": 0.92,
+          "speedup": 1.64,
+          "cost_ratio": 0.799
+        }
+      ]
+    },
+    {
+      "task_id": "task-002",
+      "task_name": "Refactor module into clean architecture",
+      "category": "refactor",
+      "subtask_count": 6,
+      "results": [
+        {
+          "task_id": "task-002",
+          "scenario": "single",
+          "wall_time_minutes": 72.0,
+          "cost_usd": 0.1152,
+          "test_pass_rate": 0.76,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-002",
+          "scenario": "multi-3",
+          "wall_time_minutes": 49.0,
+          "cost_usd": 0.1003,
+          "test_pass_rate": 0.9,
+          "speedup": 1.47,
+          "cost_ratio": 0.871
+        },
+        {
+          "task_id": "task-002",
+          "scenario": "multi-5",
+          "wall_time_minutes": 49.0,
+          "cost_usd": 0.1003,
+          "test_pass_rate": 0.92,
+          "speedup": 1.47,
+          "cost_ratio": 0.871
+        }
+      ]
+    },
+    {
+      "task_id": "task-003",
+      "task_name": "Add auth middleware + tests + docs",
+      "category": "feature",
+      "subtask_count": 6,
+      "results": [
+        {
+          "task_id": "task-003",
+          "scenario": "single",
+          "wall_time_minutes": 67.0,
+          "cost_usd": 0.1072,
+          "test_pass_rate": 0.76,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-003",
+          "scenario": "multi-3",
+          "wall_time_minutes": 39.0,
+          "cost_usd": 0.0783,
+          "test_pass_rate": 0.9,
+          "speedup": 1.72,
+          "cost_ratio": 0.73
+        },
+        {
+          "task_id": "task-003",
+          "scenario": "multi-5",
+          "wall_time_minutes": 39.0,
+          "cost_usd": 0.0783,
+          "test_pass_rate": 0.92,
+          "speedup": 1.72,
+          "cost_ratio": 0.73
+        }
+      ]
+    },
+    {
+      "task_id": "task-004",
+      "task_name": "Fix 5 linting violations",
+      "category": "maintenance",
+      "subtask_count": 5,
+      "results": [
+        {
+          "task_id": "task-004",
+          "scenario": "single",
+          "wall_time_minutes": 20.0,
+          "cost_usd": 0.032,
+          "test_pass_rate": 0.79,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-004",
+          "scenario": "multi-3",
+          "wall_time_minutes": 8.0,
+          "cost_usd": 0.0352,
+          "test_pass_rate": 0.9,
+          "speedup": 2.5,
+          "cost_ratio": 1.1
+        },
+        {
+          "task_id": "task-004",
+          "scenario": "multi-5",
+          "wall_time_minutes": 4.0,
+          "cost_usd": 0.0352,
+          "test_pass_rate": 0.92,
+          "speedup": 5.0,
+          "cost_ratio": 1.1
+        }
+      ]
+    },
+    {
+      "task_id": "task-005",
+      "task_name": "Add error handling to all endpoints",
+      "category": "reliability",
+      "subtask_count": 6,
+      "results": [
+        {
+          "task_id": "task-005",
+          "scenario": "single",
+          "wall_time_minutes": 40.0,
+          "cost_usd": 0.064,
+          "test_pass_rate": 0.76,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-005",
+          "scenario": "multi-3",
+          "wall_time_minutes": 22.0,
+          "cost_usd": 0.0572,
+          "test_pass_rate": 0.9,
+          "speedup": 1.82,
+          "cost_ratio": 0.894
+        },
+        {
+          "task_id": "task-005",
+          "scenario": "multi-5",
+          "wall_time_minutes": 16.0,
+          "cost_usd": 0.0572,
+          "test_pass_rate": 0.92,
+          "speedup": 2.5,
+          "cost_ratio": 0.894
+        }
+      ]
+    },
+    {
+      "task_id": "task-006",
+      "task_name": "Write integration test suite",
+      "category": "testing",
+      "subtask_count": 5,
+      "results": [
+        {
+          "task_id": "task-006",
+          "scenario": "single",
+          "wall_time_minutes": 57.0,
+          "cost_usd": 0.0912,
+          "test_pass_rate": 0.79,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-006",
+          "scenario": "multi-3",
+          "wall_time_minutes": 33.0,
+          "cost_usd": 0.0251,
+          "test_pass_rate": 0.9,
+          "speedup": 1.73,
+          "cost_ratio": 0.275
+        },
+        {
+          "task_id": "task-006",
+          "scenario": "multi-5",
+          "wall_time_minutes": 27.0,
+          "cost_usd": 0.0251,
+          "test_pass_rate": 0.92,
+          "speedup": 2.11,
+          "cost_ratio": 0.275
+        }
+      ]
+    },
+    {
+      "task_id": "task-007",
+      "task_name": "Add rate limiting + tests",
+      "category": "feature",
+      "subtask_count": 6,
+      "results": [
+        {
+          "task_id": "task-007",
+          "scenario": "single",
+          "wall_time_minutes": 61.0,
+          "cost_usd": 0.0976,
+          "test_pass_rate": 0.76,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-007",
+          "scenario": "multi-3",
+          "wall_time_minutes": 43.0,
+          "cost_usd": 0.0783,
+          "test_pass_rate": 0.9,
+          "speedup": 1.42,
+          "cost_ratio": 0.802
+        },
+        {
+          "task_id": "task-007",
+          "scenario": "multi-5",
+          "wall_time_minutes": 43.0,
+          "cost_usd": 0.0783,
+          "test_pass_rate": 0.92,
+          "speedup": 1.42,
+          "cost_ratio": 0.802
+        }
+      ]
+    },
+    {
+      "task_id": "task-008",
+      "task_name": "Create OpenAPI spec from code",
+      "category": "docs",
+      "subtask_count": 6,
+      "results": [
+        {
+          "task_id": "task-008",
+          "scenario": "single",
+          "wall_time_minutes": 54.0,
+          "cost_usd": 0.0864,
+          "test_pass_rate": 0.76,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-008",
+          "scenario": "multi-3",
+          "wall_time_minutes": 38.0,
+          "cost_usd": 0.037,
+          "test_pass_rate": 0.9,
+          "speedup": 1.42,
+          "cost_ratio": 0.428
+        },
+        {
+          "task_id": "task-008",
+          "scenario": "multi-5",
+          "wall_time_minutes": 38.0,
+          "cost_usd": 0.037,
+          "test_pass_rate": 0.92,
+          "speedup": 1.42,
+          "cost_ratio": 0.428
+        }
+      ]
+    },
+    {
+      "task_id": "task-009",
+      "task_name": "Add logging and monitoring hooks",
+      "category": "observability",
+      "subtask_count": 8,
+      "results": [
+        {
+          "task_id": "task-009",
+          "scenario": "single",
+          "wall_time_minutes": 68.0,
+          "cost_usd": 0.1088,
+          "test_pass_rate": 0.7,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-009",
+          "scenario": "multi-3",
+          "wall_time_minutes": 32.0,
+          "cost_usd": 0.0906,
+          "test_pass_rate": 0.9,
+          "speedup": 2.12,
+          "cost_ratio": 0.833
+        },
+        {
+          "task_id": "task-009",
+          "scenario": "multi-5",
+          "wall_time_minutes": 30.0,
+          "cost_usd": 0.0906,
+          "test_pass_rate": 0.92,
+          "speedup": 2.27,
+          "cost_ratio": 0.833
+        }
+      ]
+    },
+    {
+      "task_id": "task-010",
+      "task_name": "Security audit + fixes",
+      "category": "security",
+      "subtask_count": 10,
+      "results": [
+        {
+          "task_id": "task-010",
+          "scenario": "single",
+          "wall_time_minutes": 97.0,
+          "cost_usd": 0.1552,
+          "test_pass_rate": 0.64,
+          "speedup": 1.0,
+          "cost_ratio": 1.0
+        },
+        {
+          "task_id": "task-010",
+          "scenario": "multi-3",
+          "wall_time_minutes": 49.0,
+          "cost_usd": 0.143,
+          "test_pass_rate": 0.9,
+          "speedup": 1.98,
+          "cost_ratio": 0.921
+        },
+        {
+          "task_id": "task-010",
+          "scenario": "multi-5",
+          "wall_time_minutes": 43.0,
+          "cost_usd": 0.143,
+          "test_pass_rate": 0.92,
+          "speedup": 2.26,
+          "cost_ratio": 0.921
+        }
+      ]
+    }
+  ]
+}

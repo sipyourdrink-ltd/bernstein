@@ -339,6 +339,7 @@ class ModelConfig:
     effort: str  # e.g. "max", "high", "normal"
     max_tokens: int = 200_000
     is_batch: bool = False  # Use provider batch API (~50% cost reduction) for non-urgent tasks
+    aliases: list[str] = field(default_factory=list)  # Other names this model answers to
 
 
 # ---------------------------------------------------------------------------

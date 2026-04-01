@@ -116,6 +116,7 @@ from bernstein.core.tick_pipeline import (
 )
 from bernstein.core.token_monitor import check_token_growth
 from bernstein.core.wal import WALWriter
+from bernstein.core.watchdog import WatchdogManager, collect_watchdog_findings
 from bernstein.core.workflow import WorkflowExecutor, load_workflow
 from bernstein.evolution.governance import AdaptiveGovernor, GovernanceEntry, ProjectContext
 from bernstein.evolution.risk import RiskScorer
@@ -205,6 +206,10 @@ _complete_task = complete_task
 _parse_backlog_file = parse_backlog_file
 
 
+class ShutdownInProgress(RuntimeError):
+    """Raised when a spawn is attempted after shutdown has started."""
+
+
 class Orchestrator:
     """The main loop: watch tasks, spawn agents, verify completion, repeat.
 
@@ -284,6 +289,7 @@ class Orchestrator:
         # Run completion summary state
         self._summary_written: bool = False
         self._run_start_ts: float = time.time()
+        self._idle_shutdown_ts: dict[str, float] = {}  # agent_id -> shutdown signal sent ts
         self._shutting_down = threading.Event()
         self._executor_drained = False
         # Background thread pool for non-blocking ruff/pytest runs
@@ -590,6 +596,14 @@ class Orchestrator:
         # Idle-agent recycling: tracks when a SHUTDOWN was sent to an idle agent
         # so the grace period can be enforced (30 s before SIGKILL).
         self._idle_shutdown_ts: dict[str, float] = {}  # session_id -> shutdown_sent_ts
+        self._watchdog_log_state: dict[str, tuple[int, int]] = {}
+        self._watchdog = WatchdogManager(
+            workdir,
+            self._client,
+            self._config.server_url,
+            notify=self._notify,
+            post_bulletin=self._post_bulletin,
+        )
 
         # Cluster heartbeat client: when cluster mode is enabled and this node
         # is a worker (server_url points to a remote central server), send
@@ -862,6 +876,16 @@ class Orchestrator:
         if self._router is not None:
             self._router.update_active_agent_counts(self._rate_limit_tracker.get_all_active_counts())
 
+        # 2c. Poll Provider Batch API
+        if self._batch_api is not None:
+            self._batch_api.poll(self)
+
+        # 2d. Detect loops and deadlocks
+        check_loops_and_deadlocks(self)
+
+        # 2e. Recycle idle agents
+        recycle_idle_agents(self, tasks_by_status)
+
         refresh_agent_states(self, tasks_by_status)
         alive_count = sum(1 for a in self._agents.values() if a.status != "dead")
         result.active_agents = alive_count
@@ -1044,6 +1068,9 @@ class Orchestrator:
 
         # 4d-ii.5 Loop and deadlock detection: kill looping agents, break lock cycles
         check_loops_and_deadlocks(self)
+
+        # 4d-ii.6 Three-tier watchdog: mechanical checks -> AI triage -> human escalation
+        self._watchdog.sync(collect_watchdog_findings(self))
 
         # 4d-iii. Cost anomaly detection: burn rate projection, stop on budget overrun
         for sig in self._anomaly_detector.check_tick(list(self._agents.values()), self._cost_tracker):

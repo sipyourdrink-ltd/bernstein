@@ -168,13 +168,15 @@ def print_dry_run_table(workdir: Path) -> None:
     """Print a summary table of tasks that would be spawned in dry-run mode.
 
     Reads open backlog tasks directly from .sdd/backlog/open/ and renders
-    a Rich table showing role, title, model, effort, priority, and scope.
+    a Rich table showing role, title, provider, model, and effort.
 
     Args:
         workdir: Project root directory.
     """
     from rich.table import Table
 
+    from bernstein.core.models import Complexity, Scope, Task
+    from bernstein.core.router import TierAwareRouter, load_providers_from_yaml
     from bernstein.core.sync import BacklogTask, parse_backlog_file
 
     backlog_dir = workdir / ".sdd" / "backlog" / "open"
@@ -191,24 +193,51 @@ def print_dry_run_table(workdir: Path) -> None:
         console.print("[dim]No open tasks found in backlog.[/dim]")
         return
 
+    # Initialize router and load providers
+    router = TierAwareRouter()
+    providers_yaml = workdir / ".sdd" / "config" / "providers.yaml"
+    if providers_yaml.exists():
+        load_providers_from_yaml(providers_yaml, router)
+
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Role", style="cyan")
     table.add_column("Title")
     table.add_column("Priority", justify="center")
-    table.add_column("Scope", justify="center")
-    table.add_column("Complexity", justify="center")
-    table.add_column("Model", style="dim", justify="center")
+    table.add_column("Provider", style="green")
+    table.add_column("Model", style="dim")
     table.add_column("Effort", style="dim", justify="center")
 
     for bt in sorted(tasks, key=lambda t: t.priority):
+        # Create a temporary Task object for the router
+        t_obj = Task(
+            id=bt.source_file,
+            title=bt.title,
+            description=bt.description,
+            role=bt.role,
+            priority=bt.priority,
+            scope=Scope(bt.scope),
+            complexity=Complexity(bt.complexity),
+            model=None,  # BacklogTask doesn't expose model/effort yet
+            effort=None,
+        )
+
+        try:
+            decision = router.select_provider_for_task(t_obj)
+            provider_display = decision.provider
+            model_display = decision.model_config.model
+            effort_display = decision.model_config.effort
+        except Exception as e:
+            provider_display = f"err: {e}"
+            model_display = "auto"
+            effort_display = "auto"
+
         table.add_row(
             bt.role,
             bt.title,
             str(bt.priority),
-            bt.scope,
-            bt.complexity,
-            "auto",
-            "auto",
+            provider_display,
+            model_display,
+            effort_display,
         )
 
     console.print(table)

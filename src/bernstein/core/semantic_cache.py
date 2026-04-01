@@ -234,7 +234,7 @@ class SemanticCacheManager:
 
         return None, 0.0
 
-    def store(self, key_text: str, response: str, model: str) -> None:
+    def store(self, key_text: str, response: str, model: str, *, verified: bool = False) -> None:
         """Store a new LLM response in the cache.
 
         If the cache exceeds ``MAX_CACHE_ENTRIES``, the least-recently-used
@@ -244,6 +244,7 @@ class SemanticCacheManager:
             key_text: Short text that describes the request.
             response: The LLM response to cache.
             model: LLM model name that produced the response.
+            verified: Whether the entry came from a verified real execution.
         """
         norm = _normalize(key_text)
         cache_key = _hash(norm)
@@ -253,6 +254,7 @@ class SemanticCacheManager:
             entry = self._manifest.entries[cache_key]
             entry.response = response
             entry.last_used_at = time.time()
+            entry.verified = verified
             return
 
         self._evict_if_needed()
@@ -265,6 +267,7 @@ class SemanticCacheManager:
             model=model,
             hit_count=0,
             created_at=time.time(),
+            verified=verified,
         )
         self._manifest.entries[cache_key] = entry
         logger.debug("Semantic cache stored entry key=%s model=%s", cache_key[:12], model)
