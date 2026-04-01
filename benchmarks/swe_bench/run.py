@@ -11,7 +11,7 @@ uv run python benchmarks/swe_bench/run.py eval --scenarios bernstein-sonnet --li
 # Run all 300 instances of SWE-Bench Lite (full evaluation)
 uv run python benchmarks/swe_bench/run.py eval
 
-# Generate markdown report from saved results
+# Generate public-safe markdown report from saved results
 uv run python benchmarks/swe_bench/run.py report
 
 # List available scenarios
@@ -61,7 +61,7 @@ _DEFAULT_RESULTS_DIR = _REPO_ROOT / "benchmarks" / "swe_bench" / "results"
 
 @click.group()
 def cli() -> None:
-    """SWE-Bench evaluation harness for the Bernstein scaffolding thesis."""
+    """SWE-Bench evaluation harness for verified Bernstein benchmark publication."""
 
 
 @cli.command()
@@ -189,7 +189,7 @@ def eval(
     help="Output path for the report (default: <results-dir>/report.md).",
 )
 def report(results_dir: Path, output: Path | None) -> None:
-    """Generate a markdown report from saved evaluation results."""
+    """Generate a public-safe markdown report from saved evaluation results."""
     if not results_dir.exists():
         click.echo(f"ERROR: results directory not found: {results_dir}", err=True)
         sys.exit(1)
@@ -265,8 +265,9 @@ def mock(
     """Generate simulated evaluation results without running real agents.
 
     Produces realistic per-instance JSONL files and a summary report that
-    demonstrates the scaffolding thesis narrative.  Use this to preview the
-    report format or for CI smoke-tests before a full Docker-based run.
+    previews report format and methodology. Use this for CI smoke-tests and
+    internal modeling only; these artifacts are not eligible for public
+    benchmark claims.
     """
     selected = [SCENARIO_BY_NAME[n] for n in scenarios] if scenarios else ALL_SCENARIOS
 
@@ -340,27 +341,16 @@ def status(results_dir: Path) -> None:
     help="Output path for the report (default: benchmarks/swe_bench/results/head_to_head.md).",
 )
 def compare(output: Path | None) -> None:
-    """Generate the head-to-head comparison report: Bernstein vs. CrewAI vs. LangGraph.
-
-    Uses static competitor estimates from community benchmarks since neither CrewAI
-    nor LangGraph publish official SWE-Bench numbers.  Bernstein figures come from
-    benchmarks/swe_bench/results/ (simulated by default; replace with real runs).
-
-    To replace simulated Bernstein figures with real results, run:
-        benchmarks/swe_bench/run.py eval
-    then re-run this command — the canonical comparison will pick up real data
-    from benchmarks/swe_bench/results/*_summary.json automatically.
-    """
+    """Generate a framework-context report without public numeric rankings."""
     if output is None:
         output = _DEFAULT_RESULTS_DIR / "head_to_head.md"
 
     report_md = generate_full_report(CANONICAL_COMPARISON)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(report_md, encoding="utf-8")
-    click.echo(f"Head-to-head comparison written to: {output}")
+    click.echo(f"Framework-context report written to: {output}")
     click.echo("")
-    click.echo("NOTE: Bernstein figures are simulated. Competitor figures are estimated")
-    click.echo("      from community benchmarks. See the Data Sources section for details.")
+    click.echo("NOTE: Public numeric framework-vs-framework rankings are intentionally withheld.")
 
 
 def _print_summary_table(summaries: list[ScenarioSummary]) -> None:

@@ -84,33 +84,34 @@ The orchestrator runs on your hardware. Agents execute in isolated git worktrees
 
 ## Benchmark: identical tasks, both platforms
 
-> **Methodology note:** Direct benchmarking of Agent HQ requires GitHub access and is subject to GitHub's usage policies. The Agent HQ figures below are derived from GitHub's public documentation, model pricing, and community reports. Bernstein figures are from the internal benchmark suite (25 real GitHub issues, 2026-03-28, reproducible with `benchmarks/run_benchmark.py`).
+> **Methodology note:** Direct benchmarking of Agent HQ requires GitHub access and is subject to GitHub's usage policies. Bernstein is no longer publishing estimated or simulated cross-platform benchmark tables on this page.
 
-### Task set: 10 medium-complexity Python tasks
-*(REST endpoints, auth middleware, rate limiting, error handling, test coverage — see `benchmarks/tasks/`)*
+What we can say responsibly today:
 
-| Metric | Bernstein (mixed model) | GitHub Agent HQ (estimated) |
-|---|---:|---:|
-| **CI pass rate** | 80% | ~75–85% (reported) |
-| **Wall-clock time (median)** | 181 s | ~120–240 s (varies by queue) |
-| **Cost per task — simple** | **$0.05** (Haiku routing) | ~$0.15–0.30 (Copilot Enterprise) |
-| **Cost per task — medium** | **$0.15** (Sonnet routing) | ~$0.20–0.40 |
-| **Cost per task — complex** | $0.42 (Opus escalation) | ~$0.30–0.60 |
+- Bernstein has a verified-eval publication path based on `benchmarks/swe_bench/run.py eval`.
+- Public v1 benchmark scope is Bernstein vs real single-agent baselines on SWE-Bench Lite.
+- Agent HQ remains a qualitative comparison here until Bernstein can run a Bernstein-owned live harness against it.
 
-**Key finding:** Bernstein's model cascade routes simple tasks to cheap models (Haiku, free-tier Gemini), cutting cost by 60–70% for low-complexity work. For complex tasks, costs converge. Agent HQ's advantage is zero-setup GitHub integration — no local installation, no configuration.
+### What this page compares instead
 
-### SWE-Bench Lite comparison
+This page now focuses on product tradeoffs that do not require invented or estimated leaderboard rows:
 
-Bernstein's SWE-Bench Lite results (300 instances, simulated run — replace with Docker-based results using `benchmarks/swe_bench/run.py`):
+- workflow ownership
+- GitHub-native integration
+- cost transparency
+- model flexibility
+- local control vs managed platform convenience
 
-| Scenario | Resolve rate | Mean cost/issue |
-|---|---:|---:|
-| Bernstein 3× Sonnet | **39.0%** | $0.42 |
-| Bernstein mixed (Haiku/Sonnet) | 37.3% | **$0.16** |
-| Solo Opus (expensive baseline) | 37.0% | $1.20 |
-| Solo Sonnet (cheap baseline) | 24.3% | $0.14 |
+### Bernstein public benchmark track
 
-GitHub has not published Agent HQ SWE-Bench results as of March 2026. If they do, we'll add a direct comparison here.
+When Bernstein publishes benchmark numbers publicly, the first acceptable format is:
+
+- `Verified Pilot Results (n=50)`
+- run date shown
+- commit SHA shown
+- sourced from `benchmarks/swe_bench/run.py eval`
+
+GitHub has not published Agent HQ SWE-Bench results as of April 1, 2026. Until Bernstein can reproduce Agent HQ under a Bernstein-owned live harness, this page will not claim numeric wins or losses.
 
 ---
 

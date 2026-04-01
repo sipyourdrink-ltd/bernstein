@@ -21,7 +21,7 @@
       <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
       <a href="adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
       <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
-      <a href="leaderboard.html" class="nav-link" data-page="leaderboard.html">Leaderboard</a>
+      <a href="leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
       <a href="docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
       <a href="limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
     </div>
@@ -59,11 +59,7 @@
       <li><a href="#completion-signals">Completion signals</a></li>
       <li><a href="#self-evolution">Self-evolution</a></li>
       <li><a href="#agent-catalogs">Agent catalogs</a></li>
-<<<<<<< HEAD
-      <li><a href="#plan-files">Plan Files</a></li>
-=======
       <li><a href="#plan-files">Plan files</a></li>
->>>>>>> agent/architect-a2e185a9
       <li><a href="#file-state">File-based state</a></li>
     </ul>
   </aside>
@@ -287,44 +283,6 @@ system_prompt: |
   possible, and always profile query performance.</code></pre>
     </div>
 
-<<<<<<< HEAD
-    <h2 id="plan-files">Plan Files</h2>
-    <p>A <strong>Plan</strong> is a loadable YAML file describing a multi-step project. Think of it as an Ansible playbook or a GitHub Actions workflow, but for coding agents.</p>
-    <p>Using a plan file skips the LLM-based planning step (Manager agent), giving you full control over the task decomposition and dependencies.</p>
-
-    <div class="code-block">
-      <pre><code class="language-yaml"># plans/saas-backend.yaml
-name: "SaaS Backend"
-description: "Production-ready backend with auth, API, tests"
-
-stages:
-  - name: "Infrastructure"
-    steps:
-      - goal: "Set up PostgreSQL with SQLAlchemy models"
-        role: backend
-      - goal: "Configure Alembic for database migrations"
-        role: backend
-
-  - name: "Auth"
-    depends_on: ["Infrastructure"]
-    steps:
-      - goal: "JWT auth middleware with refresh tokens"
-        role: backend
-      - goal: "User registration and login endpoints"
-        role: backend
-
-  - name: "Quality"
-    depends_on: ["Auth"]
-    steps:
-      - goal: "Unit and integration tests (>80% coverage)"
-        role: qa</code></pre>
-    </div>
-
-    <p>To run a plan:</p>
-    <div class="code-block">
-      <pre><code class="language-bash">bernstein run plans/saas-backend.yaml</code></pre>
-    </div>
-=======
     <h2 id="plan-files">Plan files</h2>
     <p>A plan file is a YAML document that defines a multi-stage project using standard DevOps vocabulary: <strong>plan</strong>, <strong>stage</strong>, <strong>step</strong>. Think Ansible playbook or K8s manifest. Instead of giving Bernstein a goal and letting the manager agent decompose it, you define the full task graph upfront.</p>
 
@@ -397,7 +355,6 @@ stages:
     </ol>
 
     <p>See <a href="https://github.com/chernistry/bernstein/tree/main/templates/plan.yaml"><code>templates/plan.yaml</code></a> for the full format spec and <a href="https://github.com/chernistry/bernstein/tree/main/examples/plans/flask-api.yaml"><code>examples/plans/flask-api.yaml</code></a> for a working example.</p>
->>>>>>> agent/architect-a2e185a9
 
     <h2 id="file-state">File-based state</h2>
     <p>All state lives in <code>.sdd/</code> — structured files that can be committed, diffed, and read by any tool. There is no hidden database.</p>

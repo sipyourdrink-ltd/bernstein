@@ -46,7 +46,7 @@ def test_crewai_profile_uses_llm_orchestration() -> None:
 def test_crewai_profile_scheduling_label_mentions_llm() -> None:
     label = CREWAI_PROFILE.scheduling_overhead_label()
     assert "llm" in label.lower()
-    assert "%" in label
+    assert "present" in label.lower()
 
 
 def test_langgraph_profile_uses_llm_orchestration() -> None:
@@ -212,24 +212,26 @@ def test_architecture_table_has_correct_column_count() -> None:
 
 def test_swe_bench_table_contains_resolve_rates() -> None:
     table = generate_swe_bench_table(CANONICAL_COMPARISON)
-    assert "39.0%" in table
-    assert "37.3%" in table
+    assert "Published only from verified" in table
+    assert "Withheld from public numeric tables" in table
 
 
-def test_swe_bench_table_marks_simulated_results() -> None:
+def test_swe_bench_table_excludes_competitor_numeric_rows() -> None:
     table = generate_swe_bench_table(CANONICAL_COMPARISON)
-    assert "Simulated" in table or "simulated" in table
+    assert "39.0%" not in table
+    assert "26.5%" not in table
 
 
-def test_swe_bench_table_shows_scheduling_cost_column() -> None:
+def test_swe_bench_table_mentions_crewai_and_langgraph_status() -> None:
     table = generate_swe_bench_table(CANONICAL_COMPARISON)
-    assert "$0.00" in table  # Bernstein scheduling overhead
+    assert "CrewAI" in table
+    assert "LangGraph" in table
 
 
 def test_swe_bench_table_has_header_row() -> None:
     table = generate_swe_bench_table(CANONICAL_COMPARISON)
-    assert "Resolve rate" in table
-    assert "cost/issue" in table.lower() or "cost" in table.lower()
+    assert "Public numeric benchmark status" in table
+    assert "Notes" in table
 
 
 # ---------------------------------------------------------------------------
@@ -239,12 +241,12 @@ def test_swe_bench_table_has_header_row() -> None:
 
 def test_key_findings_mentions_scheduling_overhead() -> None:
     findings = generate_key_findings(CANONICAL_COMPARISON)
-    assert "scheduling" in findings.lower() or "overhead" in findings.lower()
+    assert "deterministic python code" in findings.lower() or "manager-model" in findings.lower()
 
 
 def test_key_findings_mentions_resolve_rate() -> None:
     findings = generate_key_findings(CANONICAL_COMPARISON)
-    assert "resolve" in findings.lower() or "%" in findings
+    assert "public numeric rankings are withheld" in findings.lower() or "architecture context" in findings.lower()
 
 
 def test_key_findings_is_non_empty() -> None:
@@ -265,7 +267,7 @@ def test_key_findings_with_empty_comparison_returns_fallback() -> None:
 
 def test_full_report_starts_with_title() -> None:
     report = generate_full_report(CANONICAL_COMPARISON)
-    assert report.startswith("# Bernstein vs.")
+    assert report.startswith("# Bernstein Benchmark Status and Framework Context")
 
 
 def test_full_report_contains_tldr_section() -> None:
@@ -288,9 +290,9 @@ def test_full_report_contains_key_findings_section() -> None:
     assert "## Key Findings" in report
 
 
-def test_full_report_includes_simulated_notice() -> None:
+def test_full_report_includes_publication_notice() -> None:
     report = generate_full_report(CANONICAL_COMPARISON)
-    assert "simulated" in report.lower()
+    assert "rankings are intentionally withheld" in report.lower()
 
 
 def test_full_report_contains_date() -> None:
@@ -372,7 +374,7 @@ def test_compare_command_writes_markdown_file(tmp_path: Path) -> None:
     assert "LangGraph" in content
 
 
-def test_compare_command_report_contains_resolve_rates(tmp_path: Path) -> None:
+def test_compare_command_report_withholds_numeric_rankings(tmp_path: Path) -> None:
     from click.testing import CliRunner
 
     mod = _load_run_cli()
@@ -381,11 +383,12 @@ def test_compare_command_report_contains_resolve_rates(tmp_path: Path) -> None:
     result = runner.invoke(mod.cli, ["compare", "--output", str(output)])
     assert result.exit_code == 0, result.output
     content = output.read_text()
-    assert "39.0%" in content  # bernstein-sonnet resolve rate
-    assert "26.5%" in content  # crewai-gpt4 resolve rate
+    assert "Withheld from public numeric tables" in content
+    assert "39.0%" not in content
+    assert "26.5%" not in content
 
 
-def test_compare_command_includes_simulated_notice(tmp_path: Path) -> None:
+def test_compare_command_includes_publication_notice(tmp_path: Path) -> None:
     from click.testing import CliRunner
 
     mod = _load_run_cli()
@@ -394,7 +397,7 @@ def test_compare_command_includes_simulated_notice(tmp_path: Path) -> None:
     result = runner.invoke(mod.cli, ["compare", "--output", str(output)])
     assert result.exit_code == 0, result.output
     content = output.read_text()
-    assert "simulated" in content.lower()
+    assert "rankings are intentionally withheld" in content.lower()
 
 
 def test_compare_command_outputs_path_to_stdout(tmp_path: Path) -> None:
