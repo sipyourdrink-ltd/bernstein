@@ -144,6 +144,52 @@ For security-sensitive deployments, prefer explicit config in `bernstein.yaml` o
 
 ---
 
-## Notes on older bridge docs
+## Runtime bridges
 
-If you are looking for runtime bridge details (`.bernstein/config.toml`, bridge-specific `extra` fields), treat that as advanced/experimental integration material. The day-to-day production config surface is currently `bernstein.yaml` + `.sdd/config.yaml` + `BERNSTEIN_*` environment variables.
+Bernstein's production bridge configuration lives in `bernstein.yaml`.
+The supported runtime bridge surface is:
+
+```yaml
+bridges:
+  openclaw:
+    enabled: true
+    url: wss://gateway.openclaw.ai/ws
+    api_key: ${OPENCLAW_API_KEY}
+    agent_id: bernstein-shared-workspace
+    workspace_mode: shared_workspace
+    fallback_to_local: true
+    connect_timeout_s: 10
+    request_timeout_s: 900
+    session_prefix: bernstein
+    max_log_bytes: 262144
+    model_override: null
+```
+
+`bridges.openclaw` is opt-in and intended for `shared_workspace` deployments
+only. Bernstein remains the scheduler, verification owner, and merge owner;
+OpenClaw executes against the same repository or shared filesystem that
+Bernstein can inspect locally.
+
+Field reference:
+
+| Field | Meaning |
+|---|---|
+| `enabled` | Turn the bridge on for orchestration runs |
+| `url` | OpenClaw Gateway WebSocket URL (`ws://` or `wss://`) |
+| `api_key` | Gateway API key; `${VAR}` environment substitution is supported |
+| `agent_id` | OpenClaw agent identifier to target |
+| `workspace_mode` | Must be `shared_workspace` in the current implementation |
+| `fallback_to_local` | Allow local CLI fallback only if bridge spawn fails before remote acceptance |
+| `connect_timeout_s` | Gateway connect/auth timeout |
+| `request_timeout_s` | Per-run wait timeout used by the bridge client |
+| `session_prefix` | Prefix for Bernstein-owned remote session keys |
+| `max_log_bytes` | Maximum log bytes returned by bridge log reads |
+| `model_override` | Optional model pin forwarded to the bridge request |
+
+### Notes on older bridge docs
+
+Older notes that mention `.bernstein/config.toml`, bridge-specific `extra`
+fields, or OpenClaw `/v1/sandboxes` REST semantics are obsolete. The repo-truth
+production config surface is `bernstein.yaml` + `.sdd/config.yaml` +
+`BERNSTEIN_*` environment variables, and the OpenClaw runtime path is the
+Gateway WebSocket bridge implemented in Bernstein.

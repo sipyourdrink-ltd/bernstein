@@ -435,21 +435,29 @@ bernstein test-adapter kiro</code></pre>
 
     <h2 id="openclaw">OpenClaw <span style="font-size:0.6em;padding:2px 6px;border-radius:4px;background:#6d28d9;color:white;vertical-align:middle;">experimental</span></h2>
 
-    <p><strong>Type:</strong> Runtime bridge (not a CLI adapter) &nbsp;|&nbsp; <strong>Status:</strong> Stub ready, awaiting OpenClaw API GA</p>
+    <p><strong>Type:</strong> Runtime bridge (not a CLI adapter) &nbsp;|&nbsp; <strong>Status:</strong> Implemented for shared-workspace Gateway deployments</p>
 
-    <p>OpenClaw provides ephemeral, network-isolated cloud sandboxes for running CLI coding agents remotely. Instead of spawning agents on your local machine, Bernstein can delegate execution to OpenClaw containers — useful for CI/CD, resource-constrained machines, or security-sensitive runs.</p>
+    <p>OpenClaw is exposed in Bernstein as an opt-in runtime bridge. Bernstein remains the scheduler, verifier, and merge owner while OpenClaw executes the agent task against the same repository or shared filesystem that Bernstein can inspect locally.</p>
 
     <p>Configuration in <code>bernstein.yaml</code>:</p>
 
     <div class="code-block">
       <pre><code class="language-yaml">bridges:
   openclaw:
-    endpoint: https://api.openclaw.dev/v1
-    region: us-east-1
-    sandbox_class: large</code></pre>
+    enabled: true
+    url: wss://gateway.openclaw.ai/ws
+    api_key: ${OPENCLAW_API_KEY}
+    agent_id: bernstein-shared-workspace
+    workspace_mode: shared_workspace
+    fallback_to_local: true
+    connect_timeout_s: 10
+    request_timeout_s: 900
+    session_prefix: bernstein
+    max_log_bytes: 262144
+    model_override: null</code></pre>
     </div>
 
-    <p><strong>Note:</strong> The OpenClaw bridge is currently a stub (<code>NotImplementedError</code>). It will be fully wired when the OpenClaw API reaches general availability. Track progress in the project roadmap.</p>
+    <p><strong>Operational notes:</strong> Bernstein uses the OpenClaw Gateway WebSocket path for this bridge. The older REST <code>/v1/sandboxes</code> story and legacy bridge-listener documentation are obsolete. The current implementation supports <code>workspace_mode: shared_workspace</code> only, captures logs into Bernstein runtime files, surfaces remote sessions in <code>bernstein ps</code>, and only falls back to the local adapter path if the remote spawn fails before the run is accepted.</p>
 
     <h2 id="custom">Add a custom adapter</h2>
 

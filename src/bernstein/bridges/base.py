@@ -55,22 +55,33 @@ class SpawnRequest:
         agent_id: Caller-assigned unique identifier for this agent run.
         image: Container image or runtime environment tag.
         command: Entrypoint command to execute.
+        prompt: Fully rendered task prompt for runtimes that execute an
+            embedded agent loop instead of a raw process command.
         env: Environment variables injected into the agent process.
         workdir: Working directory path inside the runtime.
         cpu_limit: CPU cores (fractional allowed, e.g. 0.5).
         memory_mb: Memory limit in mebibytes.
         timeout_seconds: Hard wall-clock limit; runtime must enforce this.
+        log_path: Preferred Bernstein-side log destination for captured output.
+        role: Bernstein role assigned to this agent.
+        model: Model name selected by Bernstein for this run.
+        effort: Reasoning effort selected by Bernstein for this run.
         labels: Arbitrary key/value metadata attached to the run.
     """
 
     agent_id: str
     image: str
     command: list[str]
+    prompt: str = ""
     env: dict[str, str] = field(default_factory=_str_str_dict)
     workdir: str = "/workspace"
     cpu_limit: float = 1.0
     memory_mb: int = 512
     timeout_seconds: int = 300
+    log_path: str = ""
+    role: str = ""
+    model: str = ""
+    effort: str = ""
     labels: dict[str, str] = field(default_factory=_str_str_dict)
 
 
@@ -85,6 +96,7 @@ class AgentStatus:
         started_at: Unix timestamp when the run started, or None.
         finished_at: Unix timestamp when the run finished, or None.
         message: Optional human-readable status detail.
+        metadata: Bridge-specific fields such as remote session/run identifiers.
     """
 
     agent_id: str
@@ -93,6 +105,7 @@ class AgentStatus:
     started_at: float | None = None
     finished_at: float | None = None
     message: str = ""
+    metadata: dict[str, str] = field(default_factory=_str_str_dict)
 
 
 class RuntimeBridge(ABC):

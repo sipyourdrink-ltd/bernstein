@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import logging
 import time
 import uuid
@@ -11,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 from bernstein.adapters.base import RateLimitError, SpawnError, SpawnResult
 from bernstein.adapters.registry import get_adapter
 from bernstein.agents.registry import AgentRegistry, get_registry
+from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
 from bernstein.core.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
@@ -549,6 +552,7 @@ class AgentSpawner:
         container_config: ContainerConfig | None = None,
         max_tokens_per_task: dict[str, int] | None = None,
         role_model_policy: dict[str, dict[str, str]] | None = None,
+        runtime_bridge: RuntimeBridge | None = None,
     ) -> None:
         self._enable_caching = enable_caching
         self._adapter_cache: dict[str, CLIAdapter] = {}
@@ -589,6 +593,7 @@ class AgentSpawner:
         self._worktree_paths: dict[str, Path] = {}
         self._traces: dict[str, AgentTrace] = {}
         self._trace_store = TraceStore(workdir / ".sdd" / "traces")
+        self._runtime_bridge = runtime_bridge
         # Container isolation
         self._container_mgr: ContainerManager | None = None
         if container_config is not None:
@@ -629,6 +634,74 @@ class AgentSpawner:
             adapter = CachingAdapter(adapter, self._workdir)
         self._adapter_cache[adapter_name] = adapter
         return adapter
+
+    def _run_bridge_call(self, awaitable: Any) -> Any:
+        """Run a bridge coroutine from the sync orchestration path."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(awaitable)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, awaitable).result()
+
+    def _spawn_via_runtime_bridge(
+        self,
+        *,
+        session: AgentSession,
+        prompt: str,
+        spawn_cwd: Path,
+        model_config: ModelConfig,
+        preferred_log_path: Path,
+    ) -> bool:
+        """Attempt to spawn via the configured runtime bridge.
+
+        Returns:
+            True when the remote run was accepted and ``session`` was populated.
+
+        Raises:
+            BridgeError: If the bridge rejects the spawn before acceptance.
+        """
+        if self._runtime_bridge is None:
+            return False
+        bridge_status = self._run_bridge_call(
+            self._runtime_bridge.spawn(
+                SpawnRequest(
+                    agent_id=session.id,
+                    image="openclaw-agent",
+                    command=[],
+                    prompt=prompt,
+                    workdir=str(spawn_cwd),
+                    timeout_seconds=session.timeout_s or 1800,
+                    log_path=str(preferred_log_path),
+                    role=session.role,
+                    model=model_config.model,
+                    effort=model_config.effort,
+                    labels={"session_id": session.id},
+                )
+            )
+        )
+        if not isinstance(bridge_status, object):
+            return False
+        session.runtime_backend = self._runtime_bridge.name()
+        session.pid = None
+        session.log_path = str(preferred_log_path)
+        session.provider = session.provider or self._runtime_bridge.name()
+        session.bridge_session_key = bridge_status.metadata.get("session_key") or None
+        session.bridge_run_id = bridge_status.metadata.get("run_id") or None
+        transition_agent(session, "working", actor="spawner", reason="remote bridge run accepted")
+        return True
+
+    def _bridge_status(self, session: AgentSession) -> Any:
+        """Fetch the latest remote runtime status for a bridge-backed session."""
+        if self._runtime_bridge is None:
+            raise BridgeError("No runtime bridge configured", agent_id=session.id)
+        return self._run_bridge_call(self._runtime_bridge.status(session.id))
+
+    def _bridge_cancel(self, session: AgentSession) -> None:
+        """Best-effort cancellation for a bridge-backed session."""
+        if self._runtime_bridge is None:
+            raise BridgeError("No runtime bridge configured", agent_id=session.id)
+        self._run_bridge_call(self._runtime_bridge.cancel(session.id))
 
     def spawn_for_tasks(self, tasks: list[Task], model_override: str | None = None) -> AgentSession:
         """Route, render prompt, and spawn an agent for a task batch."""
@@ -873,118 +946,143 @@ class AgentSpawner:
                 base_config=effective_mcp,
             )
 
+        log_dir = spawn_cwd / ".sdd" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        preferred_log_path = log_dir / f"{session_id}.log"
+
+        remote_spawned = False
+        if self._runtime_bridge is not None:
+            try:
+                remote_spawned = self._spawn_via_runtime_bridge(
+                    session=session,
+                    prompt=prompt,
+                    spawn_cwd=spawn_cwd,
+                    model_config=model_config,
+                    preferred_log_path=preferred_log_path,
+                )
+            except BridgeError as exc:
+                fallback_allowed = bool(self._runtime_bridge.config.extra.get("fallback_to_local", True))
+                if not fallback_allowed:
+                    raise SpawnError(f"OpenClaw bridge rejected spawn for {session_id}: {exc}") from exc
+                logger.warning(
+                    "OpenClaw bridge failed before acceptance for %s, falling back to local adapter: %s",
+                    session_id,
+                    exc,
+                )
+
         # Spawn via adapter with runtime provider/adapter failover.
         # This is critical for real-world rate-limit handling where a chosen
         # provider may fail at process-start time.
         result: SpawnResult | None = None
-        attempt_errors: list[str] = []
-        disabled_providers: dict[str, bool] = {}
-        attempted: set[tuple[str | None, str, str]] = set()
-        max_attempts = max(1, len(self._router.state.providers) if self._router is not None else 1) + 2
-        while len(attempted) < max_attempts:
-            adapter_name = self._infer_adapter_name_for_provider(provider_name, model_config.model)
-            attempt_key = (provider_name, adapter_name, model_config.model)
-            if attempt_key in attempted:
-                break
-            attempted.add(attempt_key)
+        if not remote_spawned:
+            attempt_errors: list[str] = []
+            disabled_providers: dict[str, bool] = {}
+            attempted: set[tuple[str | None, str, str]] = set()
+            max_attempts = max(1, len(self._router.state.providers) if self._router is not None else 1) + 2
+            while len(attempted) < max_attempts:
+                adapter_name = self._infer_adapter_name_for_provider(provider_name, model_config.model)
+                attempt_key = (provider_name, adapter_name, model_config.model)
+                if attempt_key in attempted:
+                    break
+                attempted.add(attempt_key)
 
-            try:
-                target_adapter = self._get_adapter_by_name(adapter_name)
-            except Exception as exc:
-                attempt_errors.append(f"{adapter_name}: {exc}")
-                break
-
-            try:
-                if self._container_mgr is not None:
-                    result = self._spawn_in_container(
-                        session_id=session_id,
-                        prompt=prompt,
-                        spawn_cwd=spawn_cwd,
-                        model_config=model_config,
-                        mcp_config=effective_mcp,
-                        session=session,
-                        adapter=target_adapter,
-                    )
-                else:
-                    result = target_adapter.spawn(
-                        prompt=prompt,
-                        workdir=spawn_cwd,
-                        model_config=model_config,
-                        session_id=session_id,
-                        mcp_config=effective_mcp,
-                    )
-                session.provider = (
-                    provider_name
-                    if provider_name is not None
-                    else (adapter_name if (self._router and self._router.state.providers) else None)
-                )
-                session.model_config = model_config
-                break
-            except RateLimitError as exc:
-                attempt_errors.append(f"{adapter_name}: {exc}")
-                logger.warning(
-                    "Rate-limit detected for provider=%s adapter=%s; retrying with alternate provider",
-                    provider_name or adapter_name,
-                    adapter_name,
-                )
-                if self._router is None or provider_name is None:
-                    continue
-                provider_cfg = self._router.state.providers.get(provider_name)
-                if provider_cfg is not None:
-                    provider_cfg.health.status = ProviderHealthStatus.RATE_LIMITED
-                    if provider_name not in disabled_providers:
-                        disabled_providers[provider_name] = provider_cfg.available
-                    provider_cfg.available = False
                 try:
-                    decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
-                    provider_name = decision.provider
-                    model_config = decision.model_config
-                except RouterError:
-                    provider_name = None
-            except (SpawnError, Exception) as exc:
-                attempt_errors.append(f"{adapter_name}: {exc}")
-                logger.warning(
-                    "Agent spawn failed (session=%s provider=%s adapter=%s): %s",
-                    session_id,
-                    provider_name,
-                    adapter_name,
-                    exc,
-                )
-                if self._router is None or provider_name is None:
-                    continue
-                provider_cfg = self._router.state.providers.get(provider_name)
-                if provider_cfg is not None:
-                    self._router.update_provider_health(provider_name, success=False)
-                    if provider_name not in disabled_providers:
-                        disabled_providers[provider_name] = provider_cfg.available
-                    provider_cfg.available = False
+                    target_adapter = self._get_adapter_by_name(adapter_name)
+                except Exception as exc:
+                    attempt_errors.append(f"{adapter_name}: {exc}")
+                    break
+
                 try:
-                    decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
-                    provider_name = decision.provider
-                    model_config = decision.model_config
-                except RouterError:
-                    provider_name = None
+                    if self._container_mgr is not None:
+                        result = self._spawn_in_container(
+                            session_id=session_id,
+                            prompt=prompt,
+                            spawn_cwd=spawn_cwd,
+                            model_config=model_config,
+                            mcp_config=effective_mcp,
+                            session=session,
+                            adapter=target_adapter,
+                        )
+                    else:
+                        result = target_adapter.spawn(
+                            prompt=prompt,
+                            workdir=spawn_cwd,
+                            model_config=model_config,
+                            session_id=session_id,
+                            mcp_config=effective_mcp,
+                        )
+                    session.provider = (
+                        provider_name
+                        if provider_name is not None
+                        else (adapter_name if (self._router and self._router.state.providers) else None)
+                    )
+                    session.model_config = model_config
+                    break
+                except RateLimitError as exc:
+                    attempt_errors.append(f"{adapter_name}: {exc}")
+                    logger.warning(
+                        "Rate-limit detected for provider=%s adapter=%s; retrying with alternate provider",
+                        provider_name or adapter_name,
+                        adapter_name,
+                    )
+                    if self._router is None or provider_name is None:
+                        continue
+                    provider_cfg = self._router.state.providers.get(provider_name)
+                    if provider_cfg is not None:
+                        provider_cfg.health.status = ProviderHealthStatus.RATE_LIMITED
+                        if provider_name not in disabled_providers:
+                            disabled_providers[provider_name] = provider_cfg.available
+                        provider_cfg.available = False
+                    try:
+                        decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
+                        provider_name = decision.provider
+                        model_config = decision.model_config
+                    except RouterError:
+                        provider_name = None
+                except (SpawnError, Exception) as exc:
+                    attempt_errors.append(f"{adapter_name}: {exc}")
+                    logger.warning(
+                        "Agent spawn failed (session=%s provider=%s adapter=%s): %s",
+                        session_id,
+                        provider_name,
+                        adapter_name,
+                        exc,
+                    )
+                    if self._router is None or provider_name is None:
+                        continue
+                    provider_cfg = self._router.state.providers.get(provider_name)
+                    if provider_cfg is not None:
+                        self._router.update_provider_health(provider_name, success=False)
+                        if provider_name not in disabled_providers:
+                            disabled_providers[provider_name] = provider_cfg.available
+                        provider_cfg.available = False
+                    try:
+                        decision = self._router.select_provider_for_task(tasks[0], base_config=model_config)
+                        provider_name = decision.provider
+                        model_config = decision.model_config
+                    except RouterError:
+                        provider_name = None
 
-        for prov, was_available in disabled_providers.items():
-            provider_cfg = self._router.state.providers.get(prov) if self._router is not None else None
-            if provider_cfg is not None:
-                provider_cfg.available = was_available
+            for prov, was_available in disabled_providers.items():
+                provider_cfg = self._router.state.providers.get(prov) if self._router is not None else None
+                if provider_cfg is not None:
+                    provider_cfg.available = was_available
 
-        if result is None:
-            error_text = "; ".join(attempt_errors) or "no viable spawn attempts"
-            raise RuntimeError(f"All spawn attempts failed for session {session_id}: {error_text}")
-        session.pid = result.pid
-        transition_agent(session, "working", actor="spawner", reason="agent process started")
-        if result.log_path:
-            session.log_path = str(result.log_path)
-        if result.proc is not None:
-            self._procs[session_id] = result.proc  # type: ignore[assignment]
-            # Register stdin pipe for real-time IPC (if available)
-            proc_stdin = getattr(result.proc, "stdin", None)
-            if proc_stdin is not None:
-                from bernstein.core.agent_ipc import register_stdin_pipe
+            if result is None:
+                error_text = "; ".join(attempt_errors) or "no viable spawn attempts"
+                raise RuntimeError(f"All spawn attempts failed for session {session_id}: {error_text}")
+            session.pid = result.pid
+            transition_agent(session, "working", actor="spawner", reason="agent process started")
+            if result.log_path:
+                session.log_path = str(result.log_path)
+            if result.proc is not None:
+                self._procs[session_id] = result.proc  # type: ignore[assignment]
+                # Register stdin pipe for real-time IPC (if available)
+                proc_stdin = getattr(result.proc, "stdin", None)
+                if proc_stdin is not None:
+                    from bernstein.core.agent_ipc import register_stdin_pipe
 
-                register_stdin_pipe(session_id, proc_stdin)
+                    register_stdin_pipe(session_id, proc_stdin)
 
         # Create and persist the initial trace
         # Serialize task fields to JSON-safe types (convert Enums to their values)
@@ -1008,7 +1106,7 @@ class AgentSpawner:
             role=role,
             model=model_config.model,
             effort=model_config.effort,
-            log_path=str(result.log_path) if result.log_path else "",
+            log_path=session.log_path,
             task_snapshots=task_snapshots,
         )
         self._traces[session_id] = trace
@@ -1272,6 +1370,17 @@ class AgentSpawner:
         Returns:
             True if the process is alive, False otherwise.
         """
+        if session.runtime_backend == "openclaw":
+            try:
+                bridge_status = self._bridge_status(session)
+            except BridgeError as exc:
+                logger.warning("OpenClaw status check failed for %s, treating as still alive: %s", session.id, exc)
+                return True
+            session.exit_code = bridge_status.exit_code
+            session.bridge_session_key = bridge_status.metadata.get("session_key") or session.bridge_session_key
+            session.bridge_run_id = bridge_status.metadata.get("run_id") or session.bridge_run_id
+            return bridge_status.state in {AgentState.PENDING, AgentState.RUNNING}
+
         # Container-based agents: check container status
         if session.container_id and self._container_mgr is not None:
             handle = self._container_mgr.get_handle(session.id)
@@ -1300,6 +1409,15 @@ class AgentSpawner:
         Args:
             session: Agent session to kill.
         """
+        if session.runtime_backend == "openclaw":
+            try:
+                self._bridge_cancel(session)
+            except BridgeError as exc:
+                logger.warning("OpenClaw cancellation failed for %s: %s", session.id, exc)
+            if session.status != "dead":
+                transition_agent(session, "dead", actor="spawner", reason="remote bridge kill requested")
+            return
+
         # Container-based agents: stop and destroy the container
         if session.container_id and self._container_mgr is not None:
             handle = self._container_mgr.get_handle(session.id)
@@ -1336,27 +1454,35 @@ class AgentSpawner:
             MergeResult when worktrees are enabled and skip_merge is False
             (None otherwise, or if no proc was stored).
         """
-        # Clean up container if this was a containerized agent
-        if session.container_id and self._container_mgr is not None:
-            handle = self._container_mgr.get_handle(session.id)
-            if handle is not None:
-                self._container_mgr.destroy(handle)
-            logger.info("Agent %s container destroyed", session.id)
-
-        proc = self._procs.pop(session.id, None)
         from bernstein.core.agent_ipc import unregister_stdin_pipe
 
         unregister_stdin_pipe(session.id)
-        if proc is not None:
-            try:
-                proc.terminate()
-            except Exception as exc:
-                logger.warning("reap_completed_agent: terminate failed for %s: %s", session.id, exc)
-            try:
-                session.exit_code = proc.wait(timeout=5)
-            except Exception as exc:
-                logger.warning("reap_completed_agent: wait failed for %s: %s", session.id, exc)
-        logger.info("Agent %s process reaped", session.id)
+        if session.runtime_backend == "openclaw":
+            if self._runtime_bridge is not None:
+                try:
+                    self._run_bridge_call(self._runtime_bridge.logs(session.id))
+                except BridgeError as exc:
+                    logger.warning("OpenClaw log sync failed for %s: %s", session.id, exc)
+            logger.info("Agent %s remote bridge run finalized", session.id)
+        else:
+            # Clean up container if this was a containerized agent
+            if session.container_id and self._container_mgr is not None:
+                handle = self._container_mgr.get_handle(session.id)
+                if handle is not None:
+                    self._container_mgr.destroy(handle)
+                logger.info("Agent %s container destroyed", session.id)
+
+            proc = self._procs.pop(session.id, None)
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception as exc:
+                    logger.warning("reap_completed_agent: terminate failed for %s: %s", session.id, exc)
+                try:
+                    session.exit_code = proc.wait(timeout=5)
+                except Exception as exc:
+                    logger.warning("reap_completed_agent: wait failed for %s: %s", session.id, exc)
+            logger.info("Agent %s process reaped", session.id)
 
         # Finalize trace with outcome and parsed log steps
         trace = self._traces.pop(session.id, None)

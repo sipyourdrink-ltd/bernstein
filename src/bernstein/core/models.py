@@ -608,6 +608,9 @@ class AgentSession:
     parent_id: str | None = None  # ID of the agent session that spawned this one (delegation tree)
     isolation: str = "none"  # "none", "worktree", or "container"
     container_id: str | None = None  # Container ID when isolation=container
+    runtime_backend: Literal["local", "openclaw"] = "local"
+    bridge_session_key: str | None = None
+    bridge_run_id: str | None = None
 
 
 class IsolationMode(StrEnum):
@@ -741,6 +744,45 @@ class TestAgentConfig:
     always_spawn: bool = False
     model: str = "sonnet"
     trigger: Literal["on_task_complete"] = "on_task_complete"
+
+
+@dataclass(frozen=True)
+class OpenClawBridgeConfig:
+    """Typed OpenClaw Gateway bridge configuration.
+
+    Attributes:
+        enabled: Whether the OpenClaw bridge should be considered for spawns.
+        url: Gateway WebSocket URL.
+        api_key: Gateway bearer token.
+        agent_id: Target OpenClaw agent identifier.
+        workspace_mode: Supported deployment mode for this bridge ticket.
+        fallback_to_local: Whether Bernstein may fall back to the local CLI
+            adapter before the remote run is accepted by the gateway.
+        connect_timeout_s: WebSocket connect timeout.
+        request_timeout_s: Per-request timeout for bridge RPC calls.
+        session_prefix: Prefix used when deriving Bernstein-owned session keys.
+        max_log_bytes: Maximum bytes served by logs().
+        model_override: Optional model override passed to the remote agent.
+    """
+
+    enabled: bool = False
+    url: str = ""
+    api_key: str = field(default="", repr=False)
+    agent_id: str = ""
+    workspace_mode: Literal["shared_workspace"] = "shared_workspace"
+    fallback_to_local: bool = True
+    connect_timeout_s: float = 10.0
+    request_timeout_s: float = 30.0
+    session_prefix: str = "bernstein-"
+    max_log_bytes: int = 1_048_576
+    model_override: str | None = None
+
+
+@dataclass(frozen=True)
+class BridgeConfigSet:
+    """Optional runtime bridge configuration set."""
+
+    openclaw: OpenClawBridgeConfig | None = None
 
 
 @dataclass

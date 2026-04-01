@@ -2772,6 +2772,9 @@ class Orchestrator:
                 "parent_id": s.parent_id,
                 "log_path": str(getattr(s, "log_path", "")),
                 "worktree_path": str(getattr(s, "worktree_path", "")),
+                "runtime_backend": s.runtime_backend,
+                "bridge_session_key": s.bridge_session_key,
+                "bridge_run_id": s.bridge_run_id,
             }
             for s in self._agents.values()
         ]
@@ -3022,6 +3025,32 @@ if __name__ == "__main__":
 
             ensure_agent_image(_container_iso.runtime, _container_iso.image)
 
+        runtime_bridge = None
+        openclaw_cfg = seed.bridges.openclaw if seed is not None and seed.bridges is not None else None
+        if openclaw_cfg is not None and openclaw_cfg.enabled:
+            from bernstein.bridges.base import BridgeConfig
+            from bernstein.bridges.openclaw import OpenClawBridge
+
+            runtime_bridge = OpenClawBridge(
+                BridgeConfig(
+                    bridge_type="openclaw",
+                    endpoint=openclaw_cfg.url,
+                    api_key=openclaw_cfg.api_key,
+                    timeout_seconds=int(openclaw_cfg.request_timeout_s),
+                    max_log_bytes=openclaw_cfg.max_log_bytes,
+                    extra={
+                        "agent_id": openclaw_cfg.agent_id,
+                        "workspace_mode": openclaw_cfg.workspace_mode,
+                        "fallback_to_local": openclaw_cfg.fallback_to_local,
+                        "connect_timeout_s": openclaw_cfg.connect_timeout_s,
+                        "request_timeout_s": openclaw_cfg.request_timeout_s,
+                        "session_prefix": openclaw_cfg.session_prefix,
+                        "model_override": openclaw_cfg.model_override,
+                    },
+                ),
+                workdir=workdir,
+            )
+
         spawner = AgentSpawner(
             adapter=adapter_inst,
             templates_dir=get_templates_dir(workdir),
@@ -3037,6 +3066,7 @@ if __name__ == "__main__":
             enable_caching=True,
             container_config=container_config,
             role_model_policy=seed.role_model_policy if seed else None,
+            runtime_bridge=runtime_bridge,
         )
         budget_usd = 0.0
         dry_run = False

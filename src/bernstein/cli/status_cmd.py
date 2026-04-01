@@ -20,6 +20,52 @@ from bernstein.cli.helpers import (
 from bernstein.cli.status import render_status
 from bernstein.cli.ui import make_console
 
+
+def _load_remote_agents_from_snapshot(runtime_dir: Path) -> list[dict[str, Any]]:
+    """Load remote bridge-backed sessions from ``agents.json``."""
+    state_path = runtime_dir / "agents.json"
+    if not state_path.exists():
+        return []
+    try:
+        data_raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data_raw, dict):
+        return []
+    agents_raw = data_raw.get("agents")
+    if not isinstance(agents_raw, list):
+        return []
+
+    remote_agents: list[dict[str, Any]] = []
+    for item in agents_raw:
+        if not isinstance(item, dict):
+            continue
+        runtime_backend = item.get("runtime_backend", "local")
+        if runtime_backend == "local":
+            continue
+        started_at = item.get("spawn_ts", 0)
+        runtime_s = time.time() - started_at if isinstance(started_at, (int, float)) and started_at else 0
+        minutes, secs = divmod(int(runtime_s), 60)
+        hours, minutes = divmod(minutes, 60)
+        runtime_str = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m {secs:02d}s"
+        remote_agents.append(
+            {
+                "session": item.get("id", "?"),
+                "role": item.get("role", "?"),
+                "command": f"[remote] {runtime_backend}",
+                "model": item.get("model", "?"),
+                "worker_pid": "remote",
+                "child_pid": "—",
+                "runtime": runtime_str,
+                "started_at": started_at,
+                "runtime_backend": runtime_backend,
+                "bridge_session_key": item.get("bridge_session_key"),
+                "bridge_run_id": item.get("bridge_run_id"),
+            }
+        )
+    return remote_agents
+
+
 # ---------------------------------------------------------------------------
 # status
 # ---------------------------------------------------------------------------
@@ -71,52 +117,53 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
     from rich.table import Table
 
     pid_path = Path(pid_dir)
-    if not pid_path.exists():
-        if as_json:
-            console.print("[]")
-        else:
-            console.print("[dim]No agent processes found.[/dim]")
-        return
-
     agents: list[dict[str, Any]] = []
     stale_files: list[Path] = []
 
-    for pid_file in sorted(pid_path.glob("*.json")):
-        try:
-            info = json.loads(pid_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
+    if pid_path.exists():
+        for pid_file in sorted(pid_path.glob("*.json")):
+            try:
+                info = json.loads(pid_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
 
-        worker_pid = info.get("worker_pid", 0)
-        child_pid = info.get("child_pid")
-        alive = is_process_alive(worker_pid) if worker_pid else False
+            worker_pid = info.get("worker_pid", 0)
+            child_pid = info.get("child_pid")
+            alive = is_process_alive(worker_pid) if worker_pid else False
 
-        if not alive:
-            stale_files.append(pid_file)
-            continue
+            if not alive:
+                stale_files.append(pid_file)
+                continue
 
-        started_at = info.get("started_at", 0)
-        runtime_s = time.time() - started_at if started_at else 0
-        minutes, secs = divmod(int(runtime_s), 60)
-        hours, minutes = divmod(minutes, 60)
-        runtime_str = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m {secs:02d}s"
+            started_at = info.get("started_at", 0)
+            runtime_s = time.time() - started_at if started_at else 0
+            minutes, secs = divmod(int(runtime_s), 60)
+            hours, minutes = divmod(minutes, 60)
+            runtime_str = f"{hours}h {minutes:02d}m" if hours else f"{minutes}m {secs:02d}s"
 
-        agents.append(
-            {
-                "session": info.get("session", "?"),
-                "role": info.get("role", "?"),
-                "command": info.get("command", "?"),
-                "model": info.get("model", "?"),
-                "worker_pid": worker_pid,
-                "child_pid": child_pid,
-                "runtime": runtime_str,
-                "started_at": started_at,
-            }
-        )
+            agents.append(
+                {
+                    "session": info.get("session", "?"),
+                    "role": info.get("role", "?"),
+                    "command": info.get("command", "?"),
+                    "model": info.get("model", "?"),
+                    "worker_pid": worker_pid,
+                    "child_pid": child_pid,
+                    "runtime": runtime_str,
+                    "started_at": started_at,
+                }
+            )
 
     # Clean up stale PID files
     for f in stale_files:
         f.unlink(missing_ok=True)
+
+    runtime_dir = pid_path.parent
+    remote_agents = _load_remote_agents_from_snapshot(runtime_dir)
+    seen_sessions = {str(agent["session"]) for agent in agents}
+    for remote in remote_agents:
+        if str(remote["session"]) not in seen_sessions:
+            agents.append(remote)
 
     if as_json:
         console.print(json.dumps(agents, indent=2))

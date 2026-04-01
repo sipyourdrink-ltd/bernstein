@@ -8,12 +8,14 @@ from bernstein.bridges.base import (
     RuntimeBridge,
     SpawnRequest,
 )
+from bernstein.bridges.openclaw import OpenClawBridge
 
 __all__ = [
     "AgentState",
     "AgentStatus",
     "BridgeConfig",
     "BridgeError",
+    "OpenClawBridge",
     "RuntimeBridge",
     "SpawnRequest",
 ]

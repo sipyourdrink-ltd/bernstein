@@ -6,9 +6,11 @@ initial manager Task that kicks off orchestration.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
+from urllib.parse import urlparse
 
 import yaml
 
@@ -19,9 +21,11 @@ from bernstein.core.gate_runner import VALID_GATE_NAMES, GatePipelineStep, norma
 from bernstein.core.key_rotation import KeyRotationConfig, _parse_interval
 from bernstein.core.models import (
     BatchConfig,
+    BridgeConfigSet,
     ClusterConfig,
     ClusterTopology,
     Complexity,
+    OpenClawBridgeConfig,
     Scope,
     SmtpConfig,
     Task,
@@ -158,6 +162,7 @@ class SeedConfig:
     role_model_policy: dict[str, dict[str, str]] | None = None
     compliance: ComplianceConfig | None = None
     visual: VisualConfig | None = None
+    bridges: BridgeConfigSet | None = None
     batch: BatchConfig = field(default_factory=BatchConfig)
     max_cost_per_agent: float = 0.0
     webhooks: tuple[WebhookConfig, ...] = ()
@@ -167,6 +172,7 @@ class SeedConfig:
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
+_ENV_REF_RE = re.compile(r"^\$\{([A-Z0-9_]+)\}$")
 _VALID_CLIS = frozenset({"claude", "codex", "gemini", "qwen", "auto"})
 _ALLOWED_WEBHOOK_EVENTS = frozenset(
     {
@@ -256,6 +262,145 @@ def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
             return tuple(str(s) for s in items)
         raise SeedError(f"{field_name} must be a list of strings, got: {raw!r}")
     raise SeedError(f"{field_name} must be a list of strings, got: {type(raw).__name__}")
+
+
+def _expand_env_value(raw: object, field_name: str) -> object:
+    """Expand exact ``${VAR}`` references for secret-like config values.
+
+    Args:
+        raw: Raw scalar from YAML.
+        field_name: Field name for validation errors.
+
+    Returns:
+        Expanded string when the value is an env reference, otherwise ``raw``.
+
+    Raises:
+        SeedError: If the referenced env var is missing or empty.
+    """
+    if not isinstance(raw, str):
+        return raw
+    match = _ENV_REF_RE.fullmatch(raw.strip())
+    if match is None:
+        return raw
+    env_name = match.group(1)
+    env_value = os.environ.get(env_name)
+    if env_value is None or not env_value.strip():
+        raise SeedError(f"{field_name} references unset environment variable {env_name!r}")
+    return env_value
+
+
+def _parse_openclaw_runtime_config(raw: object) -> OpenClawBridgeConfig | None:
+    """Parse the optional ``bridges.openclaw`` seed section.
+
+    Args:
+        raw: Raw YAML value for the OpenClaw bridge.
+
+    Returns:
+        Parsed bridge config, or None when the section is absent.
+
+    Raises:
+        SeedError: If the shape or values are invalid.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError(f"bridges.openclaw must be a mapping, got: {type(raw).__name__}")
+
+    data = cast("dict[str, object]", raw)
+    enabled_raw = data.get("enabled", False)
+    if not isinstance(enabled_raw, bool):
+        raise SeedError(f"bridges.openclaw.enabled must be a bool, got: {type(enabled_raw).__name__}")
+
+    url_raw = data.get("url", data.get("endpoint", ""))
+    url_value = _expand_env_value(url_raw, "bridges.openclaw.url")
+    if not isinstance(url_value, str):
+        raise SeedError(f"bridges.openclaw.url must be a string, got: {type(url_value).__name__}")
+    url_text = url_value.strip()
+
+    api_key_raw = _expand_env_value(data.get("api_key", ""), "bridges.openclaw.api_key")
+    if not isinstance(api_key_raw, str):
+        raise SeedError(f"bridges.openclaw.api_key must be a string, got: {type(api_key_raw).__name__}")
+    api_key = api_key_raw.strip()
+
+    agent_id_raw = data.get("agent_id", "")
+    if not isinstance(agent_id_raw, str):
+        raise SeedError(f"bridges.openclaw.agent_id must be a string, got: {type(agent_id_raw).__name__}")
+    agent_id = agent_id_raw.strip()
+
+    workspace_mode_raw = data.get("workspace_mode", "shared_workspace")
+    if workspace_mode_raw != "shared_workspace":
+        raise SeedError("bridges.openclaw.workspace_mode must be 'shared_workspace'")
+
+    fallback_raw = data.get("fallback_to_local", True)
+    if not isinstance(fallback_raw, bool):
+        raise SeedError(
+            f"bridges.openclaw.fallback_to_local must be a bool, got: {type(fallback_raw).__name__}"
+        )
+
+    connect_timeout_raw = data.get("connect_timeout_s", 10.0)
+    if not isinstance(connect_timeout_raw, (int, float)) or connect_timeout_raw <= 0:
+        raise SeedError("bridges.openclaw.connect_timeout_s must be a positive number")
+
+    request_timeout_raw = data.get("request_timeout_s", 30.0)
+    if not isinstance(request_timeout_raw, (int, float)) or request_timeout_raw <= 0:
+        raise SeedError("bridges.openclaw.request_timeout_s must be a positive number")
+
+    session_prefix_raw = data.get("session_prefix", "bernstein-")
+    if not isinstance(session_prefix_raw, str) or not session_prefix_raw.strip():
+        raise SeedError("bridges.openclaw.session_prefix must be a non-empty string")
+
+    max_log_bytes_raw = data.get("max_log_bytes", 1_048_576)
+    if not isinstance(max_log_bytes_raw, int) or max_log_bytes_raw < 1:
+        raise SeedError("bridges.openclaw.max_log_bytes must be a positive integer")
+
+    model_override_raw = data.get("model_override")
+    if model_override_raw is not None and (not isinstance(model_override_raw, str) or not model_override_raw.strip()):
+        raise SeedError("bridges.openclaw.model_override must be a non-empty string when set")
+
+    if enabled_raw:
+        if not url_text:
+            raise SeedError("bridges.openclaw.url is required when the bridge is enabled")
+        parsed_url = urlparse(url_text)
+        if parsed_url.scheme not in {"ws", "wss"} or not parsed_url.netloc:
+            raise SeedError("bridges.openclaw.url must be a valid ws:// or wss:// URL")
+        if not api_key:
+            raise SeedError("bridges.openclaw.api_key is required when the bridge is enabled")
+        if not agent_id:
+            raise SeedError("bridges.openclaw.agent_id is required when the bridge is enabled")
+
+    return OpenClawBridgeConfig(
+        enabled=enabled_raw,
+        url=url_text,
+        api_key=api_key,
+        agent_id=agent_id,
+        workspace_mode="shared_workspace",
+        fallback_to_local=fallback_raw,
+        connect_timeout_s=float(connect_timeout_raw),
+        request_timeout_s=float(request_timeout_raw),
+        session_prefix=session_prefix_raw.strip(),
+        max_log_bytes=max_log_bytes_raw,
+        model_override=model_override_raw.strip() if isinstance(model_override_raw, str) else None,
+    )
+
+
+def _parse_bridge_settings(raw: object) -> BridgeConfigSet | None:
+    """Parse the optional ``bridges`` section.
+
+    Args:
+        raw: Raw YAML value for ``bridges``.
+
+    Returns:
+        Parsed bridge settings or None when absent.
+
+    Raises:
+        SeedError: If the section is malformed.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError(f"bridges must be a mapping, got: {type(raw).__name__}")
+    data = cast("dict[str, object]", raw)
+    return BridgeConfigSet(openclaw=_parse_openclaw_runtime_config(data.get("openclaw")))
 
 
 def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
@@ -880,6 +1025,8 @@ def parse_seed(path: Path) -> SeedConfig:
         except ValueError as exc:
             raise SeedError(str(exc)) from exc
 
+    bridges = _parse_bridge_settings(data.get("bridges"))
+
     # Parse network config
     network: NetworkConfig | None = None
     network_raw = data.get("network")
@@ -919,6 +1066,7 @@ def parse_seed(path: Path) -> SeedConfig:
         role_model_policy=role_model_policy,
         compliance=compliance,
         visual=visual,
+        bridges=bridges,
         batch=batch,
         test_agent=test_agent,
         smtp=_parse_smtp(data.get("smtp")),
