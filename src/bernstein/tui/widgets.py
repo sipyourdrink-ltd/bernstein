@@ -16,11 +16,11 @@ SPARKLINE_CHARS = "▁▂▃▄▅▆▇█"
 
 def generate_sparkline(values: list[float], width: int = 10) -> str:
     """Generate a sparkline from a list of values.
-    
+
     Args:
         values: List of numeric values.
         width: Width of sparkline in characters.
-        
+
     Returns:
         Sparkline string.
     """

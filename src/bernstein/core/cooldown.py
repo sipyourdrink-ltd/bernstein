@@ -16,6 +16,7 @@ DEFAULT_COOLDOWN_SECONDS = 300
 @dataclass
 class AgentCooldown:
     """Cooldown state for an agent after failure."""
+
     agent_id: str
     cooldown_until: float  # Unix timestamp when cooldown expires
     failure_reason: str
@@ -45,7 +46,7 @@ class AgentCooldown:
 
 class CooldownManager:
     """Manage cooldown periods for agents after failures.
-    
+
     Args:
         cooldown_seconds: Default cooldown period in seconds.
     """
@@ -61,12 +62,12 @@ class CooldownManager:
         cooldown_seconds: int | None = None,
     ) -> AgentCooldown:
         """Record a failure and set cooldown for an agent.
-        
+
         Args:
             agent_id: Agent identifier.
             failure_reason: Reason for the failure.
             cooldown_seconds: Optional custom cooldown period.
-            
+
         Returns:
             AgentCooldown instance.
         """
@@ -101,10 +102,10 @@ class CooldownManager:
 
     def is_on_cooldown(self, agent_id: str) -> bool:
         """Check if an agent is currently on cooldown.
-        
+
         Args:
             agent_id: Agent identifier.
-            
+
         Returns:
             True if agent is on cooldown.
         """
@@ -121,10 +122,10 @@ class CooldownManager:
 
     def get_cooldown(self, agent_id: str) -> AgentCooldown | None:
         """Get cooldown info for an agent.
-        
+
         Args:
             agent_id: Agent identifier.
-            
+
         Returns:
             AgentCooldown or None if not on cooldown.
         """
@@ -140,10 +141,10 @@ class CooldownManager:
 
     def clear_cooldown(self, agent_id: str) -> bool:
         """Clear cooldown for an agent.
-        
+
         Args:
             agent_id: Agent identifier.
-            
+
         Returns:
             True if cooldown was cleared.
         """
@@ -155,15 +156,12 @@ class CooldownManager:
 
     def get_all_cooldowns(self) -> list[AgentCooldown]:
         """Get all active cooldowns.
-        
+
         Returns:
             List of active AgentCooldown instances.
         """
         # Clean up expired cooldowns
-        expired = [
-            aid for aid, cd in self._cooldowns.items()
-            if not cd.is_active
-        ]
+        expired = [aid for aid, cd in self._cooldowns.items() if not cd.is_active]
         for aid in expired:
             del self._cooldowns[aid]
 
@@ -171,7 +169,7 @@ class CooldownManager:
 
     def get_summary(self) -> dict[str, Any]:
         """Get cooldown summary.
-        
+
         Returns:
             Summary dictionary.
         """
