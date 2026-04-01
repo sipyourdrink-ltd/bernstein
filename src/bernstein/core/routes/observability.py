@@ -554,3 +554,25 @@ async def token_histogram(request: Request) -> dict[str, Any]:
             "large_avg": histogram["large"]["avg_tokens"],
         },
     }
+
+
+@router.get("/changelog")
+async def get_changelog(request: Request, days: int = 30) -> dict[str, Any]:
+    """Generate changelog from completed tasks.
+
+    Groups completed tasks by type (Features, Fixes, etc.) and
+    formats as markdown changelog.
+
+    Args:
+        request: FastAPI request.
+        days: Number of days to include (default 30).
+
+    Returns:
+        Dict with 'markdown' key containing changelog text.
+    """
+    from bernstein.core.changelog import generate_changelog
+
+    workdir = _get_workdir(request)
+    changelog = generate_changelog(workdir, period_days=days)
+
+    return {"markdown": changelog, "period_days": days}

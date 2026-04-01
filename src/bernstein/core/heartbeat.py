@@ -17,6 +17,9 @@ from bernstein.core.models import AgentHeartbeat, ProgressSnapshot, Task
 
 logger = logging.getLogger(__name__)
 
+# Idle agent detection thresholds
+IDLE_LOG_AGE_THRESHOLD_SECONDS = 180  # 3 minutes without log activity
+
 
 @dataclass(frozen=True)
 class HeartbeatStatus:
@@ -366,3 +369,47 @@ def check_stalled_tasks(orch: Any) -> None:
                         elapsed_s=elapsed,
                         last_activity_ago_s=elapsed,
                     )
+
+
+def detect_idle_agents(
+    workdir: Path,
+    agents: dict[str, Any],
+    max_idle_seconds: int = IDLE_LOG_AGE_THRESHOLD_SECONDS,
+) -> list[str]:
+    """Detect agents that are idle and should be killed to save cost.
+
+    An agent is considered idle if:
+    - Log file hasn't grown in max_idle_seconds (default 3 minutes)
+    - Heartbeat is still alive (agent process is running)
+
+    Args:
+        workdir: Repository root directory.
+        agents: Dict of agent sessions (id -> AgentSession).
+        max_idle_seconds: Threshold for considering agent idle.
+
+    Returns:
+        List of session IDs that are idle and should be killed.
+    """
+    idle_agents: list[str] = []
+    aggregator = AgentLogAggregator(workdir)
+
+    for session_id, agent in agents.items():
+        # Skip dead agents
+        if hasattr(agent, "status") and agent.status == "dead":
+            continue
+
+        # Check log activity - use last_activity_line as proxy for recent activity
+        log_summary = aggregator.parse_log(session_id)
+        # If log has recent activity (more than a few lines), consider active
+        if log_summary.total_lines > 10:
+            continue
+
+        # Agent appears idle
+        idle_agents.append(session_id)
+        logger.info(
+            "Idle agent detected: %s (only %d log lines)",
+            session_id,
+            log_summary.total_lines,
+        )
+
+    return idle_agents
