@@ -1054,3 +1054,66 @@ async def sse_events(request: Request) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/badge.json")
+async def get_badge(request: Request) -> JSONResponse:
+    """Return dynamic badge data for GitHub shields.io integration.
+
+    Shows tasks completed, total cost, and quality score.
+    Usage: https://img.shields.io/endpoint?url=<server>/badge.json
+    """
+    from bernstein.core.cost_tracker import CostTracker
+    from bernstein.core.models import TaskStatus
+
+    store = _get_store(request)
+    workdir = _get_workdir(request)
+    sdd_dir = workdir / ".sdd"
+
+    # Task counts
+    tasks = list(store.list_tasks())
+    completed = sum(1 for t in tasks if t.status == TaskStatus.DONE)
+    failed = sum(1 for t in tasks if t.status == TaskStatus.FAILED)
+
+    # Cost
+    total_cost = 0.0
+    costs_dir = sdd_dir / "runtime" / "costs"
+    if costs_dir.exists():
+        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if cost_files:
+            tracker = CostTracker.load(sdd_dir, cost_files[0].stem)
+            if tracker:
+                total_cost = tracker.spent_usd
+
+    # Quality score
+    quality_score = 0.0
+    quality_file = sdd_dir / "metrics" / "quality_scores.jsonl"
+    if quality_file.exists():
+        scores = []
+        for line in quality_file.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    data = json.loads(line)
+                    if "total" in data:
+                        scores.append(int(data["total"]))
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        if scores:
+            quality_score = sum(scores) / len(scores)
+
+    # Determine color based on completion rate
+    total = completed + failed
+    if total > 0:
+        rate = completed / total
+        color = "brightgreen" if rate >= 0.9 else "yellowgreen" if rate >= 0.7 else "yellow" if rate >= 0.5 else "red"
+    else:
+        color = "lightgrey"
+
+    return JSONResponse(
+        content={
+            "schemaVersion": 1,
+            "label": "Bernstein",
+            "message": f"{completed} done | ${total_cost:.2f} | {quality_score:.0f}%",
+            "color": color,
+        }
+    )
