@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import importlib
+import json
 import logging
+import os
+import subprocess
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import entry_points
@@ -12,15 +15,102 @@ from typing import Any
 
 import pluggy
 
+from bernstein.plugins import hookimpl
 from bernstein.plugins.hookspecs import BernsteinSpec
 
 log = logging.getLogger(__name__)
 
-__all__ = ["PluginManager", "get_plugin_manager"]
+__all__ = ["HookBlockingError", "PluginManager", "get_plugin_manager"]
 
 
 # Module-level singleton so the same manager is reused within a process.
 _manager: PluginManager | None = None
+
+
+class HookBlockingError(Exception):
+    """Raised when a hook command exits with code 2, indicating a blocking failure."""
+
+    def __init__(self, hook_name: str, stderr: str) -> None:
+        super().__init__(f"Hook {hook_name!r} blocked orchestration: {stderr}")
+        self.hook_name = hook_name
+        self.stderr = stderr
+
+
+class CommandHook:
+    """A plugin that executes shell scripts for hooks.
+
+    Discovered in ``.bernstein/hooks/<hook_name>/`` as executable files.
+    """
+
+    def __init__(self, hooks_dir: Path) -> None:
+        self._hooks_dir = hooks_dir
+
+    def _run_command(self, hook_name: str, **kwargs: Any) -> None:
+        hook_path = self._hooks_dir / hook_name
+        if not hook_path.is_dir():
+            return
+
+        # Find all executable files in the directory
+        for script in sorted(hook_path.iterdir()):
+            if not os.access(script, os.X_OK) or script.is_dir():
+                continue
+
+            log.debug("Executing hook script: %s", script)
+            try:
+                # Pass arguments via environment variables
+                env = os.environ.copy()
+                for key, value in kwargs.items():
+                    env[f"BERNSTEIN_HOOK_{key.upper()}"] = str(value)
+
+                # Also pass as JSON via stdin
+                proc = subprocess.run(
+                    [str(script)],
+                    input=json.dumps(kwargs),
+                    text=True,
+                    capture_output=True,
+                    env=env,
+                    check=False,
+                )
+
+                if proc.returncode == 0:
+                    continue
+                if proc.returncode == 2:
+                    raise HookBlockingError(hook_name, proc.stderr.strip() or proc.stdout.strip())
+                else:
+                    log.warning(
+                        "Hook script %s exited with code %d: %s",
+                        script.name,
+                        proc.returncode,
+                        proc.stderr.strip() or proc.stdout.strip(),
+                    )
+            except HookBlockingError:
+                raise
+            except Exception as exc:
+                log.warning("Failed to execute hook script %s: %s", script, exc)
+
+    @hookimpl
+    def on_task_created(self, **kwargs: Any) -> None:
+        self._run_command("on_task_created", **kwargs)
+
+    @hookimpl
+    def on_task_completed(self, **kwargs: Any) -> None:
+        self._run_command("on_task_completed", **kwargs)
+
+    @hookimpl
+    def on_task_failed(self, **kwargs: Any) -> None:
+        self._run_command("on_task_failed", **kwargs)
+
+    @hookimpl
+    def on_agent_spawned(self, **kwargs: Any) -> None:
+        self._run_command("on_agent_spawned", **kwargs)
+
+    @hookimpl
+    def on_agent_reaped(self, **kwargs: Any) -> None:
+        self._run_command("on_agent_reaped", **kwargs)
+
+    @hookimpl
+    def on_evolve_proposal(self, **kwargs: Any) -> None:
+        self._run_command("on_evolve_proposal", **kwargs)
 
 
 class PluginManager:
@@ -105,12 +195,20 @@ class PluginManager:
         Reads ``plugins:`` from ``bernstein.yaml`` in *workdir* (or the current
         directory if *workdir* is ``None``).
 
+        Also discovers command hooks in ``.bernstein/hooks/``.
+
         Args:
             workdir: Project root directory.  Defaults to ``Path.cwd()``.
         """
         self.discover_entry_points()
 
         root = workdir or Path.cwd()
+
+        # Load command hooks from .bernstein/hooks
+        hooks_dir = root / ".bernstein" / "hooks"
+        if hooks_dir.is_dir():
+            self.register(CommandHook(hooks_dir), name="command_hooks")
+
         config_path = root / "bernstein.yaml"
         if config_path.exists():
             try:
@@ -189,6 +287,9 @@ class PluginManager:
                 self._executor.submit(self._invoke_hook, hook_name, hook_caller, True, **kwargs)
             else:
                 self._invoke_hook(hook_name, hook_caller, False, **kwargs)
+        except HookBlockingError:
+            # Re-raise blocking errors so they propagate to the orchestrator.
+            raise
         except Exception as exc:
             log.warning("Plugin manager failed to dispatch hook %r: %s", hook_name, exc)
 
@@ -198,6 +299,9 @@ class PluginManager:
             log.debug("Starting background hook %r", name)
         try:
             hook_caller(**kwargs)
+        except HookBlockingError:
+            # Re-raise blocking errors so they propagate to the orchestrator.
+            raise
         except Exception as exc:
             log.warning("Plugin hook %r raised an exception: %s", name, exc)
         finally:
