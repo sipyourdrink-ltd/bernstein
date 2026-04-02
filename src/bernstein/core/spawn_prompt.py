@@ -338,6 +338,14 @@ def _render_prompt(
     lesson_tags = _extract_tags_from_tasks(tasks)
     lesson_context = gather_lessons_for_context(sdd_dir, lesson_tags)
 
+    # Enforce lesson budget
+    from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS
+
+    lesson_budget = DEFAULT_CATEGORY_BUDGETS.get("lessons", 5_000)
+    if lesson_context and (len(lesson_context) // 4) > lesson_budget:
+        logger.info("Truncating lessons: exceeded budget of %d tokens", lesson_budget)
+        lesson_context = lesson_context[: lesson_budget * 4] + "..."
+
     # Assemble final prompt as named sections for budget-aware compression
     named_sections: list[tuple[str, str]] = [("role", role_prompt)]
     if specialist_block:
@@ -395,7 +403,7 @@ def _render_prompt(
         compressed, original_tokens, compressed_tokens, dropped = compressor.compress_sections(named_sections)
         if dropped:
             reduction_pct = (1.0 - compressed_tokens / max(1, original_tokens)) * 100
-            logger.debug(
+            logger.info(
                 "Prompt compressed: %d → %d tokens (%.0f%% reduction), dropped: %s",
                 original_tokens,
                 compressed_tokens,

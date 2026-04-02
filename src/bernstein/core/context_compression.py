@@ -543,6 +543,14 @@ _SECTION_PRIORITIES: dict[str, int] = {
     "bulletin": 3,
 }
 
+# Default token budgets for specific injection categories
+# to ensure prompt predictability.
+DEFAULT_CATEGORY_BUDGETS: dict[str, int] = {
+    "files": 15_000,
+    "lessons": 5_000,
+    "rag": 10_000,
+}
+
 
 def _section_priority(name: str) -> int:
     """Return priority for a named prompt section (higher = more important).
@@ -572,17 +580,24 @@ class PromptCompressor:
     dropped (role prompt, task descriptions, instructions, signal checks).
 
     Attributes:
-        token_budget: Maximum allowed estimated token count.
+        token_budget: Maximum allowed estimated token count for the whole prompt.
+        category_budgets: Per-category token budgets for injection types.
     """
 
-    def __init__(self, token_budget: int = 50_000) -> None:
+    def __init__(
+        self,
+        token_budget: int = 50_000,
+        category_budgets: dict[str, int] | None = None,
+    ) -> None:
         """Initialize PromptCompressor.
 
         Args:
             token_budget: Token budget for the compressed prompt.
                 Defaults to 50,000 (~50% of a 100 k-token context window).
+            category_budgets: Optional per-category token budgets.
         """
         self.token_budget = token_budget
+        self.category_budgets = category_budgets or DEFAULT_CATEGORY_BUDGETS
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -606,6 +621,10 @@ class PromptCompressor:
         sections are dropped first.  Sections whose name maps to priority 10
         (role, task, instruction, signal) are never removed.
 
+        If a section name matches a category in ``category_budgets``, it may
+        be internally truncated by the caller, but this method enforces the
+        global budget across all sections.
+
         Args:
             sections: Ordered list of (section_name, content) pairs.
                 Names are matched against the priority table via keywords.
@@ -627,6 +646,17 @@ class PromptCompressor:
 
         original_tokens = sum(t for _, _, t, _ in annotated)
 
+        # Log category-specific overflows if they exist (advisory)
+        for name, _, tokens, _ in annotated:
+            cat = next((c for c in self.category_budgets if c in name.lower()), None)
+            if cat and tokens > self.category_budgets[cat]:
+                logger.info(
+                    "Section '%s' exceeds category budget (%d > %d tokens)",
+                    name,
+                    tokens,
+                    self.category_budgets[cat],
+                )
+
         if original_tokens <= self.token_budget:
             return "".join(c for _, c, _, _ in annotated), original_tokens, original_tokens, []
 
@@ -647,6 +677,10 @@ class PromptCompressor:
         kept_content = [content for name, content, _, _ in annotated if name not in dropped]
         compressed_prompt = "".join(kept_content)
         dropped_names = [name for name, _, _, _ in annotated if name in dropped]
+
+        if dropped_names:
+            logger.info("Prompt budget exceeded; dropped sections: %s", ", ".join(dropped_names))
+
         return compressed_prompt, original_tokens, current_tokens, dropped_names
 
     def compress(
