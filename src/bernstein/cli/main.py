@@ -91,6 +91,7 @@ from bernstein.cli.worker_cmd import worker
 from bernstein.cli.workflow_cmd import workflow_group
 from bernstein.cli.workspace_cmd import config_group, workspace_group
 from bernstein.cli.wrap_up_cmd import wrap_up
+from bernstein.core.json_logging import setup_json_logging
 
 # ---------------------------------------------------------------------------
 # Re-export shared state so existing imports like

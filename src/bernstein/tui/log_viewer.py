@@ -78,7 +78,7 @@ def detect_code_blocks(log_text: str) -> list[tuple[int, int, str]]:
     Returns:
         List of (start, end, language) tuples for each code block.
     """
-    blocks = []
+    blocks: list[tuple[int, int, str]] = []
     for match in CODE_BLOCK_PATTERN.finditer(log_text):
         language = match.group(1) or "text"
         blocks.append((match.start(), match.end(), language))

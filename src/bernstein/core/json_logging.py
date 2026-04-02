@@ -56,11 +56,34 @@ class JsonFormatter(logging.Formatter):
         if hasattr(record, "__dict__"):
             # Standard LogRecord attributes to ignore
             standard_attrs = {
-                "args", "asctime", "created", "exc_info", "exc_text", "filename",
-                "funcName", "levelname", "levelno", "lineno", "module", "msecs",
-                "message", "msg", "name", "pathname", "process", "processName",
-                "relativeCreated", "stack_info", "thread", "threadName",
-                "task_id", "agent_id", "correlation_id", "timestamp", "level", "component"
+                "args",
+                "asctime",
+                "created",
+                "exc_info",
+                "exc_text",
+                "filename",
+                "funcName",
+                "levelname",
+                "levelno",
+                "lineno",
+                "module",
+                "msecs",
+                "message",
+                "msg",
+                "name",
+                "pathname",
+                "process",
+                "processName",
+                "relativeCreated",
+                "stack_info",
+                "thread",
+                "threadName",
+                "task_id",
+                "agent_id",
+                "correlation_id",
+                "timestamp",
+                "level",
+                "component",
             }
             for key, val in record.__dict__.items():
                 if key not in standard_attrs:

@@ -42,8 +42,7 @@ class TaskSplitter:
         drafts = manager.decompose_sync(task, min_subtasks=self.min_subtasks, max_subtasks=self.max_subtasks)
         if not (self.min_subtasks <= len(drafts) <= self.max_subtasks):
             raise ValueError(
-                f"Manager returned {len(drafts)} subtasks; "
-                f"expected {self.min_subtasks}-{self.max_subtasks}"
+                f"Manager returned {len(drafts)} subtasks; expected {self.min_subtasks}-{self.max_subtasks}"
             )
 
         created_ids: list[str] = []
