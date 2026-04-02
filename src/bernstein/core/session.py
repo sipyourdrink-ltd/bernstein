@@ -334,3 +334,47 @@ def check_resume_session(
     if force_fresh:
         return None
     return load_session(workdir, stale_minutes=stale_minutes)
+
+
+# ---------------------------------------------------------------------------
+# Session-stable flag latching registry (T558)
+# ---------------------------------------------------------------------------
+
+_LATCH_FILE = Path(".sdd") / "runtime" / "latched_flags.json"
+
+
+def latch_session_flags(workdir: Path, flags: dict[str, object]) -> None:
+    """Persist *flags* as session-stable latched values.
+
+    Once written, these flags should not change for the lifetime of the
+    session.  Callers should read them back via :func:`load_latched_flags`
+    rather than re-evaluating the source.
+
+    Args:
+        workdir: Project root directory.
+        flags: Mapping of flag name → value to latch.
+    """
+    latch_path = workdir / _LATCH_FILE
+    latch_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"latched_at": time.time(), "flags": flags}
+    latch_path.write_text(json.dumps(payload, default=str), encoding="utf-8")
+
+
+def load_latched_flags(workdir: Path) -> dict[str, object]:
+    """Load previously latched session flags.
+
+    Args:
+        workdir: Project root directory.
+
+    Returns:
+        Mapping of flag name → value, or empty dict if no latch file exists.
+    """
+    latch_path = workdir / _LATCH_FILE
+    if not latch_path.exists():
+        return {}
+    try:
+        data = json.loads(latch_path.read_text(encoding="utf-8"))
+        flags = data.get("flags", {})
+        return dict(flags) if isinstance(flags, dict) else {}  # type: ignore[reportUnknownVariableType]
+    except (json.JSONDecodeError, OSError):
+        return {}

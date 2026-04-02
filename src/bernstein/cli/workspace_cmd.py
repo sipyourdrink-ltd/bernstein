@@ -334,6 +334,35 @@ def config_validate() -> None:
             console.print(table)
 
 
+@config_group.command("conflicts")
+@click.option("--project-dir", default=".", show_default=True, help="Project directory for precedence check.")
+def config_conflicts(project_dir: str) -> None:
+    """Show settings where multiple sources define conflicting values.
+
+    Example: bernstein config conflicts
+    """
+    from bernstein.core.home import BernsteinHome, check_source_policies, explain_conflicts, resolve_config_bundle
+
+    home = BernsteinHome.default()
+    bundle = resolve_config_bundle(home=home, project_dir=Path(project_dir))
+    conflicts = explain_conflicts(bundle)
+    violations = check_source_policies(bundle)
+
+    if not conflicts and not violations:
+        console.print("[green]✓[/green] No setting conflicts or policy violations detected.")
+        return
+
+    if conflicts:
+        console.print("[bold yellow]Setting conflicts:[/bold yellow]")
+        for c in conflicts:
+            console.print(f"  [yellow]•[/yellow] {c['explanation']}")
+
+    if violations:
+        console.print("[bold red]Source policy violations:[/bold red]")
+        for v in violations:
+            console.print(f"  [red]•[/red] {v['message']}")
+
+
 @click.command("plan")
 @click.option(
     "--export",

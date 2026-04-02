@@ -65,6 +65,88 @@ class ConfigResolution(TypedDict):
     source_chain: list[ConfigProvenanceLayer]
 
 
+class SourcePolicyViolation(TypedDict):
+    """A policy violation when a setting is resolved from a disallowed source."""
+
+    key: str
+    actual_source: ConfigSource
+    allowed_sources: list[ConfigSource]
+    message: str
+
+
+# Keys that must only be set at specific sources (policy enforcement).
+# If a key is absent from this map, any source is allowed.
+_ALLOWED_SOURCE_POLICIES: dict[str, tuple[ConfigSource, ...]] = {
+    # Security-sensitive keys must not be set via session/env overrides alone
+    "budget": ("project", "global", "default"),
+    "max_agents": ("project", "global", "default"),
+}
+
+
+def enforce_source_policy(
+    key: str,
+    resolution: ConfigResolution,
+    *,
+    extra_policies: dict[str, tuple[ConfigSource, ...]] | None = None,
+) -> SourcePolicyViolation | None:
+    """Check whether the resolved source for *key* is allowed by policy.
+
+    Args:
+        key: Config key that was resolved.
+        resolution: The resolved config value with provenance.
+        extra_policies: Additional per-key source restrictions to merge with
+            the built-in ``_ALLOWED_SOURCE_POLICIES``.
+
+    Returns:
+        A :class:`SourcePolicyViolation` if the source is disallowed, else
+        ``None``.
+    """
+    policies = dict(_ALLOWED_SOURCE_POLICIES)
+    if extra_policies:
+        policies.update(extra_policies)
+
+    allowed = policies.get(key)
+    if allowed is None:
+        return None  # no policy for this key
+
+    actual = resolution["source"]
+    if actual in allowed:
+        return None
+
+    return {
+        "key": key,
+        "actual_source": actual,
+        "allowed_sources": list(allowed),
+        "message": (
+            f"Setting '{key}' resolved from '{actual}' but policy requires one of: "
+            + ", ".join(f"'{s}'" for s in allowed)
+        ),
+    }
+
+
+def check_source_policies(
+    bundle: dict[str, ConfigResolution],
+    *,
+    extra_policies: dict[str, tuple[ConfigSource, ...]] | None = None,
+) -> list[SourcePolicyViolation]:
+    """Check all keys in *bundle* against source policies.
+
+    Args:
+        bundle: Mapping of key → :class:`ConfigResolution` (from
+            :func:`resolve_config_bundle`).
+        extra_policies: Additional per-key source restrictions.
+
+    Returns:
+        List of violations (empty when all keys comply).
+    """
+    violations: list[SourcePolicyViolation] = []
+    for key, resolution in bundle.items():
+        violation = enforce_source_policy(key, resolution, extra_policies=extra_policies)
+        if violation is not None:
+            violations.append(violation)
+    return violations
+
+
 class BernsteinHome:
     """Manages the global ~/.bernstein home directory.
 
@@ -329,4 +411,100 @@ def resolve_config_bundle(
             session_overrides=session_overrides,
         )
         for key in target_keys
+    }
+
+
+class SettingConflict(TypedDict):
+    """A conflict where multiple sources define the same key with different values."""
+
+    key: str
+    winning_source: ConfigSource
+    winning_value: object
+    conflicting_layers: list[ConfigProvenanceLayer]
+    explanation: str
+
+
+def explain_conflicts(bundle: dict[str, ConfigResolution]) -> list[SettingConflict]:
+    """Identify settings where multiple sources define different values.
+
+    Args:
+        bundle: Mapping of key → :class:`ConfigResolution`.
+
+    Returns:
+        List of conflicts where at least two non-default layers disagree.
+    """
+    conflicts: list[SettingConflict] = []
+    for key, resolution in bundle.items():
+        non_default = [
+            layer
+            for layer in resolution["source_chain"]
+            if layer["source"] != "default" and layer["value"] is not None
+        ]
+        if len(non_default) < 2:
+            continue
+        # Check if any two layers have different values
+        values = [layer["value"] for layer in non_default]
+        if len(set(str(v) for v in values)) > 1:
+            winning = resolution["source_chain"][0]
+            conflicts.append(
+                {
+                    "key": key,
+                    "winning_source": resolution["source"],
+                    "winning_value": resolution["value"],
+                    "conflicting_layers": non_default,
+                    "explanation": (
+                        f"'{key}' has conflicting values: "
+                        + ", ".join(
+                            f"{layer['source']}={layer['redacted_value']!r}"
+                            for layer in non_default
+                        )
+                        + f". Using '{winning['source']}' value: {winning['redacted_value']!r}."
+                    ),
+                }
+            )
+    return conflicts
+
+
+class SettingsSnapshot(TypedDict):
+    """Snapshot of resolved settings at a point in time for trace capture."""
+
+    captured_at: float
+    project_dir: str
+    settings: dict[str, object]
+    sources: dict[str, ConfigSource]
+    conflicts: list[SettingConflict]
+    policy_violations: list[SourcePolicyViolation]
+
+
+def capture_settings_snapshot(
+    *,
+    home: BernsteinHome,
+    project_dir: Path,
+    session_overrides: Mapping[str, object] | None = None,
+) -> SettingsSnapshot:
+    """Capture a full settings snapshot with provenance for trace embedding.
+
+    Args:
+        home: BernsteinHome instance.
+        project_dir: Project root directory.
+        session_overrides: Optional session-only overrides.
+
+    Returns:
+        :class:`SettingsSnapshot` suitable for embedding in an
+        :class:`~bernstein.core.traces.AgentTrace`.
+    """
+    import time
+
+    bundle = resolve_config_bundle(
+        home=home,
+        project_dir=project_dir,
+        session_overrides=session_overrides,
+    )
+    return {
+        "captured_at": time.time(),
+        "project_dir": str(project_dir),
+        "settings": {k: v["value"] for k, v in bundle.items()},
+        "sources": {k: v["source"] for k, v in bundle.items()},
+        "conflicts": explain_conflicts(bundle),
+        "policy_violations": check_source_policies(bundle),
     }
