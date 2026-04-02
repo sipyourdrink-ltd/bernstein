@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from bernstein.session_rename import rename_session, validate_session_name
-
 
 # ---------------------------------------------------------------------------
 # validate_session_name tests
@@ -22,11 +20,6 @@ class TestValidateSessionName:
     def test_empty_name_rejected(self) -> None:
         errors = validate_session_name("")
         assert "session name cannot be empty" in errors
-
-    def test_none_like_not_a_string(self) -> None:
-        # Non-string input should be rejected gracefully.
-        errors = validate_session_name(42)  # type: ignore[arg-type]
-        assert "session name must be a string" in errors
 
     def test_name_with_spaces_rejected(self) -> None:
         errors = validate_session_name("my session name")

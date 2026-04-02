@@ -68,6 +68,19 @@ _API_ERROR_PATTERNS: tuple[str, ...] = (
     "ECONNRESET",
 )
 
+# Text patterns that indicate an authentication error (401, 403) in agent logs.
+_AUTH_ERROR_PATTERNS: tuple[str, ...] = (
+    "401",
+    "403",
+    "unauthorized",
+    "forbidden",
+    "invalid_client",
+    "invalid_token",
+    "expired_token",
+    "AuthenticationError",
+    "PermissionDeniedError",
+)
+
 _BASE_THROTTLE_S: float = 60.0
 _MAX_THROTTLE_S: float = 3600.0
 _LOG_SCAN_TAIL_LINES: int = 500
@@ -258,22 +271,35 @@ class RateLimitTracker:
         """
         return self._scan_log_for_patterns(log_path, _API_ERROR_PATTERNS)
 
-    def detect_failure_type(self, log_path: Path) -> str | None:
-        """Scan an agent log and return the detected failure type.
-
-        Checks for rate limits first, then timeouts, then general API errors.
+    def scan_log_for_auth_error(self, log_path: Path) -> bool:
+        """Scan the tail of *log_path* for auth error patterns (401, 403).
 
         Args:
             log_path: Path to the agent's subprocess log file.
 
         Returns:
-            One of ``"rate_limit"``, ``"timeout"``, ``"api_error"``, or ``None``
+            True if an auth error indicator was found, False otherwise.
+        """
+        return self._scan_log_for_patterns(log_path, _AUTH_ERROR_PATTERNS)
+
+    def detect_failure_type(self, log_path: Path) -> str | None:
+        """Scan an agent log and return the detected failure type.
+
+        Checks for rate limits first, then timeouts, then auth errors, then general API errors.
+
+        Args:
+            log_path: Path to the agent's subprocess log file.
+
+        Returns:
+            One of ``"rate_limit"``, ``"timeout"``, ``"auth_error"``, ``"api_error"``, or ``None``
             if no failure pattern was detected.
         """
         if self.scan_log_for_429(log_path):
             return "rate_limit"
         if self.scan_log_for_timeout(log_path):
             return "timeout"
+        if self.scan_log_for_auth_error(log_path):
+            return "auth_error"
         if self.scan_log_for_api_error(log_path):
             return "api_error"
         return None

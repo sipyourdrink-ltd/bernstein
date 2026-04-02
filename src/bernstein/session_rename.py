@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from pathlib import Path  # noqa: TC003 (used at runtime, not just annotations)
 
 from bernstein.core.session import SessionState, load_session, save_session
 
@@ -47,13 +47,9 @@ def validate_session_name(name: str) -> list[str]:
     """
     if not name:
         return ["session name cannot be empty"]
-    if not isinstance(name, str):
-        return ["session name must be a string"]
     errors: list[str] = []
     if len(name) > _MAX_NAME_LEN:
-        errors.append(
-            f"session name is too long ({len(name)} chars, max {_MAX_NAME_LEN})"
-        )
+        errors.append(f"session name is too long ({len(name)} chars, max {_MAX_NAME_LEN})")
     if not _NAME_RE.match(name):
         errors.append(
             "session name can only contain alphanumeric characters and hyphens, "
@@ -91,11 +87,7 @@ def rename_session(new_name: str, workdir: Path) -> bool:
 
     if session_path.exists():
         existing = load_session(workdir, stale_minutes=2_147_483_647)  # ignore staleness
-        if existing is not None:
-            state = existing
-        else:
-            # Corrupt or missing — create fresh.
-            state = SessionState(saved_at=0.0)
+        state = existing if existing is not None else SessionState(saved_at=0.0)
     else:
         state = SessionState(saved_at=0.0)
 

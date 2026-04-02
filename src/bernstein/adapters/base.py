@@ -266,3 +266,15 @@ class CLIAdapter(ABC):
             Subclasses should override this to return provider-specific tier info.
         """
         return None
+
+    def supports_auth_refresh(self) -> bool:
+        """Return True if this adapter supports automated auth refresh (OAuth)."""
+        return False
+
+    def refresh_auth(self, workdir: Path) -> bool:
+        """Attempt to refresh authentication credentials.
+
+        Returns:
+            True if refresh was successful, False otherwise.
+        """
+        return False
