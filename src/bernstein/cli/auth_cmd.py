@@ -23,7 +23,6 @@ _TOKEN_DIR = Path.home() / ".bernstein"
 _TOKEN_FILE = _TOKEN_DIR / "token.json"
 
 
-
 @dataclass(frozen=True)
 class CachedToken:
     """Locally cached CLI token metadata."""
