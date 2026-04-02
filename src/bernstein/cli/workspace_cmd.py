@@ -313,13 +313,23 @@ def config_validate() -> None:
             table = Table(title="Providers", show_header=True, header_style="bold cyan")
             table.add_column("Provider")
             table.add_column("Tier")
+            table.add_column("Region")
             table.add_column("Status")
             table.add_column("Policy Allowed")
+            table.add_column("Residency")
 
             for name, info in sorted(summary.items()):
                 allowed_style = "green" if info["policy_allowed"] else "red"
                 allowed_text = f"[{allowed_style}]{'yes' if info['policy_allowed'] else 'no'}[/{allowed_style}]"
-                table.add_row(name, info["tier"], info["health"], allowed_text)
+                residency = str(info.get("residency_attestation") or "—")
+                table.add_row(
+                    name,
+                    info["tier"],
+                    str(info.get("region", "global")),
+                    info["health"],
+                    allowed_text,
+                    residency,
+                )
 
             console.print(table)
 

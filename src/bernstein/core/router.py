@@ -26,6 +26,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _normalize_region(region: str | None) -> str:
+    """Normalize a provider or policy region into a comparable token."""
+    if not region:
+        return ""
+    return region.strip().lower().replace("_", "-")
+
+
+def _region_matches(required_region: str | None, provider_region: str | None) -> bool:
+    """Return True when the provider region satisfies the required region."""
+    normalized_required = _normalize_region(required_region)
+    if not normalized_required:
+        return True
+    normalized_provider = _normalize_region(provider_region)
+    if not normalized_provider:
+        return False
+    if normalized_provider == normalized_required:
+        return True
+    return normalized_provider.startswith(f"{normalized_required}-")
+
+
 @dataclass
 class ModelPolicy:
     """Policy constraints for provider selection (allow/deny/prefer).
@@ -39,12 +59,15 @@ class ModelPolicy:
     allowed_providers: list[str] | None = None  # Explicit allow-list (if set, only these are available)
     denied_providers: list[str] | None = None  # Explicit deny-list (these are never used)
     prefer: str | None = None  # Preferred provider if available
+    required_region: str | None = None  # Restrict providers to a residency region (for example "eu")
+    allow_cross_region_fallback: bool = False  # Allow degraded fallback outside the residency region
 
-    def is_provider_allowed(self, provider_name: str) -> bool:
+    def is_provider_allowed(self, provider_name: str, provider_region: str | None = None) -> bool:
         """Check if a provider is allowed by the policy.
 
         Args:
             provider_name: Name of the provider (e.g., "anthropic", "openai", "ollama").
+            provider_region: Residency region associated with the provider.
 
         Returns:
             True if the provider is allowed, False otherwise.
@@ -54,7 +77,13 @@ class ModelPolicy:
             return False
 
         # If allowed list exists, only those providers are allowed
-        return not (self.allowed_providers and provider_name not in self.allowed_providers)
+        if self.allowed_providers and provider_name not in self.allowed_providers:
+            return False
+
+        if self.required_region and not self.allow_cross_region_fallback:
+            return _region_matches(self.required_region, provider_region)
+
+        return True
 
     def validate(self) -> list[str]:
         """Validate policy consistency.
@@ -78,6 +107,9 @@ class ModelPolicy:
             if self.allowed_providers and self.prefer not in self.allowed_providers:
                 issues.append(f"Preferred provider '{self.prefer}' is not in allow list")
 
+        if self.allow_cross_region_fallback and not self.required_region:
+            issues.append("allow_cross_region_fallback requires required_region to be set")
+
         return issues
 
     @classmethod
@@ -97,6 +129,8 @@ class ModelPolicy:
             allowed_providers=data.get("allowed_providers"),
             denied_providers=data.get("denied_providers"),
             prefer=data.get("prefer"),
+            required_region=data.get("required_region"),
+            allow_cross_region_fallback=bool(data.get("allow_cross_region_fallback", False)),
         )
 
 
@@ -120,7 +154,7 @@ class PolicyFilter:
         Returns:
             Filtered list (only allowed providers).
         """
-        return [p for p in providers if self.policy.is_provider_allowed(p.name)]
+        return [p for p in providers if self.policy.is_provider_allowed(p.name, p.region)]
 
 
 class Tier(Enum):
@@ -240,6 +274,8 @@ class ProviderConfig:
     supports_streaming: bool = True
     supports_vision: bool = False
     quota_snapshot: QuotaSnapshot | None = None
+    region: str = "global"
+    residency_attestation: str | None = None
 
     def is_free_tier_exhausted(self) -> bool:
         """Check if free tier quota is exhausted."""
@@ -271,6 +307,19 @@ class RoutingDecision:
     health_status: ProviderHealthStatus = ProviderHealthStatus.HEALTHY
     is_free_tier: bool = False
     fallback: bool = False
+    residency_attestation: ResidencyAttestation | None = None
+
+
+@dataclass(frozen=True)
+class ResidencyAttestation:
+    """Inspectable record of how residency constraints affected routing."""
+
+    provider: str
+    provider_region: str
+    required_region: str | None
+    compliant: bool
+    attestation: str | None
+    reason: str
 
 
 @dataclass
@@ -492,7 +541,7 @@ class TierAwareRouter:
             provider = self.state.providers.get(preferred_provider)
             if provider is None:
                 raise RouterError(f"Preferred provider '{preferred_provider}' is not registered")
-            if not self.state.model_policy.is_provider_allowed(provider.name):
+            if not self.state.model_policy.is_provider_allowed(provider.name, provider.region):
                 raise RouterError(f"Preferred provider '{preferred_provider}' is denied by model_policy")
             if not provider.available:
                 raise RouterError(f"Preferred provider '{preferred_provider}' is unavailable")
@@ -502,7 +551,7 @@ class TierAwareRouter:
                 )
             if not self._provider_meets_requirements(provider, requires_vision, requires_large_context):
                 raise RouterError(f"Preferred provider '{preferred_provider}' does not meet task requirements")
-            return self._create_decision(provider, base_config, "role_policy", fallback=False)
+            return self._create_decision(provider, task, base_config, "role_policy", fallback=False)
 
         # Try preferred tier first (default: FREE)
         preferred_providers = self.get_available_providers(
@@ -520,7 +569,7 @@ class TierAwareRouter:
 
         if matching_preferred:
             provider = matching_preferred[0]  # Already sorted by score
-            return self._create_decision(provider, base_config, "preferred_tier", fallback=False)
+            return self._create_decision(provider, task, base_config, "preferred_tier", fallback=False)
 
         # Fallback to other tiers if enabled
         if self.state.fallback_enabled:
@@ -537,14 +586,14 @@ class TierAwareRouter:
                 ]
                 if matching:
                     provider = matching[0]
-                    return self._create_decision(provider, base_config, "fallback", fallback=True)
+                    return self._create_decision(provider, task, base_config, "fallback", fallback=True)
 
         # Last resort: try any available provider (even degraded)
         all_providers = self.get_available_providers(require_healthy=False)
         any_matching = [p for p in all_providers if self._provider_supports_model(p, base_config.model)]
         if any_matching:
             provider = any_matching[0]
-            return self._create_decision(provider, base_config, "last_resort", fallback=True)
+            return self._create_decision(provider, task, base_config, "last_resort", fallback=True)
 
         # No suitable provider found
         raise RouterError(
@@ -587,6 +636,7 @@ class TierAwareRouter:
     def _create_decision(
         self,
         provider: ProviderConfig,
+        task: Task,
         base_config: ModelConfig,
         reason: str,
         fallback: bool = False,
@@ -605,6 +655,26 @@ class TierAwareRouter:
             health_status=provider.health.status,
             is_free_tier=provider.tier == Tier.FREE and not provider.is_free_tier_exhausted(),
             fallback=fallback,
+            residency_attestation=self._build_residency_attestation(provider, task, reason),
+        )
+
+    def _build_residency_attestation(
+        self,
+        provider: ProviderConfig,
+        task: Task,
+        reason: str,
+    ) -> ResidencyAttestation | None:
+        """Build an attestation record when routing is residency constrained."""
+        required_region = self.state.model_policy.required_region
+        if required_region is None and provider.residency_attestation is None:
+            return None
+        return ResidencyAttestation(
+            provider=provider.name,
+            provider_region=provider.region,
+            required_region=required_region,
+            compliant=_region_matches(required_region, provider.region),
+            attestation=provider.residency_attestation,
+            reason=f"{reason}:{task.id}",
         )
 
     def _resolve_model_config(
@@ -713,7 +783,10 @@ class TierAwareRouter:
                 "free_tier_limit": provider.free_tier_limit,
                 "is_free_tier_exhausted": provider.is_free_tier_exhausted(),
                 "available": provider.available,
-                "policy_allowed": self.state.model_policy.is_provider_allowed(name),
+                "policy_allowed": self.state.model_policy.is_provider_allowed(name, provider.region),
+                "region": provider.region,
+                "required_region": self.state.model_policy.required_region,
+                "residency_attestation": provider.residency_attestation,
             }
         return summary
 
@@ -784,10 +857,16 @@ class TierAwareRouter:
             available_for_tier = [
                 p
                 for p in self.state.providers.values()
-                if p.tier == tier and self.state.model_policy.is_provider_allowed(p.name)
+                if p.tier == tier and self.state.model_policy.is_provider_allowed(p.name, p.region)
             ]
             if not available_for_tier:
-                issues.append(f"No available providers for tier '{tier.value}' after policy constraints")
+                if self.state.model_policy.required_region:
+                    issues.append(
+                        f"No available providers for tier '{tier.value}' in region "
+                        f"'{self.state.model_policy.required_region}' after policy constraints"
+                    )
+                else:
+                    issues.append(f"No available providers for tier '{tier.value}' after policy constraints")
 
         return issues
 
@@ -974,6 +1053,13 @@ def load_model_policy_from_yaml(path: Path, router: TierAwareRouter) -> None:
 
     try:
         policy = ModelPolicy.from_dict(policy_data)
+        compliance_data = data.get("compliance")
+        if compliance_data is not None and not policy.required_region:
+            from bernstein.core.compliance import ComplianceConfig
+
+            compliance = ComplianceConfig.from_dict(cast("dict[str, Any] | str", compliance_data))
+            if compliance.data_residency and compliance.data_residency_region:
+                policy.required_region = compliance.data_residency_region
         router.state.model_policy = policy
         router.policy_filter = PolicyFilter(policy=policy)
         logger.info("Loaded model policy from %s", path)
@@ -1050,6 +1136,8 @@ def load_providers_from_yaml(path: Path, router: TierAwareRouter) -> None:
                 supports_streaming=bool(cfg.get("supports_streaming", True)),
                 supports_vision=bool(cfg.get("supports_vision", False)),
                 rate_limit_rpm=rate_limit_rpm,
+                region=str(cfg.get("region", "global")),
+                residency_attestation=cast("str | None", cfg.get("residency_attestation")),
             )
             router.register_provider(provider)
             logger.debug("Registered provider '%s' (tier=%s) from %s", str(name), tier.value, path)
@@ -1081,6 +1169,7 @@ def get_default_router() -> TierAwareRouter:
                 free_tier_used=0,
                 free_tier_reset=time.time() + 86400,  # Reset in 24h
                 max_context_tokens=128_000,
+                region="global",
             )
         )
 
@@ -1095,6 +1184,8 @@ def get_default_router() -> TierAwareRouter:
                 tier=Tier.STANDARD,
                 cost_per_1k_tokens=0.003,  # Sonnet rate
                 max_context_tokens=200_000,
+                region="us",
+                residency_attestation="soc2-us",
             )
         )
 
@@ -1108,6 +1199,8 @@ def get_default_router() -> TierAwareRouter:
                 tier=Tier.PREMIUM,
                 cost_per_1k_tokens=0.015,  # Opus rate
                 max_context_tokens=200_000,
+                region="us",
+                residency_attestation="soc2-us",
             )
         )
 
@@ -1123,6 +1216,8 @@ def get_default_router() -> TierAwareRouter:
                 cost_per_1k_tokens=0.002,
                 max_context_tokens=128_000,
                 supports_vision=True,
+                region="eu",
+                residency_attestation="gdpr-eu",
             )
         )
 
