@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
+from bernstein.core.behavior_anomaly import BehaviorAnomalyDetector, BehaviorMetrics
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.context import append_decision
 from bernstein.core.cross_model_verifier import (
@@ -708,6 +709,23 @@ def process_completed_tasks(
         ):
             orch._handle_anomaly_signal(_sig)
 
+        _duration_s = (
+            (_task_m.end_time - _task_m.start_time)
+            if _task_m and _task_m.end_time
+            else (time.time() - session.spawn_ts if session and session.spawn_ts > 0 else 0.0)
+        )
+        _behavior_metrics = BehaviorMetrics(
+            tokens_used=_task_m.tokens_used if _task_m and _task_m.tokens_used > 0 else _tokens_in + _tokens_out,
+            files_modified=len(completion_data.get("files_modified", [])) if completion_data is not None else 0,
+            duration_s=_duration_s,
+        )
+        for _sig in BehaviorAnomalyDetector(orch._workdir).detect(
+            task.id,
+            session.id if session is not None else None,
+            _behavior_metrics,
+        ):
+            orch._handle_anomaly_signal(_sig)
+
         _collector.complete_task(task.id, success=janitor_passed, janitor_passed=janitor_passed, cost_usd=_cost_usd)
         try:
             _budget = CompletionBudget(orch._workdir)
@@ -802,11 +820,7 @@ def process_completed_tasks(
         if orch._evolution is not None:
             model = session.model_config.model if session else None
             provider = session.provider if session else None
-            duration = (
-                (_task_m.end_time - _task_m.start_time)
-                if _task_m and _task_m.end_time
-                else (time.time() - session.spawn_ts if session and session.spawn_ts > 0 else 0.0)
-            )
+            duration = _duration_s
             try:
                 orch._evolution.record_task_completion(
                     task=task,
