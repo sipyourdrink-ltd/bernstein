@@ -13,8 +13,10 @@ import click
 
 from bernstein.cli.helpers import (
     console,
+    is_json,
     is_process_alive,
     print_banner,
+    print_json,
     server_get,
 )
 from bernstein.cli.status import render_status
@@ -83,16 +85,16 @@ def status(as_json: bool, no_color: bool) -> None:
     """
     data = server_get("/status")
     if data is None:
-        if as_json:
-            click.echo(json.dumps({"error": "Cannot reach task server"}))
+        if as_json or is_json():
+            print_json({"error": "Cannot reach task server"})
         else:
             console.print(
                 "[red]Cannot reach task server.[/red] Is Bernstein running? Run [bold]bernstein[/bold] to start."
             )
         raise SystemExit(1)
 
-    if as_json:
-        click.echo(json.dumps(data, indent=2))
+    if as_json or is_json():
+        print_json(data)
         return
 
     print_banner()
@@ -165,8 +167,8 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
         if str(remote["session"]) not in seen_sessions:
             agents.append(remote)
 
-    if as_json:
-        console.print(json.dumps(agents, indent=2))
+    if as_json or is_json():
+        print_json(agents)
         return
 
     if not agents:
@@ -598,14 +600,12 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
     except Exception as exc:
         _check("Secrets", False, f"configuration error: {exc}", "Check bernstein.yaml syntax")
 
-    if as_json:
-        import json as _json
-
+    if as_json or is_json():
         result_dict: dict[str, Any] = {"checks": checks}
         if auto_fix:
             result_dict["fixed"] = fixed
             result_dict["manual_needed"] = manual_needed
-        click.echo(_json.dumps(result_dict, indent=2))
+        print_json(result_dict)
         failed_checks = [c for c in checks if not c["ok"]]
         if failed_checks:
             raise SystemExit(1)
