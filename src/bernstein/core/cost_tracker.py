@@ -60,6 +60,8 @@ class TokenUsage:
         agent_id: The agent session that incurred the cost.
         task_id: The task the agent was working on.
         timestamp: Unix timestamp of when the usage was recorded.
+        cache_read_tokens: Tokens served from prompt cache (read).
+        cache_write_tokens: Tokens written to prompt cache (creation).
     """
 
     input_tokens: int
@@ -70,8 +72,10 @@ class TokenUsage:
     task_id: str
     tenant_id: str = "default"
     timestamp: float = field(default_factory=time.time)
-    cache_hit: bool = False  # Prompt cache hit tracking
-    cached_tokens: int = 0  # Tokens served from cache
+    cache_hit: bool = False  # Prompt cache hit tracking (legacy)
+    cached_tokens: int = 0  # Tokens served from cache (legacy)
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dict."""
@@ -86,6 +90,8 @@ class TokenUsage:
             "timestamp": self.timestamp,
             "cache_hit": self.cache_hit,
             "cached_tokens": self.cached_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
         }
 
     @classmethod
@@ -102,6 +108,8 @@ class TokenUsage:
             timestamp=float(d.get("timestamp", 0.0)),
             cache_hit=bool(d.get("cache_hit", False)),
             cached_tokens=int(d.get("cached_tokens", 0)),
+            cache_read_tokens=int(d.get("cache_read_tokens", 0)),
+            cache_write_tokens=int(d.get("cache_write_tokens", 0)),
         )
 
 
@@ -148,28 +156,53 @@ class BudgetStatus:
 # ---------------------------------------------------------------------------
 
 
-def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+def estimate_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float:
     """Estimate cost in USD for a given model and token counts.
 
-    Uses the ``_MODEL_COST_USD_PER_1K`` pricing table from ``cost.py``.
-    The table stores a blended per-1k-token rate (input+output combined),
-    so we sum the tokens and multiply.
+    Uses detailed pricing from ``MODEL_COSTS_PER_1M_TOKENS`` if available,
+    otherwise falls back to the blended ``_MODEL_COST_USD_PER_1K`` table.
 
     Args:
         model: Model name (e.g. ``"sonnet"``, ``"opus"``).
-        input_tokens: Number of input tokens.
+        input_tokens: Number of input tokens (excluding cache read/write).
         output_tokens: Number of output tokens.
+        cache_read_tokens: Tokens served from prompt cache.
+        cache_write_tokens: Tokens written to prompt cache.
 
     Returns:
         Estimated cost in USD.
     """
+    from bernstein.core.cost import MODEL_COSTS_PER_1M_TOKENS
+
     model_lower = model.lower()
-    rate: float = 0.005  # safe fallback
-    for key, cost in _MODEL_COST_USD_PER_1K.items():
+    pricing = None
+    for key, costs in MODEL_COSTS_PER_1M_TOKENS.items():
         if key in model_lower:
-            rate = cost
+            pricing = costs
             break
-    total_tokens = input_tokens + output_tokens
+
+    if pricing:
+        cost = 0.0
+        # pricing is in $/1M tokens
+        cost += (input_tokens / 1_000_000.0) * pricing.get("input", 0.0)
+        cost += (output_tokens / 1_000_000.0) * pricing.get("output", 0.0)
+        cost += (cache_read_tokens / 1_000_000.0) * pricing.get("cache_read", pricing.get("input", 0.0))
+        cost += (cache_write_tokens / 1_000_000.0) * pricing.get("cache_write", pricing.get("input", 0.0))
+        return cost
+
+    # Fallback to blended rate
+    rate: float = 0.005  # safe fallback
+    for key, blended_cost in _MODEL_COST_USD_PER_1K.items():
+        if key in model_lower:
+            rate = blended_cost
+            break
+    total_tokens = input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
     return (total_tokens / 1000.0) * rate
 
 
@@ -224,6 +257,8 @@ class CostTracker:
         cost_usd: float | None = None,
         *,
         tenant_id: str = "default",
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> BudgetStatus:
         """Record token usage for an agent and return updated budget status.
 
@@ -237,13 +272,21 @@ class CostTracker:
             input_tokens: Input tokens consumed.
             output_tokens: Output tokens consumed.
             cost_usd: Explicit cost override; estimated if omitted.
+            cache_read_tokens: Tokens read from prompt cache.
+            cache_write_tokens: Tokens written to prompt cache.
 
         Returns:
             Current ``BudgetStatus`` after recording.
         """
         normalized_tenant = normalize_tenant_id(tenant_id)
         if cost_usd is None:
-            cost_usd = estimate_cost(model, input_tokens, output_tokens)
+            cost_usd = estimate_cost(
+                model,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+            )
 
         usage = TokenUsage(
             input_tokens=input_tokens,
@@ -253,6 +296,8 @@ class CostTracker:
             agent_id=agent_id,
             task_id=task_id,
             tenant_id=normalized_tenant,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
         self._usages.append(usage)
         self._spent_usd += cost_usd
@@ -273,6 +318,8 @@ class CostTracker:
         total_cost_usd: float | None = None,
         *,
         tenant_id: str = "default",
+        total_cache_read_tokens: int = 0,
+        total_cache_write_tokens: int = 0,
     ) -> float:
         """Record cumulative token usage for one agent/task pair.
 
@@ -286,24 +333,41 @@ class CostTracker:
             total_input_tokens: Total prompt tokens seen so far.
             total_output_tokens: Total completion tokens seen so far.
             total_cost_usd: Optional cumulative cost observed so far.
+            total_cache_read_tokens: Total prompt cache read tokens.
+            total_cache_write_tokens: Total prompt cache write tokens.
 
         Returns:
             Newly-recorded delta cost in USD (0.0 when no new tokens).
         """
         key = (agent_id, task_id, model)
-        prev_input, prev_output = self._cumulative_tokens.get(key, (0, 0))
+        # We need to track more than just input/output now.
+        # Format in _cumulative_tokens: (input, output, cache_read, cache_write)
+        # Backward compat: handle 2-tuple from old persisted state.
+        prev = self._cumulative_tokens.get(key, (0, 0, 0, 0))
+        if len(prev) == 2:
+            prev_input, prev_output = prev
+            prev_cache_read, prev_cache_write = 0, 0
+        else:
+            prev_input, prev_output, prev_cache_read, prev_cache_write = prev
+
         cur_input = max(0, int(total_input_tokens))
         cur_output = max(0, int(total_output_tokens))
+        cur_cache_read = max(0, int(total_cache_read_tokens))
+        cur_cache_write = max(0, int(total_cache_write_tokens))
+
         delta_input = max(0, cur_input - prev_input)
         delta_output = max(0, cur_output - prev_output)
-        if delta_input == 0 and delta_output == 0:
+        delta_cache_read = max(0, cur_cache_read - prev_cache_read)
+        delta_cache_write = max(0, cur_cache_write - prev_cache_write)
+
+        if all(d == 0 for d in (delta_input, delta_output, delta_cache_read, delta_cache_write)):
             return 0.0
 
         delta_cost: float | None = None
         if total_cost_usd is not None:
-            total_tokens = cur_input + cur_output
-            prev_tokens = prev_input + prev_output
-            delta_tokens = (cur_input + cur_output) - prev_tokens
+            total_tokens = cur_input + cur_output + cur_cache_read + cur_cache_write
+            prev_tokens = prev_input + prev_output + prev_cache_read + prev_cache_write
+            delta_tokens = total_tokens - prev_tokens
             if total_tokens > 0 and delta_tokens > 0:
                 delta_cost = float(total_cost_usd) * (delta_tokens / total_tokens)
             elif prev_tokens == 0:
@@ -318,8 +382,10 @@ class CostTracker:
             output_tokens=delta_output,
             cost_usd=delta_cost,
             tenant_id=normalize_tenant_id(tenant_id),
+            cache_read_tokens=delta_cache_read,
+            cache_write_tokens=delta_cache_write,
         )
-        self._cumulative_tokens[key] = (cur_input, cur_output)
+        self._cumulative_tokens[key] = (cur_input, cur_output, cur_cache_read, cur_cache_write)
         return self._spent_usd - before
 
     # ---- status -----------------------------------------------------------
@@ -399,6 +465,12 @@ class CostTracker:
             "critical_threshold": self.critical_threshold,
             "hard_stop_threshold": self.hard_stop_threshold,
             "usages": [u.to_dict() for u in self._usages],
+            "cumulative_tokens": {
+                # JSON doesn't support tuple keys; convert to string.
+                # key is (agent_id, task_id, model)
+                "|".join(k): list(v)
+                for k, v in self._cumulative_tokens.items()
+            },
         }
         file_path.write_text(json.dumps(data, indent=2))
         return file_path
@@ -435,6 +507,14 @@ class CostTracker:
                     tracker._spent_by_agent.get(usage.agent_id, 0.0) + usage.cost_usd
                 )
                 tracker._spent_by_model[usage.model] = tracker._spent_by_model.get(usage.model, 0.0) + usage.cost_usd
+
+            # Restore cumulative token tracking for delta-safe recording
+            raw_cumul = data.get("cumulative_tokens", {})
+            for k_str, v_list in raw_cumul.items():
+                key = tuple(k_str.split("|"))
+                if len(key) == 3:
+                    tracker._cumulative_tokens[key] = tuple(v_list)  # type: ignore[assignment]
+
             return tracker
         except Exception as exc:
             from bernstein.core.sanitize import sanitize_log
@@ -526,10 +606,18 @@ class CostTracker:
         data: dict[str, dict[str, Any]] = {}
         for u in self._usages:
             if u.model not in data:
-                data[u.model] = {"total": 0.0, "tokens": 0, "count": 0}
+                data[u.model] = {
+                    "total": 0.0,
+                    "tokens": 0,
+                    "count": 0,
+                    "cache_read": 0,
+                    "cache_write": 0,
+                }
             data[u.model]["total"] += u.cost_usd
-            data[u.model]["tokens"] += u.input_tokens + u.output_tokens
+            data[u.model]["tokens"] += u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens
             data[u.model]["count"] += 1
+            data[u.model]["cache_read"] += u.cache_read_tokens
+            data[u.model]["cache_write"] += u.cache_write_tokens
 
         return [
             ModelCostBreakdown(
@@ -537,6 +625,8 @@ class CostTracker:
                 total_cost_usd=round(d["total"], 6),
                 total_tokens=int(d["tokens"]),
                 invocation_count=int(d["count"]),
+                cache_read_tokens=int(d["cache_read"]),
+                cache_write_tokens=int(d["cache_write"]),
             )
             for model, d in sorted(data.items(), key=lambda kv: kv[1]["total"], reverse=True)
         ]

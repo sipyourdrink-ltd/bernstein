@@ -41,27 +41,29 @@ MIN_OBSERVATIONS: int = 5  # arms trusted only after this many samples
 QUALITY_THRESHOLD: float = 0.80  # minimum success_rate to consider an arm
 
 
-class ModelUsdPer1MTokens(TypedDict):
+class ModelUsdPer1MTokens(TypedDict, total=False):
     """USD per 1 million tokens (list prices, approximate)."""
 
     input: float
     output: float
+    cache_read: float | None
+    cache_write: float | None
 
 
 # Per-model input/output pricing per 1M tokens (USD). Keys match substring checks in ``_model_cost``.
-# Updated 2026-03-28 from official API pricing pages (same sources as ``_MODEL_COST_USD_PER_1K``).
+# Updated 2026-03-28 from official API pricing pages.
 MODEL_COSTS_PER_1M_TOKENS: dict[str, ModelUsdPer1MTokens] = {
-    "haiku": {"input": 1.0, "output": 5.0},
-    "sonnet": {"input": 3.0, "output": 15.0},
-    "opus": {"input": 5.0, "output": 25.0},
+    "haiku": {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_write": 1.25},
+    "sonnet": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
+    "opus": {"input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write": 6.25},
     "gpt-5.4": {"input": 2.5, "output": 15.0},
     "gpt-5.4-mini": {"input": 0.75, "output": 4.5},
     "o3": {"input": 2.0, "output": 8.0},
     "o4-mini": {"input": 1.1, "output": 4.4},
-    "gemini-3": {"input": 3.0, "output": 15.0},
-    "gemini-2.5-pro": {"input": 1.25, "output": 10.0},
-    "gemini-2.5-flash": {"input": 0.3, "output": 2.5},
-    "gemini-3-flash": {"input": 0.5, "output": 3.0},
+    "gemini-3": {"input": 3.0, "output": 15.0, "cache_read": 0.1},
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.0, "cache_read": 0.05},
+    "gemini-2.5-flash": {"input": 0.3, "output": 2.5, "cache_read": 0.01},
+    "gemini-3-flash": {"input": 0.5, "output": 3.0, "cache_read": 0.02},
     "qwen3-coder": {"input": 0.22, "output": 0.9},
     # Blended-only entries in ``_MODEL_COST_USD_PER_1K`` — approximate 40/60 input/output split of total $/1M.
     "qwen-max": {"input": 0.8, "output": 1.2},
