@@ -770,7 +770,8 @@ class Orchestrator:
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             logger.warning("ingest_backlog failed: %s", exc)
 
-        self._run_scheduled_dependency_scan()
+        if self._running:
+            self._run_scheduled_dependency_scan()
 
         # 1. Fetch all tasks in a single bulk request, bucketed client-side.
         try:
