@@ -26,7 +26,7 @@ class AlertRule:
     threshold: float
     operator: Literal["gt", "lt", "eq", "gte", "lte"] = "gt"
     channel: AlertChannel = "slack"
-    channel_config: dict[str, Any] = field(default_factory=dict)
+    channel_config: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
     cooldown_seconds: int = 300
     enabled: bool = True
 
@@ -35,7 +35,7 @@ class AlertRule:
 class AlertConfig:
     """Alert configuration from bernstein.yaml."""
 
-    rules: list[AlertRule] = field(default_factory=list)
+    rules: list[AlertRule] = field(default_factory=lambda: list[AlertRule]())
     default_cooldown: int = 300
     enabled: bool = True
 
@@ -61,7 +61,7 @@ def load_alert_config(config_path: Path) -> AlertConfig:
         if not alerts_data:
             return AlertConfig()
 
-        rules = []
+        rules: list[AlertRule] = []
         for rule_data in alerts_data.get("rules", []):
             rules.append(
                 AlertRule(
@@ -108,7 +108,7 @@ class AlertManager:
 
         import time
 
-        triggered = []
+        triggered: list[AlertRule] = []
         now = time.time()
 
         for rule in self._config.rules:

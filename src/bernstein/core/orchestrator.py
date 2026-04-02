@@ -2879,10 +2879,11 @@ if __name__ == "__main__":
     # Configure logging so errors are visible in spawner.log (stdout/stderr)
     log_dir = workdir / ".sdd" / "runtime"
     log_dir.mkdir(parents=True, exist_ok=True)
-    
+
     from bernstein.core.json_logging import setup_json_logging
+
     setup_json_logging()
-    
+
     if not any(isinstance(h, logging.StreamHandler) for h in logging.getLogger().handlers):
         logging.basicConfig(
             level=logging.INFO,
