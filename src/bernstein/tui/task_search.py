@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Input
 
@@ -25,7 +25,7 @@ class TaskSearchInput(Input):
     }
     """
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, placeholder="Search tasks (by title, role, status, tags)...", **kwargs)
 
     def on_key(self, event: Key) -> None:

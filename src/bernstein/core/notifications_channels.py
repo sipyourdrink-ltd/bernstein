@@ -34,11 +34,11 @@ class NotificationConfig:
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_from: str | None = None
-    smtp_to: list[str] = field(default_factory=list)
+    smtp_to: list[str] = field(default_factory=lambda: list[str]())
     desktop_enabled: bool = False
     quiet_start: str = "22:00"
     quiet_end: str = "08:00"
-    events: list[NotificationEvent] = field(default_factory=list)
+    events: list[NotificationEvent] = field(default_factory=lambda: list[NotificationEvent]())
 
 
 @dataclass
@@ -50,7 +50,7 @@ class Notification:
     message: str
     task_id: str | None = None
     cost_usd: float | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
 
 
 class NotificationSender:
@@ -99,28 +99,24 @@ class NotificationSender:
             "cost_alert": "warning",
         }.get(notification.event, "#439FE0")
 
-        payload = {
+        fields: list[dict[str, str | bool]] = [
+            {"title": "Event", "value": notification.event, "short": True},
+        ]
+        if notification.task_id:
+            fields.append({"title": "Task ID", "value": notification.task_id, "short": True})
+        if notification.cost_usd is not None:
+            fields.append({"title": "Cost", "value": f"${notification.cost_usd:.2f}", "short": True})
+
+        payload: dict[str, Any] = {
             "attachments": [
                 {
                     "color": color,
                     "title": notification.title,
                     "text": notification.message,
-                    "fields": [
-                        {"title": "Event", "value": notification.event, "short": True},
-                    ],
+                    "fields": fields,
                 }
             ]
         }
-
-        if notification.task_id:
-            payload["attachments"][0]["fields"].append(
-                {"title": "Task ID", "value": notification.task_id, "short": True}
-            )
-
-        if notification.cost_usd is not None:
-            payload["attachments"][0]["fields"].append(
-                {"title": "Cost", "value": f"${notification.cost_usd:.2f}", "short": True}
-            )
 
         resp = httpx.post(self._config.slack_webhook, json=payload, timeout=10.0)
         resp.raise_for_status()
@@ -133,16 +129,16 @@ class NotificationSender:
         subject = f"[Bernstein] {notification.title}"
         body = f"""
 Event: {notification.event}
-Task: {notification.task_id or 'N/A'}
+Task: {notification.task_id or "N/A"}
 
 {notification.message}
 
-Cost: {f'${notification.cost_usd:.2f}' if notification.cost_usd is not None else 'N/A'}
+Cost: {f"${notification.cost_usd:.2f}" if notification.cost_usd is not None else "N/A"}
 """
 
         msg = MIMEText(body)
         msg["Subject"] = subject
-        msg["From"] = self._config.smtp_from or self._config.smtp_user
+        msg["From"] = self._config.smtp_from or self._config.smtp_user or ""
         msg["To"] = ", ".join(self._config.smtp_to)
 
         with smtplib.SMTP(self._config.smtp_host, self._config.smtp_port) as server:
@@ -158,9 +154,12 @@ Cost: {f'${notification.cost_usd:.2f}' if notification.cost_usd is not None else
             subprocess.run(
                 [
                     "terminal-notifier",
-                    "-title", "Bernstein",
-                    "-subtitle", notification.event,
-                    "-message", notification.message,
+                    "-title",
+                    "Bernstein",
+                    "-subtitle",
+                    notification.event,
+                    "-message",
+                    notification.message,
                 ],
                 timeout=5.0,
                 check=False,

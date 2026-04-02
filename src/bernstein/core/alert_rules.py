@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
+import operator as _op
 from dataclasses import dataclass, field
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -132,14 +132,6 @@ class AlertManager:
 
         return triggered
 
-    _OPERATORS: dict[str, Callable[[float, float], bool]] = {
-        "gt": float.__gt__,
-        "lt": float.__lt__,
-        "eq": float.__eq__,  # type: ignore[dict-item]
-        "gte": float.__ge__,
-        "lte": float.__le__,
-    }
-
     def _evaluate_condition(
         self,
         value: float,
@@ -147,8 +139,9 @@ class AlertManager:
         operator: Literal["gt", "lt", "eq", "gte", "lte"],
     ) -> bool:
         """Evaluate alert condition."""
-        op = self._OPERATORS.get(operator)
-        return op(value, threshold) if op else False
+        ops = {"gt": _op.gt, "lt": _op.lt, "eq": _op.eq, "gte": _op.ge, "lte": _op.le}
+        fn = ops.get(operator)
+        return fn(value, threshold) if fn else False
 
     def get_alert_message(self, rule: AlertRule, value: float) -> str:
         """Generate alert message for triggered rule.
@@ -160,7 +153,4 @@ class AlertManager:
         Returns:
             Alert message string.
         """
-        return (
-            f"Alert: {rule.name} - {rule.metric} is {value:.3f} "
-            f"(threshold: {rule.operator} {rule.threshold})"
-        )
+        return f"Alert: {rule.name} - {rule.metric} is {value:.3f} (threshold: {rule.operator} {rule.threshold})"
