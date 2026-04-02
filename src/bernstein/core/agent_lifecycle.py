@@ -90,17 +90,20 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
             continue
         if not orch._spawner.check_alive(session):
             abort_reason, abort_detail = classify_agent_abort_reason(session)
+            transition_reason = TransitionReason.ABORTED
+            if session.finish_reason == "max_output_tokens":
+                transition_reason = TransitionReason.MAX_OUTPUT_TOKENS
+
             transition_agent(
                 session,
                 "dead",
                 actor="agent_lifecycle",
                 reason="process not alive",
-                transition_reason=TransitionReason.ABORTED,
+                transition_reason=transition_reason,
                 abort_reason=abort_reason,
                 abort_detail=abort_detail,
-                finish_reason="agent_exit",
+                finish_reason=session.finish_reason or "agent_exit",
             )
-
             # Record failure timestamp for cooldown
             if session.role:
                 # Use session.id or adapter name if available.

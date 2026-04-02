@@ -563,7 +563,27 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             w.fix,
         )
 
-    # 16. Compliance mode prerequisites
+    # 16. Plugin loading errors
+    from bernstein.plugin_errors import get_plugin_errors
+
+    plugin_errors = get_plugin_errors().get_errors()
+    if plugin_errors:
+        for pe in plugin_errors:
+            detail = f"[{pe.phase}] {pe.message}"
+            _check(
+                f"Plugin: {pe.plugin_name}",
+                ok=False,
+                detail=detail,
+                fix=f"Check plugin {pe.plugin_name} configuration",
+            )
+    else:
+        _check(
+            "Plugin loading",
+            ok=True,
+            detail="no errors",
+        )
+
+    # 17. Compliance mode prerequisites
     from bernstein.core.compliance import load_compliance_config
 
     compliance_cfg = load_compliance_config(workdir / ".sdd")

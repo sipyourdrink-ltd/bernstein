@@ -143,13 +143,9 @@ def capture_settings(workdir: Path | None = None) -> SettingsSnapshot:
         if env_val is not None:
             # Try to convert to a typed value
             typed = _coerce_type(env_val)
-            snapshot.settings.append(
-                SettingValue(name=name, value=typed, source="env", raw_value=env_val)
-            )
+            snapshot.settings.append(SettingValue(name=name, value=typed, source="env", raw_value=env_val))
         elif cfg_val is not None:
-            snapshot.settings.append(
-                SettingValue(name=name, value=cfg_val, source="config")
-            )
+            snapshot.settings.append(SettingValue(name=name, value=cfg_val, source="config"))
         else:
             snapshot.settings.append(
                 SettingValue(
