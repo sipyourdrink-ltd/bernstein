@@ -17,6 +17,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from starlette.responses import StreamingResponse
 
+from bernstein.core.home import BernsteinHome, resolve_config_bundle
 from bernstein.core.prometheus import generate_latest, registry, update_metrics_from_status
 from bernstein.core.runtime_state import (
     current_git_branch,
@@ -154,6 +155,7 @@ def _last_completion(store: TaskStore) -> dict[str, Any] | None:
 _runtime_cache: dict[str, Any] = {}
 _runtime_cache_ts: float = 0.0
 _RUNTIME_CACHE_TTL: float = 10.0  # Cache expensive ops for 10s
+_STATUS_CONFIG_KEYS: tuple[str, ...] = ("cli", "model", "effort", "budget", "max_agents")
 
 
 def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
@@ -198,6 +200,11 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
         else 0.0,
         "config_hash": str(config_state.get("config_hash", "")) if config_state else "",
         "config_last_diff": config_state.get("last_diff") if config_state else None,
+        "config_provenance": resolve_config_bundle(
+            home=BernsteinHome.default(),
+            project_dir=workdir,
+            keys=_STATUS_CONFIG_KEYS,
+        ),
     }
     _runtime_cache_ts = now
     return _runtime_cache

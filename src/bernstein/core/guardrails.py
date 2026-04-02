@@ -126,7 +126,7 @@ def _parse_diff_files(diff: str) -> list[str]:
 
 def _is_file_deleted(diff: str, filepath: str) -> bool:
     """Return True if *filepath* was deleted in the diff."""
-    header_prefix = f"diff --git f{filepath}"
+    header_prefix = f"diff --git a/{filepath}"
     in_file = False
     for line in diff.splitlines():
         if line.startswith("diff --git "):

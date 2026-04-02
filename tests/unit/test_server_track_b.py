@@ -86,6 +86,37 @@ async def test_status_includes_runtime_summary_block(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_status_includes_config_provenance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BERNSTEIN_CLI", "qwen")
+    app = _make_app(tmp_path)
+    app_state = cast(Any, app.state)
+    app_state.workdir = tmp_path
+    home_dir = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home_dir))
+    home_config = home_dir / ".bernstein" / "config.yaml"
+    home_config.parent.mkdir(parents=True)
+    home_config.write_text("cli: codex\n", encoding="utf-8")
+    sdd_config = tmp_path / ".sdd" / "config.yaml"
+    sdd_config.parent.mkdir(parents=True, exist_ok=True)
+    sdd_config.write_text("cli: gemini\nmax_agents: 8\n", encoding="utf-8")
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/status")
+
+    assert response.status_code == 200
+    provenance = response.json()["runtime"]["config_provenance"]
+    assert provenance["cli"]["source"] == "session"
+    assert [layer["source"] for layer in provenance["cli"]["source_chain"]] == [
+        "session",
+        "project",
+        "global",
+        "default",
+    ]
+    assert provenance["max_agents"]["source"] == "project"
+
+
+@pytest.mark.anyio
 async def test_routing_bandit_invalid_state_returns_generic_error(tmp_path: Path) -> None:
     app = _make_app(tmp_path)
     app_state = cast(Any, app.state)

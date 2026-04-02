@@ -135,12 +135,49 @@ class TestResolveConfig:
         result = resolve_config("cli", home=home, project_dir=tmp_path)
         assert "value" in result
         assert "source" in result
+        assert "source_chain" in result
 
     def test_unknown_key_returns_none_default(self, tmp_path: Path) -> None:
         home = BernsteinHome(tmp_path / ".bernstein")
         result = resolve_config("nonexistent", home=home, project_dir=tmp_path)
         assert result["value"] is None
         assert result["source"] == "default"
+
+    def test_session_override_wins_and_appears_in_chain(self, tmp_path: Path) -> None:
+        home = BernsteinHome(tmp_path / ".bernstein")
+        home.set("cli", "codex")
+        sdd_config = tmp_path / ".sdd" / "config.yaml"
+        sdd_config.parent.mkdir(parents=True)
+        sdd_config.write_text("cli: gemini\n")
+
+        result = resolve_config(
+            "cli",
+            home=home,
+            project_dir=tmp_path,
+            session_overrides={"cli": "qwen"},
+        )
+
+        assert result["value"] == "qwen"
+        assert result["source"] == "session"
+        assert [layer["source"] for layer in result["source_chain"]] == [
+            "session",
+            "project",
+            "global",
+            "default",
+        ]
+
+    def test_sensitive_keys_are_redacted_in_source_chain(self, tmp_path: Path) -> None:
+        home = BernsteinHome(tmp_path / ".bernstein")
+
+        result = resolve_config(
+            "api_key",
+            home=home,
+            project_dir=tmp_path,
+            session_overrides={"api_key": "secret-value"},
+        )
+
+        assert result["value"] == "secret-value"
+        assert result["source_chain"][0]["redacted_value"] == "***REDACTED***"
 
 
 # ---------------------------------------------------------------------------
