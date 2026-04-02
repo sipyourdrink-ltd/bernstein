@@ -556,6 +556,48 @@ async def token_histogram(request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/observability/queue-depth")
+async def get_queue_depth(request: Request, limit: int = 100) -> dict[str, Any]:
+    """Return task queue depth over time.
+
+    Returns last N records of queue depth snapshots.
+
+    Args:
+        request: FastAPI request.
+        limit: Maximum number of records to return (default 100).
+
+    Returns:
+        List of queue depth snapshots with timestamps.
+    """
+    workdir = _get_workdir(request)
+    metrics_path = workdir / ".sdd" / "metrics" / "queue_depth.jsonl"
+
+    if not metrics_path.exists():
+        return {"records": [], "total": 0}
+
+    records: list[dict[str, Any]] = []
+    try:
+        for line in metrics_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+                records.append(data)
+            except json.JSONDecodeError:
+                continue
+
+    except OSError:
+        return {"records": [], "total": 0}
+
+    # Return last N records
+    records = records[-limit:]
+
+    return {
+        "records": records,
+        "total": len(records),
+    }
+
+
 @router.get("/changelog")
 async def get_changelog(request: Request, days: int = 30) -> dict[str, Any]:
     """Generate changelog from completed tasks.

@@ -32,6 +32,7 @@ class MetricType(Enum):
     FREE_TIER_USAGE = "free_tier_usage"
     FAST_PATH = "fast_path"
     PARALLELISM_LEVEL = "parallelism_level"
+    QUEUE_DEPTH = "queue_depth"
 
 
 class ProviderStatus(Enum):
@@ -852,6 +853,31 @@ class MetricsCollector:
             self._update_provider_health(provider, True)
 
         self._flush_buffer()
+
+    def record_queue_depth(
+        self,
+        queue_depth_open: int,
+        queue_depth_claimed: int,
+        queue_depth_failed: int,
+    ) -> None:
+        """Record task queue depth snapshot.
+
+        Called every orchestrator tick to track queue depth over time.
+
+        Args:
+            queue_depth_open: Number of open tasks.
+            queue_depth_claimed: Number of claimed tasks.
+            queue_depth_failed: Number of failed tasks.
+        """
+        self._write_metric_point(
+            MetricType.QUEUE_DEPTH,
+            float(queue_depth_open + queue_depth_claimed + queue_depth_failed),
+            {
+                "open": str(queue_depth_open),
+                "claimed": str(queue_depth_claimed),
+                "failed": str(queue_depth_failed),
+            },
+        )
 
     # -- Query Methods -------------------------------------------------------
 
