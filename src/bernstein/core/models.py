@@ -106,6 +106,7 @@ class TaskStatus(Enum):
     DONE = "done"
     FAILED = "failed"
     BLOCKED = "blocked"
+    WAITING_FOR_SUBTASKS = "waiting_for_subtasks"
     CANCELLED = "cancelled"
     ORPHANED = "orphaned"  # Agent crashed mid-task; pending crash recovery
     PENDING_APPROVAL = "pending_approval"  # Completed; awaiting human approval before taking effect
@@ -201,6 +202,7 @@ class Task:
     task_type: TaskType = TaskType.STANDARD  # Type of task
     upgrade_details: UpgradeProposalDetails | None = None  # For upgrade proposals
     depends_on: list[str] = field(default_factory=list[str])
+    parent_task_id: str | None = None
     completion_signals: list[CompletionSignal] = field(default_factory=list[CompletionSignal])
     owned_files: list[str] = field(default_factory=list[str])
     assigned_agent: str | None = None
@@ -274,6 +276,7 @@ class Task:
             task_type=task_type,
             upgrade_details=upgrade_details,
             depends_on=raw.get("depends_on", []),
+            parent_task_id=raw.get("parent_task_id"),
             completion_signals=signals,
             owned_files=raw.get("owned_files", []),
             assigned_agent=raw.get("assigned_agent"),

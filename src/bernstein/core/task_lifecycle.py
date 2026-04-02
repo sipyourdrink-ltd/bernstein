@@ -579,6 +579,7 @@ def auto_decompose_task(
     client: httpx.Client,
     server_url: str,
     decomposed_task_ids: set[str],
+    workdir: Path | None = None,
 ) -> None:
     """Queue a large task for decomposition by spawning a planner manager.
 
@@ -593,6 +594,31 @@ def auto_decompose_task(
         decomposed_task_ids: Set of decomposed task IDs (mutated in-place).
     """
     base = server_url
+
+    if workdir is not None:
+        try:
+            from bernstein import get_templates_dir
+            from bernstein.core.manager import ManagerAgent
+            from bernstein.core.task_splitter import TaskSplitter
+
+            created_ids = TaskSplitter(client=client, server_url=base).split(
+                task,
+                ManagerAgent(
+                    server_url=server_url,
+                    workdir=workdir,
+                    templates_dir=get_templates_dir(workdir),
+                ),
+            )
+            decomposed_task_ids.add(task.id)
+            logger.info(
+                "Auto-decompose: directly created %d subtasks for task %s ('%s')",
+                len(created_ids),
+                task.id,
+                task.title,
+            )
+            return
+        except Exception as exc:
+            logger.warning("Auto-decompose direct split failed for %s, falling back to planner task: %s", task.id, exc)
 
     manager_description = (
         f"A large task needs to be decomposed into 3-5 smaller, atomic subtasks.\n\n"
@@ -848,6 +874,7 @@ def claim_and_spawn_batches(
                         client=orch._client,
                         server_url=base,
                         decomposed_task_ids=orch._decomposed_task_ids,
+                        workdir=orch._workdir,
                     )
             continue
 
@@ -865,6 +892,7 @@ def claim_and_spawn_batches(
                 client=orch._client,
                 server_url=base,
                 decomposed_task_ids=orch._decomposed_task_ids,
+                workdir=orch._workdir,
             )
             continue
 

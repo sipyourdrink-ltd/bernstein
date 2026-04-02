@@ -60,6 +60,7 @@ class TaskRecord(TypedDict):
     task_type: str
     upgrade_details: dict[str, Any] | None
     depends_on: list[str]
+    parent_task_id: str | None
     depends_on_repo: str | None
     owned_files: list[str]
     assigned_agent: str | None
@@ -131,6 +132,7 @@ class TaskCreateRequest(Protocol):
     @property
     def depends_on(self) -> Sequence[str]: ...
 
+    parent_task_id: str | None
     depends_on_repo: str | None
 
     @property
@@ -530,6 +532,7 @@ class TaskStore:
             "task_type": task.task_type.value,
             "upgrade_details": asdict(task.upgrade_details) if task.upgrade_details else None,
             "depends_on": task.depends_on,
+            "parent_task_id": task.parent_task_id,
             "depends_on_repo": task.depends_on_repo,
             "owned_files": task.owned_files,
             "assigned_agent": task.assigned_agent,
@@ -642,6 +645,7 @@ class TaskStore:
             complexity=complexity_val,
             estimated_minutes=req.estimated_minutes,
             depends_on=req.depends_on,
+            parent_task_id=getattr(req, "parent_task_id", None),
             owned_files=req.owned_files,
             tenant_id=normalize_tenant_id(getattr(req, "tenant_id", "default")),
             cell_id=req.cell_id,
@@ -878,6 +882,26 @@ class TaskStore:
             completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
+            await self._complete_parent_if_ready(task.parent_task_id)
+            return task
+
+    async def wait_for_subtasks(self, task_id: str, subtask_count: int) -> Task:
+        """Mark a parent task as waiting for its newly created subtasks."""
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            self._index_remove(task)
+            transition_task(
+                task,
+                TaskStatus.WAITING_FOR_SUBTASKS,
+                actor="task_store",
+                reason=f"split into {subtask_count} subtasks",
+            )
+            task.result_summary = f"Split into {subtask_count} subtasks"
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
             return task
 
     async def fail(self, task_id: str, reason: str) -> Task:
@@ -931,6 +955,30 @@ class TaskStore:
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
             return task
+
+    async def _complete_parent_if_ready(self, parent_task_id: str | None) -> None:
+        """Complete a waiting parent task when all of its subtasks are done."""
+        if parent_task_id is None:
+            return
+        parent = self._tasks.get(parent_task_id)
+        if parent is None or parent.status != TaskStatus.WAITING_FOR_SUBTASKS:
+            return
+        subtasks = [task for task in self._tasks.values() if task.parent_task_id == parent_task_id]
+        if not subtasks or any(task.status != TaskStatus.DONE for task in subtasks):
+            return
+        self._index_remove(parent)
+        transition_task(
+            parent,
+            TaskStatus.DONE,
+            actor="task_store",
+            reason="all subtasks completed",
+        )
+        parent.result_summary = f"Completed via {len(subtasks)} subtasks"
+        parent.version += 1
+        self._index_add(parent)
+        completed_at = time.time()
+        await self._append_jsonl(self._task_to_record(parent))
+        await self._append_archive(parent, completed_at)
 
     async def add_progress(self, task_id: str, message: str, percent: int) -> Task:
         """Append an intermediate progress update to a task.

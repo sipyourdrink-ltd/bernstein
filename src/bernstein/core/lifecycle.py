@@ -89,6 +89,7 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.PLANNED, TaskStatus.CANCELLED): _always,
     # Claiming
     (TaskStatus.OPEN, TaskStatus.CLAIMED): _always,
+    (TaskStatus.OPEN, TaskStatus.WAITING_FOR_SUBTASKS): _always,
     (TaskStatus.OPEN, TaskStatus.CANCELLED): _always,
     # Work progression from CLAIMED
     (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS): _always,
@@ -111,6 +112,8 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     # Recovery from blocked
     (TaskStatus.BLOCKED, TaskStatus.OPEN): _always,
     (TaskStatus.BLOCKED, TaskStatus.CANCELLED): _always,
+    (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.DONE): _always,
+    (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.CANCELLED): _always,
     # Retry from failed
     (TaskStatus.FAILED, TaskStatus.OPEN): _always,
 }

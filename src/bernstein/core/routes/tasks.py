@@ -57,6 +57,7 @@ from bernstein.core.server import (
     TaskStealRequest,
     TaskStealResponse,
     TaskStore,
+    TaskWaitForSubtasksRequest,
     a2a_message_to_response,
     a2a_task_to_response,
     node_to_response,
@@ -260,6 +261,25 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))
         get_plugin_manager().fire_task_completed(task_id=task.id, role=task.role, result_summary=body.result_summary)
         return task_to_response(task)
+
+
+@router.post("/tasks/{task_id}/wait-for-subtasks", response_model=TaskResponse)
+async def wait_for_subtasks(task_id: str, body: TaskWaitForSubtasksRequest, request: Request) -> TaskResponse:
+    """Mark a parent task as waiting until its generated subtasks complete."""
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+    try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
+        task = await store.wait_for_subtasks(task_id, body.subtask_count)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    except IllegalTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
+    return task_to_response(task)
 
 
 @router.post("/tasks/{task_id}/fail", response_model=TaskResponse)
