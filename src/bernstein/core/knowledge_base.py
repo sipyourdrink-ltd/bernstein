@@ -258,50 +258,54 @@ class TaskContextBuilder:
         """Build compressed context for a task batch.
 
         Uses ContextCompressor to select only task-relevant files,
-        then generates rich context for those files.  Falls back to
-        task-owned file context if compression is unavailable.
-
-        Includes owned_files from parent tasks to ensure context continuity.
+        then generates rich context for those files. Enforces category
+        budgets for files and RAG search results.
 
         Args:
             tasks: Batch of tasks to build context for.
             store: Optional TaskStore to look up parent tasks.
 
         Returns:
-            Formatted context string with compressed file summaries.
+            Formatted context string with compressed file summaries and RAG.
         """
-        from bernstein.core.context_compression import ContextCompressor
+        from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS, ContextCompressor
+        from bernstein.core.rag import CodebaseIndexer
 
         sections: list[str] = []
+        file_budget = DEFAULT_CATEGORY_BUDGETS.get("files", 15_000)
+        rag_budget = DEFAULT_CATEGORY_BUDGETS.get("rag", 10_000)
 
         # 1. Expand tasks with parent owned_files if store is available
         if store is not None:
             for task in tasks:
                 if task.parent_task_id:
                     try:
-                        # We use sync wrapper or just check if it's in memory if possible
-                        # For this implementation, we assume store has a way to get task by id
                         parent = getattr(store, "get_task", lambda tid: None)(task.parent_task_id)
                         if parent:
-                            # Inherit owned_files from parent
                             task.owned_files = list(set(task.owned_files) | set(parent.owned_files))
                     except Exception:
                         continue
 
+        # 2. File context with budget enforcement
         try:
             compressor = ContextCompressor(self.workdir)
             result = compressor.compress(tasks, max_files=15)
 
-            reduction_pct = (1.0 - result.compression_ratio) * 100
-            sections.append(
-                f"## Context (auto-generated)\n"
-                f"~{result.original_tokens} → ~{result.compressed_tokens} tokens "
-                f"(**{reduction_pct:.0f}% reduction**, {len(result.selected_files)} files)\n"
-            )
+            file_sections: list[str] = []
+            current_file_tokens = 0
 
-            for fpath in result.selected_files[:10]:
+            for fpath in result.selected_files:
                 file_ctx = self.file_context(fpath, max_chars=600)
-                sections.append(file_ctx)
+                tokens = len(file_ctx) // 4
+                if current_file_tokens + tokens > file_budget:
+                    logger.info("Truncating file context: reached budget of %d tokens", file_budget)
+                    break
+                file_sections.append(file_ctx)
+                current_file_tokens += tokens
+
+            if file_sections:
+                sections.append("## Project Context (File Summaries)")
+                sections.extend(file_sections)
 
         except Exception as exc:
             logger.warning("ContextCompressor failed, falling back to uncompressed context: %s", exc)
@@ -310,6 +314,37 @@ class TaskContextBuilder:
                 all_owned.extend(getattr(task, "owned_files", []))
             if all_owned:
                 sections.append(self.task_context(all_owned))
+
+        # 3. RAG Search with budget enforcement
+        try:
+            indexer = CodebaseIndexer(self.workdir)
+            query = " ".join(t.title for t in tasks)
+            search_results = indexer.search(query, limit=10)
+
+            rag_sections: list[str] = []
+            current_rag_tokens = 0
+
+            if search_results:
+                rag_sections.append("## Relevant Code Snippets (RAG)")
+                for res in search_results:
+                    # Format RAG result
+                    entry = (
+                        f"### {res.file_path} (lines {res.line_start}-{res.line_end})\n"
+                        f"Symbols: {res.symbols}\n"
+                        f"```\n{res.snippet}\n```\n"
+                    )
+                    tokens = len(entry) // 4
+                    if current_rag_tokens + tokens > rag_budget:
+                        logger.info("Truncating RAG context: reached budget of %d tokens", rag_budget)
+                        break
+                    rag_sections.append(entry)
+                    current_rag_tokens += tokens
+
+                if len(rag_sections) > 1:  # More than just the header
+                    sections.extend(rag_sections)
+
+        except Exception as exc:
+            logger.debug("RAG search failed: %s", exc)
 
         return "\n".join(sections) if sections else ""
 

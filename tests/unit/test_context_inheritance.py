@@ -36,6 +36,7 @@ def test_child_task_inherits_parent_context(tmp_path: Path) -> None:
             assert "main.py" in child.owned_files
 
             # Verify mock_task_ctx was called with inherited files
+            assert mock_task_ctx.called
             call_args = mock_task_ctx.call_args[0][0]
             assert "auth.py" in call_args
             assert "main.py" in call_args
