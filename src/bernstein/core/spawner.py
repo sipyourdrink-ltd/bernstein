@@ -22,9 +22,8 @@ from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
 from bernstein.core.heartbeat import HeartbeatMonitor
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
-from bernstein.core.models import AgentSession, IsolationMode, ModelConfig, Task
+from bernstein.core.models import AbortReason, AgentSession, IsolationMode, ModelConfig, Task, TransitionReason
 from bernstein.core.orchestrator import ShutdownInProgress
-from bernstein.core.process_utils import is_process_alive as _shared_is_process_alive
 from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
@@ -1111,7 +1110,15 @@ class AgentSpawner:
                 error_text = "; ".join(attempt_errors) or "no viable spawn attempts"
                 raise RuntimeError(f"All spawn attempts failed for session {session_id}: {error_text}")
             session.pid = result.pid
-            transition_agent(session, "working", actor="spawner", reason="agent process started")
+            session.abort_reason = result.abort_reason
+            session.abort_detail = result.abort_detail
+            session.finish_reason = result.finish_reason
+            transition_agent(
+                session,
+                "working",
+                actor="spawner",
+                reason="agent process started",
+            )
             if result.log_path:
                 session.log_path = str(result.log_path)
             if result.proc is not None:
@@ -1228,6 +1235,9 @@ class AgentSpawner:
             session_id=session_id,
         )
         session.pid = result.pid
+        session.abort_reason = result.abort_reason
+        session.abort_detail = result.abort_detail
+        session.finish_reason = result.finish_reason
         transition_agent(session, "working", actor="spawner", reason="agent process started in worktree")
         if result.log_path:
             session.log_path = str(result.log_path)
@@ -1542,7 +1552,16 @@ class AgentSpawner:
             except BridgeError as exc:
                 logger.warning("OpenClaw cancellation failed for %s: %s", session.id, exc)
             if session.status != "dead":
-                transition_agent(session, "dead", actor="spawner", reason="remote bridge kill requested")
+                transition_agent(
+                    session,
+                    "dead",
+                    actor="spawner",
+                    reason="remote bridge kill requested",
+                    transition_reason=TransitionReason.ABORTED,
+                    abort_reason=AbortReason.SHUTDOWN_SIGNAL,
+                    abort_detail="remote runtime cancellation requested by orchestrator",
+                    finish_reason="kill_requested",
+                )
             return
 
         # Container-based agents: stop and destroy the container
@@ -1555,7 +1574,16 @@ class AgentSpawner:
         elif session.pid is not None:
             self._adapter.kill(session.pid)
         if session.status != "dead":
-            transition_agent(session, "dead", actor="spawner", reason="kill requested")
+            transition_agent(
+                session,
+                "dead",
+                actor="spawner",
+                reason="kill requested",
+                transition_reason=TransitionReason.ABORTED,
+                abort_reason=AbortReason.SHUTDOWN_SIGNAL,
+                abort_detail="local process kill requested by orchestrator",
+                finish_reason="kill_requested",
+            )
 
     def reap_completed_agent(
         self,

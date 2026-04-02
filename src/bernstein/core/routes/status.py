@@ -623,7 +623,7 @@ async def dashboard_data(request: Request) -> JSONResponse:
 
     # Fallback: if store has no agents, read from agents.json on disk
     if not agents:
-        from bernstein.core.models import AgentSession
+        from bernstein.core.models import AbortReason, AgentSession, TransitionReason
 
         for snapshot in agent_snapshots.values():
             status_value = str(snapshot.get("status", "dead"))
@@ -640,10 +640,19 @@ async def dashboard_data(request: Request) -> JSONResponse:
                 context_window_tokens=int(snapshot.get("context_window_tokens", 0) or 0),
                 context_utilization_pct=float(snapshot.get("context_utilization_pct", 0.0) or 0.0),
                 context_utilization_alert=bool(snapshot.get("context_utilization_alert", False)),
+                transition_reason=TransitionReason(str(snapshot["transition_reason"]))
+                if str(snapshot.get("transition_reason", "")).strip()
+                else None,
+                abort_reason=AbortReason(str(snapshot["abort_reason"]))
+                if str(snapshot.get("abort_reason", "")).strip()
+                else None,
+                abort_detail=str(snapshot.get("abort_detail", "") or ""),
+                finish_reason=str(snapshot.get("finish_reason", "") or ""),
             )
             agents[session.id] = session
 
-    alive_agents = [a for a in agents.values() if a.status != "dead"]
+    all_agents = list(agents.values())
+    alive_agents = [a for a in all_agents if a.status != "dead"]
     cost_by_role = store.cost_by_role()
     total_cost = sum(cost_by_role.values())
     agent_count = len(alive_agents)
@@ -687,7 +696,7 @@ async def dashboard_data(request: Request) -> JSONResponse:
     # -- Agent details with cost + task info ---------------------------------
     live_per_agent: dict[str, float] = live_costs.get("per_agent") or {}
     agent_details: list[dict[str, Any]] = []
-    for a in alive_agents:
+    for a in all_agents:
         snapshot = agent_snapshots.get(a.id, {})
         runtime_s = int(now - a.spawn_ts)
         model_name = a.model_config.model if hasattr(a.model_config, "model") else "sonnet"
@@ -723,6 +732,18 @@ async def dashboard_data(request: Request) -> JSONResponse:
                 "context_window_tokens": context_window_tokens,
                 "context_utilization_pct": context_utilization_pct,
                 "context_utilization_alert": context_utilization_alert,
+                "transition_reason": (
+                    getattr(a, "transition_reason", None).value
+                    if getattr(a, "transition_reason", None) is not None
+                    else str(snapshot.get("transition_reason", "") or "")
+                ),
+                "abort_reason": (
+                    getattr(a, "abort_reason", None).value
+                    if getattr(a, "abort_reason", None) is not None
+                    else str(snapshot.get("abort_reason", "") or "")
+                ),
+                "abort_detail": str(getattr(a, "abort_detail", "") or snapshot.get("abort_detail", "") or ""),
+                "finish_reason": str(getattr(a, "finish_reason", "") or snapshot.get("finish_reason", "") or ""),
                 "cost_usd": round(agent_cost, 4),
                 "tasks": [
                     {"id": t.id, "title": t.title[:40], "status": t.status.value, "progress": _task_progress_pct(t)}

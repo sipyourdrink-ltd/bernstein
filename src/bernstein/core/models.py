@@ -29,6 +29,40 @@ class KillReason(StrEnum):
     GUARDRAIL_VIOLATION = "guardrail_violation"
 
 
+class TransitionReason(StrEnum):
+    """Canonical reasons for lifecycle transitions in the runtime pipeline."""
+
+    COMPLETED = "completed"
+    ABORTED = "aborted"
+    RETRY = "retry"
+    PROMPT_TOO_LONG = "prompt_too_long"
+    MAX_OUTPUT_TOKENS = "max_output_tokens"
+    MAX_TURNS = "max_turns"
+    PROVIDER_413 = "provider_413"
+    PROVIDER_529 = "provider_529"
+    COMPACTION_FAILED = "compaction_failed"
+    STOP_HOOK_BLOCKED = "stop_hook_blocked"
+    PERMISSION_DENIED = "permission_denied"
+    SIBLING_ABORTED = "sibling_aborted"
+    ORPHAN_RECOVERED = "orphan_recovered"
+
+
+class AbortReason(StrEnum):
+    """Canonical reasons for abnormal agent termination."""
+
+    USER_INTERRUPT = "user_interrupt"
+    SHUTDOWN_SIGNAL = "shutdown_signal"
+    TIMEOUT = "timeout"
+    OOM = "oom"
+    PERMISSION_DENIED = "permission_denied"
+    PROVIDER_ERROR = "provider_error"
+    BASH_ERROR = "bash_error"
+    SIBLING_ABORTED = "sibling_aborted"
+    PARENT_ABORTED = "parent_aborted"
+    COMPACT_FAILURE = "compact_failure"
+    UNKNOWN = "unknown"
+
+
 class ProviderType(Enum):
     """Supported API provider types."""
 
@@ -624,6 +658,10 @@ class AgentSession:
     runtime_backend: Literal["local", "openclaw"] = "local"
     bridge_session_key: str | None = None
     bridge_run_id: str | None = None
+    transition_reason: TransitionReason | None = None
+    abort_reason: AbortReason | None = None
+    abort_detail: str = ""
+    finish_reason: str = ""
 
 
 class IsolationMode(StrEnum):
@@ -1195,6 +1233,8 @@ class LifecycleEvent:
     to_status: str
     actor: str = ""
     reason: str = ""
+    transition_reason: TransitionReason | None = None
+    abort_reason: AbortReason | None = None
 
 
 @dataclass(frozen=True)

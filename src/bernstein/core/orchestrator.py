@@ -2868,6 +2868,10 @@ class Orchestrator:
                 "runtime_backend": s.runtime_backend,
                 "bridge_session_key": s.bridge_session_key,
                 "bridge_run_id": s.bridge_run_id,
+                "transition_reason": s.transition_reason.value if s.transition_reason is not None else "",
+                "abort_reason": s.abort_reason.value if s.abort_reason is not None else "",
+                "abort_detail": s.abort_detail,
+                "finish_reason": s.finish_reason,
             }
             for s in self._agents.values()
         ]
