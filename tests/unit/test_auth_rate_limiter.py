@@ -134,9 +134,7 @@ class TestRequestRateLimitMiddleware:
         app.state.seed_config = SeedConfig(
             goal="Test",
             rate_limit=RateLimitConfig(
-                buckets=(
-                    RateLimitBucketConfig(name="auth", requests=1, path_prefixes=("/auth",), methods=("POST",)),
-                )
+                buckets=(RateLimitBucketConfig(name="auth", requests=1, path_prefixes=("/auth",), methods=("POST",)),)
             ),
         )
 

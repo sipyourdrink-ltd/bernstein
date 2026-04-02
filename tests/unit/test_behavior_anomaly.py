@@ -32,7 +32,9 @@ def test_detector_returns_no_signal_with_insufficient_history(tmp_path: Path) ->
     )
     detector = BehaviorAnomalyDetector(tmp_path, min_samples=3)
 
-    signals = detector.detect("task-1", "session-1", BehaviorMetrics(tokens_used=1000, files_modified=10, duration_s=300.0))
+    signals = detector.detect(
+        "task-1", "session-1", BehaviorMetrics(tokens_used=1000, files_modified=10, duration_s=300.0)
+    )
 
     assert signals == []
 
@@ -42,7 +44,12 @@ def test_detector_emits_log_signal_for_single_metric_outlier(tmp_path: Path) -> 
     _write_history(
         tmp_path / ".sdd" / "metrics",
         [
-            {"tokens_prompt": 100 + index, "tokens_completion": 20 + index, "files_modified": 2, "duration_seconds": 30.0}
+            {
+                "tokens_prompt": 100 + index,
+                "tokens_completion": 20 + index,
+                "files_modified": 2,
+                "duration_seconds": 30.0,
+            }
             for index in range(12)
         ],
     )
@@ -64,7 +71,12 @@ def test_detector_pauses_spawning_for_multiple_outliers(tmp_path: Path) -> None:
     _write_history(
         tmp_path / ".sdd" / "metrics",
         [
-            {"tokens_prompt": 120, "tokens_completion": 40, "files_modified": 2 + (index % 2), "duration_seconds": 20 + index}
+            {
+                "tokens_prompt": 120,
+                "tokens_completion": 40,
+                "files_modified": 2 + (index % 2),
+                "duration_seconds": 20 + index,
+            }
             for index in range(15)
         ],
     )
@@ -85,7 +97,12 @@ def test_detector_kills_agent_for_three_extreme_outliers(tmp_path: Path) -> None
     _write_history(
         tmp_path / ".sdd" / "metrics",
         [
-            {"tokens_prompt": 100 + index, "tokens_completion": 50, "files_modified": 1 + (index % 2), "duration_seconds": 10 + index}
+            {
+                "tokens_prompt": 100 + index,
+                "tokens_completion": 50,
+                "files_modified": 1 + (index % 2),
+                "duration_seconds": 10 + index,
+            }
             for index in range(20)
         ],
     )

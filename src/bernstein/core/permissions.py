@@ -113,7 +113,7 @@ def get_permissions_for_role(
 # ---------------------------------------------------------------------------
 
 
-def _path_matches_any(filepath: str, patterns: tuple[str, ...]) -> bool:
+def path_matches_any(filepath: str, patterns: tuple[str, ...]) -> bool:
     """Return True if *filepath* matches any of the glob *patterns*.
 
     Matching is done against the full relative path using ``fnmatch``.
@@ -158,14 +158,14 @@ def is_path_allowed(filepath: str, permissions: AgentPermissions) -> bool:
         True if the path is permitted.
     """
     # Denied paths always win
-    if permissions.denied_paths and _path_matches_any(filepath, permissions.denied_paths):
+    if permissions.denied_paths and path_matches_any(filepath, permissions.denied_paths):
         return False
 
     # If no allow-list, everything (not denied) is allowed
     if not permissions.allowed_paths:
         return True
 
-    return _path_matches_any(filepath, permissions.allowed_paths)
+    return path_matches_any(filepath, permissions.allowed_paths)
 
 
 def is_command_allowed(command: str, permissions: AgentPermissions) -> bool:

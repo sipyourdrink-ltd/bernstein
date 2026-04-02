@@ -221,10 +221,10 @@ def check_immune_paths(diff: str) -> list[GuardrailResult]:
     Returns:
         List containing one GuardrailResult for the "immune_path_enforcement" check.
     """
-    from bernstein.core.permissions import _path_matches_any
+    from bernstein.core.permissions import path_matches_any
 
     changed_files = _parse_diff_files(diff)
-    violations = [f for f in changed_files if _path_matches_any(f, _IMMUNE_CRITICAL_PATHS)]
+    violations = [f for f in changed_files if path_matches_any(f, _IMMUNE_CRITICAL_PATHS)]
 
     if violations:
         return [

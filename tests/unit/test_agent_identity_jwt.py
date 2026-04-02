@@ -39,9 +39,7 @@ def test_create_identity_returns_jwt_with_expected_claims(tmp_path: Path, monkey
     assert identity.credential.jti == claims["jti"]
 
 
-def test_authenticate_jwt_token_updates_last_authenticated(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_authenticate_jwt_token_updates_last_authenticated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """JWT authentication should resolve the identity and update its auth timestamp."""
 
     monkeypatch.setenv("BERNSTEIN_AUTH_JWT_SECRET", "agent-jwt-secret")

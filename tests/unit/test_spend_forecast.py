@@ -78,9 +78,7 @@ class TestForecastMonthlySpend:
         (tmp_path / "costs_test.json").write_text(json.dumps(cost_data))
 
         tasks_data = [{"status": "done"} for _ in range(5)]
-        (tmp_path / "tasks.jsonl").write_text(
-            "\n".join(json.dumps(t) for t in tasks_data)
-        )
+        (tmp_path / "tasks.jsonl").write_text("\n".join(json.dumps(t) for t in tasks_data))
 
         forecast = forecast_monthly_spend(tmp_path, current_day=2)
         assert forecast.confidence_level == "low"

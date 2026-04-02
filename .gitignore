@@ -29,12 +29,8 @@ node_modules/
 .ruff_cache/
 .mypy_cache/
 
-# Bernstein workspace state (bootstrapped on first run)
-.sdd/backlog/deferred/
-.sdd/backlog/done/
-.sdd/backlog/manual
-!.sdd/backlog/manual/manual-orchestration
-.sdd/caching/response_cache.jsonl
+# Bernstein workspace state — .sdd must NEVER be committed to git (CI enforced)
+.sdd/
 
 # Proprietary: agent role prompts, design specs, development plans
 templates/roles/
@@ -58,4 +54,3 @@ docs/research*
 
 # Marketing
 marketing/*
-.sdd/decisions/launch-plan.md

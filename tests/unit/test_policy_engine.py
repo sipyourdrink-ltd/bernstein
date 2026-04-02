@@ -68,9 +68,9 @@ class TestPolicyEngine:
         repo = _prepare_repo(tmp_path)
         _write_file(
             repo / ".sdd" / "policies" / "no_eval.yaml",
-            "name: no_eval\nrule: \"file_content !~ /eval\\\\(/\"\nseverity: block\n",
+            'name: no_eval\nrule: "file_content !~ /eval\\\\(/"\nseverity: block\n',
         )
-        _write_file(repo / "app.py", 'def unsafe(expr: str) -> int:\n    return eval(expr)\n')
+        _write_file(repo / "app.py", "def unsafe(expr: str) -> int:\n    return eval(expr)\n")
         _git(repo, "add", "app.py")
         _git(repo, "commit", "-m", "introduce eval")
 
@@ -108,9 +108,9 @@ class TestPolicyEngine:
         repo = _prepare_repo(tmp_path)
         _write_file(
             repo / ".sdd" / "policies" / "no_eval.yaml",
-            "name: no_eval\nrule: \"file_content !~ /eval\\\\(/\"\nseverity: block\n",
+            'name: no_eval\nrule: "file_content !~ /eval\\\\(/"\nseverity: block\n',
         )
-        _write_file(repo / "app.py", 'def unsafe(expr: str) -> int:\n    return eval(expr)\n')
+        _write_file(repo / "app.py", "def unsafe(expr: str) -> int:\n    return eval(expr)\n")
         _git(repo, "add", "app.py")
         _git(repo, "commit", "-m", "introduce eval")
 

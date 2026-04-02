@@ -47,7 +47,14 @@ def test_timeline_compaction_entry_rendered() -> None:
 
     entries = [
         TimelineEntry(task_id="t1", title="Task 1", start_time=now - 100, end_time=now - 50, status="done"),
-        TimelineEntry(task_id="comp-1", title="compaction: 20k → 5k tokens", start_time=now - 70, end_time=now - 70, status="done", kind="compaction"),
+        TimelineEntry(
+            task_id="comp-1",
+            title="compaction: 20k → 5k tokens",
+            start_time=now - 70,
+            end_time=now - 70,
+            status="done",
+            kind="compaction",
+        ),
     ]
     widget.update_data(entries)
 

@@ -14,7 +14,9 @@ def test_child_task_inherits_parent_context(tmp_path: Path) -> None:
     builder = TaskContextBuilder(tmp_path)
 
     parent = Task(id="p1", title="Parent", description="...", role="backend", owned_files=["auth.py"])
-    child = Task(id="c1", title="Child", description="...", role="backend", parent_task_id="p1", owned_files=["main.py"])
+    child = Task(
+        id="c1", title="Child", description="...", role="backend", parent_task_id="p1", owned_files=["main.py"]
+    )
 
     # Mock store
     store = MagicMock()

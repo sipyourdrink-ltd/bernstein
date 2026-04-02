@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from bernstein.core.a2a import A2AHandler
 from bernstein.core.access_log import StructuredAccessLogMiddleware
 from bernstein.core.acp import ACPHandler
+from bernstein.core.auth_rate_limiter import RequestRateLimitMiddleware
 from bernstein.core.bulletin import BulletinBoard, MessageBoard, MessageType
 from bernstein.core.cluster import NodeRegistry
 from bernstein.core.json_logging import setup_json_logging
@@ -1053,6 +1054,9 @@ def create_app(
         auth_service=auth_service,
         legacy_token=legacy_auth_token,
     )
+
+    # Per-endpoint request rate limiting — reads buckets from app.state.seed_config.
+    application.add_middleware(RequestRateLimitMiddleware)
 
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()

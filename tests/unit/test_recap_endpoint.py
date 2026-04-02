@@ -31,6 +31,7 @@ def app(jsonl_path: Path, tmp_path: Path):
     (sdd_dir / "runtime").mkdir()
     # Set env var for workdir
     import os
+
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
@@ -129,7 +130,12 @@ async def test_recap_with_cost_data(client: AsyncClient, tmp_path: Path) -> None
         "run_id": "test",
         "total_spent_usd": 1.25,
         "per_model": [
-            {"model": "claude-sonnet-4-5-20250929", "total_cost_usd": 0.75, "total_tokens": 5000, "invocation_count": 10},
+            {
+                "model": "claude-sonnet-4-5-20250929",
+                "total_cost_usd": 0.75,
+                "total_tokens": 5000,
+                "invocation_count": 10,
+            },
             {"model": "claude-opus-4-5-20251101", "total_cost_usd": 0.50, "total_tokens": 3000, "invocation_count": 5},
         ],
         "per_agent": [

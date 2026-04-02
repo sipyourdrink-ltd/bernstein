@@ -52,15 +52,11 @@ class TestKnowledgeGraphBuild:
         _write(tmp_path / "src" / "pkg" / "helpers.py", "def helper() -> int:\n    return 1\n")
         _write(
             tmp_path / "src" / "pkg" / "service.py",
-            "from pkg.helpers import helper\n\n"
-            "def run() -> int:\n"
-            "    return helper()\n",
+            "from pkg.helpers import helper\n\ndef run() -> int:\n    return helper()\n",
         )
         _write(
             tmp_path / "src" / "pkg" / "controller.py",
-            "from pkg.service import run\n\n"
-            "def handle() -> int:\n"
-            "    return run()\n",
+            "from pkg.service import run\n\ndef handle() -> int:\n    return run()\n",
         )
 
         files = ["src/pkg/helpers.py", "src/pkg/service.py", "src/pkg/controller.py"]
@@ -102,9 +98,7 @@ class TestKnowledgeGraphIntegrations:
         _write(tmp_path / "src" / "pkg" / "helpers.py", "def helper() -> int:\n    return 1\n")
         _write(
             tmp_path / "src" / "pkg" / "service.py",
-            "from pkg.helpers import helper\n\n"
-            "def run() -> int:\n"
-            "    return helper()\n",
+            "from pkg.helpers import helper\n\ndef run() -> int:\n    return helper()\n",
         )
 
         _patch_ls_files(monkeypatch, ["src/pkg/helpers.py", "src/pkg/service.py"])
@@ -121,9 +115,7 @@ class TestKnowledgeGraphIntegrations:
         _write(tmp_path / "src" / "pkg" / "helpers.py", "def helper() -> int:\n    return 1\n")
         _write(
             tmp_path / "src" / "pkg" / "service.py",
-            "from pkg.helpers import helper\n\n"
-            "def run() -> int:\n"
-            "    return helper()\n",
+            "from pkg.helpers import helper\n\ndef run() -> int:\n    return helper()\n",
         )
 
         _patch_ls_files(monkeypatch, ["src/pkg/helpers.py", "src/pkg/service.py"])

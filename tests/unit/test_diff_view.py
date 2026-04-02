@@ -11,14 +11,10 @@ def test_render_enhanced_summary() -> None:
     """Test that enhanced summary rendering doesn't crash and computes totals."""
     stats = [
         FileDiffStat(path="src/main.py", additions=10, deletions=5),
-        FileDiffStat(path="tests/test_main.py", additions=2, deletions=10), # MODERATE risk
-        FileDiffStat(path="config/secrets.yaml", additions=1, deletions=0), # HIGH risk
+        FileDiffStat(path="tests/test_main.py", additions=2, deletions=10),  # MODERATE risk
+        FileDiffStat(path="config/secrets.yaml", additions=1, deletions=0),  # HIGH risk
     ]
-    resolved = ResolvedDiff(
-        diff_text="some diff",
-        source_label="source",
-        file_stats=stats
-    )
+    resolved = ResolvedDiff(diff_text="some diff", source_label="source", file_stats=stats)
 
     with patch("bernstein.cli.diff_cmd.console.print") as mock_print:
         _render_enhanced_summary(resolved)

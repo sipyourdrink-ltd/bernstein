@@ -300,12 +300,21 @@ def _readiness(request: Request) -> tuple[bool, str]:
 @router.get("/status")
 async def status_dashboard(request: Request) -> JSONResponse:
     """Dashboard summary of task counts."""
+    from bernstein.core.dependency_scan import read_latest_dependency_scan
+
     store = _get_store(request)
     payload = store.status_summary()
     payload["runtime"] = _runtime_summary(request, store)
     provider_status = _read_provider_status(request)
     if provider_status is not None:
         payload["provider_status"] = provider_status
+
+    sdd_dir: Any = getattr(request.app.state, "sdd_dir", None)
+    if sdd_dir is not None:
+        scan = read_latest_dependency_scan(sdd_dir)
+        if scan is not None:
+            payload["dependency_scan"] = scan.to_dict()
+
     return JSONResponse(content=payload)
 
 
@@ -663,7 +672,7 @@ async def dashboard_data(request: Request) -> JSONResponse:
     cost_history = _read_cost_history(store)
 
     # -- Alerts --------------------------------------------------------------
-    alerts = build_alerts(store, alive_agents, total_cost, now)
+    alerts = build_alerts(store, alive_agents, total_cost, now, agent_snapshots)
 
     # -- Merge queue snapshot ------------------------------------------------
     merge_queue = _read_merge_queue(request)
@@ -832,6 +841,7 @@ def build_alerts(
     alive_agents: list[Any],
     total_cost: float,
     now: float,
+    agent_snapshots: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     """Generate alerts for the dashboard."""
     alerts: list[dict[str, str]] = []
@@ -869,6 +879,31 @@ def build_alerts(
                     "detail": f"No heartbeat for {int((now - a.heartbeat_ts) / 60)}m",
                 }
             )
+
+        # Context window alerts from live agent state
+        if getattr(a, "context_utilization_alert", False):
+            pct = float(getattr(a, "context_utilization_pct", 0.0))
+            alerts.append(
+                {
+                    "level": "warning",
+                    "message": f"Agent {a.id[:12]} nearing context limit",
+                    "detail": f"Context utilization at {pct:.0f}%",
+                }
+            )
+
+    # Context window alerts from agent snapshots (covers agents loaded from agents.json)
+    if agent_snapshots:
+        for snap in agent_snapshots.values():
+            if snap.get("context_utilization_alert"):
+                agent_id = str(snap.get("id", ""))[:12]
+                pct = float(snap.get("context_utilization_pct", 0.0))
+                alerts.append(
+                    {
+                        "level": "warning",
+                        "message": f"Agent {agent_id} nearing context limit",
+                        "detail": f"Context utilization at {pct:.0f}%",
+                    }
+                )
 
     # Budget alerts
     budget = getattr(store, "_budget_usd", 0.0)

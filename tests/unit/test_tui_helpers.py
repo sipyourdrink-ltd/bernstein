@@ -162,17 +162,19 @@ def test_task_row_from_api_includes_tokens() -> None:
     """TaskRow parses tokens_used and token_budget from API response."""
     from bernstein.tui.widgets import TaskRow
 
-    row = TaskRow.from_api({
-        "id": "abc123",
-        "status": "in_progress",
-        "role": "backend",
-        "title": "Add auth",
-        "model": "sonnet",
-        "elapsed": "2m",
-        "session_id": "sess-1",
-        "tokens_used": 4500,
-        "token_budget": 10000,
-    })
+    row = TaskRow.from_api(
+        {
+            "id": "abc123",
+            "status": "in_progress",
+            "role": "backend",
+            "title": "Add auth",
+            "model": "sonnet",
+            "elapsed": "2m",
+            "session_id": "sess-1",
+            "tokens_used": 4500,
+            "token_budget": 10000,
+        }
+    )
     assert row.tokens_used == 4500
     assert row.tokens_budget == 10000
 
@@ -204,12 +206,14 @@ def test_agent_badge_color_varies_by_agent() -> None:
 def test_build_cache_hit_sparkline_empty() -> None:
     """Empty input returns empty string."""
     from bernstein.tui.widgets import build_cache_hit_sparkline
+
     assert build_cache_hit_sparkline([]) == ""
 
 
 def test_build_cache_hit_sparkline_high_hit_rate() -> None:
     """High cache rate renders green with percentage."""
     from bernstein.tui.widgets import build_cache_hit_sparkline
+
     bar = build_cache_hit_sparkline([0.9, 0.95, 1.0, 0.8])
     assert "%" in bar
     assert "green" in bar
@@ -218,6 +222,7 @@ def test_build_cache_hit_sparkline_high_hit_rate() -> None:
 def test_build_cache_hit_sparkline_low_hit_rate() -> None:
     """Low cache rate renders red."""
     from bernstein.tui.widgets import build_cache_hit_sparkline
+
     bar = build_cache_hit_sparkline([0.0, 0.1, 0.2])
     assert "%" in bar
     assert "red" in bar

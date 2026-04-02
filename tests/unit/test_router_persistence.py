@@ -16,7 +16,7 @@ def test_routing_weights_persistence(tmp_path: Path) -> None:
         models={"sonnet": ModelConfig("sonnet", "high")},
         tier=Tier.STANDARD,
         cost_per_1k_tokens=0.01,
-        routing_weight=1.5
+        routing_weight=1.5,
     )
     router.register_provider(p1)
 
@@ -36,7 +36,7 @@ def test_routing_weights_persistence(tmp_path: Path) -> None:
         models={"sonnet": ModelConfig("sonnet", "high")},
         tier=Tier.STANDARD,
         cost_per_1k_tokens=0.01,
-        routing_weight=1.0 # Default
+        routing_weight=1.0,  # Default
     )
     router2.register_provider(p1_new)
 

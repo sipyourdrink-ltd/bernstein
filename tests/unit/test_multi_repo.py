@@ -23,12 +23,7 @@ if TYPE_CHECKING:
 
 def _write_seed(tmp_path: Path) -> None:
     (tmp_path / "bernstein.yaml").write_text(
-        'goal: "Ship API"\n'
-        "repos:\n"
-        "  - name: backend\n"
-        "    path: ./backend\n"
-        "  - name: frontend\n"
-        "    path: ./frontend\n",
+        'goal: "Ship API"\nrepos:\n  - name: backend\n    path: ./backend\n  - name: frontend\n    path: ./frontend\n',
         encoding="utf-8",
     )
 

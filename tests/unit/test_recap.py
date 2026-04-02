@@ -54,7 +54,7 @@ class TestRecapCommand:
                 "completed": 2,
                 "failed": 1,
                 "success_rate": 66.6,
-            }
+            },
         }
         runner = CliRunner()
         with patch("bernstein.cli.advanced_cmd.server_get", return_value=server_data):

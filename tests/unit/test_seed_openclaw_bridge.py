@@ -57,12 +57,7 @@ def test_parse_openclaw_bridge_env_substitution(seed_file: Path, monkeypatch: py
 
 def test_parse_openclaw_bridge_disabled_is_allowed(seed_file: Path) -> None:
     """Disabled bridge configs should not require runtime credentials."""
-    seed_file.write_text(
-        "goal: T\n"
-        "bridges:\n"
-        "  openclaw:\n"
-        "    enabled: false\n"
-    )
+    seed_file.write_text("goal: T\nbridges:\n  openclaw:\n    enabled: false\n")
 
     cfg = parse_seed(seed_file)
 
@@ -91,12 +86,7 @@ def test_parse_openclaw_bridge_invalid_mode_raises(seed_file: Path) -> None:
 def test_parse_openclaw_bridge_missing_required_fields_raises(seed_file: Path) -> None:
     """Enabled bridge configs must declare URL, API key, and agent_id."""
     seed_file.write_text(
-        "goal: T\n"
-        "bridges:\n"
-        "  openclaw:\n"
-        "    enabled: true\n"
-        "    url: ws://127.0.0.1:18789\n"
-        "    api_key: secret-token\n"
+        "goal: T\nbridges:\n  openclaw:\n    enabled: true\n    url: ws://127.0.0.1:18789\n    api_key: secret-token\n"
     )
 
     with pytest.raises(SeedError, match="agent_id"):

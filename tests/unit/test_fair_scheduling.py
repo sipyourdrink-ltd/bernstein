@@ -78,9 +78,7 @@ def test_fair_scheduling_ages_old_tasks(sample_tasks: list[Task]) -> None:
 
     # At least some P2/P3 tasks should appear before all P1 tasks are exhausted
     # This ensures fair scheduling is working
-    assert min(p2_indices + p3_indices) < max(p1_indices), (
-        "Older P2/P3 tasks should be boosted ahead of some P1 tasks"
-    )
+    assert min(p2_indices + p3_indices) < max(p1_indices), "Older P2/P3 tasks should be boosted ahead of some P1 tasks"
 
 
 def test_fair_scheduling_without_timestamps(sample_tasks: list[Task]) -> None:

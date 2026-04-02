@@ -6,7 +6,7 @@ from bernstein.core.permissions import (
     DEFAULT_ROLE_PERMISSIONS,
     AgentPermissions,
     _parse_diff_files,
-    _path_matches_any,
+    path_matches_any,
     check_file_permissions,
     get_permissions_for_role,
     is_command_allowed,
@@ -83,31 +83,31 @@ class TestParseDiffFiles:
 
 
 # ---------------------------------------------------------------------------
-# _path_matches_any
+# path_matches_any
 # ---------------------------------------------------------------------------
 
 
 class TestPathMatchesAny:
     def test_exact_match(self) -> None:
-        assert _path_matches_any("pyproject.toml", ("pyproject.toml",))
+        assert path_matches_any("pyproject.toml", ("pyproject.toml",))
 
     def test_glob_star(self) -> None:
-        assert _path_matches_any("src/foo.py", ("src/*",))
+        assert path_matches_any("src/foo.py", ("src/*",))
 
     def test_nested_path_with_dir_glob(self) -> None:
-        assert _path_matches_any("src/bernstein/core/models.py", ("src/*",))
+        assert path_matches_any("src/bernstein/core/models.py", ("src/*",))
 
     def test_no_match(self) -> None:
-        assert not _path_matches_any("README.md", ("src/*",))
+        assert not path_matches_any("README.md", ("src/*",))
 
     def test_leading_dot_slash_stripped(self) -> None:
-        assert _path_matches_any("./src/foo.py", ("src/*",))
+        assert path_matches_any("./src/foo.py", ("src/*",))
 
     def test_leading_slash_stripped(self) -> None:
-        assert _path_matches_any("/src/foo.py", ("src/*",))
+        assert path_matches_any("/src/foo.py", ("src/*",))
 
     def test_empty_patterns(self) -> None:
-        assert not _path_matches_any("anything.py", ())
+        assert not path_matches_any("anything.py", ())
 
 
 # ---------------------------------------------------------------------------

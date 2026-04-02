@@ -154,7 +154,9 @@ class TestParseSeedValid:
         assert cfg.network.allowed_ips == ("10.0.0.0/8", "192.168.1.0/24")
 
     def test_rate_limit_config_parsed(self, seed_file: Path) -> None:
-        seed_file.write_text('goal: "T"\nrate_limit:\n  tasks: 100\n  auth:\n    requests_per_minute: 10\n    methods: [POST]\n')
+        seed_file.write_text(
+            'goal: "T"\nrate_limit:\n  tasks: 100\n  auth:\n    requests_per_minute: 10\n    methods: [POST]\n'
+        )
         cfg = parse_seed(seed_file)
         assert cfg.rate_limit is not None
         buckets = {bucket.name: bucket for bucket in cfg.rate_limit.buckets}

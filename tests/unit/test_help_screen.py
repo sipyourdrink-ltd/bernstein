@@ -35,7 +35,7 @@ class TestHelpScreen:
             await app.push_screen(screen)
             # Wait for any mount events
             await pilot.pause()
-            
+
             # Should have table and title
             assert screen.query_one("#help-table") is not None
             assert screen.query_one("#help-title") is not None

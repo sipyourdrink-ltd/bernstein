@@ -47,11 +47,7 @@ def test_parse_seed_sandbox_rejects_invalid_image_shape(seed_file: Path) -> None
     """Non-string adapter image entries should fail parsing."""
 
     seed_file.write_text(
-        "goal: ship sandboxing\n"
-        "sandbox:\n"
-        "  image:\n"
-        "    default: bernstein/base:latest\n"
-        "    claude: 123\n",
+        "goal: ship sandboxing\nsandbox:\n  image:\n    default: bernstein/base:latest\n    claude: 123\n",
         encoding="utf-8",
     )
 

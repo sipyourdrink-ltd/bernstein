@@ -122,8 +122,7 @@ def test_metrics_collector_writes_tenant_labels(tmp_path: Path) -> None:
     ]
 
     assert any(
-        record["metric_type"] == "agent_success" and record["labels"].get("tenant_id") == "acme"
-        for record in records
+        record["metric_type"] == "agent_success" and record["labels"].get("tenant_id") == "acme" for record in records
     )
     assert any(
         record["metric_type"] == "task_completion_time" and record["labels"].get("tenant_id") == "acme"

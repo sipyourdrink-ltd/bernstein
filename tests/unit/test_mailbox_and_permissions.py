@@ -200,15 +200,11 @@ class TestPermissionDelegator:
         delegator.register_approval("approval-1", "write", ["read", "write"])
 
         # Can delegate same or lower scope
-        token = delegator.create_delegation(
-            "approval-1", "coord-1", "worker-1", scope="read"
-        )
+        token = delegator.create_delegation("approval-1", "coord-1", "worker-1", scope="read")
         assert token is not None
 
         # Cannot delegate higher scope
-        token = delegator.create_delegation(
-            "approval-1", "coord-1", "worker-1", scope="full"
-        )
+        token = delegator.create_delegation("approval-1", "coord-1", "worker-1", scope="full")
         assert token is None
 
     def test_token_expiry(self) -> None:
@@ -216,9 +212,7 @@ class TestPermissionDelegator:
         delegator = PermissionDelegator(default_ttl_seconds=0.1)
         delegator.register_approval("approval-1", "write", ["read"])
 
-        token = delegator.create_delegation(
-            "approval-1", "coord-1", "worker-1"
-        )
+        token = delegator.create_delegation("approval-1", "coord-1", "worker-1")
 
         assert token is not None
         assert token.can_use() is True
@@ -232,9 +226,7 @@ class TestPermissionDelegator:
         delegator = PermissionDelegator(max_uses_per_token=2)
         delegator.register_approval("approval-1", "write", ["read"])
 
-        token = delegator.create_delegation(
-            "approval-1", "coord-1", "worker-1"
-        )
+        token = delegator.create_delegation("approval-1", "coord-1", "worker-1")
 
         assert token.use() is True
         assert token.use() is True
@@ -245,9 +237,7 @@ class TestPermissionDelegator:
         delegator = PermissionDelegator()
         delegator.register_approval("approval-1", "write", ["read", "write"])
 
-        token = delegator.create_delegation(
-            "approval-1", "coord-1", "worker-1"
-        )
+        token = delegator.create_delegation("approval-1", "coord-1", "worker-1")
 
         assert delegator.verify_token(token.token_id, "read") is True
         assert delegator.verify_token(token.token_id, "delete") is False
@@ -257,32 +247,39 @@ class TestPermissionDelegator:
         delegator = PermissionDelegator()
         delegator.register_approval("approval-1", "write", ["read"])
 
-        token = delegator.create_delegation(
-            "approval-1", "coord-1", "worker-1"
-        )
+        token = delegator.create_delegation("approval-1", "coord-1", "worker-1")
 
         assert delegator.revoke_token(token.token_id) is True
         assert delegator.verify_token(token.token_id, "read") is False
 
     def test_should_delegate(self) -> None:
         """Test delegation decision logic."""
-        assert should_delegate(
-            coordinator_mode=True,
-            has_parent_approval=True,
-            worker_scope="write",
-        ) is True
+        assert (
+            should_delegate(
+                coordinator_mode=True,
+                has_parent_approval=True,
+                worker_scope="write",
+            )
+            is True
+        )
 
-        assert should_delegate(
-            coordinator_mode=False,
-            has_parent_approval=True,
-            worker_scope="write",
-        ) is False
+        assert (
+            should_delegate(
+                coordinator_mode=False,
+                has_parent_approval=True,
+                worker_scope="write",
+            )
+            is False
+        )
 
-        assert should_delegate(
-            coordinator_mode=True,
-            has_parent_approval=False,
-            worker_scope="write",
-        ) is False
+        assert (
+            should_delegate(
+                coordinator_mode=True,
+                has_parent_approval=False,
+                worker_scope="write",
+            )
+            is False
+        )
 
 
 class TestPermissionResolutionMatrix:

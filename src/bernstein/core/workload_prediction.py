@@ -84,7 +84,7 @@ def _analyze_backlog(backlog_dir: Path) -> list[dict[str, Any]]:
     Returns:
         List of task dictionaries.
     """
-    tasks = []
+    tasks: list[dict[str, Any]] = []
 
     if not backlog_dir.exists():
         return tasks
@@ -93,7 +93,7 @@ def _analyze_backlog(backlog_dir: Path) -> list[dict[str, Any]]:
         try:
             import yaml
 
-            data = yaml.safe_load(task_file.read_text())
+            data: dict[str, Any] = yaml.safe_load(task_file.read_text()) or {}
             tasks.append(data)
         except Exception:
             continue

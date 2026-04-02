@@ -144,9 +144,7 @@ class TestCoordinatorMode:
         coordinator.assign_worker("coord-1", "worker-2", "subtask-2", "desc")
 
         # Third assignment should fail
-        assignment = coordinator.assign_worker(
-            "coord-1", "worker-3", "subtask-3", "desc"
-        )
+        assignment = coordinator.assign_worker("coord-1", "worker-3", "subtask-3", "desc")
 
         assert assignment is None
 
@@ -188,9 +186,7 @@ class TestCoordinatorMode:
         coordinator = CoordinatorMode(enabled=True)
         coordinator.create_session("coord-1", "task-1")
 
-        result = coordinator.set_synthesis_result(
-            "coord-1", "Synthesized summary here"
-        )
+        result = coordinator.set_synthesis_result("coord-1", "Synthesized summary here")
 
         assert result is True
         state = coordinator.get_session("coord-1")
@@ -319,24 +315,33 @@ class TestSynthesisEngine:
 
     def test_should_synthesize_coordinator_mode(self) -> None:
         """Test synthesis decision for coordinator mode."""
-        assert should_synthesize(
-            worker_count=3,
-            coordinator_mode=True,
-            explicit_flag=False,
-        ) is True
+        assert (
+            should_synthesize(
+                worker_count=3,
+                coordinator_mode=True,
+                explicit_flag=False,
+            )
+            is True
+        )
 
     def test_should_synthesize_explicit_flag(self) -> None:
         """Test synthesis decision with explicit flag."""
-        assert should_synthesize(
-            worker_count=1,
-            coordinator_mode=False,
-            explicit_flag=True,
-        ) is True
+        assert (
+            should_synthesize(
+                worker_count=1,
+                coordinator_mode=False,
+                explicit_flag=True,
+            )
+            is True
+        )
 
     def test_should_not_synthesize(self) -> None:
         """Test when synthesis should not occur."""
-        assert should_synthesize(
-            worker_count=1,
-            coordinator_mode=False,
-            explicit_flag=False,
-        ) is False
+        assert (
+            should_synthesize(
+                worker_count=1,
+                coordinator_mode=False,
+                explicit_flag=False,
+            )
+            is False
+        )
