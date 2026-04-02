@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import logging
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from bernstein.plugins.hookspecs import BernsteinSpec
 log = logging.getLogger(__name__)
 
 __all__ = ["PluginManager", "get_plugin_manager"]
+
 
 # Module-level singleton so the same manager is reused within a process.
 _manager: PluginManager | None = None
@@ -40,6 +42,8 @@ class PluginManager:
         self._pm = pluggy.PluginManager("bernstein")
         self._pm.add_hookspecs(BernsteinSpec)
         self._registered_names: list[str] = []
+        # Use a small pool for background hooks.
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="BernsteinPluginHook")
 
     # ------------------------------------------------------------------
     # Discovery
@@ -166,15 +170,39 @@ class PluginManager:
     def _safe_call(self, hook_name: str, **kwargs: Any) -> None:
         """Invoke a hook, swallowing all exceptions from individual plugins.
 
+        If the hook is marked as ``background=True`` in its specification,
+        it will be scheduled for asynchronous execution in a thread pool.
+
         Args:
             hook_name: Name of the hook attribute on ``self._pm.hook``.
             **kwargs: Arguments forwarded to the hook.
         """
         try:
-            hook = getattr(self._pm.hook, hook_name)
-            hook(**kwargs)
+            hook_caller = getattr(self._pm.hook, hook_name)
+            spec = getattr(hook_caller, "spec", None)
+            is_background = False
+            if spec and hasattr(spec.function, "bernstein_background"):
+                is_background = bool(spec.function.bernstein_background)
+
+            if is_background:
+                log.debug("Scheduling background hook %r", hook_name)
+                self._executor.submit(self._invoke_hook, hook_name, hook_caller, True, **kwargs)
+            else:
+                self._invoke_hook(hook_name, hook_caller, False, **kwargs)
         except Exception as exc:
-            log.warning("Plugin hook %r raised an exception: %s", hook_name, exc)
+            log.warning("Plugin manager failed to dispatch hook %r: %s", hook_name, exc)
+
+    def _invoke_hook(self, name: str, hook_caller: Any, is_background: bool, **kwargs: Any) -> None:
+        """Actually execute the hook and log errors."""
+        if is_background:
+            log.debug("Starting background hook %r", name)
+        try:
+            hook_caller(**kwargs)
+        except Exception as exc:
+            log.warning("Plugin hook %r raised an exception: %s", name, exc)
+        finally:
+            if is_background:
+                log.debug("Finished background hook %r", name)
 
     def fire_task_created(self, task_id: str, role: str, title: str) -> None:
         """Fire the ``on_task_created`` hook.

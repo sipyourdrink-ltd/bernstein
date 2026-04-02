@@ -14,6 +14,6 @@
 
 - [ ] `uv run ruff check src/` passes
 - [ ] `uv run pyright src/` passes
-- [ ] `uv run pytest` passes
+- [ ] `uv run python scripts/run_tests.py -x` passes
 - [ ] New code has type hints
 - [ ] Docs updated if needed
