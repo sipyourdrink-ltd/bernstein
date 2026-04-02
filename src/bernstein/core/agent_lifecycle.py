@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import os
+import signal
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,11 +23,7 @@ from bernstein.core import heartbeat as heartbeat_protocol
 from bernstein.core.janitor import verify_task
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.metrics import get_collector
-from bernstein.core.models import (
-    AgentSession,
-    Task,
-    TaskStatus,
-)
+from bernstein.core.models import AbortReason, AgentSession, Task, TaskStatus, TransitionReason
 from bernstein.core.task_lifecycle import (
     collect_completion_data,
     retry_or_fail_task,
@@ -38,6 +35,37 @@ from bernstein.core.tick_pipeline import (
 from bernstein.evolution.types import MetricsRecord
 
 logger = logging.getLogger(__name__)
+
+
+def classify_agent_abort_reason(session: AgentSession) -> tuple[AbortReason, str]:
+    """Classify an abnormal agent stop into a canonical abort reason.
+
+    Args:
+        session: Agent session with the latest exit metadata populated.
+
+    Returns:
+        Tuple of canonical abort reason and a short detail string.
+    """
+    exit_code = session.exit_code
+    if exit_code is None:
+        return AbortReason.UNKNOWN, "agent stopped without exit code"
+    if exit_code == 124:
+        return AbortReason.TIMEOUT, "process exited with timeout status 124"
+    if exit_code == 137:
+        return AbortReason.OOM, "process exited with status 137"
+    if exit_code == 126:
+        return AbortReason.PERMISSION_DENIED, "process exited with permission denied status 126"
+    if exit_code > 0:
+        return AbortReason.UNKNOWN, f"process exited with status {exit_code}"
+
+    signal_num = abs(exit_code)
+    if signal_num == getattr(signal, "SIGINT", 2):
+        return AbortReason.USER_INTERRUPT, "process interrupted by SIGINT"
+    if signal_num == getattr(signal, "SIGTERM", 15):
+        return AbortReason.SHUTDOWN_SIGNAL, "process terminated by SIGTERM"
+    if signal_num == getattr(signal, "SIGKILL", 9):
+        return AbortReason.OOM, "process killed by SIGKILL"
+    return AbortReason.UNKNOWN, f"process terminated by signal {signal_num}"
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +89,17 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
         if session.status == "dead":
             continue
         if not orch._spawner.check_alive(session):
-            transition_agent(session, "dead", actor="agent_lifecycle", reason="process not alive")
+            abort_reason, abort_detail = classify_agent_abort_reason(session)
+            transition_agent(
+                session,
+                "dead",
+                actor="agent_lifecycle",
+                reason="process not alive",
+                transition_reason=TransitionReason.ABORTED,
+                abort_reason=abort_reason,
+                abort_detail=abort_detail,
+                finish_reason="agent_exit",
+            )
 
             # Record failure timestamp for cooldown
             if session.role:

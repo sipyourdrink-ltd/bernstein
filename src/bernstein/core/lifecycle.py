@@ -14,7 +14,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
-from bernstein.core.models import AgentSession, LifecycleEvent, Task, TaskStatus
+from bernstein.core.models import AbortReason, AgentSession, LifecycleEvent, Task, TaskStatus, TransitionReason
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -180,6 +180,7 @@ def transition_task(
     *,
     actor: str = "",
     reason: str = "",
+    transition_reason: TransitionReason | None = None,
 ) -> LifecycleEvent:
     """Validate and apply a task status transition.
 
@@ -229,6 +230,7 @@ def transition_task(
             to_status=new_status.value,
             actor=actor,
             reason=reason,
+            transition_reason=transition_reason,
         )
         _emit(event)
 
@@ -245,6 +247,7 @@ def transition_task(
                 "from_status": old_status.value,
                 "to_status": new_status.value,
                 "reason": reason,
+                "transition_reason": transition_reason.value if transition_reason is not None else "",
                 "input_hash": _content_hash(input_state),
                 "output_hash": _content_hash(output_state),
             },
@@ -259,6 +262,10 @@ def transition_agent(
     *,
     actor: str = "",
     reason: str = "",
+    transition_reason: TransitionReason | None = None,
+    abort_reason: AbortReason | None = None,
+    abort_detail: str = "",
+    finish_reason: str = "",
 ) -> LifecycleEvent:
     """Validate and apply an agent session status transition.
 
@@ -285,6 +292,14 @@ def transition_agent(
         raise IllegalTransitionError("agent", agent.id, old_status, new_status)
 
     agent.status = new_status
+    if transition_reason is not None:
+        agent.transition_reason = transition_reason
+    if abort_reason is not None:
+        agent.abort_reason = abort_reason
+    if abort_detail:
+        agent.abort_detail = abort_detail
+    if finish_reason:
+        agent.finish_reason = finish_reason
 
     from bernstein.core.telemetry import start_span
 
@@ -305,6 +320,8 @@ def transition_agent(
             to_status=new_status,
             actor=actor,
             reason=reason,
+            transition_reason=transition_reason,
+            abort_reason=abort_reason,
         )
         _emit(event)
 
@@ -321,6 +338,10 @@ def transition_agent(
                 "from_status": old_status,
                 "to_status": new_status,
                 "reason": reason,
+                "transition_reason": transition_reason.value if transition_reason is not None else "",
+                "abort_reason": abort_reason.value if abort_reason is not None else "",
+                "abort_detail": abort_detail,
+                "finish_reason": finish_reason,
                 "input_hash": _content_hash(input_state),
                 "output_hash": _content_hash(output_state),
             },
