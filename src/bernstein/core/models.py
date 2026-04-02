@@ -649,6 +649,9 @@ class AgentSession:
     log_path: str = ""  # Path to agent log file for live streaming
     tokens_used: int = 0  # Running total of input+output tokens consumed by this agent
     token_budget: int = 0  # Per-task token budget computed from scope (0 = unlimited)
+    context_window_tokens: int = 0  # Provider/model max context window for utilization tracking
+    context_utilization_pct: float = 0.0  # Percentage of the context window currently consumed
+    context_utilization_alert: bool = False  # True when utilization crosses the warning threshold
     parent_id: str | None = None  # ID of the agent session that spawned this one (delegation tree)
     isolation: str = "none"  # "none", "worktree", or "container"
     container_id: str | None = None  # Container ID when isolation=container

@@ -6,6 +6,7 @@ initial manager Task that kicks off orchestration.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 from dataclasses import dataclass, field
@@ -114,6 +115,45 @@ class NetworkConfig:
 
 
 @dataclass(frozen=True)
+class RateLimitBucketConfig:
+    """Config for one endpoint rate-limit bucket.
+
+    Attributes:
+        name: Bucket identifier for metrics and error messages.
+        requests: Maximum requests allowed in the window.
+        window_seconds: Sliding-window size in seconds.
+        path_prefixes: Route prefixes covered by this bucket.
+        methods: Optional HTTP methods to scope the bucket to.
+    """
+
+    name: str
+    requests: int
+    window_seconds: int = 60
+    path_prefixes: tuple[str, ...] = ()
+    methods: tuple[str, ...] = ()
+
+    def matches(self, path: str, method: str) -> bool:
+        """Return whether this bucket applies to the current request."""
+        if self.methods and method.upper() not in self.methods:
+            return False
+        return any(path.startswith(prefix) for prefix in self.path_prefixes)
+
+
+@dataclass(frozen=True)
+class RateLimitConfig:
+    """Top-level request rate-limit config."""
+
+    buckets: tuple[RateLimitBucketConfig, ...] = ()
+
+    def match_request(self, path: str, method: str) -> RateLimitBucketConfig | None:
+        """Return the first matching bucket for the current request."""
+        for bucket in self.buckets:
+            if bucket.matches(path, method):
+                return bucket
+        return None
+
+
+@dataclass(frozen=True)
 class SeedConfig:
     """Validated configuration from bernstein.yaml.
 
@@ -172,6 +212,7 @@ class SeedConfig:
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
     smtp: SmtpConfig | None = None
     network: NetworkConfig | None = None
+    rate_limit: RateLimitConfig | None = None
     tenants: tuple[TenantConfig, ...] = ()
 
 
@@ -265,6 +306,88 @@ def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
         if all(isinstance(s, str) for s in items):
             return tuple(str(s) for s in items)
     raise SeedError(f"{field_name} must be a list of strings, got: {raw!r}")
+
+
+def _parse_network_config(raw: object) -> NetworkConfig | None:
+    """Parse the optional network config block from ``bernstein.yaml``.
+
+    Args:
+        raw: Raw YAML value for the ``network`` section.
+
+    Returns:
+        Parsed network config, or ``None`` when the section is absent.
+
+    Raises:
+        SeedError: If the network section is malformed or contains invalid CIDRs.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError(f"network must be a mapping, got: {type(raw).__name__}")
+    allowed_ips = _parse_string_list(raw.get("allowed_ips"), "network.allowed_ips")
+    for ip_range in allowed_ips:
+        try:
+            ipaddress.ip_network(ip_range, strict=False)
+        except ValueError as exc:
+            raise SeedError(f"network.allowed_ips contains invalid CIDR {ip_range!r}") from exc
+    return NetworkConfig(allowed_ips=allowed_ips)
+
+
+_DEFAULT_RATE_LIMIT_PATHS: dict[str, tuple[str, ...]] = {
+    "auth": ("/auth",),
+    "tasks": ("/tasks",),
+}
+
+
+def _parse_rate_limit_bucket(name: str, raw: object) -> RateLimitBucketConfig:
+    """Parse one rate-limit bucket definition."""
+    if isinstance(raw, int):
+        requests = raw
+        window_seconds = 60
+        path_prefixes = _DEFAULT_RATE_LIMIT_PATHS.get(name, ())
+        methods: tuple[str, ...] = ()
+    elif isinstance(raw, dict):
+        requests_raw = raw.get("requests_per_minute", raw.get("requests"))
+        if not isinstance(requests_raw, int) or requests_raw <= 0:
+            raise SeedError(f"rate_limit.{name}.requests_per_minute must be a positive integer")
+        requests = requests_raw
+        window_raw = raw.get("window_seconds", 60)
+        if not isinstance(window_raw, int) or window_raw <= 0:
+            raise SeedError(f"rate_limit.{name}.window_seconds must be a positive integer")
+        window_seconds = window_raw
+        path_prefixes = _parse_string_list(raw.get("paths"), f"rate_limit.{name}.paths")
+        if not path_prefixes:
+            path_prefixes = _DEFAULT_RATE_LIMIT_PATHS.get(name, ())
+        methods_raw = _parse_string_list(raw.get("methods"), f"rate_limit.{name}.methods")
+        methods = tuple(method.upper() for method in methods_raw)
+    else:
+        raise SeedError(f"rate_limit.{name} must be an integer or mapping, got: {type(raw).__name__}")
+
+    if requests <= 0:
+        raise SeedError(f"rate_limit.{name}.requests_per_minute must be a positive integer")
+    if not path_prefixes:
+        raise SeedError(f"rate_limit.{name}.paths is required for custom buckets")
+    return RateLimitBucketConfig(
+        name=name,
+        requests=requests,
+        window_seconds=window_seconds,
+        path_prefixes=path_prefixes,
+        methods=methods,
+    )
+
+
+def _parse_rate_limit_config(raw: object) -> RateLimitConfig | None:
+    """Parse the optional request rate-limit config block."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError(f"rate_limit must be a mapping, got: {type(raw).__name__}")
+    buckets: list[RateLimitBucketConfig] = []
+    for name, bucket_raw in raw.items():
+        if not isinstance(name, str) or not name:
+            raise SeedError("rate_limit bucket names must be non-empty strings")
+        buckets.append(_parse_rate_limit_bucket(name, bucket_raw))
+    return RateLimitConfig(buckets=tuple(buckets))
 
 
 def _parse_tenants(raw: object) -> tuple[TenantConfig, ...]:
@@ -1071,15 +1194,8 @@ def parse_seed(path: Path) -> SeedConfig:
 
     bridges = _parse_bridge_settings(data.get("bridges"))
 
-    # Parse network config
-    network: NetworkConfig | None = None
-    network_raw = data.get("network")
-    if network_raw is not None:
-        try:
-            allowed_ips = tuple(network_raw.get("allowed_ips", ()))
-            network = NetworkConfig(allowed_ips=allowed_ips)
-        except (AttributeError, TypeError):
-            pass  # Skip invalid network config
+    network = _parse_network_config(data.get("network"))
+    rate_limit = _parse_rate_limit_config(data.get("rate_limit"))
 
     tenants = _parse_tenants(data.get("tenants"))
 
@@ -1118,6 +1234,7 @@ def parse_seed(path: Path) -> SeedConfig:
         test_agent=test_agent,
         smtp=_parse_smtp(data.get("smtp")),
         network=network,
+        rate_limit=rate_limit,
         tenants=tenants,
     )
 

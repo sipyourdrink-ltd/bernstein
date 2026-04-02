@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -49,7 +47,7 @@ def calculate_health_score(metrics_dir: Path) -> HealthScore:
     dep_freshness = _calculate_dependency_freshness(metrics_dir)
 
     # Calculate weighted total
-    weights: dict[str, float] = {
+    weights = {
         "test_coverage": 0.30,
         "lint_score": 0.25,
         "complexity": 0.25,
@@ -93,51 +91,28 @@ def _read_quality_scores(metrics_dir: Path) -> dict[str, int]:
     if not quality_file.exists():
         return result
 
-    scores: list[dict[str, int]] = []
+    scores = []
     try:
         for line in quality_file.read_text().splitlines():
             if not line.strip():
                 continue
-            parsed = _parse_quality_line(line)
-            if parsed is not None:
-                scores.append(parsed)
+            data = json.loads(line)
+            breakdown = data.get("breakdown", {})
+            scores.append(breakdown)
     except (json.JSONDecodeError, OSError):
         return result
 
     if not scores:
         return result
 
-    recent = scores[-10:]
-    recent_len = min(10, len(scores))
     # Average recent scores
-    avg_lint = sum(s.get("lint", 50) for s in recent) / recent_len
-    avg_tests = sum(s.get("tests", 50) for s in recent) / recent_len
+    avg_lint = sum(s.get("lint", 50) for s in scores[-10:]) / min(10, len(scores))
+    avg_tests = sum(s.get("tests", 50) for s in scores[-10:]) / min(10, len(scores))
 
     result["lint_score"] = int(avg_lint)
     result["tests_score"] = int(avg_tests)
 
     return result
-
-
-def _parse_quality_line(line: str) -> dict[str, int] | None:
-    """Parse one JSONL line into a breakdown dict, or None if invalid."""
-    data: object = json.loads(line)
-    if not isinstance(data, dict):
-        return None
-    record = cast("dict[str, object]", data)
-    breakdown_raw: object = record.get("breakdown", {})
-    if not isinstance(breakdown_raw, dict):
-        return None
-    breakdown = cast("dict[str, object]", breakdown_raw)
-    out: dict[str, int] = {}
-    for key, val in breakdown.items():
-        if isinstance(val, bool):
-            continue
-        if isinstance(val, int):
-            out[key] = val
-        elif isinstance(val, float):
-            out[key] = int(val)
-    return out
 
 
 def _calculate_complexity_score(metrics_dir: Path) -> int:
@@ -177,7 +152,7 @@ def format_health_report(score: HealthScore) -> str:
     """
     grade = _score_to_grade(score.total)
 
-    lines: list[str] = [
+    lines = [
         "Codebase Health Score",
         "=" * 40,
         f"Overall: {score.total}/100 ({grade})",

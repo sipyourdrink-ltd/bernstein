@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -84,7 +82,7 @@ def _analyze_backlog(backlog_dir: Path) -> list[dict[str, Any]]:
     Returns:
         List of task dictionaries.
     """
-    tasks: list[dict[str, Any]] = []
+    tasks = []
 
     if not backlog_dir.exists():
         return tasks
@@ -92,10 +90,8 @@ def _analyze_backlog(backlog_dir: Path) -> list[dict[str, Any]]:
     for task_file in backlog_dir.glob("*.yaml"):
         try:
             import yaml
-
-            raw = yaml.safe_load(task_file.read_text())
-            if isinstance(raw, dict):
-                tasks.append(cast("dict[str, Any]", raw))
+            data = yaml.safe_load(task_file.read_text())
+            tasks.append(data)
         except Exception:
             continue
 
@@ -214,7 +210,9 @@ def format_workload_report(prediction: WorkloadPrediction) -> str:
 
     for role, data in prediction.breakdown_by_role.items():
         lines.append(
-            f"  {role}: {data['task_count']} tasks, ${data['estimated_cost']:.2f}, {data['estimated_hours']:.1f}h"
+            f"  {role}: {data['task_count']} tasks, "
+            f"${data['estimated_cost']:.2f}, "
+            f"{data['estimated_hours']:.1f}h"
         )
 
     return "\n".join(lines)

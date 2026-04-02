@@ -4,16 +4,33 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
     from fastapi import Request
+    from starlette.responses import Response as StarletteResponse
     from starlette.types import ASGIApp
 
 logger = logging.getLogger(__name__)
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def _parse_allowed_networks(allowed_ips: Sequence[str]) -> tuple[_Network, ...]:
+    """Parse a sequence of CIDR strings into IP network objects."""
+    networks: list[_Network] = []
+    for ip_range in allowed_ips:
+        try:
+            networks.append(ipaddress.ip_network(ip_range, strict=False))
+        except ValueError as exc:
+            logger.warning("Invalid IP range %s: %s", ip_range, exc)
+    return tuple(networks)
 
 
 class IPAllowlistMiddleware(BaseHTTPMiddleware):
@@ -45,20 +62,23 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app: ASGIApp,
-        allowed_ips: list[str] | None = None,
+        allowed_ips: Sequence[str] | None = None,
+        public_paths: Sequence[str] | None = None,
     ) -> None:
         super().__init__(app)
-        self._allowed_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        self._configured_allowed_ips = tuple(allowed_ips) if allowed_ips is not None else None
+        self._configured_networks = (
+            _parse_allowed_networks(self._configured_allowed_ips) if self._configured_allowed_ips is not None else ()
+        )
+        self._cached_dynamic_allowed_ips: tuple[str, ...] = ()
+        self._cached_dynamic_networks: tuple[_Network, ...] = ()
+        self._public_paths = frozenset(public_paths or self._PUBLIC_PATHS)
 
-        if allowed_ips:
-            for ip_range in allowed_ips:
-                try:
-                    network = ipaddress.ip_network(ip_range, strict=False)
-                    self._allowed_networks.append(network)
-                except ValueError as exc:
-                    logger.warning("Invalid IP range %s: %s", ip_range, exc)
-
-    async def dispatch(self, request: Request, call_next: Any) -> Any:
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Any],
+    ) -> StarletteResponse:
         """Process request and check IP allowlist.
 
         Args:
@@ -68,27 +88,29 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
         Returns:
             Response from next handler or 403 if IP not allowed.
         """
-        # If no allowlist configured, pass through
-        if not self._allowed_networks:
-            return await call_next(request)
-
         path = request.url.path
 
         # Public paths always allowed
-        if path in self._PUBLIC_PATHS:
+        if path in self._public_paths:
+            return await call_next(request)
+
+        allowed_networks = self._resolve_allowed_networks(request)
+
+        # If no allowlist configured, pass through
+        if not allowed_networks:
             return await call_next(request)
 
         # Get client IP
         client_ip = self._get_client_ip(request)
 
         # Localhost always allowed
-        if client_ip in ("127.0.0.1", "::1", "localhost"):
+        if client_ip in _LOOPBACK_HOSTS:
             return await call_next(request)
 
         # Check if client IP is in allowed ranges
         try:
             client_addr = ipaddress.ip_address(client_ip)
-            if any(client_addr in network for network in self._allowed_networks):
+            if any(client_addr in network for network in allowed_networks):
                 return await call_next(request)
         except ValueError:
             logger.warning("Invalid client IP: %s", client_ip)
@@ -100,6 +122,32 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
             content={"detail": f"IP {client_ip} not in allowed list"},
         )
 
+    def _resolve_allowed_networks(self, request: Request) -> tuple[_Network, ...]:
+        """Resolve the active allowlist from static config or app state."""
+        if self._configured_allowed_ips is not None:
+            return self._configured_networks
+
+        allowed_ips = self._allowed_ips_from_seed(request)
+        if not allowed_ips:
+            return ()
+        if allowed_ips != self._cached_dynamic_allowed_ips:
+            self._cached_dynamic_allowed_ips = allowed_ips
+            self._cached_dynamic_networks = _parse_allowed_networks(allowed_ips)
+        return self._cached_dynamic_networks
+
+    def _allowed_ips_from_seed(self, request: Request) -> tuple[str, ...]:
+        """Read allowlist CIDRs from the current app seed config."""
+        seed_config = getattr(request.app.state, "seed_config", None)
+        network_config = getattr(seed_config, "network", None)
+        allowed_ips_raw: object = getattr(network_config, "allowed_ips", ())
+        if not isinstance(allowed_ips_raw, tuple):
+            return ()
+        allowed_ips_tuple = cast("tuple[object, ...]", allowed_ips_raw)
+        for value in allowed_ips_tuple:
+            if not isinstance(value, str):
+                return ()
+        return cast("tuple[str, ...]", allowed_ips_tuple)
+
     def _get_client_ip(self, request: Request) -> str:
         """Get client IP from request.
 
@@ -109,20 +157,32 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
         Returns:
             Client IP address string.
         """
-        # Check X-Forwarded-For header first
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            # Take the first IP in the chain
-            return forwarded.split(",")[0].strip()
+        direct_client_ip = request.client.host if request.client else "unknown"
+        if direct_client_ip in _LOOPBACK_HOSTS:
+            forwarded_ip = self._trusted_forwarded_ip(request)
+            if forwarded_ip:
+                return forwarded_ip
 
-        # Fall back to direct client
-        if request.client:
-            return request.client.host
+        return direct_client_ip
 
-        return "unknown"
+    def _trusted_forwarded_ip(self, request: Request) -> str | None:
+        """Extract a forwarded client IP when the proxy itself is trusted."""
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",", maxsplit=1)[0].strip()
+
+        forwarded = request.headers.get("Forwarded")
+        if not forwarded:
+            return None
+        first_segment = forwarded.split(",", maxsplit=1)[0]
+        for part in first_segment.split(";"):
+            key, separator, value = part.partition("=")
+            if separator and key.strip().lower() == "for":
+                return value.strip().strip('"')
+        return None
 
 
-def check_ip_allowed(client_ip: str, allowed_ips: list[str]) -> bool:
+def check_ip_allowed(client_ip: str, allowed_ips: Sequence[str]) -> bool:
     """Check if an IP address is in the allowed list.
 
     Args:
@@ -133,16 +193,11 @@ def check_ip_allowed(client_ip: str, allowed_ips: list[str]) -> bool:
         True if IP is allowed, False otherwise.
     """
     # Localhost always allowed
-    if client_ip in ("127.0.0.1", "::1", "localhost"):
+    if client_ip in _LOOPBACK_HOSTS:
         return True
 
     try:
         client_addr = ipaddress.ip_address(client_ip)
-        for ip_range in allowed_ips:
-            network = ipaddress.ip_network(ip_range, strict=False)
-            if client_addr in network:
-                return True
+        return any(client_addr in network for network in _parse_allowed_networks(allowed_ips))
     except ValueError:
         return False
-
-    return False

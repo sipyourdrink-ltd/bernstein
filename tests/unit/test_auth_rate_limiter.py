@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from bernstein.core.auth_rate_limiter import AuthRateLimiter
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from bernstein.core.auth_rate_limiter import AuthRateLimiter, RequestRateLimitMiddleware
+from bernstein.core.seed import RateLimitBucketConfig, RateLimitConfig, SeedConfig
+from bernstein.core.server import create_app
 
 
 class TestAuthRateLimiter:
@@ -94,3 +102,58 @@ class TestAuthRateLimiterHTTP:
             assert int(resp.headers["Retry-After"]) >= 1
         finally:
             mod._auth_limiter = original
+
+
+class TestRequestRateLimitMiddleware:
+    """Test generic request bucket enforcement through the app middleware."""
+
+    @pytest.mark.anyio
+    async def test_tasks_bucket_returns_429_with_retry_after(self, tmp_path: Path) -> None:
+        app = create_app(jsonl_path=tmp_path / "tasks.jsonl")
+        app.state.seed_config = SeedConfig(
+            goal="Test",
+            rate_limit=RateLimitConfig(
+                buckets=(RateLimitBucketConfig(name="tasks", requests=2, path_prefixes=("/tasks",)),)
+            ),
+        )
+        transport = ASGITransport(app=app, client=("198.51.100.4", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.get("/tasks")).status_code == 200
+            assert (await client.get("/tasks")).status_code == 200
+            response = await client.get("/tasks")
+
+        assert response.status_code == 429
+        assert response.json()["bucket"] == "tasks"
+        assert int(response.headers["Retry-After"]) >= 1
+
+    @pytest.mark.anyio
+    async def test_auth_bucket_uses_method_scoping(self, tmp_path: Path) -> None:
+        del tmp_path
+        app = FastAPI()
+        app.add_middleware(RequestRateLimitMiddleware)
+        app.state.seed_config = SeedConfig(
+            goal="Test",
+            rate_limit=RateLimitConfig(
+                buckets=(
+                    RateLimitBucketConfig(name="auth", requests=1, path_prefixes=("/auth",), methods=("POST",)),
+                )
+            ),
+        )
+
+        @app.get("/auth/providers")
+        async def providers() -> dict[str, str]:
+            return {"status": "ok"}
+
+        @app.post("/auth/cli/device")
+        async def device() -> dict[str, str]:
+            return {"status": "ok"}
+
+        transport = ASGITransport(app=app, client=("198.51.100.5", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            providers = await client.get("/auth/providers")
+            first_post = await client.post("/auth/cli/device")
+            second_post = await client.post("/auth/cli/device")
+
+        assert providers.status_code == 200
+        assert first_post.status_code == 200
+        assert second_post.status_code == 429

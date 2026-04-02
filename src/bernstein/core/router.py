@@ -414,6 +414,20 @@ class TierAwareRouter:
         if name in self.state.providers:
             self.state.providers[name].cost_tracker.record_request(tokens, cost_usd)
 
+    def get_provider_max_context_tokens(self, name: str) -> int | None:
+        """Return the configured max context window for a provider.
+
+        Args:
+            name: Provider name.
+
+        Returns:
+            The provider's max context token count, or ``None`` when unknown.
+        """
+        provider = self.state.providers.get(name)
+        if provider is None:
+            return None
+        return provider.max_context_tokens
+
     def get_available_providers(
         self,
         tier: Tier | None = None,

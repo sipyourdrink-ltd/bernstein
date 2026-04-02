@@ -28,6 +28,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from bernstein.core.context_window import compute_context_window_utilization
 from bernstein.core.lifecycle import transition_agent
 
 if TYPE_CHECKING:
@@ -86,6 +87,7 @@ class AgentTokenHistory:
     samples: list[TokenSample] = field(default_factory=list[TokenSample])
     last_file_offset: int = 0
     warned_quadratic: bool = False
+    warned_context_window: bool = False
     killed: bool = False
 
 
@@ -257,6 +259,22 @@ class TokenGrowthMonitor:
         """
         return self._get_or_create(session_id).warned_quadratic
 
+    def mark_context_warned(self, session_id: str) -> None:
+        """Record that a high context-window utilization warning was emitted.
+
+        Args:
+            session_id: Agent session identifier.
+        """
+        self._get_or_create(session_id).warned_context_window = True
+
+    def was_context_warned(self, session_id: str) -> bool:
+        """Return True if a context-window warning was already emitted.
+
+        Args:
+            session_id: Agent session identifier.
+        """
+        return self._get_or_create(session_id).warned_context_window
+
     def purge(self, session_id: str) -> None:
         """Remove history for a dead session.
 
@@ -338,6 +356,7 @@ def check_token_growth(orch: Any) -> None:
         # 1. Read tokens from sidecar
         total = monitor.read_tokens(session.id, workdir)
         session.tokens_used = total
+        _update_context_window_utilization(orch, session)
 
         # 2. Get files_changed for all tasks owned by this agent
         files_changed = _get_files_changed(orch, session, base)
@@ -371,6 +390,15 @@ def check_token_growth(orch: Any) -> None:
                     last_activity_ago_s=0,
                 )
             monitor.mark_warned(session.id)
+
+        if session.context_utilization_alert and not monitor.was_context_warned(session.id):
+            logger.warning(
+                "Context window utilization high for agent %s: %.2f%% of %d tokens used",
+                session.id,
+                session.context_utilization_pct,
+                session.context_window_tokens,
+            )
+            monitor.mark_context_warned(session.id)
 
 
 def _get_files_changed(orch: Any, session: Any, base: str) -> int:
@@ -411,3 +439,31 @@ def _get_files_changed(orch: Any, session: Any, base: str) -> int:
         return -1
 
     return total_changed
+
+
+def _update_context_window_utilization(orch: Any, session: Any) -> None:
+    """Update context-window utilization fields for an agent session.
+
+    Args:
+        orch: Orchestrator instance providing access to the configured router.
+        session: Agent session whose context usage fields should be refreshed.
+    """
+    provider_name = getattr(session, "provider", None)
+    router = getattr(orch, "_router", None)
+    if not provider_name or router is None or not hasattr(router, "get_provider_max_context_tokens"):
+        session.context_window_tokens = 0
+        session.context_utilization_pct = 0.0
+        session.context_utilization_alert = False
+        return
+
+    max_context_tokens = router.get_provider_max_context_tokens(provider_name)
+    utilization = compute_context_window_utilization(session.tokens_used, max_context_tokens or 0)
+    if utilization is None:
+        session.context_window_tokens = 0
+        session.context_utilization_pct = 0.0
+        session.context_utilization_alert = False
+        return
+
+    session.context_window_tokens = utilization.max_context_tokens
+    session.context_utilization_pct = utilization.utilization_pct
+    session.context_utilization_alert = utilization.over_warning_threshold

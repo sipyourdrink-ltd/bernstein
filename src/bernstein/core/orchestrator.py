@@ -46,6 +46,11 @@ from bernstein.core.context import refresh_knowledge_base
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.cost_tracker import CostTracker
 from bernstein.core.dep_validator import DependencyValidator
+from bernstein.core.dependency_scan import (
+    DependencyScanStatus,
+    DependencyVulnerabilityFinding,
+    DependencyVulnerabilityScanner,
+)
 from bernstein.core.evolution import EvolutionCoordinator, UpgradeStatus
 from bernstein.core.fast_path import (
     FastPathStats,
@@ -281,6 +286,7 @@ class Orchestrator:
         self._preserved_worktrees: dict[str, Path] = {}  # task_id -> worktree to reuse
         self._running = False
         self._tick_count = 0
+        self._dependency_scanner = DependencyVulnerabilityScanner(workdir)
         # Track spawn failures per batch for backoff: task_ids -> (fail_count, last_fail_ts)
         self._spawn_failures: dict[frozenset[str], tuple[int, float]] = {}
         self._spawn_failure_history: dict[frozenset[str], list[Any]] = {}
@@ -763,6 +769,8 @@ class Orchestrator:
             self.ingest_backlog()
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             logger.warning("ingest_backlog failed: %s", exc)
+
+        self._run_scheduled_dependency_scan()
 
         # 1. Fetch all tasks in a single bulk request, bucketed client-side.
         try:
@@ -1401,6 +1409,85 @@ class Orchestrator:
             "status",
             f"live_cost_update: {status.spent_usd:.4f} USD spent ({status.percentage_used * 100:.1f}%)",
         )
+
+    def _run_scheduled_dependency_scan(self) -> None:
+        """Run the weekly dependency scan and enqueue remediation tasks."""
+        try:
+            existing_titles = self._load_existing_dependency_scan_task_titles()
+            result = self._dependency_scanner.run_if_due(
+                create_fix_task=lambda finding: self._create_dependency_fix_task(finding, existing_titles),
+                audit_log=self._audit_log,
+            )
+        except Exception as exc:
+            logger.warning("Dependency scan failed: %s", exc)
+            return
+
+        if result is None:
+            return
+
+        log_level = logging.WARNING if result.status == DependencyScanStatus.VULNERABLE else logging.INFO
+        logger.log(
+            log_level,
+            "Dependency scan completed: %s (%d findings)",
+            result.status.value,
+            len(result.findings),
+        )
+        self._post_bulletin("status", f"dependency_scan: {result.summary}")
+
+    def _load_existing_dependency_scan_task_titles(self) -> set[str]:
+        """Load open remediation task titles so weekly scans do not duplicate them."""
+        try:
+            response = self._client.get(f"{self._config.server_url}/tasks")
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            return set()
+
+        if not isinstance(payload, list):
+            return set()
+        return {
+            str(item.get("title", ""))
+            for item in payload
+            if isinstance(item, dict)
+            and str(item.get("status", "")) in {"open", "claimed", "in_progress", "pending_approval"}
+        }
+
+    def _create_dependency_fix_task(
+        self,
+        finding: DependencyVulnerabilityFinding,
+        existing_titles: set[str],
+    ) -> str | None:
+        """Create one remediation task per vulnerable package."""
+        title = f"Upgrade vulnerable dependency: {finding.package}"
+        if title in existing_titles:
+            return None
+
+        description = (
+            f"{finding.source} reported {finding.package} {finding.installed_version} as vulnerable.\n\n"
+            f"Advisory: {finding.advisory_id}\n"
+            f"Summary: {finding.summary or 'No summary provided.'}"
+        )
+        if finding.fix_versions:
+            description += f"\nRecommended fix versions: {', '.join(finding.fix_versions)}"
+
+        try:
+            response = self._client.post(
+                f"{self._config.server_url}/tasks",
+                json={
+                    "title": title,
+                    "description": description,
+                    "role": "security",
+                    "priority": 2,
+                    "task_type": "fix",
+                },
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            logger.warning("Failed to create dependency fix task for %s: %s", finding.package, exc)
+            return None
+
+        existing_titles.add(title)
+        return title
 
     def _kill_agent_for_cost_cap(self, session: AgentSession) -> None:
         """Terminate an agent that exceeded the hard per-session cost cap."""
@@ -2772,10 +2859,16 @@ class Orchestrator:
                 "spawn_ts": s.spawn_ts,
                 "runtime_s": round(time.time() - s.spawn_ts) if s.spawn_ts > 0 else 0,
                 "agent_source": s.agent_source,
+                "provider": s.provider,
                 "cell_id": s.cell_id,
                 "parent_id": s.parent_id,
                 "log_path": str(getattr(s, "log_path", "")),
                 "worktree_path": str(getattr(s, "worktree_path", "")),
+                "tokens_used": s.tokens_used,
+                "token_budget": s.token_budget,
+                "context_window_tokens": s.context_window_tokens,
+                "context_utilization_pct": s.context_utilization_pct,
+                "context_utilization_alert": s.context_utilization_alert,
                 "runtime_backend": s.runtime_backend,
                 "bridge_session_key": s.bridge_session_key,
                 "bridge_run_id": s.bridge_run_id,
