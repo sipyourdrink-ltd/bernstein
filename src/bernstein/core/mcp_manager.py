@@ -363,3 +363,234 @@ def _merge_env(extra: dict[str, str]) -> dict[str, str]:
     env = dict(os.environ)
     env.update(extra)
     return env
+
+
+# ---------------------------------------------------------------------------
+# MCP capability snapshot persistence (T553)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MCPCapabilitySnapshot:
+    """Point-in-time snapshot of MCP server capabilities and health.
+
+    Attributes:
+        captured_at: Unix timestamp when the snapshot was taken.
+        server_name: Name of the MCP server.
+        alive: Whether the server was alive at capture time.
+        capabilities: List of capability tags reported by the server.
+        transport: Transport type (``"stdio"`` or ``"sse"``).
+        uptime_seconds: Seconds since the server was started.
+        oauth_expiry: Unix timestamp when OAuth token expires, if applicable.
+        scopes: OAuth scopes granted to this server.
+    """
+
+    captured_at: float
+    server_name: str
+    alive: bool
+    capabilities: list[str] = field(default_factory=list[str])
+    transport: str = "stdio"
+    uptime_seconds: float = 0.0
+    oauth_expiry: float | None = None
+    scopes: list[str] = field(default_factory=list[str])
+
+    def is_oauth_expiring_soon(self, threshold_seconds: float = 300.0) -> bool:
+        """Return True if the OAuth token expires within *threshold_seconds*."""
+        if self.oauth_expiry is None:
+            return False
+        return (self.oauth_expiry - time.time()) < threshold_seconds
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-compatible dict."""
+        return {
+            "captured_at": self.captured_at,
+            "server_name": self.server_name,
+            "alive": self.alive,
+            "capabilities": self.capabilities,
+            "transport": self.transport,
+            "uptime_seconds": self.uptime_seconds,
+            "oauth_expiry": self.oauth_expiry,
+            "scopes": self.scopes,
+            "oauth_expiring_soon": self.is_oauth_expiring_soon(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# MCP server health history timeline (T556)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MCPHealthEvent:
+    """A single health status change event for an MCP server.
+
+    Attributes:
+        ts: Unix timestamp of the event.
+        server_name: Name of the MCP server.
+        alive: Health status at this point.
+        reason: Human-readable reason for the status change.
+    """
+
+    ts: float
+    server_name: str
+    alive: bool
+    reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-compatible dict."""
+        return {
+            "ts": self.ts,
+            "server_name": self.server_name,
+            "alive": self.alive,
+            "reason": self.reason,
+        }
+
+
+class MCPHealthHistory:
+    """Rolling health history for all managed MCP servers (T556).
+
+    Stores the last *max_events* health events per server.
+
+    Args:
+        max_events: Maximum events to retain per server.
+    """
+
+    def __init__(self, max_events: int = 100) -> None:
+        self._max_events = max_events
+        self._events: dict[str, list[MCPHealthEvent]] = {}
+
+    def record(self, server_name: str, alive: bool, reason: str = "") -> None:
+        """Record a health status event.
+
+        Args:
+            server_name: Name of the server.
+            alive: Current health status.
+            reason: Optional reason for the change.
+        """
+        event = MCPHealthEvent(ts=time.time(), server_name=server_name, alive=alive, reason=reason)
+        history = self._events.setdefault(server_name, [])
+        history.append(event)
+        if len(history) > self._max_events:
+            del history[: len(history) - self._max_events]
+
+    def get_history(self, server_name: str) -> list[MCPHealthEvent]:
+        """Return health events for *server_name* in chronological order."""
+        return list(self._events.get(server_name, []))
+
+    def to_dict(self) -> dict[str, list[dict[str, Any]]]:
+        """Serialise all history to a JSON-compatible dict."""
+        return {name: [e.to_dict() for e in events] for name, events in self._events.items()}
+
+
+# ---------------------------------------------------------------------------
+# MCP scope precedence explainer (T555)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MCPScopePrecedenceEntry:
+    """One entry in the MCP scope precedence chain.
+
+    Attributes:
+        source: Where this scope came from (``"task"``, ``"global"``,
+            ``"server_default"``).
+        scopes: Scopes granted at this level.
+        server_name: MCP server this entry applies to.
+    """
+
+    source: str
+    scopes: list[str]
+    server_name: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-compatible dict."""
+        return {"source": self.source, "scopes": self.scopes, "server_name": self.server_name}
+
+
+def explain_mcp_scope_precedence(
+    server_name: str,
+    task_scopes: list[str] | None,
+    global_scopes: list[str] | None,
+    server_default_scopes: list[str] | None,
+) -> list[MCPScopePrecedenceEntry]:
+    """Build the scope precedence chain for an MCP server (T555).
+
+    Precedence (highest first): task → global → server_default.
+
+    Args:
+        server_name: Name of the MCP server.
+        task_scopes: Scopes requested by the current task.
+        global_scopes: Globally configured scopes.
+        server_default_scopes: Default scopes from the server definition.
+
+    Returns:
+        Ordered list of :class:`MCPScopePrecedenceEntry` objects.
+    """
+    chain: list[MCPScopePrecedenceEntry] = []
+    if task_scopes is not None:
+        chain.append(MCPScopePrecedenceEntry(source="task", scopes=task_scopes, server_name=server_name))
+    if global_scopes is not None:
+        chain.append(MCPScopePrecedenceEntry(source="global", scopes=global_scopes, server_name=server_name))
+    if server_default_scopes is not None:
+        chain.append(
+            MCPScopePrecedenceEntry(source="server_default", scopes=server_default_scopes, server_name=server_name)
+        )
+    return chain
+
+
+# ---------------------------------------------------------------------------
+# MCPManager extensions: snapshot + health history + OAuth expiry (T553, T554, T556)
+# ---------------------------------------------------------------------------
+
+
+def build_mcp_capability_snapshots(manager: MCPManager) -> list[MCPCapabilitySnapshot]:
+    """Build capability snapshots for all servers in *manager* (T553).
+
+    Args:
+        manager: The :class:`MCPManager` to snapshot.
+
+    Returns:
+        List of :class:`MCPCapabilitySnapshot` objects.
+    """
+    snapshots: list[MCPCapabilitySnapshot] = []
+    now = time.time()
+    for config in manager.configs:
+        state = manager._servers.get(config.name)  # type: ignore[reportPrivateUsage]
+        alive = manager.is_alive(config.name)
+        uptime = (now - state.started_at) if state is not None else 0.0
+        snapshots.append(
+            MCPCapabilitySnapshot(
+                captured_at=now,
+                server_name=config.name,
+                alive=alive,
+                transport=config.transport,
+                uptime_seconds=uptime,
+            )
+        )
+    return snapshots
+
+
+def get_oauth_expiry_dashboard(snapshots: list[MCPCapabilitySnapshot]) -> list[dict[str, Any]]:
+    """Build an OAuth expiry dashboard from capability snapshots (T554).
+
+    Args:
+        snapshots: List of :class:`MCPCapabilitySnapshot` objects.
+
+    Returns:
+        List of dicts with ``server_name``, ``oauth_expiry``,
+        ``expiring_soon``, and ``seconds_remaining``.
+    """
+    dashboard: list[dict[str, Any]] = []
+    now = time.time()
+    for snap in snapshots:
+        if snap.oauth_expiry is not None:
+            seconds_remaining = snap.oauth_expiry - now
+            dashboard.append(
+                {
+                    "server_name": snap.server_name,
+                    "oauth_expiry": snap.oauth_expiry,
+                    "expiring_soon": snap.is_oauth_expiring_soon(),
+                    "seconds_remaining": max(0.0, seconds_remaining),
+                }
+            )
+    return dashboard
