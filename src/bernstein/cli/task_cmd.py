@@ -234,8 +234,8 @@ def pending(ctx: click.Context, workdir: str) -> None:
 
     pending_dir = Path(workdir) / ".sdd" / "runtime" / "pending_approvals"
     if not pending_dir.exists() or not any(pending_dir.glob("*.json")):
-        if ctx.obj.get("JSON"):
-            console.print_json(data=[])
+        if is_json():
+            print_json([])
         else:
             console.print("[dim]No tasks pending approval.[/dim]")
         return
@@ -250,8 +250,8 @@ def pending(ctx: click.Context, workdir: str) -> None:
         except Exception:
             results.append({"task_id": f.stem, "error": "unreadable"})
 
-    if ctx.obj.get("JSON"):
-        console.print_json(data=results)
+    if is_json():
+        print_json(results)
         return
 
     table = Table(show_header=True, header_style="bold magenta")

@@ -622,6 +622,73 @@ async def cache_stats(request: Request) -> JSONResponse:
     )
 
 
+@router.get("/costs/model-comparison")
+async def model_cost_comparison(request: Request) -> JSONResponse:
+    """Return model cost comparison report.
+
+    Shows what the current run would have cost with different models.
+    Useful for optimizing model routing decisions.
+    """
+    from bernstein.core.cost import MODEL_COSTS_PER_1M_TOKENS
+
+    sdd_dir = _get_sdd_dir(request)
+    costs_dir = sdd_dir / "runtime" / "costs"
+
+    # Get current spending by model
+    model_costs: dict[str, dict[str, Any]] = {}
+
+    if costs_dir.exists():
+        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for cost_file in cost_files[:1]:  # Most recent run
+            from bernstein.core.cost_tracker import CostTracker
+            tracker = CostTracker.load(sdd_dir, cost_file.stem)
+            if tracker is None:
+                continue
+            for u in tracker.usages:
+                if u.model not in model_costs:
+                    model_costs[u.model] = {
+                        "actual_cost_usd": 0.0,
+                        "total_tokens": 0,
+                        "invocations": 0,
+                    }
+                model_costs[u.model]["actual_cost_usd"] += u.cost_usd
+                model_costs[u.model]["total_tokens"] += u.input_tokens + u.output_tokens
+                model_costs[u.model]["invocations"] += 1
+
+    # Calculate alternatives
+    comparison = []
+    for model, data in model_costs.items():
+        avg_tokens = data["total_tokens"] / max(1, data["invocations"])
+        actual_cost = data["actual_cost_usd"]
+
+        alternatives = {}
+        for alt_model, costs in MODEL_COSTS_PER_1M_TOKENS.items():
+            if alt_model != model:
+                # Estimate cost based on average tokens
+                input_cost = (avg_tokens * 0.5) / 1_000_000 * costs["input"]
+                output_cost = (avg_tokens * 0.5) / 1_000_000 * costs["output"]
+                estimated_cost = (input_cost + output_cost) * data["invocations"]
+                alternatives[alt_model] = {
+                    "estimated_cost_usd": round(estimated_cost, 4),
+                    "savings_usd": round(actual_cost - estimated_cost, 4),
+                }
+
+        comparison.append({
+            "model": model,
+            "actual_cost_usd": round(actual_cost, 4),
+            "total_tokens": data["total_tokens"],
+            "invocations": data["invocations"],
+            "alternatives": alternatives,
+        })
+
+    return JSONResponse(
+        content={
+            "model_comparison": comparison,
+            "total_models_used": len(comparison),
+        }
+    )
+
+
 @router.get("/costs/token-efficiency")
 async def token_efficiency(request: Request) -> JSONResponse:
     """Compare token efficiency across models and tasks.
