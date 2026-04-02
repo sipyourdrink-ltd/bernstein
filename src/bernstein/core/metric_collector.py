@@ -33,6 +33,7 @@ class MetricType(Enum):
     FAST_PATH = "fast_path"
     PARALLELISM_LEVEL = "parallelism_level"
     QUEUE_DEPTH = "queue_depth"
+    MERGE_RESULT = "merge_result"
 
 
 class ProviderStatus(Enum):
@@ -702,6 +703,31 @@ class MetricsCollector:
                     "limit": str(tokens_limit),
                 },
             )
+        self._flush_buffer()
+
+    def record_merge_result(
+        self,
+        task_id: str,
+        success: bool,
+        *,
+        tenant_id: str = "default",
+    ) -> None:
+        """Record the outcome of a task merge.
+
+        Args:
+            task_id: Task identifier.
+            success: Whether the merge succeeded.
+        """
+        normalized_tenant = normalize_tenant_id(tenant_id)
+        self._write_metric_point(
+            MetricType.MERGE_RESULT,
+            1.0 if success else 0.0,
+            {
+                "task_id": task_id,
+                "success": str(success),
+                "tenant_id": normalized_tenant,
+            },
+        )
         self._flush_buffer()
 
     # -- Error Tracking ------------------------------------------------------

@@ -33,9 +33,11 @@ jobs:
         run: |
           git fetch origin ${{ github.base_ref }} --depth=1
           DIFF=$(git diff --unified=3 origin/${{ github.base_ref }}...HEAD | head -c 50000)
-          echo "diff<<DIFF_EOF" >> "$GITHUB_OUTPUT"
-          echo "$DIFF" >> "$GITHUB_OUTPUT"
-          echo "DIFF_EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "diff<<DIFF_EOF"
+            echo "$DIFF"
+            echo "DIFF_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Analyze with GitHub Models
         id: ai

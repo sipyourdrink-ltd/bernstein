@@ -60,11 +60,10 @@ jobs:
             --baseline tests/protocol/compatibility-baseline.json 2>&1 | tee gate-check.log
 
       - name: Gate decision
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          BREAKING=$(grep -c "breaking_changes" gate-check.log || true)
-          ACKNOWLEDGE="${{ github.event.head_commit.message }}"
-
-          if grep -q "ACKNOWLEDGE_BREAKING_CHANGES" <<< "$ACKNOWLEDGE"; then
+          if grep -q "ACKNOWLEDGE_BREAKING_CHANGES" <<< "$COMMIT_MSG"; then
             echo "✅ Operator acknowledged breaking changes"
             exit 0
           fi

@@ -4,9 +4,35 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def _timestamp_from_json_line(line: str) -> float | None:
+    """Parse a JSONL line and return the timestamp as float if present and numeric.
+
+    Args:
+        line: Single line of JSON (SLO history record).
+
+    Returns:
+        Unix timestamp as float, or None if missing or invalid.
+    """
+    try:
+        parsed: object = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    body: dict[str, object] = cast("dict[str, object]", parsed)
+    raw: object | None = body.get("timestamp")
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    return None
 
 
 @dataclass
@@ -91,8 +117,8 @@ class SLOTracker:
             for line in self._history_file.read_text().splitlines():
                 if not line.strip():
                     continue
-                data = json.loads(line)
-                if data.get("timestamp", 0) >= hour_ago:
+                ts = _timestamp_from_json_line(line)
+                if ts is not None and ts >= hour_ago:
                     count += 1
 
             return float(count)
@@ -118,8 +144,9 @@ class SLOTracker:
             for line in self._history_file.read_text().splitlines():
                 if not line.strip():
                     continue
-                data = json.loads(line)
-                ts = data.get("timestamp", 0)
+                ts = _timestamp_from_json_line(line)
+                if ts is None:
+                    continue
                 if ts >= now - 3600:
                     recent_count += 1
                 elif ts >= two_hours_ago:
@@ -148,13 +175,13 @@ class SLOTracker:
             if not lines:
                 return 0
 
-            timestamps = []
+            timestamps: list[float] = []
             for line in lines:
                 if not line.strip():
                     continue
-                data = json.loads(line)
-                if "timestamp" in data:
-                    timestamps.append(data["timestamp"])
+                ts = _timestamp_from_json_line(line)
+                if ts is not None:
+                    timestamps.append(ts)
 
             if not timestamps:
                 return 0

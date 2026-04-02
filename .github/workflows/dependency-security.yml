@@ -40,7 +40,7 @@ jobs:
         if: success() || failure()
         run: |
           python << 'EOF'
-          import json
+          import json, os
           with open(".sdd/dependency-report.json") as f:
               report = json.load(f)
 
@@ -52,11 +52,13 @@ jobs:
           print(f"CVE_COUNT={report['summary']['cves_found']}")
           print(f"RESOLUTION_COUNT={report['summary']['resolutions_suggested']}")
 
-          with open("$GITHUB_OUTPUT", "a") as f:
-              f.write(f"has_issues={has_issues}\n")
-              f.write(f"has_fixes={has_fixes}\n")
-              f.write(f"cve_count={report['summary']['cves_found']}\n")
-              f.write(f"resolution_count={report['summary']['resolutions_suggested']}\n")
+          output_path = os.environ.get("GITHUB_OUTPUT", "")
+          if output_path:
+              with open(output_path, "a") as f:
+                  f.write(f"has_issues={has_issues}\n")
+                  f.write(f"has_fixes={has_fixes}\n")
+                  f.write(f"cve_count={report['summary']['cves_found']}\n")
+                  f.write(f"resolution_count={report['summary']['resolutions_suggested']}\n")
           EOF
 
       - name: Comment on PR if issues found

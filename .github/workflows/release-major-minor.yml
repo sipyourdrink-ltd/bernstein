@@ -48,7 +48,7 @@ jobs:
         id: bump
         run: |
           VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          IFS='.' read -r MAJOR MINOR _PATCH <<< "$VERSION"
 
           if [ "${{ inputs.bump }}" = "major" ]; then
             NEW="$((MAJOR + 1)).0.0"
@@ -56,8 +56,10 @@ jobs:
             NEW="${MAJOR}.$((MINOR + 1)).0"
           fi
 
-          echo "old=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          {
+            echo "old=$VERSION"
+            echo "new=$NEW"
+          } >> "$GITHUB_OUTPUT"
           echo "Bumping $VERSION → $NEW (${{ inputs.bump }})"
 
       # Verify CI passed on current commit
@@ -91,9 +93,11 @@ jobs:
           else
             COMMITS=$(git log --oneline -20)
           fi
-          echo "commits<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$COMMITS" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "commits<<EOF"
+            echo "$COMMITS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       # Commit, tag, build, publish
       - name: Commit and tag
@@ -140,11 +144,13 @@ jobs:
       - name: Dry run summary
         if: inputs.dry_run == true
         run: |
-          echo "## Dry Run Summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Bump**: ${{ inputs.bump }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Version**: ${{ steps.bump.outputs.old }} → ${{ steps.bump.outputs.new }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Changelog**: ${{ inputs.changelog }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Commits since last tag**:" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "${{ steps.changelog.outputs.commits }}" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Dry Run Summary"
+            echo "- **Bump**: ${{ inputs.bump }}"
+            echo "- **Version**: ${{ steps.bump.outputs.old }} → ${{ steps.bump.outputs.new }}"
+            echo "- **Changelog**: ${{ inputs.changelog }}"
+            echo "- **Commits since last tag**:"
+            echo '```'
+            echo "${{ steps.changelog.outputs.commits }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

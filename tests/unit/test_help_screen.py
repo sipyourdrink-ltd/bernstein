@@ -22,7 +22,7 @@ class TestHelpScreen:
         screen = HelpScreen()
 
         # Should have escape and q bindings
-        binding_keys = [b.key for b in screen.BINDINGS]
+        binding_keys = [b[0] if isinstance(b, tuple) else b.key for b in screen.BINDINGS]
         assert "escape" in binding_keys
         assert "q" in binding_keys
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp
+
+if TYPE_CHECKING:
+    from fastapi import Request
+    from starlette.types import ASGIApp
 
 logger = logging.getLogger(__name__)
 

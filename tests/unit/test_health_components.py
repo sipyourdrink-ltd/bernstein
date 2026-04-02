@@ -144,12 +144,11 @@ async def test_database_ok_when_directory_accessible(client: AsyncClient) -> Non
 
 
 @pytest.mark.anyio
-async def test_database_down_when_mkdir_fails(app) -> None:
+async def test_database_down_when_mkdir_fails(client: AsyncClient) -> None:
     """Database is 'down' when storage directory cannot be created."""
+    await client.get("/health")  # warm up middleware stack
     with patch("pathlib.Path.mkdir", side_effect=OSError("permission denied")):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
-            resp = await c.get("/health")
+        resp = await client.get("/health")
     assert resp.json()["components"]["database"]["status"] == "down"
 
 

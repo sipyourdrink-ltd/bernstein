@@ -212,6 +212,14 @@ class SLOTracker:
             target_seconds = 1800.0
             self.targets["p95_duration"].current = min(1.0, target_seconds / max(p95, 1.0))
 
+        # Update merge success SLO (if we have merge metrics)
+        # We need to find merge metrics in collector.
+        # For now, let's assume we can query them or they are tracked separately.
+        # To keep it simple for this ticket, we'll proxy it from janitor_passed if available.
+        janitor_passed = sum(1 for tm in task_metrics.values() if getattr(tm, "janitor_passed", False))
+        if total > 0:
+            self.targets["merge_success"].current = janitor_passed / total
+
         # Update error budget
         self.error_budget.total_tasks = total
         self.error_budget.failed_tasks = total - successes

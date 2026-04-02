@@ -641,6 +641,7 @@ async def model_cost_comparison(request: Request) -> JSONResponse:
         cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         for cost_file in cost_files[:1]:  # Most recent run
             from bernstein.core.cost_tracker import CostTracker
+
             tracker = CostTracker.load(sdd_dir, cost_file.stem)
             if tracker is None:
                 continue
@@ -656,7 +657,7 @@ async def model_cost_comparison(request: Request) -> JSONResponse:
                 model_costs[u.model]["invocations"] += 1
 
     # Calculate alternatives
-    comparison = []
+    comparison: list[dict[str, Any]] = []
     for model, data in model_costs.items():
         avg_tokens = data["total_tokens"] / max(1, data["invocations"])
         actual_cost = data["actual_cost_usd"]
@@ -673,13 +674,15 @@ async def model_cost_comparison(request: Request) -> JSONResponse:
                     "savings_usd": round(actual_cost - estimated_cost, 4),
                 }
 
-        comparison.append({
-            "model": model,
-            "actual_cost_usd": round(actual_cost, 4),
-            "total_tokens": data["total_tokens"],
-            "invocations": data["invocations"],
-            "alternatives": alternatives,
-        })
+        comparison.append(
+            {
+                "model": model,
+                "actual_cost_usd": round(actual_cost, 4),
+                "total_tokens": data["total_tokens"],
+                "invocations": data["invocations"],
+                "alternatives": alternatives,
+            }
+        )
 
     return JSONResponse(
         content={

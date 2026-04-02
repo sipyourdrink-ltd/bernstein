@@ -62,9 +62,11 @@ jobs:
             --output-format json 2>/dev/null || echo '{"response":"Gemini review could not be generated."}')
 
           BODY=$(echo "$RESPONSE" | jq -r '.response // .text // "Review unavailable."')
-          echo "body<<REVIEW_EOF" >> "$GITHUB_OUTPUT"
-          echo "$BODY" >> "$GITHUB_OUTPUT"
-          echo "REVIEW_EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "body<<REVIEW_EOF"
+            echo "$BODY"
+            echo "REVIEW_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Post review comment
         if: steps.check.outputs.skip == 'false'

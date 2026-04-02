@@ -598,6 +598,32 @@ async def get_queue_depth(request: Request, limit: int = 100) -> dict[str, Any]:
     }
 
 
+@router.get("/observability/timeline")
+async def get_timeline(request: Request) -> dict[str, Any]:
+    """Return task timing data for timeline visualization.
+
+    Returns start and end times for all tasks tracked in metrics.
+    """
+    from bernstein.core.metric_collector import get_collector
+
+    collector = get_collector()
+    task_metrics = getattr(collector, "_task_metrics", {})
+
+    entries: list[dict[str, Any]] = []
+    for tid, m in task_metrics.items():
+        entries.append(
+            {
+                "task_id": tid,
+                "title": tid[:8],  # titles aren't in metrics usually, but IDs are
+                "start_time": m.start_time,
+                "end_time": m.end_time,
+                "status": "done" if m.success else ("failed" if m.end_time else "in_progress"),
+            }
+        )
+
+    return {"entries": entries}
+
+
 @router.get("/changelog")
 async def get_changelog(request: Request, days: int = 30) -> dict[str, Any]:
     """Generate changelog from completed tasks.
