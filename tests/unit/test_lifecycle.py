@@ -10,7 +10,7 @@ from bernstein.core.lifecycle import (
     transition_agent,
     transition_task,
 )
-from bernstein.core.models import AgentSession, Task, TaskStatus
+from bernstein.core.models import AbortReason, AgentSession, Task, TaskStatus, TransitionReason
 
 
 @pytest.fixture
@@ -52,12 +52,35 @@ def test_transition_task_illegal(task: Task) -> None:
 def test_transition_agent_success(agent: AgentSession) -> None:
     """Test a legal agent status transition."""
     with patch("bernstein.core.telemetry.start_span"):
-        event = transition_agent(agent, "working", actor="orchestrator")
+        event = transition_agent(agent, "working", actor="orchestrator", transition_reason=TransitionReason.COMPLETED)
         assert agent.status == "working"
+        assert agent.transition_reason is TransitionReason.COMPLETED
         assert event.entity_type == "agent"
         assert event.entity_id == "agent-1"
         assert event.from_status == "starting"
         assert event.to_status == "working"
+        assert event.transition_reason is TransitionReason.COMPLETED
+
+
+def test_transition_agent_records_abort_metadata(agent: AgentSession) -> None:
+    """Structured abort metadata should be persisted on the session and event."""
+    with patch("bernstein.core.telemetry.start_span"):
+        event = transition_agent(
+            agent,
+            "dead",
+            actor="agent_lifecycle",
+            reason="process not alive",
+            transition_reason=TransitionReason.ABORTED,
+            abort_reason=AbortReason.TIMEOUT,
+            abort_detail="process exited with timeout status 124",
+            finish_reason="agent_exit",
+        )
+
+    assert agent.abort_reason is AbortReason.TIMEOUT
+    assert agent.abort_detail == "process exited with timeout status 124"
+    assert agent.finish_reason == "agent_exit"
+    assert event.transition_reason is TransitionReason.ABORTED
+    assert event.abort_reason is AbortReason.TIMEOUT
 
 
 def test_transition_agent_illegal(agent: AgentSession) -> None:

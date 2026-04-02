@@ -91,6 +91,30 @@ def _read_provider_status(request: Request) -> dict[str, Any] | None:
         return None
 
 
+def _read_agents_snapshot(sdd_dir: Path | None) -> dict[str, dict[str, Any]]:
+    """Load the latest serialized agent session snapshot from disk."""
+    if not isinstance(sdd_dir, Path):
+        return {}
+
+    path = sdd_dir / "runtime" / "agents.json"
+    if not path.exists():
+        return {}
+
+    try:
+        payload = cast("dict[str, Any]", json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    snapshots: dict[str, dict[str, Any]] = {}
+    for raw_agent in payload.get("agents", []):
+        if not isinstance(raw_agent, dict):
+            continue
+        agent_id = str(raw_agent.get("id", "")).strip()
+        if agent_id:
+            snapshots[agent_id] = raw_agent
+    return snapshots
+
+
 def _active_worktree_count(request: Request) -> int:
     """Return the number of active Bernstein worktrees."""
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
@@ -582,31 +606,41 @@ async def dashboard_data(request: Request) -> JSONResponse:
     tasks = store.list_tasks()
     agents = store.agents
     now = time.time()
+    sdd_dir = getattr(request.app.state, "sdd_dir", None)
+    agent_snapshots = _read_agents_snapshot(sdd_dir if isinstance(sdd_dir, Path) else None)
 
     # Fallback: if store has no agents, read from agents.json on disk
     if not agents:
-        import json as _json
+        from bernstein.core.models import AbortReason, AgentSession, TransitionReason
 
-        sdd_dir: Path = request.app.state.sdd_dir
-        agents_file = sdd_dir / "runtime" / "agents.json"
-        if agents_file.exists():
-            try:
-                data = _json.loads(agents_file.read_text())
-                from bernstein.core.models import AgentSession
+        for snapshot in agent_snapshots.values():
+            status_value = str(snapshot.get("status", "dead"))
+            session = AgentSession(
+                id=str(snapshot.get("id", "")),
+                pid=int(snapshot.get("pid", 0) or 0),
+                role=str(snapshot.get("role", "")),
+                status=cast('Any', status_value),
+                task_ids=list(snapshot.get("task_ids") or []),
+                provider=str(snapshot.get("provider", "")) or None,
+                agent_source=str(snapshot.get("agent_source", "built-in")),
+                tokens_used=int(snapshot.get("tokens_used", 0) or 0),
+                token_budget=int(snapshot.get("token_budget", 0) or 0),
+                context_window_tokens=int(snapshot.get("context_window_tokens", 0) or 0),
+                context_utilization_pct=float(snapshot.get("context_utilization_pct", 0.0) or 0.0),
+                context_utilization_alert=bool(snapshot.get("context_utilization_alert", False)),
+                transition_reason=TransitionReason(str(snapshot["transition_reason"]))
+                if str(snapshot.get("transition_reason", "")).strip()
+                else None,
+                abort_reason=AbortReason(str(snapshot["abort_reason"]))
+                if str(snapshot.get("abort_reason", "")).strip()
+                else None,
+                abort_detail=str(snapshot.get("abort_detail", "") or ""),
+                finish_reason=str(snapshot.get("finish_reason", "") or ""),
+            )
+            agents[session.id] = session
 
-                for a_raw in data.get("agents", []):
-                    session = AgentSession(
-                        id=a_raw.get("id", ""),
-                        pid=a_raw.get("pid", 0),
-                        role=a_raw.get("role", ""),
-                        status=a_raw.get("status", "dead"),
-                        task_ids=a_raw.get("task_ids", []),
-                    )
-                    agents[session.id] = session
-            except Exception:
-                pass
-
-    alive_agents = [a for a in agents.values() if a.status != "dead"]
+    all_agents = list(agents.values())
+    alive_agents = [a for a in all_agents if a.status != "dead"]
     cost_by_role = store.cost_by_role()
     total_cost = sum(cost_by_role.values())
     agent_count = len(alive_agents)
@@ -650,12 +684,22 @@ async def dashboard_data(request: Request) -> JSONResponse:
     # -- Agent details with cost + task info ---------------------------------
     live_per_agent: dict[str, float] = live_costs.get("per_agent") or {}
     agent_details: list[dict[str, Any]] = []
-    for a in alive_agents:
+    for a in all_agents:
+        snapshot = agent_snapshots.get(a.id, {})
         runtime_s = int(now - a.spawn_ts)
         model_name = a.model_config.model if hasattr(a.model_config, "model") else "sonnet"
         # Prefer accurate per-agent cost from live tracker; fall back to role-based estimate
         agent_cost = live_per_agent.get(a.id) or cost_by_role.get(a.role, 0.0) / max(
             1, len([ag for ag in alive_agents if ag.role == a.role])
+        )
+        context_window_tokens = int(
+            getattr(a, "context_window_tokens", 0) or snapshot.get("context_window_tokens", 0) or 0
+        )
+        context_utilization_pct = float(
+            getattr(a, "context_utilization_pct", 0.0) or snapshot.get("context_utilization_pct", 0.0) or 0.0
+        )
+        context_utilization_alert = bool(
+            getattr(a, "context_utilization_alert", False) or snapshot.get("context_utilization_alert", False)
         )
         # Find tasks assigned to this agent
         agent_tasks = [t for t in tasks if t.assigned_agent == a.id]
@@ -665,11 +709,29 @@ async def dashboard_data(request: Request) -> JSONResponse:
                 "role": a.role,
                 "status": a.status,
                 "model": model_name,
+                "provider": getattr(a, "provider", None) or snapshot.get("provider"),
                 "spawn_ts": a.spawn_ts,
                 "runtime_s": runtime_s,
                 "pid": a.pid,
                 "task_ids": a.task_ids,
                 "agent_source": a.agent_source,
+                "tokens_used": int(getattr(a, "tokens_used", 0) or snapshot.get("tokens_used", 0) or 0),
+                "token_budget": int(getattr(a, "token_budget", 0) or snapshot.get("token_budget", 0) or 0),
+                "context_window_tokens": context_window_tokens,
+                "context_utilization_pct": context_utilization_pct,
+                "context_utilization_alert": context_utilization_alert,
+                "transition_reason": (
+                    getattr(a, "transition_reason", None).value
+                    if getattr(a, "transition_reason", None) is not None
+                    else str(snapshot.get("transition_reason", "") or "")
+                ),
+                "abort_reason": (
+                    getattr(a, "abort_reason", None).value
+                    if getattr(a, "abort_reason", None) is not None
+                    else str(snapshot.get("abort_reason", "") or "")
+                ),
+                "abort_detail": str(getattr(a, "abort_detail", "") or snapshot.get("abort_detail", "") or ""),
+                "finish_reason": str(getattr(a, "finish_reason", "") or snapshot.get("finish_reason", "") or ""),
                 "cost_usd": round(agent_cost, 4),
                 "tasks": [
                     {"id": t.id, "title": t.title[:40], "status": t.status.value, "progress": _task_progress_pct(t)}

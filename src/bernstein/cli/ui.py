@@ -112,6 +112,9 @@ class AgentInfo:
     status: str = "idle"
     task_ids: list[str] = field(default_factory=lambda: list[str]())
     runtime_s: float = 0.0
+    abort_reason: str = ""
+    abort_detail: str = ""
+    finish_reason: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentInfo:
@@ -130,6 +133,9 @@ class AgentInfo:
             status=str(data.get("status", "idle")),
             task_ids=[str(t) for t in cast("list[str]", data.get("task_ids") or [])],
             runtime_s=float(data.get("runtime_s", 0.0)),
+            abort_reason=str(data.get("abort_reason", "")),
+            abort_detail=str(data.get("abort_detail", "")),
+            finish_reason=str(data.get("finish_reason", "")),
         )
 
 
@@ -420,12 +426,15 @@ class AgentStatusTable:
             )
             status_icon = get_status_icon(agent.status)
             agent_icon = get_agent_icon(agent.role)
+            status_label = f"{status_icon} {agent.status}"
+            if agent.abort_reason:
+                status_label = f"{status_label} ({agent.abort_reason})"
             table.add_row(
                 f"{agent_icon} [bold]{agent.role}[/bold] [dim]{agent.agent_id[-8:]}[/dim]"
                 if agent.agent_id
                 else f"{agent_icon} {agent.role}",
                 agent.model or "\u2014",
-                f"[{color}]{status_icon} {agent.status}[/{color}]",
+                f"[{color}]{status_label}[/{color}]",
                 runtime_str,
                 str(len(agent.task_ids)),
                 cost_cell,
@@ -451,8 +460,11 @@ class AgentStatusTable:
             cost_usd = costs.get(agent.agent_id, 0.0)
             cost_str = f"${cost_usd:.4f}" if cost_usd > 0 else "-"
             tasks_n = len(agent.task_ids)
+            status_label = agent.status
+            if agent.abort_reason:
+                status_label = f"{status_label} ({agent.abort_reason})"
             lines.append(
-                f"{agent.role:<16} {agent.model:<10} {agent.status:<10} {runtime_str:>7}  {tasks_n}  {cost_str}"
+                f"{agent.role:<16} {agent.model:<10} {status_label:<24} {runtime_str:>7}  {tasks_n}  {cost_str}"
             )
         return "\n".join(lines)
 
