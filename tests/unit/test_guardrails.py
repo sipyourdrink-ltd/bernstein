@@ -15,6 +15,7 @@ from bernstein.core.guardrails import (
     run_guardrails,
 )
 from bernstein.core.models import Complexity, Scope, Task
+from bernstein.core.policy_engine import DecisionType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,47 +48,38 @@ class TestCheckSecrets:
         diff = "+    config['key'] = 'AKIAIOSFODNN7EXAMPLE'\n"
         results = check_secrets(diff)
         assert len(results) == 1
-        assert not results[0].passed
-        assert results[0].blocked  # hard block
+        assert results[0].type == DecisionType.SAFETY
+        assert results[0].bypass_immune
 
     def test_blocks_github_token(self) -> None:
         diff = "+TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz123456789012'\n"
         results = check_secrets(diff)
         assert len(results) == 1
-        assert not results[0].passed
-        assert results[0].blocked
+        assert results[0].type == DecisionType.SAFETY
 
     def test_blocks_private_key_header(self) -> None:
         diff = "+-----BEGIN RSA PRIVATE KEY-----\n+MIIEowIBAAKCAQEA...\n"
         results = check_secrets(diff)
         assert len(results) == 1
-        assert not results[0].passed
-        assert results[0].blocked
+        assert results[0].type == DecisionType.SAFETY
 
     def test_passes_clean_diff(self) -> None:
         diff = "+def greet(name: str) -> str:\n+    return f'Hello, {name}!'\n"
         results = check_secrets(diff)
         assert len(results) == 1
-        assert results[0].passed
-        assert not results[0].blocked
-
-    def test_check_name_is_secret_detection(self) -> None:
-        results = check_secrets("")
-        assert results[0].check == "secret_detection"
+        assert results[0].type == DecisionType.ALLOW
 
     def test_blocks_openssh_private_key(self) -> None:
         diff = "+-----BEGIN OPENSSH PRIVATE KEY-----\n+b3BlbnNzaC1rZXktdjEA...\n"
         results = check_secrets(diff)
-        assert not results[0].passed
-        assert results[0].blocked
+        assert results[0].type == DecisionType.SAFETY
 
     def test_passes_variable_named_key_with_placeholder(self) -> None:
         # Variable named "key" but value is not a real secret pattern
         diff = "+key = 'my_config_key'\n"
         results = check_secrets(diff)
-        # "my_config_key" is 14 chars and matches generic_secret pattern.
         # Just verify the function runs without error; actual result depends on patterns.
-        assert isinstance(results[0].passed, bool)
+        assert results[0].type in (DecisionType.ALLOW, DecisionType.SAFETY)
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +93,7 @@ class TestCheckScope:
         diff = "diff --git a/src/bernstein/core/orchestrator.py b/src/bernstein/core/orchestrator.py\n"
         results = check_scope(diff, task)
         assert len(results) == 1
-        assert not results[0].passed
+        assert results[0].type == DecisionType.ASK
         assert any("orchestrator.py" in f for f in results[0].files)
 
     def test_passes_in_scope_file(self) -> None:
@@ -109,20 +101,15 @@ class TestCheckScope:
         diff = "diff --git a/src/bernstein/core/janitor.py b/src/bernstein/core/janitor.py\n"
         results = check_scope(diff, task)
         assert len(results) == 1
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
     def test_passes_when_no_owned_files(self) -> None:
         task = _make_task(owned_files=[])
         diff = "diff --git a/anything.py b/anything.py\n"
         results = check_scope(diff, task)
         assert len(results) == 1
-        assert results[0].passed
-        assert "no scope" in results[0].detail.lower()
-
-    def test_check_name_is_scope_enforcement(self) -> None:
-        task = _make_task(owned_files=[])
-        results = check_scope("", task)
-        assert results[0].check == "scope_enforcement"
+        assert results[0].type == DecisionType.ALLOW
+        assert "no scope" in results[0].reason.lower()
 
     def test_collects_all_out_of_scope_files(self) -> None:
         task = _make_task(owned_files=["src/bernstein/core/janitor.py"])
@@ -131,22 +118,21 @@ class TestCheckScope:
             "diff --git a/pyproject.toml b/pyproject.toml\n"
         )
         results = check_scope(diff, task)
-        assert not results[0].passed
+        assert results[0].type == DecisionType.ASK
         assert len(results[0].files) == 2
 
     def test_passes_file_within_owned_directory(self) -> None:
         task = _make_task(owned_files=["src/bernstein/core"])
         diff = "diff --git a/src/bernstein/core/new_module.py b/src/bernstein/core/new_module.py\n"
         results = check_scope(diff, task)
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
-    def test_scope_violation_is_not_hard_blocked(self) -> None:
-        """Scope violations are soft blocks (flagged for review, not hard-blocked)."""
+    def test_scope_violation_is_ask(self) -> None:
+        """Scope violations are ASK (flagged for review)."""
         task = _make_task(owned_files=["src/foo.py"])
         diff = "diff --git a/src/bar.py b/src/bar.py\n"
         results = check_scope(diff, task)
-        assert not results[0].passed
-        assert not results[0].blocked  # soft block only
+        assert results[0].type == DecisionType.ASK
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +156,8 @@ class TestCheckDangerousOperations:
     def test_flags_critical_file_deletion(self) -> None:
         results = check_dangerous_operations(_CRITICAL_FILE_DELETION_DIFF, GuardrailsConfig())
         assert len(results) == 1
-        assert not results[0].passed
-        assert "LICENSE" in results[0].detail
+        assert results[0].type == DecisionType.ASK
+        assert "LICENSE" in results[0].reason
 
     def test_flags_test_file_deletion(self) -> None:
         diff = (
@@ -181,7 +167,7 @@ class TestCheckDangerousOperations:
             "+++ /dev/null\n"
         )
         results = check_dangerous_operations(diff, GuardrailsConfig())
-        assert not results[0].passed
+        assert results[0].type == DecisionType.ASK
 
     def test_flags_large_deletion(self) -> None:
         removed_lines = "".join(f"-line {i}\n" for i in range(8))
@@ -191,7 +177,7 @@ class TestCheckDangerousOperations:
             + "+keep1\n+keep2\n"
         )
         results = check_dangerous_operations(diff, GuardrailsConfig(max_deletion_pct=50))
-        assert not results[0].passed
+        assert results[0].type == DecisionType.ASK
 
     def test_passes_clean_diff(self) -> None:
         diff = (
@@ -204,11 +190,7 @@ class TestCheckDangerousOperations:
             "+new line\n"
         )
         results = check_dangerous_operations(diff, GuardrailsConfig())
-        assert results[0].passed
-
-    def test_check_name_is_dangerous_operations(self) -> None:
-        results = check_dangerous_operations("", GuardrailsConfig())
-        assert results[0].check == "dangerous_operations"
+        assert results[0].type == DecisionType.ALLOW
 
     def test_flags_pyproject_deletion(self) -> None:
         diff = (
@@ -218,7 +200,7 @@ class TestCheckDangerousOperations:
             "+++ /dev/null\n"
         )
         results = check_dangerous_operations(diff, GuardrailsConfig())
-        assert not results[0].passed
+        assert results[0].type == DecisionType.ASK
 
     def test_custom_deletion_threshold(self) -> None:
         """With max_deletion_pct=90, an 80% deletion should pass."""
@@ -229,7 +211,7 @@ class TestCheckDangerousOperations:
             + "+keep1\n+keep2\n"
         )
         results = check_dangerous_operations(diff, GuardrailsConfig(max_deletion_pct=90))
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +388,7 @@ def test_regular_paths_allowed_when_permissive(tmp_path: Path) -> None:
 
     results = run_guardrails(diff, task, config, workdir)
 
+    # Convert to list to iterate
     immune_results = [r for r in results if r.check == "immune_path_enforcement"]
     assert len(immune_results) == 1
     assert immune_results[0].passed

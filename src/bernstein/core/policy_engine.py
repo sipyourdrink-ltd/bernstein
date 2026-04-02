@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -19,6 +20,77 @@ if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
+
+
+class DecisionType(StrEnum):
+    """Permission decision types in order of precedence (highest first)."""
+
+    DENY = "deny"  # Mandatory block, bypass-immune
+    IMMUNE = "immune"  # Safety-critical paths, bypass-immune
+    SAFETY = "safety"  # Secret detection, etc. - bypass-immune
+    ASK = "ask"  # Requires human approval
+    ALLOW = "allow"  # Permitted to proceed
+
+
+@dataclass(frozen=True)
+class PermissionDecision:
+    """A single decision from a permission layer."""
+
+    type: DecisionType
+    reason: str
+    bypass_immune: bool = False
+    files: tuple[str, ...] = ()
+
+
+class DecisionGraph:
+    """Evaluates layered permission decisions.
+
+    Layers are checked in order of DecisionType precedence.
+    Bypass flags only apply to layers where bypass_immune=False.
+    """
+
+    def __init__(self, bypass_enabled: bool = False) -> None:
+        self.bypass_enabled = bypass_enabled
+        self._decisions: list[PermissionDecision] = []
+
+    def add_decision(self, decision: PermissionDecision) -> None:
+        """Add a decision to the graph."""
+        self._decisions.append(decision)
+
+    def evaluate(self) -> PermissionDecision:
+        """Return the final aggregate decision.
+
+        If multiple decisions exist, the one with highest precedence wins.
+        If bypass is enabled, non-immune DENY/SAFETY/ASK decisions are downgraded
+        to ALLOW.
+        """
+        if not self._decisions:
+            return PermissionDecision(DecisionType.ALLOW, "No rules evaluated")
+
+        # Sort by precedence (DENY > IMMUNE > SAFETY > ASK > ALLOW)
+        priority = {
+            DecisionType.DENY: 0,
+            DecisionType.IMMUNE: 1,
+            DecisionType.SAFETY: 2,
+            DecisionType.ASK: 3,
+            DecisionType.ALLOW: 4,
+        }
+
+        sorted_decisions = sorted(self._decisions, key=lambda d: priority[d.type])
+
+        for d in sorted_decisions:
+            if d.type == DecisionType.ALLOW:
+                continue
+
+            # Bypass logic
+            if self.bypass_enabled and not d.bypass_immune:
+                logger.info("Bypassing decision %s: %s", d.type, d.reason)
+                continue
+
+            return d
+
+        return PermissionDecision(DecisionType.ALLOW, "All checks passed or bypassed")
+
 
 _REGEX_RULE_RE = re.compile(r"^(?P<field>[a-z_]+)\s*(?P<operator>!~|=~)\s*/(?P<pattern>.+)/$")
 _COMPARE_RULE_RE = re.compile(r"^(?P<field>[a-z_]+)\s*(?P<operator>==|!=|>=|<=|>|<)\s*(?P<value>.+)$")

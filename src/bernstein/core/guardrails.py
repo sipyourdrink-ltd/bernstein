@@ -18,6 +18,7 @@ from typing import Any
 from bernstein.core.license_scanner import check_license_obligations
 from bernstein.core.models import GuardrailResult, Task
 from bernstein.core.permissions import AgentPermissions, check_file_permissions
+from bernstein.core.policy_engine import DecisionGraph, DecisionType, PermissionDecision
 
 logger = logging.getLogger(__name__)
 
@@ -177,14 +178,14 @@ def _parse_deletion_pct_per_file(diff: str) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 
-def check_secrets(diff: str) -> list[GuardrailResult]:
+def check_secrets(diff: str) -> list[PermissionDecision]:
     """Scan a diff for known secret patterns.
 
     Args:
         diff: Git diff output string.
 
     Returns:
-        List with one GuardrailResult for the "secret_detection" check.
+        List with one PermissionDecision for the "secret_detection" check.
     """
     found: list[str] = []
     for name, pattern in _SECRET_PATTERNS:
@@ -193,24 +194,16 @@ def check_secrets(diff: str) -> list[GuardrailResult]:
 
     if found:
         return [
-            GuardrailResult(
-                check="secret_detection",
-                passed=False,
-                blocked=True,
-                detail=f"Potential secrets detected: {', '.join(found)}",
+            PermissionDecision(
+                type=DecisionType.SAFETY,
+                reason=f"Potential secrets detected: {', '.join(found)}",
+                bypass_immune=True,
             )
         ]
-    return [
-        GuardrailResult(
-            check="secret_detection",
-            passed=True,
-            blocked=False,
-            detail="No secrets detected",
-        )
-    ]
+    return [PermissionDecision(type=DecisionType.ALLOW, reason="No secrets detected")]
 
 
-def check_immune_paths(diff: str) -> list[GuardrailResult]:
+def check_immune_paths(diff: str) -> list[PermissionDecision]:
     """Hard-block any modifications to safety-critical paths that bypass other checks.
 
     These paths (.sdd, .git, etc.) are always protected regardless of permission mode.
@@ -219,7 +212,7 @@ def check_immune_paths(diff: str) -> list[GuardrailResult]:
         diff: Git diff output string.
 
     Returns:
-        List containing one GuardrailResult for the "immune_path_enforcement" check.
+        List containing one PermissionDecision for the "immune_path_enforcement" check.
     """
     from bernstein.core.permissions import path_matches_any
 
@@ -228,25 +221,17 @@ def check_immune_paths(diff: str) -> list[GuardrailResult]:
 
     if violations:
         return [
-            GuardrailResult(
-                check="immune_path_enforcement",
-                passed=False,
-                blocked=True,
-                detail=f"Safety-critical path violation: modified immune files {', '.join(violations)}",
-                files=violations,
+            PermissionDecision(
+                type=DecisionType.IMMUNE,
+                reason=f"Safety-critical path violation: modified immune files {', '.join(violations)}",
+                bypass_immune=True,
+                files=tuple(violations),
             )
         ]
-    return [
-        GuardrailResult(
-            check="immune_path_enforcement",
-            passed=True,
-            blocked=False,
-            detail="No immune path violations",
-        )
-    ]
+    return [PermissionDecision(type=DecisionType.ALLOW, reason="No immune path violations")]
 
 
-def check_scope(diff: str, task: Task) -> list[GuardrailResult]:
+def check_scope(diff: str, task: Task) -> list[PermissionDecision]:
     """Check that all modified files are within the task's owned_files scope.
 
     If the task has no owned_files, scope enforcement is skipped (passes).
@@ -256,17 +241,10 @@ def check_scope(diff: str, task: Task) -> list[GuardrailResult]:
         task: Task with owned_files defining the allowed scope.
 
     Returns:
-        List with one GuardrailResult for the "scope_enforcement" check.
+        List with one PermissionDecision for the "scope_enforcement" check.
     """
     if not task.owned_files:
-        return [
-            GuardrailResult(
-                check="scope_enforcement",
-                passed=True,
-                blocked=False,
-                detail="No scope defined — skipping",
-            )
-        ]
+        return [PermissionDecision(type=DecisionType.ALLOW, reason="No scope defined — skipping")]
 
     changed_files = _parse_diff_files(diff)
     out_of_scope = [
@@ -277,28 +255,19 @@ def check_scope(diff: str, task: Task) -> list[GuardrailResult]:
 
     if out_of_scope:
         return [
-            GuardrailResult(
-                check="scope_enforcement",
-                passed=False,
-                blocked=False,  # Soft block — flagged for review, not hard-blocked
-                detail=f"{len(out_of_scope)} file(s) modified outside task scope",
-                files=out_of_scope,
+            PermissionDecision(
+                type=DecisionType.ASK,
+                reason=f"{len(out_of_scope)} file(s) modified outside task scope",
+                files=tuple(out_of_scope),
             )
         ]
-    return [
-        GuardrailResult(
-            check="scope_enforcement",
-            passed=True,
-            blocked=False,
-            detail="All modified files within scope",
-        )
-    ]
+    return [PermissionDecision(type=DecisionType.ALLOW, reason="All modified files within scope")]
 
 
 def check_dangerous_operations(
     diff: str,
     config: GuardrailsConfig,
-) -> list[GuardrailResult]:
+) -> list[PermissionDecision]:
     """Flag dangerous operations in a git diff.
 
     Checks:
@@ -311,7 +280,7 @@ def check_dangerous_operations(
         config: Guardrails configuration (max_deletion_pct threshold).
 
     Returns:
-        List with one GuardrailResult for the "dangerous_operations" check.
+        List with one PermissionDecision for the "dangerous_operations" check.
     """
     issues: list[str] = []
     changed_files = _parse_diff_files(diff)
@@ -334,22 +303,13 @@ def check_dangerous_operations(
     if issues:
         violated_files = [f for f in changed_files if any(f in issue for issue in issues)]
         return [
-            GuardrailResult(
-                check="dangerous_operations",
-                passed=False,
-                blocked=False,
-                detail="; ".join(issues),
-                files=violated_files,
+            PermissionDecision(
+                type=DecisionType.ASK,
+                reason="; ".join(issues),
+                files=tuple(violated_files),
             )
         ]
-    return [
-        GuardrailResult(
-            check="dangerous_operations",
-            passed=True,
-            blocked=False,
-            detail="No dangerous operations detected",
-        )
-    ]
+    return [PermissionDecision(type=DecisionType.ALLOW, reason="No dangerous operations detected")]
 
 
 # ---------------------------------------------------------------------------
@@ -443,6 +403,7 @@ def run_guardrails(
     task: Task,
     config: GuardrailsConfig,
     workdir: Path,
+    bypass_enabled: bool = False,
 ) -> list[GuardrailResult]:
     """Run all enabled guardrail checks on an agent's diff and record events.
 
@@ -451,47 +412,66 @@ def run_guardrails(
         task: The task that produced the diff.
         config: Which checks to run and their thresholds.
         workdir: Project root for writing metrics.
+        bypass_enabled: Whether non-immune checks can be bypassed.
 
     Returns:
         List of GuardrailResult, one per enabled check.
     """
-    results: list[GuardrailResult] = []
+    graph = DecisionGraph(bypass_enabled=bypass_enabled)
+    decisions: dict[str, list[PermissionDecision]] = {}
 
     # Mandatory checks that cannot be disabled
-    for r in check_immune_paths(diff):
-        results.append(r)
-        _record_result(task.id, r, workdir)
+    decisions["immune_path_enforcement"] = check_immune_paths(diff)
 
     if config.secrets:
-        for r in check_secrets(diff):
-            results.append(r)
-            _record_result(task.id, r, workdir)
+        decisions["secret_detection"] = check_secrets(diff)
 
     if config.scope:
-        for r in check_scope(diff, task):
-            results.append(r)
-            _record_result(task.id, r, workdir)
+        decisions["scope_enforcement"] = check_scope(diff, task)
 
     if config.file_permissions:
-        for r in check_file_permissions(diff, task.role, config.permission_overrides):
-            results.append(r)
-            _record_result(task.id, r, workdir)
+        decisions["file_permissions"] = check_file_permissions(diff, task.role, config.permission_overrides)
 
-    for r in check_dangerous_operations(diff, config):
-        results.append(r)
-        _record_result(task.id, r, workdir)
+    decisions["dangerous_operations"] = check_dangerous_operations(diff, config)
 
     if config.license_scan:
-        for r in check_license_obligations(diff):
-            results.append(r)
-            _record_result(task.id, r, workdir)
+        decisions["license_obligations"] = check_license_obligations(diff)
 
     if config.review_checklist:
-        for r in check_review_checklist(diff, task, config.review_checklist, workdir):
-            results.append(r)
-            _record_result(task.id, r, workdir)
+        decisions["review_checklist"] = check_review_checklist(diff, task, config.review_checklist, workdir)
+
+    # Populate graph and build results
+    results: list[GuardrailResult] = []
+    for check_name, check_decisions in decisions.items():
+        for d in check_decisions:
+            graph.add_decision(d)
+            # Convert decision to legacy GuardrailResult for compatibility
+            results.append(_decision_to_result(check_name, d, bypass_enabled))
+            _record_result(task.id, results[-1], workdir)
 
     return results
+
+
+def _decision_to_result(check_name: str, d: PermissionDecision, bypass_enabled: bool) -> GuardrailResult:
+    """Translate a PermissionDecision to a legacy GuardrailResult."""
+    passed = d.type == DecisionType.ALLOW
+    # These types are considered "blocked" if not allowed
+    blocked = d.type in (DecisionType.DENY, DecisionType.IMMUNE, DecisionType.SAFETY)
+
+    # Apply bypass logic for legacy result
+    detail = d.reason
+    if bypass_enabled and not d.bypass_immune and not passed:
+        passed = True
+        blocked = False
+        detail = f"[BYPASSED] {d.reason}"
+
+    return GuardrailResult(
+        check=check_name,
+        passed=passed,
+        blocked=blocked,
+        detail=detail,
+        files=list(d.files),
+    )
 
 
 def check_review_checklist(
@@ -499,7 +479,7 @@ def check_review_checklist(
     task: Task,
     checklist: list[str],
     workdir: Path,
-) -> list[GuardrailResult]:
+) -> list[PermissionDecision]:
     """Verify a custom review checklist against the git diff using LLM.
 
     Args:
@@ -509,11 +489,11 @@ def check_review_checklist(
         workdir: Project root directory.
 
     Returns:
-        List of GuardrailResult, one for each checklist item.
+        List of PermissionDecision, one for each checklist item.
     """
     from bernstein.core.llm import call_llm
 
-    results: list[GuardrailResult] = []
+    results: list[PermissionDecision] = []
     if not checklist:
         return results
 
@@ -535,38 +515,34 @@ def check_review_checklist(
         response = asyncio.run(call_llm(prompt, model="sonnet", provider="auto"))
 
         for item in checklist:
-            passed = True
+            dtype = DecisionType.ALLOW
             reason = "Item not mentioned in LLM response"
 
             # Simple heuristic parsing
             for line in response.splitlines():
                 if item.lower() in line.lower():
                     if "FAIL" in line.upper():
-                        passed = False
+                        dtype = DecisionType.ASK
                         reason = line.split(":", 1)[1].strip() if ":" in line else "Failed review"
                         break
                     elif "PASS" in line.upper():
-                        passed = True
+                        dtype = DecisionType.ALLOW
                         reason = line.split(":", 1)[1].strip() if ":" in line else "Passed review"
                         break
 
             results.append(
-                GuardrailResult(
-                    check=f"review_checklist:{item[:30]}",
-                    passed=passed,
-                    blocked=False,  # Checklist violations are usually soft-blocks
-                    detail=reason,
+                PermissionDecision(
+                    type=dtype,
+                    reason=reason,
                 )
             )
     except Exception as exc:
         logger.warning("Review checklist failed for task %s: %s", task.id, exc)
-        for item in checklist:
+        for _item in checklist:
             results.append(
-                GuardrailResult(
-                    check=f"review_checklist:{item[:30]}",
-                    passed=False,
-                    blocked=False,
-                    detail=f"Check failed due to error: {exc}",
+                PermissionDecision(
+                    type=DecisionType.ASK,
+                    reason=f"Check failed due to error: {exc}",
                 )
             )
 

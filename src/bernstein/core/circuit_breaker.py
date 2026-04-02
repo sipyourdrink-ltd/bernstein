@@ -472,6 +472,7 @@ def check_guardrail_violations(orch: Any, result: Any) -> None:
         result: Current :class:`TickResult` to record reaped agent IDs into.
     """
     from bernstein.core.guardrails import check_secrets  # avoid circular import
+    from bernstein.core.policy_engine import DecisionType
 
     for session in list(orch._agents.values()):
         if session.status == "dead":
@@ -486,11 +487,11 @@ def check_guardrail_violations(orch: Any, result: Any) -> None:
             continue
 
         guardrail_results = check_secrets(diff)
-        blocked = [r for r in guardrail_results if r.blocked]
+        blocked = [r for r in guardrail_results if r.type != DecisionType.ALLOW]
         if not blocked:
             continue
 
-        detail = "; ".join(r.detail for r in blocked)
+        detail = "; ".join(r.reason for r in blocked)
         logger.warning(
             "Guardrail violation by agent %s: %s",
             session.id,

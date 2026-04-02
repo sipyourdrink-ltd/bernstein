@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from bernstein.core.license_scanner import _scan_diff_for_licenses, check_license_obligations
+from bernstein.core.policy_engine import DecisionType
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,32 +44,28 @@ class TestSpdxStrongCopyleft:
         diff = _added("# SPDX-License-Identifier: GPL-3.0-or-later")
         results = check_license_obligations(diff)
         assert len(results) == 1
-        assert not results[0].passed
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
+        assert results[0].bypass_immune
 
     def test_gpl2_spdx_hard_blocks(self) -> None:
         diff = _added("# SPDX-License-Identifier: GPL-2.0-only")
         results = check_license_obligations(diff)
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
 
     def test_agpl3_spdx_hard_blocks(self) -> None:
         diff = _added("# SPDX-License-Identifier: AGPL-3.0-only")
         results = check_license_obligations(diff)
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
 
     def test_osl_spdx_hard_blocks(self) -> None:
         diff = _added("# SPDX-License-Identifier: OSL-3.0")
         results = check_license_obligations(diff)
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
 
     def test_detail_names_license_id(self) -> None:
         diff = _added("# SPDX-License-Identifier: GPL-3.0")
         results = check_license_obligations(diff)
-        assert "GPL-3.0" in results[0].detail
-
-    def test_check_name_is_license_obligations(self) -> None:
-        results = check_license_obligations("")
-        assert results[0].check == "license_obligations"
+        assert "GPL-3.0" in results[0].reason
 
 
 # ---------------------------------------------------------------------------
@@ -80,31 +77,27 @@ class TestSpdxWeakCopyleft:
     def test_lgpl21_spdx_soft_flags(self) -> None:
         diff = _added("# SPDX-License-Identifier: LGPL-2.1-or-later")
         results = check_license_obligations(diff)
-        assert not results[0].passed
-        assert not results[0].blocked  # soft flag, not hard block
+        assert results[0].type == DecisionType.ASK
 
     def test_mpl2_spdx_soft_flags(self) -> None:
         diff = _added("# SPDX-License-Identifier: MPL-2.0")
         results = check_license_obligations(diff)
-        assert not results[0].passed
-        assert not results[0].blocked
+        assert results[0].type == DecisionType.ASK
 
     def test_lgpl3_spdx_soft_flags(self) -> None:
         diff = _added("# SPDX-License-Identifier: LGPL-3.0-only")
         results = check_license_obligations(diff)
-        assert not results[0].passed
-        assert not results[0].blocked
+        assert results[0].type == DecisionType.ASK
 
     def test_eupl_spdx_soft_flags(self) -> None:
         diff = _added("# SPDX-License-Identifier: EUPL-1.2")
         results = check_license_obligations(diff)
-        assert not results[0].passed
-        assert not results[0].blocked
+        assert results[0].type == DecisionType.ASK
 
     def test_detail_names_license_id(self) -> None:
         diff = _added("# SPDX-License-Identifier: LGPL-2.1")
         results = check_license_obligations(diff)
-        assert "LGPL-2.1" in results[0].detail
+        assert "LGPL-2.1" in results[0].reason
 
 
 # ---------------------------------------------------------------------------
@@ -116,18 +109,17 @@ class TestSpdxCompoundExpressions:
     def test_gpl_or_mit_blocks_due_to_gpl(self) -> None:
         diff = _added("# SPDX-License-Identifier: GPL-3.0-or-later OR MIT")
         results = check_license_obligations(diff)
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
 
     def test_lgpl_and_apache_soft_flags(self) -> None:
         diff = _added("# SPDX-License-Identifier: LGPL-2.1-only AND Apache-2.0")
         results = check_license_obligations(diff)
-        assert not results[0].passed
-        assert not results[0].blocked
+        assert results[0].type == DecisionType.ASK
 
     def test_permissive_only_passes(self) -> None:
         diff = _added("# SPDX-License-Identifier: MIT AND Apache-2.0")
         results = check_license_obligations(diff)
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
 
 # ---------------------------------------------------------------------------
@@ -139,34 +131,32 @@ class TestProseLicenseHeaders:
     def test_gpl_prose_hard_blocks(self) -> None:
         diff = _added("# This file is licensed under the GNU General Public License.")
         results = check_license_obligations(diff)
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
 
     def test_agpl_prose_hard_blocks(self) -> None:
         diff = _added("# GNU Affero General Public License, version 3 or later.")
         results = check_license_obligations(diff)
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
 
     def test_lgpl_prose_soft_flags(self) -> None:
         diff = _added("# GNU Lesser General Public License as published by the FSF.")
         results = check_license_obligations(diff)
-        assert not results[0].passed
-        assert not results[0].blocked
+        assert results[0].type == DecisionType.ASK
 
     def test_mpl_prose_soft_flags(self) -> None:
         diff = _added("# This Source Code Form is subject to the terms of the Mozilla Public License.")
         results = check_license_obligations(diff)
-        assert not results[0].passed
-        assert not results[0].blocked
+        assert results[0].type == DecisionType.ASK
 
     def test_gpl_version3_prose_hard_blocks(self) -> None:
         diff = _added("# Released under the GNU General Public License version 3.")
         results = check_license_obligations(diff)
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
 
     def test_lgpl_version21_prose_soft_flags(self) -> None:
         diff = _added("# GNU Lesser General Public License version 2.1")
         results = check_license_obligations(diff)
-        assert not results[0].blocked
+        assert results[0].type == DecisionType.ASK
 
 
 # ---------------------------------------------------------------------------
@@ -178,12 +168,12 @@ class TestRemovedLinesIgnored:
     def test_removed_gpl_header_passes(self) -> None:
         diff = _removed("# SPDX-License-Identifier: GPL-3.0-or-later")
         results = check_license_obligations(diff)
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
     def test_removed_lgpl_header_passes(self) -> None:
         diff = _removed("# GNU Lesser General Public License v2.1")
         results = check_license_obligations(diff)
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
 
 # ---------------------------------------------------------------------------
@@ -194,28 +184,27 @@ class TestRemovedLinesIgnored:
 class TestCleanDiff:
     def test_empty_diff_passes(self) -> None:
         results = check_license_obligations("")
-        assert results[0].passed
-        assert not results[0].blocked
+        assert results[0].type == DecisionType.ALLOW
 
     def test_pure_code_diff_passes(self) -> None:
         diff = _added("def greet(name: str) -> str:")
         results = check_license_obligations(diff)
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
     def test_mit_license_passes(self) -> None:
         diff = _added("# SPDX-License-Identifier: MIT")
         results = check_license_obligations(diff)
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
     def test_apache_license_passes(self) -> None:
         diff = _added("# SPDX-License-Identifier: Apache-2.0")
         results = check_license_obligations(diff)
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
     def test_bsd_license_passes(self) -> None:
         diff = _added("# SPDX-License-Identifier: BSD-3-Clause")
         results = check_license_obligations(diff)
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +218,7 @@ class TestSeverityPrecedence:
             "# SPDX-License-Identifier: GPL-3.0", "src/core.py"
         )
         results = check_license_obligations(diff)
-        assert results[0].blocked  # hard block because GPL present
+        assert results[0].type == DecisionType.DENY  # hard block because GPL present
 
     def test_multiple_files_reported_in_files_list(self) -> None:
         diff = _added("# SPDX-License-Identifier: GPL-3.0", "src/a.py") + _added(
@@ -329,4 +318,5 @@ class TestRunGuardrailsIntegration:
         diff = _added("# SPDX-License-Identifier: AGPL-3.0-or-later")
         results = run_guardrails(diff, task, GuardrailsConfig(), Path(str(tmp_path)))
         license_result = next(r for r in results if r.check == "license_obligations")
+        assert not license_result.passed
         assert license_result.blocked
