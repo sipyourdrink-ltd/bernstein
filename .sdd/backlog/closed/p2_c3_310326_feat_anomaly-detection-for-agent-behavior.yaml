@@ -1,0 +1,49 @@
+---
+id: "W9-04"
+title: "Anomaly Detection for Agent Behavior"
+status: open
+type: feature
+priority: 2
+scope: medium
+complexity: high
+role: backend
+model: sonnet
+effort: normal
+estimated_minutes: 45
+depends_on: []
+blocks: []
+tags: ["observability", "monitoring"]
+janitor_signals: []
+context_files: []
+affected_paths: []
+max_tokens: null
+require_review: false
+require_human_approval: false
+---
+
+## Summary
+
+Detect unusual agent behavior: unexpected file modifications, excessive API calls, security violations.
+
+## Objective & Definition of Done
+
+1. Baseline: learn normal agent behavior from past runs
+2. Detect: files modified outside scope, excessive token usage (>3x average), suspicious patterns
+3. Alert: log warning + optional Slack notification
+4. Action: pause agent, await human review
+
+## Steps
+
+1. Read relevant source files
+2. Implement the feature
+3. Add/update unit tests
+4. Run `uv run ruff check src/` and `uv run pytest tests/unit/ -x -q`
+
+## Tests & Verification
+
+- `uv run ruff check src/bernstein/`
+- `uv run pytest tests/unit/ -x -q`
+
+## Agent Notes
+
+<!-- Reserved for implementing agent -->
