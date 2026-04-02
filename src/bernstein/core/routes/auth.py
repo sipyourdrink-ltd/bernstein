@@ -15,18 +15,15 @@ import secrets
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
-
-from bernstein.core.auth_rate_limiter import check_auth_rate_limit
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/auth",
     tags=["authentication"],
-    dependencies=[Depends(check_auth_rate_limit)],
 )
 
 
