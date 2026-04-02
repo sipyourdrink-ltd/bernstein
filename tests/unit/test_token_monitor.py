@@ -183,15 +183,26 @@ class TestCheckTokenGrowth:
         orch._config.server_url = "http://localhost:8052"
         orch._agents = sessions
         orch._spawn_ts = time.time()
+        orch._router.get_provider_max_context_tokens.return_value = 200_000
         return orch
 
-    def _make_session(self, session_id: str, status: str = "working") -> MagicMock:
+    def _make_session(
+        self,
+        session_id: str,
+        status: str = "working",
+        *,
+        provider: str | None = "anthropic",
+    ) -> MagicMock:
         s = MagicMock()
         s.id = session_id
         s.status = status
         s.task_ids = ["task-001"]
         s.spawn_ts = time.time()
+        s.provider = provider
         s.tokens_used = 0
+        s.context_window_tokens = 0
+        s.context_utilization_pct = 0.0
+        s.context_utilization_alert = False
         return s
 
     def test_updates_tokens_used_on_session(self, tmp_path: Path) -> None:
@@ -210,6 +221,28 @@ class TestCheckTokenGrowth:
 
         check_token_growth(orch)
         assert sess.tokens_used == 1100
+        assert sess.context_window_tokens == 200_000
+        assert sess.context_utilization_pct == 0.55
+        assert sess.context_utilization_alert is False
+
+    def test_marks_context_window_alert_above_threshold(self, tmp_path: Path) -> None:
+        reset_monitor()
+        sess = self._make_session("sess-context")
+        tokens_path = tmp_path / ".sdd" / "runtime" / "sess-context.tokens"
+        _write_tokens(tokens_path, [(time.time(), 170_000, 0)])
+
+        resp = MagicMock()
+        resp.json.return_value = []
+        resp.raise_for_status = MagicMock()
+
+        orch = self._make_orch(tmp_path, {"sess-context": sess})
+        orch._client.get.return_value = resp
+
+        check_token_growth(orch)
+
+        assert sess.context_window_tokens == 200_000
+        assert sess.context_utilization_pct == 85.0
+        assert sess.context_utilization_alert is True
 
     def test_kills_runaway_agent(self, tmp_path: Path) -> None:
         reset_monitor()
