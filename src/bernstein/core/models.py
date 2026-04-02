@@ -421,14 +421,41 @@ class ModelCostBreakdown:
     Attributes:
         model: Model name (e.g. ``"sonnet"``, ``"opus"``).
         total_cost_usd: Sum of all costs incurred using this model.
-        total_tokens: Total input + output tokens consumed by this model.
+        total_tokens: Total input + output + cached tokens consumed by this model.
         invocation_count: Number of times this model was invoked.
+        cache_read_tokens: Total tokens served from prompt cache (read).
+        cache_write_tokens: Total tokens written to prompt cache (creation).
     """
 
     model: str
     total_cost_usd: float
     total_tokens: int
     invocation_count: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-safe mapping."""
+        return {
+            "model": self.model,
+            "total_cost_usd": self.total_cost_usd,
+            "total_tokens": self.total_tokens,
+            "invocation_count": self.invocation_count,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ModelCostBreakdown:
+        """Deserialise from a dictionary."""
+        return cls(
+            model=str(d["model"]),
+            total_cost_usd=float(d["total_cost_usd"]),
+            total_tokens=int(d["total_tokens"]),
+            invocation_count=int(d["invocation_count"]),
+            cache_read_tokens=int(d.get("cache_read_tokens", 0)),
+            cache_write_tokens=int(d.get("cache_write_tokens", 0)),
+        )
 
 
 @dataclass(frozen=True)
