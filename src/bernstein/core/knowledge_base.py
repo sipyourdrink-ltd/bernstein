@@ -337,6 +337,16 @@ class FileIndexEntry:
     last_modified: datetime
     summary: FileSummary
 
+    @property
+    def docstring(self) -> str:
+        """First line of module docstring."""
+        return self.summary.docstring
+
+    @property
+    def classes(self) -> list[tuple[str, list[str]]]:
+        """Class names and methods."""
+        return self.summary.classes
+
 
 def build_file_index(workdir: Path) -> dict[str, FileIndexEntry]:
     """Crawl project root and index all Python files."""
@@ -372,19 +382,64 @@ def build_architecture_md(index: dict[str, FileIndexEntry]) -> str:
 
 
 def refresh_knowledge_base(workdir: Path) -> None:
-    """Force refresh of all cached structural info."""
-    # (Optional: persist index to disk)
-    pass
+    """Force refresh of all cached structural info and persist to disk."""
+    kb_dir = workdir / ".sdd" / "knowledge"
+    kb_dir.mkdir(parents=True, exist_ok=True)
+
+    index = build_file_index(workdir)
+
+    # Persist raw index as JSON for other tools
+    from dataclasses import asdict
+
+    def _json_serial(obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        raise TypeError(f"Type {type(obj)} not serializable")
+
+    index_data = {path: asdict(entry) for path, entry in index.items()}
+    (kb_dir / "file_index.json").write_text(json.dumps(index_data, default=_json_serial, indent=2), encoding="utf-8")
+
+    arch_md = build_architecture_md(index)
+    (kb_dir / "architecture.md").write_text(arch_md, encoding="utf-8")
+
+    logger.info("Knowledge base refreshed: %d files indexed", len(index))
 
 
-def append_decision(task_id: str, decision: str, workdir: Path) -> None:
+def append_decision(workdir: Path, task_id: str, title: str, decision: str) -> None:
     """Append a key architecture decision to the project knowledge base."""
-    path = workdir / ".sdd" / "knowledge" / "decisions.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    kb_dir = workdir / ".sdd" / "knowledge"
+    kb_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Append to JSONL for machine reading
+    jsonl_path = kb_dir / "decisions.jsonl"
     record = {
         "timestamp": datetime.now().isoformat(),
         "task_id": task_id,
+        "title": title,
         "decision": decision,
     }
-    with path.open("a", encoding="utf-8") as f:
+    with jsonl_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
+
+    # 2. Append to Markdown for human reading
+    md_path = kb_dir / "recent_decisions.md"
+    md_line = f"- **{task_id}**: {title} — {decision}\n"
+
+    lines = []
+    if md_path.exists():
+        lines = md_path.read_text(encoding="utf-8").splitlines(keepends=True)
+
+    # Keep header if it exists
+    header = []
+    if lines and lines[0].startswith("#"):
+        header = [lines[0]]
+        content = lines[1:]
+    else:
+        content = lines
+
+    content.append(md_line)
+    # Cap at 15 entries
+    if len(content) > 15:
+        content = content[-15:]
+
+    md_path.write_text("".join(header + content), encoding="utf-8")
