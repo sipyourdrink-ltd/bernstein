@@ -94,9 +94,7 @@ class GooseAdapter(CLIAdapter):
                     start_new_session=True,
                 )
             except FileNotFoundError as exc:
-                raise RuntimeError(
-                    "goose not found in PATH. Install: https://github.com/block/goose"
-                ) from exc
+                raise RuntimeError("goose not found in PATH. Install: https://github.com/block/goose") from exc
             except PermissionError as exc:
                 raise RuntimeError(f"Permission denied executing goose: {exc}") from exc
 
