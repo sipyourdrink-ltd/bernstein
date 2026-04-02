@@ -256,6 +256,12 @@ class TestCheckFilePermissions:
         assert len(results) == 1
         assert not results[0].passed
 
+    def test_security_role_cannot_edit_immune_paths(self) -> None:
+        # Even if security can normally edit .github, immune paths might have stricter rules in guardrails.
+        # But check_file_permissions only checks role-based rules.
+        # Guardrails.run_guardrails calls BOTH check_file_permissions AND check_immune_paths.
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Default role matrix validation

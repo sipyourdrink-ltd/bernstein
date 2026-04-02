@@ -2,15 +2,19 @@
 
 Provides cross-project config storage, catalog cache, and cost tracking.
 Config precedence (highest to lowest):
-  project .sdd/config.yaml > ~/.bernstein/config.yaml > built-in defaults
+  session overrides > project .sdd/config.yaml > ~/.bernstein/config.yaml > built-in defaults
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 import yaml
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 # Built-in defaults for known keys.
 _DEFAULTS: dict[str, Any] = {
@@ -40,6 +44,25 @@ effort: max
 # Default model override (null = adapter default)
 model: null
 """
+
+ConfigSource = Literal["session", "project", "global", "default"]
+
+
+class ConfigProvenanceLayer(TypedDict):
+    """Single configuration layer in a resolved precedence chain."""
+
+    source: ConfigSource
+    value: object
+    redacted_value: object
+    path: str | None
+
+
+class ConfigResolution(TypedDict):
+    """Resolved config value with provenance metadata."""
+
+    value: object
+    source: ConfigSource
+    source_chain: list[ConfigProvenanceLayer]
 
 
 class BernsteinHome:
@@ -136,6 +159,67 @@ class BernsteinHome:
         return merged
 
 
+_ENV_OVERRIDE_MAP: dict[str, str] = {
+    "cli": "BERNSTEIN_CLI",
+    "budget": "BERNSTEIN_BUDGET",
+    "max_agents": "BERNSTEIN_MAX_AGENTS",
+    "effort": "BERNSTEIN_EFFORT",
+    "model": "BERNSTEIN_MODEL",
+}
+
+
+def _redact_config_value(key: str, value: object) -> object:
+    """Return a redacted display value for sensitive configuration fields."""
+    lowered = key.lower()
+    if any(token in lowered for token in ("secret", "token", "password", "key")) and value is not None:
+        return "***REDACTED***"
+    return value
+
+
+def _coerce_config_value(key: str, raw: object) -> object:
+    """Coerce raw config values based on built-in defaults."""
+    default = _DEFAULTS.get(key)
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        lowered = raw.strip().lower()
+        if lowered in {"null", "none"}:
+            return None
+        if isinstance(default, int):
+            try:
+                return int(raw)
+            except ValueError:
+                return raw
+        if isinstance(default, float):
+            try:
+                return float(raw)
+            except ValueError:
+                return raw
+    return raw
+
+
+def _session_overrides_from_env() -> dict[str, object]:
+    """Build session-only overrides from Bernstein environment variables."""
+    overrides: dict[str, object] = {}
+    for key, env_name in _ENV_OVERRIDE_MAP.items():
+        value = os.environ.get(env_name)
+        if value is not None:
+            overrides[key] = _coerce_config_value(key, value)
+    return overrides
+
+
+def _load_project_config(project_dir: Path) -> dict[str, object]:
+    """Load ``.sdd/config.yaml`` for a project when present."""
+    sdd_config = project_dir / ".sdd" / "config.yaml"
+    if not sdd_config.exists():
+        return {}
+    try:
+        data = yaml.safe_load(sdd_config.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 # ---------------------------------------------------------------------------
 # Config resolution with precedence
 # ---------------------------------------------------------------------------
@@ -146,37 +230,95 @@ def resolve_config(
     *,
     home: BernsteinHome,
     project_dir: Path,
-) -> dict[str, Any]:
+    session_overrides: Mapping[str, object] | None = None,
+) -> ConfigResolution:
     """Resolve the effective value for *key* across all config layers.
 
     Precedence (highest first):
-    1. ``<project>/.sdd/config.yaml``
-    2. ``~/.bernstein/config.yaml``
-    3. Built-in defaults
+    1. Session-only overrides (environment or caller-provided)
+    2. ``<project>/.sdd/config.yaml``
+    3. ``~/.bernstein/config.yaml``
+    4. Built-in defaults
 
     Args:
         key: Config key to look up.
         home: BernsteinHome instance (global config).
         project_dir: Project root for loading ``.sdd/config.yaml``.
+        session_overrides: Optional session-only overrides.
 
     Returns:
-        Dict with ``value`` (effective value) and ``source`` (one of
-        ``"project"``, ``"global"``, ``"default"``).
+        Typed mapping with the effective ``value``, winning ``source``, and the
+        full ``source_chain`` in descending-precedence order.
     """
-    # 1. Project .sdd/config.yaml
-    sdd_config = project_dir / ".sdd" / "config.yaml"
-    if sdd_config.exists():
-        try:
-            data = yaml.safe_load(sdd_config.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and key in data:
-                return {"value": data[key], "source": "project"}
-        except Exception:
-            pass
+    project_config = _load_project_config(project_dir)
+    global_data = home._load()
+    combined_session_overrides = {**_session_overrides_from_env(), **dict(session_overrides or {})}
 
-    # 2. Global ~/.bernstein/config.yaml
-    global_data = home._load()  # type: ignore[reportPrivateUsage]
+    layers: list[ConfigProvenanceLayer] = []
+    if key in combined_session_overrides:
+        value = _coerce_config_value(key, combined_session_overrides[key])
+        layers.append(
+            {
+                "source": "session",
+                "value": value,
+                "redacted_value": _redact_config_value(key, value),
+                "path": None,
+            }
+        )
+    if key in project_config:
+        value = project_config[key]
+        layers.append(
+            {
+                "source": "project",
+                "value": value,
+                "redacted_value": _redact_config_value(key, value),
+                "path": str(project_dir / ".sdd" / "config.yaml"),
+            }
+        )
     if key in global_data:
-        return {"value": global_data[key], "source": "global"}
+        value = global_data[key]
+        layers.append(
+            {
+                "source": "global",
+                "value": value,
+                "redacted_value": _redact_config_value(key, value),
+                "path": str(home.path / "config.yaml"),
+            }
+        )
 
-    # 3. Built-in defaults
-    return {"value": _DEFAULTS.get(key), "source": "default"}
+    default_value = _DEFAULTS.get(key)
+    layers.append(
+        {
+            "source": "default",
+            "value": default_value,
+            "redacted_value": _redact_config_value(key, default_value),
+            "path": None,
+        }
+    )
+
+    winning = layers[0]
+    return {
+        "value": winning["value"],
+        "source": winning["source"],
+        "source_chain": layers,
+    }
+
+
+def resolve_config_bundle(
+    *,
+    home: BernsteinHome,
+    project_dir: Path,
+    keys: tuple[str, ...] | None = None,
+    session_overrides: Mapping[str, object] | None = None,
+) -> dict[str, ConfigResolution]:
+    """Resolve a stable bundle of config keys with provenance."""
+    target_keys = keys or tuple(sorted(_DEFAULTS))
+    return {
+        key: resolve_config(
+            key,
+            home=home,
+            project_dir=project_dir,
+            session_overrides=session_overrides,
+        )
+        for key in target_keys
+    }

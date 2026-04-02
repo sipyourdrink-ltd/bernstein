@@ -211,6 +211,8 @@ def config_get(key: str, project_dir: str) -> None:
     console.print(
         f"[bold]{key}[/bold] = {result['value']!r}  [{source_style}](source: {result['source']})[/{source_style}]"
     )
+    chain = " -> ".join(str(layer["source"]) for layer in result["source_chain"])
+    console.print(f"[dim]resolution: {chain}[/dim]")
 
 
 @config_group.command("list")
@@ -226,6 +228,7 @@ def config_list(project_dir: str) -> None:
     table.add_column("Key")
     table.add_column("Value")
     table.add_column("Source")
+    table.add_column("Resolution")
 
     source_styles = {"project": "cyan", "global": "yellow", "default": "dim"}
 
@@ -236,6 +239,7 @@ def config_list(project_dir: str) -> None:
             key,
             str(result["value"]),
             f"[{style}]{result['source']}[/{style}]",
+            " -> ".join(str(layer["source"]) for layer in result["source_chain"]),
         )
 
     console.print(table)
