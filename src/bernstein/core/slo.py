@@ -4,10 +4,9 @@ Defines measurable targets for agent orchestration and automatically
 adjusts orchestrator behavior when error budgets are depleted.
 
 SLO targets:
-- Task success rate: >90%
-- P95 task completion time: <300s (5 minutes)
-- Cost per task: <$0.50 average
-- Zero secret leaks
+- Task success rate: >= 90%
+- Merge success rate: >= 95%
+- P95 task duration: < 30 minutes
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -101,6 +100,32 @@ class ErrorBudget:
         return self.budget_remaining / self.budget_total
 
     @property
+    def burn_rate(self) -> float:
+        """Rate of error budget consumption relative to ideal."""
+        if self.total_tasks == 0:
+            return 0.0
+        actual_failure_rate = self.failed_tasks / self.total_tasks
+        allowed_failure_rate = 1.0 - self.slo_target
+        if allowed_failure_rate <= 0:
+            return 10.0 if actual_failure_rate > 0 else 0.0
+        return actual_failure_rate / allowed_failure_rate
+
+    @property
+    def time_to_exhaustion_tasks(self) -> int | None:
+        """Estimated number of tasks until budget is gone at current burn rate."""
+        if self.burn_rate <= 1.0:
+            return None
+        if self.budget_remaining <= 0:
+            return 0
+
+        actual_rate = self.failed_tasks / self.total_tasks
+        allowed_rate = 1.0 - self.slo_target
+        if actual_rate <= allowed_rate:
+            return None
+
+        return int(self.budget_remaining / (actual_rate - allowed_rate))
+
+    @property
     def is_depleted(self) -> bool:
         return self.budget_remaining <= 0 and self.total_tasks > 0
 
@@ -163,37 +188,29 @@ class SLOTracker:
 
     def update_from_collector(self, collector: MetricsCollector) -> None:
         """Refresh SLO values from the metrics collector."""
-        task_metrics = collector._task_metrics  # pyright: ignore[reportPrivateUsage]
+        task_metrics: dict[str, Any] = getattr(collector, "_task_metrics", {})
         if not task_metrics:
             return
 
         total = len(task_metrics)
-        successes = sum(1 for tm in task_metrics.values() if tm.success)
+        successes = sum(1 for tm in task_metrics.values() if getattr(tm, "success", False))
         durations = [
             tm.end_time - tm.start_time
             for tm in task_metrics.values()
-            if tm.end_time is not None and tm.end_time > tm.start_time
+            if getattr(tm, "end_time", None) is not None and tm.end_time > tm.start_time
         ]
-        costs = [tm.cost_usd for tm in task_metrics.values() if tm.cost_usd > 0]
 
-        # Update success rate SLO
+        # Update task success SLO
         if total > 0:
-            self.targets["success_rate"].current = successes / total
+            self.targets["task_success"].current = successes / total
 
-        # Update P95 completion time SLO (lower is better, so we invert)
+        # Update P95 task duration SLO (target = 30 min = 1800s)
         if durations:
             durations_sorted = sorted(durations)
             p95_idx = int(len(durations_sorted) * 0.95)
             p95 = durations_sorted[min(p95_idx, len(durations_sorted) - 1)]
-            # Store as fraction of target met (e.g., if p95=250s and target=300s, current=1.0)
-            target_seconds = 300.0
-            self.targets["p95_completion"].current = min(1.0, target_seconds / max(p95, 1.0))
-
-        # Update cost per task SLO (lower is better)
-        if costs:
-            avg_cost = sum(costs) / len(costs)
-            target_cost = 0.50
-            self.targets["cost_per_task"].current = min(1.0, target_cost / max(avg_cost, 0.001))
+            target_seconds = 1800.0
+            self.targets["p95_duration"].current = min(1.0, target_seconds / max(p95, 1.0))
 
         # Update error budget
         self.error_budget.total_tasks = total
@@ -221,6 +238,8 @@ class SLOTracker:
                 "budget_total": self.error_budget.budget_total,
                 "budget_remaining": self.error_budget.budget_remaining,
                 "budget_fraction": round(self.error_budget.budget_fraction, 4),
+                "burn_rate": round(self.error_budget.burn_rate, 4),
+                "time_to_exhaustion_tasks": self.error_budget.time_to_exhaustion_tasks,
                 "is_depleted": self.error_budget.is_depleted,
                 "status": self.error_budget.status.value,
             },
@@ -252,11 +271,11 @@ class SLOTracker:
             for slo in data.get("slos", []):
                 name = slo.get("name", "")
                 if name in tracker.targets:
-                    tracker.targets[name].current = slo.get("current", 0.0)
+                    tracker.targets[name].current = float(slo.get("current", 0.0))
             eb = data.get("error_budget", {})
-            tracker.error_budget.total_tasks = eb.get("total_tasks", 0)
-            tracker.error_budget.failed_tasks = eb.get("failed_tasks", 0)
-        except (json.JSONDecodeError, OSError) as exc:
+            tracker.error_budget.total_tasks = int(eb.get("total_tasks", 0))
+            tracker.error_budget.failed_tasks = int(eb.get("failed_tasks", 0))
+        except (json.JSONDecodeError, OSError, ValueError) as exc:
             logger.warning("Failed to load SLO state: %s", exc)
         return tracker
 
@@ -264,30 +283,23 @@ class SLOTracker:
 def _default_slo_targets() -> dict[str, SLOTarget]:
     """Create default SLO targets per spec."""
     return {
-        "success_rate": SLOTarget(
-            name="success_rate",
-            description="Task success rate >90%",
+        "task_success": SLOTarget(
+            name="task_success",
+            description="Task success rate >= 90%",
             target=0.90,
-            warning_threshold=0.85,
+            warning_threshold=0.92,
         ),
-        "p95_completion": SLOTarget(
-            name="p95_completion",
-            description="P95 completion time <5 minutes",
-            target=0.90,  # Normalized: 1.0 = well under target
+        "merge_success": SLOTarget(
+            name="merge_success",
+            description="Merge success rate >= 95%",
+            target=0.95,
+            warning_threshold=0.97,
+        ),
+        "p95_duration": SLOTarget(
+            name="p95_duration",
+            description="P95 task duration < 30 minutes",
+            target=0.90,  # Normalized
             warning_threshold=0.70,
-        ),
-        "cost_per_task": SLOTarget(
-            name="cost_per_task",
-            description="Average cost per task <$0.50",
-            target=0.90,  # Normalized: 1.0 = well under target
-            warning_threshold=0.70,
-        ),
-        "secret_leaks": SLOTarget(
-            name="secret_leaks",
-            description="Zero secret leaks",
-            target=1.0,
-            warning_threshold=1.0,  # Any leak is red
-            current=1.0,  # Starts green (no leaks)
         ),
     }
 
