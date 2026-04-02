@@ -207,6 +207,7 @@ class PromptProcessResult:
     first_seen: float | None = None
     prefix_tokens: int = 0
     previous_cache_key: str | None = None
+    expected_drop_reason: str | None = None  # reason if pre-announced; None = surprise break
 
 
 def compute_cache_key(prefix: str) -> str:
@@ -301,7 +302,32 @@ class PromptCachingManager:
         self._manifest = CacheManifest()
         self._manifest_path = workdir / ".sdd" / "caching" / "manifest.jsonl"
         self._last_active_key: str | None = None
+        self._expected_drops: set[str] = set()
         self._load_manifest()
+
+    def mark_expected_drop(self, reason: str) -> None:
+        """Record that the next cache break is expected (e.g., after compaction).
+
+        This clears the last-active-key baseline so the next new prefix is
+        treated as an expected drop, not a surprise cache break.
+
+        Args:
+            reason: Explanation for why the drop is expected (e.g. "compaction").
+        """
+        self._expected_drops.add(reason)
+        self._last_active_key = None  # Reset baseline to avoid false break
+        logger.info("Expected cache drop recorded: reason=%s", reason)
+
+    def is_expected_drop(self) -> bool:
+        """Check whether a cache break was pre-announced.
+
+        Returns:
+            True if mark_expected_drop() was called before this check.
+        """
+        was_expected = bool(self._expected_drops)
+        if was_expected:
+            self._expected_drops.clear()
+        return was_expected
 
     def _load_manifest(self) -> None:
         """Load existing cache manifest if it exists."""
@@ -364,6 +390,7 @@ class PromptCachingManager:
             prev_key = None
 
         self._last_active_key = cache_key
+        was_expected = self._expected_drops.pop() if self._expected_drops else None
 
         return PromptProcessResult(
             cache_key=cache_key,
@@ -374,6 +401,7 @@ class PromptCachingManager:
             first_seen=self._manifest.entries[cache_key].first_seen_at if not is_new else time.time(),
             prefix_tokens=self._manifest.entries[cache_key].prefix_tokens,
             previous_cache_key=prev_key,
+            expected_drop_reason=was_expected,
         )
 
     def save_manifest(self) -> None:

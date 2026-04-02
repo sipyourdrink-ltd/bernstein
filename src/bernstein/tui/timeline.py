@@ -14,17 +14,27 @@ from bernstein.tui.widgets import STATUS_COLORS
 
 @dataclass
 class TimelineEntry:
-    """A single task's timing data for the timeline."""
+    """A single task's timing data for the timeline.
+
+    Attributes:
+        task_id: Task or event identifier.
+        title: Human-readable label.
+        start_time: Unix timestamp when the entry started.
+        end_time: Unix timestamp when the entry ended (None = in-progress).
+        status: Task status string ("done", "failed", etc.).
+        kind: Entry type — "task" or "compaction" for distinct markers.
+    """
 
     task_id: str
     title: str
     start_time: float
     end_time: float | None
     status: str
+    kind: str = "task"
 
 
 class TaskTimeline(Static):
-    """Gantt-like horizontal bars showing task durations."""
+    """Gantt-like horizontal bars showing task durations and event markers."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -36,7 +46,7 @@ class TaskTimeline(Static):
         """Update timeline data and refresh view.
 
         Args:
-            entries: List of task timing entries.
+            entries: List of task timing and event entries.
         """
         self._entries = sorted(entries, key=lambda x: x.start_time)
         if not self._entries:
@@ -52,7 +62,7 @@ class TaskTimeline(Static):
         self.refresh()
 
     def render(self) -> Text:
-        """Render the timeline as a Rich Text object."""
+        """Render the timeline as a Rich text object."""
         if not self._entries:
             return Text("No task timing data available.", style="dim")
 
@@ -69,6 +79,16 @@ class TaskTimeline(Static):
             # Label
             label = f"{entry.task_id[:8]:<9} "
             text.append(label, style="cyan")
+
+            # Entry kind: compaction events render as distinct markers
+            if entry.kind == "compaction":
+                start_off = int(((entry.start_time - self._start_ts) / duration) * width)
+                start_off = max(0, start_off)
+                text.append(" " * start_off)
+                text.append("⚡", style="magenta")
+                text.append(f" {entry.title}", style="magenta dim")
+                text.append("\n")
+                continue
 
             # Calculate bar position and width
             start_off = int(((entry.start_time - self._start_ts) / duration) * width)
