@@ -55,6 +55,7 @@ from bernstein.core.file_locks import FileLockManager
 from bernstein.core.graph import TaskGraph
 from bernstein.core.incident import IncidentManager
 from bernstein.core.manifest import build_manifest, save_manifest
+from bernstein.core.memory_guard import MemoryGuard
 from bernstein.core.merge_queue import MergeQueue
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
@@ -474,6 +475,9 @@ class Orchestrator:
         # Hot-reload: track source file mtimes so the orchestrator can
         # detect when agents modify its own code and restart in-place.
         self._source_mtime: float = time.time()
+
+        # Memory leak detection: sampled every few ticks
+        self._memory_guard = MemoryGuard()
 
         # Agent signal manager: writes WAKEUP/SHUTDOWN files into
         # .sdd/runtime/signals/{session_id}/ for stale agent detection.

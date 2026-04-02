@@ -231,6 +231,7 @@ from bernstein.cli.stop_cmd import (
     stop,
     write_shutdown_signals,
 )
+from bernstein.cli.test_cmd import test_cmd
 
 # ---------------------------------------------------------------------------
 # Rich help
@@ -647,6 +648,7 @@ cli.add_command(history_cmd, "history")
 
 # Already registered elsewhere
 cli.add_command(agents_group)
+cli.add_command(test_cmd, "test")
 cli.add_command(auth_group, "auth")
 cli.add_command(auth_login, "login")
 cli.add_command(evolve)

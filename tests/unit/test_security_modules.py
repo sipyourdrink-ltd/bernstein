@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 from bernstein.core.ip_allowlist import check_ip_allowed
-from bernstein.core.jwt_tokens import JWTManager, JWTPayload
+from bernstein.core.jwt_tokens import JWTManager
 from bernstein.core.models import Task
 
 

@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 from bernstein.core.git_context import (
-    cochange_files as _gc_cochange_files,
+    cochange_files as _git_cochanged_files,
 )
 from bernstein.core.git_context import (
     ls_files_pattern as _gc_ls_files_pattern,
@@ -105,6 +105,23 @@ def _parse_python_file(filepath: Path) -> FileSummary | None:
         functions=functions,
         imports=list(set(imports)),
     )
+
+
+def _subsystem_context(rel_path: str, workdir: Path) -> str:
+    """Extract minimal subsystem context (docstring) for a file.
+
+    Args:
+        rel_path: Relative path to the file.
+        workdir: Project root directory.
+
+    Returns:
+        The first line of the module docstring, or empty string.
+    """
+    abspath = workdir / rel_path
+    if not abspath.exists():
+        return ""
+    summary = _parse_python_file(abspath)
+    return summary.docstring if summary else ""
 
 
 class TaskContextBuilder:
@@ -198,7 +215,7 @@ class TaskContextBuilder:
         # Cochanges across all files
         all_cochanges: list[str] = []
         for fpath in files[:2]:  # Check first 2 files only
-            cochanges = _gc_cochange_files(fpath, self.workdir, max_results=2)
+            cochanges = _git_cochanged_files(fpath, self.workdir, max_results=2)
             all_cochanges.extend(cochanges)
 
         if all_cochanges:

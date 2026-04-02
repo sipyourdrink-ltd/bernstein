@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
-
-import pytest
 
 from bernstein.core.bulletin_board import BulletinBoard, BulletinMessage
-from bernstein.core.rate_limiter import RateLimitConfig, RateLimitMiddleware
+from bernstein.core.rate_limiter import RateLimitConfig
 from bernstein.core.session_checkpoint import (
     SessionCheckpoint,
     SessionCheckpointManager,
