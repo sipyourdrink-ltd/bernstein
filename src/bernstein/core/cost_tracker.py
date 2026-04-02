@@ -192,8 +192,10 @@ def estimate_cost(
         # pricing is in $/1M tokens
         cost += (input_tokens / 1_000_000.0) * pricing.get("input", 0.0)
         cost += (output_tokens / 1_000_000.0) * pricing.get("output", 0.0)
-        cost += (cache_read_tokens / 1_000_000.0) * cast(float, pricing.get("cache_read", pricing.get("input", 0.0)))
-        cost += (cache_write_tokens / 1_000_000.0) * cast(float, pricing.get("cache_write", pricing.get("input", 0.0)))
+        cost += (cache_read_tokens / 1_000_000.0) * cast("float", pricing.get("cache_read", pricing.get("input", 0.0)))
+        cost += (cache_write_tokens / 1_000_000.0) * cast(
+            "float", pricing.get("cache_write", pricing.get("input", 0.0))
+        )
         return cost
 
     # Fallback to blended rate
