@@ -11,11 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.home import (
     BernsteinHome,
-    SettingsSnapshot,
     capture_settings_snapshot,
     check_source_policies,
     enforce_source_policy,
@@ -24,7 +21,6 @@ from bernstein.core.home import (
     resolve_config_bundle,
 )
 from bernstein.core.session import latch_session_flags, load_latched_flags
-
 
 # ---------------------------------------------------------------------------
 # T519 — Allowed setting source policy enforcement

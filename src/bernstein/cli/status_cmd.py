@@ -1,4 +1,4 @@
-"""Status and diagnostic commands: status, ps, doctor."""
+"""Status and diagnostic commands: status, ps, doctor, commit-stats."""
 
 from __future__ import annotations
 
@@ -583,7 +583,35 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             detail="no errors",
         )
 
-    # 17. Compliance mode prerequisites
+    # 17. Commit attribution (doctor check — shows agent contribution summary)
+    from bernstein.commit_stats import collect_commit_stats
+
+    commit_result = collect_commit_stats(repo_dir=str(workdir))
+    if commit_result.error:
+        _check(
+            "Commit attribution",
+            ok=False,
+            detail=f"git log error: {commit_result.error}",
+            fix="Ensure this is a git repository with git installed",
+        )
+    elif not commit_result.roles:
+        _check(
+            "Commit attribution",
+            ok=True,
+            detail="no commits found in this repository",
+        )
+    else:
+        role_parts = ", ".join(
+            f"{role}: {rs.commits} commits, +{rs.lines_added}/-{rs.lines_deleted}"
+            for role, rs in commit_result.roles.items()
+        )
+        _check(
+            "Commit attribution",
+            ok=True,
+            detail=f"{commit_result.total_commits} commits: {role_parts}",
+        )
+
+    # 18. Compliance mode prerequisites
     from bernstein.core.compliance import load_compliance_config
 
     compliance_cfg = load_compliance_config(workdir / ".sdd")
@@ -717,3 +745,37 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         raise SystemExit(1)
     else:
         console.print("\n[green]All checks passed.[/green]")
+
+
+# ---------------------------------------------------------------------------
+# commit-stats — agent attribution report
+# ---------------------------------------------------------------------------
+
+
+@click.command("commit-stats")
+@click.option("--since", default=None, help="Date range start (e.g. 2025-01-01).")
+@click.option("--until", default=None, help="Date range end (e.g. 2025-12-31).")
+@click.option("--repo-dir", default=".", help="Path to git repository.")
+@click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON.")
+def commit_stats_cmd(since: str | None, until: str | None, repo_dir: str, as_json: bool) -> None:
+    """Show commit attribution by agent role.
+
+    \b
+      bernstein commit-stats                    # all-time stats
+      bernstein commit-stats --since 2025-01-01 # since a date
+      bernstein commit-stats --json             # machine-readable output
+    """
+    from bernstein.commit_stats import collect_commit_stats, render_commit_stats
+
+    result = collect_commit_stats(repo_dir=repo_dir, since=since, until=until)
+    if result.error:
+        if as_json or is_json():
+            print_json(result.to_dict())
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+        raise SystemExit(1)
+
+    if as_json or is_json():
+        print_json(result.to_dict())
+    else:
+        render_commit_stats(result)

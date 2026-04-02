@@ -117,6 +117,86 @@ def build_cache_hit_sparkline(hit_rates: list[float], width: int = 12) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Compaction event indicators (T563)
+# ---------------------------------------------------------------------------
+
+#: Marker rendered in the TUI timeline when a compaction event occurs.
+COMPACTION_MARKER = "⚡"
+COMPACTION_MARKER_COLOR = "yellow"
+
+
+def build_compaction_marker(reason: str = "", ts: float | None = None) -> str:
+    """Build a Rich markup string for a compaction event marker (T563).
+
+    Args:
+        reason: Human-readable compaction reason (e.g. ``"token_limit"``).
+        ts: Unix timestamp of the event.
+
+    Returns:
+        Rich markup string with the compaction marker and optional tooltip.
+    """
+    label = f"{COMPACTION_MARKER} compact"
+    if reason:
+        label += f":{reason}"
+    return f"[{COMPACTION_MARKER_COLOR}]{label}[/{COMPACTION_MARKER_COLOR}]"
+
+
+# ---------------------------------------------------------------------------
+# Color-coded agent identity (T562)
+# ---------------------------------------------------------------------------
+
+#: Extended palette for agent identity — 12 distinct, accessible colors.
+AGENT_IDENTITY_COLORS: tuple[str, ...] = (
+    "cyan",
+    "magenta",
+    "blue",
+    "green",
+    "yellow",
+    "red",
+    "bright_cyan",
+    "bright_magenta",
+    "bright_blue",
+    "bright_green",
+    "bright_yellow",
+    "bright_red",
+)
+
+
+def agent_identity_color(agent_id: str) -> str:
+    """Return a deterministic, accessible color for an agent identity (T562).
+
+    Uses a stable hash of the agent ID so the same agent always gets the
+    same color across sessions.
+
+    Args:
+        agent_id: Agent session ID or role name.
+
+    Returns:
+        Rich color name.
+    """
+    if not agent_id:
+        return "white"
+    return AGENT_IDENTITY_COLORS[hash(agent_id) % len(AGENT_IDENTITY_COLORS)]
+
+
+def format_agent_label(agent_id: str, role: str = "", short: bool = True) -> str:
+    """Format an agent label with its identity color (T562).
+
+    Args:
+        agent_id: Agent session ID.
+        role: Optional role name to include.
+        short: If True, truncate agent_id to 8 chars.
+
+    Returns:
+        Rich markup string with colored agent label.
+    """
+    color = agent_identity_color(agent_id)
+    display_id = agent_id[:8] if short and len(agent_id) > 8 else agent_id
+    label = f"{role}:{display_id}" if role else display_id
+    return f"[{color}]{label}[/{color}]"
+
+
+# ---------------------------------------------------------------------------
 # Colour mapping for task statuses
 # ---------------------------------------------------------------------------
 

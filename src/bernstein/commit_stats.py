@@ -120,7 +120,7 @@ def _run_git_log(
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        return []
+        raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
 
     lines = result.stdout.splitlines()
     rows: list[tuple[str, int, int]] = []

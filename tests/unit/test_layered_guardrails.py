@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
-import pytest
-from bernstein.core.guardrails import run_guardrails, GuardrailsConfig
+
+from bernstein.core.guardrails import GuardrailsConfig, run_guardrails
 from bernstein.core.models import Task
+
 
 def test_run_guardrails_bypass_ask(tmp_path: Path):
     # Mock diff that triggers a scope violation (ASK)
@@ -14,7 +14,7 @@ def test_run_guardrails_bypass_ask(tmp_path: Path):
     diff = "diff --git a/out_of_scope.py b/out_of_scope.py\n+new content"
     task = Task(id="T1", title="test", role="backend", description="test", owned_files=["src/"])
     config = GuardrailsConfig(secrets=False, file_permissions=False, license_scan=False)
-    
+
     # Without bypass: should be flagged (passed=False, blocked=False)
     results = run_guardrails(diff, task, config, tmp_path, bypass_enabled=False)
     scope_res = next(r for r in results if r.check == "scope_enforcement")
@@ -32,7 +32,7 @@ def test_run_guardrails_bypass_immune_stays_blocked(tmp_path: Path):
     diff = "diff --git a/bernstein.yaml b/bernstein.yaml\n+new content"
     task = Task(id="T1", title="test", role="backend", description="test")
     config = GuardrailsConfig(secrets=False, file_permissions=False, license_scan=False)
-    
+
     # With bypass enabled: IMMUNE check must STILL fail and block
     results = run_guardrails(diff, task, config, tmp_path, bypass_enabled=True)
     immune_res = next(r for r in results if r.check == "immune_path_enforcement")

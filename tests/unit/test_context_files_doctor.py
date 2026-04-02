@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from bernstein.context_files_doctor import (
+    DoctorWarning,
     check_context_files,
     check_mcp_servers,
     check_permission_rules,
-    DoctorWarning,
 )
 
 # --- Fixtures ---

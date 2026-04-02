@@ -6,11 +6,11 @@ from bernstein.core.permissions import (
     DEFAULT_ROLE_PERMISSIONS,
     AgentPermissions,
     _parse_diff_files,
-    path_matches_any,
     check_file_permissions,
     get_permissions_for_role,
     is_command_allowed,
     is_path_allowed,
+    path_matches_any,
 )
 
 # ---------------------------------------------------------------------------

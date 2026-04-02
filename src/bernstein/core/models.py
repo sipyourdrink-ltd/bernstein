@@ -256,6 +256,7 @@ class Task:
     risk_level: Literal["low", "medium", "high", "critical"] = "low"  # Risk for approval workflow routing
     sensitivity: Literal["public", "internal", "confidential"] = "internal"  # Data classification level
     max_output_tokens: int | None = None  # Escalated limit for model output
+    meta_messages: list[str] = field(default_factory=list[str])  # Operational nudges/hints (T423)
     created_at: float = field(default_factory=time.time)
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
@@ -329,6 +330,7 @@ class Task:
             approval_required=bool(raw.get("approval_required", False)),
             risk_level=raw.get("risk_level", "low"),
             max_output_tokens=raw.get("max_output_tokens"),
+            meta_messages=list(raw.get("meta_messages", [])),
             created_at=raw.get("created_at", time.time()),
             progress_log=list(raw.get("progress_log", [])),
             version=raw.get("version", 1),
@@ -664,6 +666,7 @@ class AgentSession:
     abort_reason: AbortReason | None = None
     abort_detail: str = ""
     finish_reason: str = ""
+    meta_messages: list[str] = field(default_factory=list[str])  # Operational nudges/hints (T423)
 
 
 class IsolationMode(StrEnum):
