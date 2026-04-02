@@ -9,7 +9,7 @@ from typing import Any
 
 class LazyImport:
     """Lazy import wrapper that defers module loading until first access.
-    
+
     Usage:
         foo = LazyImport("foo")
         # Module not loaded yet
@@ -29,6 +29,7 @@ class LazyImport:
             elapsed = (time.perf_counter() - start) * 1000
             if elapsed > 10:  # Log slow imports
                 from bernstein.cli.helpers import console
+
                 console.print(f"[dim]Loaded {self._module_name} in {elapsed:.1f}ms[/dim]")
 
         if self._attr:
@@ -46,10 +47,10 @@ class LazyImport:
 
 def lazy_import(name: str) -> LazyImport:
     """Create a lazy import for a module.
-    
+
     Args:
         name: Module name to import lazily.
-        
+
     Returns:
         LazyImport instance.
     """
@@ -58,11 +59,11 @@ def lazy_import(name: str) -> LazyImport:
 
 def lazy_import_attr(module: str, attr: str) -> LazyImport:
     """Create a lazy import for a specific attribute from a module.
-    
+
     Args:
         module: Module name.
         attr: Attribute name.
-        
+
     Returns:
         LazyImport instance.
     """
@@ -85,22 +86,24 @@ class StartupTimer:
         elapsed_ms = (time.perf_counter() - self._start) * 1000
         if elapsed_ms > self._threshold_ms:
             from bernstein.cli.helpers import console
+
             console.print(
                 f"[yellow]Warning:[/yellow] {self._command} took {elapsed_ms:.0f}ms "
                 f"(target: <{self._threshold_ms:.0f}ms)"
             )
         elif elapsed_ms > 100:
             from bernstein.cli.helpers import console
+
             console.print(f"[dim]{self._command} started in {elapsed_ms:.0f}ms[/dim]")
 
 
 def measure_startup(command: str, threshold_ms: float = 1000.0) -> StartupTimer:
     """Create a startup timer for a command.
-    
+
     Args:
         command: Command name for logging.
         threshold_ms: Warning threshold in milliseconds.
-        
+
     Returns:
         StartupTimer context manager.
     """

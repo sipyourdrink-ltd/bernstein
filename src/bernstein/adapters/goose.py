@@ -9,20 +9,22 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
 class GooseAdapter(CLIAdapter):
     """Goose CLI adapter for Bernstein.
-    
+
     Integrates with Block's Goose CLI agent.
     GitHub: https://github.com/block/goose
-    
+
     Args:
         workdir: Project working directory.
         session_id: Unique agent session identifier.
@@ -50,14 +52,14 @@ class GooseAdapter(CLIAdapter):
         timeout: int | None = None,
     ) -> SpawnResult:
         """Spawn Goose agent for a task.
-        
+
         Args:
             task_description: Task description to execute.
             files: Optional list of files to include in context.
             model: Optional model override.
             effort: Optional effort level override.
             timeout: Optional timeout in seconds.
-            
+
         Returns:
             SpawnResult with agent output.
         """
@@ -136,10 +138,10 @@ class GooseAdapter(CLIAdapter):
 
     def detect_tier(self) -> Any | None:
         """Detect the pricing tier for Goose.
-        
+
         Goose can use various backends (Anthropic, OpenAI, etc.).
         Tier depends on the configured backend.
-        
+
         Returns:
             Tier information or None if unavailable.
         """
@@ -151,6 +153,7 @@ class GooseAdapter(CLIAdapter):
             config_path = P.home() / ".config" / "goose" / "config.yaml"
             if config_path.exists():
                 import yaml
+
                 config = yaml.safe_load(config_path.read_text())
 
                 # Check provider
@@ -160,17 +163,25 @@ class GooseAdapter(CLIAdapter):
                 from bernstein.core.router import Tier
 
                 if provider in ("anthropic", "openai"):
-                    return type("TierInfo", (), {
-                        "tier": Tier.STANDARD,
-                        "is_active": True,
-                        "rate_limit": None,
-                    })()
+                    return type(
+                        "TierInfo",
+                        (),
+                        {
+                            "tier": Tier.STANDARD,
+                            "is_active": True,
+                            "rate_limit": None,
+                        },
+                    )()
                 elif provider in ("ollama", "local"):
-                    return type("TierInfo", (), {
-                        "tier": Tier.FREE,
-                        "is_active": True,
-                        "rate_limit": None,
-                    })()
+                    return type(
+                        "TierInfo",
+                        (),
+                        {
+                            "tier": Tier.FREE,
+                            "is_active": True,
+                            "rate_limit": None,
+                        },
+                    )()
 
         except Exception as exc:
             logger.debug("Failed to detect Goose tier: %s", exc)
@@ -179,7 +190,7 @@ class GooseAdapter(CLIAdapter):
 
     def get_version(self) -> str | None:
         """Get Goose CLI version.
-        
+
         Returns:
             Version string or None if unavailable.
         """
@@ -199,7 +210,7 @@ class GooseAdapter(CLIAdapter):
 
     def is_available(self) -> bool:
         """Check if Goose CLI is available.
-        
+
         Returns:
             True if Goose is installed and accessible.
         """
