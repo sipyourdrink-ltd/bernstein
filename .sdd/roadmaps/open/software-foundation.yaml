@@ -1,6 +1,0 @@
-id: software-foundation
-title: Software Foundation Rolling Plan
-wave_size: 5
-scenarios:
-  - ci-remediation
-  - docs-upgrade
