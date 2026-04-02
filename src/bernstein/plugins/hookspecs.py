@@ -14,6 +14,13 @@ class BernsteinSpec:
 
     Hooks can be marked as ``@hookspec(background=True)`` to run them in the
     background without blocking the orchestrator's main tick loop.
+
+    **Exit Code Semantics for Hook Commands:**
+    - ``0``: Success.
+    - ``2``: Blocking error. The orchestration pipeline will stop, and stderr
+      will be surfaced to the operator.
+    - Any other non-zero: Warning. Logged as a warning, but orchestration
+      continues.
     """
 
     @hookspec
