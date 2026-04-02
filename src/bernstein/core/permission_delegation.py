@@ -292,9 +292,7 @@ class PermissionDelegator:
         Returns:
             Number of tokens revoked.
         """
-        to_revoke = [
-            tid for tid, t in self._tokens.items() if t.worker_id == worker_id
-        ]
+        to_revoke = [tid for tid, t in self._tokens.items() if t.worker_id == worker_id]
 
         for token_id in to_revoke:
             del self._tokens[token_id]
@@ -313,9 +311,7 @@ class PermissionDelegator:
         Returns:
             Number of tokens cleaned up.
         """
-        expired = [
-            tid for tid, t in self._tokens.items() if t.is_expired()
-        ]
+        expired = [tid for tid, t in self._tokens.items() if t.is_expired()]
 
         for token_id in expired:
             del self._tokens[token_id]

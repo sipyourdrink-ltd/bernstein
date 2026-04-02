@@ -453,7 +453,7 @@ class TierAwareRouter:
         # weight_score is 0.05 to 1.0 (for weights 0.1 to 2.0)
         # We want weight=1.0 to have zero effect on base_score.
         adjustment = (weight_score - 0.5) * 0.1  # ranges from -0.045 to +0.05
-        
+
         return base_score + adjustment
 
     def select_provider_for_task(

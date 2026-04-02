@@ -83,9 +83,7 @@ class MailboxQueue:
     def _sort_by_priority(self) -> None:
         """Sort messages by priority (urgent first)."""
         priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
-        self.messages.sort(
-            key=lambda m: (priority_order.get(m.priority, 2), -m.timestamp)
-        )
+        self.messages.sort(key=lambda m: (priority_order.get(m.priority, 2), -m.timestamp))
 
     def peek(self, count: int = 10) -> list[MailboxMessage]:
         """Peek at messages without marking as read.
