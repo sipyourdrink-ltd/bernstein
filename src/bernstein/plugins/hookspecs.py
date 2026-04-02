@@ -21,6 +21,15 @@ class BernsteinSpec:
       will be surfaced to the operator.
     - Any other non-zero: Warning. Logged as a warning, but orchestration
       continues.
+
+    **JSON Communication Contract:**
+    - **Input (stdin):** Arguments are passed as a single-line JSON object.
+      Environment variables (``BERNSTEIN_HOOK_<ARG>``) are also set for convenience.
+    - **Output (stdout):** Optionally, hooks can return a JSON object.
+      Standard fields:
+      - ``status``: ``"ok"`` or ``"error"``.
+      - ``message``: Human-readable message or error details.
+      - ``data``: Hook-specific structured output.
     """
 
     @hookspec

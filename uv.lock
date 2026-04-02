@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -49,7 +49,7 @@ wheels = [
 
 [[package]]
 name = "bernstein"
-version = "1.4.9"
+version = "1.4.10"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

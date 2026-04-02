@@ -11,7 +11,7 @@ import warnings
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pluggy
 
@@ -73,9 +73,37 @@ class CommandHook:
                 )
 
                 if proc.returncode == 0:
+                    # Parse JSON response from stdout if present
+                    if proc.stdout.strip():
+                        try:
+                            response = cast(dict[str, Any], json.loads(proc.stdout))
+                            status = str(response.get("status", ""))
+                            message = str(response.get("message", ""))
+                            if status == "error":
+                                log.warning(
+                                    "Hook script %s reported error: %s",
+                                    script.name,
+                                    message or "no message",
+                                )
+                        except (json.JSONDecodeError, TypeError):
+                            log.warning(
+                                "Hook script %s returned malformed JSON: %s",
+                                script.name,
+                                proc.stdout[:100],
+                            )
                     continue
+
                 if proc.returncode == 2:
-                    raise HookBlockingError(hook_name, proc.stderr.strip() or proc.stdout.strip())
+                    error_detail: str = proc.stderr.strip() or proc.stdout.strip()
+                    # Try to extract message from JSON if possible
+                    if proc.stdout.strip():
+                        try:
+                            response = cast(dict[str, Any], json.loads(proc.stdout))
+                            if response.get("message"):
+                                error_detail = str(response["message"])
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    raise HookBlockingError(hook_name, error_detail)
                 else:
                     log.warning(
                         "Hook script %s exited with code %d: %s",
@@ -89,28 +117,28 @@ class CommandHook:
                 log.warning("Failed to execute hook script %s: %s", script, exc)
 
     @hookimpl
-    def on_task_created(self, **kwargs: Any) -> None:
-        self._run_command("on_task_created", **kwargs)
+    def on_task_created(self, task_id: str, role: str, title: str) -> None:
+        self._run_command("on_task_created", task_id=task_id, role=role, title=title)
 
     @hookimpl
-    def on_task_completed(self, **kwargs: Any) -> None:
-        self._run_command("on_task_completed", **kwargs)
+    def on_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
+        self._run_command("on_task_completed", task_id=task_id, role=role, result_summary=result_summary)
 
     @hookimpl
-    def on_task_failed(self, **kwargs: Any) -> None:
-        self._run_command("on_task_failed", **kwargs)
+    def on_task_failed(self, task_id: str, role: str, error: str) -> None:
+        self._run_command("on_task_failed", task_id=task_id, role=role, error=error)
 
     @hookimpl
-    def on_agent_spawned(self, **kwargs: Any) -> None:
-        self._run_command("on_agent_spawned", **kwargs)
+    def on_agent_spawned(self, session_id: str, role: str, model: str) -> None:
+        self._run_command("on_agent_spawned", session_id=session_id, role=role, model=model)
 
     @hookimpl
-    def on_agent_reaped(self, **kwargs: Any) -> None:
-        self._run_command("on_agent_reaped", **kwargs)
+    def on_agent_reaped(self, session_id: str, role: str, outcome: str) -> None:
+        self._run_command("on_agent_reaped", session_id=session_id, role=role, outcome=outcome)
 
     @hookimpl
-    def on_evolve_proposal(self, **kwargs: Any) -> None:
-        self._run_command("on_evolve_proposal", **kwargs)
+    def on_evolve_proposal(self, proposal_id: str, title: str, verdict: str) -> None:
+        self._run_command("on_evolve_proposal", proposal_id=proposal_id, title=title, verdict=verdict)
 
 
 class PluginManager:
