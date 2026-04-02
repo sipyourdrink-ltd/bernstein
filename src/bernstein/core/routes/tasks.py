@@ -30,6 +30,8 @@ from bernstein.core.server import (
     A2AAgentCardResponse,
     A2AArtifactRequest,
     A2AArtifactResponse,
+    A2AMessageRequest,
+    A2AMessageResponse,
     A2ATaskResponse,
     A2ATaskSendRequest,
     BatchClaimRequest,
@@ -55,6 +57,7 @@ from bernstein.core.server import (
     TaskStealRequest,
     TaskStealResponse,
     TaskStore,
+    a2a_message_to_response,
     a2a_task_to_response,
     node_to_response,
     read_log_tail,
@@ -691,6 +694,48 @@ async def agent_card(request: Request) -> A2AAgentCardResponse:
     return A2AAgentCardResponse(**d)
 
 
+@router.get("/a2a/agents", response_model=A2AAgentCardResponse)
+async def list_a2a_agents(request: Request) -> A2AAgentCardResponse:
+    """Return Bernstein's A2A agent card via the task API namespace."""
+
+    return await agent_card(request)
+
+
+@router.post("/a2a/message", response_model=A2AMessageResponse, status_code=201)
+async def a2a_message(body: A2AMessageRequest, request: Request) -> A2AMessageResponse:
+    """Receive an inbound A2A message and inject it into the target task context."""
+
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+    a2a_handler = _get_a2a_handler(request)
+
+    task = store.get_task(body.task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{body.task_id}' not found")
+    _require_task_access(task, request)
+
+    message = a2a_handler.receive_message(
+        sender=body.sender,
+        recipient=body.recipient,
+        content=body.content,
+        task_id=body.task_id,
+    )
+    injected_context = f"[A2A:{body.sender}->{body.recipient}] {body.content}"
+    await store.add_progress(body.task_id, injected_context, 0)
+    sse_bus.publish(
+        "a2a_message",
+        json.dumps(
+            {
+                "id": message.id,
+                "task_id": message.task_id,
+                "sender": message.sender,
+                "recipient": message.recipient,
+            }
+        ),
+    )
+    return a2a_message_to_response(message)
+
+
 @router.post("/a2a/tasks/send", response_model=A2ATaskResponse, status_code=201)
 async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskResponse:
     """Receive a task from an external A2A agent.
@@ -712,6 +757,7 @@ async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskRe
             description=body.message,
             role=body.role,
             tenant_id=request_tenant_id(request),
+            estimated_minutes=minutes_for_level(estimate_difficulty(body.message).level),
         )
     )
     a2a_handler.link_bernstein_task(a2a_task.id, bernstein_task.id)

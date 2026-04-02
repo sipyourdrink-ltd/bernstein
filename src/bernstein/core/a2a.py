@@ -13,7 +13,12 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+import httpx
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 class A2ATaskStatus(Enum):
@@ -25,6 +30,36 @@ class A2ATaskStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELED = "canceled"
+
+
+@dataclass(frozen=True)
+class A2AMessage:
+    """A single A2A message exchanged with Bernstein or an external agent."""
+
+    id: str
+    sender: str
+    recipient: str
+    content: str
+    task_id: str
+    direction: Literal["inbound", "outbound"] = "inbound"
+    external_endpoint: str | None = None
+    delivered: bool = False
+    created_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the message to a JSON-compatible dict."""
+
+        return {
+            "id": self.id,
+            "sender": self.sender,
+            "recipient": self.recipient,
+            "content": self.content,
+            "task_id": self.task_id,
+            "direction": self.direction,
+            "external_endpoint": self.external_endpoint,
+            "delivered": self.delivered,
+            "created_at": self.created_at,
+        }
 
 
 # Mapping from A2A states to Bernstein TaskStatus values.
@@ -232,13 +267,14 @@ class A2AHandler:
         self._tasks: dict[str, A2ATask] = {}
         # Reverse index: bernstein task id -> a2a task id
         self._by_bernstein_id: dict[str, str] = {}
+        self._messages: dict[str, A2AMessage] = {}
 
     def orchestrator_card(self) -> AgentCard:
         """Return the Agent Card for the Bernstein orchestrator."""
         return AgentCard(
             name="bernstein-orchestrator",
             description="Multi-agent orchestration system for CLI coding agents",
-            capabilities=["task_orchestration", "agent_spawning", "code_review"],
+            capabilities=["task_orchestration", "agent_spawning", "code_review", "a2a_message"],
             protocol_version="0.1",
             endpoint=f"{self._server_url}/a2a",
             provider="bernstein",
@@ -360,6 +396,70 @@ class A2AHandler:
         if sender is not None:
             tasks = [t for t in tasks if t.sender == sender]
         return tasks
+
+    def receive_message(self, sender: str, recipient: str, content: str, task_id: str) -> A2AMessage:
+        """Record an inbound A2A message targeted at a Bernstein task."""
+
+        message = A2AMessage(
+            id=uuid.uuid4().hex[:12],
+            sender=sender,
+            recipient=recipient,
+            content=content,
+            task_id=task_id,
+            direction="inbound",
+            delivered=True,
+        )
+        self._messages[message.id] = message
+        return message
+
+    async def send_message(
+        self,
+        *,
+        sender: str,
+        recipient: str,
+        content: str,
+        task_id: str,
+        external_endpoint: str,
+        client: httpx.AsyncClient | None = None,
+    ) -> A2AMessage:
+        """Send an outbound A2A message to an external agent endpoint."""
+
+        payload = {
+            "sender": sender,
+            "recipient": recipient,
+            "content": content,
+            "task_id": task_id,
+        }
+        base_url = external_endpoint.rstrip("/")
+        owns_client = client is None
+        outbound_client = client or httpx.AsyncClient(timeout=10.0)
+        try:
+            response = await outbound_client.post(f"{base_url}/a2a/message", json=payload)
+            response.raise_for_status()
+        finally:
+            if owns_client:
+                await outbound_client.aclose()
+
+        message = A2AMessage(
+            id=uuid.uuid4().hex[:12],
+            sender=sender,
+            recipient=recipient,
+            content=content,
+            task_id=task_id,
+            direction="outbound",
+            external_endpoint=base_url,
+            delivered=True,
+        )
+        self._messages[message.id] = message
+        return message
+
+    def list_messages(self, task_id: str | None = None) -> Sequence[A2AMessage]:
+        """List recorded A2A messages, optionally filtered by task."""
+
+        messages = list(self._messages.values())
+        if task_id is not None:
+            messages = [message for message in messages if message.task_id == task_id]
+        return tuple(messages)
 
     @staticmethod
     def bernstein_status_for(a2a_status: A2ATaskStatus) -> str:

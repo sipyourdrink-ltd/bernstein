@@ -605,6 +605,29 @@ class A2AArtifactResponse(BaseModel):
     created_at: float
 
 
+class A2AMessageRequest(BaseModel):
+    """Body for POST /a2a/message."""
+
+    sender: str
+    recipient: str
+    content: str
+    task_id: str
+
+
+class A2AMessageResponse(BaseModel):
+    """Serialized A2A message returned by Bernstein endpoints."""
+
+    id: str
+    sender: str
+    recipient: str
+    content: str
+    task_id: str
+    direction: str
+    delivered: bool
+    external_endpoint: str | None
+    created_at: float
+
+
 class A2ATaskResponse(BaseModel):
     """Serialised A2A task in responses."""
 
@@ -657,6 +680,22 @@ def a2a_task_to_response(task: Any) -> A2ATaskResponse:
         ],
         created_at=task.created_at,
         updated_at=task.updated_at,
+    )
+
+
+def a2a_message_to_response(message: Any) -> A2AMessageResponse:
+    """Convert an A2A message record to its response schema."""
+
+    return A2AMessageResponse(
+        id=message.id,
+        sender=message.sender,
+        recipient=message.recipient,
+        content=message.content,
+        task_id=message.task_id,
+        direction=message.direction,
+        delivered=message.delivered,
+        external_endpoint=message.external_endpoint,
+        created_at=message.created_at,
     )
 
 
