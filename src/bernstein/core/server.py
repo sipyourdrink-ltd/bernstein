@@ -298,7 +298,7 @@ class TaskResponse(BaseModel):
     eu_ai_act_risk: str
     approval_required: bool
     risk_level: str
-    estimated_minutes: int
+    estimated_minutes: int | None
     status: str
     depends_on: list[str]
     parent_task_id: str | None
