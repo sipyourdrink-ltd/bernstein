@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
+from bernstein.core.auth import create_jwt, verify_jwt
 from bernstein.core.sanitize import sanitize_log
+from bernstein.core.tenanting import normalize_tenant_id
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -141,6 +144,10 @@ class AgentCredential:
     created_at: float = field(default_factory=time.time)
     expires_at: float = 0.0  # 0 = no expiry (session-scoped)
     revoked: bool = False
+    token_type: Literal["opaque", "jwt"] = "opaque"
+    algorithm: str = "HS256"
+    jti: str = ""
+    tenant_id: str = "default"
 
     @property
     def is_valid(self) -> bool:
@@ -154,6 +161,10 @@ class AgentCredential:
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "revoked": self.revoked,
+            "token_type": self.token_type,
+            "algorithm": self.algorithm,
+            "jti": self.jti,
+            "tenant_id": self.tenant_id,
         }
 
     @classmethod
@@ -163,6 +174,10 @@ class AgentCredential:
             created_at=float(d.get("created_at", 0)),
             expires_at=float(d.get("expires_at", 0)),
             revoked=bool(d.get("revoked", False)),
+            token_type=str(d.get("token_type", "opaque")),
+            algorithm=str(d.get("algorithm", "HS256")),
+            jti=str(d.get("jti", "")),
+            tenant_id=normalize_tenant_id(str(d.get("tenant_id", "default") or "default")),
         )
 
 
@@ -286,6 +301,24 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _load_or_create_jwt_secret(base_dir: Path) -> str:
+    """Return the agent-identity JWT secret, preferring the shared auth env var."""
+
+    env_secret = os.environ.get("BERNSTEIN_AUTH_JWT_SECRET", "").strip()
+    if env_secret:
+        return env_secret
+
+    secret_path = base_dir / "agent_identity_jwt_secret"
+    if secret_path.exists():
+        secret = secret_path.read_text(encoding="utf-8").strip()
+        if secret:
+            return secret
+
+    secret = secrets.token_urlsafe(32)
+    secret_path.write_text(secret, encoding="utf-8")
+    return secret
+
+
 class AgentIdentityStore:
     """File-based CRUD store for agent identities.
 
@@ -294,9 +327,11 @@ class AgentIdentityStore:
     """
 
     def __init__(self, base_dir: Path) -> None:
+        self._base_dir = base_dir
         self._identities_dir = base_dir / "agent_identities"
         self._identities_dir.mkdir(parents=True, exist_ok=True)
         self._audit_path = base_dir / "agent_identity_audit.jsonl"
+        self._jwt_secret = _load_or_create_jwt_secret(base_dir)
         # In-memory index keyed by token_hash → identity_id for fast auth.
         self._token_index: dict[str, str] = {}
         self._rebuild_token_index()
@@ -347,7 +382,7 @@ class AgentIdentityStore:
         metadata: dict[str, Any] | None = None,
         token_expiry_s: float = 0.0,
     ) -> tuple[AgentIdentity, str]:
-        """Create a new agent identity with a bearer token.
+        """Create a new agent identity with a JWT bearer token.
 
         Returns the identity and the raw bearer token (shown only once).
         """
@@ -356,14 +391,34 @@ class AgentIdentityStore:
         if extra_permissions:
             permissions = permissions | extra_permissions
 
-        raw_token = secrets.token_urlsafe(32)
-        token_hash = _hash_token(raw_token)
         now = time.time()
+        expiry_s = int(token_expiry_s if token_expiry_s > 0 else 86400)
+        tenant_id = normalize_tenant_id(str((metadata or {}).get("tenant_id", "default")))
+        raw_token = create_jwt(
+            claims={
+                "sub": identity_id,
+                "sid": session_id,
+                "role": role,
+                "scopes": sorted(permissions),
+                "tenant_id": tenant_id,
+            },
+            secret=self._jwt_secret,
+            expiry_seconds=expiry_s,
+        )
+        claims = verify_jwt(raw_token, self._jwt_secret)
+        if claims is None:
+            msg = "failed to verify freshly issued agent JWT"
+            raise RuntimeError(msg)
+        token_hash = _hash_token(raw_token)
 
         credential = AgentCredential(
             token_hash=token_hash,
             created_at=now,
-            expires_at=now + token_expiry_s if token_expiry_s > 0 else 0.0,
+            expires_at=float(claims.get("exp", now + expiry_s)),
+            token_type="jwt",
+            algorithm="HS256",
+            jti=str(claims.get("jti", "")),
+            tenant_id=tenant_id,
         )
 
         identity = AgentIdentity(
@@ -391,6 +446,7 @@ class AgentIdentityStore:
                     "role": role,
                     "permissions": sorted(permissions),
                     "parent_identity_id": parent_identity_id,
+                    "token_type": credential.token_type,
                 },
             )
         )
@@ -400,6 +456,10 @@ class AgentIdentityStore:
 
     def authenticate(self, token: str) -> AgentIdentity | None:
         """Authenticate a bearer token and return the identity, or None."""
+        jwt_identity = self._authenticate_jwt(token)
+        if jwt_identity is not None:
+            return jwt_identity
+
         token_hash = _hash_token(token)
         identity_id = self._token_index.get(token_hash)
         if identity_id is None:
@@ -443,6 +503,73 @@ class AgentIdentityStore:
                 identity_id=identity_id,
                 action="authenticated",
                 actor="auth",
+            )
+        )
+        return identity
+
+    def _authenticate_jwt(self, token: str) -> AgentIdentity | None:
+        """Authenticate a JWT token when the credential was issued in JWT mode."""
+
+        claims = verify_jwt(token, self._jwt_secret)
+        if not claims:
+            return None
+
+        identity_id = str(claims.get("sub", ""))
+        if not identity_id:
+            return None
+
+        identity = self._load(identity_id)
+        if identity is None or identity.credential is None:
+            return None
+        if identity.credential.token_type != "jwt":
+            return None
+        if identity.credential.token_hash != _hash_token(token):
+            return None
+        if identity.credential.jti and str(claims.get("jti", "")) != identity.credential.jti:
+            return None
+        if str(claims.get("sid", "")) != identity.session_id:
+            return None
+        if str(claims.get("role", "")) != identity.role:
+            return None
+        if normalize_tenant_id(str(claims.get("tenant_id", "default"))) != identity.credential.tenant_id:
+            return None
+        claim_scopes = claims.get("scopes", [])
+        if not isinstance(claim_scopes, list) or set(map(str, claim_scopes)) != set(identity.permissions):
+            return None
+
+        if not identity.is_active:
+            self._append_audit(
+                IdentityAuditEvent(
+                    timestamp=time.time(),
+                    identity_id=identity_id,
+                    action="denied",
+                    actor="auth",
+                    details={"reason": f"identity status: {identity.status}"},
+                )
+            )
+            return None
+
+        if not identity.credential.is_valid:
+            self._append_audit(
+                IdentityAuditEvent(
+                    timestamp=time.time(),
+                    identity_id=identity_id,
+                    action="denied",
+                    actor="auth",
+                    details={"reason": "credential expired or revoked"},
+                )
+            )
+            return None
+
+        identity.last_authenticated_at = time.time()
+        self._save(identity)
+        self._append_audit(
+            IdentityAuditEvent(
+                timestamp=time.time(),
+                identity_id=identity_id,
+                action="authenticated",
+                actor="auth",
+                details={"token_type": "jwt"},
             )
         )
         return identity

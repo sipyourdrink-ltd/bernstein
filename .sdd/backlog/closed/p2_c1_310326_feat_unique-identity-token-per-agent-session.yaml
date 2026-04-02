@@ -1,0 +1,43 @@
+---
+id: "T109"
+title: "Unique identity token per agent session"
+status: open
+type: feature
+priority: 2
+scope: small
+complexity: low
+role: security
+model: opus
+effort: normal
+estimated_minutes: 20
+depends_on: []
+blocks: []
+tags: ["security"]
+janitor_signals: []
+context_files: []
+affected_paths: []
+max_tokens: null
+require_review: true
+require_human_approval: false
+---
+
+## Summary
+
+JWT with: agent_id, role, scope, expiry
+
+## Objective & Definition of Done
+
+- [ ] Unique identity token per agent session implemented and working
+- [ ] Unit tests pass
+- [ ] Ruff lint clean
+
+## Steps
+
+1. Read relevant source files
+2. Implement the feature
+3. Add/update unit tests
+4. Run `uv run ruff check src/` and `uv run pytest tests/unit/ -x -q`
+
+## Agent Notes
+
+<!-- Reserved for implementing agent -->
