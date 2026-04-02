@@ -99,7 +99,7 @@
     "@types/vscode": "^1.100.0",
     "@vscode/vsce": "^2.26",
     "ovsx": "^0.9",
-    "esbuild": "^0.21",
+    "esbuild": "^0.25",
     "jest": "^29.7",
     "ts-jest": "^29.1",
     "typescript": "^5.4"
