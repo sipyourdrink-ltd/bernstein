@@ -180,7 +180,6 @@ class CorrelationFilter(logging.Filter):
         return True
 
 
-
 def setup_correlation_logging() -> None:
     """Setup correlation ID logging for all handlers."""
     filter_instance = CorrelationFilter()

@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from bernstein.core.a2a import A2AHandler
+from bernstein.core.json_logging import setup_json_logging
 from bernstein.core.access_log import StructuredAccessLogMiddleware
 from bernstein.core.acp import ACPHandler
 from bernstein.core.bulletin import BulletinBoard, MessageBoard, MessageType
