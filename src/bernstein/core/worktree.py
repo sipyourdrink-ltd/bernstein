@@ -375,9 +375,7 @@ def validate_worktree_slug(slug: str) -> str:
     if not slug:
         raise WorktreeError("Worktree slug must not be empty")
     if len(slug) > _SLUG_MAX_LEN:
-        raise WorktreeError(
-            f"Worktree slug too long ({len(slug)} chars, max {_SLUG_MAX_LEN}): {slug!r}"
-        )
+        raise WorktreeError(f"Worktree slug too long ({len(slug)} chars, max {_SLUG_MAX_LEN}): {slug!r}")
     if "/" in slug or "\\" in slug:
         raise WorktreeError(f"Worktree slug must not contain path separators: {slug!r}")
     if ".." in slug:
@@ -385,9 +383,7 @@ def validate_worktree_slug(slug: str) -> str:
     if slug in _SLUG_RESERVED:
         raise WorktreeError(f"Worktree slug is a reserved git name: {slug!r}")
     if not _SLUG_PATTERN.match(slug):
-        raise WorktreeError(
-            f"Worktree slug contains invalid characters (allowed: a-z A-Z 0-9 - _ .): {slug!r}"
-        )
+        raise WorktreeError(f"Worktree slug contains invalid characters (allowed: a-z A-Z 0-9 - _ .): {slug!r}")
     return slug
 
 
