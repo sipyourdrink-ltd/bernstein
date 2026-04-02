@@ -6,6 +6,7 @@ Traces capture decision points: files read, edits made, tests run, and outcome.
 
 from __future__ import annotations
 
+import difflib
 import json
 import re
 import time
@@ -113,6 +114,34 @@ class AgentTrace:
             log_path=d.get("log_path", ""),
             task_snapshots=cast("list[dict[str, Any]]", d.get("task_snapshots", [])),
         )
+
+
+@dataclass(frozen=True)
+class ReplayTaskRequest:
+    """Replay request built from a stored trace snapshot."""
+
+    title: str
+    description: str
+    role: str
+    priority: int
+    scope: str
+    complexity: str
+    model: str
+    effort: str
+    original_result_summary: str
+
+    def to_payload(self) -> dict[str, Any]:
+        """Serialize the replay request into a task-create payload."""
+        return {
+            "title": self.title,
+            "description": self.description,
+            "role": self.role,
+            "priority": self.priority,
+            "scope": self.scope,
+            "complexity": self.complexity,
+            "model": self.model,
+            "effort": self.effort,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +433,13 @@ class TraceStore:
         traces.sort(key=lambda t: t.spawn_ts, reverse=True)
         return traces[:limit]
 
+    def latest_for_task(self, task_id: str) -> AgentTrace | None:
+        """Return the newest trace recorded for a given task ID."""
+        traces = self.read_by_task(task_id)
+        if not traces:
+            return None
+        return max(traces, key=lambda trace: trace.spawn_ts)
+
 
 # ---------------------------------------------------------------------------
 # Factory
@@ -491,3 +527,49 @@ def finalize_trace(
         )
     )
     return trace
+
+
+def build_replay_task_request(
+    trace: AgentTrace,
+    *,
+    task_id: str | None = None,
+    override_model: str | None = None,
+    extra_context: str | None = None,
+) -> ReplayTaskRequest:
+    """Build a replay task payload from the latest trace snapshot."""
+    snapshot: dict[str, Any] | None = None
+    if task_id is not None:
+        snapshot = next((item for item in trace.task_snapshots if item.get("id") == task_id), None)
+    if snapshot is None and trace.task_snapshots:
+        snapshot = trace.task_snapshots[0]
+    if snapshot is None:
+        raise ValueError("Trace does not contain any task snapshots to replay")
+
+    original_description = str(snapshot.get("description", ""))
+    description = original_description
+    if extra_context:
+        description = f"{description.rstrip()}\n\nReplay hint:\n{extra_context}"
+
+    return ReplayTaskRequest(
+        title=f"[replay] {snapshot.get('title', trace.task_ids[0] if trace.task_ids else trace.trace_id)}",
+        description=description,
+        role=str(snapshot.get("role", trace.agent_role)),
+        priority=int(snapshot.get("priority", 2)),
+        scope=str(snapshot.get("scope", "medium")),
+        complexity=str(snapshot.get("complexity", "medium")),
+        model=override_model or str(snapshot.get("model", trace.model)),
+        effort=str(snapshot.get("effort", trace.effort)),
+        original_result_summary=str(snapshot.get("result_summary", "")),
+    )
+
+
+def render_replay_diff(original: str, replayed: str) -> str:
+    """Render a unified diff between the original and replayed task outcomes."""
+    diff = difflib.unified_diff(
+        original.splitlines(),
+        replayed.splitlines(),
+        fromfile="original",
+        tofile="replay",
+        lineterm="",
+    )
+    return "\n".join(diff)

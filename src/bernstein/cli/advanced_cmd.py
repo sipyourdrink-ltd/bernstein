@@ -18,6 +18,7 @@ import datetime as dt
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,7 @@ from bernstein.cli.helpers import (
     server_post,
 )
 from bernstein.core.runtime_state import read_session_replay_metadata
+from bernstein.core.traces import TraceStore, build_replay_task_request, render_replay_diff
 from bernstein.core.visual_config import VisualConfig, resolve_visual_config
 
 # ---------------------------------------------------------------------------
@@ -704,6 +706,65 @@ def trace_cmd(task_id: str, as_json: bool, traces_dir: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _should_use_run_replay(run_id: str, runs_dir: Path) -> bool:
+    """Return whether replay should use the legacy run-event mode."""
+    return run_id in {"list", "latest"} or (runs_dir / run_id / "replay.jsonl").exists()
+
+
+def _wait_for_replay_completion(
+    task_id: str,
+    *,
+    timeout_s: float = 30.0,
+    poll_interval_s: float = 1.0,
+) -> dict[str, Any] | None:
+    """Poll the task server until a replayed task reaches a terminal state."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        task = server_get(f"/tasks/{task_id}")
+        if task is None:
+            return None
+        status = str(task.get("status", ""))
+        if status in {"done", "failed", "cancelled"}:
+            return task
+        time.sleep(poll_interval_s)
+    return None
+
+
+def _replay_task_trace(task_id: str, sdd_path: Path, *, override_model: str | None, extra_context: str | None) -> None:
+    """Replay a historical task trace by re-submitting its last snapshot."""
+    trace = TraceStore(sdd_path / "traces").latest_for_task(task_id)
+    if trace is None:
+        console.print(f"[red]No trace found for task:[/red] {task_id}")
+        raise SystemExit(1)
+
+    request = build_replay_task_request(
+        trace,
+        task_id=task_id,
+        override_model=override_model,
+        extra_context=extra_context,
+    )
+    created = server_post("/tasks", request.to_payload())
+    if created is None:
+        console.print("[red]Failed to create replay task.[/red]")
+        raise SystemExit(1)
+
+    replay_task_id = str(created.get("id", ""))
+    console.print(f"[green]Replay task created:[/green] {replay_task_id}")
+    replayed = _wait_for_replay_completion(replay_task_id)
+    if replayed is None:
+        console.print("[yellow]Replay task created, but completion polling timed out.[/yellow]")
+        return
+
+    replay_summary = str(replayed.get("result_summary", ""))
+    diff = render_replay_diff(request.original_result_summary, replay_summary)
+    if diff:
+        from rich.syntax import Syntax
+
+        console.print(Syntax(diff, "diff", theme="monokai", line_numbers=False))
+    else:
+        console.print("[dim]Replay completed with no result-summary diff.[/dim]")
+
+
 @click.command("replay")
 @click.argument("run_id")
 @click.option(
@@ -725,7 +786,16 @@ def trace_cmd(task_id: str, as_json: bool, traces_dir: str) -> None:
     default=None,
     help="Show only the first N events.",
 )
-def replay_cmd(run_id: str, sdd_dir: str, as_json: bool, limit: int | None) -> None:
+@click.option("--model", default=None, help="Override model for task-trace replay.")
+@click.option("--extra-context", default=None, help="Append additional hint text to the replayed task description.")
+def replay_cmd(
+    run_id: str,
+    sdd_dir: str,
+    as_json: bool,
+    limit: int | None,
+    model: str | None,
+    extra_context: str | None,
+) -> None:
     """Replay a past orchestration run step-by-step.
 
     \b
@@ -744,6 +814,9 @@ def replay_cmd(run_id: str, sdd_dir: str, as_json: bool, limit: int | None) -> N
     """
     sdd_path = Path(sdd_dir)
     runs_dir = sdd_path / "runs"
+    if not _should_use_run_replay(run_id, runs_dir):
+        _replay_task_trace(run_id, sdd_path, override_model=model, extra_context=extra_context)
+        return
 
     # "list" subcommand: show all available run IDs
     if run_id == "list":
