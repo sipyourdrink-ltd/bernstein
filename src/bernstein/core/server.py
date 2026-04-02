@@ -844,7 +844,10 @@ def create_app(
     Returns:
         Configured FastAPI app with all routes registered.
     """
+    from bernstein.core.auth import AuthService, AuthStore, SSOConfig
+    from bernstein.core.auth_middleware import SSOAuthMiddleware
     from bernstein.core.routes.agents import router as agents_router
+    from bernstein.core.routes.auth import router as auth_router
     from bernstein.core.routes.costs import router as costs_router
     from bernstein.core.routes.dashboard import router as dashboard_router
     from bernstein.core.routes.observability import router as observability_router
@@ -868,6 +871,11 @@ def create_app(
         if jsonl_path.parent.name == "runtime" and jsonl_path.parent.parent.name == ".sdd"
         else Path.cwd()
     )
+    sdd_dir = jsonl_path.parent.parent
+    auth_config = SSOConfig()
+    auth_enabled = auth_config.enabled or auth_config.oidc.enabled or auth_config.saml.enabled
+    auth_service = AuthService(auth_config, AuthStore(sdd_dir)) if auth_enabled else None
+    legacy_auth_token = effective_token or auth_config.legacy_token or None
 
     def _reload_seed_config() -> dict[str, Any]:
         """Reload and persist bernstein.yaml metadata without restarting."""
@@ -969,8 +977,12 @@ def create_app(
     if readonly:
         application.add_middleware(ReadOnlyMiddleware)
 
-    # Auth middleware — only enforced when a token is configured
-    application.add_middleware(BearerAuthMiddleware, auth_token=effective_token)
+    # Auth middleware — supports SSO JWTs plus legacy bearer tokens.
+    application.add_middleware(
+        SSOAuthMiddleware,
+        auth_service=auth_service,
+        legacy_token=legacy_auth_token,
+    )
 
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()
@@ -986,11 +998,13 @@ def create_app(
     application.state.node_registry = node_registry  # type: ignore[attr-defined]
     application.state.sse_bus = sse_bus  # type: ignore[attr-defined]
     application.state.runtime_dir = jsonl_path.parent  # type: ignore[attr-defined]  # .sdd/runtime/
-    application.state.sdd_dir = jsonl_path.parent.parent  # type: ignore[attr-defined]  # .sdd/
+    application.state.sdd_dir = sdd_dir  # type: ignore[attr-defined]  # .sdd/
     application.state.workdir = workdir  # type: ignore[attr-defined]
     application.state.reload_seed_config = _reload_seed_config  # type: ignore[attr-defined]
     application.state.draining = False  # type: ignore[attr-defined]
     application.state.readonly = readonly  # type: ignore[attr-defined]
+    application.state.auth_service = auth_service  # type: ignore[attr-defined]
+    application.state.legacy_auth_token = legacy_auth_token  # type: ignore[attr-defined]
     application.state.slack_signing_secret = (  # type: ignore[attr-defined]
         slack_signing_secret or os.environ.get("SLACK_SIGNING_SECRET") or ""
     )
@@ -1010,6 +1024,7 @@ def create_app(
 
     # Mount routers
     application.include_router(agents_router)
+    application.include_router(auth_router)
     application.include_router(tasks_router)
     application.include_router(status_router)
     application.include_router(webhooks_router)

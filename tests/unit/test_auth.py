@@ -1,5 +1,7 @@
 """Tests for SSO / SAML / OIDC authentication system."""
 
+# pyright: reportPrivateUsage=false
+
 from __future__ import annotations
 
 import time
@@ -14,8 +16,10 @@ from bernstein.core.auth import (
     AuthStore,
     AuthUser,
     DeviceAuthRequest,
+    ParsedSAMLAssertion,
     SSOConfig,
     create_jwt,
+    extract_jwt_expiry,
     parse_group_role_map,
     resolve_role,
     role_has_permission,
@@ -111,6 +115,12 @@ class TestJWT:
     def test_unsupported_algorithm_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported algorithm"):
             create_jwt({"sub": "user1"}, "secret", algorithm="RS256")
+
+    def test_extract_jwt_expiry(self) -> None:
+        token = create_jwt({"sub": "user1"}, "secret", expiry_seconds=120)
+        expiry = extract_jwt_expiry(token)
+        assert expiry is not None
+        assert expiry > time.time()
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +470,47 @@ class TestAuthService:
         assert url.startswith("https://idp.example.com/saml/sso?")
         assert "SAMLRequest=" in url
         assert "RelayState=test-relay" in url
+
+    def test_parse_saml_assertion(self, svc: AuthService) -> None:
+        svc.config.saml.attr_email = "email"
+        svc.config.saml.attr_name = "displayName"
+        svc.config.saml.attr_groups = "memberOf"
+        assertion = svc.parse_saml_assertion(
+            """<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">
+                <samlp:Status>
+                    <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success" />
+                </samlp:Status>
+                <saml:Assertion>
+                    <saml:Subject>
+                        <saml:NameID>user@example.com</saml:NameID>
+                    </saml:Subject>
+                    <saml:AttributeStatement>
+                        <saml:Attribute Name="email">
+                            <saml:AttributeValue>user@example.com</saml:AttributeValue>
+                        </saml:Attribute>
+                        <saml:Attribute Name="displayName">
+                            <saml:AttributeValue>Example User</saml:AttributeValue>
+                        </saml:Attribute>
+                        <saml:Attribute Name="memberOf">
+                            <saml:AttributeValue>admins</saml:AttributeValue>
+                            <saml:AttributeValue>backend</saml:AttributeValue>
+                        </saml:Attribute>
+                    </saml:AttributeStatement>
+                </saml:Assertion>
+            </samlp:Response>"""
+        )
+        assert assertion == ParsedSAMLAssertion(
+            subject="user@example.com",
+            email="user@example.com",
+            display_name="Example User",
+            groups=["admins", "backend"],
+            attributes={
+                "email": ["user@example.com"],
+                "displayName": ["Example User"],
+                "memberOf": ["admins", "backend"],
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

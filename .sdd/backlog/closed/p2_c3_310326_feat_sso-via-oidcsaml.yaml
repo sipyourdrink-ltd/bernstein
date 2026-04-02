@@ -1,0 +1,50 @@
+---
+id: "W6-04"
+title: "SSO via OIDC/SAML"
+status: open
+type: feature
+priority: 2
+scope: medium
+complexity: high
+role: backend
+model: sonnet
+effort: normal
+estimated_minutes: 45
+depends_on: []
+blocks: []
+tags: ["enterprise", "compliance"]
+janitor_signals: []
+context_files: []
+affected_paths: []
+max_tokens: null
+require_review: false
+require_human_approval: false
+---
+
+## Summary
+
+Enterprise SSO integration. Login via company IdP (Okta, Azure AD, Google Workspace).
+
+## Objective & Definition of Done
+
+1. OIDC authorization code flow for CLI login
+2. SAML assertion parsing for enterprise IdPs
+3. `bernstein login --sso` initiates browser-based flow
+4. Token cached in `~/.bernstein/token.json` with refresh
+5. Works with Okta, Azure AD, Google (test with mock IdP)
+
+## Steps
+
+1. Read relevant source files
+2. Implement the feature
+3. Add/update unit tests
+4. Run `uv run ruff check src/` and `uv run pytest tests/unit/ -x -q`
+
+## Tests & Verification
+
+- `uv run ruff check src/bernstein/`
+- `uv run pytest tests/unit/ -x -q`
+
+## Agent Notes
+
+<!-- Reserved for implementing agent -->

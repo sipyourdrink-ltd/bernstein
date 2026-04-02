@@ -301,6 +301,17 @@ class SSOConfig(BaseSettings):
     saml: SAMLConfig = Field(default_factory=SAMLConfig)
 
 
+@dataclass(frozen=True)
+class ParsedSAMLAssertion:
+    """Parsed claims extracted from a SAML assertion."""
+
+    subject: str
+    email: str
+    display_name: str
+    groups: list[str]
+    attributes: dict[str, list[str]] = field(default_factory=dict)
+
+
 # ---------------------------------------------------------------------------
 # JWT token handling (HMAC-based, no external dependency beyond stdlib)
 # ---------------------------------------------------------------------------
@@ -321,6 +332,33 @@ def _b64url_decode(s: str) -> bytes:
     if padding != 4:
         s += "=" * padding
     return base64.urlsafe_b64decode(s)
+
+
+def decode_jwt_unverified(token: str) -> dict[str, Any] | None:
+    """Decode JWT claims without verifying the signature.
+
+    This is used only for local cache metadata such as expiry timestamps.
+    It must not be used for authorization decisions.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        claims: dict[str, Any] = json.loads(_b64url_decode(parts[1]))
+    except (json.JSONDecodeError, Exception):
+        return None
+    return claims
+
+
+def extract_jwt_expiry(token: str) -> float | None:
+    """Return the ``exp`` claim from a JWT without verifying the signature."""
+    claims = decode_jwt_unverified(token)
+    if claims is None:
+        return None
+    exp = claims.get("exp")
+    if isinstance(exp, int | float):
+        return float(exp)
+    return None
 
 
 def create_jwt(
@@ -861,6 +899,54 @@ class AuthService:
             params["RelayState"] = relay_state
         return f"{saml.idp_sso_url}?{urlencode(params)}"
 
+    def parse_saml_assertion(self, assertion_xml: str) -> ParsedSAMLAssertion | None:
+        """Parse a SAML assertion XML payload into normalized Bernstein claims."""
+        import xml.etree.ElementTree as ET
+
+        saml = self.config.saml
+        try:
+            root = ET.fromstring(assertion_xml)
+        except ET.ParseError as exc:
+            logger.error("Failed to parse SAML assertion XML: %s", exc)
+            return None
+
+        ns = {
+            "samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
+            "saml": "urn:oasis:names:tc:SAML:2.0:assertion",
+        }
+        status_code = root.find(".//samlp:Status/samlp:StatusCode", ns)
+        if status_code is not None:
+            status_value = status_code.get("Value", "")
+            if "Success" not in status_value:
+                logger.error("SAML response status: %s", status_value)
+                return None
+
+        name_id_el = root.find(".//saml:Assertion/saml:Subject/saml:NameID", ns)
+        subject = name_id_el.text if name_id_el is not None and name_id_el.text else ""
+
+        attributes: dict[str, list[str]] = {}
+        for attr_stmt in root.findall(".//saml:Assertion/saml:AttributeStatement/saml:Attribute", ns):
+            attr_name = attr_stmt.get("Name", "")
+            values = [value.text for value in attr_stmt.findall("saml:AttributeValue", ns) if value.text]
+            if attr_name and values:
+                attributes[attr_name] = values
+
+        email = (attributes.get(saml.attr_email, [""]) or [""])[0] or subject
+        display_name = (attributes.get(saml.attr_name, [""]) or [""])[0] or email
+        groups = attributes.get(saml.attr_groups, [])
+
+        if not subject and not email:
+            logger.error("SAML response missing both NameID and email attribute")
+            return None
+
+        return ParsedSAMLAssertion(
+            subject=subject or email,
+            email=email,
+            display_name=display_name,
+            groups=groups,
+            attributes=attributes,
+        )
+
     def handle_saml_response(
         self, saml_response_b64: str, ip_address: str = "", user_agent: str = ""
     ) -> tuple[AuthUser, str] | None:
@@ -874,56 +960,23 @@ class AuthService:
         basic structure.
         """
         import base64
-        import xml.etree.ElementTree as ET
 
-        saml = self.config.saml
         try:
             xml_bytes = base64.b64decode(saml_response_b64)
-            root = ET.fromstring(xml_bytes)
         except Exception as exc:
             logger.error("Failed to parse SAML response: %s", exc)
             return None
 
-        # SAML namespace prefixes
-        ns = {
-            "samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
-            "saml": "urn:oasis:names:tc:SAML:2.0:assertion",
-        }
-
-        # Check status
-        status_code = root.find(".//samlp:Status/samlp:StatusCode", ns)
-        if status_code is not None:
-            status_value = status_code.get("Value", "")
-            if "Success" not in status_value:
-                logger.error("SAML response status: %s", status_value)
-                return None
-
-        # Extract NameID (subject)
-        name_id_el = root.find(".//saml:Assertion/saml:Subject/saml:NameID", ns)
-        subject = name_id_el.text if name_id_el is not None and name_id_el.text else ""
-
-        # Extract attributes
-        attrs: dict[str, list[str]] = {}
-        for attr_stmt in root.findall(".//saml:Assertion/saml:AttributeStatement/saml:Attribute", ns):
-            attr_name = attr_stmt.get("Name", "")
-            values = [v.text for v in attr_stmt.findall("saml:AttributeValue", ns) if v.text]
-            if attr_name and values:
-                attrs[attr_name] = values
-
-        email = (attrs.get(saml.attr_email, [""]) or [""])[0] or subject
-        display_name = (attrs.get(saml.attr_name, [""]) or [""])[0] or email
-        groups = attrs.get(saml.attr_groups, [])
-
-        if not subject and not email:
-            logger.error("SAML response missing both NameID and email attribute")
+        assertion = self.parse_saml_assertion(xml_bytes.decode("utf-8"))
+        if assertion is None:
             return None
 
         user = self._upsert_user(
             provider="saml",
-            subject=subject or email,
-            email=email,
-            display_name=display_name,
-            groups=groups,
+            subject=assertion.subject,
+            email=assertion.email,
+            display_name=assertion.display_name,
+            groups=assertion.groups,
         )
         token = self._issue_token(user, ip_address=ip_address, user_agent=user_agent)
         return user, token

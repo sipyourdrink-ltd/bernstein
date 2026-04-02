@@ -1,20 +1,12 @@
-"""CLI authentication commands for Bernstein SSO.
-
-Provides:
-- bernstein auth login   — authenticate via device flow or browser
-- bernstein auth status  — show current auth status
-- bernstein auth logout  — revoke the current token
-"""
-# TODO(D6): Not yet wired into main.py CLI group. Ready to ship — add
-# `cli.add_command(auth_group, "auth")` in main.py once server-side auth
-# routes (/auth/providers, /auth/cli/device, /auth/cli/token, /auth/me,
-# /auth/logout) are deployed and tested. See p0-documentation-overhaul.md.
+"""CLI authentication commands for Bernstein SSO."""
 
 from __future__ import annotations
 
 import json
 import os
 import time
+import webbrowser
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,39 +15,120 @@ import httpx
 from rich.console import Console
 
 from bernstein.cli.helpers import SERVER_URL
+from bernstein.core.auth import extract_jwt_expiry
 
 console = Console()
 
-# Token is cached at ~/.bernstein/token.json
 _TOKEN_DIR = Path.home() / ".bernstein"
 _TOKEN_FILE = _TOKEN_DIR / "token.json"
 
 
-def _save_token(token: str, server_url: str = "") -> None:
-    """Save JWT token to local cache."""
-    _TOKEN_DIR.mkdir(parents=True, exist_ok=True)
-    _TOKEN_FILE.write_text(
-        json.dumps(
-            {
-                "token": token,
-                "server_url": server_url or SERVER_URL,
-                "saved_at": time.time(),
-            },
-            indent=2,
+
+@dataclass(frozen=True)
+class CachedToken:
+    """Locally cached CLI token metadata."""
+
+    token: str
+    server_url: str
+    saved_at: float
+    expires_at: float | None = None
+    refresh_token: str | None = None
+
+    @property
+    def is_expired(self) -> bool:
+        """Return whether the cached token is expired."""
+        return self.expires_at is not None and time.time() >= self.expires_at
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the token cache entry."""
+        return {
+            "token": self.token,
+            "server_url": self.server_url,
+            "saved_at": self.saved_at,
+            "expires_at": self.expires_at,
+            "refresh_token": self.refresh_token,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> CachedToken:
+        """Deserialize a token cache entry from JSON."""
+        expires_at_raw = payload.get("expires_at")
+        expires_at = float(expires_at_raw) if isinstance(expires_at_raw, int | float) else None
+        refresh_token = payload.get("refresh_token")
+        return cls(
+            token=str(payload["token"]),
+            server_url=str(payload.get("server_url", SERVER_URL)),
+            saved_at=float(payload.get("saved_at", 0.0)),
+            expires_at=expires_at,
+            refresh_token=str(refresh_token) if isinstance(refresh_token, str) else None,
         )
+
+
+def _save_token(
+    token: str,
+    server_url: str = "",
+    *,
+    expires_at: float | None = None,
+    refresh_token: str | None = None,
+) -> CachedToken:
+    """Save a JWT token and metadata to the local cache."""
+    _TOKEN_DIR.mkdir(parents=True, exist_ok=True)
+    cached = CachedToken(
+        token=token,
+        server_url=server_url or SERVER_URL,
+        saved_at=time.time(),
+        expires_at=expires_at if expires_at is not None else extract_jwt_expiry(token),
+        refresh_token=refresh_token,
     )
-    # Restrict permissions (owner read/write only)
+    _TOKEN_FILE.write_text(json.dumps(cached.to_dict(), indent=2))
     _TOKEN_FILE.chmod(0o600)
+    return cached
 
 
-def _load_token() -> dict[str, Any] | None:
-    """Load cached JWT token."""
+def _refresh_token_entry(cached: CachedToken) -> CachedToken | None:
+    """Refresh an expired token when a refresh token is available."""
+    if not cached.refresh_token:
+        return None
+    try:
+        response = httpx.post(
+            f"{cached.server_url}/auth/cli/refresh",
+            json={"refresh_token": cached.refresh_token},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return None
+
+    token = payload.get("access_token")
+    if not isinstance(token, str) or not token:
+        return None
+    expires_at_raw = payload.get("expires_at")
+    expires_at = float(expires_at_raw) if isinstance(expires_at_raw, int | float) else None
+    refresh_token = payload.get("refresh_token")
+    return _save_token(
+        token,
+        cached.server_url,
+        expires_at=expires_at,
+        refresh_token=str(refresh_token) if isinstance(refresh_token, str) else cached.refresh_token,
+    )
+
+
+def _load_token() -> CachedToken | None:
+    """Load the cached JWT token, refreshing if possible."""
     if not _TOKEN_FILE.exists():
         return None
     try:
-        return json.loads(_TOKEN_FILE.read_text())  # type: ignore[no-any-return]
+        cached = CachedToken.from_dict(json.loads(_TOKEN_FILE.read_text()))
     except (json.JSONDecodeError, OSError):
         return None
+    if not cached.is_expired:
+        return cached
+    refreshed = _refresh_token_entry(cached)
+    if refreshed is not None:
+        return refreshed
+    _clear_token()
+    return None
 
 
 def _clear_token() -> None:
@@ -71,7 +144,8 @@ def auth_group() -> None:
 
 @auth_group.command("login")
 @click.option("--server", default=None, help="Server URL (default: $BERNSTEIN_SERVER_URL or localhost:8052)")
-def auth_login(server: str | None) -> None:
+@click.option("--sso", is_flag=True, help="Open the browser automatically for the SSO flow.")
+def auth_login(server: str | None, sso: bool) -> None:
     """Authenticate with the Bernstein server via device authorization flow.
 
     This initiates a device code flow:
@@ -114,7 +188,7 @@ def auth_login(server: str | None) -> None:
         raise SystemExit(1)  # noqa: B904
 
     user_code = device["user_code"]
-    verification_uri = device["verification_uri"]
+    verification_uri = str(device["verification_uri"])
     expires_in = device["expires_in"]
     interval = device["interval"]
     device_code = device["device_code"]
@@ -127,6 +201,11 @@ def auth_login(server: str | None) -> None:
     console.print(f"  3. Enter code: [bold green]{user_code}[/bold green]")
     console.print()
     console.print(f"[dim]Code expires in {expires_in // 60} minutes. Waiting for authorization...[/dim]")
+    if sso:
+        if webbrowser.open(verification_uri):
+            console.print("[dim]Opened browser for SSO login.[/dim]")
+        else:
+            console.print("[dim]Could not open a browser automatically; open the URL manually.[/dim]")
 
     # Poll for authorization
     deadline = time.time() + expires_in
@@ -148,7 +227,14 @@ def auth_login(server: str | None) -> None:
         status = result.get("status", "pending")
         if status == "complete":
             token = result["access_token"]
-            _save_token(token, server_url=target)
+            expires_at = result.get("expires_at")
+            refresh_token = result.get("refresh_token")
+            _save_token(
+                token,
+                server_url=target,
+                expires_at=float(expires_at) if isinstance(expires_at, int | float) else None,
+                refresh_token=str(refresh_token) if isinstance(refresh_token, str) else None,
+            )
             console.print()
             console.print("[bold green]Authenticated successfully![/bold green]")
 
@@ -187,13 +273,15 @@ def auth_status() -> None:
     # Check for SSO token
     cached = _load_token()
     if cached:
-        token = cached.get("token", "")
-        target = cached.get("server_url", SERVER_URL)
-        saved_at = cached.get("saved_at", 0)
+        token = cached.token
+        target = cached.server_url
+        saved_at = cached.saved_at
 
         console.print("[bold]SSO Authentication[/bold]")
         console.print(f"  Server:  {target}")
         console.print(f"  Cached:  {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(saved_at))}")
+        if cached.expires_at is not None:
+            console.print(f"  Expires: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(cached.expires_at))}")
 
         # Validate token
         try:
@@ -241,8 +329,8 @@ def auth_logout() -> None:
         console.print("[dim]No cached token found.[/dim]")
         return
 
-    token = cached.get("token", "")
-    target = cached.get("server_url", SERVER_URL)
+    token = cached.token
+    target = cached.server_url
 
     # Try to revoke server-side
     try:

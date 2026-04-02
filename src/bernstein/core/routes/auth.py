@@ -71,6 +71,8 @@ class DevicePollResponse(BaseModel):
     """Response for device token poll."""
 
     access_token: str = ""
+    expires_at: float | None = None
+    refresh_token: str | None = None
     token_type: str = "Bearer"
     status: str = "pending"  # "pending", "complete", "expired"
 
@@ -344,7 +346,11 @@ async def device_token_poll(request: Request, body: DevicePollRequest) -> Device
         return DevicePollResponse(status="pending")
 
     token, status = result
-    return DevicePollResponse(access_token=token, status=status)
+    return DevicePollResponse(
+        access_token=token,
+        expires_at=time.time() + svc.config.jwt_expiry_seconds,
+        status=status,
+    )
 
 
 @router.post("/cli/authorize")

@@ -47,6 +47,7 @@ from bernstein.cli.advanced_cmd import (
 # Subcommand imports from modules
 from bernstein.cli.agents_cmd import agents_group
 from bernstein.cli.audit_cmd import audit_group
+from bernstein.cli.auth_cmd import auth_group, auth_login
 from bernstein.cli.cache_cmd import cache_group
 from bernstein.cli.changelog_cmd import changelog_cmd
 from bernstein.cli.chaos_cmd import chaos_group
@@ -107,7 +108,9 @@ __all__ = [
     # Commands from task_cmd
     "add_task",
     "approve",
+    "auth_group",
     "auth_headers",
+    "auth_login",
     # Groups and commands from advanced_cmd
     "benchmark_group",
     "cache_group",
@@ -631,6 +634,8 @@ cli.add_command(history_cmd, "history")
 
 # Already registered elsewhere
 cli.add_command(agents_group)
+cli.add_command(auth_group, "auth")
+cli.add_command(auth_login, "login")
 cli.add_command(evolve)
 cli.add_command(cost_cmd, "cost")
 cli.add_command(estimate_cmd, "estimate")
