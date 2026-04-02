@@ -116,6 +116,82 @@ def _save_plan_markdown(md: str, workdir: Path) -> Path:
     return plan_file
 
 
+def _show_dry_run_plan(
+    workdir: Path,
+    plan_file: Path | None,
+    goal: str | None,
+    seed_file: str | None,
+    model_override: str | None,
+    cli: str | None,
+) -> None:
+    """Show scheduling plan without executing.
+
+    Fetches open tasks and shows which agent/model/tier each would be assigned to.
+
+    Args:
+        workdir: Project root directory.
+        plan_file: Optional plan file path.
+        goal: Optional goal string.
+        seed_file: Optional seed file path.
+        model_override: Optional model override.
+        cli: Optional CLI override.
+    """
+    from rich.table import Table
+
+    from bernstein.core.models import Task
+    from bernstein.core.router import route_task
+
+    # Fetch open tasks from server
+    try:
+        resp = httpx.get(f"http://127.0.0.1:8052/tasks?status=open", timeout=5.0)
+        resp.raise_for_status()
+        tasks_data = resp.json()
+    except httpx.ConnectError:
+        console.print("[red]Task server not running. Start with `bernstein conduct` first.[/red]")
+        raise SystemExit(1)
+    except Exception as exc:
+        console.print(f"[red]Failed to fetch tasks:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    if not tasks_data:
+        console.print("[yellow]No open tasks to schedule.[/yellow]")
+        return
+
+    # Build dry-run schedule table
+    table = Table(title="Dry-Run Scheduling Plan", show_header=True, header_style="bold cyan")
+    table.add_column("Task ID")
+    table.add_column("Title")
+    table.add_column("Role")
+    table.add_column("Model")
+    table.add_column("Effort")
+    table.add_column("Estimated Min")
+
+    for task_dict in tasks_data:
+        task = Task.from_dict(task_dict)
+
+        # Route task (dry-run - doesn't actually spawn)
+        try:
+            config = route_task(task)
+            model = config.model
+            effort = config.effort
+        except Exception as exc:
+            model = f"error: {exc}"
+            effort = "—"
+
+        table.add_row(
+            task.id,
+            task.title[:50] + "..." if len(task.title) > 50 else task.title,
+            task.role,
+            model,
+            effort,
+            str(task.estimated_minutes),
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Total open tasks: {len(tasks_data)}[/dim]")
+    console.print("[dim]No agents spawned (dry-run mode)[/dim]")
+
+
 @dataclass(frozen=True)
 class RecipeStage:
     """Stage metadata extracted from a recipe/plan file."""
@@ -845,6 +921,12 @@ def _configure_quality_gate_bypass(
     default=False,
     help="A/B testing mode: spawn two agents with different models for each task.",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show scheduling plan without executing: which agent/model/tier each task would be assigned to.",
+)
 def run(
     plan_file: Path | None,
     goal: str | None,
@@ -869,6 +951,7 @@ def run(
     audit: bool,
     sandbox: str | None = None,
     ab_test: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
@@ -945,6 +1028,18 @@ def run(
     # Propagate audit mode so the orchestrator enables SOC 2 audit logging
     if audit:
         os.environ["BERNSTEIN_AUDIT"] = "1"
+
+    # --dry-run: show scheduling plan without executing
+    if dry_run:
+        _show_dry_run_plan(
+            workdir=Path.cwd(),
+            plan_file=plan_file,
+            goal=goal,
+            seed_file=seed_file,
+            model_override=model,
+            cli=cli,
+        )
+        return
 
     workdir = Path.cwd()
     if not plan_only:
