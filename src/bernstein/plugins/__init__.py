@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-import pluggy
-from typing import Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any
 
-F = TypeVar("F", bound=Callable[..., Any])
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+import pluggy
+
 
 def hookspec(
-    func: F | None = None,
+    func: Callable[..., Any] | None = None,
     firstresult: bool = False,
     historic: bool = False,
     background: bool = False,
@@ -31,13 +34,14 @@ def hookspec(
         setattr(res, "bernstein_background", background)
         return res
 
-    def decorator(func: F) -> F:
+    def decorator(f: Callable[..., Any]) -> Any:
         # Called as @hookspec(firstresult=True, ...)
-        res = marker(firstresult=firstresult, historic=historic)(func)
+        res = marker(firstresult=firstresult, historic=historic)(f)
         setattr(res, "bernstein_background", background)
         return res
 
     return decorator
+
 
 hookimpl = pluggy.HookimplMarker("bernstein")
 

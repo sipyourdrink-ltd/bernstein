@@ -683,3 +683,69 @@ def test_no_cache_break_event_on_cache_hit(tmp_path: Path) -> None:
     break_file = workdir / ".sdd" / "metrics" / "cache_breaks.jsonl"
     lines = break_file.read_text().strip().splitlines()
     assert len(lines) == 1  # Only the first call emitted a break
+
+
+def test_expected_drop_does_not_emit_cache_break(tmp_path: Path) -> None:
+    """CachingAdapter does NOT write a break event when mark_expected_drop was called."""
+    inner = Mock(spec=CLIAdapter)
+    inner.name.return_value = "backend"
+    inner.spawn.return_value = SpawnResult(pid=42, log_path=tmp_path / "test.log")
+
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    adapter = CachingAdapter(inner, workdir)
+
+    model_cfg = Mock(spec=ModelConfig)
+    model_cfg.model_name = "claude-sonnet-4-20250514"
+    model_cfg.provider = "anthropic"
+
+    # Pre-announce expected drop (simulating compaction or manual cache clear)
+    adapter._caching_mgr.mark_expected_drop("compaction")
+
+    prompt = "You are a security engineer.\n\n## Assigned tasks\n"
+    adapter.spawn(
+        prompt=prompt,
+        workdir=tmp_path,
+        model_config=model_cfg,
+        session_id="sess-expected",
+    )
+
+    break_file = workdir / ".sdd" / "metrics" / "cache_breaks.jsonl"
+    # No break event file at all, since expected drops are suppressed
+    assert not break_file.exists()
+
+
+def test_unexpected_drop_still_emits_break(tmp_path: Path) -> None:
+    """CachingAdapter writes a break event when prefix changes without pre-announcement."""
+    inner = Mock(spec=CLIAdapter)
+    inner.name.return_value = "backend"
+    inner.spawn.return_value = SpawnResult(pid=42, log_path=tmp_path / "test.log")
+
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    adapter = CachingAdapter(inner, workdir)
+
+    model_cfg = Mock(spec=ModelConfig)
+    model_cfg.model_name = "claude-sonnet-4-20250514"
+    model_cfg.provider = "anthropic"
+
+    # First: establish baseline
+    adapter.spawn(
+        prompt="You are a backend engineer.\n\n## Assigned tasks\n",
+        workdir=tmp_path,
+        model_config=model_cfg,
+        session_id="sess-base",
+    )
+
+    # Second: new prefix without pre-announcement -> surprise break
+    adapter.spawn(
+        prompt="You are a security engineer.\n\n## Assigned tasks\n",
+        workdir=tmp_path,
+        model_config=model_cfg,
+        session_id="sess-surprise",
+    )
+
+    break_file = workdir / ".sdd" / "metrics" / "cache_breaks.jsonl"
+    assert break_file.exists()
+    text = break_file.read_text()
+    assert "sess-surprise" in text
