@@ -728,7 +728,7 @@ class TestWorktreeIntegration:
         ):
             spawner.reap_completed_agent(session)
 
-            mock_merge.assert_called_once_with(session.id)
+            mock_merge.assert_called_once_with(session.id, repo_root=tmp_path.resolve())
             mock_cleanup.assert_called_once_with(session.id)
 
         assert session.id not in spawner._worktree_paths

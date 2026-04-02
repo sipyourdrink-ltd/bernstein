@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bernstein.core.models import ApiTierInfo, ModelConfig
+    from bernstein.core.models import AbortReason, ApiTierInfo, ModelConfig
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,9 @@ class SpawnResult:
     log_path: Path
     proc: object | None = None  # subprocess.Popen, kept for poll()-based alive check
     timeout_timer: threading.Timer | None = field(default=None, repr=False)
+    abort_reason: AbortReason | None = None
+    abort_detail: str = ""
+    finish_reason: str = ""
 
 
 class WaitableProcess(Protocol):
