@@ -66,6 +66,7 @@ from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
 from bernstein.cli.manifest_cmd import manifest_group
 from bernstein.cli.memory_cmd import memory_group
 from bernstein.cli.merge_cmd import merge_cmd
+from bernstein.cli.policy_cmd import policy_group
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
 from bernstein.cli.self_update_cmd import self_update_cmd
@@ -621,6 +622,7 @@ cli.add_command(trace_cmd, "trace")
 cli.add_command(replay_cmd, "replay")
 cli.add_command(github_group)
 cli.add_command(graph_group, "graph")
+cli.add_command(policy_group, "policy")
 cli.add_command(mcp_server, "mcp")
 cli.add_command(completions)
 cli.add_command(quarantine_group)

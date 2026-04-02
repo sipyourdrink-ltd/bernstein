@@ -32,6 +32,7 @@ from bernstein.core.models import (
     AgentSession,
     Task,
 )
+from bernstein.core.policy_engine import load_policy_engine, run_policy_engine
 from bernstein.core.quality_gates import run_quality_gates
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.tick_pipeline import (
@@ -469,6 +470,30 @@ def process_completed_tasks(
                             "Rule enforcement blocked merge for task %s: %s",
                             task.id,
                             ", ".join(_re_failed),
+                        )
+
+            # Policy-as-code enforcement: `.sdd/policies/*.yaml|*.rego`.
+            # Runs after organizational rules, before cross-model verification.
+            if janitor_passed:
+                _policy_engine = load_policy_engine(orch._workdir)
+                if _policy_engine is not None:
+                    _policy_worktree = orch._spawner.get_worktree_path(session.id)
+                    _policy_run_dir = _policy_worktree if _policy_worktree is not None else orch._workdir
+                    _policy_result = run_policy_engine(task, _policy_run_dir, orch._workdir, _policy_engine)
+                    if not _policy_result.passed:
+                        janitor_passed = False
+                        _policy_failed = [
+                            f"policy:{violation.policy_name}: {violation.detail}"
+                            for violation in _policy_result.violations
+                            if violation.blocked
+                        ]
+                        with contextlib.suppress(ValueError):
+                            result.verified.remove(task.id)
+                        result.verification_failures.append((task.id, _policy_failed))
+                        logger.info(
+                            "Policy engine blocked merge for task %s: %s",
+                            task.id,
+                            "; ".join(_policy_failed),
                         )
 
             # Cross-model verification: route diff to a different model for review.
