@@ -48,7 +48,7 @@ class HelpScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         """Populate the help table on mount."""
-        table = self.query_one("#help-table", DataTable[Any])
+        table = self.query_one("#help-table", DataTable)
         table.add_columns("Key", "Action")
 
         shortcuts: list[tuple[str, str]] = [

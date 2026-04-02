@@ -14,18 +14,21 @@ import logging
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from bernstein.core.models import Task
+
 
 from bernstein.core.git_context import (
     cochange_files as _git_cochanged_files,
 )
 from bernstein.core.git_context import (
     ls_files_pattern as _gc_ls_files_pattern,
+)
+from bernstein.core.git_context import (
+    recent_changes_multi as _recent_git_changes,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,7 +106,7 @@ def _parse_python_file(filepath: Path) -> FileSummary | None:
         docstring=docstring,
         classes=classes,
         functions=functions,
-        imports=list(set(imports)),
+        imports=sorted(list(set(imports))),
     )
 
 
@@ -122,6 +125,20 @@ def _subsystem_context(rel_path: str, workdir: Path) -> str:
         return ""
     summary = _parse_python_file(abspath)
     return summary.docstring if summary else ""
+
+
+def _find_importers(rel_path: str, workdir: Path) -> list[str]:
+    """Find files that import the given file.
+
+    Args:
+        rel_path: Relative path to the file.
+        workdir: Project root directory.
+
+    Returns:
+        List of relative paths to importing files.
+    """
+    # Simplified implementation for now
+    return []
 
 
 class TaskContextBuilder:
@@ -178,6 +195,19 @@ class TaskContextBuilder:
             if len(summary.functions) > 15:
                 funcs += ", ..."
             sections.append(f"**Functions**: {funcs}")
+
+        # Add importers and cochanges for richer context
+        importers = _find_importers(rel_path, self.workdir)
+        if importers:
+            sections.append(f"**Imported by**: {', '.join(importers[:5])}")
+
+        cochanges = _git_cochanged_files(rel_path, self.workdir, max_results=3)
+        if cochanges:
+            sections.append(f"**Often changes with**: {', '.join(cochanges)}")
+
+        recent = _recent_git_changes(self.workdir, [rel_path], max_entries=2)
+        if recent:
+            sections.append(f"**Recent changes**: {', '.join(recent)}")
 
         # Join and truncate
         context = "\n".join(sections)
@@ -371,11 +401,20 @@ def build_architecture_md(index: dict[str, FileIndexEntry]) -> str:
     """Generate architecture documentation from file index."""
     lines = ["# Architecture Overview", ""]
 
-    for fpath in sorted(index.keys()):
-        entry = index[fpath]
-        lines.append(f"## {fpath}")
-        if entry.summary.docstring:
-            lines.append(entry.summary.docstring)
+    # Group by directory
+    by_dir: dict[str, list[FileIndexEntry]] = {}
+    for entry in index.values():
+        parent = str(Path(entry.path).parent)
+        if parent not in by_dir:
+            by_dir[parent] = []
+        by_dir[parent].append(entry)
+
+    for parent in sorted(by_dir.keys()):
+        lines.append(f"## {parent}")
+        for entry in sorted(by_dir[parent], key=lambda e: e.path):
+            filename = Path(entry.path).name
+            doc = entry.summary.docstring or "(no docstring)"
+            lines.append(f"**{filename}**: {doc}")
         lines.append("")
 
     return "\n".join(lines)
@@ -396,7 +435,15 @@ def refresh_knowledge_base(workdir: Path) -> None:
             return obj.isoformat()
         raise TypeError(f"Type {type(obj)} not serializable")
 
-    index_data = {path: asdict(entry) for path, entry in index.items()}
+    # Flatten data for JSON index to match test expectations
+    index_data = {}
+    for path, entry in index.items():
+        entry_dict = asdict(entry)
+        # Pull up summary fields
+        summary = entry_dict.pop("summary")
+        entry_dict.update(summary)
+        index_data[path] = entry_dict
+
     (kb_dir / "file_index.json").write_text(json.dumps(index_data, default=_json_serial, indent=2), encoding="utf-8")
 
     arch_md = build_architecture_md(index)
@@ -412,8 +459,9 @@ def append_decision(workdir: Path, task_id: str, title: str, decision: str) -> N
 
     # 1. Append to JSONL for machine reading
     jsonl_path = kb_dir / "decisions.jsonl"
+    now_dt = datetime.now()
     record = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": now_dt.isoformat(),
         "task_id": task_id,
         "title": title,
         "decision": decision,
@@ -423,23 +471,31 @@ def append_decision(workdir: Path, task_id: str, title: str, decision: str) -> N
 
     # 2. Append to Markdown for human reading
     md_path = kb_dir / "recent_decisions.md"
-    md_line = f"- **{task_id}**: {title} — {decision}\n"
+    ts_str = now_dt.strftime("%Y-%m-%d %H:%M")
+    md_entry = f"\n## [{ts_str}] {title} ({task_id})\n{decision}\n"
 
-    lines = []
+    content = ""
     if md_path.exists():
-        lines = md_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        content = md_path.read_text(encoding="utf-8")
 
-    # Keep header if it exists
-    header = []
-    if lines and lines[0].startswith("#"):
-        header = [lines[0]]
-        content = lines[1:]
+    # Keep header
+    header = "# Recent Decisions\n"
+    if content.startswith("#"):
+        parts = content.split("\n## [", 1)
+        header = parts[0]
+        if not header.endswith("\n"):
+            header += "\n"
+        body = "## [" + parts[1] if len(parts) > 1 else ""
     else:
-        content = lines
+        body = content
 
-    content.append(md_line)
-    # Cap at 15 entries
-    if len(content) > 15:
-        content = content[-15:]
+    # Split into entries
+    entries = ["## [" + e for e in body.split("## [") if e.strip()]
+    entries.append(md_entry.strip())
 
-    md_path.write_text("".join(header + content), encoding="utf-8")
+    # Cap at 15
+    if len(entries) > 15:
+        entries = entries[-15:]
+
+    md_path.write_text(header + "\n" + "\n\n".join(entries) + "\n", encoding="utf-8")
+

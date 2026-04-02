@@ -289,14 +289,24 @@ def group_by_role(
         # 2. Second pass: pack affinity groups into batches of max_per_batch
         role_batches: list[list[Task]] = []
         for group in affinity_groups:
-            # Within an affinity group, we must be sequential,
-            # so we split into batches if the group is too large.
-            # But wait, if they are in different batches they might run in parallel!
-            # So we should ideally keep an affinity group in a single batch if possible.
-            # If it exceeds max_per_batch, we have no choice but to split,
-            # but the orchestrator will still serialize them via file ownership.
-            for i in range(0, len(group), max_per_batch):
-                role_batches.append(group[i : i + max_per_batch])
+            # Try to pack this affinity group into an existing batch that has room.
+            # Since affinity groups are disjoint by file overlap, any existing batch
+            # is guaranteed not to conflict with this group.
+            added = False
+            # Optimization: only try to pack small groups. If a group is already
+            # at or near max_per_batch, just give it its own batch(es).
+            if len(group) < max_per_batch:
+                for batch in role_batches:
+                    if len(batch) + len(group) <= max_per_batch:
+                        batch.extend(group)
+                        added = True
+                        break
+
+            if not added:
+                # If group is too large to fit or we couldn't find a batch with room,
+                # create new batch(es) for it.
+                for i in range(0, len(group), max_per_batch):
+                    role_batches.append(group[i : i + max_per_batch])
 
         role_batch_queues[role] = role_batches
 
