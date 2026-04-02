@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Thresholds for CPU-based adjustment
 CPU_HIGH_THRESHOLD = 80.0  # Reduce agents if CPU > 80%
-CPU_LOW_THRESHOLD = 30.0   # Increase agents if CPU < 30%
+CPU_LOW_THRESHOLD = 30.0  # Increase agents if CPU < 30%
 MEMORY_HIGH_THRESHOLD = 80.0  # Reduce agents if memory > 80%
 MEMORY_LOW_THRESHOLD = 30.0  # Increase agents if memory < 30%
 
@@ -25,6 +25,7 @@ DEFAULT_POLL_INTERVAL_SECONDS = 30
 @dataclass
 class LoadAdjustmentResult:
     """Result of a load-based adjustment decision."""
+
     current_cpu: float
     current_memory: float
     current_agents: int
@@ -36,10 +37,10 @@ class LoadAdjustmentResult:
 
 class LoadBasedAgentScaler:
     """Automatically adjust max concurrent agents based on system load.
-    
+
     Monitors CPU and memory usage and adjusts the maximum number of
     concurrent agents to optimize resource utilization.
-    
+
     Args:
         min_agents: Minimum number of agents to maintain.
         max_agents: Maximum number of agents allowed.
@@ -61,7 +62,7 @@ class LoadBasedAgentScaler:
 
     def get_system_load(self) -> tuple[float, float]:
         """Get current CPU and memory usage percentages.
-        
+
         Returns:
             Tuple of (cpu_percent, memory_percent).
         """
@@ -77,6 +78,7 @@ class LoadBasedAgentScaler:
             # Memory usage
             try:
                 import resource
+
                 rusage = resource.getrusage(resource.RUSAGE_SELF)
                 # Max RSS in KB, estimate percentage (assume 8GB baseline)
                 max_mem_kb = rusage.ru_maxrss
@@ -91,7 +93,7 @@ class LoadBasedAgentScaler:
 
     def should_adjust(self) -> bool:
         """Check if enough time has passed since last adjustment.
-        
+
         Returns:
             True if adjustment is allowed.
         """
@@ -102,10 +104,10 @@ class LoadBasedAgentScaler:
         current_agents: int,
     ) -> LoadAdjustmentResult:
         """Calculate recommended agent count based on current load.
-        
+
         Args:
             current_agents: Current number of active agents.
-            
+
         Returns:
             LoadAdjustmentResult with recommendation.
         """
@@ -148,11 +150,11 @@ class LoadBasedAgentScaler:
         force: bool = False,
     ) -> LoadAdjustmentResult | None:
         """Apply load-based adjustment if conditions are met.
-        
+
         Args:
             current_agents: Current number of active agents.
             force: Force adjustment even if cooldown not elapsed.
-            
+
         Returns:
             LoadAdjustmentResult if adjustment was made, None otherwise.
         """
@@ -176,7 +178,7 @@ class LoadBasedAgentScaler:
 
     def get_current_max(self) -> int:
         """Get current maximum agent limit.
-        
+
         Returns:
             Current max agents setting.
         """
@@ -184,7 +186,7 @@ class LoadBasedAgentScaler:
 
     def set_limits(self, min_agents: int, max_agents: int) -> None:
         """Update agent limits.
-        
+
         Args:
             min_agents: New minimum agents.
             max_agents: New maximum agents.
@@ -195,7 +197,7 @@ class LoadBasedAgentScaler:
 
     def get_history(self) -> list[LoadAdjustmentResult]:
         """Get adjustment history.
-        
+
         Returns:
             List of LoadAdjustmentResult instances.
         """
@@ -203,7 +205,7 @@ class LoadBasedAgentScaler:
 
     def get_summary(self) -> dict:
         """Get scaler summary.
-        
+
         Returns:
             Summary dictionary.
         """

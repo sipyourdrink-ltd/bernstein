@@ -333,9 +333,7 @@ def _parse_openclaw_runtime_config(raw: object) -> OpenClawBridgeConfig | None:
 
     fallback_raw = data.get("fallback_to_local", True)
     if not isinstance(fallback_raw, bool):
-        raise SeedError(
-            f"bridges.openclaw.fallback_to_local must be a bool, got: {type(fallback_raw).__name__}"
-        )
+        raise SeedError(f"bridges.openclaw.fallback_to_local must be a bool, got: {type(fallback_raw).__name__}")
 
     connect_timeout_raw = data.get("connect_timeout_s", 10.0)
     if not isinstance(connect_timeout_raw, (int, float)) or connect_timeout_raw <= 0:

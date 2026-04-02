@@ -9,8 +9,10 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ FREE_TIER_LIMITS = {
 @dataclass
 class FreeTierStatus:
     """Status of a provider's free tier quota."""
+
     provider: str
     remaining_today: int
     limit_today: int
@@ -73,9 +76,9 @@ class FreeTierStatus:
 
 class FreeTierMaximizer:
     """Maximize free tier usage before falling back to paid tiers.
-    
+
     Tracks free tier quotas and provides routing recommendations.
-    
+
     Args:
         workdir: Project working directory for state persistence.
     """
@@ -129,16 +132,13 @@ class FreeTierMaximizer:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "last_saved": time.time(),
-            "providers": {
-                provider: status.to_dict()
-                for provider, status in self._statuses.items()
-            },
+            "providers": {provider: status.to_dict() for provider, status in self._statuses.items()},
         }
         self._state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     def record_request(self, provider: str) -> None:
         """Record a free tier request for a provider.
-        
+
         Args:
             provider: Provider name.
         """
@@ -157,16 +157,14 @@ class FreeTierMaximizer:
 
     def get_best_free_provider(self) -> str | None:
         """Get the best available free tier provider.
-        
+
         Returns provider with highest remaining quota.
-        
+
         Returns:
             Provider name or None if no free tier available.
         """
         available = [
-            (provider, status.remaining_today)
-            for provider, status in self._statuses.items()
-            if status.is_available
+            (provider, status.remaining_today) for provider, status in self._statuses.items() if status.is_available
         ]
 
         if not available:
@@ -178,10 +176,10 @@ class FreeTierMaximizer:
 
     def should_use_free_tier(self, provider: str) -> bool:
         """Check if a provider's free tier should be used.
-        
+
         Args:
             provider: Provider name.
-            
+
         Returns:
             True if free tier is available and recommended.
         """
@@ -197,7 +195,7 @@ class FreeTierMaximizer:
 
     def get_all_statuses(self) -> list[FreeTierStatus]:
         """Get status for all providers.
-        
+
         Returns:
             List of FreeTierStatus instances.
         """
@@ -205,7 +203,7 @@ class FreeTierMaximizer:
 
     def get_summary(self) -> dict[str, Any]:
         """Get free tier utilization summary.
-        
+
         Returns:
             Summary dictionary.
         """
@@ -216,15 +214,10 @@ class FreeTierMaximizer:
         return {
             "total_remaining": total_remaining,
             "total_limit": total_limit,
-            "overall_utilization_pct": round(
-                ((total_limit - total_remaining) / max(1, total_limit)) * 100, 1
-            ),
+            "overall_utilization_pct": round(((total_limit - total_remaining) / max(1, total_limit)) * 100, 1),
             "available_providers": available_count,
             "total_providers": len(self._statuses),
-            "providers": {
-                provider: status.to_dict()
-                for provider, status in self._statuses.items()
-            },
+            "providers": {provider: status.to_dict() for provider, status in self._statuses.items()},
         }
 
     def reset_daily_limits(self) -> None:
