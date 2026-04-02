@@ -441,7 +441,7 @@ def cli(
     setup_json_logging()
     ctx.ensure_object(dict)
     ctx.obj["JSON"] = output_json
-    
+
     if ctx.invoked_subcommand is not None:
         return
 

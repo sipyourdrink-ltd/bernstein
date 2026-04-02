@@ -9,6 +9,7 @@ Implements provider-aware intelligent routing with:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -223,6 +224,7 @@ class ProviderConfig:
     available: bool = True
     quota_remaining: int | None = None  # None = unlimited
     rate_limit_rpm: int | None = None  # requests per minute
+    routing_weight: float = 1.0  # Learned weight based on outcomes
 
     # Health and cost tracking
     health: ProviderHealth = field(default_factory=ProviderHealth)
@@ -407,9 +409,10 @@ class TierAwareRouter:
         Higher score = better provider.
 
         Factors:
-        - Health status (35%)
-        - Cost efficiency (25%)
+        - Health status (30%)
+        - Cost efficiency (20%)
         - Free tier availability (20%)
+        - Routing weight (10%): learned from outcomes
         - Latency (10%)
         - Load spreading (10%): penalises providers with more active agents
         """
@@ -424,6 +427,10 @@ class TierAwareRouter:
         # Free tier score (0 or 1)
         free_tier_score = 1.0 if (provider.tier == Tier.FREE and not provider.is_free_tier_exhausted()) else 0.0
 
+        # Routing weight (normalized to 0-1 range, with 1.0 being baseline)
+        # We cap at 2.0 and floor at 0.1 for scoring purposes
+        weight_score = max(0.1, min(2.0, provider.routing_weight)) / 2.0
+
         # Latency score (0-1, lower latency = higher score)
         max_latency = self.state.max_latency_ms
         latency_score = 1.0 - min(provider.health.avg_latency_ms / max_latency, 1.0)
@@ -435,9 +442,10 @@ class TierAwareRouter:
 
         # Weighted sum
         return (
-            health_score * 0.35
-            + cost_score * 0.25
+            health_score * 0.30
+            + cost_score * 0.20
             + free_tier_score * 0.20
+            + weight_score * 0.10
             + latency_score * 0.10
             + spreading_score * 0.10
         )
@@ -638,6 +646,38 @@ class TierAwareRouter:
         """
         self.state.active_agent_counts = dict(counts)
 
+    def record_outcome(
+        self,
+        provider_name: str,
+        success: bool,
+        latency_ms: float = 0.0,
+    ) -> None:
+        """Update provider health and routing weights based on outcome.
+
+        Args:
+            provider_name: Name of the provider.
+            success: Whether the task succeeded.
+            latency_ms: Request latency in milliseconds.
+        """
+        if provider_name not in self.state.providers:
+            return
+
+        provider = self.state.providers[provider_name]
+        provider.health.update(success, latency_ms)
+
+        # Update routing weight: Success = +0.1, Failure = -0.2
+        if success:
+            provider.routing_weight = min(2.0, provider.routing_weight + 0.1)
+        else:
+            provider.routing_weight = max(0.1, provider.routing_weight - 0.2)
+
+        logger.debug(
+            "Router: updated weight for '%s' to %.2f (success=%s)",
+            provider_name,
+            provider.routing_weight,
+            success,
+        )
+
     def route_batch(
         self,
         tasks: list[Task],
@@ -670,6 +710,39 @@ class TierAwareRouter:
                 "policy_allowed": self.state.model_policy.is_provider_allowed(name),
             }
         return summary
+
+    def save_weights(self, weights_dir: Path) -> None:
+        """Persist routing weights to disk.
+
+        Args:
+            weights_dir: Directory to save the weights.json file.
+        """
+        weights_dir.mkdir(parents=True, exist_ok=True)
+        path = weights_dir / "weights.json"
+        data = {name: p.routing_weight for name, p in self.state.providers.items()}
+        try:
+            path.write_text(json.dumps(data, indent=2))
+            logger.debug("Router: saved weights to %s", path)
+        except OSError as exc:
+            logger.warning("Router: failed to save weights to %s: %s", path, exc)
+
+    def load_weights(self, weights_dir: Path) -> None:
+        """Load routing weights from disk.
+
+        Args:
+            weights_dir: Directory containing weights.json.
+        """
+        path = weights_dir / "weights.json"
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text())
+            for name, weight in data.items():
+                if name in self.state.providers:
+                    self.state.providers[name].routing_weight = float(weight)
+            logger.debug("Router: loaded weights from %s", path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("Router: failed to load weights from %s: %s", path, exc)
 
     def validate_policy(self) -> list[str]:
         """Validate model policy and provider configuration consistency.

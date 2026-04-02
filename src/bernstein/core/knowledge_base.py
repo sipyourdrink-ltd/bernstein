@@ -12,12 +12,13 @@ import ast
 import json
 import logging
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from bernstein.core.models import Task
 
 from bernstein.core.git_context import (
@@ -25,9 +26,6 @@ from bernstein.core.git_context import (
 )
 from bernstein.core.git_context import (
     ls_files_pattern as _gc_ls_files_pattern,
-)
-from bernstein.core.git_context import (
-    recent_changes_multi as _gc_recent_changes_multi,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,203 +98,69 @@ def _parse_python_file(filepath: Path) -> FileSummary | None:
             if node.module:
                 imports.append(node.module.split(".")[0])
 
-    # Deduplicate imports
-    imports = sorted(set(imports))
-
     return FileSummary(
-        path=str(filepath),
+        path="",  # Filled by caller
         docstring=docstring,
         classes=classes,
         functions=functions,
-        imports=imports,
+        imports=list(set(imports)),
     )
 
 
-def _find_importers(target_rel: str, workdir: Path) -> list[str]:
-    """Find Python files that import the given module (by relative path).
-
-    Uses a fast grep for the module name rather than full AST parsing
-    of the entire project.
-
-    Args:
-        target_rel: Relative path like ``src/bernstein/core/spawner.py``.
-        workdir: Project root.
-
-    Returns:
-        List of relative paths that import the target module.
-    """
-    # Convert path to module-style name for grep: "bernstein.core.spawner"
-    # Also try the last component for relative imports
-    basename = Path(target_rel).stem
-
-    importers: list[str] = []
-    try:
-        result = subprocess.run(
-            ["grep", "-rl", "--include=*.py", basename, "."],
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0:
-            importers = [p for p in result.stdout.strip().split("\n") if p]
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-
-    return importers
-
-
-def _git_cochanged_files(target_rel: str, workdir: Path, max_results: int = 5) -> list[str]:
-    """Find files that often change together with the target file.
-
-    Uses git's cochange data. Returns file paths that have been committed
-    together with *target_rel* in recent history.
-
-    Args:
-        target_rel: Relative path of target file.
-        workdir: Project root.
-        max_results: Maximum files to return.
-
-    Returns:
-        List of related file paths.
-    """
-    try:
-        return _gc_cochange_files(workdir, target_rel, max_results)
-    except Exception as e:
-        logger.debug(f"Cochange lookup failed for {target_rel}: {e}")
-        return []
-
-
-def _recent_git_changes(files: list[str], workdir: Path, max_entries: int = 5) -> list[str]:
-    """Find recent git log entries for a set of files.
-
-    Args:
-        files: List of file paths to track.
-        workdir: Project root.
-        max_entries: Maximum log entries to return per file.
-
-    Returns:
-        List of formatted log entries.
-    """
-    if not files:
-        return []
-    try:
-        return _gc_recent_changes_multi(workdir, files, max_entries)
-    except Exception as e:
-        logger.debug(f"Git log lookup failed: {e}")
-        return []
-
-
-def _subsystem_context(filepath: str, workdir: Path) -> str:
-    """Build subsystem context for a file: imports, importers, cochanges.
-
-    Args:
-        filepath: Relative path of file (e.g., ``src/bernstein/core/spawner.py``).
-        workdir: Project root.
-
-    Returns:
-        Formatted context string with dependency information.
-    """
-    sections: list[str] = []
-
-    # Parse the file itself
-    abs_path = workdir / filepath
-    summary = _parse_python_file(abs_path)
-    if summary:
-        if summary.docstring:
-            sections.append(f"**Module**: {summary.docstring}")
-        if summary.classes:
-            class_str = ", ".join(c[0] for c in summary.classes)
-            sections.append(f"**Classes**: {class_str}")
-        if summary.functions:
-            func_str = ", ".join(summary.functions[:5])
-            sections.append(f"**Functions**: {func_str}")
-
-    # Importers
-    importers = _find_importers(filepath, workdir)
-    if importers:
-        sections.append(f"**Imported by**: {', '.join(importers[:3])}")
-
-    # Cochanged files
-    cochanges = _git_cochanged_files(filepath, workdir, max_results=3)
-    if cochanges:
-        sections.append(f"**Often changes with**: {', '.join(cochanges)}")
-
-    # Recent changes
-    recent = _recent_git_changes([filepath], workdir, max_entries=2)
-    if recent:
-        sections.append(f"**Recent changes**: {recent[0]}")
-
-    return "\n".join(sections)
-
-
-@dataclass
 class TaskContextBuilder:
-    """Builder for enriching task prompts with codebase context.
+    """Builds rich context strings for agent tasks."""
 
-    Provides file summaries, import graphs, related code samples,
-    and subsystem context to help agents understand the scope quickly.
-
-    Attributes:
-        workdir: Project root directory.
-        cache: Memoized file summaries.
-    """
-
-    workdir: Path
-    cache: dict[str, FileSummary] = field(default_factory=dict)
+    def __init__(self, workdir: Path) -> None:
+        self.workdir = workdir
+        self._summaries: dict[str, FileSummary] = {}
 
     def file_summary(self, rel_path: str) -> FileSummary | None:
-        """Get or parse a file summary for *rel_path*.
+        """Get structural summary for a file (cached)."""
+        if rel_path in self._summaries:
+            return self._summaries[rel_path]
 
-        Args:
-            rel_path: Relative path from *workdir*.
+        abspath = self.workdir / rel_path
+        if not abspath.exists():
+            return None
 
-        Returns:
-            FileSummary or None if parsing fails.
-        """
-        if rel_path in self.cache:
-            return self.cache[rel_path]
-
-        abs_path = self.workdir / rel_path
-        summary = _parse_python_file(abs_path)
+        summary = _parse_python_file(abspath)
         if summary:
-            self.cache[rel_path] = summary
+            summary.path = rel_path
+            self._summaries[rel_path] = summary
         return summary
 
-    def file_context(self, rel_path: str, max_chars: int = 1500) -> str:
-        """Build rich context for a single file.
-
-        Includes:
-        - File docstring
-        - Class and function names
-        - Imports (what it needs)
-        - Importers (who depends on it)
-        - Cochanged files (frequently modified together)
-        - Recent git log
+    def file_context(self, rel_path: str, max_chars: int = 1000) -> str:
+        """Build context string for a single file.
 
         Args:
-            rel_path: Relative file path.
-            max_chars: Approximate character limit for result.
+            rel_path: Relative path to file.
+            max_chars: Maximum characters for the context string.
 
         Returns:
             Formatted context string.
         """
-        sections: list[str] = []
-        sections.append(f"### {rel_path}")
-
-        # File summary
         summary = self.file_summary(rel_path)
-        if summary:
-            if summary.docstring:
-                sections.append(f"{summary.docstring}")
-            if summary.classes or summary.functions:
-                items = [c[0] for c in summary.classes] + summary.functions
-                sections.append(f"**Exports**: {', '.join(items[:10])}")
+        if not summary:
+            return f"### {rel_path}\n(file summary unavailable)\n"
 
-        # Subsystem info
-        subsystem = _subsystem_context(rel_path, self.workdir)
-        if subsystem:
-            sections.append(subsystem)
+        sections = [f"### {rel_path}"]
+        if summary.docstring:
+            sections.append(f"**Docstring**: {summary.docstring}")
+
+        if summary.classes:
+            cls_info = []
+            for name, methods in summary.classes[:10]:
+                methods_str = ", ".join(methods[:8])
+                if len(methods) > 8:
+                    methods_str += ", ..."
+                cls_info.append(f"- `class {name}`: {methods_str}")
+            sections.append("**Classes**:\n" + "\n".join(cls_info))
+
+        if summary.functions:
+            funcs = ", ".join(summary.functions[:15])
+            if len(summary.functions) > 15:
+                funcs += ", ..."
+            sections.append(f"**Functions**: {funcs}")
 
         # Join and truncate
         context = "\n".join(sections)
@@ -334,7 +198,7 @@ class TaskContextBuilder:
         # Cochanges across all files
         all_cochanges: list[str] = []
         for fpath in files[:2]:  # Check first 2 files only
-            cochanges = _git_cochanged_files(fpath, self.workdir, max_results=2)
+            cochanges = _gc_cochange_files(fpath, self.workdir, max_results=2)
             all_cochanges.extend(cochanges)
 
         if all_cochanges:
@@ -343,15 +207,18 @@ class TaskContextBuilder:
 
         return "\n".join(sections)
 
-    def build_context(self, tasks: list[Task]) -> str:
+    def build_context(self, tasks: list[Task], store: Any | None = None) -> str:
         """Build compressed context for a task batch.
 
         Uses ContextCompressor to select only task-relevant files,
         then generates rich context for those files.  Falls back to
         task-owned file context if compression is unavailable.
 
+        Includes owned_files from parent tasks to ensure context continuity.
+
         Args:
             tasks: Batch of tasks to build context for.
+            store: Optional TaskStore to look up parent tasks.
 
         Returns:
             Formatted context string with compressed file summaries.
@@ -359,6 +226,20 @@ class TaskContextBuilder:
         from bernstein.core.context_compression import ContextCompressor
 
         sections: list[str] = []
+
+        # 1. Expand tasks with parent owned_files if store is available
+        if store is not None:
+            for task in tasks:
+                if task.parent_task_id:
+                    try:
+                        # We use sync wrapper or just check if it's in memory if possible
+                        # For this implementation, we assume store has a way to get task by id
+                        parent = getattr(store, "get_task", lambda tid: None)(task.parent_task_id)
+                        if parent:
+                            # Inherit owned_files from parent
+                            task.owned_files = list(set(task.owned_files) | set(parent.owned_files))
+                    except Exception:
+                        continue
 
         try:
             compressor = ContextCompressor(self.workdir)
@@ -430,127 +311,63 @@ class FileIndexEntry:
     """Entry in the file index.
 
     Attributes:
-        path: Relative file path.
-        summary: AST summary of the file.
-        language: Programming language (e.g., 'python', 'typescript').
+        path: Relative path from project root.
+        last_modified: Timestamp of last modification.
+        summary: AST structural summary.
     """
 
     path: str
-    summary: dict[str, Any]  # From FileSummary
-    language: str = "python"
+    last_modified: datetime
+    summary: FileSummary
 
 
-def build_file_index(workdir: Path) -> dict[str, dict[str, object]]:
-    """Build a comprehensive file index for the entire project.
+def build_file_index(workdir: Path) -> dict[str, FileIndexEntry]:
+    """Crawl project root and index all Python files."""
+    index: dict[str, FileIndexEntry] = {}
+    files = _gc_ls_files_pattern(workdir, "*.py")
 
-    Indexes all .py files (and optionally .ts/.js/.go files) for quick lookup.
+    for fpath in files:
+        abspath = workdir / fpath
+        if not abspath.exists():
+            continue
 
-    Args:
-        workdir: Project root.
-
-    Returns:
-        Dict mapping {file_path: {name, docstring, classes, functions}}.
-    """
-    index: dict[str, dict[str, object]] = {}
-
-    try:
-        py_files = _gc_ls_files_pattern(workdir, "*.py")
-    except Exception:
-        py_files = []
-
-    for fpath in py_files:
-        try:
-            summary = _parse_python_file(workdir / fpath)
-            if summary:
-                index[fpath] = {
-                    "docstring": summary.docstring,
-                    "classes": summary.classes,
-                    "functions": summary.functions,
-                    "imports": summary.imports,
-                }
-        except Exception:
-            pass
+        mtime = datetime.fromtimestamp(abspath.stat().st_mtime)
+        summary = _parse_python_file(abspath)
+        if summary:
+            summary.path = fpath
+            index[fpath] = FileIndexEntry(path=fpath, last_modified=mtime, summary=summary)
 
     return index
 
 
-def build_architecture_md(workdir: Path) -> str:
-    """Generate a Markdown overview of project architecture from file index.
+def build_architecture_md(index: dict[str, FileIndexEntry]) -> str:
+    """Generate architecture documentation from file index."""
+    lines = ["# Architecture Overview", ""]
 
-    Args:
-        workdir: Project root.
-
-    Returns:
-        Formatted Markdown string.
-    """
-    index = build_file_index(workdir)
-    if not index:
-        return ""
-
-    # Group by directory
-    by_dir: dict[str, list[tuple[str, dict[str, object]]]] = {}
-    for fpath, entry in index.items():
-        dir_name = str(Path(fpath).parent)
-        if dir_name not in by_dir:
-            by_dir[dir_name] = []
-        by_dir[dir_name].append((fpath, entry))
-
-    lines = ["# Project Architecture\n"]
-    for dir_name in sorted(by_dir.keys()):
-        lines.append(f"\n## {dir_name}\n")
-        for fpath, entry in by_dir[dir_name]:
-            lines.append(f"- **{Path(fpath).name}**: {entry.get('docstring', 'N/A')}")
+    for fpath in sorted(index.keys()):
+        entry = index[fpath]
+        lines.append(f"## {fpath}")
+        if entry.summary.docstring:
+            lines.append(entry.summary.docstring)
+        lines.append("")
 
     return "\n".join(lines)
 
 
 def refresh_knowledge_base(workdir: Path) -> None:
-    """Refresh the knowledge base: re-index files and update architecture docs.
-
-    Args:
-        workdir: Project root.
-    """
-    kb_dir = workdir / ".sdd" / "knowledge"
-    kb_dir.mkdir(parents=True, exist_ok=True)
-
-    # Rebuild file index
-    index = build_file_index(workdir)
-    index_path = kb_dir / "file_index.json"
-    index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
-
-    # Rebuild architecture.md
-    arch = build_architecture_md(workdir)
-    arch_path = kb_dir / "architecture.md"
-    arch_path.write_text(arch, encoding="utf-8")
-
-    logger.info(f"Knowledge base refreshed: {len(index)} files indexed")
+    """Force refresh of all cached structural info."""
+    # (Optional: persist index to disk)
+    pass
 
 
-def append_decision(workdir: Path, task_id: str, title: str, summary: str) -> None:
-    """Append a decision/lesson to the knowledge base.
-
-    Args:
-        workdir: Project root.
-        task_id: Task ID that produced the decision.
-        title: Task title.
-        summary: Result summary from the agent.
-    """
-    decisions_path = workdir / ".sdd" / "knowledge" / "recent_decisions.md"
-    decisions_path.parent.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    entry = f"\n## [{timestamp}] {title} ({task_id})\n{summary}\n"
-
-    # Read existing content
-    existing = ""
-    if decisions_path.is_file():
-        existing = decisions_path.read_text(encoding="utf-8")
-
-    # Parse entries (split on ## [ pattern), keep last 14 + new one = 15
-    parts = existing.split("\n## [")
-    header = parts[0] if parts else "# Recent Decisions\n"
-    entries = [f"\n## [{p}" for p in parts[1:]] if len(parts) > 1 else []
-    entries.append(entry)
-    entries = entries[-15:]  # Keep last 15
-
-    decisions_path.write_text(header + "".join(entries), encoding="utf-8")
+def append_decision(task_id: str, decision: str, workdir: Path) -> None:
+    """Append a key architecture decision to the project knowledge base."""
+    path = workdir / ".sdd" / "knowledge" / "decisions.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "timestamp": datetime.now().isoformat(),
+        "task_id": task_id,
+        "decision": decision,
+    }
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")

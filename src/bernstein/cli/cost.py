@@ -261,13 +261,15 @@ def estimate_cmd(goal: str, role: str, scope: str, complexity: str, metrics_dir:
     est_cost = predict_task_cost(task, metrics_dir=Path(metrics_dir))
 
     if is_json():
-        print_json({
-            "goal": goal,
-            "role": role,
-            "scope": scope,
-            "complexity": complexity,
-            "estimated_cost_usd": round(est_cost, 4)
-        })
+        print_json(
+            {
+                "goal": goal,
+                "role": role,
+                "scope": scope,
+                "complexity": complexity,
+                "estimated_cost_usd": round(est_cost, 4),
+            }
+        )
         return
 
     console.print(

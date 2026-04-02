@@ -1621,10 +1621,9 @@ def process_completed_tasks(
         if task.result_summary:
             try:
                 append_decision(
-                    orch._workdir,
                     task.id,
-                    task.title,
-                    task.result_summary,
+                    task.result_summary or task.title,
+                    orch._workdir,
                 )
             except Exception as exc:
                 logger.warning("append_decision failed for task %s: %s", task.id, exc)

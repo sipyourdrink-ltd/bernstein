@@ -254,7 +254,7 @@ class TaskCreate(BaseModel):
 
     title: str
     description: str
-    role: str
+    role: str = "auto"
     tenant_id: str = "default"
     priority: int = 2
     scope: str = "medium"

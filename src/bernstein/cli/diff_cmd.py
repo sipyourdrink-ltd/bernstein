@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,16 @@ from bernstein.cli.helpers import console
 
 
 @dataclass(frozen=True)
+class FileDiffStat:
+    """Additions and deletions for a single file."""
+
+    path: str
+    additions: int
+    deletions: int
+    is_binary: bool = False
+
+
+@dataclass(frozen=True)
 class ResolvedDiff:
     """Result of resolving a diff for an agent/task.
 
@@ -31,6 +41,7 @@ class ResolvedDiff:
         agent: The agent session dict (if found).
         session_id: The agent session ID (if found).
         stat_text: The ``--stat`` summary (if available).
+        file_stats: List of per-file addition/deletion stats.
     """
 
     diff_text: str
@@ -38,6 +49,30 @@ class ResolvedDiff:
     agent: dict[str, Any] | None = None
     session_id: str | None = None
     stat_text: str = ""
+    file_stats: list[FileDiffStat] = field(default_factory=list)
+
+
+def _get_numstat(args: list[str], cwd: Path) -> list[FileDiffStat]:
+    """Run git diff --numstat and parse results."""
+    out = _run_git([*args, "--numstat"], cwd)
+    stats: list[FileDiffStat] = []
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            try:
+                add = int(parts[0]) if parts[0] != "-" else 0
+                dele = int(parts[1]) if parts[1] != "-" else 0
+                stats.append(
+                    FileDiffStat(
+                        path=parts[2],
+                        additions=add,
+                        deletions=dele,
+                        is_binary=parts[0] == "-" or parts[1] == "-",
+                    )
+                )
+            except ValueError:
+                continue
+    return stats
 
 
 def _load_agents(workdir: Path) -> list[dict[str, Any]]:
@@ -179,6 +214,7 @@ def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base
     diff_text = ""
     source_label = ""
     stat_text = ""
+    file_stats: list[FileDiffStat] = []
 
     if session_id:
         branch = f"agent/{session_id}"
@@ -190,6 +226,7 @@ def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base
             if diff_text:
                 source_label = f"[dim]source:[/dim] worktree [cyan]{session_id}[/cyan] vs [yellow]{base}[/yellow]"
                 stat_text = _get_stat_from_worktree(worktree_path, base)
+                file_stats = _get_numstat(["diff", f"{base}...HEAD"], worktree_path)
 
         # Local branch still exists
         if not diff_text and _branch_exists(branch, root):
@@ -197,6 +234,7 @@ def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base
             if diff_text:
                 source_label = f"[dim]source:[/dim] branch [cyan]{branch}[/cyan] vs [yellow]{base}[/yellow]"
                 stat_text = _get_stat_from_branch(branch, root, base)
+                file_stats = _get_numstat(["diff", f"{base}...{branch}"], root)
 
         # Merged branch
         if not diff_text:
@@ -207,12 +245,15 @@ def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base
                     source_label = (
                         f"[dim]source:[/dim] merge commit [cyan]{merge_commit}[/cyan] ([dim]agent/{session_id}[/dim])"
                     )
+                    file_stats = _get_numstat(["diff", f"{merge_commit}^..{merge_commit}"], root)
 
     # Last resort: search commits
     if not diff_text:
         diff_text = _search_commits_by_task_id(identifier, root)
         if diff_text:
             source_label = f"[dim]source:[/dim] commit search for [cyan]{identifier}[/cyan]"
+            # Extract hash from diff_text if possible, or skip stats
+            # For simplicity, we skip numstat for commit search for now
 
     return ResolvedDiff(
         diff_text=diff_text,
@@ -220,6 +261,7 @@ def resolve_diff(identifier: str, root: Path, agents: list[dict[str, Any]], base
         agent=agent,
         session_id=session_id,
         stat_text=stat_text,
+        file_stats=file_stats,
     )
 
 
@@ -337,6 +379,56 @@ def _render_compare(left: ResolvedDiff, right: ResolvedDiff, left_name: str, rig
         console.print()
 
 
+def _render_enhanced_summary(resolved: ResolvedDiff) -> None:
+    """Render a file-level summary with risk indicators."""
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.text import Text
+
+    if not resolved.file_stats:
+        return
+
+    table = Table(title="File Summary", expand=True, show_lines=False)
+    table.add_column("File", style="cyan")
+    table.add_column("Changes", justify="right", width=12)
+    table.add_column("Risk", justify="center", width=10)
+
+    total_adds = 0
+    total_dels = 0
+
+    for stat in resolved.file_stats:
+        total_adds += stat.additions
+        total_dels += stat.deletions
+
+        changes = Text()
+        if stat.is_binary:
+            changes.append("binary", style="dim")
+        else:
+            if stat.additions > 0:
+                changes.append(f"+{stat.additions}", style="green")
+            if stat.deletions > 0:
+                if stat.additions > 0:
+                    changes.append(" ")
+                changes.append(f"-{stat.deletions}", style="red")
+
+        # Basic risk detection
+        risk = Text("low", style="dim")
+        if "test" in stat.path.lower() and stat.deletions > stat.additions:
+            risk = Text("MODERATE", style="yellow")
+        if any(k in stat.path.lower() for k in ["secret", "auth", "encrypt", "key", "config"]):
+            risk = Text("HIGH", style="red")
+        if stat.additions + stat.deletions > 500:
+            risk = Text("LARGE", style="magenta")
+
+        table.add_row(stat.path, changes, risk)
+
+    summary_text = (
+        f"Total: [green]+{total_adds}[/green] [red]-{total_dels}[/red] across {len(resolved.file_stats)} files"
+    )
+    console.print(Panel(table, subtitle=summary_text))
+    console.print()
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -439,6 +531,10 @@ def diff_cmd(
     if resolved.source_label:
         console.print(resolved.source_label)
     console.print()
+
+    # Show file-level summary by default
+    if not stat_only and not raw:
+        _render_enhanced_summary(resolved)
 
     if stat_only:
         if resolved.stat_text:

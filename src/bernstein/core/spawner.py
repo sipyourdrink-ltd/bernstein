@@ -24,7 +24,6 @@ from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import AgentSession, IsolationMode, ModelConfig, Task
 from bernstein.core.orchestrator import ShutdownInProgress
-from bernstein.core.process_utils import is_process_alive as _shared_is_process_alive
 from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
@@ -1635,6 +1634,13 @@ class AgentSpawner:
                 merge_start = time.perf_counter()
                 merge_result = self._merge_worktree_branch(session.id, repo_root=worktree_root)
                 merge_duration.observe(time.perf_counter() - merge_start)
+
+                from bernstein.core.metric_collector import get_collector
+
+                merge_ok = merge_result is not None and merge_result.success
+                for task_id in session.task_ids:
+                    get_collector().record_merge_result(task_id, success=merge_ok)
+
                 # Push merged work to remote so nothing is lost
                 if merge_result and merge_result.success:
                     from bernstein.core.git_ops import safe_push

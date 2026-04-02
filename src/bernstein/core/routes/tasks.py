@@ -22,6 +22,7 @@ from bernstein.core.eu_ai_act import (
 )
 from bernstein.core.lifecycle import IllegalTransitionError
 from bernstein.core.models import NodeCapacity, NodeInfo, NodeStatus
+from bernstein.core.role_classifier import classify_role
 
 # Import Pydantic models from server — this works because server.py's
 # __getattr__ defers the `app` creation, so the module body (class defs)
@@ -148,6 +149,10 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     effective_body = body.model_copy(update={"tenant_id": request_tenant_id(request)})
+
+    # Auto-classify role if not specified
+    if effective_body.role == "auto":
+        effective_body.role = classify_role(effective_body.description)
 
     # Auto-estimate difficulty if minutes not provided
     if effective_body.estimated_minutes is None:
