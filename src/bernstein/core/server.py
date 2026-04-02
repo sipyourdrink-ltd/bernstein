@@ -192,41 +192,55 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
                 with suppress(ValueError):
                     self._allowed_networks.append(ipaddress.ip_network(ip_range, strict=False))
 
+    def _get_networks(self, request: Request) -> list[Any]:
+        """Resolve allowed networks from constructor or seed_config."""
+        if self._allowed_networks:
+            return self._allowed_networks
+        seed_config = getattr(request.app.state, "seed_config", None)
+        network_cfg = getattr(seed_config, "network", None)
+        allowed_ips = getattr(network_cfg, "allowed_ips", None)
+        if not allowed_ips:
+            return []
+        import ipaddress
+        from contextlib import suppress
+
+        nets: list[Any] = []
+        for ip_range in allowed_ips:
+            with suppress(ValueError):
+                nets.append(ipaddress.ip_network(ip_range, strict=False))
+        return nets
+
     async def dispatch(
         self,
         request: Request,
         call_next: Callable[[Request], Any],
     ) -> StarletteResponse:
-        # If no allowlist configured, pass through
-        if not self._allowed_networks:
+        networks = self._get_networks(request)
+        if not networks:
             response: StarletteResponse = await call_next(request)
             return response
 
         path = request.url.path
         client_ip = request.client.host if request.client else "unknown"
 
-        # Localhost always allowed
         if client_ip in ("127.0.0.1", "::1", "localhost"):
             response = await call_next(request)
             return response
 
-        # Public paths always allowed
         if path in _PUBLIC_PATHS:
             response = await call_next(request)
             return response
 
-        # Check if client IP is in allowed ranges
         try:
             import ipaddress
 
             client_addr = ipaddress.ip_address(client_ip)
-            if any(client_addr in network for network in self._allowed_networks):
+            if any(client_addr in network for network in networks):
                 response = await call_next(request)
                 return response
         except ValueError:
-            pass  # Invalid IP format, deny access
+            pass
 
-        # IP not in allowlist
         return JSONResponse(
             status_code=403,
             content={"detail": f"IP {client_ip} not in allowed list"},
@@ -1057,6 +1071,9 @@ def create_app(
 
     # Per-endpoint request rate limiting — reads buckets from app.state.seed_config.
     application.add_middleware(RequestRateLimitMiddleware)
+
+    # IP allowlist — reads allowed_ips from app.state.seed_config.network dynamically.
+    application.add_middleware(IPAllowlistMiddleware)
 
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()
