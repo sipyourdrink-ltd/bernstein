@@ -666,8 +666,8 @@ async def model_cost_comparison(request: Request) -> JSONResponse:
         for alt_model, costs in MODEL_COSTS_PER_1M_TOKENS.items():
             if alt_model != model:
                 # Estimate cost based on average tokens
-                input_cost = (avg_tokens * 0.5) / 1_000_000 * costs["input"]
-                output_cost = (avg_tokens * 0.5) / 1_000_000 * costs["output"]
+                input_cost = (avg_tokens * 0.5) / 1_000_000 * costs.get("input", 0.0)
+                output_cost = (avg_tokens * 0.5) / 1_000_000 * costs.get("output", 0.0)
                 estimated_cost = (input_cost + output_cost) * data["invocations"]
                 alternatives[alt_model] = {
                     "estimated_cost_usd": round(estimated_cost, 4),

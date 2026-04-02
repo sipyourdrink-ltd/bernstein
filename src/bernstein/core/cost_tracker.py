@@ -18,7 +18,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -188,12 +188,12 @@ def estimate_cost(
             break
 
     if pricing:
-        cost = 0.0
+        cost: float = 0.0
         # pricing is in $/1M tokens
         cost += (input_tokens / 1_000_000.0) * pricing.get("input", 0.0)
         cost += (output_tokens / 1_000_000.0) * pricing.get("output", 0.0)
-        cost += (cache_read_tokens / 1_000_000.0) * pricing.get("cache_read", pricing.get("input", 0.0))
-        cost += (cache_write_tokens / 1_000_000.0) * pricing.get("cache_write", pricing.get("input", 0.0))
+        cost += (cache_read_tokens / 1_000_000.0) * cast(float, pricing.get("cache_read", pricing.get("input", 0.0)))
+        cost += (cache_write_tokens / 1_000_000.0) * cast(float, pricing.get("cache_write", pricing.get("input", 0.0)))
         return cost
 
     # Fallback to blended rate
@@ -239,8 +239,8 @@ class CostTracker:
     _critical_warned: bool = field(default=False, init=False, repr=False)
     _spent_by_agent: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
     _spent_by_model: dict[str, float] = field(default_factory=dict[str, float], init=False, repr=False)
-    _cumulative_tokens: dict[tuple[str, str, str], tuple[int, int]] = field(
-        default_factory=dict[tuple[str, str, str], tuple[int, int]],
+    _cumulative_tokens: dict[tuple[str, str, str], tuple[int, ...]] = field(
+        default_factory=dict[tuple[str, str, str], tuple[int, ...]],
         init=False,
         repr=False,
     )
