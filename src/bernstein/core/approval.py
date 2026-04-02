@@ -176,6 +176,7 @@ class ApprovalGate:
         test_summary: str = "",
         override_mode: ApprovalMode | None = None,
         timeout_s: float | None = None,
+        bypass_enabled: bool = False,
     ) -> ApprovalResult:
         """Evaluate the approval gate for a verified task.
 
@@ -192,10 +193,15 @@ class ApprovalGate:
             test_summary: Optional one-line test-results summary.
             override_mode: Optional mode to override the global configuration.
             timeout_s: Optional overriding timeout for review mode.
+            bypass_enabled: When True, bypass approval and return approved=True.
 
         Returns:
             :class:`ApprovalResult` describing the decision.
         """
+        if bypass_enabled:
+            logger.info("Approval gate: bypassing review for task %s", task.id)
+            return ApprovalResult(approved=True)
+
         mode = override_mode if override_mode is not None else self._mode
         if mode == ApprovalMode.AUTO:
             return ApprovalResult(approved=True)

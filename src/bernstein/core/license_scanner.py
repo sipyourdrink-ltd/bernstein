@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from bernstein.core.models import GuardrailResult
+from bernstein.core.policy_engine import DecisionType, PermissionDecision
 
 # ---------------------------------------------------------------------------
 # Static license database
@@ -188,16 +188,16 @@ def _scan_diff_for_licenses(diff: str) -> list[_LicenseHit]:
 # ---------------------------------------------------------------------------
 
 
-def check_license_obligations(diff: str) -> list[GuardrailResult]:
+def check_license_obligations(diff: str) -> list[PermissionDecision]:
     """Scan a diff for copyleft license obligations in added lines.
 
     Severity rules:
 
-    - **Strong copyleft** (GPL/AGPL/OSL): hard block — ``blocked=True``.
+    - **Strong copyleft** (GPL/AGPL/OSL): hard block.
       Code under these licenses infects the entire derivative work.
       Merge must not proceed until the code is removed or replaced.
-    - **Weak copyleft** (LGPL/MPL/EUPL/CDDL): soft flag — ``passed=False``,
-      ``blocked=False``.  Obligations exist (attribution, source distribution)
+    - **Weak copyleft** (LGPL/MPL/EUPL/CDDL): soft flag.
+      Obligations exist (attribution, source distribution)
       but the codebase is not fully infected.  Human review is required.
     - **No copyleft detected**: passes.
 
@@ -206,19 +206,12 @@ def check_license_obligations(diff: str) -> list[GuardrailResult]:
 
     Returns:
         A single-element list containing the ``"license_obligations"``
-        :class:`~bernstein.core.models.GuardrailResult`.
+        :class:`~bernstein.core.policy_engine.PermissionDecision`.
     """
     hits = _scan_diff_for_licenses(diff)
 
     if not hits:
-        return [
-            GuardrailResult(
-                check="license_obligations",
-                passed=True,
-                blocked=False,
-                detail="No copyleft license obligations detected",
-            )
-        ]
+        return [PermissionDecision(type=DecisionType.ALLOW, reason="No copyleft license obligations detected")]
 
     strong = [h for h in hits if h.copyleft_strength == "strong"]
     weak = [h for h in hits if h.copyleft_strength == "weak"]
@@ -227,29 +220,26 @@ def check_license_obligations(diff: str) -> list[GuardrailResult]:
     if strong:
         ids = ", ".join(sorted({h.license_id for h in strong}))
         return [
-            GuardrailResult(
-                check="license_obligations",
-                passed=False,
-                blocked=True,
-                detail=(
+            PermissionDecision(
+                type=DecisionType.DENY,
+                reason=(
                     f"Strong copyleft license(s) detected — merge BLOCKED: {ids}. "
                     "GPL/AGPL-licensed code infects the entire codebase. "
                     "Remove or replace before merging."
                 ),
-                files=affected_files,
+                bypass_immune=True,
+                files=tuple(affected_files),
             )
         ]
 
     ids = ", ".join(sorted({h.license_id for h in weak}))
     return [
-        GuardrailResult(
-            check="license_obligations",
-            passed=False,
-            blocked=False,
-            detail=(
+        PermissionDecision(
+            type=DecisionType.ASK,
+            reason=(
                 f"Weak copyleft license(s) detected — review required: {ids}. "
                 "LGPL/MPL code may be linked but distribution obligations apply."
             ),
-            files=affected_files,
+            files=tuple(affected_files),
         )
     ]

@@ -11,7 +11,7 @@ import fnmatch
 import logging
 from dataclasses import dataclass
 
-from bernstein.core.models import GuardrailResult
+from bernstein.core.policy_engine import DecisionType, PermissionDecision
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,7 @@ def check_file_permissions(
     diff: str,
     role: str,
     overrides: dict[str, AgentPermissions] | None = None,
-) -> list[GuardrailResult]:
+) -> list[PermissionDecision]:
     """Check that all modified files in a diff are within the role's permissions.
 
     Args:
@@ -208,7 +208,7 @@ def check_file_permissions(
         overrides: Optional per-project permission overrides.
 
     Returns:
-        A list containing a single ``GuardrailResult`` for the
+        A list containing a single ``PermissionDecision`` for the
         ``"file_permissions"`` check.
     """
     permissions = get_permissions_for_role(role, overrides)
@@ -216,24 +216,15 @@ def check_file_permissions(
     # If no restrictions defined, skip the check
     if not permissions.allowed_paths and not permissions.denied_paths:
         return [
-            GuardrailResult(
-                check="file_permissions",
-                passed=True,
-                blocked=False,
-                detail=f"No file permission rules defined for role '{role}' — skipping",
+            PermissionDecision(
+                type=DecisionType.ALLOW,
+                reason=f"No file permission rules defined for role '{role}' — skipping",
             )
         ]
 
     changed_files = _parse_diff_files(diff)
     if not changed_files:
-        return [
-            GuardrailResult(
-                check="file_permissions",
-                passed=True,
-                blocked=False,
-                detail="No files changed",
-            )
-        ]
+        return [PermissionDecision(type=DecisionType.ALLOW, reason="No files changed")]
 
     violations: list[str] = []
     for filepath in changed_files:
@@ -242,21 +233,18 @@ def check_file_permissions(
 
     if violations:
         return [
-            GuardrailResult(
-                check="file_permissions",
-                passed=False,
-                blocked=True,
-                detail=(f"Role '{role}' is not permitted to modify {len(violations)} file(s): {', '.join(violations)}"),
-                files=violations,
+            PermissionDecision(
+                type=DecisionType.DENY,
+                reason=(f"Role '{role}' is not permitted to modify {len(violations)} file(s): {', '.join(violations)}"),
+                bypass_immune=True,
+                files=tuple(violations),
             )
         ]
 
     return [
-        GuardrailResult(
-            check="file_permissions",
-            passed=True,
-            blocked=False,
-            detail=f"All {len(changed_files)} modified file(s) within role '{role}' permissions",
+        PermissionDecision(
+            type=DecisionType.ALLOW,
+            reason=f"All {len(changed_files)} modified file(s) within role '{role}' permissions",
         )
     ]
 

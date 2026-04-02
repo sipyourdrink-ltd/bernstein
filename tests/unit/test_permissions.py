@@ -194,6 +194,8 @@ class TestGetPermissionsForRole:
         assert perms is DEFAULT_ROLE_PERMISSIONS["qa"]
 
 
+from bernstein.core.policy_engine import DecisionType
+
 # ---------------------------------------------------------------------------
 # check_file_permissions (guardrail integration)
 # ---------------------------------------------------------------------------
@@ -203,32 +205,31 @@ class TestCheckFilePermissions:
     def test_backend_allowed_src(self) -> None:
         results = check_file_permissions(DIFF_ONLY_SRC, "backend")
         assert len(results) == 1
-        assert results[0].passed
-        assert results[0].check == "file_permissions"
+        assert results[0].type == DecisionType.ALLOW
 
     def test_backend_denied_github(self) -> None:
         results = check_file_permissions(SAMPLE_DIFF, "backend")
         assert len(results) == 1
-        assert not results[0].passed
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
+        assert results[0].bypass_immune
         assert ".github/workflows/ci.yml" in results[0].files
 
     def test_security_allowed_github_workflows(self) -> None:
         # Security role CAN modify .github/workflows/
         results = check_file_permissions(SAMPLE_DIFF, "security")
         assert len(results) == 1
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
     def test_unknown_role_no_restrictions(self) -> None:
         results = check_file_permissions(SAMPLE_DIFF, "unknown_role")
         assert len(results) == 1
-        assert results[0].passed
-        assert "No file permission rules" in results[0].detail
+        assert results[0].type == DecisionType.ALLOW
+        assert "No file permission rules" in results[0].reason
 
     def test_empty_diff(self) -> None:
         results = check_file_permissions("", "backend")
         assert len(results) == 1
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
     def test_custom_overrides(self) -> None:
         custom = AgentPermissions(
@@ -237,24 +238,24 @@ class TestCheckFilePermissions:
         )
         results = check_file_permissions(DIFF_ONLY_SRC, "backend", overrides={"backend": custom})
         assert len(results) == 1
-        assert not results[0].passed
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
+        assert results[0].bypass_immune
 
     def test_qa_can_edit_tests_and_src(self) -> None:
         results = check_file_permissions(DIFF_TESTS_AND_SRC, "qa")
         assert len(results) == 1
-        assert results[0].passed
+        assert results[0].type == DecisionType.ALLOW
 
     def test_docs_cannot_edit_src(self) -> None:
         results = check_file_permissions(DIFF_ONLY_SRC, "docs")
         assert len(results) == 1
-        assert not results[0].passed
-        assert results[0].blocked
+        assert results[0].type == DecisionType.DENY
+        assert results[0].bypass_immune
 
     def test_devops_cannot_edit_src(self) -> None:
         results = check_file_permissions(DIFF_ONLY_SRC, "devops")
         assert len(results) == 1
-        assert not results[0].passed
+        assert results[0].type == DecisionType.DENY
 
     def test_security_role_cannot_edit_immune_paths(self) -> None:
         # Even if security can normally edit .github, immune paths might have stricter rules in guardrails.
