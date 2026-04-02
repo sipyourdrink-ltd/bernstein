@@ -322,3 +322,69 @@ class StatusBar(Static):
         keys = "[dim][S]oft stop  [H]ard stop  [Q]uit[/dim]"
 
         self.update(Text.from_markup(f"{left}  {keys}"))
+
+
+# ---------------------------------------------------------------------------
+# Quality gate panel
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class QualityGateResult:
+    """Single quality gate result for display."""
+
+    gate: str
+    status: str  # "pass", "fail", "warn", "skipped"
+    duration_ms: float
+    details: str
+
+
+class QualityGatePanel(DataTable):
+    """DataTable widget showing quality gate results with pass/fail badges.
+
+    Columns: Gate | Status | Duration | Details
+    Status cell: green "✓ PASS" or red "✗ FAIL" rich markup.
+    """
+
+    DEFAULT_CSS = """
+    QualityGatePanel {
+        height: auto;
+        max-height: 40%;
+    }
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._setup_columns()
+
+    def _setup_columns(self) -> None:
+        """Initialize table columns."""
+        self.add_columns("Gate", "Status", "Duration", "Details")
+
+    def set_results(self, results: list[QualityGateResult]) -> None:
+        """Populate the panel with quality gate results.
+
+        Args:
+            results: List of QualityGateResult instances.
+        """
+        self.clear()
+        for result in results:
+            # Format status with pass/fail badge
+            if result.status == "pass":
+                status_markup = "[green]✓ PASS[/green]"
+            elif result.status == "fail":
+                status_markup = "[red]✗ FAIL[/red]"
+            elif result.status == "warn":
+                status_markup = "[yellow]⚠ WARN[/yellow]"
+            else:
+                status_markup = f"[dim]{result.status.upper()}[/dim]"
+
+            # Format duration
+            duration_str = f"{result.duration_ms:.0f}ms"
+
+            self.add_row(
+                result.gate,
+                status_markup,
+                duration_str,
+                result.details[:50] + "..." if len(result.details) > 50 else result.details,
+            )
