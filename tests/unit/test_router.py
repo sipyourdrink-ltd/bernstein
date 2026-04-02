@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from bernstein.core.models import Complexity, ModelConfig, Scope, Task
@@ -14,6 +16,7 @@ from bernstein.core.router import (
     Tier,
     TierAwareRouter,
     get_default_router,
+    load_model_policy_from_yaml,
     route_task,
 )
 
@@ -46,6 +49,8 @@ def _make_provider(
     available: bool = True,
     models: dict[str, ModelConfig] | None = None,
     quota_remaining: int | None = None,
+    region: str = "global",
+    residency_attestation: str | None = None,
 ) -> ProviderConfig:
     return ProviderConfig(
         name=name,
@@ -54,6 +59,8 @@ def _make_provider(
         cost_per_1k_tokens=cost,
         available=available,
         quota_remaining=quota_remaining,
+        region=region,
+        residency_attestation=residency_attestation,
     )
 
 
@@ -153,6 +160,34 @@ class TestGetAvailableProviders:
 
 
 class TestSelectProviderForTask:
+    def test_required_region_prefers_matching_provider(self) -> None:
+        router = TierAwareRouter()
+        router.state.model_policy = ModelPolicy(required_region="eu")
+        router.policy_filter = PolicyFilter(policy=router.state.model_policy)
+        router.register_provider(
+            _make_provider(name="us-standard", region="us-east-1", cost=0.001, residency_attestation="soc2-us")
+        )
+        router.register_provider(
+            _make_provider(name="eu-standard", region="eu-west-1", cost=0.002, residency_attestation="gdpr-eu")
+        )
+
+        decision = router.select_provider_for_task(_make_task())
+
+        assert decision.provider == "eu-standard"
+        assert decision.residency_attestation is not None
+        assert decision.residency_attestation.provider_region == "eu-west-1"
+        assert decision.residency_attestation.required_region == "eu"
+        assert decision.residency_attestation.compliant is True
+
+    def test_required_region_raises_when_no_provider_matches(self) -> None:
+        router = TierAwareRouter()
+        router.state.model_policy = ModelPolicy(required_region="eu")
+        router.policy_filter = PolicyFilter(policy=router.state.model_policy)
+        router.register_provider(_make_provider(name="us-standard", region="us-east-1"))
+
+        with pytest.raises(RouterError, match="No available provider"):
+            router.select_provider_for_task(_make_task())
+
     def test_selects_free_tier_when_available(self) -> None:
         router = TierAwareRouter()
         router.state.preferred_tier = Tier.FREE
@@ -713,12 +748,21 @@ class TestModelPolicy:
             "allowed_providers": ["anthropic"],
             "denied_providers": [],
             "prefer": "anthropic",
+            "required_region": "eu",
         }
 
         policy = ModelPolicy.from_dict(data)
 
         assert policy.allowed_providers == ["anthropic"]
         assert policy.prefer == "anthropic"
+        assert policy.required_region == "eu"
+
+    def test_validation_detects_cross_region_fallback_without_region(self) -> None:
+        policy = ModelPolicy(allow_cross_region_fallback=True)
+
+        issues = policy.validate()
+
+        assert any("required_region" in issue for issue in issues)
 
 
 class TestPolicyFilter:
@@ -754,6 +798,20 @@ class TestPolicyFilter:
         assert len(filtered) == 2
         assert set(p.name for p in filtered) == {"anthropic", "ollama"}
 
+    def test_filter_providers_respects_required_region(self) -> None:
+
+        policy = ModelPolicy(required_region="eu")
+        filter_obj = PolicyFilter(policy=policy)
+
+        providers = [
+            _make_provider(name="anthropic-eu", tier=Tier.STANDARD, region="eu-west-1"),
+            _make_provider(name="anthropic-us", tier=Tier.STANDARD, region="us-east-1"),
+        ]
+
+        filtered = filter_obj.filter_providers(providers)
+
+        assert [provider.name for provider in filtered] == ["anthropic-eu"]
+
     def test_policy_filter_integrated_in_router(self) -> None:
         """Test that router respects model policy when selecting providers."""
         router = TierAwareRouter()
@@ -769,11 +827,21 @@ class TestPolicyFilter:
         router.state.model_policy = policy
         router.policy_filter = type(router.policy_filter)(policy=policy)  # Update filter
 
-        # Get available providers - openai should be filtered out
         available = router.get_available_providers()
 
         assert len(available) == 2
         assert all(p.name != "openai" for p in available)
+
+
+class TestPolicyLoading:
+    def test_load_model_policy_uses_compliance_residency_when_policy_unset(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "bernstein.yaml"
+        config_path.write_text("compliance:\n  preset: regulated\n", encoding="utf-8")
+        router = TierAwareRouter()
+
+        load_model_policy_from_yaml(config_path, router)
+
+        assert router.state.model_policy.required_region == "eu"
 
     def test_validate_policy_detects_no_available_providers(self) -> None:
         """Test that validate_policy warns when no providers available for a tier."""

@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 from pathlib import Path
 
+from bernstein.core.cost import forecast_planned_backlog
 from bernstein.core.cost_tracker import CostTracker
+from bernstein.core.models import Complexity, Scope, Task, TaskStatus
 
 
 def test_cost_tracker_accumulate() -> None:
@@ -112,3 +116,61 @@ def test_cost_tracker_projection() -> None:
     proj2 = tracker.project(tasks_done=1, tasks_remaining=10)
     assert proj2.within_budget is False
     assert proj2.confidence == 0.2  # 1/5
+
+
+def test_forecast_planned_backlog_uses_non_terminal_tasks_only(tmp_path: Path) -> None:
+    tasks = [
+        Task(
+            id="open-1",
+            title="Implement API",
+            description="Add backend endpoint",
+            role="backend",
+            scope=Scope.MEDIUM,
+            complexity=Complexity.MEDIUM,
+            status=TaskStatus.OPEN,
+        ),
+        Task(
+            id="done-1",
+            title="Ship docs",
+            description="Completed work",
+            role="docs",
+            scope=Scope.SMALL,
+            complexity=Complexity.LOW,
+            status=TaskStatus.DONE,
+        ),
+    ]
+
+    forecast = forecast_planned_backlog(tasks, metrics_dir=tmp_path, current_spend_usd=0.5, budget_usd=2.0)
+
+    assert forecast.task_count == 1
+    assert forecast.current_spend_usd == 0.5
+    assert forecast.projected_total_cost_usd > 0.5
+    assert forecast.within_budget is True
+
+
+def test_forecast_planned_backlog_rolls_up_by_role(tmp_path: Path) -> None:
+    tasks = [
+        Task(
+            id="t-1",
+            title="Backend change",
+            description="Add API",
+            role="backend",
+            scope=Scope.SMALL,
+            complexity=Complexity.LOW,
+            status=TaskStatus.OPEN,
+        ),
+        Task(
+            id="t-2",
+            title="UI change",
+            description="Polish dashboard",
+            role="frontend",
+            scope=Scope.MEDIUM,
+            complexity=Complexity.MEDIUM,
+            status=TaskStatus.PLANNED,
+        ),
+    ]
+
+    forecast = forecast_planned_backlog(tasks, metrics_dir=tmp_path)
+
+    assert {entry.role for entry in forecast.per_role} == {"backend", "frontend"}
+    assert sum(entry.task_count for entry in forecast.per_role) == 2

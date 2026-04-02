@@ -316,6 +316,44 @@ def test_quality_models_endpoint(tmp_path: Path) -> None:
     assert "generated_at" in body
 
 
+def test_quality_budget_forecast_endpoint(tmp_path: Path) -> None:
+    metrics_dir = tmp_path / ".sdd" / "metrics"
+    metrics_dir.mkdir(parents=True)
+    (metrics_dir / "tasks.jsonl").write_text(
+        json.dumps({"task_id": "done-1", "cost_usd": 0.4}) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".sdd").mkdir(exist_ok=True)
+    (tmp_path / "bernstein.yaml").write_text('goal: "Ship roadmap"\nbudget: 1.0\n', encoding="utf-8")
+
+    app = _make_test_app(tmp_path / "tasks.jsonl")
+    app.state.sdd_dir = tmp_path / ".sdd"
+
+    with TestClient(app) as client:
+        create_one = client.post(
+            "/tasks",
+            json={
+                "title": "Implement billing flow",
+                "description": "Build enterprise billing support",
+                "role": "backend",
+                "priority": 1,
+                "scope": "large",
+                "complexity": "high",
+                "status": "open",
+            },
+        )
+        assert create_one.status_code == 201
+        response = client.get("/quality/budget-forecast")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["task_count"] == 1
+    assert body["current_spend_usd"] == 0.4
+    assert body["projected_total_cost_usd"] >= body["current_spend_usd"]
+    assert body["budget_usd"] == 1.0
+    assert "generated_at" in body
+
+
 def test_quality_endpoint_with_gate_data(tmp_path: Path) -> None:
     metrics_dir = tmp_path / ".sdd" / "metrics"
     metrics_dir.mkdir(parents=True)

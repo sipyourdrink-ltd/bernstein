@@ -3,14 +3,30 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.differential_privacy import DPConfig
     from bernstein.core.metric_collector import MetricsCollector
+
+
+def _serialize_residency_attestations(raw: object) -> list[dict[str, object]]:
+    """Convert residency attestation objects into JSON-safe dictionaries."""
+    if not isinstance(raw, list):
+        return []
+
+    serialized: list[dict[str, object]] = []
+    for item in cast("list[object]", raw):
+        if not isinstance(item, type) and is_dataclass(cast("Any", item)):
+            serialized.append(cast("dict[str, object]", asdict(cast("Any", item))))
+        elif isinstance(item, dict):
+            typed_item = cast("dict[object, object]", item)
+            serialized.append({str(key): value for key, value in typed_item.items()})
+    return serialized
 
 
 def export_metrics(
@@ -60,6 +76,9 @@ def export_metrics(
             }
             for a in collector.agent_metrics.values()
         ],
+        "residency_attestations": _serialize_residency_attestations(
+            getattr(collector, "residency_attestations", cast("Any", []))
+        ),
     }
 
     if dp_config is not None:

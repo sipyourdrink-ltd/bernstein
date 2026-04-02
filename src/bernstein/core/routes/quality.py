@@ -12,19 +12,27 @@ import json
 import time
 from collections import defaultdict
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from bernstein.core.cost import forecast_planned_backlog
+
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from bernstein.core.server import TaskStore
 
 router = APIRouter()
 
 
 def _get_sdd_dir(request: Request) -> Path:
     return request.app.state.sdd_dir  # type: ignore[no-any-return]
+
+
+def _get_store(request: Request) -> TaskStore:
+    return request.app.state.store  # type: ignore[no-any-return]
 
 
 def _parse_timestamp(value: Any) -> float:
@@ -257,6 +265,48 @@ def _compute_gate_stats(gate_records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _read_current_spend(metrics_dir: Path) -> float:
+    """Read cumulative task cost from metrics JSONL."""
+    tasks_path = metrics_dir / "tasks.jsonl"
+    if not tasks_path.exists():
+        return 0.0
+
+    latest_by_task: dict[str, float] = {}
+    try:
+        for raw in tasks_path.read_text(encoding="utf-8").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            typed_record = cast("dict[str, Any]", record)
+            task_id = str(typed_record.get("task_id", "")).strip()
+            if not task_id:
+                continue
+            latest_by_task[task_id] = float(typed_record.get("cost_usd", 0.0) or 0.0)
+    except OSError:
+        return 0.0
+
+    return sum(latest_by_task.values())
+
+
+def _load_budget_from_seed(sdd_dir: Path) -> float:
+    """Load the configured run budget from ``bernstein.yaml`` when available."""
+    from bernstein.core.seed import SeedError, parse_seed
+
+    seed_path = sdd_dir.parent / "bernstein.yaml"
+    if not seed_path.exists():
+        return 0.0
+    try:
+        cfg = parse_seed(seed_path)
+    except SeedError:
+        return 0.0
+    return float(cfg.budget_usd or 0.0)
+
+
 @router.get("/quality")
 async def get_quality_metrics(request: Request) -> JSONResponse:
     """Return aggregated internal quality metrics (last 7 days).
@@ -320,6 +370,23 @@ async def get_quality_metrics(request: Request) -> JSONResponse:
             "generated_at": time.time(),
         }
     )
+
+
+@router.get("/quality/budget-forecast")
+async def get_budget_forecast(request: Request) -> JSONResponse:
+    """Return projected spend for the active planned backlog."""
+    sdd_dir = _get_sdd_dir(request)
+    store = _get_store(request)
+    metrics_dir = sdd_dir / "metrics"
+    forecast = forecast_planned_backlog(
+        store.list_tasks(),
+        metrics_dir=metrics_dir if metrics_dir.exists() else None,
+        current_spend_usd=_read_current_spend(metrics_dir),
+        budget_usd=_load_budget_from_seed(sdd_dir),
+    )
+    payload = forecast.to_dict()
+    payload["generated_at"] = time.time()
+    return JSONResponse(payload)
 
 
 @router.get("/quality/models")

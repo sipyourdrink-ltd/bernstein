@@ -90,3 +90,23 @@ def test_export_metrics_timestamp_is_iso8601(tmp_path: Path) -> None:
 
     parsed = datetime.fromisoformat(data["exported_at"])
     assert parsed.year >= 2000
+
+
+def test_export_metrics_includes_residency_attestations(tmp_path: Path) -> None:
+    output = tmp_path / "residency.json"
+    collector = _collector_fixture()
+    collector.residency_attestations = [
+        {
+            "provider": "google_ai",
+            "provider_region": "eu-west-1",
+            "required_region": "eu",
+            "compliant": True,
+            "attestation": "gdpr-eu",
+            "reason": "preferred_tier:T-1",
+        }
+    ]
+
+    export_metrics(collector, output)
+
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["residency_attestations"][0]["provider"] == "google_ai"

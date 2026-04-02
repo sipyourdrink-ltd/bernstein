@@ -25,7 +25,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from bernstein.core.models import Complexity, Scope, Task
+from bernstein.core.models import Complexity, Scope, Task, TaskStatus
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -499,6 +499,117 @@ def estimate_run_cost(task_count: int, model: str = "sonnet") -> tuple[float, fl
     low = task_count * low_tokens_per_task * cost_per_1k
     high = task_count * high_tokens_per_task * cost_per_1k
     return (round(low, 2), round(high, 2))
+
+
+@dataclass(frozen=True)
+class PlannedRoleForecast:
+    """Estimated remaining spend for one task role."""
+
+    role: str
+    task_count: int
+    estimated_cost_usd: float
+
+
+@dataclass(frozen=True)
+class PlannedBacklogForecast:
+    """Forecasted spend for active backlog tasks."""
+
+    task_count: int
+    current_spend_usd: float
+    estimated_remaining_cost_usd: float
+    projected_total_cost_usd: float
+    avg_estimated_cost_per_task_usd: float
+    budget_usd: float
+    within_budget: bool
+    confidence_level: str
+    per_role: list[PlannedRoleForecast]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the forecast into a JSON-safe mapping."""
+        return {
+            "task_count": self.task_count,
+            "current_spend_usd": round(self.current_spend_usd, 4),
+            "estimated_remaining_cost_usd": round(self.estimated_remaining_cost_usd, 4),
+            "projected_total_cost_usd": round(self.projected_total_cost_usd, 4),
+            "avg_estimated_cost_per_task_usd": round(self.avg_estimated_cost_per_task_usd, 4),
+            "budget_usd": round(self.budget_usd, 4),
+            "within_budget": self.within_budget,
+            "confidence_level": self.confidence_level,
+            "per_role": [
+                {
+                    "role": item.role,
+                    "task_count": item.task_count,
+                    "estimated_cost_usd": round(item.estimated_cost_usd, 4),
+                }
+                for item in self.per_role
+            ],
+        }
+
+
+_FORECASTABLE_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.PLANNED,
+        TaskStatus.OPEN,
+        TaskStatus.CLAIMED,
+        TaskStatus.IN_PROGRESS,
+        TaskStatus.BLOCKED,
+        TaskStatus.WAITING_FOR_SUBTASKS,
+        TaskStatus.PENDING_APPROVAL,
+        TaskStatus.ORPHANED,
+    }
+)
+
+
+def forecast_planned_backlog(
+    tasks: list[Task],
+    *,
+    metrics_dir: Path | None = None,
+    current_spend_usd: float = 0.0,
+    budget_usd: float = 0.0,
+) -> PlannedBacklogForecast:
+    """Estimate remaining and projected spend for non-terminal backlog tasks."""
+    planned_tasks = [task for task in tasks if task.status in _FORECASTABLE_STATUSES]
+    role_rollup: dict[str, dict[str, float]] = {}
+    estimated_remaining_cost = 0.0
+
+    for task in planned_tasks:
+        estimated_cost = predict_task_cost(task, metrics_dir=metrics_dir)
+        estimated_remaining_cost += estimated_cost
+        role_data = role_rollup.setdefault(task.role, {"task_count": 0.0, "estimated_cost_usd": 0.0})
+        role_data["task_count"] += 1
+        role_data["estimated_cost_usd"] += estimated_cost
+
+    projected_total = current_spend_usd + estimated_remaining_cost
+    avg_cost = estimated_remaining_cost / len(planned_tasks) if planned_tasks else 0.0
+
+    has_history = bool(metrics_dir and metrics_dir.exists() and any(metrics_dir.glob("api_usage_*.jsonl")))
+    if len(planned_tasks) >= 10 and has_history:
+        confidence_level = "high"
+    elif len(planned_tasks) >= 3:
+        confidence_level = "medium" if has_history else "low"
+    else:
+        confidence_level = "low"
+
+    per_role = [
+        PlannedRoleForecast(
+            role=role,
+            task_count=int(values["task_count"]),
+            estimated_cost_usd=values["estimated_cost_usd"],
+        )
+        for role, values in sorted(role_rollup.items())
+    ]
+
+    return PlannedBacklogForecast(
+        task_count=len(planned_tasks),
+        current_spend_usd=current_spend_usd,
+        estimated_remaining_cost_usd=estimated_remaining_cost,
+        projected_total_cost_usd=projected_total,
+        avg_estimated_cost_per_task_usd=avg_cost,
+        budget_usd=budget_usd,
+        within_budget=True if budget_usd <= 0 else projected_total <= budget_usd,
+        confidence_level=confidence_level,
+        per_role=per_role,
+    )
 
 
 def predict_task_cost(task: Task, metrics_dir: Path | None = None) -> float:
