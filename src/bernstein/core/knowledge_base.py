@@ -498,4 +498,3 @@ def append_decision(workdir: Path, task_id: str, title: str, decision: str) -> N
         entries = entries[-15:]
 
     md_path.write_text(header + "\n" + "\n\n".join(entries) + "\n", encoding="utf-8")
-

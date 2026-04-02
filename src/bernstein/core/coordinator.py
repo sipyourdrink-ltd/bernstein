@@ -233,10 +233,7 @@ class CoordinatorMode:
         if state is None:
             return False
 
-        return all(
-            a.status in ("completed", "failed")
-            for a in state.worker_assignments
-        )
+        return all(a.status in ("completed", "failed") for a in state.worker_assignments)
 
     def get_worker_results(self, coordinator_id: str) -> list[WorkerAssignment]:
         """Get all worker results for a coordinator.
@@ -251,10 +248,7 @@ class CoordinatorMode:
         if state is None:
             return []
 
-        return [
-            a for a in state.worker_assignments
-            if a.status in ("completed", "failed")
-        ]
+        return [a for a in state.worker_assignments if a.status in ("completed", "failed")]
 
     def set_synthesis_result(
         self,

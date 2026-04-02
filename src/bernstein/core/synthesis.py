@@ -66,11 +66,7 @@ class SynthesisEngine:
         failed = [w for w in worker_results if w.get("status") == "failed"]
 
         # Collect all summaries
-        summaries = [
-            w.get("result_summary", "")
-            for w in successful
-            if w.get("result_summary")
-        ]
+        summaries = [w.get("result_summary", "") for w in successful if w.get("result_summary")]
 
         # Collect all artifacts
         all_artifacts: list[str] = []
@@ -185,7 +181,7 @@ class SynthesisEngine:
         negative_keywords = {"fail", "error", "broken", "issue"}
 
         for i, summary1 in enumerate(summaries):
-            for summary2 in summaries[i + 1:]:
+            for summary2 in summaries[i + 1 :]:
                 s1_lower = summary1.lower()
                 s2_lower = summary2.lower()
 
@@ -197,8 +193,7 @@ class SynthesisEngine:
                 # Conflict: one says success, other says failure
                 if (has_positive1 and has_negative2) or (has_negative1 and has_positive2):
                     conflicts.append(
-                        "Conflicting results between workers: "
-                        "one reports success, another reports failure"
+                        "Conflicting results between workers: one reports success, another reports failure"
                     )
 
         return conflicts
@@ -238,15 +233,11 @@ class SynthesisEngine:
 
 ## Artifacts
 
-{chr(10).join(f'- `{artifact}`' for artifact in result.artifacts_merged) if result.artifacts_merged else 'No artifacts'}
+{chr(10).join(f"- `{artifact}`" for artifact in result.artifacts_merged) if result.artifacts_merged else "No artifacts"}
 
 ## Conflicts
 
-{
-    chr(10).join(f'- {c}' for c in result.conflicts_detected)
-    if result.conflicts_detected
-    else 'No conflicts detected'
-}
+{chr(10).join(f"- {c}" for c in result.conflicts_detected) if result.conflicts_detected else "No conflicts detected"}
 """
 
         output_path.write_text(content, encoding="utf-8")
