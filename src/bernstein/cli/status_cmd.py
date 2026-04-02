@@ -552,7 +552,17 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
             w.fix,
         )
 
-    # 15. Compliance mode prerequisites
+    # 15. Installation mismatches
+    from bernstein.install_check import check_installations
+    for w in check_installations():
+        _check(
+            w.name,
+            w.ok,
+            w.detail,
+            w.fix,
+        )
+
+    # 16. Compliance mode prerequisites
     from bernstein.core.compliance import load_compliance_config
 
     compliance_cfg = load_compliance_config(workdir / ".sdd")
