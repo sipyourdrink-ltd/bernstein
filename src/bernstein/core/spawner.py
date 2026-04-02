@@ -585,14 +585,18 @@ class AgentSpawner:
         self._shutdown_event: threading.Event | None = None
         self._agent_failure_timestamps: dict[str, float] = {}  # adapter_name -> last failure ts
         self._use_worktrees = use_worktrees
+        self._worktree_setup_config = worktree_setup_config
         self._worktree_mgr: WorktreeManager | None = None
+        self._worktree_managers: dict[Path, WorktreeManager] = {}
         if use_worktrees:
             self._worktree_mgr = WorktreeManager(workdir, setup_config=worktree_setup_config)
+            self._worktree_managers[workdir.resolve()] = self._worktree_mgr
             # Clean stale worktrees from prior crashed/stopped runs
             cleaned = self._worktree_mgr.cleanup_all_stale()
             if cleaned:
                 logger.info("Cleaned %d stale worktree(s) from prior run", cleaned)
         self._worktree_paths: dict[str, Path] = {}
+        self._worktree_roots: dict[str, Path] = {}
         self._traces: dict[str, AgentTrace] = {}
         self._trace_store = TraceStore(workdir / ".sdd" / "traces")
         self._runtime_bridge = runtime_bridge
@@ -609,8 +613,20 @@ class AgentSpawner:
     def set_shutdown_event(self, shutdown_event: threading.Event | None) -> None:
         """Attach the orchestrator shutdown event for spawn/worktree guards."""
         self._shutdown_event = shutdown_event
-        if self._worktree_mgr is not None:
-            self._worktree_mgr.set_shutdown_event(shutdown_event)
+        for manager in self._worktree_managers.values():
+            manager.set_shutdown_event(shutdown_event)
+
+    def _worktree_manager_for_repo(self, repo_root: Path) -> WorktreeManager | None:
+        if not self._use_worktrees:
+            return None
+        normalized = repo_root.resolve()
+        existing = self._worktree_managers.get(normalized)
+        if existing is not None:
+            return existing
+        manager = WorktreeManager(normalized, setup_config=self._worktree_setup_config)
+        manager.set_shutdown_event(self._shutdown_event)
+        self._worktree_managers[normalized] = manager
+        return manager
 
     def _infer_adapter_name_for_provider(self, provider_name: str | None, model: str) -> str:
         """Infer adapter name from provider/model identifiers."""
@@ -898,6 +914,7 @@ class AgentSpawner:
 
         # Determine working directory: repo-specific > worktree > shared workdir
         spawn_cwd = self._workdir
+        worktree_repo_root = self._workdir.resolve()
 
         # If the task targets a specific repo in a multi-repo workspace,
         # use that repo's path as the working directory.
@@ -905,6 +922,7 @@ class AgentSpawner:
         if task_repo is not None and self._workspace is not None:
             try:
                 spawn_cwd = self._workspace.resolve_repo(task_repo)
+                worktree_repo_root = spawn_cwd.resolve()
                 logger.info("Task targets repo '%s', spawn cwd: %s", task_repo, spawn_cwd)
             except KeyError:
                 logger.warning(
@@ -912,10 +930,12 @@ class AgentSpawner:
                     task_repo,
                 )
 
-        if self._use_worktrees and self._worktree_mgr is not None:
+        worktree_mgr = self._worktree_manager_for_repo(worktree_repo_root)
+        if self._use_worktrees and worktree_mgr is not None:
             try:
-                spawn_cwd = self._worktree_mgr.create(session_id)
+                spawn_cwd = worktree_mgr.create(session_id)
                 self._worktree_paths[session_id] = spawn_cwd
+                self._worktree_roots[session_id] = worktree_repo_root
             except WorktreeError as exc:
                 logger.warning(
                     "Cannot create workspace for agent %s. "
@@ -1602,20 +1622,22 @@ class AgentSpawner:
 
         # Merge worktree branch back and clean up
         worktree_path = self._worktree_paths.pop(session.id, None)
+        worktree_root = self._worktree_roots.pop(session.id, self._workdir.resolve())
+        worktree_mgr = self._worktree_managers.get(worktree_root)
         merge_result: MergeResult | None = None
-        if worktree_path is not None and self._worktree_mgr is not None:
+        if worktree_path is not None and worktree_mgr is not None:
             if not skip_merge:
-                merge_result = self._merge_worktree_branch(session.id)
+                merge_result = self._merge_worktree_branch(session.id, repo_root=worktree_root)
                 # Push merged work to remote so nothing is lost
                 if merge_result and merge_result.success:
                     from bernstein.core.git_ops import safe_push
 
-                    push_result = safe_push(self._workdir, "main")
+                    push_result = safe_push(worktree_root, "main")
                     if push_result.ok:
                         logger.info("Pushed merged work from %s to origin/main", session.id)
                     else:
                         logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
-            self._worktree_mgr.cleanup(session.id)
+            worktree_mgr.cleanup(session.id)
 
         outcome = "completed" if session.status != "dead" else "timed_out"
         get_plugin_manager().fire_agent_reaped(session_id=session.id, role=session.role, outcome=outcome)
@@ -1653,7 +1675,7 @@ class AgentSpawner:
             except Exception as exc:
                 logger.warning("Failed to update trace outcome for %s: %s", session_id, exc)
 
-    def _merge_worktree_branch(self, session_id: str) -> MergeResult:
+    def _merge_worktree_branch(self, session_id: str, repo_root: Path | None = None) -> MergeResult:
         """Merge the agent's worktree branch with conflict detection.
 
         Uses ``merge_with_conflict_detection`` for a safe, abort-on-conflict
@@ -1667,9 +1689,10 @@ class AgentSpawner:
             MergeResult with success status and any conflicting files.
         """
         branch_name = f"agent/{session_id}"
+        merge_root = (repo_root or self._workdir).resolve()
         try:
             result = merge_with_conflict_detection(
-                self._workdir,
+                merge_root,
                 branch_name,
                 message=f"Merge {branch_name}",
             )

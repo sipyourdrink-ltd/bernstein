@@ -261,8 +261,10 @@ class TaskCreate(BaseModel):
     risk_level: str = "low"
     estimated_minutes: int | None = None
     depends_on: list[str] = Field(default_factory=list)
+    depends_on_repo: str | None = None
     owned_files: list[str] = Field(default_factory=list)
     cell_id: str | None = None
+    repo: str | None = None
     task_type: str = "standard"
     upgrade_details: dict[str, Any] | None = None
     model: str | None = None  # Manager hint: "opus", "sonnet", "haiku"
@@ -293,10 +295,12 @@ class TaskResponse(BaseModel):
     estimated_minutes: int
     status: str
     depends_on: list[str]
+    depends_on_repo: str | None
     owned_files: list[str]
     assigned_agent: str | None
     result_summary: str | None
     cell_id: str | None
+    repo: str | None
     task_type: str
     upgrade_details: dict[str, Any] | None
     model: str | None
@@ -688,10 +692,12 @@ def task_to_response(task: Task) -> TaskResponse:
         estimated_minutes=task.estimated_minutes,
         status=task.status.value,
         depends_on=task.depends_on,
+        depends_on_repo=task.depends_on_repo,
         owned_files=task.owned_files,
         assigned_agent=task.assigned_agent,
         result_summary=task.result_summary,
         cell_id=task.cell_id,
+        repo=task.repo,
         task_type=task.task_type.value,
         upgrade_details=asdict(task.upgrade_details) if task.upgrade_details else None,
         model=task.model,
@@ -857,6 +863,7 @@ def create_app(
     from bernstein.core.routes.status import router as status_router
     from bernstein.core.routes.tasks import router as tasks_router
     from bernstein.core.routes.webhooks import router as webhooks_router
+    from bernstein.core.routes.workspace import router as workspace_router
 
     # Resolve auth token: explicit arg > env var > None
     effective_token = auth_token or os.environ.get("BERNSTEIN_AUTH_TOKEN")
@@ -1028,6 +1035,7 @@ def create_app(
     application.include_router(auth_router)
     application.include_router(tasks_router)
     application.include_router(status_router)
+    application.include_router(workspace_router)
     application.include_router(webhooks_router)
     application.include_router(slack_router)
     application.include_router(costs_router)

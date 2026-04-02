@@ -208,6 +208,7 @@ class Task:
     tenant_id: str = "default"
     cell_id: str | None = None  # Which cell this task belongs to
     repo: str | None = None  # Target repo in a multi-repo workspace
+    depends_on_repo: str | None = None  # Cross-repo dependency source repo, used with depends_on task IDs
     # Manager-specified routing hints (override auto-routing when set)
     model: str | None = None  # "opus", "sonnet", "haiku"
     effort: str | None = None  # "max", "high", "medium", "low"
@@ -279,6 +280,7 @@ class Task:
             tenant_id=str(raw.get("tenant_id", "default") or "default"),
             cell_id=raw.get("cell_id"),
             repo=raw.get("repo"),
+            depends_on_repo=raw.get("depends_on_repo"),
             model=raw.get("model"),
             effort=raw.get("effort"),
             mcp_servers=list(raw.get("mcp_servers", [])),

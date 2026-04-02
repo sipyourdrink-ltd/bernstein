@@ -11,7 +11,10 @@ import logging
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +207,54 @@ class Workspace:
             elif not (abs_path / ".git").exists():
                 issues.append(f"Repo '{repo.name}': not a git repository ({abs_path})")
         return issues
+
+    def merge_order(self, tasks: list[Task]) -> list[str]:
+        """Return a topological merge order across repos.
+
+        The dependency graph is derived from tasks that declare both
+        ``repo`` and ``depends_on_repo``. An edge ``backend -> frontend``
+        means frontend must merge after backend.
+
+        Args:
+            tasks: Current workspace tasks.
+
+        Returns:
+            Repository names in merge order.
+
+        Raises:
+            ValueError: If repo dependencies contain a cycle.
+        """
+        repo_names = [repo.name for repo in self.repos]
+        repo_set = set(repo_names)
+        adjacency: dict[str, set[str]] = {name: set() for name in repo_names}
+        indegree: dict[str, int] = {name: 0 for name in repo_names}
+
+        for task in tasks:
+            if not task.repo or not task.depends_on_repo:
+                continue
+            if task.repo not in repo_set or task.depends_on_repo not in repo_set:
+                continue
+            if task.depends_on_repo == task.repo:
+                continue
+            if task.repo not in adjacency[task.depends_on_repo]:
+                adjacency[task.depends_on_repo].add(task.repo)
+                indegree[task.repo] += 1
+
+        queue = [name for name in repo_names if indegree[name] == 0]
+        ordered: list[str] = []
+
+        while queue:
+            current = queue.pop(0)
+            ordered.append(current)
+            for neighbour in sorted(adjacency[current]):
+                indegree[neighbour] -= 1
+                if indegree[neighbour] == 0:
+                    queue.append(neighbour)
+
+        if len(ordered) != len(repo_names):
+            raise ValueError("Workspace repo dependencies contain a cycle")
+
+        return ordered
 
     # -- private git helpers --------------------------------------------------
 

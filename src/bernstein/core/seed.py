@@ -670,6 +670,7 @@ def parse_seed(path: Path) -> SeedConfig:
         session_cfg = SessionConfig(resume=resume_raw, stale_after_minutes=stale_raw)
 
     workspace_raw: object = data.get("workspace")
+    repos_raw: object = data.get("repos")
     workspace: Workspace | None = None
     if workspace_raw is not None:
         if not isinstance(workspace_raw, dict):
@@ -679,6 +680,13 @@ def parse_seed(path: Path) -> SeedConfig:
             workspace = Workspace.from_config(workspace_dict, root=path.parent)
         except ValueError as exc:
             raise SeedError(f"Invalid workspace configuration: {exc}") from exc
+    elif repos_raw is not None:
+        if not isinstance(repos_raw, list):
+            raise SeedError(f"repos must be a list, got: {type(repos_raw).__name__}")
+        try:
+            workspace = Workspace.from_config({"repos": repos_raw}, root=path.parent)
+        except ValueError as exc:
+            raise SeedError(f"Invalid repos configuration: {exc}") from exc
 
     worktree_setup_raw: object = data.get("worktree_setup")
     worktree_setup: WorktreeSetupConfig | None = None

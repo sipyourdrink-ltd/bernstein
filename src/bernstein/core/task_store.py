@@ -15,7 +15,7 @@ import uuid
 from collections import deque
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from fastapi import HTTPException
 from typing_extensions import TypedDict
@@ -35,6 +35,9 @@ from bernstein.core.models import (
 )
 from bernstein.core.tenanting import normalize_tenant_id
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -52,16 +55,18 @@ class TaskRecord(TypedDict):
     priority: int
     scope: str
     complexity: str
-    estimated_minutes: int
+    estimated_minutes: int | None
     status: str
     task_type: str
     upgrade_details: dict[str, Any] | None
     depends_on: list[str]
+    depends_on_repo: str | None
     owned_files: list[str]
     assigned_agent: str | None
     result_summary: str | None
     tenant_id: str
     cell_id: str | None
+    repo: str | None
     batch_eligible: bool
     slack_context: dict[str, Any] | None
     version: int
@@ -100,6 +105,52 @@ class SnapshotEntry(TypedDict):
     tests_passing: int
     errors: int
     last_file: str
+
+
+class _CompletionSignalRequest(Protocol):
+    @property
+    def type(self) -> str: ...
+
+    @property
+    def value(self) -> str: ...
+
+
+class TaskCreateRequest(Protocol):
+    """Protocol for validated task-create request objects."""
+
+    title: str
+    description: str
+    role: str
+    priority: int
+    scope: str
+    complexity: str
+    estimated_minutes: int | None
+    @property
+    def depends_on(self) -> Sequence[str]: ...
+
+    depends_on_repo: str | None
+
+    @property
+    def owned_files(self) -> Sequence[str]: ...
+
+    tenant_id: str
+    cell_id: str | None
+    repo: str | None
+    task_type: str
+
+    @property
+    def upgrade_details(self) -> Mapping[str, Any] | None: ...
+
+    model: str | None
+    effort: str | None
+    batch_eligible: bool
+    risk_level: str
+
+    @property
+    def completion_signals(self) -> Sequence[_CompletionSignalRequest]: ...
+
+    @property
+    def slack_context(self) -> Mapping[str, Any] | None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -442,11 +493,13 @@ class TaskStore:
             "task_type": task.task_type.value,
             "upgrade_details": asdict(task.upgrade_details) if task.upgrade_details else None,
             "depends_on": task.depends_on,
+            "depends_on_repo": task.depends_on_repo,
             "owned_files": task.owned_files,
             "assigned_agent": task.assigned_agent,
             "result_summary": task.result_summary,
             "tenant_id": normalize_tenant_id(task.tenant_id),
             "cell_id": task.cell_id,
+            "repo": task.repo,
             "batch_eligible": task.batch_eligible is True,
             "slack_context": task.slack_context,
             "version": task.version,
@@ -490,7 +543,23 @@ class TaskStore:
 
         return dfs(new_task.id)
 
-    async def create(self, req: dict[str, Any]) -> Task:
+    def _dependencies_satisfied(self, task: Task) -> bool:
+        done_ids = {done_task.id for done_task in self._by_status[TaskStatus.DONE].values()}
+        if not all(dep in done_ids for dep in task.depends_on):
+            return False
+        if task.depends_on_repo is None:
+            return True
+        if not task.depends_on:
+            return any(
+                done_task.repo == task.depends_on_repo
+                for done_task in self._by_status[TaskStatus.DONE].values()
+            )
+        return all(
+            (self._tasks.get(dep_id) is not None and self._tasks[dep_id].repo == task.depends_on_repo)
+            for dep_id in task.depends_on
+        )
+
+    async def create(self, req: TaskCreateRequest) -> Task:
         """Create a new task and persist it.
 
         Args:
@@ -536,6 +605,8 @@ class TaskStore:
             owned_files=req.owned_files,
             tenant_id=normalize_tenant_id(getattr(req, "tenant_id", "default")),
             cell_id=req.cell_id,
+            repo=getattr(req, "repo", None),
+            depends_on_repo=getattr(req, "depends_on_repo", None),
             task_type=TaskType(req.task_type),
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),
             model=req.model,
@@ -558,6 +629,25 @@ class TaskStore:
                     raise HTTPException(
                         status_code=422,
                         detail="Circular dependency detected: " + " -> ".join(cycle),
+                    )
+            if task.depends_on_repo is not None:
+                if not task.depends_on:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="depends_on_repo requires at least one depends_on task id",
+                    )
+                mismatched = [
+                    dep
+                    for dep in task.depends_on
+                    if dep in self._tasks and self._tasks[dep].repo != task.depends_on_repo
+                ]
+                if mismatched:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "depends_on_repo does not match dependency repo for task(s): "
+                            + ", ".join(mismatched)
+                        ),
                     )
             self._tasks[task.id] = task
             self._index_add(task)
@@ -604,12 +694,19 @@ class TaskStore:
             if not pq:
                 return None
             task: Task | None = None
+            blocked_entries: list[tuple[int, str]] = []
             while pq:
-                _priority, task_id = heapq.heappop(pq)
+                priority, task_id = heapq.heappop(pq)
                 candidate = self._tasks.get(task_id)
-                if candidate is not None and candidate.status == TaskStatus.OPEN:
-                    task = candidate
-                    break
+                if candidate is None or candidate.status != TaskStatus.OPEN:
+                    continue
+                if not self._dependencies_satisfied(candidate):
+                    blocked_entries.append((priority, task_id))
+                    continue
+                task = candidate
+                break
+            for entry in blocked_entries:
+                heapq.heappush(pq, entry)
             if task is None:
                 return None
             self._index_remove(task)
@@ -661,6 +758,8 @@ class TaskStore:
                     f"role mismatch: task {task_id} requires role '{task.role}', agent has role '{agent_role}'"
                 )
             if task.status == TaskStatus.OPEN:
+                if not self._dependencies_satisfied(task):
+                    raise ValueError(f"task {task_id} has unresolved dependencies")
                 self._index_remove(task)
                 transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_by_id")
                 task.version += 1
@@ -693,7 +792,7 @@ class TaskStore:
         async with self._lock:
             for task_id in task_ids:
                 task = self._tasks.get(task_id)
-                if task is None or task.status != TaskStatus.OPEN:
+                if task is None or task.status != TaskStatus.OPEN or not self._dependencies_satisfied(task):
                     failed.append(task_id)
                     continue
                 if agent_role is not None and task.role != agent_role:
@@ -1010,8 +1109,7 @@ class TaskStore:
         if cell_id is not None:
             tasks = [t for t in tasks if t.cell_id == cell_id]
         if status == "open":
-            done_ids = {t.id for t in self._by_status[TaskStatus.DONE].values()}
-            tasks = [t for t in tasks if all(dep in done_ids for dep in t.depends_on)]
+            tasks = [t for t in tasks if self._dependencies_satisfied(t)]
         return tasks
 
     def get_task(self, task_id: str) -> Task | None:
