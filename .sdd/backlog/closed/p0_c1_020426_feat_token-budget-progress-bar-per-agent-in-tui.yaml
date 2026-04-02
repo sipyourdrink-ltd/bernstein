@@ -1,0 +1,10 @@
+---
+id: "T403"
+title: "Token budget progress bar per agent in TUI"
+status: closed
+type: feature
+priority: 0
+completed_at: "2026-04-02T12:30:00Z"
+---
+
+Done. build_token_budget_bar() + TaskRow tokens_used/tokens_budget fields.

@@ -66,6 +66,32 @@ def build_token_budget_bar(used: int, budget: int, width: int = 20) -> str:
     return f"[{color}]{bar}[/{color}] {int(pct * 100):>3}%"
 
 
+#: Contrast-safe palette for worker badges — works with light/dark themes.
+WORKER_BADGE_COLORS: tuple[str, ...] = (
+    "cyan",
+    "magenta",
+    "blue",
+    "green",
+    "yellow",
+    "red",
+)
+
+
+def agent_badge_color(agent_id: str) -> str:
+    """Return a deterministic, theme-safe badge color for an agent.
+
+    Args:
+        agent_id: Unique agent session identifier.
+
+    Returns:
+        A Rich colour name suitable for badge markup.
+    """
+    if not agent_id:
+        return "white"
+    h = hash(agent_id) % len(WORKER_BADGE_COLORS)
+    return WORKER_BADGE_COLORS[h]
+
+
 # ---------------------------------------------------------------------------
 # Colour mapping for task statuses
 # ---------------------------------------------------------------------------
