@@ -368,3 +368,70 @@ class TestNewTrace:
     def test_outcome_defaults_to_unknown(self) -> None:
         trace = new_trace("sess-v", ["t1"], "qa", "haiku", "medium")
         assert trace.outcome == "unknown"
+
+
+from bernstein.core.traces import AgentTrace, TraceStep, record_turn_budget
+
+
+def test_trace_step_has_budget_fields() -> None:
+    """TraceStep stores per-turn budget accounting fields."""
+    step = TraceStep(
+        type="orient",
+        timestamp=1234567890.0,
+        turn_number=2,
+        allocated_budget=20000,
+        consumed_this_turn=12000,
+        remaining_budget=8000,
+    )
+    assert step.turn_number == 2
+    assert step.remaining_budget == 8000
+
+    data = step.to_dict()
+    assert data["allocated_budget"] == 20000
+
+    restored = TraceStep.from_dict(data)
+    assert restored.consumed_this_turn == 12000
+
+
+def test_agent_trace_has_turn_budget_totals() -> None:
+    """AgentTrace stores aggregated turn budget fields."""
+    trace = AgentTrace(
+        trace_id="abc123",
+        session_id="sess-1",
+        task_ids=["t1"],
+        agent_role="backend",
+        model="sonnet",
+        effort="normal",
+        spawn_ts=0.0,
+        total_allocated_budget=40000,
+        total_consumed=24000,
+        turn_count=3,
+    )
+    assert trace.turn_count == 3
+    assert trace.total_allocated_budget == 40000
+
+
+def test_record_turn_budget_updates_trace() -> None:
+    """record_turn_budget creates a step and mutates the trace totals."""
+    trace = AgentTrace(
+        trace_id="xyz",
+        session_id="s-1",
+        task_ids=["t1"],
+        agent_role="backend",
+        model="sonnet",
+        effort="normal",
+        spawn_ts=0.0,
+    )
+    step = record_turn_budget(trace, turn_number=1, allocated=20000, consumed=5000, remaining=15000)
+    trace.steps.append(step)
+
+    assert trace.turn_count == 1
+    assert trace.total_consumed == 5000
+    assert trace.total_allocated_budget == 20000
+    assert step.consumed_this_turn == 5000
+    assert "turn 1" in step.detail
+
+    # Second turn accumulates
+    step2 = record_turn_budget(trace, turn_number=2, allocated=25000, consumed=8000, remaining=17000)
+    assert trace.turn_count == 2
+    assert trace.total_consumed == 13000  # 5000 + 8000

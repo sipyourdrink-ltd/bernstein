@@ -39,6 +39,11 @@ class TraceStep:
     files: list[str] = field(default_factory=lambda: [])
     tokens: int = 0
     duration_ms: int = 0
+    # Per-turn budget accounting (populated at turn boundaries)
+    turn_number: int = 0
+    allocated_budget: int = 0
+    consumed_this_turn: int = 0
+    remaining_budget: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -52,6 +57,10 @@ class TraceStep:
             files=cast("list[str]", d.get("files", [])),
             tokens=cast("int", d.get("tokens", 0)),
             duration_ms=cast("int", d.get("duration_ms", 0)),
+            turn_number=cast("int", d.get("turn_number", 0)),
+            allocated_budget=cast("int", d.get("allocated_budget", 0)),
+            consumed_this_turn=cast("int", d.get("consumed_this_turn", 0)),
+            remaining_budget=cast("int", d.get("remaining_budget", 0)),
         )
 
 
@@ -86,6 +95,10 @@ class AgentTrace:
     outcome: Literal["success", "failed", "unknown"] = "unknown"
     log_path: str = ""
     task_snapshots: list[dict[str, Any]] = field(default_factory=lambda: [])
+    # Budget snapshot at turn boundaries
+    total_allocated_budget: int = 0
+    total_consumed: int = 0
+    turn_count: int = 0
 
     @property
     def duration_s(self) -> float | None:
@@ -573,3 +586,40 @@ def render_replay_diff(original: str, replayed: str) -> str:
         lineterm="",
     )
     return "\n".join(diff)
+
+
+def record_turn_budget(
+    trace: AgentTrace,
+    turn_number: int,
+    allocated: int,
+    consumed: int,
+    remaining: int,
+) -> TraceStep:
+    """Create a TraceStep capturing per-turn budget accounting.
+
+    Updates ``trace.turn_count`` and ``trace.total_consumed`` in-place
+    so downstream analysis can evaluate efficiency vs budget.
+
+    Args:
+        trace: The agent trace to annotate.
+        turn_number: 1-based turn/iteration number.
+        allocated: Token budget allocated for this turn.
+        consumed: Tokens actually consumed this turn.
+        remaining: Remaining tokens after this turn.
+
+    Returns:
+        The created TraceStep (caller should append to trace.steps).
+    """
+    step = TraceStep(
+        type="orient",  # reuse orient as a budget boundary marker
+        timestamp=time.time(),
+        detail=f"turn {turn_number}: budget {allocated}, consumed {consumed}, remaining {remaining}",
+        turn_number=turn_number,
+        allocated_budget=allocated,
+        consumed_this_turn=consumed,
+        remaining_budget=remaining,
+    )
+    trace.turn_count = max(trace.turn_count, turn_number)
+    trace.total_consumed += consumed
+    trace.total_allocated_budget = max(trace.total_allocated_budget, allocated)
+    return step
