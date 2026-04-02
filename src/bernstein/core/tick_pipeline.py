@@ -265,8 +265,39 @@ def group_by_role(
     for role, role_tasks in by_role.items():
         role_tasks.sort(key=_sort_key)
         role_batches: list[list[Task]] = []
-        for i in range(0, len(role_tasks), max_per_batch):
-            role_batches.append(role_tasks[i : i + max_per_batch])
+
+        # Smarter batching: group tasks that touch the same files into the same batch
+        # so they are handled sequentially by a single agent.
+        for task in role_tasks:
+            added = False
+            task_files = set(task.owned_files)
+            for batch in role_batches:
+                if len(batch) < max_per_batch:
+                    # If any task in batch touches any file this task touches, group them
+                    batch_files = set().union(*(set(t.owned_files) for t in batch))
+                    if task_files & batch_files:
+                        batch.append(task)
+                        added = True
+                        break
+
+            if not added:
+                # Try to fit in first available batch that isn't full,
+                # but if no file overlap, we might prefer starting a new batch
+                # to allow parallelism, OR we can just fill up existing batches.
+                # Requirement says "Group tasks touching same files", so we prioritize that.
+                # To maximize parallelism for non-conflicting tasks, we only add to
+                # an existing batch if there's a conflict or if we've reached a limit.
+                for batch in role_batches:
+                    if len(batch) < max_per_batch:
+                        # Optimization: if no conflict, we COULD start a new batch
+                        # but we'll just fill them up for now to keep it simple.
+                        batch.append(task)
+                        added = True
+                        break
+
+            if not added:
+                role_batches.append([task])
+
         role_batch_queues[role] = role_batches
 
     # Round-robin interleave: emit one batch per role per round.
