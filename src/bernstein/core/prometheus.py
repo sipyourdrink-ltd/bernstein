@@ -15,6 +15,7 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 
 from prometheus_client import (
@@ -25,16 +26,21 @@ from prometheus_client import (
     generate_latest,
 )
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
+    "agent_spawn_duration",
     "agents_active",
     "cost_usd_by_model_total",
     "cost_usd_total",
     "evolution_errors_by_type",
     "evolve_proposals_total",
     "generate_latest",
+    "merge_duration",
     "registry",
     "task_duration_seconds",
     "task_queue_depth",
+    "tasks_active",
     "tasks_total",
     "update_metrics_from_status",
 ]
@@ -53,7 +59,14 @@ registry: CollectorRegistry = CollectorRegistry(auto_describe=True)
 tasks_total: Counter = Counter(
     "bernstein_tasks_total",
     "Total tasks by terminal or active status.",
-    labelnames=["status"],
+    labelnames=["status", "role"],
+    registry=registry,
+)
+
+tasks_active: Gauge = Gauge(
+    "bernstein_tasks_active",
+    "Number of currently active (claimed/in_progress) tasks.",
+    labelnames=["role"],
     registry=registry,
 )
 
@@ -74,19 +87,36 @@ task_duration_seconds: Histogram = Histogram(
     "bernstein_task_duration_seconds",
     "Task completion time in seconds.",
     buckets=(10, 30, 60, 120, 300, 600, 1800, 3600),
+    labelnames=["status", "role"],
+    registry=registry,
+)
+
+agent_spawn_duration: Histogram = Histogram(
+    "bernstein_agent_spawn_duration_seconds",
+    "Time taken to spawn an agent subprocess.",
+    buckets=(1, 2, 5, 10, 20, 30),
+    labelnames=["adapter"],
+    registry=registry,
+)
+
+merge_duration: Histogram = Histogram(
+    "bernstein_merge_duration_seconds",
+    "Time taken to merge task work into main.",
+    buckets=(1, 2, 5, 10, 20, 30, 60),
     registry=registry,
 )
 
 cost_usd_total: Counter = Counter(
     "bernstein_cost_usd_total",
     "Total API cost in USD.",
+    labelnames=["adapter"],
     registry=registry,
 )
 
 cost_usd_by_model_total: Counter = Counter(
     "bernstein_cost_usd_by_model_total",
     "Total API cost in USD, partitioned by model.",
-    labelnames=["model"],
+    labelnames=["model", "adapter"],
     registry=registry,
 )
 
@@ -124,18 +154,39 @@ def update_metrics_from_status(status_data: dict[str, Any]) -> None:
         status_data: The parsed JSON body returned by ``GET /status``.
             Expected keys: ``open``, ``claimed``, ``done``, ``failed``,
             ``total_cost_usd``, and optionally ``per_role`` (list of dicts
-            with ``role``, ``open``, ``claimed`` keys for agent tracking).
+            with ``role``, ``open``, ``claimed``, ``done``, ``failed`` keys).
     """
     global _prev_cost, _prev_cost_by_model
 
-    # -- Task counters -------------------------------------------------------
-    for status_key in ("open", "claimed", "done", "failed"):
-        current: float = float(status_data.get(status_key, 0))
-        prev: float = _prev_tasks.get(status_key, 0.0)
+    # -- Task counters and gauges --------------------------------------------
+    per_role: list[dict[str, Any]] = status_data.get("per_role", [])
+
+    for role_entry in per_role:
+        role = str(role_entry.get("role", "unknown"))
+
+        # Terminal status counters (cumulative)
+        for status_key in ("done", "failed"):
+            current = float(role_entry.get(status_key, 0))
+            prev_key = f"{role}:{status_key}"
+            prev = _prev_tasks.get(prev_key, 0.0)
+            delta = current - prev
+            if delta > 0:
+                tasks_total.labels(status=status_key, role=role).inc(delta)
+            _prev_tasks[prev_key] = current
+
+        # Active status gauges (current state)
+        claimed = float(role_entry.get("claimed", 0))
+        tasks_active.labels(role=role).set(claimed)
+        agents_active.labels(role=role).set(claimed)
+
+    # Global counters (backward compat or for total overview)
+    for status_key in ("done", "failed"):
+        current = float(status_data.get(status_key, 0))
+        prev = _prev_tasks.get(f"total:{status_key}", 0.0)
         delta = current - prev
         if delta > 0:
-            tasks_total.labels(status=status_key).inc(delta)
-        _prev_tasks[status_key] = current
+            tasks_total.labels(status=status_key, role="all").inc(delta)
+        _prev_tasks[f"total:{status_key}"] = current
 
     # -- Queue depth gauge (for HPA) -----------------------------------------
     queue_depth: float = float(status_data.get("open", 0))
@@ -145,7 +196,7 @@ def update_metrics_from_status(status_data: dict[str, Any]) -> None:
     current_cost: float = float(status_data.get("total_cost_usd", 0.0))
     cost_delta = current_cost - _prev_cost
     if cost_delta > 0:
-        cost_usd_total.inc(cost_delta)
+        cost_usd_total.labels(adapter="total").inc(cost_delta)
     _prev_cost = current_cost
 
     # -- Cost by model counter ----------------------------------------------
@@ -161,13 +212,5 @@ def update_metrics_from_status(status_data: dict[str, Any]) -> None:
         previous_model_cost = _prev_cost_by_model.get(model_name, 0.0)
         delta_model_cost = current_model_cost - previous_model_cost
         if delta_model_cost > 0:
-            cost_usd_by_model_total.labels(model=model_name).inc(delta_model_cost)
+            cost_usd_by_model_total.labels(model=model_name, adapter="unknown").inc(delta_model_cost)
         _prev_cost_by_model[model_name] = current_model_cost
-
-    # -- Active-agent gauges -------------------------------------------------
-    # Derive active-agent counts from per_role claimed tasks as a proxy.
-    per_role: list[dict[str, Any]] = status_data.get("per_role", [])
-    for role_entry in per_role:
-        role: str = str(role_entry.get("role", "unknown"))
-        claimed_count: float = float(role_entry.get("claimed", 0))
-        agents_active.labels(role=role).set(claimed_count)

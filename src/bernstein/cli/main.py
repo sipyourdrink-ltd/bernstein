@@ -596,6 +596,7 @@ def cli(
         skip_gate_reason=None,
         audit=False,
         ab_test=False,
+        dry_run=False,
     )
 
 

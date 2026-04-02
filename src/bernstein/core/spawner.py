@@ -24,6 +24,8 @@ from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import AgentSession, IsolationMode, ModelConfig, Task
 from bernstein.core.orchestrator import ShutdownInProgress
+from bernstein.core.process_utils import is_process_alive as _shared_is_process_alive
+from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
@@ -1017,6 +1019,7 @@ class AgentSpawner:
                     break
 
                 try:
+                    spawn_start = time.perf_counter()
                     if self._sandbox is not None:
                         result = self._spawn_in_sandbox(
                             session_id=session_id,
@@ -1045,6 +1048,8 @@ class AgentSpawner:
                             session_id=session_id,
                             mcp_config=effective_mcp,
                         )
+                    spawn_duration = time.perf_counter() - spawn_start
+                    agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)
                     session.provider = (
                         provider_name
                         if provider_name is not None
@@ -1627,7 +1632,9 @@ class AgentSpawner:
         merge_result: MergeResult | None = None
         if worktree_path is not None and worktree_mgr is not None:
             if not skip_merge:
+                merge_start = time.perf_counter()
                 merge_result = self._merge_worktree_branch(session.id, repo_root=worktree_root)
+                merge_duration.observe(time.perf_counter() - merge_start)
                 # Push merged work to remote so nothing is lost
                 if merge_result and merge_result.success:
                     from bernstein.core.git_ops import safe_push

@@ -220,6 +220,7 @@ class Task:
     eu_ai_act_risk: Literal["minimal", "limited", "high", "unacceptable"] = "minimal"
     approval_required: bool = False  # Pause after completion until explicitly approved
     risk_level: Literal["low", "medium", "high", "critical"] = "low"  # Risk for approval workflow routing
+    sensitivity: Literal["public", "internal", "confidential"] = "internal"  # Data classification level
     created_at: float = field(default_factory=time.time)
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
