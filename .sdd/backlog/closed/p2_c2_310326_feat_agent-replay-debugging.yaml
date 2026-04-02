@@ -1,0 +1,50 @@
+---
+id: "W7-09"
+title: "Agent Replay Debugging"
+status: open
+type: feature
+priority: 2
+scope: medium
+complexity: medium
+role: backend
+model: auto
+effort: normal
+estimated_minutes: 45
+depends_on: []
+blocks: []
+tags: ["dx", "developer-experience"]
+janitor_signals: []
+context_files: []
+affected_paths: []
+max_tokens: null
+require_review: false
+require_human_approval: false
+---
+
+## Summary
+
+Replay a failed agent session with modified prompt or different model.
+
+## Objective & Definition of Done
+
+1. `bernstein replay <task_id>` re-runs the exact same task
+2. `bernstein replay <task_id> --model opus` replays with different model
+3. `bernstein replay <task_id> --extra-context "hint: use the Foo class"` adds hint
+4. Diff: compare replay result with original
+5. Useful for debugging why an agent failed
+
+## Steps
+
+1. Read relevant source files
+2. Implement the feature
+3. Add/update unit tests
+4. Run `uv run ruff check src/` and `uv run pytest tests/unit/ -x -q`
+
+## Tests & Verification
+
+- `uv run ruff check src/bernstein/`
+- `uv run pytest tests/unit/ -x -q`
+
+## Agent Notes
+
+<!-- Reserved for implementing agent -->

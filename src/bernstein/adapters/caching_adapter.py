@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
-from bernstein.core.prompt_caching import PromptCachingManager
+from bernstein.core.prompt_caching import (
+    CacheBreakEvent,
+    CacheBreakReason,
+    PromptCachingManager,
+)
 from bernstein.core.semantic_cache import ResponseCacheManager
 
 if TYPE_CHECKING:
@@ -22,7 +27,7 @@ class CachingAdapter(CLIAdapter):
 
     Intercepts spawn calls to:
     - Extract and deduplicate system prompt prefixes
-    - Track cache metadata
+    - Track cache break events
     - Skip spawn if a verified response hit is found (Cosine >= 0.95)
 
     Args:
@@ -34,7 +39,24 @@ class CachingAdapter(CLIAdapter):
     def __init__(self, inner_adapter: CLIAdapter, workdir: Path, ttl_seconds: int = 3600) -> None:
         self._inner = inner_adapter
         self._caching_mgr = PromptCachingManager(workdir)
+        self._cache_break_path = workdir / ".sdd" / "metrics" / "cache_breaks.jsonl"
         self._response_cache = ResponseCacheManager(workdir, ttl_seconds=float(ttl_seconds))
+
+    def _record_cache_break(self, event: CacheBreakEvent) -> None:
+        """Append a cache break event to the JSONL file.
+
+        Args:
+            event: The cache break event to record.
+        """
+        self._cache_break_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._cache_break_path, "a") as f:
+            f.write(event.to_json_line() + "\n")
+        logger.info(
+            "Cache break: reason=%s, key=%s, delta_tokens=%s",
+            event.reason.value,
+            event.new_cache_key[:8],
+            event.estimated_token_delta,
+        )
 
     def spawn(
         self,
@@ -61,6 +83,21 @@ class CachingAdapter(CLIAdapter):
         """
         # 1. Prompt prefix caching (Anthropic-style)
         cache_res = self._caching_mgr.process_prompt(prompt)
+
+        # 2. Emit cache break event when prefix is new
+        if cache_res.is_new_prefix:
+            event = CacheBreakEvent(
+                timestamp=time.time(),
+                reason=CacheBreakReason.SYSTEM,
+                old_cache_key=None,
+                new_cache_key=cache_res.cache_key,
+                estimated_token_delta=cache_res.prefix_tokens,
+                session_id=session_id,
+                model_name=getattr(model_config, "model_name", ""),
+                provider_name=getattr(model_config, "provider", ""),
+            )
+            self._record_cache_break(event)
+
         logger.debug(
             "Prompt cache: key=%s, is_new=%s, hit_count=%s, reuse_savings=%s%%",
             cache_res.cache_key[:8],
@@ -70,7 +107,7 @@ class CachingAdapter(CLIAdapter):
         )
         self._caching_mgr.save_manifest()
 
-        # 2. Response caching (Skip execution)
+        # 3. Response caching (Skip execution)
         # Use first 100 chars as title heuristic for the task key
         key = self._response_cache.task_key(
             role=self._inner.name(),
@@ -92,7 +129,7 @@ class CachingAdapter(CLIAdapter):
                 log_path=workdir / f"{session_id}.log",
             )
 
-        # 3. Cache miss: delegate to inner adapter
+        # 4. Cache miss: delegate to inner adapter
         return self._inner.spawn(
             prompt=prompt,
             workdir=workdir,

@@ -173,7 +173,7 @@ class ScratchpadManager:
         self.create_scratchpad()
         return self
 
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    def __exit__(self, _exc_type: Any, _exc_val: Any, _exc_tb: Any) -> None:
         """Context manager exit."""
         if self._auto_cleanup:
             self.cleanup()

@@ -94,6 +94,7 @@ def _patch(path: str, data: dict[str, Any]) -> dict[str, Any] | None:  # type: i
 class BernsteinApp(App[None]):
     """The central Bernstein TUI application."""
 
+    TITLE = "Bernstein"
     CSS_PATH: ClassVar[str] = "styles.tcss"  # type: ignore[assignment]
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -222,6 +223,33 @@ class BernsteinApp(App[None]):
         from bernstein.tui.help_screen import HelpScreen
 
         self.push_screen(HelpScreen())
+
+    @staticmethod
+    def _count_active_agents() -> int:
+        """Count active agents recorded in the local runtime snapshot.
+
+        Returns:
+            Number of active agent entries with a PID in `.sdd/runtime/agents.json`.
+        """
+        agents_file = Path(".sdd/runtime/agents.json")
+        if not agents_file.exists():
+            return 0
+
+        try:
+            data = json.loads(agents_file.read_text())
+        except Exception:
+            return 0
+        if not isinstance(data, list):
+            return 0
+        items = cast("list[object]", data)
+        count = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            agent = cast("dict[str, object]", item)
+            if agent.get("pid"):
+                count += 1
+        return count
 
 
 def _kill_agent(session_id: str) -> bool:  # type: ignore[reportUnusedFunction]

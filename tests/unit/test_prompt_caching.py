@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock
@@ -10,6 +11,8 @@ from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.caching_adapter import CachingAdapter
 from bernstein.core.models import ModelConfig
 from bernstein.core.prompt_caching import (
+    CacheBreakEvent,
+    CacheBreakReason,
     CacheEntry,
     CacheManifest,
     PromptCachingManager,
@@ -539,3 +542,144 @@ def test_make_prompt_cache_key_multiple_files() -> None:
 
         assert k1 == k2  # sorted by path, so order-independent
         assert len(k1) == 64
+
+
+# ---------------------------------------------------------------------------
+# CacheBreakEvent
+# ---------------------------------------------------------------------------
+
+
+def test_cache_break_event_roundtrip() -> None:
+    """Cache break event serializes and deserializes cleanly."""
+    event = CacheBreakEvent(
+        timestamp=1234567890.0,
+        reason=CacheBreakReason.SYSTEM,
+        old_cache_key="old_key_123",
+        new_cache_key="new_key_456",
+        estimated_token_delta=150,
+        session_id="session-abc",
+        model_name="claude-sonnet-4-20250514",
+        provider_name="anthropic",
+    )
+    data = event.to_dict()
+    assert data["reason"] == "system"
+    assert data["model_name"] == "claude-sonnet-4-20250514"
+
+    restored = CacheBreakEvent.from_dict(data)
+    assert restored.reason == CacheBreakReason.SYSTEM
+    assert restored.model_name == "claude-sonnet-4-20250514"
+
+
+def test_cache_break_event_json_line() -> None:
+    """JSON line serialization is valid JSON."""
+    event = CacheBreakEvent(
+        timestamp=1234567890.0,
+        reason=CacheBreakReason.TOOLS,
+        old_cache_key=None,
+        new_cache_key="key_123",
+        estimated_token_delta=200,
+        session_id="sess-1",
+    )
+    line = event.to_json_line()
+    parsed = json.loads(line)
+    assert parsed["reason"] == "tools"
+    assert parsed["old_cache_key"] is None
+
+
+def test_all_cache_break_reasons_roundtrip() -> None:
+    """Every CacheBreakReason survives serialization."""
+    for reason in CacheBreakReason:
+        event = CacheBreakEvent(
+            timestamp=0.0,
+            reason=reason,
+            old_cache_key=None,
+            new_cache_key="x",
+            estimated_token_delta=0,
+            session_id="s",
+        )
+        restored = CacheBreakEvent.from_dict(event.to_dict())
+        assert restored.reason == reason
+
+
+def test_prompt_process_result_includes_new_fields() -> None:
+    """PromptProcessResult includes first_seen and prefix_tokens."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = PromptCachingManager(Path(tmpdir))
+        prompt = "You are a backend engineer.\n\n## Assigned tasks\n"
+        result = mgr.process_prompt(prompt)
+        assert result.is_new_prefix
+        assert result.prefix_tokens > 0
+        assert result.first_seen is not None
+        assert isinstance(result.first_seen, float)
+
+
+def test_cache_break_event_emitted_on_new_prefix(tmp_path: Path) -> None:
+    """CachingAdapter writes a cache break event when encountering a new prefix."""
+    inner = Mock(spec=CLIAdapter)
+    inner.name.return_value = "backend"
+    inner.spawn.return_value = SpawnResult(pid=42, log_path=tmp_path / "test.log")
+
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    adapter = CachingAdapter(inner, workdir)
+
+    model_cfg = Mock(spec=ModelConfig)
+    model_cfg.model_name = "claude-sonnet-4-20250514"
+    model_cfg.provider = "anthropic"
+
+    prompt = "You are a QA engineer.\n\n## Assigned tasks\n"
+    result = adapter.spawn(
+        prompt=prompt,
+        workdir=tmp_path,
+        model_config=model_cfg,
+        session_id="sess-qa-001",
+    )
+
+    assert result.pid == 42  # went to inner adapter
+
+    break_file = workdir / ".sdd" / "metrics" / "cache_breaks.jsonl"
+    assert break_file.exists()
+    import json
+
+    lines = break_file.read_text().strip().splitlines()
+    assert len(lines) == 1
+    event_data = json.loads(lines[0])
+    assert event_data["reason"] == "system"
+    assert event_data["session_id"] == "sess-qa-001"
+    assert event_data["model_name"] == "claude-sonnet-4-20250514"
+
+
+def test_no_cache_break_event_on_cache_hit(tmp_path: Path) -> None:
+    """CachingAdapter does NOT emit a cache break event when prefix is reused."""
+    inner = Mock(spec=CLIAdapter)
+    inner.name.return_value = "backend"
+    inner.spawn.return_value = SpawnResult(pid=42, log_path=tmp_path / "test.log")
+
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    adapter = CachingAdapter(inner, workdir)
+
+    model_cfg = Mock(spec=ModelConfig)
+    model_cfg.model_name = "claude-sonnet-4-20250514"
+    model_cfg.provider = "anthropic"
+
+    prompt = "You are a backend engineer.\n\n## Assigned tasks\n"
+    # First call: NEW prefix (emit break event)
+    adapter.spawn(
+        prompt=prompt,
+        workdir=tmp_path,
+        model_config=model_cfg,
+        session_id="sess-1",
+    )
+
+    # Second call: SAME prefix (cache HIT, no break event)
+    adapter.spawn(
+        prompt=prompt,
+        workdir=tmp_path,
+        model_config=model_cfg,
+        session_id="sess-2",
+    )
+
+    break_file = workdir / ".sdd" / "metrics" / "cache_breaks.jsonl"
+    lines = break_file.read_text().strip().splitlines()
+    assert len(lines) == 1  # Only the first call emitted a break

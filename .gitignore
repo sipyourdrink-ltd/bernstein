@@ -1,48 +1,61 @@
-# Python
+# Python bytecode and distribution
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
-.venv/
 dist/
 build/
 
-# Environment
-.env
-.env.local
-.env.*
+# Python environments
+.venv/
 
-# IDE / AI tooling
+# Environment variables
+.env
+.env.*
+.env.local
+
+# IDE and Editor directories/files
 .DS_Store
 .idea/
 .vscode/
-.claude/
 *.swp
 
+# AI/assistant/Claude-specific tooling
+.claude/
+
+# Package and dependency caches
+node_modules/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 # Bernstein workspace state (bootstrapped on first run)
-.sdd/
+.sdd/backlog/deferred/
+.sdd/backlog/done/
+.sdd/backlog/manual
+!.sdd/backlog/manual/manual-orchestration
+.sdd/caching/response_cache.jsonl
 
 # Proprietary: agent role prompts, design specs, development plans
 templates/roles/
 docs/specs/
 docs/plans/
 
-# Cache
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-
-# Coverage
-.coverage
+# Project/Repository-specific generated or log files
+*.pid
+*.log
 
 # Git worktrees
 .worktrees/
 
-# Other
-node_modules/
-*.pid
-*.log
+# Coverage reports
+.coverage
+
+# Documentation and content
 docs/social/
 docs/content-calendar.md
-marketing/*
 docs/research*
+
+# Marketing
+marketing/*
+.sdd/decisions/launch-plan.md
