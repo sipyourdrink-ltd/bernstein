@@ -37,6 +37,7 @@ class MockTask:
         self.task_type = MockTaskType()
         self.model = "sonnet"
         self.effort = "high"
+        self.max_output_tokens = None
         self.completion_signals = []
 
 

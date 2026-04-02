@@ -255,6 +255,7 @@ class Task:
     approval_required: bool = False  # Pause after completion until explicitly approved
     risk_level: Literal["low", "medium", "high", "critical"] = "low"  # Risk for approval workflow routing
     sensitivity: Literal["public", "internal", "confidential"] = "internal"  # Data classification level
+    max_output_tokens: int | None = None  # Escalated limit for model output
     created_at: float = field(default_factory=time.time)
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
@@ -327,6 +328,7 @@ class Task:
             eu_ai_act_risk=raw.get("eu_ai_act_risk", "minimal"),
             approval_required=bool(raw.get("approval_required", False)),
             risk_level=raw.get("risk_level", "low"),
+            max_output_tokens=raw.get("max_output_tokens"),
             created_at=raw.get("created_at", time.time()),
             progress_log=list(raw.get("progress_log", [])),
             version=raw.get("version", 1),
