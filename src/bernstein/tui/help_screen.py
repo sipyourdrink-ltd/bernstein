@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Static
@@ -48,10 +48,10 @@ class HelpScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         """Populate the help table on mount."""
-        table = self.query_one("#help-table", DataTable)
+        table = self.query_one("#help-table", DataTable[Any])
         table.add_columns("Key", "Action")
 
-        shortcuts = [
+        shortcuts: list[tuple[str, str]] = [
             ("q", "Quit"),
             ("r", "Refresh"),
             ("S", "Hard stop"),

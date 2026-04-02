@@ -31,7 +31,7 @@ class RouteDecision:
     adapter: str
     model: str
     effort: str
-    reasons: list[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)  # type: ignore[reportUnknownVariableType]
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -171,7 +171,7 @@ def format_routing_reasons(
     Returns:
         List of reason strings.
     """
-    reasons = []
+    reasons: list[str] = []
 
     # Complexity-based reasoning
     if complexity == "high":

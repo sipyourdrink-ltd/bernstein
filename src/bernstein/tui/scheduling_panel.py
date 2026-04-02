@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from textual.widgets import DataTable
 
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-class SchedulingPanel(DataTable):
+class SchedulingPanel(DataTable[Any]):
     """DataTable showing scheduling decisions.
 
     Columns: Task | → Agent | Model | Reason
@@ -51,23 +51,23 @@ class SchedulingPanel(DataTable):
 
         self.clear()
 
-        decisions = []
+        decisions: list[dict[str, Any]] = []
         with filepath.open("r", encoding="utf-8") as f:
             for line in f:
                 if not line.strip():
                     continue
                 try:
-                    data = json.loads(line)
+                    data = cast("dict[str, Any]", json.loads(line))
                     decisions.append(data)
                 except json.JSONDecodeError:
                     continue
 
         # Show most recent first
         for decision in reversed(decisions[-limit:]):
-            task_id = decision.get("task_id", "unknown")
-            adapter = decision.get("adapter", "unknown")
-            model = f"{decision.get('model', 'unknown')}/{decision.get('effort', '?')}"
-            reasons = decision.get("reasons", [])
+            task_id = cast("str", decision.get("task_id", "unknown"))
+            adapter = cast("str", decision.get("adapter", "unknown"))
+            model = f"{cast('str', decision.get('model', 'unknown'))}/{cast('str', decision.get('effort', '?'))}"
+            reasons = cast("list[str]", decision.get("reasons", []))
             reason = "; ".join(reasons[:2]) if reasons else ""
 
             self.add_row(task_id, adapter, model, reason)

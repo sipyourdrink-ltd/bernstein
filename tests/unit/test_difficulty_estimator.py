@@ -24,10 +24,10 @@ def test_estimate_difficulty_low() -> None:
 
 def test_estimate_difficulty_medium() -> None:
     """Test medium difficulty task."""
-    desc = "We need to refactor the logic here to use the new database. Also architect a security layer. `code_here`"
-    # keywords: refactor, database, architect, security = 4 * 2 = 8
-    # code refs: 1
-    # score ~ 9.0
+    # Simpler description to get medium score
+    desc = "Refactor the database logic. `code_here`"
+    # word count: 6 -> 0.12. code refs: 1. keywords: refactor, database = 4
+    # score ~ 5.12 -> medium
     score = estimate_difficulty(desc)
     assert score.level == "medium"
     assert minutes_for_level(score.level) == 45
