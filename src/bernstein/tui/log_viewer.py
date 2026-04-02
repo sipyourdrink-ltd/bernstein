@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from typing import TYPE_CHECKING
 
-from rich.console import Console, ConsoleOptions, RenderResult
-from rich.segment import Segment
-from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
 
+if TYPE_CHECKING:
+    from rich.console import Console, ConsoleOptions, RenderResult
 
 # Pattern to match fenced code blocks in logs
 CODE_BLOCK_PATTERN = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from textual.events import Key
+from typing import TYPE_CHECKING
+
 from textual.widgets import Input
+
+if TYPE_CHECKING:
+    from textual.events import Key
 
 
 class TaskSearchInput(Input):

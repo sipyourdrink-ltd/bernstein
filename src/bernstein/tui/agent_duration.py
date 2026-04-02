@@ -16,7 +16,7 @@ def format_agent_duration(start_time: float) -> str:
         Formatted duration string (e.g., "2m 34s" or "1h 07m").
     """
     elapsed = time.time() - start_time
-    delta = timedelta(seconds=int(elapsed))
+    timedelta(seconds=int(elapsed))
 
     hours, remainder = divmod(int(elapsed), 3600)
     minutes, seconds = divmod(remainder, 60)

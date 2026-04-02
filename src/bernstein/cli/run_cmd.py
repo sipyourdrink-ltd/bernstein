@@ -143,7 +143,7 @@ def _show_dry_run_plan(
 
     # Fetch open tasks from server
     try:
-        resp = httpx.get(f"http://127.0.0.1:8052/tasks?status=open", timeout=5.0)
+        resp = httpx.get("http://127.0.0.1:8052/tasks?status=open", timeout=5.0)
         resp.raise_for_status()
         tasks_data = resp.json()
     except httpx.ConnectError:

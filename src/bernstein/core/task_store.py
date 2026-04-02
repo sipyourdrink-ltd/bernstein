@@ -129,6 +129,7 @@ class TaskCreateRequest(Protocol):
     scope: str
     complexity: str
     estimated_minutes: int | None
+
     @property
     def depends_on(self) -> Sequence[str]: ...
 
@@ -247,9 +248,7 @@ class TaskStore:
             if metrics_jsonl_path is not None
             else jsonl_path.parent.parent / "metrics" / "tasks.jsonl"
         )
-        self._sdd_dir: Path = (
-            jsonl_path.parent.parent if jsonl_path.parent.name == "runtime" else jsonl_path.parent
-        )
+        self._sdd_dir: Path = jsonl_path.parent.parent if jsonl_path.parent.name == "runtime" else jsonl_path.parent
         self._lock: asyncio.Lock = asyncio.Lock()
         self._write_buffer: list[str] = []
         self._dirty: bool = False
@@ -594,8 +593,7 @@ class TaskStore:
             return True
         if not task.depends_on:
             return any(
-                done_task.repo == task.depends_on_repo
-                for done_task in self._by_status[TaskStatus.DONE].values()
+                done_task.repo == task.depends_on_repo for done_task in self._by_status[TaskStatus.DONE].values()
             )
         return all(
             (self._tasks.get(dep_id) is not None and self._tasks[dep_id].repo == task.depends_on_repo)
@@ -690,10 +688,7 @@ class TaskStore:
                 if mismatched:
                     raise HTTPException(
                         status_code=422,
-                        detail=(
-                            "depends_on_repo does not match dependency repo for task(s): "
-                            + ", ".join(mismatched)
-                        ),
+                        detail=("depends_on_repo does not match dependency repo for task(s): " + ", ".join(mismatched)),
                     )
             self._tasks[task.id] = task
             self._index_add(task)
