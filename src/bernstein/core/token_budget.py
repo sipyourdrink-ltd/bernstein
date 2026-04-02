@@ -86,12 +86,14 @@ class TokenGrowthMonitor:
         token_history: List of token counts per turn.
         growth_rate: Current growth rate.
         intervention_triggered: Whether intervention was triggered.
+        compaction_fail_count: Consecutive compaction failures.
     """
 
     session_id: str
     token_history: list[int] = field(default_factory=list[int])
     growth_rate: float = 0.0
     intervention_triggered: bool = False
+    compaction_fail_count: int = 0
 
     def record_turn(self, tokens: int) -> None:
         """Record token count for a turn.
@@ -108,6 +110,20 @@ class TokenGrowthMonitor:
             # Check for intervention
             if not self.intervention_triggered:
                 self._check_intervention()
+
+    def record_compaction_failure(self) -> None:
+        """Record a compaction failure and potentially open the circuit breaker."""
+        self.compaction_fail_count += 1
+        logger.warning(
+            "Session %s: Compaction failure recorded (total=%d)",
+            self.session_id,
+            self.compaction_fail_count,
+        )
+
+    def record_compaction_success(self) -> None:
+        """Record a successful compaction and reset the failure counter."""
+        self.compaction_fail_count = 0
+        self.intervention_triggered = False
 
     def _calculate_growth_rate(self) -> None:
         """Calculate token growth rate over recent turns."""
@@ -140,7 +156,19 @@ class TokenGrowthMonitor:
             self.intervention_triggered = True
 
     def should_compact(self) -> bool:
-        """Return whether session should be compacted."""
+        """Return whether session should be compacted.
+
+        Circuit breaker opens after 3 consecutive failures.
+        """
+        if self.compaction_fail_count >= 3:
+            if self.intervention_triggered:
+                logger.error(
+                    "Session %s: Compaction circuit breaker OPEN after %d failures. Skipping compaction.",
+                    self.session_id,
+                    self.compaction_fail_count,
+                )
+            return False
+
         return self.intervention_triggered
 
     def get_summary(self) -> dict[str, Any]:
