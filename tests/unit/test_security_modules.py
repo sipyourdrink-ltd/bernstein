@@ -5,9 +5,14 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+from httpx import ASGITransport, AsyncClient
+
 from bernstein.core.ip_allowlist import check_ip_allowed
-from bernstein.core.jwt_tokens import JWTManager, JWTPayload
+from bernstein.core.jwt_tokens import JWTManager
 from bernstein.core.models import Task
+from bernstein.core.seed import NetworkConfig, SeedConfig
+from bernstein.core.server import create_app
 
 
 class TestIPAllowlist:
@@ -30,6 +35,52 @@ class TestIPAllowlist:
     def test_check_ip_allowed_empty_list(self) -> None:
         """Test with empty allowlist."""
         assert check_ip_allowed("10.0.0.5", []) is False
+
+    @pytest.mark.anyio
+    async def test_middleware_allows_seed_allowlisted_ip(self, tmp_path: Path) -> None:
+        """Test seed-configured CIDRs are enforced by the canonical middleware."""
+        app = create_app(jsonl_path=tmp_path / "tasks.jsonl")
+        app.state.seed_config = SeedConfig(goal="Test", network=NetworkConfig(allowed_ips=("10.0.0.0/8",)))
+        transport = ASGITransport(app=app, client=("10.2.3.4", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/tasks")
+        assert response.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_middleware_blocks_disallowed_ip(self, tmp_path: Path) -> None:
+        """Test non-allowlisted IPs are rejected on protected routes."""
+        app = create_app(jsonl_path=tmp_path / "tasks.jsonl")
+        app.state.seed_config = SeedConfig(goal="Test", network=NetworkConfig(allowed_ips=("10.0.0.0/8",)))
+        transport = ASGITransport(app=app, client=("203.0.113.9", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/tasks")
+        assert response.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_middleware_trusts_forwarded_headers_only_from_loopback(self, tmp_path: Path) -> None:
+        """Test X-Forwarded-For is honored only for trusted local proxies."""
+        app = create_app(jsonl_path=tmp_path / "tasks.jsonl")
+        app.state.seed_config = SeedConfig(goal="Test", network=NetworkConfig(allowed_ips=("10.0.0.0/8",)))
+
+        trusted_transport = ASGITransport(app=app, client=("127.0.0.1", 123))
+        async with AsyncClient(transport=trusted_transport, base_url="http://test") as client:
+            response = await client.get("/tasks", headers={"X-Forwarded-For": "10.2.3.4"})
+        assert response.status_code == 200
+
+        untrusted_transport = ASGITransport(app=app, client=("203.0.113.9", 123))
+        async with AsyncClient(transport=untrusted_transport, base_url="http://test") as client:
+            response = await client.get("/tasks", headers={"X-Forwarded-For": "10.2.3.4"})
+        assert response.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_middleware_allows_public_path(self, tmp_path: Path) -> None:
+        """Test public endpoints bypass the allowlist."""
+        app = create_app(jsonl_path=tmp_path / "tasks.jsonl")
+        app.state.seed_config = SeedConfig(goal="Test", network=NetworkConfig(allowed_ips=("10.0.0.0/8",)))
+        transport = ASGITransport(app=app, client=("203.0.113.9", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/health")
+        assert response.status_code == 200
 
 
 class TestJWTManager:

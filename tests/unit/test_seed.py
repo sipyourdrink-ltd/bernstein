@@ -147,6 +147,12 @@ class TestParseSeedValid:
         assert cfg.test_agent.model == "gpt-5.4-mini"
         assert cfg.test_agent.trigger == "on_task_complete"
 
+    def test_network_config_parsed(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nnetwork:\n  allowed_ips: ["10.0.0.0/8", "192.168.1.0/24"]\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.network is not None
+        assert cfg.network.allowed_ips == ("10.0.0.0/8", "192.168.1.0/24")
+
 
 # ---------------------------------------------------------------------------
 # parse_seed — invalid inputs
@@ -218,6 +224,16 @@ class TestParseSeedInvalid:
     def test_invalid_test_agent_trigger_raises(self, seed_file: Path) -> None:
         seed_file.write_text('goal: "T"\ntest_agent:\n  trigger: on_start\n')
         with pytest.raises(SeedError, match="on_task_complete"):
+            parse_seed(seed_file)
+
+    def test_invalid_network_shape_raises(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nnetwork: "10.0.0.0/8"\n')
+        with pytest.raises(SeedError, match="network must be a mapping"):
+            parse_seed(seed_file)
+
+    def test_invalid_network_cidr_raises(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "T"\nnetwork:\n  allowed_ips: ["not-a-cidr"]\n')
+        with pytest.raises(SeedError, match="invalid CIDR"):
             parse_seed(seed_file)
 
 

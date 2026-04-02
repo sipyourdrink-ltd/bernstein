@@ -6,6 +6,7 @@ initial manager Task that kicks off orchestration.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 from dataclasses import dataclass, field
@@ -265,6 +266,31 @@ def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
         if all(isinstance(s, str) for s in items):
             return tuple(str(s) for s in items)
     raise SeedError(f"{field_name} must be a list of strings, got: {raw!r}")
+
+
+def _parse_network_config(raw: object) -> NetworkConfig | None:
+    """Parse the optional network config block from ``bernstein.yaml``.
+
+    Args:
+        raw: Raw YAML value for the ``network`` section.
+
+    Returns:
+        Parsed network config, or ``None`` when the section is absent.
+
+    Raises:
+        SeedError: If the network section is malformed or contains invalid CIDRs.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError(f"network must be a mapping, got: {type(raw).__name__}")
+    allowed_ips = _parse_string_list(raw.get("allowed_ips"), "network.allowed_ips")
+    for ip_range in allowed_ips:
+        try:
+            ipaddress.ip_network(ip_range, strict=False)
+        except ValueError as exc:
+            raise SeedError(f"network.allowed_ips contains invalid CIDR {ip_range!r}") from exc
+    return NetworkConfig(allowed_ips=allowed_ips)
 
 
 def _parse_tenants(raw: object) -> tuple[TenantConfig, ...]:
@@ -1071,15 +1097,7 @@ def parse_seed(path: Path) -> SeedConfig:
 
     bridges = _parse_bridge_settings(data.get("bridges"))
 
-    # Parse network config
-    network: NetworkConfig | None = None
-    network_raw = data.get("network")
-    if network_raw is not None:
-        try:
-            allowed_ips = tuple(network_raw.get("allowed_ips", ()))
-            network = NetworkConfig(allowed_ips=allowed_ips)
-        except (AttributeError, TypeError):
-            pass  # Skip invalid network config
+    network = _parse_network_config(data.get("network"))
 
     tenants = _parse_tenants(data.get("tenants"))
 
