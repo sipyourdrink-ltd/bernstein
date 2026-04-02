@@ -61,6 +61,7 @@ from bernstein.cli.eval_benchmark_cmd import (
 )
 from bernstein.cli.evolve_cmd import evolve
 from bernstein.cli.gateway_cmd import gateway_group
+from bernstein.cli.graph_cmd import graph_group
 from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
 from bernstein.cli.manifest_cmd import manifest_group
 from bernstein.cli.memory_cmd import memory_group
@@ -619,6 +620,7 @@ cli.add_command(live)
 cli.add_command(trace_cmd, "trace")
 cli.add_command(replay_cmd, "replay")
 cli.add_command(github_group)
+cli.add_command(graph_group, "graph")
 cli.add_command(mcp_server, "mcp")
 cli.add_command(completions)
 cli.add_command(quarantine_group)
