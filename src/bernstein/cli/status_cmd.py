@@ -554,6 +554,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
 
     # 15. Installation mismatches
     from bernstein.install_check import check_installations
+
     for w in check_installations():
         _check(
             w.name,

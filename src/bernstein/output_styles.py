@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 try:
     import yaml
@@ -113,7 +116,7 @@ def load_style(path: Path) -> OutputStyle | None:
     except OSError:
         return None
 
-    fm, body = _parse_frontmatter(content)
+    fm, _body = _parse_frontmatter(content)
     name = str(fm.get("name", path.stem))
     if not name.strip():
         return None

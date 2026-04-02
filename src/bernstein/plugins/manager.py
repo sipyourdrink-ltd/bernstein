@@ -76,7 +76,7 @@ class CommandHook:
                     # Parse JSON response from stdout if present
                     if proc.stdout.strip():
                         try:
-                            response = cast(dict[str, Any], json.loads(proc.stdout))
+                            response = cast("dict[str, Any]", json.loads(proc.stdout))
                             status = str(response.get("status", ""))
                             message = str(response.get("message", ""))
                             if status == "error":
@@ -98,7 +98,7 @@ class CommandHook:
                     # Try to extract message from JSON if possible
                     if proc.stdout.strip():
                         try:
-                            response = cast(dict[str, Any], json.loads(proc.stdout))
+                            response = cast("dict[str, Any]", json.loads(proc.stdout))
                             if response.get("message"):
                                 error_detail = str(response["message"])
                         except (json.JSONDecodeError, TypeError):
