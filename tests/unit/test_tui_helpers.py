@@ -122,3 +122,56 @@ class TestWorktreeStatus:
             result = get_worktree_status(Path("/fake"))
 
             assert result is None
+
+
+def test_build_token_budget_bar_empty() -> None:
+    """Bar renders dash when no budget."""
+    from bernstein.tui.widgets import build_token_budget_bar
+
+    assert build_token_budget_bar(0, 0) == "—"
+
+
+def test_build_token_budget_bar_half() -> None:
+    """Half budget consumed renders green bar."""
+    from bernstein.tui.widgets import build_token_budget_bar
+
+    bar = build_token_budget_bar(500, 1000, width=10)
+    assert "50%" in bar
+    assert "green" in bar
+
+
+def test_build_token_budget_bar_high() -> None:
+    """High budget consumed renders yellow bar."""
+    from bernstein.tui.widgets import build_token_budget_bar
+
+    bar = build_token_budget_bar(800, 1000, width=10)
+    assert "80%" in bar
+    assert "yellow" in bar
+
+
+def test_build_token_budget_bar_full() -> None:
+    """Full budget consumed renders red bar."""
+    from bernstein.tui.widgets import build_token_budget_bar
+
+    bar = build_token_budget_bar(1000, 1000, width=10)
+    assert "100%" in bar
+    assert "red" in bar
+
+
+def test_task_row_from_api_includes_tokens() -> None:
+    """TaskRow parses tokens_used and token_budget from API response."""
+    from bernstein.tui.widgets import TaskRow
+
+    row = TaskRow.from_api({
+        "id": "abc123",
+        "status": "in_progress",
+        "role": "backend",
+        "title": "Add auth",
+        "model": "sonnet",
+        "elapsed": "2m",
+        "session_id": "sess-1",
+        "tokens_used": 4500,
+        "token_budget": 10000,
+    })
+    assert row.tokens_used == 4500
+    assert row.tokens_budget == 10000

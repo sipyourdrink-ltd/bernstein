@@ -45,6 +45,27 @@ def generate_sparkline(values: list[float], width: int = 10) -> str:
     return "".join(sparkline)
 
 
+def build_token_budget_bar(used: int, budget: int, width: int = 20) -> str:
+    """Render a token budget progress bar as a Rich markup string.
+
+    Args:
+        used: Tokens consumed so far.
+        budget: Total allocated token budget.  Zero renders '—'.
+        width: Visual width of the progress bar in characters.
+
+    Returns:
+        Rich-compatible progress bar or dash marker string.
+    """
+    if budget <= 0:
+        return "—"
+    pct = min(used / budget, 1.0)
+    filled = int(pct * width)
+    empty = width - filled
+    bar = "█" * filled + "░" * empty
+    color = "green" if pct < 0.6 else "yellow" if pct < 0.9 else "red"
+    return f"[{color}]{bar}[/{color}] {int(pct * 100):>3}%"
+
+
 # ---------------------------------------------------------------------------
 # Colour mapping for task statuses
 # ---------------------------------------------------------------------------
@@ -112,6 +133,8 @@ class TaskRow:
         model: Model name used for the task (e.g. "sonnet", "opus").
         elapsed: Elapsed time string (e.g. "1m02s") or dash if not started.
         session_id: Agent session ID, used for kill operations.
+        tokens_used: Tokens consumed so far (0 if unknown).
+        tokens_budget: Token budget allocation (0 if not set).
     """
 
     task_id: str
@@ -121,6 +144,8 @@ class TaskRow:
     model: str
     elapsed: str
     session_id: str
+    tokens_used: int = 0
+    tokens_budget: int = 0
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> TaskRow:
@@ -142,6 +167,8 @@ class TaskRow:
             model=model,
             elapsed=elapsed,
             session_id=str(raw.get("session_id", "")),
+            tokens_used=int(raw.get("tokens_used", 0) or 0),
+            tokens_budget=int(raw.get("token_budget", 0) or 0),
         )
 
 

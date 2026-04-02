@@ -351,3 +351,58 @@ class TestRunGuardrails:
         secret_result = next(r for r in results if r.check == "secret_detection")
         assert not secret_result.passed
         assert secret_result.blocked
+from pathlib import Path
+from unittest.mock import Mock
+
+from bernstein.core.guardrails import run_guardrails, GuardrailsConfig
+from bernstein.core.models import Task
+
+def test_immune_paths_always_blocked(tmp_path: Path) -> None:
+    """Modifying .sdd/ or .git/ should be blocked even if config is permissive."""
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    
+    # Very permissive config
+    config = GuardrailsConfig(
+        secrets=False,
+        scope=False,
+        file_permissions=False,
+        license_scan=False,
+    )
+    
+    task = Task(id="T1", title="Test Task", description="Testing immune paths", role="backend")
+    
+    # Try to modify .sdd/ (which is in _IMMUNE_CRITICAL_PATHS)
+    diff = "diff --git a/.sdd/backlog/closed/T1.yaml b/.sdd/backlog/closed/T1.yaml\n--- a/.sdd/backlog/closed/T1.yaml\n+++ b/.sdd/backlog/closed/T1.yaml\n@@ -1,1 +1,2 @@\n status: closed\n+extra: data"
+    
+    results = run_guardrails(diff, task, config, workdir)
+    
+    # Should find at least one blocked result for immune paths
+    immune_results = [r for r in results if r.check == "immune_path_enforcement"]
+    assert len(immune_results) == 1
+    assert not immune_results[0].passed
+    assert immune_results[0].blocked
+    assert ".sdd/backlog/closed/T1.yaml" in immune_results[0].detail
+
+def test_regular_paths_allowed_when_permissive(tmp_path: Path) -> None:
+    """Regular files should still pass if config is permissive."""
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    
+    config = GuardrailsConfig(
+        secrets=False,
+        scope=False,
+        file_permissions=False,
+        license_scan=False,
+    )
+    
+    task = Task(id="T1", title="Test Task", description="Testing regular paths", role="backend")
+    
+    diff = "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1,1 +1,2 @@\n print('hello')\n+print('world')"
+    
+    results = run_guardrails(diff, task, config, workdir)
+    
+    immune_results = [r for r in results if r.check == "immune_path_enforcement"]
+    assert len(immune_results) == 1
+    assert immune_results[0].passed
+    assert not immune_results[0].blocked

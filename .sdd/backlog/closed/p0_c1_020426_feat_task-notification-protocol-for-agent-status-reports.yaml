@@ -1,0 +1,10 @@
+---
+id: "T426"
+title: "Task notification protocol for agent status reports"
+status: closed
+type: feature
+priority: 0
+completed_at: "2026-04-02T12:00:00Z"
+---
+
+Done. Added AgentStatusNotification dataclass and post/consume methods on BulletinBoard.
