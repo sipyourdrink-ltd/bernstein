@@ -217,7 +217,7 @@ from bernstein.cli.run_cmd import (
     setup_demo_project,
     start,
 )
-from bernstein.cli.status_cmd import ps_cmd, status
+from bernstein.cli.status_cmd import commit_stats_cmd, ps_cmd, status
 
 # Re-export stop_cmd helpers used by tests and other modules
 from bernstein.cli.stop_cmd import (
@@ -656,6 +656,7 @@ cli.add_command(cost_cmd, "cost")
 cli.add_command(estimate_cmd, "estimate")
 cli.add_command(status)
 cli.add_command(ps_cmd, "ps")
+cli.add_command(commit_stats_cmd, "commit-stats")
 cli.add_command(stop)
 cli.add_command(test_adapter, "test-adapter")
 cli.add_command(run, "run")  # visible: `bernstein run [plan.yaml]`

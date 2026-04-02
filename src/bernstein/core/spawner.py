@@ -253,6 +253,7 @@ def _render_prompt(
     bulletin_summary: str = "",
     task_graph: TaskGraph | None = None,
     token_budget: int = 0,
+    meta_messages: list[str] | None = None,
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -481,6 +482,10 @@ def _render_prompt(
             logger.debug("Heartbeat instructions unavailable: %s", exc)
     if session_id:
         sections.append(_render_signal_check(session_id))
+
+    if meta_messages:
+        nudges_block = "\n## Operational nudges\n" + "\n".join(f"- {m}" for m in meta_messages) + "\n"
+        sections.append(nudges_block)
 
     return "".join(sections)
 
@@ -873,6 +878,7 @@ class AgentSpawner:
 
         # Render prompt (catalog system_prompt replaces role template when matched)
         bulletin_summary = self._bulletin.summary() if self._bulletin is not None else ""
+        meta_messages = list(tasks[0].meta_messages)
         prompt = _render_prompt(
             tasks,
             self._templates_dir,
@@ -884,6 +890,7 @@ class AgentSpawner:
             session_id=session_id,
             bulletin_summary=bulletin_summary,
             token_budget=task_token_budget,
+            meta_messages=meta_messages,
         )
 
         agent_source = catalog_agent.source if catalog_agent else "built-in"
@@ -911,6 +918,7 @@ class AgentSpawner:
             agent_source=agent_source,
             isolation=isolation_mode.value,
             token_budget=task_token_budget,
+            meta_messages=meta_messages,
         )
 
         # Determine working directory: repo-specific > worktree > shared workdir
@@ -1208,6 +1216,7 @@ class AgentSpawner:
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
 
+        meta_messages = ["This is a crash recovery session. Continue from where the previous agent left off."]
         prompt = _render_prompt(
             tasks,
             self._templates_dir,
@@ -1216,6 +1225,7 @@ class AgentSpawner:
             spawner_config=getattr(self, "_config", None),
             context_builder=self._context_builder,
             session_id=session_id,
+            meta_messages=meta_messages,
         )
         # Prepend crash recovery context
         prompt = resume_header + prompt

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re as _re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -341,3 +342,189 @@ class WorktreeManager:
                 session_ids.append(session_id)
 
         return session_ids
+
+
+# ---------------------------------------------------------------------------
+# Slug validation for worktree names (T572)
+# ---------------------------------------------------------------------------
+
+_SLUG_MAX_LEN = 64
+_SLUG_PATTERN = _re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}[a-zA-Z0-9]$|^[a-zA-Z0-9]$")
+_SLUG_RESERVED = frozenset({".", "..", "HEAD", "FETCH_HEAD", "ORIG_HEAD", "MERGE_HEAD"})
+
+
+def validate_worktree_slug(slug: str) -> str:
+    """Validate and return *slug* for use as a worktree session identifier (T572).
+
+    Rules:
+    - 1-64 characters.
+    - Starts and ends with alphanumeric.
+    - Interior characters: alphanumeric, ``-``, ``_``, ``.``.
+    - No path traversal (``..``, ``/``, ``\\``).
+    - Not a reserved git name.
+
+    Args:
+        slug: Candidate session identifier.
+
+    Returns:
+        The validated slug (unchanged).
+
+    Raises:
+        WorktreeError: If the slug is invalid.
+    """
+    if not slug:
+        raise WorktreeError("Worktree slug must not be empty")
+    if len(slug) > _SLUG_MAX_LEN:
+        raise WorktreeError(
+            f"Worktree slug too long ({len(slug)} chars, max {_SLUG_MAX_LEN}): {slug!r}"
+        )
+    if "/" in slug or "\\" in slug:
+        raise WorktreeError(f"Worktree slug must not contain path separators: {slug!r}")
+    if ".." in slug:
+        raise WorktreeError(f"Worktree slug must not contain '..': {slug!r}")
+    if slug in _SLUG_RESERVED:
+        raise WorktreeError(f"Worktree slug is a reserved git name: {slug!r}")
+    if not _SLUG_PATTERN.match(slug):
+        raise WorktreeError(
+            f"Worktree slug contains invalid characters (allowed: a-z A-Z 0-9 - _ .): {slug!r}"
+        )
+    return slug
+
+
+# ---------------------------------------------------------------------------
+# Sparse checkout for agent worktrees (T573)
+# ---------------------------------------------------------------------------
+
+
+def apply_sparse_checkout(
+    worktree_path: Path,
+    sparse_paths: list[str],
+    *,
+    timeout: int = 30,
+) -> bool:
+    """Apply sparse checkout to a worktree (T573).
+
+    Enables ``git sparse-checkout`` in cone mode and sets the given paths.
+    Falls back gracefully if the git version does not support sparse checkout.
+
+    Args:
+        worktree_path: Path to the worktree directory.
+        sparse_paths: List of paths/patterns to include in the sparse checkout.
+        timeout: Command timeout in seconds.
+
+    Returns:
+        True if sparse checkout was applied, False if unsupported or skipped.
+    """
+    if not sparse_paths:
+        return False
+
+    try:
+        # Enable sparse checkout
+        result = subprocess.run(
+            ["git", "sparse-checkout", "init", "--cone"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "git sparse-checkout init failed for %s: %s",
+                worktree_path,
+                result.stderr.strip(),
+            )
+            return False
+
+        # Set the paths
+        result = subprocess.run(
+            ["git", "sparse-checkout", "set", *sparse_paths],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "git sparse-checkout set failed for %s: %s",
+                worktree_path,
+                result.stderr.strip(),
+            )
+            return False
+
+        logger.info("Applied sparse checkout to %s: %s", worktree_path, sparse_paths)
+        return True
+
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("Sparse checkout failed for %s: %s", worktree_path, exc)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Worktree lock file protocol (T580)
+# ---------------------------------------------------------------------------
+
+_WORKTREE_LOCK_DIR = ".sdd/worktrees/.locks"
+
+
+def write_worktree_lock(repo_root: Path, session_id: str, pid: int) -> Path:
+    """Write a PID-based lock file for an active worktree (T580).
+
+    Args:
+        repo_root: Repository root directory.
+        session_id: Agent session identifier.
+        pid: Worker process PID.
+
+    Returns:
+        Path to the written lock file.
+    """
+    lock_dir = repo_root / _WORKTREE_LOCK_DIR
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{session_id}.lock"
+    payload = {
+        "session_id": session_id,
+        "pid": pid,
+        "created_at": __import__("time").time(),
+    }
+    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+    return lock_path
+
+
+def remove_worktree_lock(repo_root: Path, session_id: str) -> None:
+    """Remove the lock file for a worktree session (T580).
+
+    Args:
+        repo_root: Repository root directory.
+        session_id: Agent session identifier.
+    """
+    lock_path = repo_root / _WORKTREE_LOCK_DIR / f"{session_id}.lock"
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("Failed to remove worktree lock for %s: %s", session_id, exc)
+
+
+def is_worktree_lock_stale(repo_root: Path, session_id: str) -> bool:
+    """Return True if the worktree lock is stale (process no longer alive) (T580).
+
+    Args:
+        repo_root: Repository root directory.
+        session_id: Agent session identifier.
+
+    Returns:
+        True if the lock file is absent or the recorded PID is dead.
+    """
+    lock_path = repo_root / _WORKTREE_LOCK_DIR / f"{session_id}.lock"
+    if not lock_path.exists():
+        return True
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+        pid = int(data.get("pid", 0))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+        return False  # process is alive
+    except OSError:
+        return True  # process is dead

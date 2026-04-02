@@ -7,7 +7,6 @@ from pathlib import Path
 from bernstein.core.coordinator import (
     CoordinatorMode,
     CoordinatorPhase,
-    CoordinatorState,
     is_coordinator_task,
     is_worker_task,
 )

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-import httpx
-import pytest
 
-from bernstein.core.models import Task, TransitionReason, AgentSession, ModelConfig, Scope, Complexity, TaskType
 from bernstein.core.agent_lifecycle import refresh_agent_states
+from bernstein.core.models import AgentSession, Complexity, ModelConfig, Scope, Task, TaskType, TransitionReason
 from bernstein.core.task_lifecycle import retry_or_fail_task
+
 
 def test_task_serialization_includes_max_output_tokens():
     raw = {
@@ -24,7 +22,7 @@ def test_task_serialization_includes_max_output_tokens():
     }
     task = Task.from_dict(raw)
     assert task.max_output_tokens == 8192
-    
+
     # Check default
     task_default = Task.from_dict({"id": "T2", "title": "t", "description": "d", "role": "r"})
     assert task_default.max_output_tokens is None
@@ -47,7 +45,7 @@ def test_agent_lifecycle_detects_max_output_tokens_finish_reason():
     orch._MAX_DEAD_AGENTS_KEPT = 10
     orch._MAX_PROCESSED_DONE = 100
     orch._SPAWN_BACKOFF_MAX_S = 60
-    
+
     # Mock task fetching inside handle_orphaned_task
     task_raw = {
         "id": "T1",
@@ -66,7 +64,7 @@ def test_agent_lifecycle_detects_max_output_tokens_finish_reason():
 
     with patch("bernstein.core.agent_lifecycle.transition_agent") as mock_transition:
         refresh_agent_states(orch, {})
-        
+
         mock_transition.assert_called_once()
         kwargs = mock_transition.call_args.kwargs
         assert kwargs["transition_reason"] == TransitionReason.MAX_OUTPUT_TOKENS
@@ -86,10 +84,10 @@ def test_retry_escalates_max_output_tokens():
     )
     client = MagicMock()
     client.post.return_value = MagicMock(status_code=200)
-    
+
     # Passing task via tasks_snapshot
     tasks_snapshot = {"claimed": [task]}
-    
+
     # "timeout" triggers max_retries = 3
     retry_or_fail_task(
         "T1",
@@ -100,7 +98,7 @@ def test_retry_escalates_max_output_tokens():
         retried_task_ids=set(),
         tasks_snapshot=tasks_snapshot
     )
-    
+
     assert client.post.called
     # Check all calls to client.post to find the task creation one
     retry_call = next(c for c in client.post.call_args_list if "title" in c.kwargs.get("json", {}))
@@ -122,9 +120,9 @@ def test_retry_escalates_max_output_tokens_from_default():
     )
     client = MagicMock()
     client.post.return_value = MagicMock(status_code=200)
-    
+
     tasks_snapshot = {"claimed": [task]}
-    
+
     # "transient" triggers max_retries = 3
     retry_or_fail_task(
         "T1",
@@ -135,7 +133,7 @@ def test_retry_escalates_max_output_tokens_from_default():
         retried_task_ids=set(),
         tasks_snapshot=tasks_snapshot
     )
-    
+
     retry_call = next(c for c in client.post.call_args_list if "title" in c.kwargs.get("json", {}))
     payload = retry_call.kwargs["json"]
     assert "max_output_tokens" in payload

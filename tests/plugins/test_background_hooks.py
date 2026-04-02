@@ -1,8 +1,7 @@
 import time
-import threading
-from pathlib import Path
-from bernstein.plugins.manager import PluginManager
+
 from bernstein.plugins import hookimpl, hookspec
+from bernstein.plugins.manager import PluginManager
 
 
 class BackgroundSpec:

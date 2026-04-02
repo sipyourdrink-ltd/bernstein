@@ -336,10 +336,6 @@ class TestRunGuardrails:
 
 
 from pathlib import Path
-from unittest.mock import Mock
-
-from bernstein.core.guardrails import run_guardrails, GuardrailsConfig
-from bernstein.core.models import Task
 
 
 def test_immune_paths_always_blocked(tmp_path: Path) -> None:

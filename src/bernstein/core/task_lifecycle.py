@@ -414,6 +414,10 @@ def retry_or_fail_task(
                 new_max_output_tokens,
             )
 
+        # Meta messages / Nudges (T423)
+        new_meta_messages = list(task.meta_messages)
+        new_meta_messages.append(f"Retry {retry_count + 1}: Previous attempt failed with reason: {reason}")
+
         # Progressive timeout: each retry multiplies estimated_minutes by (retry_count + 2)
         # so retry 1 doubles the time, retry 2 triples it, giving agents more runway.
         progressive_minutes = task.estimated_minutes * (retry_count + 2)
@@ -431,6 +435,7 @@ def retry_or_fail_task(
             "model": retry_model,
             "effort": retry_effort,
             "max_output_tokens": new_max_output_tokens,
+            "meta_messages": new_meta_messages,
         }
         # Preserve completion signals on retry
         if task.completion_signals:

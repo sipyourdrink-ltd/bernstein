@@ -985,15 +985,15 @@ def main() -> None:
     print(f"  Output: {OUTPUT_DIR}")
     print(f"{'='*60}")
 
-    print(f"\n  Priority distribution:")
+    print("\n  Priority distribution:")
     for p in sorted(priority_counts):
         print(f"    p{p}: {priority_counts[p]} tickets")
 
-    print(f"\n  Complexity distribution:")
+    print("\n  Complexity distribution:")
     for c in sorted(complexity_counts):
         print(f"    c{c} ({COMPLEXITY_LABEL[c]}): {complexity_counts[c]} tickets")
 
-    print(f"\n  Pillar distribution:")
+    print("\n  Pillar distribution:")
     for pillar in sorted(pillar_counts):
         print(f"    {pillar}: {pillar_counts[pillar]} tickets")
 

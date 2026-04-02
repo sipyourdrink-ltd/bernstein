@@ -370,7 +370,7 @@ class TestNewTrace:
         assert trace.outcome == "unknown"
 
 
-from bernstein.core.traces import AgentTrace, TraceStep, record_turn_budget
+from bernstein.core.traces import record_turn_budget
 
 
 def test_trace_step_has_budget_fields() -> None:

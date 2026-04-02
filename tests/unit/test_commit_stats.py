@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from bernstein.commit_stats import (
     CommitStatsResult,
     RoleStats,
@@ -89,9 +91,11 @@ class TestRunGitLog:
         assert _run_git_log() == []
 
     @patch("subprocess.run")
-    def test_git_failure_returns_empty(self, mock_run: MagicMock) -> None:
+    def test_git_failure_raises_error(self, mock_run: MagicMock) -> None:
+        import subprocess
         mock_run.return_value = MagicMock(returncode=128, stdout="", stderr="not a git repo")
-        assert _run_git_log() == []
+        with pytest.raises(subprocess.CalledProcessError):
+            _run_git_log()
 
     @patch("subprocess.run")
     def test_binary_files_dash_handling(self, mock_run: MagicMock) -> None:

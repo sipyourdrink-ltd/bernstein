@@ -229,6 +229,7 @@ def _render_prompt(
     session_id: str = "",
     bulletin_summary: str = "",
     task_graph: TaskGraph | None = None,
+    meta_messages: list[str] | None = None,
 ) -> str:
     """Build the full agent prompt from role template + tasks + context.
 
@@ -250,6 +251,8 @@ def _render_prompt(
         context_builder: Optional TaskContextBuilder for rich context injection.
         bulletin_summary: Optional recent bulletin activity to inject as a
             team-awareness section. Empty string means no section is added.
+        task_graph: Optional task graph for context retrieval.
+        meta_messages: Optional list of operational nudges/hints (T423).
 
     Returns:
         Complete prompt string ready for the CLI adapter.
@@ -395,6 +398,10 @@ def _render_prompt(
     if session_id:
         named_sections.append(("signal", _render_signal_check(session_id)))
 
+    if meta_messages:
+        nudges_block = "\n## Operational nudges\n" + "\n".join(f"- {m}" for m in meta_messages) + "\n"
+        named_sections.append(("meta nudges", nudges_block))
+
     # Apply budget-aware prompt compression
     try:
         from bernstein.core.context_compression import PromptCompressor
@@ -426,6 +433,7 @@ def render_prompt(
     session_id: str = "",
     bulletin_summary: str = "",
     task_graph: TaskGraph | None = None,
+    meta_messages: list[str] | None = None,
 ) -> str:
     """Public wrapper for compatibility-safe prompt rendering."""
     return _render_prompt(
@@ -438,6 +446,7 @@ def render_prompt(
         session_id=session_id,
         bulletin_summary=bulletin_summary,
         task_graph=task_graph,
+        meta_messages=meta_messages,
     )
 
 
