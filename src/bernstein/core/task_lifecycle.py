@@ -400,6 +400,20 @@ def retry_or_fail_task(
         else:
             retry_model = task.model or "sonnet"
             retry_effort = task.effort or "high"
+
+        # Max output tokens escalation (T415)
+        new_max_output_tokens = task.max_output_tokens
+        if "max_output_tokens" in reason.lower() or "truncated" in reason.lower():
+            # Canonical escalation: double the previous limit (default 4k -> 8k -> 16k...)
+            current_limit = task.max_output_tokens or 4096
+            new_max_output_tokens = min(current_limit * 2, 1_000_000)
+            logger.info(
+                "Escalating max_output_tokens for task %s: %d -> %d",
+                task_id,
+                current_limit,
+                new_max_output_tokens,
+            )
+
         # Progressive timeout: each retry multiplies estimated_minutes by (retry_count + 2)
         # so retry 1 doubles the time, retry 2 triples it, giving agents more runway.
         progressive_minutes = task.estimated_minutes * (retry_count + 2)
@@ -416,6 +430,7 @@ def retry_or_fail_task(
             "task_type": task.task_type.value,
             "model": retry_model,
             "effort": retry_effort,
+            "max_output_tokens": new_max_output_tokens,
         }
         # Preserve completion signals on retry
         if task.completion_signals:
