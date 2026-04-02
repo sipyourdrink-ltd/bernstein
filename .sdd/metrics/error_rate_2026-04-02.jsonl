@@ -1,1 +1,0 @@
-{"timestamp": 1775125180.950973, "metric_type": "error_rate", "value": 1.0, "labels": {"error_type": "llm_review_failed", "provider": "openrouter_free", "model": "nvidia/nemotron-3-super-120b-a12b", "role": "manager", "tenant_id": "default"}}
