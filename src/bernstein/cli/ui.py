@@ -115,6 +115,16 @@ class AgentInfo:
     abort_reason: str = ""
     abort_detail: str = ""
     finish_reason: str = ""
+    tokens_used: int = 0
+    token_budget: int = 0
+    context_utilization_pct: float = 0.0
+
+    @property
+    def token_budget_pct(self) -> float:
+        """Percentage of token budget consumed."""
+        if self.token_budget <= 0:
+            return 0.0
+        return min(100.0, (self.tokens_used / self.token_budget) * 100)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentInfo:
@@ -136,6 +146,9 @@ class AgentInfo:
             abort_reason=str(data.get("abort_reason", "")),
             abort_detail=str(data.get("abort_detail", "")),
             finish_reason=str(data.get("finish_reason", "")),
+            tokens_used=int(data.get("tokens_used", 0)),
+            token_budget=int(data.get("token_budget", 0)),
+            context_utilization_pct=float(data.get("context_utilization_pct", 0.0)),
         )
 
 
@@ -414,6 +427,7 @@ class AgentStatusTable:
         table.add_column("Status", min_width=10)
         table.add_column("Runtime", justify="right", min_width=7)
         table.add_column("Tasks", justify="right", min_width=5)
+        table.add_column("Tokens", justify="right", min_width=12)
         table.add_column("Cost", justify="right", min_width=9)
 
         costs = agent_costs or {}
@@ -424,6 +438,23 @@ class AgentStatusTable:
             cost_cell = (
                 f"[bold bright_yellow]${cost_usd:.4f}[/bold bright_yellow]" if cost_usd > 0 else "[dim]\u2014[/dim]"
             )
+
+            # Token progress
+            if agent.token_budget > 0:
+                pct = agent.token_budget_pct
+                bucket = int(pct / 20)  # 0-5 scale
+                bar = "█" * bucket + "░" * (5 - bucket)
+                if pct > 90:
+                    token_cell = f"[red]{agent.tokens_used:,}/{agent.token_budget:,}[/red]"
+                elif pct > 70:
+                    token_cell = f"[yellow]{agent.tokens_used:,}/{agent.token_budget:,}[/yellow]"
+                else:
+                    token_cell = f"[dim]{bar}[/dim] {agent.tokens_used:,}/{agent.token_budget:,}"
+            elif agent.tokens_used > 0:
+                token_cell = f"{agent.tokens_used:,}"
+            else:
+                token_cell = "[dim]\u2014[/dim]"
+
             status_icon = get_status_icon(agent.status)
             agent_icon = get_agent_icon(agent.role)
             status_label = f"{status_icon} {agent.status}"
@@ -437,6 +468,7 @@ class AgentStatusTable:
                 f"[{color}]{status_label}[/{color}]",
                 runtime_str,
                 str(len(agent.task_ids)),
+                token_cell,
                 cost_cell,
             )
         return table
@@ -454,18 +486,28 @@ class AgentStatusTable:
         if not agents:
             return "No active agents."
         costs = agent_costs or {}
-        lines = ["AGENT            MODEL      STATUS     RUNTIME  TASKS  COST"]
+        lines = ["AGENT            MODEL      STATUS     RUNTIME  TASKS  TOKENS          COST"]
         for agent in agents:
             runtime_str = format_duration(agent.runtime_s) if agent.runtime_s > 0 else "-"
             cost_usd = costs.get(agent.agent_id, 0.0)
             cost_str = f"${cost_usd:.4f}" if cost_usd > 0 else "-"
             tasks_n = len(agent.task_ids)
+            token_str = f"{agent.tokens_used:,}" if agent.tokens_used > 0 else "-"
+            if agent.token_budget > 0:
+                token_str = f"{agent.tokens_used:,}/{agent.token_budget:,}"
             status_label = agent.status
             if agent.abort_reason:
                 status_label = f"{status_label} ({agent.abort_reason})"
-            lines.append(
-                f"{agent.role:<16} {agent.model:<10} {status_label:<24} {runtime_str:>7}  {tasks_n}  {cost_str}"
-            )
+            line_parts = [
+                f"{agent.role:<16}",
+                f"{agent.model:<10}",
+                f"{status_label:<12}",
+                f"{runtime_str:>7}",
+                f"  {tasks_n:<5}",
+                f"{token_str:<15}",
+                cost_str,
+            ]
+            lines.append("  ".join(line_parts))
         return "\n".join(lines)
 
 
