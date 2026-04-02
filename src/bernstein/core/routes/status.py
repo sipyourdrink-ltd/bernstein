@@ -173,6 +173,7 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
         if config_state and config_state.get("reloaded_at")
         else 0.0,
         "config_hash": str(config_state.get("config_hash", "")) if config_state else "",
+        "config_last_diff": config_state.get("last_diff") if config_state else None,
     }
     _runtime_cache_ts = now
     return _runtime_cache
@@ -678,6 +679,7 @@ async def dashboard_data(request: Request) -> JSONResponse:
         )
 
     live_spent = float(live_costs.get("spent_usd") or total_cost)
+    runtime = _runtime_summary(request, store)
     return JSONResponse(
         content={
             "ts": now,
@@ -697,6 +699,8 @@ async def dashboard_data(request: Request) -> JSONResponse:
             "file_locks": file_locks,
             "merge_queue": merge_queue,
             "alerts": alerts,
+            "runtime": runtime,
+            "config_last_diff": runtime.get("config_last_diff"),
             # Live cost tracker data for per-model/per-agent breakdown and budget bar
             "live_costs": live_costs,
         },

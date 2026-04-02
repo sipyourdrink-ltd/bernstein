@@ -151,6 +151,7 @@ def write_config_state(
     config_hash: str,
     seed_path: str | None,
     reloaded_at: float,
+    last_diff: dict[str, Any] | None = None,
 ) -> Path:
     """Persist the latest loaded ``bernstein.yaml`` metadata."""
     runtime_dir = sdd_dir / "runtime"
@@ -160,6 +161,7 @@ def write_config_state(
         "config_hash": config_hash,
         "seed_path": seed_path,
         "reloaded_at": reloaded_at,
+        "last_diff": last_diff,
     }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path

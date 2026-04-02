@@ -871,16 +871,27 @@ def create_app(
 
     def _reload_seed_config() -> dict[str, Any]:
         """Reload and persist bernstein.yaml metadata without restarting."""
+        from bernstein.core.config_diff import (
+            diff_config_snapshots,
+            load_redacted_config,
+            read_config_snapshot,
+            write_config_snapshot,
+        )
         from bernstein.core.runtime_state import hash_file, write_config_state
         from bernstein.core.seed import SeedError, parse_seed
 
         seed_path = workdir / "bernstein.yaml"
+        sdd_dir = jsonl_path.parent.parent
+        previous_snapshot = read_config_snapshot(sdd_dir)
+        current_snapshot = load_redacted_config(seed_path if seed_path.exists() else None)
+        diff = diff_config_snapshots(previous_snapshot, current_snapshot)
         config_hash = hash_file(seed_path if seed_path.exists() else None)
         payload: dict[str, Any] = {
             "seed_path": str(seed_path) if seed_path.exists() else None,
             "config_hash": config_hash,
             "reloaded_at": time.time(),
             "loaded": False,
+            "config_last_diff": diff.to_dict(),
         }
         if seed_path.exists():
             try:
@@ -891,11 +902,13 @@ def create_app(
         else:
             application.state.seed_config = None  # type: ignore[attr-defined]
         write_config_state(
-            jsonl_path.parent.parent,
+            sdd_dir,
             config_hash=config_hash,
             seed_path=payload["seed_path"],
             reloaded_at=float(payload["reloaded_at"]),
+            last_diff=diff.to_dict(),
         )
+        write_config_snapshot(sdd_dir, current_snapshot)
         return payload
 
     @asynccontextmanager

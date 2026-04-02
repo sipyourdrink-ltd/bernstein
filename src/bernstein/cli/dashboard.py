@@ -1234,6 +1234,8 @@ class BernsteinApp(App[None]):
             log.write("[green]→ First agent spawned[/green]")
         elif alive > prev_alive and prev_alive > 0:
             log.write(f"[dim]→ {alive} agent(s) active[/dim]")
+        runtime = status.get("runtime", {}) if isinstance(status.get("runtime", {}), dict) else {}
+        self._announce_config_diff(runtime)
 
         if not isinstance(status, dict) or not status:
             if not getattr(self, "_logged_no_server", False):
@@ -1573,6 +1575,44 @@ class BernsteinApp(App[None]):
                 severity="warning",
                 timeout=8,
             )
+
+    def _announce_config_diff(self, runtime: dict[str, Any]) -> None:
+        """Emit a compact activity item when the loaded config changes."""
+
+        diff = runtime.get("config_last_diff")
+        if not isinstance(diff, dict) or not diff.get("changed"):
+            return
+
+        fingerprint = json.dumps(diff, sort_keys=True)
+        if getattr(self, "_last_config_diff_fingerprint", "") == fingerprint:
+            return
+        self._last_config_diff_fingerprint = fingerprint  # type: ignore[attr-defined]
+
+        log = self.query_one("#activity-log", RichLog)
+        modified = int(diff.get("modified", 0) or 0)
+        added = int(diff.get("added", 0) or 0)
+        removed = int(diff.get("removed", 0) or 0)
+        log.write(
+            _format_activity_line(
+                "system",
+                f"config reloaded: {modified} changed, {added} added, {removed} removed",
+            )
+        )
+
+        for raw_change in list(diff.get("changes", []))[:4]:
+            if not isinstance(raw_change, dict):
+                continue
+            path = str(raw_change.get("path", "?"))
+            kind = str(raw_change.get("kind", "changed"))
+            before = str(raw_change.get("before", "")).strip()
+            after = str(raw_change.get("after", "")).strip()
+            if kind == "added":
+                message = f"config + {path} = {after}"
+            elif kind == "removed":
+                message = f"config - {path} (was {before})"
+            else:
+                message = f"config ~ {path}: {before} -> {after}"
+            log.write(_format_activity_line("system", message))
 
     ROLE_COLORS: ClassVar[dict[str, str]] = {
         "backend": role_color("backend"),
