@@ -905,6 +905,7 @@ def create_app(
     Returns:
         Configured FastAPI app with all routes registered.
     """
+    setup_json_logging()
     from bernstein.core.auth import AuthService, AuthStore, SSOConfig
     from bernstein.core.auth_middleware import SSOAuthMiddleware
     from bernstein.core.routes.agents import router as agents_router

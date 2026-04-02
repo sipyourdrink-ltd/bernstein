@@ -659,8 +659,12 @@ if __name__ == "__main__":
     _args = _parser.parse_args()
 
     if _args.watchdog:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
+        from bernstein.core.json_logging import setup_json_logging
+        setup_json_logging()
+        
+        if not any(isinstance(h, logging.StreamHandler) for h in logging.getLogger().handlers):
+            logging.basicConfig(
+                level=logging.INFO,
+                format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+            )
         run_watchdog(Path.cwd(), _args.port)
