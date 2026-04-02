@@ -1,4 +1,4 @@
-# Migration Guide: From CrewAI to Bernstein
+# Migration Guide: CrewAI to Bernstein
 
 This guide helps teams migrate from CrewAI to Bernstein, mapping concepts and providing step-by-step migration instructions.
 
@@ -9,8 +9,9 @@ This guide helps teams migrate from CrewAI to Bernstein, mapping concepts and pr
 | **Agent** | **Role** + **CLI Agent** | Bernstein separates role definition from agent execution |
 | **Task** | **Task** | Similar concept, Bernstein tasks have priority and complexity |
 | **Process** | **Orchestrator** | Bernstein's orchestrator manages task lifecycle |
-| **Crew** | **Goal + task backlog + orchestrator run** | Bernstein plans/executes from goals and task state |
+| **Crew** | **Recipe** | A collection of tasks to achieve a goal |
 | **Tool** | **Quality Gate** | Bernstein uses quality gates for validation |
+| **Memory** | **Context Files** | Shared via `.sdd/` file system |
 
 ## Architecture Differences
 
@@ -69,19 +70,23 @@ Task(
 )
 ```
 
-Bernstein task (`.sdd/backlog/open/p2_feat_api-endpoint.yaml`):
-```yaml
+Bernstein task (`.sdd/backlog/open/my-task.md`):
+```markdown
+---
 id: "api-endpoint"
 title: "Write API endpoint"
 role: backend
 priority: 2
-scope: medium
 complexity: medium
-description: |
-  Write API endpoint for user registration.
-completion_signals:
-  - type: test_passes
-    value: uv run pytest tests/unit/test_registration.py -x -q
+---
+
+## Description
+
+Write API endpoint for user registration.
+
+## Expected Output
+
+Working API endpoint with tests.
 ```
 
 ### Step 4: Define Your Goal as a Recipe
@@ -95,30 +100,26 @@ Bernstein will automatically decompose the goal into tasks.
 
 ### Step 5: Configure Quality Gates
 
-CrewAI tool/check steps typically map to Bernstein quality gates and completion signals:
+CrewAI tools become Bernstein quality gates:
 
 ```yaml
-quality_gates:
-  lint:
-    enabled: true
-  typecheck:
-    enabled: true
-  tests:
-    enabled: true
+# .bernstein/quality_gates.yaml
+gates:
+  - lint
+  - type_check
+  - tests
+  - security_scan
 ```
 
 ### Step 6: Set Up Model Routing
 
-Bernstein supports role-aware model policy and provider policy:
+Bernstein supports multiple models:
 ```yaml
 # bernstein.yaml
-role_model_policy:
-  backend:
-    provider: claude_standard
-    model: sonnet
-    effort: high
-model_policy:
-  denied_providers: [example_provider]
+model_routing:
+  default: sonnet
+  high_stakes: opus
+  simple: haiku
 ```
 
 ### Step 7: Migrate Integrations
@@ -129,16 +130,9 @@ model_policy:
 | Custom tools | CLI adapters |
 | API calls | MCP servers |
 
-### Step 8: Test Migration
-
-1. Start with a small, non-critical workflow
-2. Run in dry-run mode: `bernstein run --dry-run`
-3. Compare outputs with CrewAI
-4. Iterate and refine
-
 ## Key Advantages of Bernstein
 
-1. **Agent-Agnostic**: Works with Claude Code, Codex, Gemini, Aider, etc.
+1. **Agent-Agnostic**: Works with Claude Code, Codex, Gemini, etc.
 2. **Deterministic Orchestration**: Scheduling is code, not LLM
 3. **File-Based State**: `.sdd/` is git-friendly and inspectable
 4. **Self-Evolving**: Bernstein can improve itself via `bernstein evolve`
@@ -184,7 +178,7 @@ Bernstein: Task dependencies and quality gates
 **Solution**: Override in task file: `model: opus`
 
 ### Issue: Quality gates failing
-**Solution**: Review `quality_gates` in `bernstein.yaml` and the task's `completion_signals`
+**Solution**: Review gate configuration in `.bernstein/quality_gates.yaml`
 
 ## Next Steps
 
