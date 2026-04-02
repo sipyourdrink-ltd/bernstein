@@ -26,6 +26,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from bernstein.core.a2a import A2AHandler
 from bernstein.core.access_log import StructuredAccessLogMiddleware
 from bernstein.core.acp import ACPHandler
+from bernstein.core.auth_rate_limiter import RequestRateLimitMiddleware
 from bernstein.core.bulletin import BulletinBoard, MessageBoard, MessageType
 from bernstein.core.cluster import NodeRegistry
 from bernstein.core.ip_allowlist import IPAllowlistMiddleware
@@ -981,6 +982,9 @@ def create_app(
 
     # Network perimeter — dynamic allowlist resolved from the current seed config.
     application.add_middleware(IPAllowlistMiddleware, public_paths=tuple(_PUBLIC_PATHS))
+
+    # Endpoint-aware request limits from the current seed config.
+    application.add_middleware(RequestRateLimitMiddleware)
 
     # Read-only mode — blocks all writes before auth is even checked
     if readonly:
