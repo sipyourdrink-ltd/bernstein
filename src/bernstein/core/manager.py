@@ -332,7 +332,39 @@ class ManagerAgent:
                 except httpx.HTTPError as exc:
                     logger.error("Failed to post task %s: %s", task.title, exc)
 
-        return tasks
+            return tasks
+
+    async def decompose(self, task: Task, *, min_subtasks: int = 2, max_subtasks: int = 5) -> list[Task]:
+        """Decompose a single large task into 2-5 atomic subtasks."""
+        context = gather_project_context(self._workdir)
+        roles = available_roles(self._templates_dir / "roles")
+        prompt = (
+            "Decompose the following Bernstein task into atomic subtasks.\n\n"
+            f"## Parent task\nTitle: {task.title}\nRole: {task.role}\n"
+            f"Estimated minutes: {task.estimated_minutes}\n"
+            f"Description:\n{task.description}\n\n"
+            f"Available roles: {', '.join(sorted(roles))}\n\n"
+            "Return ONLY a JSON array with 2-5 objects. Each object must contain:\n"
+            '- "title": concise task title\n'
+            '- "description": clear implementation instructions\n'
+            '- "role": one available role\n'
+            '- "scope": "small" or "medium"\n'
+            '- "complexity": "low", "medium", or "high"\n'
+            '- "estimated_minutes": integer <= 60\n'
+            '- "owned_files": array of file paths, optional\n\n'
+            "Prefer independent subtasks that can be executed in separate agent sessions.\n\n"
+            f"## Project context\n{context}"
+        )
+        raw = await call_llm(prompt, model=self._model, provider=self._provider)
+        parsed = parse_tasks_response(raw)
+        subtasks = raw_dicts_to_tasks(parsed, id_prefix=f"{task.id}-subtask")
+        if not (min_subtasks <= len(subtasks) <= max_subtasks):
+            raise ValueError(f"Expected {min_subtasks}-{max_subtasks} subtasks, got {len(subtasks)}")
+        return subtasks[:max_subtasks]
+
+    def decompose_sync(self, task: Task, *, min_subtasks: int = 2, max_subtasks: int = 5) -> list[Task]:
+        """Synchronous wrapper around :meth:`decompose` for orchestrator call sites."""
+        return asyncio.run(self.decompose(task, min_subtasks=min_subtasks, max_subtasks=max_subtasks))
 
     async def review(self, task: Task) -> ReviewResult:
         """Review completed work and decide: approve, request changes, or reject.

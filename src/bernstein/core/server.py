@@ -263,6 +263,7 @@ class TaskCreate(BaseModel):
     risk_level: str = "low"
     estimated_minutes: int | None = None
     depends_on: list[str] = Field(default_factory=list)
+    parent_task_id: str | None = None
     depends_on_repo: str | None = None
     owned_files: list[str] = Field(default_factory=list)
     cell_id: str | None = None
@@ -299,6 +300,7 @@ class TaskResponse(BaseModel):
     estimated_minutes: int
     status: str
     depends_on: list[str]
+    parent_task_id: str | None
     depends_on_repo: str | None
     owned_files: list[str]
     assigned_agent: str | None
@@ -365,6 +367,12 @@ class TaskProgressRequest(BaseModel):
     tests_passing: int | None = None
     errors: int | None = None
     last_file: str = ""
+
+
+class TaskWaitForSubtasksRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/wait-for-subtasks."""
+
+    subtask_count: int = 0
 
 
 class BatchClaimRequest(BaseModel):
@@ -737,6 +745,7 @@ def task_to_response(task: Task) -> TaskResponse:
         estimated_minutes=task.estimated_minutes,
         status=task.status.value,
         depends_on=task.depends_on,
+        parent_task_id=task.parent_task_id,
         depends_on_repo=task.depends_on_repo,
         owned_files=task.owned_files,
         assigned_agent=task.assigned_agent,
