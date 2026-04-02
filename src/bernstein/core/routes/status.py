@@ -619,7 +619,7 @@ async def dashboard_data(request: Request) -> JSONResponse:
                 id=str(snapshot.get("id", "")),
                 pid=int(snapshot.get("pid", 0) or 0),
                 role=str(snapshot.get("role", "")),
-                status=cast('Any', status_value),
+                status=cast("Any", status_value),
                 task_ids=list(snapshot.get("task_ids") or []),
                 provider=str(snapshot.get("provider", "")) or None,
                 agent_source=str(snapshot.get("agent_source", "built-in")),
