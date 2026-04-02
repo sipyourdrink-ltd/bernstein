@@ -90,6 +90,19 @@ _CRITICAL_FILENAMES: frozenset[str] = frozenset(
     }
 )
 
+# Paths that are NEVER allowed to be modified by an agent without human intervention,
+# regardless of permission modes or hook overrides.
+_IMMUNE_CRITICAL_PATHS: tuple[str, ...] = (
+    ".sdd/*",
+    ".git/*",
+    ".github/*",
+    ".bashrc",
+    ".bash_profile",
+    ".zshrc",
+    ".profile",
+    "bernstein.yaml",
+)
+
 
 # ---------------------------------------------------------------------------
 # Diff parsing helpers
@@ -113,7 +126,7 @@ def _parse_diff_files(diff: str) -> list[str]:
 
 def _is_file_deleted(diff: str, filepath: str) -> bool:
     """Return True if *filepath* was deleted in the diff."""
-    header_prefix = f"diff --git a/{filepath}"
+    header_prefix = f"diff --git f{filepath}"
     in_file = False
     for line in diff.splitlines():
         if line.startswith("diff --git "):
@@ -193,6 +206,42 @@ def check_secrets(diff: str) -> list[GuardrailResult]:
             passed=True,
             blocked=False,
             detail="No secrets detected",
+        )
+    ]
+
+
+def check_immune_paths(diff: str) -> list[GuardrailResult]:
+    """Hard-block any modifications to safety-critical paths that bypass other checks.
+
+    These paths (.sdd, .git, etc.) are always protected regardless of permission mode.
+
+    Args:
+        diff: Git diff output string.
+
+    Returns:
+        List containing one GuardrailResult for the "immune_path_enforcement" check.
+    """
+    from bernstein.core.permissions import _path_matches_any
+
+    changed_files = _parse_diff_files(diff)
+    violations = [f for f in changed_files if _path_matches_any(f, _IMMUNE_CRITICAL_PATHS)]
+
+    if violations:
+        return [
+            GuardrailResult(
+                check="immune_path_enforcement",
+                passed=False,
+                blocked=True,
+                detail=f"Safety-critical path violation: modified immune files {', '.join(violations)}",
+                files=violations,
+            )
+        ]
+    return [
+        GuardrailResult(
+            check="immune_path_enforcement",
+            passed=True,
+            blocked=False,
+            detail="No immune path violations",
         )
     ]
 
@@ -407,6 +456,11 @@ def run_guardrails(
         List of GuardrailResult, one per enabled check.
     """
     results: list[GuardrailResult] = []
+
+    # Mandatory checks that cannot be disabled
+    for r in check_immune_paths(diff):
+        results.append(r)
+        _record_result(task.id, r, workdir)
 
     if config.secrets:
         for r in check_secrets(diff):
