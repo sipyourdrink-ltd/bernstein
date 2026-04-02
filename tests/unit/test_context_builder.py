@@ -231,8 +231,8 @@ class TestBuildFileIndex:
         index = build_file_index(tmp_path)
         assert "mod.py" in index
         entry = index["mod.py"]
-        assert entry["docstring"] == "My module."
-        assert any("Foo" in str(c) for c in entry["classes"])
+        assert entry.docstring == "My module."
+        assert any("Foo" in str(c) for c in entry.classes)
 
     def test_returns_empty_for_non_git_dir(self, tmp_path: Path) -> None:
         _write_py(tmp_path / "mod.py", "x = 1\n")
