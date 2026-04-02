@@ -53,6 +53,7 @@ from bernstein.cli.changelog_cmd import changelog_cmd
 from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
+from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.cost import cost_cmd, estimate_cmd
 from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.eval_benchmark_cmd import (
@@ -656,6 +657,7 @@ cli.add_command(demo)
 cli.add_command(checkpoint_cmd, "checkpoint")
 cli.add_command(wrap_up, "wrap-up")
 cli.add_command(audit_group, "audit")
+cli.add_command(compliance_group, "compliance")
 cli.add_command(verify_cmd, "verify")
 cli.add_command(chaos_group, "chaos")
 cli.add_command(manifest_group, "manifest")

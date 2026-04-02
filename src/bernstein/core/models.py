@@ -215,6 +215,7 @@ class Task:
     mcp_servers: list[str] = field(default_factory=list[str])  # MCP server names for this task
     slack_context: dict[str, Any] | None = None  # Slack slash command or event metadata
     batch_eligible: bool | None = None  # Non-urgent: None=auto-detect, True=explicit batch, False=explicit realtime
+    eu_ai_act_risk: Literal["minimal", "limited", "high", "unacceptable"] = "minimal"
     approval_required: bool = False  # Pause after completion until explicitly approved
     risk_level: Literal["low", "medium", "high", "critical"] = "low"  # Risk for approval workflow routing
     created_at: float = field(default_factory=time.time)
@@ -285,6 +286,7 @@ class Task:
             effort=raw.get("effort"),
             mcp_servers=list(raw.get("mcp_servers", [])),
             batch_eligible=(lambda v: None if v is None else bool(v))(raw.get("batch_eligible")),
+            eu_ai_act_risk=raw.get("eu_ai_act_risk", "minimal"),
             approval_required=bool(raw.get("approval_required", False)),
             risk_level=raw.get("risk_level", "low"),
             created_at=raw.get("created_at", time.time()),

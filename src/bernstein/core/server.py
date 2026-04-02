@@ -258,6 +258,8 @@ class TaskCreate(BaseModel):
     priority: int = 2
     scope: str = "medium"
     complexity: str = "medium"
+    eu_ai_act_risk: str = "minimal"
+    approval_required: bool = False
     risk_level: str = "low"
     estimated_minutes: int | None = None
     depends_on: list[str] = Field(default_factory=list)
@@ -291,6 +293,8 @@ class TaskResponse(BaseModel):
     priority: int
     scope: str
     complexity: str
+    eu_ai_act_risk: str
+    approval_required: bool
     risk_level: str
     estimated_minutes: int
     status: str
@@ -688,6 +692,8 @@ def task_to_response(task: Task) -> TaskResponse:
         priority=task.priority,
         scope=task.scope.value,
         complexity=task.complexity.value,
+        eu_ai_act_risk=task.eu_ai_act_risk,
+        approval_required=task.approval_required,
         risk_level=task.risk_level,
         estimated_minutes=task.estimated_minutes,
         status=task.status.value,

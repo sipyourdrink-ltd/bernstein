@@ -46,6 +46,7 @@ class BacklogTask:
     scope: str
     complexity: str
     source_file: str
+    approval_required: bool = False
 
 
 def parse_backlog_file(path: Path) -> BacklogTask | None:
@@ -72,6 +73,7 @@ def parse_backlog_file(path: Path) -> BacklogTask | None:
         scope=parsed.scope,
         complexity=parsed.complexity,
         source_file=parsed.source_file,
+        approval_required=parsed.require_human_approval,
     )
 
 
@@ -280,6 +282,7 @@ def sync_backlog_to_server(
                 "priority": task.priority,
                 "scope": task.scope,
                 "complexity": task.complexity,
+                "approval_required": task.approval_required,
             }
             try:
                 resp = _client.post(f"{server_url}/tasks", json=payload)

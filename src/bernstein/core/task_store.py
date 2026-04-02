@@ -68,6 +68,9 @@ class TaskRecord(TypedDict):
     cell_id: str | None
     repo: str | None
     batch_eligible: bool
+    eu_ai_act_risk: str
+    approval_required: bool
+    risk_level: str
     slack_context: dict[str, Any] | None
     version: int
 
@@ -144,6 +147,8 @@ class TaskCreateRequest(Protocol):
     model: str | None
     effort: str | None
     batch_eligible: bool
+    approval_required: bool
+    eu_ai_act_risk: str
     risk_level: str
 
     @property
@@ -533,6 +538,9 @@ class TaskStore:
             "cell_id": task.cell_id,
             "repo": task.repo,
             "batch_eligible": task.batch_eligible is True,
+            "eu_ai_act_risk": task.eu_ai_act_risk,
+            "approval_required": task.approval_required,
+            "risk_level": task.risk_level,
             "slack_context": task.slack_context,
             "version": task.version,
         }
@@ -644,6 +652,8 @@ class TaskStore:
             model=req.model,
             effort=req.effort,
             batch_eligible=batch_eligible,
+            eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
+            approval_required=bool(getattr(req, "approval_required", False)),
             risk_level=getattr(req, "risk_level", "low"),
             completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
             slack_context=req.slack_context,

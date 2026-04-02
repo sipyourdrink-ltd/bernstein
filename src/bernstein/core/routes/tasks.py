@@ -13,6 +13,13 @@ from starlette.responses import StreamingResponse
 
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
+from bernstein.core.eu_ai_act import (
+    append_assessment_log,
+    assess_task,
+    build_log_record,
+    merge_bernstein_risk,
+    merge_eu_ai_act_risk,
+)
 from bernstein.core.lifecycle import IllegalTransitionError
 from bernstein.core.models import NodeCapacity, NodeInfo, NodeStatus
 
@@ -143,8 +150,21 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
         score = estimate_difficulty(effective_body.description)
         effective_body.estimated_minutes = minutes_for_level(score.level)
 
+    assessment = assess_task(effective_body)
+    effective_body = effective_body.model_copy(
+        update={
+            "eu_ai_act_risk": merge_eu_ai_act_risk(effective_body.eu_ai_act_risk, assessment.risk_level).value,
+            "approval_required": bool(effective_body.approval_required or assessment.approval_required),
+            "risk_level": merge_bernstein_risk(effective_body.risk_level, assessment.bernstein_risk_level),
+        }
+    )
+
     with start_span("task.create", {"task.role": effective_body.role, "task.title": effective_body.title}):
         task = await store.create(effective_body)
+        append_assessment_log(
+            request.app.state.sdd_dir,
+            build_log_record(task.id, task, assessment),
+        )
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
         get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
         return task_to_response(task)

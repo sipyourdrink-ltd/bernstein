@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
+from bernstein.core.approval import ApprovalMode
 from bernstein.core.behavior_anomaly import BehaviorAnomalyDetector, BehaviorMetrics
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.context import append_decision
@@ -596,9 +597,23 @@ def process_completed_tasks(
 
             orch._record_provider_health(session, success=janitor_passed)
             _skip_merge = False
-            if janitor_passed and orch._approval_gate is not None:
+            _approval_gate = orch._approval_gate
+            if janitor_passed and task.approval_required and _approval_gate is None:
+                from bernstein.core.approval import ApprovalGate
+
+                _approval_gate = ApprovalGate(
+                    mode=ApprovalMode.REVIEW,
+                    workdir=orch._workdir,
+                    auto_merge=orch._config.auto_merge,
+                    pr_labels=orch._config.pr_labels,
+                )
+
+            if janitor_passed and _approval_gate is not None:
                 _override_mode = None
                 _timeout_s = None
+
+                if task.approval_required:
+                    _override_mode = ApprovalMode.REVIEW
 
                 wf = getattr(orch._config, "approval_workflow", None)
                 if wf is not None and wf.enabled:
@@ -610,8 +625,6 @@ def process_completed_tasks(
                         "critical": getattr(wf, "critical_risk", wf.high_risk),
                     }
                     mode_str = mapping.get(risk, "auto")
-
-                    from bernstein.core.approval import ApprovalMode
 
                     _override_mode = ApprovalMode(mode_str)
                     _timeout_s = float(wf.timeout_hours * 3600)
@@ -626,7 +639,7 @@ def process_completed_tasks(
                             risk_level=risk,
                         )
 
-                _approval_result = orch._approval_gate.evaluate(
+                _approval_result = _approval_gate.evaluate(
                     task,
                     session_id=session.id,
                     override_mode=_override_mode,
@@ -650,7 +663,7 @@ def process_completed_tasks(
                         _pr_cost_usd = _pr_task_m.cost_usd if _pr_task_m else 0.0
                         _pr_completion = completion_data or {"files_modified": [], "test_results": {}}
                         _pr_test_summary = _pr_completion.get("test_results", {}).get("summary", "")
-                        _pr_url = orch._approval_gate.create_pr(
+                        _pr_url = _approval_gate.create_pr(
                             task,
                             worktree_path=_worktree_path,
                             session_id=session.id,
