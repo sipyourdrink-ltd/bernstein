@@ -1389,9 +1389,7 @@ class FeatureGateRegistry:
             RuntimeError: If the registry has been latched.
         """
         if self._latched:
-            raise RuntimeError(
-                f"FeatureGateRegistry is latched — cannot register gate '{gate.name}' mid-session"
-            )
+            raise RuntimeError(f"FeatureGateRegistry is latched — cannot register gate '{gate.name}' mid-session")
         self._gates[gate.name] = gate
 
     def latch(self) -> None:

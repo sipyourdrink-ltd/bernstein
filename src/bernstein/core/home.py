@@ -436,9 +436,7 @@ def explain_conflicts(bundle: dict[str, ConfigResolution]) -> list[SettingConfli
     conflicts: list[SettingConflict] = []
     for key, resolution in bundle.items():
         non_default = [
-            layer
-            for layer in resolution["source_chain"]
-            if layer["source"] != "default" and layer["value"] is not None
+            layer for layer in resolution["source_chain"] if layer["source"] != "default" and layer["value"] is not None
         ]
         if len(non_default) < 2:
             continue
@@ -454,10 +452,7 @@ def explain_conflicts(bundle: dict[str, ConfigResolution]) -> list[SettingConfli
                     "conflicting_layers": non_default,
                     "explanation": (
                         f"'{key}' has conflicting values: "
-                        + ", ".join(
-                            f"{layer['source']}={layer['redacted_value']!r}"
-                            for layer in non_default
-                        )
+                        + ", ".join(f"{layer['source']}={layer['redacted_value']!r}" for layer in non_default)
                         + f". Using '{winning['source']}' value: {winning['redacted_value']!r}."
                     ),
                 }

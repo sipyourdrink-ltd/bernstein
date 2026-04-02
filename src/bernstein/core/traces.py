@@ -707,11 +707,7 @@ def score_patch_match(
     ratio = matcher.ratio()
 
     # Count changed lines
-    diff_lines = sum(
-        max(i2 - i1, j2 - j1)
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes()
-        if tag != "equal"
-    )
+    diff_lines = sum(max(i2 - i1, j2 - j1) for tag, i1, i2, j1, j2 in matcher.get_opcodes() if tag != "equal")
 
     mismatch_reason = ""
     if ratio < 0.5:
@@ -795,9 +791,7 @@ def preview_edit_conflict(
     lines_a = content_a.splitlines(keepends=True)
     lines_b = content_b.splitlines(keepends=True)
 
-    diff = list(
-        difflib.unified_diff(lines_a, lines_b, fromfile=f"{file_path} (A)", tofile=f"{file_path} (B)", n=2)
-    )
+    diff = list(difflib.unified_diff(lines_a, lines_b, fromfile=f"{file_path} (A)", tofile=f"{file_path} (B)", n=2))
 
     conflict_lines: list[int] = []
     for line in diff:
@@ -872,7 +866,7 @@ def build_crash_bundle(
                 try:
                     content = tf.read_text(encoding="utf-8", errors="replace")
                     total_bytes += len(content)
-                    bundle["traces"].append({"file": tf.name, "content": content[:max_trace_bytes - total_bytes]})
+                    bundle["traces"].append({"file": tf.name, "content": content[: max_trace_bytes - total_bytes]})
                 except OSError:
                     pass
 
@@ -887,8 +881,6 @@ def build_crash_bundle(
 
     runtime_dir = workdir / ".sdd" / "runtime"
     if runtime_dir.exists():
-        bundle["runtime_files"] = [
-            f.name for f in runtime_dir.iterdir() if f.is_file()
-        ][:30]
+        bundle["runtime_files"] = [f.name for f in runtime_dir.iterdir() if f.is_file()][:30]
 
     return bundle
