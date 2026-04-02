@@ -302,8 +302,12 @@ def _hash_token(token: str) -> str:
 
 
 def _load_or_create_jwt_secret(base_dir: Path) -> str:
-    """Return the agent-identity JWT secret, preferring the shared auth env var."""
+    """Return the agent-identity JWT secret, preferring the shared auth env var.
 
+    When a new secret must be generated and persisted to disk, the file is
+    created with mode 0600 (owner read/write only) to prevent other users or
+    processes on the same host from reading the key material.
+    """
     env_secret = os.environ.get("BERNSTEIN_AUTH_JWT_SECRET", "").strip()
     if env_secret:
         return env_secret
@@ -315,7 +319,13 @@ def _load_or_create_jwt_secret(base_dir: Path) -> str:
             return secret
 
     secret = secrets.token_urlsafe(32)
-    secret_path.write_text(secret, encoding="utf-8")
+
+    fd = os.open(str(secret_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, secret.encode("utf-8"))
+    finally:
+        os.close(fd)
+
     return secret
 
 
