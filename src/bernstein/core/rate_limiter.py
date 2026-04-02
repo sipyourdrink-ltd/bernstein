@@ -201,7 +201,7 @@ def create_rate_limit_middleware(
     app: ASGIApp,
     tasks_per_minute: int = 100,
     auth_per_minute: int = 10,
-    default_per_minute: int = 100,
+    default_per_minute: int = 100,  # noqa: F841
 ) -> RateLimitMiddleware:
     """Create rate limit middleware with common configuration.
 
@@ -217,6 +217,7 @@ def create_rate_limit_middleware(
     limits = {
         "/tasks": RateLimitConfig(requests_per_minute=tasks_per_minute),
         "/auth": RateLimitConfig(requests_per_minute=auth_per_minute),
+        "/": RateLimitConfig(requests_per_minute=default_per_minute),
     }
 
     return RateLimitMiddleware(app, limits=limits)
