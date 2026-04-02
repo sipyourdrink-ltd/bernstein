@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import ast
-import inspect
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass
@@ -25,9 +26,9 @@ class DocEntry:
 class Documentation:
     """Generated documentation collection."""
 
-    modules: list[DocEntry] = field(default_factory=list)
-    classes: list[DocEntry] = field(default_factory=list)
-    functions: list[DocEntry] = field(default_factory=list)
+    modules: list[DocEntry] = field(default_factory=lambda: list[DocEntry]())
+    classes: list[DocEntry] = field(default_factory=lambda: list[DocEntry]())
+    functions: list[DocEntry] = field(default_factory=lambda: list[DocEntry]())
 
     def to_markdown(self) -> str:
         """Convert documentation to Markdown format."""
@@ -55,9 +56,9 @@ class Documentation:
                     lines.append(cls.docstring)
                     lines.append("")
                 if cls.signature:
-                    lines.append(f"```python")
+                    lines.append("```python")
                     lines.append(cls.signature)
-                    lines.append(f"```")
+                    lines.append("```")
                     lines.append("")
 
         # Functions
@@ -71,9 +72,9 @@ class Documentation:
                     lines.append(func.docstring)
                     lines.append("")
                 if func.signature:
-                    lines.append(f"```python")
+                    lines.append("```python")
                     lines.append(func.signature)
-                    lines.append(f"```")
+                    lines.append("```")
                     lines.append("")
 
         return "\n".join(lines)
@@ -126,11 +127,9 @@ def extract_docs_from_module(module_path: Path) -> Documentation:
 
         elif isinstance(node, ast.FunctionDef):
             func_doc = ast.get_docstring(node)
-            # Get signature
             try:
-                sig = inspect.signature(node)
-                signature = f"def {node.name}{sig}"
-            except (ValueError, TypeError):
+                signature = f"def {node.name}({ast.unparse(node.args)})"
+            except Exception:
                 signature = None
 
             docs.functions.append(

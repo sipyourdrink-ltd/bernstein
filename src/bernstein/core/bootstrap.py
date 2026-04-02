@@ -660,8 +660,9 @@ if __name__ == "__main__":
 
     if _args.watchdog:
         from bernstein.core.json_logging import setup_json_logging
+
         setup_json_logging()
-        
+
         if not any(isinstance(h, logging.StreamHandler) for h in logging.getLogger().handlers):
             logging.basicConfig(
                 level=logging.INFO,
