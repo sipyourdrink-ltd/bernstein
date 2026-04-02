@@ -298,6 +298,11 @@ def _build_create_args(
         args.extend(["--memory-swap", f"{limits.memory_swap_mb}m"])
     if limits.pids_limit is not None:
         args.extend(["--pids-limit", str(limits.pids_limit)])
+    if limits.disk_mb is not None:
+        # Docker/Podman cannot quota a bind-mounted project directory portably.
+        # We still cap the container writable layer and /tmp scratch space.
+        args.extend(["--storage-opt", f"size={limits.disk_mb}m"])
+        args.extend(["--tmpfs", f"/tmp:rw,size={limits.disk_mb}m"])
     if limits.read_only_rootfs:
         args.append("--read-only")
 

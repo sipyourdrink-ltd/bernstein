@@ -33,6 +33,7 @@ from bernstein.core.models import (
     TestAgentConfig,
 )
 from bernstein.core.quality_gates import QualityGatesConfig
+from bernstein.core.sandbox import DockerSandbox, parse_docker_sandbox
 from bernstein.core.secrets import SecretsConfig
 from bernstein.core.visual_config import VisualConfig, parse_visual_config
 from bernstein.core.workspace import Workspace
@@ -162,6 +163,7 @@ class SeedConfig:
     role_model_policy: dict[str, dict[str, str]] | None = None
     compliance: ComplianceConfig | None = None
     visual: VisualConfig | None = None
+    sandbox: DockerSandbox | None = None
     bridges: BridgeConfigSet | None = None
     batch: BatchConfig = field(default_factory=BatchConfig)
     max_cost_per_agent: float = 0.0
@@ -1023,6 +1025,14 @@ def parse_seed(path: Path) -> SeedConfig:
         except ValueError as exc:
             raise SeedError(str(exc)) from exc
 
+    sandbox_raw: object = data.get("sandbox")
+    sandbox: DockerSandbox | None = None
+    if sandbox_raw is not None:
+        try:
+            sandbox = parse_docker_sandbox(sandbox_raw)
+        except ValueError as exc:
+            raise SeedError(str(exc)) from exc
+
     bridges = _parse_bridge_settings(data.get("bridges"))
 
     # Parse network config
@@ -1064,6 +1074,7 @@ def parse_seed(path: Path) -> SeedConfig:
         role_model_policy=role_model_policy,
         compliance=compliance,
         visual=visual,
+        sandbox=sandbox,
         bridges=bridges,
         batch=batch,
         test_agent=test_agent,

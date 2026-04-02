@@ -779,6 +779,12 @@ def _configure_quality_gate_bypass(
     help="Container image for agent execution (default: bernstein-agent:latest). Requires --container.",
 )
 @click.option(
+    "--sandbox",
+    default=None,
+    type=click.Choice(["docker", "podman"], case_sensitive=False),
+    help="Run agents in a Docker/Podman sandbox. Preferred alias for --container.",
+)
+@click.option(
     "--two-phase-sandbox/--no-two-phase-sandbox",
     default=False,
     help=(
@@ -861,6 +867,7 @@ def run(
     skip_gate: tuple[str, ...],
     skip_gate_reason: str | None,
     audit: bool,
+    sandbox: str | None = None,
     ab_test: bool = False,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
@@ -881,6 +888,7 @@ def run(
       bernstein conduct --routing bandit       # contextual bandit routing (learns over time)
       bernstein conduct --compliance standard  # compliance mode (development/standard/regulated)
       bernstein conduct --container            # run agents in containers
+      bernstein conduct --sandbox docker       # run agents in Docker sandbox
       bernstein conduct --container --two-phase-sandbox  # two-phase sandboxed execution
       bernstein conduct --audit                # SOC 2 audit mode (HMAC-chained log + Merkle seal)
     """
@@ -913,7 +921,10 @@ def run(
         os.environ["BERNSTEIN_COMPLIANCE"] = compliance
 
     # Propagate container isolation settings to the orchestrator subprocess
-    if container:
+    if sandbox:
+        os.environ["BERNSTEIN_CONTAINER"] = "1"
+        os.environ["BERNSTEIN_SANDBOX_RUNTIME"] = sandbox.lower()
+    elif container:
         os.environ["BERNSTEIN_CONTAINER"] = "1"
     if container_image:
         os.environ["BERNSTEIN_CONTAINER_IMAGE"] = container_image

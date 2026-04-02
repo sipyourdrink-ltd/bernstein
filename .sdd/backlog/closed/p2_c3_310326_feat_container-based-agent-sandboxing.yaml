@@ -1,0 +1,50 @@
+---
+id: "W6-08"
+title: "Container-Based Agent Sandboxing"
+status: open
+type: feature
+priority: 2
+scope: large
+complexity: high
+role: backend
+model: sonnet
+effort: normal
+estimated_minutes: 90
+depends_on: []
+blocks: []
+tags: ["enterprise", "compliance"]
+janitor_signals: []
+context_files: []
+affected_paths: []
+max_tokens: null
+require_review: false
+require_human_approval: false
+---
+
+## Summary
+
+Run agents in Docker/Podman containers for full isolation. Prevent agents from accessing host filesystem.
+
+## Objective & Definition of Done
+
+1. `bernstein run --sandbox docker` spawns agents in containers
+2. Each agent gets: project dir (bind mount, read-write), no host network, no host filesystem
+3. Container image configurable per adapter
+4. Fallback to worktree isolation when Docker unavailable
+5. Resource limits: CPU, memory, disk via cgroups
+
+## Steps
+
+1. Read relevant source files
+2. Implement the feature
+3. Add/update unit tests
+4. Run `uv run ruff check src/` and `uv run pytest tests/unit/ -x -q`
+
+## Tests & Verification
+
+- `uv run ruff check src/bernstein/`
+- `uv run pytest tests/unit/ -x -q`
+
+## Agent Notes
+
+<!-- Reserved for implementing agent -->

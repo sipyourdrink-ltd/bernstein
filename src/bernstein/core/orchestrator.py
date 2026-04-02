@@ -3007,19 +3007,43 @@ if __name__ == "__main__":
             mcp_registry = MCPRegistry(config_path=mcp_registry_path)
             logger.info("Loaded MCP auto-discovery registry from %s", mcp_registry_path)
 
-        # Container isolation: env vars take precedence over defaults.
-        # BERNSTEIN_CONTAINER=1 enables container isolation.
-        # BERNSTEIN_TWO_PHASE_SANDBOX=1 enables Codex-style two-phase execution.
-        # BERNSTEIN_CONTAINER_IMAGE=<image> overrides the container image.
+        # Legacy container isolation env vars are still supported. The newer
+        # ``--sandbox`` CLI flag sets BERNSTEIN_SANDBOX_RUNTIME and routes
+        # through the adapter-aware sandbox config below.
         _container_enabled = os.environ.get("BERNSTEIN_CONTAINER", "0").strip() in ("1", "true", "yes")
         _container_image = os.environ.get("BERNSTEIN_CONTAINER_IMAGE", "bernstein-agent:latest")
         _two_phase = os.environ.get("BERNSTEIN_TWO_PHASE_SANDBOX", "0").strip() in ("1", "true", "yes")
+        _sandbox_runtime = os.environ.get("BERNSTEIN_SANDBOX_RUNTIME", "").strip().lower()
+        sandbox_config = (
+            seed.sandbox
+            if seed is not None and seed.sandbox is not None and seed.sandbox.enabled
+            else None
+        )
+        if _sandbox_runtime:
+            from bernstein.core.sandbox import DockerSandbox
+
+            base_sandbox = sandbox_config or DockerSandbox(enabled=True)
+            sandbox_config = DockerSandbox(
+                enabled=True,
+                runtime="podman" if _sandbox_runtime == "podman" else "docker",
+                default_image=_container_image or base_sandbox.default_image,
+                adapter_images=base_sandbox.adapter_images,
+                cpu_cores=base_sandbox.cpu_cores,
+                memory_mb=base_sandbox.memory_mb,
+                disk_mb=base_sandbox.disk_mb,
+                pids_limit=base_sandbox.pids_limit,
+                network_mode=base_sandbox.network_mode,
+                drop_capabilities=base_sandbox.drop_capabilities,
+                read_only_rootfs=base_sandbox.read_only_rootfs,
+                extra_mounts=base_sandbox.extra_mounts,
+            )
+
         _container_iso = ContainerIsolationConfig(
             enabled=_container_enabled,
             image=_container_image,
             two_phase_sandbox=_two_phase,
         )
-        container_config = _build_container_config(_container_iso)
+        container_config = None if sandbox_config is not None else _build_container_config(_container_iso)
         if container_config is not None and _container_iso.auto_build_image:
             from bernstein.core.container import ensure_agent_image
 
@@ -3065,6 +3089,7 @@ if __name__ == "__main__":
             worktree_setup_config=seed.worktree_setup if seed else None,
             enable_caching=True,
             container_config=container_config,
+            sandbox=sandbox_config,
             role_model_policy=seed.role_model_policy if seed else None,
             runtime_bridge=runtime_bridge,
         )

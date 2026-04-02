@@ -573,6 +573,7 @@ def cli(
         compliance=None,
         container=False,
         container_image=None,
+        sandbox=None,
         two_phase_sandbox=False,
         plan_only=plan_only,
         from_plan=Path(from_plan) if from_plan else None,

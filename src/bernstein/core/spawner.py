@@ -25,6 +25,7 @@ from bernstein.core.lifecycle import transition_agent
 from bernstein.core.models import AgentSession, IsolationMode, ModelConfig, Task
 from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
+from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
 from bernstein.plugins.manager import get_plugin_manager
@@ -550,6 +551,7 @@ class AgentSpawner:
         bulletin: BulletinBoard | None = None,
         enable_caching: bool = False,
         container_config: ContainerConfig | None = None,
+        sandbox: DockerSandbox | None = None,
         max_tokens_per_task: dict[str, int] | None = None,
         role_model_policy: dict[str, dict[str, str]] | None = None,
         runtime_bridge: RuntimeBridge | None = None,
@@ -594,6 +596,8 @@ class AgentSpawner:
         self._traces: dict[str, AgentTrace] = {}
         self._trace_store = TraceStore(workdir / ".sdd" / "traces")
         self._runtime_bridge = runtime_bridge
+        self._sandbox = sandbox if sandbox is not None and sandbox.enabled else None
+        self._sandbox_managers: dict[str, ContainerManager] = {}
         # Container isolation
         self._container_mgr: ContainerManager | None = None
         if container_config is not None:
@@ -993,7 +997,17 @@ class AgentSpawner:
                     break
 
                 try:
-                    if self._container_mgr is not None:
+                    if self._sandbox is not None:
+                        result = self._spawn_in_sandbox(
+                            session_id=session_id,
+                            prompt=prompt,
+                            spawn_cwd=spawn_cwd,
+                            model_config=model_config,
+                            mcp_config=effective_mcp,
+                            session=session,
+                            adapter=target_adapter,
+                        )
+                    elif self._container_mgr is not None:
                         result = self._spawn_in_container(
                             session_id=session_id,
                             prompt=prompt,
@@ -1312,6 +1326,89 @@ class AgentSpawner:
                 mcp_config=mcp_config,
             )
 
+    def _spawn_in_sandbox(
+        self,
+        *,
+        session_id: str,
+        prompt: str,
+        spawn_cwd: Path,
+        model_config: ModelConfig,
+        mcp_config: dict[str, Any] | None,
+        session: AgentSession,
+        adapter: CLIAdapter,
+    ) -> SpawnResult:
+        """Spawn an agent in a per-session Docker or Podman sandbox.
+
+        Args:
+            session_id: Agent session identifier.
+            prompt: Rendered system prompt.
+            spawn_cwd: Worktree or workspace path mounted into the sandbox.
+            model_config: Model and effort configuration.
+            mcp_config: Optional MCP configuration for the adapter.
+            session: Mutable session record to update.
+            adapter: Adapter selected for this spawn attempt.
+
+        Returns:
+            Spawn result for the sandboxed process.
+        """
+        assert self._sandbox is not None
+
+        from bernstein.adapters.env_isolation import build_filtered_env
+
+        adapter_name = adapter.name().lower()
+        extra_keys: list[str] = []
+        if "claude" in adapter_name:
+            extra_keys.append("ANTHROPIC_API_KEY")
+        elif "gemini" in adapter_name:
+            extra_keys.extend(["GOOGLE_API_KEY", "GEMINI_API_KEY"])
+        elif "codex" in adapter_name:
+            extra_keys.append("OPENAI_API_KEY")
+        sandbox_env = build_filtered_env(extra_keys)
+
+        prompt_file = spawn_cwd / ".sdd" / "runtime" / "prompts" / f"{session_id}.md"
+        prompt_file.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file.write_text(prompt, encoding="utf-8")
+
+        log_dir = spawn_cwd / ".sdd" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"{session_id}.log"
+
+        try:
+            manager, handle = spawn_in_sandbox(
+                sandbox=self._sandbox,
+                session_id=session_id,
+                adapter_name=adapter_name,
+                cmd=self._adapter_cmd_for_container(
+                    prompt_file=prompt_file,
+                    model_config=model_config,
+                    session_id=session_id,
+                    mcp_config=mcp_config,
+                    adapter=adapter,
+                ),
+                env=sandbox_env,
+                workdir=spawn_cwd,
+                log_path=log_path,
+            )
+        except ContainerError as exc:
+            logger.warning(
+                "Sandbox runtime unavailable for %s, falling back to worktree isolation: %s",
+                session_id,
+                exc,
+            )
+            session.isolation = IsolationMode.WORKTREE.value if self._use_worktrees else IsolationMode.NONE.value
+            return adapter.spawn(
+                prompt=prompt,
+                workdir=spawn_cwd,
+                model_config=model_config,
+                session_id=session_id,
+                mcp_config=mcp_config,
+            )
+
+        self._sandbox_managers[session_id] = manager
+        session.container_id = handle.container_id
+        session.isolation = IsolationMode.CONTAINER.value
+        return SpawnResult(pid=handle.pid or 0, log_path=log_path)
+
     def _adapter_cmd_for_container(
         self,
         *,
@@ -1361,6 +1458,10 @@ class AgentSpawner:
             ]
         return cmd
 
+    def _container_manager_for_session(self, session_id: str) -> ContainerManager | None:
+        """Return the container manager responsible for a session."""
+        return self._sandbox_managers.get(session_id, self._container_mgr)
+
     def check_alive(self, session: AgentSession) -> bool:
         """Check if the agent process is still running.
 
@@ -1382,12 +1483,13 @@ class AgentSpawner:
             return bridge_status.state in {AgentState.PENDING, AgentState.RUNNING}
 
         # Container-based agents: check container status
-        if session.container_id and self._container_mgr is not None:
-            handle = self._container_mgr.get_handle(session.id)
+        container_mgr = self._container_manager_for_session(session.id)
+        if session.container_id and container_mgr is not None:
+            handle = container_mgr.get_handle(session.id)
             if handle is not None:
-                alive = self._container_mgr.is_alive(handle)
+                alive = container_mgr.is_alive(handle)
                 if not alive:
-                    session.exit_code = self._container_mgr.get_exit_code(handle)
+                    session.exit_code = container_mgr.get_exit_code(handle)
                 return alive
             return False
 
@@ -1419,10 +1521,12 @@ class AgentSpawner:
             return
 
         # Container-based agents: stop and destroy the container
-        if session.container_id and self._container_mgr is not None:
-            handle = self._container_mgr.get_handle(session.id)
+        container_mgr = self._container_manager_for_session(session.id)
+        if session.container_id and container_mgr is not None:
+            handle = container_mgr.get_handle(session.id)
             if handle is not None:
-                self._container_mgr.destroy(handle)
+                container_mgr.destroy(handle)
+            self._sandbox_managers.pop(session.id, None)
         elif session.pid is not None:
             self._adapter.kill(session.pid)
         if session.status != "dead":
@@ -1466,10 +1570,12 @@ class AgentSpawner:
             logger.info("Agent %s remote bridge run finalized", session.id)
         else:
             # Clean up container if this was a containerized agent
-            if session.container_id and self._container_mgr is not None:
-                handle = self._container_mgr.get_handle(session.id)
+            container_mgr = self._container_manager_for_session(session.id)
+            if session.container_id and container_mgr is not None:
+                handle = container_mgr.get_handle(session.id)
                 if handle is not None:
-                    self._container_mgr.destroy(handle)
+                    container_mgr.destroy(handle)
+                self._sandbox_managers.pop(session.id, None)
                 logger.info("Agent %s container destroyed", session.id)
 
             proc = self._procs.pop(session.id, None)
