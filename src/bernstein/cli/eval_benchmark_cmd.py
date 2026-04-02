@@ -349,6 +349,7 @@ def eval_golden(workdir: str) -> None:
         raise SystemExit(1)
 
 
+@eval_group.command("swe-bench")
 @click.option(
     "--subset",
     type=click.Choice(["lite", "full"]),

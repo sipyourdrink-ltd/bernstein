@@ -11,6 +11,9 @@ class BernsteinSpec:
     Plugins implement one or more of these hooks via ``@hookimpl``.
     All hooks are called with keyword arguments so implementations may
     safely omit parameters they do not need.
+
+    Hooks can be marked as ``@hookspec(background=True)`` to run them in the
+    background without blocking the orchestrator's main tick loop.
     """
 
     @hookspec

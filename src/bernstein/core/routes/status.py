@@ -625,9 +625,6 @@ async def dashboard_data(request: Request) -> JSONResponse:
                 agent_source=str(snapshot.get("agent_source", "built-in")),
                 tokens_used=int(snapshot.get("tokens_used", 0) or 0),
                 token_budget=int(snapshot.get("token_budget", 0) or 0),
-                context_window_tokens=int(snapshot.get("context_window_tokens", 0) or 0),
-                context_utilization_pct=float(snapshot.get("context_utilization_pct", 0.0) or 0.0),
-                context_utilization_alert=bool(snapshot.get("context_utilization_alert", False)),
                 transition_reason=TransitionReason(str(snapshot["transition_reason"]))
                 if str(snapshot.get("transition_reason", "")).strip()
                 else None,

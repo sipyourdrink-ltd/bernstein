@@ -8,12 +8,23 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class CacheBreakReason(Enum):
+    """Classification of why a prompt cache break occurred."""
+
+    SYSTEM = "system"  # role prompt, specialist agents, or shared context changed
+    TOOLS = "tools"  # tool definitions or MCP config changed
+    MODEL = "model"  # model or tier routing changed
+    CONFIG = "config"  # agent config or project settings changed
+
 
 # Savings-per-token at Anthropic's cached-input discount (90% off vs standard
 # claude-sonnet-4 input price of $3.00/MTok).  Standard - cached = $2.70/MTok.
@@ -77,6 +88,62 @@ class CacheEntry:
 
 
 @dataclass
+class CacheBreakEvent:
+    """Structured event emitted on every prompt cache break.
+
+    Attributes:
+        timestamp: Unix timestamp of the cache break.
+        reason: Classification of why the cache broke.
+        old_cache_key: Previous cache key that was invalidated (None if brand-new).
+        new_cache_key: New cache key after the break.
+        estimated_token_delta: Estimated token count difference (old vs new prefix).
+        session_id: Agent session ID that triggered the break.
+        model_name: Model name used for the request.
+        provider_name: API provider name.
+    """
+
+    timestamp: float
+    reason: CacheBreakReason
+    old_cache_key: str | None
+    new_cache_key: str
+    estimated_token_delta: int
+    session_id: str
+    model_name: str = ""
+    provider_name: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to JSON-compatible dict."""
+        return {
+            "timestamp": self.timestamp,
+            "reason": self.reason.value,
+            "old_cache_key": self.old_cache_key,
+            "new_cache_key": self.new_cache_key,
+            "estimated_token_delta": self.estimated_token_delta,
+            "session_id": self.session_id,
+            "model_name": self.model_name,
+            "provider_name": self.provider_name,
+        }
+
+    def to_json_line(self) -> str:
+        """Serialize to a single JSON line for JSONL storage."""
+        return json.dumps(self.to_dict(), separators=(",", ":"))
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CacheBreakEvent:
+        """Deserialize from JSON dict."""
+        return cls(
+            timestamp=data["timestamp"],
+            reason=CacheBreakReason(data["reason"]),
+            old_cache_key=data.get("old_cache_key"),
+            new_cache_key=data["new_cache_key"],
+            estimated_token_delta=data.get("estimated_token_delta", 0),
+            session_id=data["session_id"],
+            model_name=data.get("model_name", ""),
+            provider_name=data.get("provider_name", ""),
+        )
+
+
+@dataclass
 class CacheManifest:
     """Collection of cached prefixes with metadata.
 
@@ -122,6 +189,8 @@ class PromptProcessResult:
         task_suffix: The task-specific suffix.
         is_new_prefix: True if this is a new cache entry.
         hit_count: Number of times this prefix has been reused (before this spawn).
+        first_seen: Timestamp when the prefix was first cached (None if reused).
+        prefix_tokens: Estimated token count of the prefix.
     """
 
     cache_key: str
@@ -129,6 +198,8 @@ class PromptProcessResult:
     task_suffix: str
     is_new_prefix: bool
     hit_count: int
+    first_seen: float | None = None
+    prefix_tokens: int = 0
 
 
 def compute_cache_key(prefix: str) -> str:
@@ -264,12 +335,13 @@ class PromptCachingManager:
         hit_count = 0
 
         if is_new:
+            now = time.time()
             entry = CacheEntry(
                 cache_key=cache_key,
                 system_prefix=system_prefix,
                 prefix_tokens=_estimate_tokens(system_prefix),
                 hit_count=0,
-                first_seen_at=time.time(),
+                first_seen_at=now,
             )
             self._manifest.entries[cache_key] = entry
         else:
@@ -286,6 +358,8 @@ class PromptCachingManager:
             task_suffix=task_suffix,
             is_new_prefix=is_new,
             hit_count=hit_count,
+            first_seen=self._manifest.entries[cache_key].first_seen_at if not is_new else time.time(),
+            prefix_tokens=self._manifest.entries[cache_key].prefix_tokens,
         )
 
     def save_manifest(self) -> None:
