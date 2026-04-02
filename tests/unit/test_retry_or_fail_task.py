@@ -38,6 +38,7 @@ class MockTask:
         self.model = "sonnet"
         self.effort = "high"
         self.max_output_tokens = None
+        self.meta_messages = []
         self.completion_signals = []
 
 
