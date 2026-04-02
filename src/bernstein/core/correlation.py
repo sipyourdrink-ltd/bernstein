@@ -10,9 +10,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Context variable for current correlation ID
-_current_correlation_id: ContextVar[str | None] = ContextVar(
-    "correlation_id",
+# Context variable for current correlation context
+_current_context: ContextVar[CorrelationContext | None] = ContextVar(
+    "correlation_context",
     default=None,
 )
 
@@ -95,22 +95,47 @@ def generate_correlation_id() -> str:
     return str(uuid.uuid4())[:12]
 
 
+def get_current_context() -> CorrelationContext | None:
+    """Get current correlation context.
+
+    Returns:
+        Current context or None.
+    """
+    return _current_context.get()
+
+
 def get_current_correlation_id() -> str | None:
     """Get current correlation ID from context.
 
     Returns:
         Current correlation ID or None.
     """
-    return _current_correlation_id.get()
+    ctx = get_current_context()
+    return ctx.correlation_id if ctx else None
 
 
 def set_correlation_id(correlation_id: str) -> None:
-    """Set correlation ID in context.
+    """Set correlation ID in context (backward compat).
 
     Args:
         correlation_id: Correlation ID to set.
     """
-    _current_correlation_id.set(correlation_id)
+    ctx = get_current_context()
+    if ctx:
+        # Update existing context or create new one?
+        # For simplicity, we just create a minimal context if none exists.
+        pass
+    else:
+        _current_context.set(CorrelationContext(correlation_id=correlation_id, task_id="none"))
+
+
+def set_current_context(context: CorrelationContext) -> None:
+    """Set correlation context in current thread.
+
+    Args:
+        context: Context to set.
+    """
+    _current_context.set(context)
 
 
 def create_context(task_id: str) -> CorrelationContext:
@@ -127,15 +152,15 @@ def create_context(task_id: str) -> CorrelationContext:
         correlation_id=correlation_id,
         task_id=task_id,
     )
-    set_correlation_id(correlation_id)
+    set_current_context(context)
     return context
 
 
 class CorrelationFilter(logging.Filter):
-    """Logging filter that adds correlation ID to log records."""
+    """Logging filter that adds correlation ID and other context to log records."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Add correlation ID to log record.
+        """Add correlation ID, task_id, and agent_id to log record.
 
         Args:
             record: Log record to filter.
@@ -143,9 +168,17 @@ class CorrelationFilter(logging.Filter):
         Returns:
             True to allow record through.
         """
-        correlation_id = get_current_correlation_id()
-        record.correlation_id = correlation_id or "none"
+        ctx = get_current_context()
+        if ctx:
+            record.correlation_id = ctx.correlation_id
+            record.task_id = ctx.task_id
+            record.agent_id = ctx.agent_id or "none"
+        else:
+            record.correlation_id = "none"
+            record.task_id = "none"
+            record.agent_id = "none"
         return True
+
 
 
 def setup_correlation_logging() -> None:

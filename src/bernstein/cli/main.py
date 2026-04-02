@@ -435,6 +435,7 @@ def cli(
     auto_approve: bool,
 ) -> None:
     """Declarative agent orchestration for engineering teams."""
+    setup_json_logging()
     if ctx.invoked_subcommand is not None:
         return
 

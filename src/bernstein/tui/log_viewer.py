@@ -11,7 +11,6 @@ from rich.text import Text
 if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderResult
 
-# Pattern to match fenced code blocks in logs
 CODE_BLOCK_PATTERN = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
 
 
@@ -49,19 +48,15 @@ class LogViewer:
         Yields:
             Rich segments.
         """
-        # Split by code blocks
         parts = CODE_BLOCK_PATTERN.split(self._log_text)
 
         for i, part in enumerate(parts):
             if not part:
                 continue
 
-            # Every 3rd part (starting from index 1) is a code block language
             if i % 3 == 1:
-                # Language specifier (may be empty)
                 continue
             elif i % 3 == 2:
-                # Code block content
                 language = parts[i - 1] or "text"
                 syntax = Syntax(
                     part,
@@ -71,7 +66,6 @@ class LogViewer:
                 )
                 yield from console.render(syntax, options)
             else:
-                # Plain text
                 yield Text(part)
 
 
