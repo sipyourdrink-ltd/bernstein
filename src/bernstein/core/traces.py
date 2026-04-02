@@ -626,3 +626,269 @@ def record_turn_budget(
     trace.total_consumed += consumed
     trace.total_allocated_budget = max(trace.total_allocated_budget, allocated)
     return step
+
+
+# ---------------------------------------------------------------------------
+# Fuzzy patch match confidence scoring (T566)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PatchMatchResult:
+    """Result of a fuzzy patch match attempt.
+
+    Attributes:
+        file_path: Path to the file being patched.
+        confidence: Match confidence in [0.0, 1.0].
+        matched: Whether the patch was applied successfully.
+        before_snippet: First 200 chars of the original content.
+        after_snippet: First 200 chars of the patched content.
+        diff_lines: Number of lines changed.
+        mismatch_reason: Human-readable reason if confidence < 1.0.
+    """
+
+    file_path: str
+    confidence: float
+    matched: bool
+    before_snippet: str = ""
+    after_snippet: str = ""
+    diff_lines: int = 0
+    mismatch_reason: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-compatible dict."""
+        return {
+            "file_path": self.file_path,
+            "confidence": self.confidence,
+            "matched": self.matched,
+            "before_snippet": self.before_snippet,
+            "after_snippet": self.after_snippet,
+            "diff_lines": self.diff_lines,
+            "mismatch_reason": self.mismatch_reason,
+        }
+
+
+def score_patch_match(
+    original: str,
+    patched: str,
+    file_path: str = "",
+    *,
+    context_lines: int = 3,
+) -> PatchMatchResult:
+    """Score how confidently a patch was applied to a file (T566).
+
+    Uses difflib sequence matching to compute a similarity ratio between
+    the original and patched content.  A ratio of 1.0 means no change
+    (identity), while lower values indicate more aggressive edits.
+
+    Args:
+        original: Original file content before the patch.
+        patched: File content after the patch was applied.
+        file_path: Path label for the result.
+        context_lines: Lines of context to include in snippets.
+
+    Returns:
+        :class:`PatchMatchResult` with confidence score and diff metadata.
+    """
+    if original == patched:
+        return PatchMatchResult(
+            file_path=file_path,
+            confidence=1.0,
+            matched=True,
+            before_snippet=original[:200],
+            after_snippet=patched[:200],
+            diff_lines=0,
+        )
+
+    orig_lines = original.splitlines(keepends=True)
+    patch_lines = patched.splitlines(keepends=True)
+
+    matcher = difflib.SequenceMatcher(None, orig_lines, patch_lines, autojunk=False)
+    ratio = matcher.ratio()
+
+    # Count changed lines
+    diff_lines = sum(
+        max(i2 - i1, j2 - j1)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes()
+        if tag != "equal"
+    )
+
+    mismatch_reason = ""
+    if ratio < 0.5:
+        mismatch_reason = f"Low similarity ({ratio:.2f}) — patch may have applied to wrong location"
+    elif ratio < 0.8:
+        mismatch_reason = f"Moderate similarity ({ratio:.2f}) — verify patch applied correctly"
+
+    return PatchMatchResult(
+        file_path=file_path,
+        confidence=ratio,
+        matched=ratio >= 0.5,
+        before_snippet=original[:200],
+        after_snippet=patched[:200],
+        diff_lines=diff_lines,
+        mismatch_reason=mismatch_reason,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Structured file-edit conflict preview (T560)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FileEditConflict:
+    """Structured preview of a file-edit conflict between two agents.
+
+    Attributes:
+        file_path: Path to the conflicting file.
+        session_a: Session ID of the first agent.
+        session_b: Session ID of the second agent.
+        snippet_a: Relevant snippet from agent A's edit.
+        snippet_b: Relevant snippet from agent B's edit.
+        conflict_lines: Line numbers where the conflict occurs.
+        resolution_hint: Suggested resolution strategy.
+    """
+
+    file_path: str
+    session_a: str
+    session_b: str
+    snippet_a: str = ""
+    snippet_b: str = ""
+    conflict_lines: list[int] = field(default_factory=list[int])
+    resolution_hint: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-compatible dict."""
+        return {
+            "file_path": self.file_path,
+            "session_a": self.session_a,
+            "session_b": self.session_b,
+            "snippet_a": self.snippet_a,
+            "snippet_b": self.snippet_b,
+            "conflict_lines": self.conflict_lines,
+            "resolution_hint": self.resolution_hint,
+        }
+
+
+def preview_edit_conflict(
+    file_path: str,
+    content_a: str,
+    content_b: str,
+    session_a: str = "",
+    session_b: str = "",
+) -> FileEditConflict:
+    """Build a structured conflict preview for two competing edits (T560).
+
+    Computes a unified diff between *content_a* and *content_b* and
+    extracts the conflicting line ranges and representative snippets.
+
+    Args:
+        file_path: Path label for the conflict.
+        content_a: File content from agent A.
+        content_b: File content from agent B.
+        session_a: Session ID of agent A.
+        session_b: Session ID of agent B.
+
+    Returns:
+        :class:`FileEditConflict` with diff metadata and resolution hint.
+    """
+    lines_a = content_a.splitlines(keepends=True)
+    lines_b = content_b.splitlines(keepends=True)
+
+    diff = list(
+        difflib.unified_diff(lines_a, lines_b, fromfile=f"{file_path} (A)", tofile=f"{file_path} (B)", n=2)
+    )
+
+    conflict_lines: list[int] = []
+    for line in diff:
+        if line.startswith("@@"):
+            # Extract line numbers from @@ -a,b +c,d @@ header
+            m = re.search(r"\+(\d+)", line)
+            if m:
+                conflict_lines.append(int(m.group(1)))
+
+    snippet_a = content_a[:300]
+    snippet_b = content_b[:300]
+
+    hint = "manual merge required"
+    if not diff:
+        hint = "no conflict — contents are identical"
+    elif len(conflict_lines) == 1:
+        hint = f"single-region conflict at line {conflict_lines[0]} — prefer agent with later timestamp"
+
+    return FileEditConflict(
+        file_path=file_path,
+        session_a=session_a,
+        session_b=session_b,
+        snippet_a=snippet_a,
+        snippet_b=snippet_b,
+        conflict_lines=conflict_lines,
+        resolution_hint=hint,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Crash bundle export (T585)
+# ---------------------------------------------------------------------------
+
+
+def build_crash_bundle(
+    workdir: Path,
+    *,
+    include_traces: bool = True,
+    include_metrics: bool = True,
+    max_trace_bytes: int = 50_000,
+) -> dict[str, Any]:
+    """Build a crash diagnostic bundle for operator export (T585).
+
+    Collects recent traces, metric summaries, and runtime state into a
+    single dict suitable for JSON export or TUI display.
+
+    Args:
+        workdir: Project root directory.
+        include_traces: Whether to include recent trace data.
+        include_metrics: Whether to include metric summaries.
+        max_trace_bytes: Maximum bytes of trace data to include.
+
+    Returns:
+        Dict with ``traces``, ``metrics``, ``runtime``, and ``captured_at``.
+    """
+    bundle: dict[str, Any] = {
+        "captured_at": time.time(),
+        "workdir": str(workdir),
+        "traces": [],
+        "metrics_summary": {},
+        "runtime_files": [],
+    }
+
+    if include_traces:
+        traces_dir = workdir / ".sdd" / "traces"
+        if traces_dir.exists():
+            trace_files = sorted(traces_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+            total_bytes = 0
+            for tf in trace_files[:10]:
+                if total_bytes >= max_trace_bytes:
+                    break
+                try:
+                    content = tf.read_text(encoding="utf-8", errors="replace")
+                    total_bytes += len(content)
+                    bundle["traces"].append({"file": tf.name, "content": content[:max_trace_bytes - total_bytes]})
+                except OSError:
+                    pass
+
+    if include_metrics:
+        metrics_dir = workdir / ".sdd" / "metrics"
+        if metrics_dir.exists():
+            metric_files = list(metrics_dir.glob("*.jsonl"))
+            bundle["metrics_summary"] = {
+                "file_count": len(metric_files),
+                "files": [f.name for f in metric_files[:20]],
+            }
+
+    runtime_dir = workdir / ".sdd" / "runtime"
+    if runtime_dir.exists():
+        bundle["runtime_files"] = [
+            f.name for f in runtime_dir.iterdir() if f.is_file()
+        ][:30]
+
+    return bundle
