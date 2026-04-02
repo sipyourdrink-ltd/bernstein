@@ -9,6 +9,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from bernstein.core.tenanting import request_tenant_id
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -106,6 +108,7 @@ async def slack_slash_command(request: Request) -> JSONResponse:
             priority=1,
             scope="small",
             slack_context=slack_context,
+            tenant_id=request_tenant_id(request),
         )
         task = await store.create(task_create)
         logger.info("Created task %s from Slack command: %r", task.id, sanitize_log(text[:60]))
@@ -216,6 +219,7 @@ async def slack_events(request: Request) -> JSONResponse:
             priority=1,
             scope="small",
             slack_context=slack_context,
+            tenant_id=request_tenant_id(request),
         )
         task = await store.create(task_create)
         from bernstein.core.sanitize import sanitize_log as _sl

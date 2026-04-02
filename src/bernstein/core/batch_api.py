@@ -384,12 +384,14 @@ class ProviderBatchManager:
             model=session.model_config.model,
             provider=session.provider or decision.provider,
             agent_source="provider-batch",
+            tenant_id=task.tenant_id,
         )
         collector.start_task(
             task_id=task.id,
             role=task.role,
             model=decision.model_config.model,
             provider=decision.provider,
+            tenant_id=task.tenant_id,
         )
 
         worktree_path: Path | None = None

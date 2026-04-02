@@ -18,6 +18,7 @@ from bernstein.core.server import (
     WebhookTaskResponse,
     task_to_response,
 )
+from bernstein.core.tenanting import request_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookT
         return denied
 
     store = _get_store(request)
-    task = await store.create(TaskCreate(**body.model_dump()))
+    task = await store.create(body.model_copy(update={"tenant_id": request_tenant_id(request)}))
     return WebhookTaskResponse(task=task_to_response(task))
 
 
@@ -223,8 +224,9 @@ async def github_webhook(request: Request) -> JSONResponse:
 
     # Create tasks in the store
     created_ids: list[str] = []
+    tenant_id = request_tenant_id(request)
     for payload in task_payloads:
-        task = await store.create(TaskCreate(**payload))
+        task = await store.create(TaskCreate(**payload, tenant_id=tenant_id))
         created_ids.append(task.id)
 
     return JSONResponse(

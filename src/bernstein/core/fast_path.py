@@ -639,6 +639,7 @@ def try_fast_path_batch(
         role=task.role,
         model="fast-path",
         provider="local",
+        tenant_id=task.tenant_id,
     )
 
     if result.success:

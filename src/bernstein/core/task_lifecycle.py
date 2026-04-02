@@ -1097,6 +1097,7 @@ def claim_and_spawn_batches(
                 model=session.model_config.model,
                 provider=session.provider or "default",
                 agent_source=session.agent_source,
+                tenant_id=batch[0].tenant_id,
             )
             for _task in batch:
                 collector.start_task(
@@ -1104,6 +1105,7 @@ def claim_and_spawn_batches(
                     role=session.role,
                     model=session.model_config.model,
                     provider=session.provider or "default",
+                    tenant_id=_task.tenant_id,
                 )
             logger.info(
                 "Agent '%s' using prompt source: %s",
@@ -1121,6 +1123,7 @@ def claim_and_spawn_batches(
                 f"agent_spawn_failed:{analysis.error_type}",
                 "default",
                 role=batch[0].role if batch else None,
+                tenant_id=batch[0].tenant_id if batch else "default",
             )
             if not analysis.is_transient:
                 for task in batch:
@@ -1479,6 +1482,7 @@ def process_completed_tasks(
             total_input_tokens=_tokens_in,
             total_output_tokens=_tokens_out,
             total_cost_usd=_cost_usd if _cost_usd > 0 else None,
+            tenant_id=task.tenant_id,
         )
         try:
             orch._cost_tracker.save(orch._workdir / ".sdd")

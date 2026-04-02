@@ -254,6 +254,7 @@ class TaskCreate(BaseModel):
     title: str
     description: str
     role: str
+    tenant_id: str = "default"
     priority: int = 2
     scope: str = "medium"
     complexity: str = "medium"
@@ -284,6 +285,7 @@ class TaskResponse(BaseModel):
     title: str
     description: str
     role: str
+    tenant_id: str
     priority: int
     scope: str
     complexity: str
@@ -678,6 +680,7 @@ def task_to_response(task: Task) -> TaskResponse:
         title=task.title,
         description=task.description,
         role=task.role,
+        tenant_id=task.tenant_id,
         priority=task.priority,
         scope=task.scope.value,
         complexity=task.complexity.value,

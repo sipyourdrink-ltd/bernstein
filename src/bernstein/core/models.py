@@ -205,6 +205,7 @@ class Task:
     owned_files: list[str] = field(default_factory=list[str])
     assigned_agent: str | None = None
     result_summary: str | None = None
+    tenant_id: str = "default"
     cell_id: str | None = None  # Which cell this task belongs to
     repo: str | None = None  # Target repo in a multi-repo workspace
     # Manager-specified routing hints (override auto-routing when set)
@@ -275,6 +276,7 @@ class Task:
             owned_files=raw.get("owned_files", []),
             assigned_agent=raw.get("assigned_agent"),
             result_summary=raw.get("result_summary"),
+            tenant_id=str(raw.get("tenant_id", "default") or "default"),
             cell_id=raw.get("cell_id"),
             repo=raw.get("repo"),
             model=raw.get("model"),

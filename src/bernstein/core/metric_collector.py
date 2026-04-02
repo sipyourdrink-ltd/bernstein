@@ -15,6 +15,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from bernstein.core.tenanting import normalize_tenant_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +61,7 @@ class TaskMetrics:
     model: str
     provider: str
     start_time: float
+    tenant_id: str = "default"
     end_time: float | None = None
     success: bool = False
     error: str | None = None
@@ -82,6 +85,7 @@ class AgentMetrics:
     model: str
     provider: str
     start_time: float
+    tenant_id: str = "default"
     end_time: float | None = None
     tasks_completed: int = 0
     tasks_failed: int = 0
@@ -156,7 +160,15 @@ class MetricsCollector:
 
     # -- Task Metrics --------------------------------------------------------
 
-    def start_task(self, task_id: str, role: str, model: str, provider: str) -> TaskMetrics:
+    def start_task(
+        self,
+        task_id: str,
+        role: str,
+        model: str,
+        provider: str,
+        *,
+        tenant_id: str = "default",
+    ) -> TaskMetrics:
         """Record the start of a task execution.
 
         Args:
@@ -173,6 +185,7 @@ class MetricsCollector:
             role=role,
             model=model,
             provider=provider,
+            tenant_id=normalize_tenant_id(tenant_id),
             start_time=time.time(),
         )
         self._task_metrics[task_id] = metrics
@@ -223,10 +236,17 @@ class MetricsCollector:
 
         # Write completion time metric point
         duration = metrics.end_time - metrics.start_time
+        labels = {
+            "task_id": task_id,
+            "role": metrics.role,
+            "model": metrics.model,
+            "success": str(success),
+            "tenant_id": metrics.tenant_id,
+        }
         self._write_metric_point(
             MetricType.TASK_COMPLETION_TIME,
             duration,
-            {"task_id": task_id, "role": metrics.role, "model": metrics.model, "success": str(success)},
+            labels,
         )
 
         # Write cost efficiency metric if cost > 0
@@ -234,7 +254,12 @@ class MetricsCollector:
             self._write_metric_point(
                 MetricType.COST_EFFICIENCY,
                 cost_usd,
-                {"task_id": task_id, "role": metrics.role, "model": metrics.model},
+                {
+                    "task_id": task_id,
+                    "role": metrics.role,
+                    "model": metrics.model,
+                    "tenant_id": metrics.tenant_id,
+                },
             )
 
         # Write token usage — enables avg-tokens-per-task queries in /quality
@@ -242,7 +267,7 @@ class MetricsCollector:
             self._write_metric_point(
                 MetricType.API_USAGE,
                 float(tokens_used),
-                {"task_id": task_id, "role": metrics.role, "model": metrics.model, "success": str(success)},
+                labels,
             )
 
         # Update provider health
@@ -275,6 +300,8 @@ class MetricsCollector:
         model: str,
         provider: str,
         agent_source: str = "built-in",
+        *,
+        tenant_id: str = "default",
     ) -> AgentMetrics:
         """Record the start of an agent session.
 
@@ -294,6 +321,7 @@ class MetricsCollector:
             role=role,
             model=model,
             provider=provider,
+            tenant_id=normalize_tenant_id(tenant_id),
             start_time=time.time(),
             agent_source=agent_source,
         )
@@ -350,7 +378,12 @@ class MetricsCollector:
             self._write_metric_point(
                 MetricType.AGENT_SUCCESS,
                 success_rate,
-                {"agent_id": agent_id, "role": metrics.role, "model": metrics.model},
+                {
+                    "agent_id": agent_id,
+                    "role": metrics.role,
+                    "model": metrics.model,
+                    "tenant_id": metrics.tenant_id,
+                },
             )
 
         self._flush_buffer()
@@ -515,6 +548,8 @@ class MetricsCollector:
         role: str,
         model: str,
         provider: str,
+        *,
+        tenant_id: str = "default",
     ) -> None:
         """Record janitor verification result.
 
@@ -530,6 +565,7 @@ class MetricsCollector:
             self._task_metrics[task_id].janitor_passed = passed
 
         # Write janitor verification metric
+        normalized_tenant = normalize_tenant_id(tenant_id)
         self._write_metric_point(
             MetricType.AGENT_SUCCESS,
             1.0 if passed else 0.0,
@@ -538,6 +574,7 @@ class MetricsCollector:
                 "role": role,
                 "model": model,
                 "verification": "janitor",
+                "tenant_id": normalized_tenant,
             },
         )
 
@@ -598,6 +635,8 @@ class MetricsCollector:
         provider: str,
         model: str | None = None,
         role: str | None = None,
+        *,
+        tenant_id: str = "default",
     ) -> None:
         """Record an error for metrics tracking.
 
@@ -608,6 +647,7 @@ class MetricsCollector:
             role: Agent role.
         """
         # Write error metric
+        normalized_tenant = normalize_tenant_id(tenant_id)
         self._write_metric_point(
             MetricType.ERROR_RATE,
             1.0,
@@ -616,6 +656,7 @@ class MetricsCollector:
                 "provider": provider,
                 "model": model or "",
                 "role": role or "",
+                "tenant_id": normalized_tenant,
             },
         )
         # Update provider health
@@ -698,6 +739,8 @@ class MetricsCollector:
         tokens: int,
         cost_usd: float,
         success: bool,
+        *,
+        tenant_id: str = "default",
     ) -> None:
         """Record an API call for usage tracking.
 
@@ -710,10 +753,17 @@ class MetricsCollector:
             success: Whether the call succeeded.
         """
         # Write API usage metric
+        normalized_tenant = normalize_tenant_id(tenant_id)
         self._write_metric_point(
             MetricType.API_USAGE,
             float(tokens),
-            {"provider": provider, "model": model, "success": str(success), "latency_ms": str(round(latency_ms, 1))},
+            {
+                "provider": provider,
+                "model": model,
+                "success": str(success),
+                "latency_ms": str(round(latency_ms, 1)),
+                "tenant_id": normalized_tenant,
+            },
         )
 
         # Update provider health with latency

@@ -30,6 +30,7 @@ from bernstein.core.models import (
     RunCostProjection,
     RunCostReport,
 )
+from bernstein.core.tenanting import normalize_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ class TokenUsage:
     cost_usd: float
     agent_id: str
     task_id: str
+    tenant_id: str = "default"
     timestamp: float = field(default_factory=time.time)
     cache_hit: bool = False  # Prompt cache hit tracking
     cached_tokens: int = 0  # Tokens served from cache
@@ -80,6 +82,7 @@ class TokenUsage:
             "cost_usd": self.cost_usd,
             "agent_id": self.agent_id,
             "task_id": self.task_id,
+            "tenant_id": self.tenant_id,
             "timestamp": self.timestamp,
             "cache_hit": self.cache_hit,
             "cached_tokens": self.cached_tokens,
@@ -95,6 +98,7 @@ class TokenUsage:
             cost_usd=float(d["cost_usd"]),
             agent_id=str(d["agent_id"]),
             task_id=str(d["task_id"]),
+            tenant_id=str(d.get("tenant_id", "default") or "default"),
             timestamp=float(d.get("timestamp", 0.0)),
             cache_hit=bool(d.get("cache_hit", False)),
             cached_tokens=int(d.get("cached_tokens", 0)),
@@ -218,6 +222,8 @@ class CostTracker:
         input_tokens: int,
         output_tokens: int,
         cost_usd: float | None = None,
+        *,
+        tenant_id: str = "default",
     ) -> BudgetStatus:
         """Record token usage for an agent and return updated budget status.
 
@@ -235,6 +241,7 @@ class CostTracker:
         Returns:
             Current ``BudgetStatus`` after recording.
         """
+        normalized_tenant = normalize_tenant_id(tenant_id)
         if cost_usd is None:
             cost_usd = estimate_cost(model, input_tokens, output_tokens)
 
@@ -245,6 +252,7 @@ class CostTracker:
             cost_usd=cost_usd,
             agent_id=agent_id,
             task_id=task_id,
+            tenant_id=normalized_tenant,
         )
         self._usages.append(usage)
         self._spent_usd += cost_usd
@@ -263,6 +271,8 @@ class CostTracker:
         total_input_tokens: int,
         total_output_tokens: int,
         total_cost_usd: float | None = None,
+        *,
+        tenant_id: str = "default",
     ) -> float:
         """Record cumulative token usage for one agent/task pair.
 
@@ -307,6 +317,7 @@ class CostTracker:
             input_tokens=delta_input,
             output_tokens=delta_output,
             cost_usd=delta_cost,
+            tenant_id=normalize_tenant_id(tenant_id),
         )
         self._cumulative_tokens[key] = (cur_input, cur_output)
         return self._spent_usd - before

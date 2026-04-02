@@ -54,6 +54,7 @@ from bernstein.core.server import (
 )
 from bernstein.core.task_store import ArchiveRecord, SnapshotEntry
 from bernstein.core.telemetry import start_span
+from bernstein.core.tenanting import request_tenant_id
 from bernstein.plugins.manager import get_plugin_manager
 
 if TYPE_CHECKING:
@@ -104,8 +105,9 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
     """Create a new task."""
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
-    with start_span("task.create", {"task.role": body.role, "task.title": body.title}):
-        task = await store.create(body)
+    effective_body = body.model_copy(update={"tenant_id": request_tenant_id(request)})
+    with start_span("task.create", {"task.role": effective_body.role, "task.title": effective_body.title}):
+        task = await store.create(effective_body)
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
         get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
         return task_to_response(task)
@@ -598,6 +600,7 @@ async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskRe
             title=f"[A2A] {body.message[:80]}",
             description=body.message,
             role=body.role,
+            tenant_id=request_tenant_id(request),
         )
     )
     a2a_handler.link_bernstein_task(a2a_task.id, bernstein_task.id)

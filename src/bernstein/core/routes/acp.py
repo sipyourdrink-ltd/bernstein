@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from bernstein.core.server import TaskCreate, TaskStore
+from bernstein.core.tenanting import request_tenant_id
 
 if TYPE_CHECKING:
     from bernstein.core.acp import ACPHandler
@@ -181,6 +182,7 @@ async def create_acp_run(body: ACPRunCreateRequest, request: Request) -> ACPRunR
             title=f"[ACP] {body.input[:80]}",
             description=body.input,
             role=body.role,
+            tenant_id=request_tenant_id(request),
         )
     )
     handler.link_bernstein_task(run.id, bernstein_task.id)

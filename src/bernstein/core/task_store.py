@@ -33,6 +33,7 @@ from bernstein.core.models import (
     TaskType,
     UpgradeProposalDetails,
 )
+from bernstein.core.tenanting import normalize_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class TaskRecord(TypedDict):
     owned_files: list[str]
     assigned_agent: str | None
     result_summary: str | None
+    tenant_id: str
     cell_id: str | None
     batch_eligible: bool
     slack_context: dict[str, Any] | None
@@ -71,6 +73,7 @@ class ArchiveRecord(TypedDict):
     task_id: str
     title: str
     role: str
+    tenant_id: str
     status: str
     created_at: float
     completed_at: float
@@ -313,6 +316,7 @@ class TaskStore:
                 task.status = TaskStatus(record.get("status", task.status.value))
                 task.assigned_agent = record.get("assigned_agent", task.assigned_agent)
                 task.result_summary = record.get("result_summary", task.result_summary)
+                task.tenant_id = normalize_tenant_id(str(record.get("tenant_id", task.tenant_id) or task.tenant_id))
                 self._index_add(task)
             else:
                 task = Task.from_dict(cast("dict[str, Any]", record))
@@ -413,6 +417,7 @@ class TaskStore:
             "cost_usd": None,
             "assigned_agent": task.assigned_agent,
             "owned_files": list(task.owned_files),
+            "tenant_id": normalize_tenant_id(task.tenant_id),
         }
         line = json.dumps(record, default=str) + "\n"
 
@@ -440,6 +445,7 @@ class TaskStore:
             "owned_files": task.owned_files,
             "assigned_agent": task.assigned_agent,
             "result_summary": task.result_summary,
+            "tenant_id": normalize_tenant_id(task.tenant_id),
             "cell_id": task.cell_id,
             "batch_eligible": task.batch_eligible is True,
             "slack_context": task.slack_context,
@@ -528,6 +534,7 @@ class TaskStore:
             estimated_minutes=req.estimated_minutes,
             depends_on=req.depends_on,
             owned_files=req.owned_files,
+            tenant_id=normalize_tenant_id(getattr(req, "tenant_id", "default")),
             cell_id=req.cell_id,
             task_type=TaskType(req.task_type),
             upgrade_details=_parse_upgrade_dict(req.upgrade_details),

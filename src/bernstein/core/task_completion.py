@@ -690,6 +690,7 @@ def process_completed_tasks(
             input_tokens=_tokens_in,
             output_tokens=_tokens_out,
             cost_usd=_cost_usd if _cost_usd > 0 else None,
+            tenant_id=task.tenant_id,
         )
         try:
             orch._cost_tracker.save(orch._workdir / ".sdd")
