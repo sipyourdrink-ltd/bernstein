@@ -3015,9 +3015,7 @@ if __name__ == "__main__":
         _two_phase = os.environ.get("BERNSTEIN_TWO_PHASE_SANDBOX", "0").strip() in ("1", "true", "yes")
         _sandbox_runtime = os.environ.get("BERNSTEIN_SANDBOX_RUNTIME", "").strip().lower()
         sandbox_config = (
-            seed.sandbox
-            if seed is not None and seed.sandbox is not None and seed.sandbox.enabled
-            else None
+            seed.sandbox if seed is not None and seed.sandbox is not None and seed.sandbox.enabled else None
         )
         if _sandbox_runtime:
             from bernstein.core.sandbox import DockerSandbox

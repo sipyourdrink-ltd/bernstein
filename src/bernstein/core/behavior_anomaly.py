@@ -146,9 +146,8 @@ class BehaviorAnomalyDetector:
 
         max_zscore = max(deviation.zscore for deviation in deviations)
         action = self._action_for_deviations(deviations, max_zscore)
-        message = (
-            f"Behavior anomaly for task {task_id}: "
-            + ", ".join(f"{deviation.metric} z={deviation.zscore:.1f}" for deviation in deviations)
+        message = f"Behavior anomaly for task {task_id}: " + ", ".join(
+            f"{deviation.metric} z={deviation.zscore:.1f}" for deviation in deviations
         )
         details = {
             "task_id": task_id,
