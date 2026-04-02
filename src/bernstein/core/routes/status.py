@@ -17,6 +17,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from starlette.responses import StreamingResponse
 
+from bernstein.core.dependency_scan import read_latest_dependency_scan
 from bernstein.core.prometheus import generate_latest, registry, update_metrics_from_status
 from bernstein.core.runtime_state import (
     current_git_branch,
@@ -193,6 +194,8 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
         disk_usage_bytes = 0
         config_state = None
 
+    dependency_scan = read_latest_dependency_scan(sdd_dir) if isinstance(sdd_dir, Path) else None
+
     _runtime_cache = {
         "git_branch": current_git_branch(workdir),
         "restart_count": restart_count,
@@ -205,6 +208,7 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
         else 0.0,
         "config_hash": str(config_state.get("config_hash", "")) if config_state else "",
         "config_last_diff": config_state.get("last_diff") if config_state else None,
+        "dependency_scan": dependency_scan.to_dict() if dependency_scan is not None else None,
     }
     _runtime_cache_ts = now
     return _runtime_cache
@@ -303,6 +307,7 @@ async def status_dashboard(request: Request) -> JSONResponse:
     store = _get_store(request)
     payload = store.status_summary()
     payload["runtime"] = _runtime_summary(request, store)
+    payload["dependency_scan"] = payload["runtime"].get("dependency_scan")
     provider_status = _read_provider_status(request)
     if provider_status is not None:
         payload["provider_status"] = provider_status

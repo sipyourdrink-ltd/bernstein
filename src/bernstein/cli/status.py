@@ -6,6 +6,7 @@ active agents, total cost, and elapsed time.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 from rich.table import Table
@@ -145,6 +146,22 @@ def _build_provider_table(provider_status: dict[str, Any]) -> Table | None:
     return table
 
 
+def _format_dependency_scan_line(scan: dict[str, Any]) -> str | None:
+    """Return a one-line status summary for the latest dependency scan."""
+    status = str(scan.get("status", "")).strip()
+    if not status:
+        return None
+    finding_count = int(scan.get("finding_count", 0) or 0)
+    summary = str(scan.get("summary", "")).strip()
+    scanned_at = float(scan.get("scanned_at", 0.0) or 0.0)
+    age_suffix = ""
+    if scanned_at > 0:
+        age_suffix = f" ({format_duration(max(0.0, time.time() - scanned_at))} ago)"
+    if summary:
+        return f"Dependency scan: {status} — {summary}{age_suffix}"
+    return f"Dependency scan: {status} ({finding_count} findings){age_suffix}"
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -172,6 +189,8 @@ def render_status(
     per_role: list[dict[str, Any]] = data.get("per_role", [])
     provider_status_obj = data.get("provider_status", {})
     provider_status = cast("dict[str, Any]", provider_status_obj) if isinstance(provider_status_obj, dict) else {}
+    dependency_scan_obj = data.get("dependency_scan", {})
+    dependency_scan = cast("dict[str, Any]", dependency_scan_obj) if isinstance(dependency_scan_obj, dict) else {}
 
     summary = TaskSummary.from_dict(
         {
@@ -242,6 +261,11 @@ def render_status(
         con.print()
         con.print(provider_table)
 
+    dependency_scan_line = _format_dependency_scan_line(dependency_scan)
+    if dependency_scan_line is not None:
+        con.print()
+        con.print(Text.assemble(("Security: ", "bold"), (dependency_scan_line, "dim")))
+
     # Clean summary table
     con.print()
     con.print(create_summary_table(stats))
@@ -274,6 +298,8 @@ def render_status_plain(data: dict[str, Any]) -> str:
     agents = [AgentInfo.from_dict(a) for a in agents_raw]
     elapsed = float(data.get("elapsed_seconds", 0))
     total_cost = float(data.get("total_cost_usd", 0.0))
+    dependency_scan_obj = data.get("dependency_scan", {})
+    dependency_scan = cast("dict[str, Any]", dependency_scan_obj) if isinstance(dependency_scan_obj, dict) else {}
 
     stats = RunStats(
         summary=summary,
@@ -281,4 +307,8 @@ def render_status_plain(data: dict[str, Any]) -> str:
         elapsed_seconds=elapsed,
         total_cost_usd=total_cost,
     )
-    return create_summary_plain(stats)
+    plain = create_summary_plain(stats)
+    dependency_scan_line = _format_dependency_scan_line(dependency_scan)
+    if dependency_scan_line is None:
+        return plain
+    return f"{plain}\n{dependency_scan_line}"
