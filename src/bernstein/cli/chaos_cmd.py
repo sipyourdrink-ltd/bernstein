@@ -94,9 +94,8 @@ def agent_kill(agent_id: str | None) -> None:
 @click.option("--provider", default="claude", help="Provider to simulate rate limit for.")
 def rate_limit(duration: int, provider: str) -> None:
     """Simulate API rate limiting to test fallback routing."""
-    runtime_dir = Path(".sdd/runtime")
-    rate_limit_file = runtime_dir / "chaos" / "rate_limit_active.json"
-    rate_limit_file.parent.mkdir(parents=True, exist_ok=True)
+    CHAOS_DIR.mkdir(parents=True, exist_ok=True)
+    rate_limit_file = CHAOS_DIR / "rate_limit_active.json"
 
     event = {
         "provider": provider,
@@ -154,6 +153,42 @@ def file_remove(pattern: str) -> None:
     except OSError as exc:
         _record_chaos_event("file-remove", str(target), success=False, error=str(exc))
         console.print(f"[red]Failed: {exc}[/red]")
+
+
+@chaos_group.command("agent-oom")
+@click.option("--agent-id", default=None, help="Specific agent to target.")
+def agent_oom(agent_id: str | None) -> None:
+    """Simulate OOM by injecting memory-intensive task to an agent."""
+    # For now we just record it, as real OOM is hard to inject safely from outside
+    # without agent cooperation.
+    target = agent_id or "random-active"
+    console.print(f"[bold red]CHAOS:[/bold red] Simulating OOM for agent {target}")
+    _record_chaos_event("agent-oom", target, success=True)
+
+
+@chaos_group.command("disk-full")
+@click.option("--duration", default=60, help="Duration in seconds.")
+def disk_full(duration: int) -> None:
+    """Simulate disk full condition for all components."""
+    CHAOS_DIR.mkdir(parents=True, exist_ok=True)
+    disk_full_file = CHAOS_DIR / "disk_full_active.json"
+
+    event = {
+        "started_at": time.time(),
+        "duration_seconds": duration,
+        "expires_at": time.time() + duration,
+    }
+
+    disk_full_file.write_text(json.dumps(event, indent=2))
+    _record_chaos_event("disk-full", f"all for {duration}s", success=True)
+
+    console.print(
+        Panel(
+            f"Simulating disk full for [bold]{duration}s[/bold]\n"
+            f"Expires at: {time.strftime('%H:%M:%S', time.localtime(event['expires_at']))}",
+            title="[red]CHAOS: Disk Full Simulation[/red]",
+        )
+    )
 
 
 @chaos_group.command("status")

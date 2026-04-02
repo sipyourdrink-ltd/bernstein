@@ -869,6 +869,7 @@ class OrchestratorConfig:
     evolution_enabled: bool = True
     evolution_tick_interval: int = 30
     max_task_retries: int = 2
+    kill_on_memory_leak: bool = False
     evolve_mode: bool = False
     budget_usd: float = 0.0  # Stop spawning when cumulative cost reaches this (0 = unlimited)
     dry_run: bool = False  # Preview planned spawns without actually spawning agents

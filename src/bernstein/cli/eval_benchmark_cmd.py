@@ -307,7 +307,52 @@ def eval_group() -> None:
     """Evaluation harness with multiplicative scoring."""
 
 
-@eval_group.command("swe-bench")
+@eval_group.command("golden")
+@click.option("--workdir", default=".", help="Project root.", type=click.Path(exists=True))
+def eval_golden(workdir: str) -> None:
+    """Run the curated golden test suite to detect orchestrator regressions."""
+    import asyncio
+
+    from rich.table import Table
+
+    from bernstein.benchmark.golden import GoldenEvalRunner
+    from bernstein.cli.helpers import SERVER_URL
+
+    runner = GoldenEvalRunner(Path(workdir), SERVER_URL)
+
+    console.print("[bold]Running Golden Test Suite…[/bold]\n")
+
+    # We use asyncio.run because the CLI is synchronous but the runner might be async
+    summary = asyncio.run(runner.run_suite())
+
+    table = Table(title=f"Golden Results ({summary['timestamp']})", header_style="bold cyan")
+    table.add_column("Task ID", style="dim")
+    table.add_column("Title")
+    table.add_column("Status", justify="center")
+    table.add_column("Cost", justify="right")
+    table.add_column("Duration", justify="right")
+
+    for res in summary["tasks"]:
+        status = "[green]PASS[/green]" if res["passed"] else "[red]FAIL[/red]"
+        table.add_row(
+            res["task_id"],
+            res["title"],
+            status,
+            f"${res['cost_usd']:.4f}",
+            f"{res['duration_s']}s"
+        )
+
+    console.print(table)
+
+    passed = summary["passed"]
+    total = summary["total_tasks"]
+    console.print(f"\n[bold]Score:[/bold] {passed}/{total} ({passed/total:.1%})")
+    cost_str = f"${summary['total_cost_usd']:.4f}"
+    dur_str = f"{summary['duration_s']:.1f}s"
+    console.print(f"[dim]Total cost: {cost_str}  Total duration: {dur_str}[/dim]")
+
+    if summary["failed"] > 0:
+        raise SystemExit(1)
 @click.option(
     "--subset",
     type=click.Choice(["lite", "full"]),

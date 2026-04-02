@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from bernstein.tui.agent_duration import format_agent_duration, get_duration_color
 from bernstein.tui.worktree_status import WorktreeStatus, format_worktree_display, get_worktree_status

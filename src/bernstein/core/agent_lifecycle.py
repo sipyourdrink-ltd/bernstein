@@ -89,6 +89,21 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
 
     # Purge expired spawn backoff entries
     now = time.time()
+
+    # Memory monitoring: check for leaks in active processes
+    if hasattr(orch, "_memory_guard"):
+        active_sessions = [s for s in orch._agents.values() if s.status != "dead"]
+        leaking_ids = orch._memory_guard.monitor_agents(active_sessions)
+        if leaking_ids:
+            logger.warning("Memory leak detected in sessions: %s", leaking_ids)
+            # Optional: kill leaking agents if configured
+            if getattr(orch._config, "kill_on_memory_leak", False):
+                for sid in leaking_ids:
+                    session = orch._agents.get(sid)
+                    if session:
+                        orch._spawner.kill(session)
+                        transition_agent(session, "dead", actor="memory_guard", reason="memory leak")
+
     expired = [k for k, (_, ts) in orch._spawn_failures.items() if now - ts > orch._SPAWN_BACKOFF_MAX_S]
     for k in expired:
         del orch._spawn_failures[k]

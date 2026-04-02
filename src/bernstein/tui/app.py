@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
+import signal
 import time
+from pathlib import Path
 from typing import Any, ClassVar, cast
 
 import httpx
@@ -219,6 +222,58 @@ class BernsteinApp(App[None]):
         from bernstein.tui.help_screen import HelpScreen
 
         self.push_screen(HelpScreen())
+
+
+def _kill_agent(session_id: str) -> bool:  # type: ignore[reportUnusedFunction]
+    """Kill a specific agent process.
+
+    Args:
+        session_id: The session ID of the agent to kill.
+
+    Returns:
+        True if the agent was found and a kill signal was sent.
+    """
+    agents_file = Path(".sdd/runtime/agents.json")
+    if not agents_file.exists():
+        return False
+
+    try:
+        data = json.loads(agents_file.read_text())
+        for agent in data:
+            if agent.get("id") == session_id:
+                pid = agent.get("pid")
+                if pid:
+                    os.kill(pid, signal.SIGKILL)
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _kill_all_agents() -> int:  # type: ignore[reportUnusedFunction]
+    """Kill all active agent processes listed in agents.json.
+
+    Returns:
+        The number of agents successfully killed.
+    """
+    agents_file = Path(".sdd/runtime/agents.json")
+    if not agents_file.exists():
+        return 0
+
+    killed_count = 0
+    try:
+        data = json.loads(agents_file.read_text())
+        for agent in data:
+            pid = agent.get("pid")
+            if pid:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    killed_count += 1
+                except OSError:
+                    continue
+    except Exception:
+        pass
+    return killed_count
 
 
 if __name__ == "__main__":

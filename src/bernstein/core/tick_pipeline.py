@@ -264,39 +264,39 @@ def group_by_role(
     role_batch_queues: dict[str, list[list[Task]]] = {}
     for role, role_tasks in by_role.items():
         role_tasks.sort(key=_sort_key)
-        role_batches: list[list[Task]] = []
 
-        # Smarter batching: group tasks that touch the same files into the same batch
-        # so they are handled sequentially by a single agent.
+        # 1. First pass: group by file affinity (transitive overlap)
+        affinity_groups: list[list[Task]] = []
         for task in role_tasks:
-            added = False
             task_files = set(task.owned_files)
-            for batch in role_batches:
-                if len(batch) < max_per_batch:
-                    # If any task in batch touches any file this task touches, group them
-                    batch_files = set().union(*(set(t.owned_files) for t in batch))
-                    if task_files & batch_files:
-                        batch.append(task)
-                        added = True
-                        break
+            matching_groups: list[int] = []
+            if task_files:
+                for i, group in enumerate(affinity_groups):
+                    group_files: set[str] = set().union(*(set(t.owned_files) for t in group))  # type: ignore[reportUnknownVariableType]
+                    if task_files & group_files:
+                        matching_groups.append(i)
 
-            if not added:
-                # Try to fit in first available batch that isn't full,
-                # but if no file overlap, we might prefer starting a new batch
-                # to allow parallelism, OR we can just fill up existing batches.
-                # Requirement says "Group tasks touching same files", so we prioritize that.
-                # To maximize parallelism for non-conflicting tasks, we only add to
-                # an existing batch if there's a conflict or if we've reached a limit.
-                for batch in role_batches:
-                    if len(batch) < max_per_batch:
-                        # Optimization: if no conflict, we COULD start a new batch
-                        # but we'll just fill them up for now to keep it simple.
-                        batch.append(task)
-                        added = True
-                        break
+            if matching_groups:
+                # Merge into the first matching group
+                first_idx = matching_groups[0]
+                affinity_groups[first_idx].append(task)
+                # If it matched multiple groups, merge them all (transitive)
+                for other_idx in sorted(matching_groups[1:], reverse=True):
+                    affinity_groups[first_idx].extend(affinity_groups.pop(other_idx))
+            else:
+                affinity_groups.append([task])
 
-            if not added:
-                role_batches.append([task])
+        # 2. Second pass: pack affinity groups into batches of max_per_batch
+        role_batches: list[list[Task]] = []
+        for group in affinity_groups:
+            # Within an affinity group, we must be sequential,
+            # so we split into batches if the group is too large.
+            # But wait, if they are in different batches they might run in parallel!
+            # So we should ideally keep an affinity group in a single batch if possible.
+            # If it exceeds max_per_batch, we have no choice but to split,
+            # but the orchestrator will still serialize them via file ownership.
+            for i in range(0, len(group), max_per_batch):
+                role_batches.append(group[i : i + max_per_batch])
 
         role_batch_queues[role] = role_batches
 

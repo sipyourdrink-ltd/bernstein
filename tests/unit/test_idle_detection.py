@@ -7,13 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from bernstein.core.agent_log_aggregator import AgentLogAggregator, AgentLogSummary
 from bernstein.core.idle_detection import (
     DEFAULT_IDLE_TIMEOUT_SECONDS,
     IdleDetectionResult,
     _check_git_changes,
     detect_idle_agent,
 )
-from bernstein.core.agent_log_aggregator import AgentLogAggregator, AgentLogSummary
 
 
 @pytest.fixture()
