@@ -510,8 +510,8 @@ class AgentWidget(Static):
         context_utilization_pct = float(a.get("context_utilization_pct", 0.0) or 0.0)
         if context_window_tokens > 0:
             context_style = "bold bright_yellow" if a.get("context_utilization_alert") else "bright_cyan"
-            context_capacity = f"{context_window_tokens / 1000:.0f}k" if context_window_tokens >= 1000 else str(
-                context_window_tokens
+            context_capacity = (
+                f"{context_window_tokens / 1000:.0f}k" if context_window_tokens >= 1000 else str(context_window_tokens)
             )
             t.append(
                 f"  CTX {context_utilization_pct:.1f}%/{context_capacity}",

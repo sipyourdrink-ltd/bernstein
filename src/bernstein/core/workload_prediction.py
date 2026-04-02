@@ -92,6 +92,7 @@ def _analyze_backlog(backlog_dir: Path) -> list[dict[str, Any]]:
     for task_file in backlog_dir.glob("*.yaml"):
         try:
             import yaml
+
             data = yaml.safe_load(task_file.read_text())
             tasks.append(data)
         except Exception:
@@ -212,9 +213,7 @@ def format_workload_report(prediction: WorkloadPrediction) -> str:
 
     for role, data in prediction.breakdown_by_role.items():
         lines.append(
-            f"  {role}: {data['task_count']} tasks, "
-            f"${data['estimated_cost']:.2f}, "
-            f"{data['estimated_hours']:.1f}h"
+            f"  {role}: {data['task_count']} tasks, ${data['estimated_cost']:.2f}, {data['estimated_hours']:.1f}h"
         )
 
     return "\n".join(lines)
