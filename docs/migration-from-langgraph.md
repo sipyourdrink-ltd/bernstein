@@ -1,4 +1,4 @@
-# Migration Guide: From LangGraph to Bernstein
+# Migration Guide: LangGraph to Bernstein
 
 This guide helps teams migrate from LangGraph to Bernstein, mapping concepts and providing step-by-step migration instructions.
 
@@ -6,12 +6,12 @@ This guide helps teams migrate from LangGraph to Bernstein, mapping concepts and
 
 | LangGraph Concept | Bernstein Equivalent | Notes |
 |------------------|---------------------|-------|
-| **Graph** | **Goal + task backlog + orchestrator run** | Bernstein executes from goal/task state rather than one in-memory graph object |
+| **Graph** | **Recipe** | Bernstein recipes define task workflows |
 | **Node** | **Task** | Individual units of work |
 | **Edge** | **Dependency** | `depends_on` field in tasks |
 | **State** | **Task Context** | Shared via `.sdd/` file system |
 | **Agent** | **Role + CLI Agent** | Bernstein separates role from execution |
-| **Tool** | **Quality Gate** | Validation and verification |
+| **Tool** | **Quality Gate** | Bernstein uses quality gates for validation |
 | **Memory** | **Context Files** | `.sdd/` persistence |
 
 ## Architecture Differences
@@ -51,20 +51,22 @@ def code_review_node(state):
     return {"review": "..."}
 ```
 
-Bernstein task (`.sdd/backlog/open/p2_qa_code-review.yaml`):
-```yaml
+Bernstein task (`.sdd/backlog/open/code-review.md`):
+```markdown
+---
 id: "code-review"
 title: "Review code changes"
 role: qa
 priority: 2
-scope: medium
-complexity: medium
 depends_on: ["implementation"]
-description: |
-  Review the implemented code for quality and best practices.
+---
+
+## Description
+
+Review the implemented code for quality and best practices.
 ```
 
-### Step 3: Convert Graph to dependency-backed tasks (or staged plan)
+### Step 3: Convert Graph to Recipe
 
 LangGraph workflow:
 ```python
@@ -73,21 +75,22 @@ workflow.add_edge("implementation", "testing")
 workflow.add_edge("testing", "review")
 ```
 
-Bernstein staged plan (`plans/my-workflow.yaml`) or equivalent dependent tasks:
+Bernstein recipe (`recipes/my-workflow.yaml`):
 ```yaml
-goal: "Ship my development workflow"
-stages:
-  - name: plan
-    steps:
-      - goal: "Plan implementation"
-        role: manager
-  - name: implement
-    depends_on: [plan]
-    steps:
-      - goal: "Implement feature"
-        role: backend
-      - goal: "Run QA verification"
-        role: qa
+id: my-workflow
+title: My Development Workflow
+steps:
+  - id: planning
+    role: manager
+  - id: implementation
+    role: backend
+    depends_on: [planning]
+  - id: testing
+    role: qa
+    depends_on: [implementation]
+  - id: review
+    role: security
+    depends_on: [testing]
 ```
 
 ### Step 4: Migrate State Management
@@ -115,15 +118,13 @@ def run_tests(code: str) -> str:
     return results
 ```
 
-Bernstein quality gates (`bernstein.yaml`):
+Bernstein quality gates (`.bernstein/quality_gates.yaml`):
 ```yaml
-quality_gates:
-  lint:
-    enabled: true
-  tests:
-    enabled: true
-  typecheck:
-    enabled: true
+gates:
+  - lint
+  - tests
+  - type_check
+  - security_scan
 ```
 
 ### Step 6: Configure Agent Roles
@@ -180,7 +181,7 @@ def should_test(state):
 
 Bernstein: Quality gates automatically block merge on failure
 
-### Parallel Execution (LangGraph) → Parallel Agents (Bernstein)
+### Parallel Execution
 
 LangGraph:
 ```python
@@ -188,7 +189,12 @@ workflow.add_node("parallel1", func1)
 workflow.add_node("parallel2", func2)
 ```
 
-Bernstein: Set `max_agents: 6` for parallel execution
+Bernstein: Automatic with `max_agents` configuration
+
+```yaml
+# bernstein.yaml
+max_agents: 5  # Run up to 5 agents in parallel
+```
 
 ## Troubleshooting
 
@@ -210,6 +216,6 @@ Bernstein: Set `max_agents: 6` for parallel execution
 
 ## Support
 
-- Documentation: `README.md`
+- Documentation: `README.md`, `docs/`
 - Issues: GitHub Issues
 - Community: [Link to community]
