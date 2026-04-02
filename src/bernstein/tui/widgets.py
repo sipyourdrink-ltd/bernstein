@@ -92,6 +92,30 @@ def agent_badge_color(agent_id: str) -> str:
     return WORKER_BADGE_COLORS[h]
 
 
+def build_cache_hit_sparkline(hit_rates: list[float], width: int = 12) -> str:
+    """Render a cache hit-rate sparkline with colour markup.
+
+    Args:
+        hit_rates: Series of cache hit ratios (0.0–1.0) over recent intervals.
+        width: Max sparkline characters to emit.
+
+    Returns:
+        Rich markup string. Empty string when no data.
+    """
+    if not hit_rates:
+        return ""
+    recent = hit_rates[-width:]
+    sparkline = []
+    for val in recent:
+        # Map 0-1 to bar height
+        level = int(val * (len(SPARKLINE_CHARS) - 1))
+        sparkline.append(SPARKLINE_CHARS[level])
+    pct = int(sum(recent) / len(recent) * 100)
+    color = "green" if pct >= 70 else "yellow" if pct >= 40 else "red"
+    bar = "".join(sparkline)
+    return f"[{color}]{bar}[/{color}] {pct:3}%"
+
+
 # ---------------------------------------------------------------------------
 # Colour mapping for task statuses
 # ---------------------------------------------------------------------------
