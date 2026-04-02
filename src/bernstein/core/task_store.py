@@ -33,7 +33,7 @@ from bernstein.core.models import (
     TaskType,
     UpgradeProposalDetails,
 )
-from bernstein.core.tenanting import normalize_tenant_id
+from bernstein.core.tenanting import ensure_tenant_layout, normalize_tenant_id
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -240,6 +240,9 @@ class TaskStore:
             if metrics_jsonl_path is not None
             else jsonl_path.parent.parent / "metrics" / "tasks.jsonl"
         )
+        self._sdd_dir: Path = (
+            jsonl_path.parent.parent if jsonl_path.parent.name == "runtime" else jsonl_path.parent
+        )
         self._lock: asyncio.Lock = asyncio.Lock()
         self._write_buffer: list[str] = []
         self._dirty: bool = False
@@ -404,6 +407,7 @@ class TaskStore:
         """
         line = json.dumps(record, default=str) + "\n"
         self._write_buffer.append(line)
+        await self._append_tenant_backlog_record(record, line)
         if len(self._write_buffer) >= self._BUFFER_MAX:
             await self._flush_buffer_unlocked()
 
@@ -412,7 +416,7 @@ class TaskStore:
         async with self._lock:
             await self._flush_buffer_unlocked()
 
-    def read_archive(self, limit: int = 50) -> list[ArchiveRecord]:
+    def read_archive(self, limit: int = 50, tenant_id: str | None = None) -> list[ArchiveRecord]:
         """Return the last *limit* archived task records, oldest-first.
 
         Reads from the archive JSONL file on disk.
@@ -446,6 +450,9 @@ class TaskStore:
             logger.warning("Cannot read archive at %s: %s", self._archive_path, exc)
             return []
 
+        if tenant_id is not None:
+            normalized = normalize_tenant_id(tenant_id)
+            records = [record for record in records if normalize_tenant_id(str(record.get("tenant_id"))) == normalized]
         return records[-limit:]
 
     async def _append_archive(self, task: Task, completed_at: float) -> None:
@@ -475,6 +482,31 @@ class TaskStore:
         def _write() -> None:
             with self._archive_path.open("a") as f:
                 f.write(line)
+
+        await _retry_io(_write)
+        await self._append_tenant_archive_record(task.tenant_id, line)
+
+    async def _append_tenant_backlog_record(self, record: TaskRecord, line: str) -> None:
+        """Mirror task lifecycle records into a tenant-scoped backlog file."""
+
+        tenant_paths = ensure_tenant_layout(self._sdd_dir, str(record["tenant_id"]))
+        target_path = tenant_paths.backlog_dir / "tasks.jsonl"
+
+        def _write() -> None:
+            with target_path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
+
+        await _retry_io(_write)
+
+    async def _append_tenant_archive_record(self, tenant_id: str, line: str) -> None:
+        """Mirror archive records into a tenant-scoped backlog archive file."""
+
+        tenant_paths = ensure_tenant_layout(self._sdd_dir, tenant_id)
+        target_path = tenant_paths.backlog_dir / "archive.jsonl"
+
+        def _write() -> None:
+            with target_path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
 
         await _retry_io(_write)
 
@@ -677,7 +709,7 @@ class TaskStore:
 
         return task
 
-    async def claim_next(self, role: str) -> Task | None:
+    async def claim_next(self, role: str, tenant_id: str | None = None) -> Task | None:
         """Claim the highest-priority open task for *role*.
 
         Priority is ascending (1 = critical). Among equal priorities,
@@ -695,10 +727,14 @@ class TaskStore:
                 return None
             task: Task | None = None
             blocked_entries: list[tuple[int, str]] = []
+            normalized_tenant = normalize_tenant_id(tenant_id) if tenant_id is not None else None
             while pq:
                 priority, task_id = heapq.heappop(pq)
                 candidate = self._tasks.get(task_id)
                 if candidate is None or candidate.status != TaskStatus.OPEN:
+                    continue
+                if normalized_tenant is not None and candidate.tenant_id != normalized_tenant:
+                    blocked_entries.append((priority, task_id))
                     continue
                 if not self._dependencies_satisfied(candidate):
                     blocked_entries.append((priority, task_id))
@@ -1085,6 +1121,7 @@ class TaskStore:
         self,
         status: str | None = None,
         cell_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> list[Task]:
         """Return all tasks, optionally filtered by status and/or cell_id.
 
@@ -1108,6 +1145,9 @@ class TaskStore:
             tasks = list(self._tasks.values())
         if cell_id is not None:
             tasks = [t for t in tasks if t.cell_id == cell_id]
+        if tenant_id is not None:
+            normalized_tenant = normalize_tenant_id(tenant_id)
+            tasks = [t for t in tasks if t.tenant_id == normalized_tenant]
         if status == "open":
             tasks = [t for t in tasks if self._dependencies_satisfied(t)]
         return tasks

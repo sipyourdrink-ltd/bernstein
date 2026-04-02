@@ -55,7 +55,7 @@ from bernstein.core.server import (
 )
 from bernstein.core.task_store import ArchiveRecord, SnapshotEntry
 from bernstein.core.telemetry import start_span
-from bernstein.core.tenanting import request_tenant_id
+from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
 from bernstein.plugins.manager import get_plugin_manager
 
 if TYPE_CHECKING:
@@ -64,6 +64,8 @@ if TYPE_CHECKING:
 
     from bernstein.core.a2a import A2AHandler
     from bernstein.core.cluster import NodeRegistry
+    from bernstein.core.models import Task
+    from bernstein.core.tenanting import TenantRegistry
 
 router = APIRouter()
 
@@ -94,6 +96,34 @@ def _get_runtime_dir(request: Request) -> Path:
 
 def _get_gate_report_path(request: Request, task_id: str) -> Path:
     return _get_runtime_dir(request) / "gates" / f"{task_id}.json"
+
+
+def _get_tenant_registry(request: Request) -> TenantRegistry | None:
+    registry = getattr(request.app.state, "tenant_registry", None)
+    return registry if registry is not None else None
+
+
+def _resolve_request_tenant_scope(request: Request, requested_tenant: str | None = None) -> str:
+    """Resolve the tenant scope for the current request."""
+
+    try:
+        return resolve_tenant_scope(
+            request_tenant_id(request),
+            requested_tenant,
+            registry=_get_tenant_registry(request),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _require_task_access(task: Task, request: Request, requested_tenant: str | None = None) -> None:
+    """Reject access to a task outside the current tenant scope."""
+
+    effective_tenant = _resolve_request_tenant_scope(request, requested_tenant)
+    if task.tenant_id != effective_tenant:
+        raise HTTPException(status_code=404, detail=f"Task '{task.id}' not found")
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +159,7 @@ async def next_task(role: str, request: Request) -> TaskResponse:
             status_code=503,
         )
     store = _get_store(request)
-    task = await store.claim_next(role)
+    task = await store.claim_next(role, tenant_id=_resolve_request_tenant_scope(request))
     if task is None:
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     return task_to_response(task)
@@ -145,7 +175,17 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
         )
     with start_span("task.claim_batch", {"agent_id": body.agent_id, "task_count": len(body.task_ids)}):
         store = _get_store(request)
-        claimed, failed = await store.claim_batch(body.task_ids, body.agent_id)
+        tenant_id = _resolve_request_tenant_scope(request)
+        authorized_ids: list[str] = []
+        unauthorized_ids: list[str] = []
+        for task_id in body.task_ids:
+            task = store.get_task(task_id)
+            if task is None or task.tenant_id != tenant_id:
+                unauthorized_ids.append(task_id)
+                continue
+            authorized_ids.append(task_id)
+        claimed, failed = await store.claim_batch(authorized_ids, body.agent_id)
+        failed.extend(unauthorized_ids)
         return BatchClaimResponse(claimed=claimed, failed=failed)
 
 
@@ -165,6 +205,10 @@ async def claim_task(task_id: str, request: Request, expected_version: int | Non
         store = _get_store(request)
         sse_bus = _get_sse_bus(request)
         try:
+            task = store.get_task(task_id)
+            if task is None:
+                raise KeyError
+            _require_task_access(task, request)
             task = await store.claim_by_id(task_id, expected_version=expected_version)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -181,6 +225,10 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
         store = _get_store(request)
         sse_bus = _get_sse_bus(request)
         try:
+            task = store.get_task(task_id)
+            if task is None:
+                raise KeyError
+            _require_task_access(task, request)
             task = await store.complete(task_id, body.result_summary)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -197,6 +245,10 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
         task = await store.fail(task_id, body.reason)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -212,6 +264,10 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
     """Cancel a task that has not yet finished."""
     store = _get_store(request)
     try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
         task = await store.cancel(task_id, body.reason)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -226,6 +282,10 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
         task = await store.block(task_id, body.reason)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -245,6 +305,10 @@ async def progress_task(task_id: str, body: TaskProgressRequest, request: Reques
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
         task = await store.add_progress(task_id, body.message, body.percent)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -268,6 +332,10 @@ async def progress_task(task_id: str, body: TaskProgressRequest, request: Reques
 async def get_task_snapshots(task_id: str, request: Request) -> list[SnapshotEntry]:
     """Return stored progress snapshots for a task (oldest-first, up to 10)."""
     store = _get_store(request)
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    _require_task_access(task, request)
     snapshots = store.get_snapshots(task_id)
     return [
         SnapshotEntry(
@@ -286,17 +354,19 @@ async def list_tasks(
     request: Request,
     status: str | None = None,
     cell_id: str | None = None,
+    tenant: str | None = None,
 ) -> list[TaskResponse]:
     """List all tasks, optionally filtered by status and/or cell_id."""
     store = _get_store(request)
-    return [task_to_response(t) for t in store.list_tasks(status, cell_id)]
+    effective_tenant = _resolve_request_tenant_scope(request, tenant)
+    return [task_to_response(t) for t in store.list_tasks(status, cell_id, tenant_id=effective_tenant)]
 
 
 @router.get("/tasks/archive", response_model=list[ArchiveRecord])
-async def get_archive(request: Request, limit: int = 50) -> list[ArchiveRecord]:
+async def get_archive(request: Request, limit: int = 50, tenant: str | None = None) -> list[ArchiveRecord]:
     """Return the last N archived (done/failed) task records."""
     store = _get_store(request)
-    return store.read_archive(limit=limit)
+    return store.read_archive(limit=limit, tenant_id=_resolve_request_tenant_scope(request, tenant))
 
 
 @router.get("/tasks/graph")
@@ -314,7 +384,7 @@ async def get_task_graph(request: Request) -> JSONResponse:
     from bernstein.core.graph import TaskGraph
 
     store = _get_store(request)
-    tasks = store.list_tasks()
+    tasks = store.list_tasks(tenant_id=_resolve_request_tenant_scope(request))
     graph = TaskGraph(tasks)
     data = graph.to_dict()
     # Enrich nodes with title for CLI rendering
@@ -331,6 +401,7 @@ async def get_task(task_id: str, request: Request) -> TaskResponse:
     task = store.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    _require_task_access(task, request)
     return task_to_response(task)
 
 
@@ -341,6 +412,7 @@ async def get_task_gates(task_id: str, request: Request) -> JSONResponse:
     task = store.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    _require_task_access(task, request)
 
     report_path = _get_gate_report_path(request, task_id)
     if not report_path.exists():
@@ -362,6 +434,10 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
         task = await store.update(task_id, role=body.role, priority=body.priority, model=body.model)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -375,6 +451,10 @@ async def prioritize_task(task_id: str, request: Request) -> TaskResponse:
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
         task = await store.prioritize(task_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -393,6 +473,10 @@ async def force_claim_task(task_id: str, request: Request) -> TaskResponse:
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
     try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
         task = await store.force_claim(task_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None

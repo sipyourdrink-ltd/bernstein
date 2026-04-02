@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from bernstein.core.tenanting import normalize_tenant_id
+from bernstein.core.tenanting import normalize_tenant_id, tenant_metrics_dir
 
 logger = logging.getLogger(__name__)
 
@@ -771,6 +771,11 @@ class MetricsCollector:
 
         with self._lock:
             self._buffer.append((filepath, json.dumps(point)))
+            tenant_id = normalize_tenant_id(labels.get("tenant_id"))
+            if tenant_id != "default":
+                tenant_dir = tenant_metrics_dir(self._metrics_dir, tenant_id)
+                tenant_dir.mkdir(parents=True, exist_ok=True)
+                self._buffer.append((tenant_dir / filename, json.dumps(point)))
             should_flush = (
                 len(self._buffer) >= self._buffer_limit or (time.time() - self._last_flush) >= self._flush_interval
             )
