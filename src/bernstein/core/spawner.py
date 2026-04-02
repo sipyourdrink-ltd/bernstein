@@ -1091,14 +1091,17 @@ class AgentSpawner:
                     # Check for auth error (T499)
                     is_auth_error = False
                     log_path = spawn_cwd / ".sdd" / "logs" / f"{session_id}.log"
-                    if log_path.exists() and self._rate_limit_tracker is not None:
-                        if self._rate_limit_tracker.scan_log_for_auth_error(log_path):
-                            logger.warning(
-                                "Auth error detected for provider=%s adapter=%s",
-                                provider_name or adapter_name,
-                                adapter_name,
-                            )
-                            is_auth_error = True
+                    if (
+                        log_path.exists()
+                        and self._rate_limit_tracker is not None
+                        and self._rate_limit_tracker.scan_log_for_auth_error(log_path)
+                    ):
+                        logger.warning(
+                            "Auth error detected for provider=%s adapter=%s",
+                            provider_name or adapter_name,
+                            adapter_name,
+                        )
+                        is_auth_error = True
 
                     if is_auth_error and target_adapter.supports_auth_refresh():
                         refresh_key = (provider_name, "auth_refresh")
