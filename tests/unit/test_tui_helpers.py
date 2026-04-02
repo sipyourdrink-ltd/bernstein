@@ -199,3 +199,25 @@ def test_agent_badge_color_varies_by_agent() -> None:
 
     colors = {agent_badge_color(f"sess-{i}") for i in range(30)}
     assert len(colors) > 1  # not all identical
+
+
+def test_build_cache_hit_sparkline_empty() -> None:
+    """Empty input returns empty string."""
+    from bernstein.tui.widgets import build_cache_hit_sparkline
+    assert build_cache_hit_sparkline([]) == ""
+
+
+def test_build_cache_hit_sparkline_high_hit_rate() -> None:
+    """High cache rate renders green with percentage."""
+    from bernstein.tui.widgets import build_cache_hit_sparkline
+    bar = build_cache_hit_sparkline([0.9, 0.95, 1.0, 0.8])
+    assert "%" in bar
+    assert "green" in bar
+
+
+def test_build_cache_hit_sparkline_low_hit_rate() -> None:
+    """Low cache rate renders red."""
+    from bernstein.tui.widgets import build_cache_hit_sparkline
+    bar = build_cache_hit_sparkline([0.0, 0.1, 0.2])
+    assert "%" in bar
+    assert "red" in bar

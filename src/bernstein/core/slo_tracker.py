@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass
@@ -148,13 +150,13 @@ class SLOTracker:
             if not lines:
                 return 0
 
-            timestamps = []
+            timestamps: list[float] = []
             for line in lines:
                 if not line.strip():
                     continue
-                data = json.loads(line)
+                data: dict[str, object] = json.loads(line)
                 if "timestamp" in data:
-                    timestamps.append(data["timestamp"])
+                    timestamps.append(float(data["timestamp"]))  # type: ignore[arg-type]
 
             if not timestamps:
                 return 0

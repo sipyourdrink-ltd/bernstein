@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass
@@ -91,13 +93,13 @@ def _read_quality_scores(metrics_dir: Path) -> dict[str, int]:
     if not quality_file.exists():
         return result
 
-    scores = []
+    scores: list[dict[str, int]] = []
     try:
         for line in quality_file.read_text().splitlines():
             if not line.strip():
                 continue
-            data = json.loads(line)
-            breakdown = data.get("breakdown", {})
+            data: dict[str, object] = json.loads(line)
+            breakdown: dict[str, int] = dict(data.get("breakdown", {}))  # type: ignore[arg-type]
             scores.append(breakdown)
     except (json.JSONDecodeError, OSError):
         return result

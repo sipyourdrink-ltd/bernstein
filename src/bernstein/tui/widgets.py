@@ -96,7 +96,7 @@ def build_cache_hit_sparkline(hit_rates: list[float], width: int = 12) -> str:
     """Render a cache hit-rate sparkline with colour markup.
 
     Args:
-        hit_rates: Series of cache hit ratios (0.0–1.0) over recent intervals.
+        hit_rates: Series of cache hit ratios (0.0-1.0) over recent intervals.
         width: Max sparkline characters to emit.
 
     Returns:
