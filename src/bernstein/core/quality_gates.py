@@ -109,13 +109,13 @@ class BenchmarkConfig:
         command: Shell command that runs benchmarks and writes results to
             ``.benchmark_results.json`` (pytest-benchmark JSON format).
         threshold: Maximum allowed regression ratio (0.0-1.0). A value of
-            0.15 means a 15% degradation in response time, throughput, or
+            0.10 means a 10% degradation in response time, throughput, or
             memory blocks merge.
     """
 
     enabled: bool = False
     command: str = "uv run pytest benchmarks/ --benchmark-json=.benchmark_results.json -q"
-    threshold: float = 0.15
+    threshold: float = 0.10
 
 
 @dataclass(frozen=True)

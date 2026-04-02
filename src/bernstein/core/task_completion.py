@@ -18,6 +18,7 @@ import httpx
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
 from bernstein.core.approval import ApprovalMode
 from bernstein.core.behavior_anomaly import BehaviorAnomalyDetector, BehaviorMetrics
+from bernstein.core.benchmark_gate import BenchmarkGate
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.context import append_decision
 from bernstein.core.cross_model_verifier import (
@@ -416,6 +417,7 @@ def process_completed_tasks(
     # Fan-in: collect results then run sequential post-verification steps.
     for task in new_tasks:
         _qg_result: Any = None
+        _gate_run_dir = orch._workdir
         if task.id in verify_futures:
             passed, failed_signals = verify_futures[task.id].result()
             janitor_passed = passed
@@ -710,6 +712,24 @@ def process_completed_tasks(
                     f"merge conflict in {len(_merge_result.conflicting_files)} files — "
                     f"resolver task created (task {task.id})",
                 )
+            if (
+                _merge_result is not None
+                and _merge_result.success
+                and not _skip_merge
+                and _qg_result is not None
+                and any(gate.gate == "benchmark" and gate.passed for gate in _qg_result.gate_results)
+            ):
+                _benchmark_cfg = getattr(getattr(orch, "_quality_gate_config", None), "benchmark", None)
+                _benchmark_command = getattr(_benchmark_cfg, "command", None)
+                _benchmark_threshold = float(getattr(_benchmark_cfg, "threshold", 0.10))
+                if BenchmarkGate(
+                    orch._workdir,
+                    _gate_run_dir,
+                    base_ref=orch._config.base_branch,
+                    benchmark_command=_benchmark_command,
+                    threshold=_benchmark_threshold,
+                ).promote_candidate():
+                    logger.info("Promoted benchmark baseline candidate after merge for task %s", task.id)
 
         # Record task completion in the operational metrics collector so
         # run summaries and evolution analysis see real duration/success data.
@@ -752,8 +772,9 @@ def process_completed_tasks(
             if _task_m and _task_m.end_time
             else (time.time() - session.spawn_ts if session and session.spawn_ts > 0 else 0.0)
         )
+        _task_tokens_used = int(getattr(_task_m, "tokens_used", 0)) if _task_m is not None else 0
         _behavior_metrics = BehaviorMetrics(
-            tokens_used=_task_m.tokens_used if _task_m and _task_m.tokens_used > 0 else _tokens_in + _tokens_out,
+            tokens_used=_task_tokens_used if _task_tokens_used > 0 else _tokens_in + _tokens_out,
             files_modified=len(completion_data.get("files_modified", [])) if completion_data is not None else 0,
             duration_s=_duration_s,
         )

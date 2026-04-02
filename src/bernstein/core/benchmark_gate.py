@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import logging
 import shutil
@@ -72,6 +74,8 @@ class BenchmarkGate:
     """
 
     BASELINE_FILE = Path(".sdd/cache/benchmark_baseline.json")
+    CANONICAL_BASELINE_FILE = Path(".sdd/metrics/benchmark_baseline.json")
+    CANDIDATE_DIR = Path(".sdd/runtime/benchmark_candidates")
     RESULTS_FILE = ".benchmark_results.json"
     DEFAULT_COMMAND = "uv run pytest benchmarks/ --benchmark-json=.benchmark_results.json -q"
 
@@ -82,14 +86,15 @@ class BenchmarkGate:
         *,
         base_ref: str = "main",
         benchmark_command: str | None = None,
-        threshold: float = 0.15,
+        threshold: float = 0.10,
     ) -> None:
         self._workdir = workdir
         self._run_dir = run_dir
         self._base_ref = base_ref
         self._benchmark_command = benchmark_command or self.DEFAULT_COMMAND
         self._threshold = threshold
-        self._baseline_path = workdir / self.BASELINE_FILE
+        self._baseline_path = workdir / self.CANONICAL_BASELINE_FILE
+        self._legacy_baseline_path = workdir / self.BASELINE_FILE
 
     # ------------------------------------------------------------------
     # Public interface
@@ -134,6 +139,8 @@ class BenchmarkGate:
         current = self.measure_current()
         regressions = self._detect_regressions(baseline, current)
         passed = len(regressions) == 0
+        if passed:
+            self._write_candidate(current)
         detail = self._format_detail(baseline, current, regressions)
         return BenchmarkEvaluation(
             passed=passed,
@@ -143,41 +150,34 @@ class BenchmarkGate:
             current_metrics=current,
         )
 
+    def promote_candidate(self) -> bool:
+        """Promote the current successful benchmark candidate into the baseline cache."""
+        candidate_path = self._candidate_path()
+        payload = self._load_cached_baseline(candidate_path)
+        if payload is None:
+            return False
+        self._persist_baseline_payload(payload)
+        with contextlib.suppress(OSError):
+            candidate_path.unlink()
+        return True
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _load_or_measure_baseline(self) -> dict[str, BenchmarkMetrics]:
         """Load the cached baseline when compatible, else re-measure it."""
-        if self._baseline_path.exists():
-            try:
-                raw: object = json.loads(self._baseline_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                raw = None
-            if isinstance(raw, dict):
-                data = cast("dict[str, object]", raw)
-                if data.get("base_ref") == self._base_ref and data.get("benchmark_command") == self._benchmark_command:
-                    metrics_raw = data.get("metrics")
-                    if isinstance(metrics_raw, dict):
-                        try:
-                            return self._deserialize_metrics(cast("dict[str, object]", metrics_raw))
-                        except (KeyError, ValueError, TypeError):
-                            pass
+        canonical = self._load_cached_baseline(self._baseline_path)
+        if canonical is not None:
+            return self._deserialize_metrics(cast("dict[str, object]", canonical["metrics"]))
+
+        legacy = self._load_cached_baseline(self._legacy_baseline_path)
+        if legacy is not None:
+            self._persist_baseline_payload(legacy)
+            return self._deserialize_metrics(cast("dict[str, object]", legacy["metrics"]))
 
         baseline = self.measure_baseline()
-        self._baseline_path.parent.mkdir(parents=True, exist_ok=True)
-        self._baseline_path.write_text(
-            json.dumps(
-                {
-                    "base_ref": self._base_ref,
-                    "benchmark_command": self._benchmark_command,
-                    "metrics": self._serialize_metrics(baseline),
-                },
-                indent=2,
-                sort_keys=True,
-            ),
-            encoding="utf-8",
-        )
+        self._persist_baseline(baseline)
         return baseline
 
     def _run_measurement(self, cwd: Path) -> dict[str, BenchmarkMetrics]:
@@ -353,3 +353,58 @@ class BenchmarkGate:
                 memory_mb=memory_mb,
             )
         return metrics
+
+    def _load_cached_baseline(self, path: Path) -> dict[str, object] | None:
+        """Load a cached baseline payload when it matches the active config."""
+        if not path.exists():
+            return None
+        try:
+            raw: object = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        payload = cast("dict[str, object]", raw)
+        if payload.get("base_ref") != self._base_ref or payload.get("benchmark_command") != self._benchmark_command:
+            return None
+        metrics_raw = payload.get("metrics")
+        if not isinstance(metrics_raw, dict):
+            return None
+        try:
+            self._deserialize_metrics(cast("dict[str, object]", metrics_raw))
+        except (KeyError, TypeError, ValueError):
+            return None
+        return payload
+
+    def _persist_baseline(self, metrics: dict[str, BenchmarkMetrics]) -> None:
+        """Persist baseline metrics to canonical and legacy cache paths."""
+        self._persist_baseline_payload(self._build_payload(metrics))
+
+    def _persist_baseline_payload(self, payload: dict[str, object]) -> None:
+        """Persist a validated baseline payload to both cache locations."""
+        serialized = json.dumps(payload, indent=2, sort_keys=True)
+        for path in (self._baseline_path, self._legacy_baseline_path):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(serialized, encoding="utf-8")
+
+    def _write_candidate(self, metrics: dict[str, BenchmarkMetrics]) -> None:
+        """Write a successful current measurement for promotion after merge."""
+        candidate_path = self._candidate_path()
+        candidate_path.parent.mkdir(parents=True, exist_ok=True)
+        candidate_path.write_text(
+            json.dumps(self._build_payload(metrics), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+    def _candidate_path(self) -> Path:
+        """Return the candidate baseline path for the active benchmark command."""
+        digest = hashlib.sha256(self._benchmark_command.encode("utf-8")).hexdigest()[:12]
+        return self._workdir / self.CANDIDATE_DIR / f"{self._base_ref}-{digest}.json"
+
+    def _build_payload(self, metrics: dict[str, BenchmarkMetrics]) -> dict[str, object]:
+        """Build the persisted JSON payload for baseline or candidate metrics."""
+        return {
+            "base_ref": self._base_ref,
+            "benchmark_command": self._benchmark_command,
+            "metrics": self._serialize_metrics(metrics),
+        }
