@@ -30,37 +30,40 @@ class TestHelpScreen:
     async def test_help_screen_mount(self) -> None:
         """Test help screen mounts correctly."""
         app = App()
-        screen = HelpScreen()
-
-        # Mount the screen
-        await app.push_screen(screen)
-
-        # Should have table and title
-        assert screen.query_one("#help-table") is not None
-        assert screen.query_one("#help-title") is not None
+        async with app.run_test() as pilot:
+            screen = HelpScreen()
+            await app.push_screen(screen)
+            # Wait for any mount events
+            await pilot.pause()
+            
+            # Should have table and title
+            assert screen.query_one("#help-table") is not None
+            assert screen.query_one("#help-title") is not None
 
     @pytest.mark.asyncio
     async def test_help_screen_populated(self) -> None:
         """Test help screen table is populated."""
         app = App()
-        screen = HelpScreen()
+        async with app.run_test() as pilot:
+            screen = HelpScreen()
+            await app.push_screen(screen)
+            await pilot.pause()
 
-        await app.push_screen(screen)
-
-        table = screen.query_one("#help-table")
-
-        # Should have rows
-        assert table.row_count > 0
+            table = screen.query_one("#help-table")
+            # Should have rows
+            assert table.row_count > 0
 
     @pytest.mark.asyncio
     async def test_help_screen_dismiss(self) -> None:
         """Test help screen can be dismissed."""
         app = App()
-        screen = HelpScreen()
+        async with app.run_test() as pilot:
+            screen = HelpScreen()
+            await app.push_screen(screen)
+            await pilot.pause()
 
-        await app.push_screen(screen)
-
-        # Dismiss should work
-        screen.dismiss()
-
-        assert screen.is_dismissed or not screen.is_mounted
+            # Dismiss should work
+            screen.dismiss()
+            await pilot.pause()
+            # screen is removed from stack
+            assert screen not in app.screen_stack

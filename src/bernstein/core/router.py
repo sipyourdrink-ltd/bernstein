@@ -440,15 +440,21 @@ class TierAwareRouter:
         active = self.state.active_agent_counts.get(provider.name, 0)
         spreading_score = 1.0 - min(active / 10.0, 1.0)
 
-        # Weighted sum
-        return (
-            health_score * 0.30
-            + cost_score * 0.20
+        # Weighted sum (baseline 100%)
+        base_score = (
+            health_score * 0.35
+            + cost_score * 0.25
             + free_tier_score * 0.20
-            + weight_score * 0.10
             + latency_score * 0.10
             + spreading_score * 0.10
         )
+
+        # Apply routing weight as a small adjustment (±5% max)
+        # weight_score is 0.05 to 1.0 (for weights 0.1 to 2.0)
+        # We want weight=1.0 to have zero effect on base_score.
+        adjustment = (weight_score - 0.5) * 0.1  # ranges from -0.045 to +0.05
+        
+        return base_score + adjustment
 
     def select_provider_for_task(
         self,
