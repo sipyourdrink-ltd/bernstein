@@ -175,3 +175,27 @@ def test_task_row_from_api_includes_tokens() -> None:
     })
     assert row.tokens_used == 4500
     assert row.tokens_budget == 10000
+
+
+def test_agent_badge_color_deterministic() -> None:
+    """Same agent returns same colour; empty string returns white."""
+    from bernstein.tui.widgets import agent_badge_color
+
+    c1 = agent_badge_color("agent-42")
+    c2 = agent_badge_color("agent-42")
+    assert c1 == c2
+
+
+def test_agent_badge_color_empty() -> None:
+    """Empty agent_id defaults to white."""
+    from bernstein.tui.widgets import agent_badge_color
+
+    assert agent_badge_color("") == "white"
+
+
+def test_agent_badge_color_varies_by_agent() -> None:
+    """Different agent IDs generally pick different colours."""
+    from bernstein.tui.widgets import agent_badge_color
+
+    colors = {agent_badge_color(f"sess-{i}") for i in range(30)}
+    assert len(colors) > 1  # not all identical
