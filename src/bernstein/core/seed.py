@@ -35,6 +35,7 @@ from bernstein.core.models import (
 from bernstein.core.quality_gates import QualityGatesConfig
 from bernstein.core.sandbox import DockerSandbox, parse_docker_sandbox
 from bernstein.core.secrets import SecretsConfig
+from bernstein.core.tenanting import TenantConfig
 from bernstein.core.visual_config import VisualConfig, parse_visual_config
 from bernstein.core.workspace import Workspace
 from bernstein.core.worktree import WorktreeSetupConfig
@@ -171,6 +172,7 @@ class SeedConfig:
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
     smtp: SmtpConfig | None = None
     network: NetworkConfig | None = None
+    tenants: tuple[TenantConfig, ...] = ()
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -262,8 +264,34 @@ def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
         items: list[object] = cast("list[object]", raw)
         if all(isinstance(s, str) for s in items):
             return tuple(str(s) for s in items)
-        raise SeedError(f"{field_name} must be a list of strings, got: {raw!r}")
-    raise SeedError(f"{field_name} must be a list of strings, got: {type(raw).__name__}")
+    raise SeedError(f"{field_name} must be a list of strings, got: {raw!r}")
+
+
+def _parse_tenants(raw: object) -> tuple[TenantConfig, ...]:
+    """Parse the optional `tenants` config block."""
+
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise SeedError(f"tenants must be a list, got: {type(raw).__name__}")
+    parsed: list[TenantConfig] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise SeedError(f"tenants[{index}] must be a mapping")
+        entry = cast("dict[str, object]", item)
+        tenant_id_raw = entry.get("id")
+        if not isinstance(tenant_id_raw, str) or not tenant_id_raw.strip():
+            raise SeedError(f"tenants[{index}].id must be a non-empty string")
+        tenant_id = tenant_id_raw.strip()
+        if tenant_id in seen:
+            raise SeedError(f"Duplicate tenant id: {tenant_id!r}")
+        seen.add(tenant_id)
+        budget_usd = _parse_budget(cast("str | int | float | None", entry.get("budget")))
+        allowed_agents_raw = entry.get("allowed_agents", entry.get("agents"))
+        allowed_agents = _parse_string_list(allowed_agents_raw, f"tenants[{index}].allowed_agents")
+        parsed.append(TenantConfig(id=tenant_id, budget_usd=budget_usd, allowed_agents=allowed_agents))
+    return tuple(parsed)
 
 
 def _expand_env_value(raw: object, field_name: str) -> object:
@@ -1053,6 +1081,8 @@ def parse_seed(path: Path) -> SeedConfig:
         except (AttributeError, TypeError):
             pass  # Skip invalid network config
 
+    tenants = _parse_tenants(data.get("tenants"))
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -1088,6 +1118,7 @@ def parse_seed(path: Path) -> SeedConfig:
         test_agent=test_agent,
         smtp=_parse_smtp(data.get("smtp")),
         network=network,
+        tenants=tenants,
     )
 
 

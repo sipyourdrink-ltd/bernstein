@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
 from bernstein.core.server import (
     TaskCreate,
     TaskStore,
@@ -96,7 +97,11 @@ async def generic_webhook(body: WebhookTaskCreate, request: Request) -> WebhookT
         return denied
 
     store = _get_store(request)
-    task = await store.create(body.model_copy(update={"tenant_id": request_tenant_id(request)}))
+    effective_body = body.model_copy(update={"tenant_id": request_tenant_id(request)})
+    if effective_body.estimated_minutes is None:
+        score = estimate_difficulty(effective_body.description)
+        effective_body.estimated_minutes = minutes_for_level(score.level)
+    task = await store.create(effective_body)
     return WebhookTaskResponse(task=task_to_response(task))
 
 

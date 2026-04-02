@@ -895,6 +895,7 @@ def create_app(
         )
         from bernstein.core.runtime_state import hash_file, write_config_state
         from bernstein.core.seed import SeedError, parse_seed
+        from bernstein.core.tenanting import TenantRegistry, ensure_tenant_layout, tenant_registry_from_seed
 
         seed_path = workdir / "bernstein.yaml"
         sdd_dir = jsonl_path.parent.parent
@@ -912,11 +913,16 @@ def create_app(
         if seed_path.exists():
             try:
                 application.state.seed_config = parse_seed(seed_path)  # type: ignore[attr-defined]
+                application.state.tenant_registry = tenant_registry_from_seed(application.state.seed_config)  # type: ignore[attr-defined]
+                for tenant in application.state.tenant_registry.tenants:  # type: ignore[attr-defined]
+                    ensure_tenant_layout(sdd_dir, tenant.id)
                 payload["loaded"] = True
             except SeedError as exc:
                 payload["error"] = str(exc)
+                application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
         else:
             application.state.seed_config = None  # type: ignore[attr-defined]
+            application.state.tenant_registry = TenantRegistry()  # type: ignore[attr-defined]
         write_config_state(
             sdd_dir,
             config_hash=config_hash,
@@ -1008,6 +1014,8 @@ def create_app(
     application.state.runtime_dir = jsonl_path.parent  # type: ignore[attr-defined]  # .sdd/runtime/
     application.state.sdd_dir = sdd_dir  # type: ignore[attr-defined]  # .sdd/
     application.state.workdir = workdir  # type: ignore[attr-defined]
+    application.state.seed_config = None  # type: ignore[attr-defined]
+    application.state.tenant_registry = None  # type: ignore[attr-defined]
     application.state.reload_seed_config = _reload_seed_config  # type: ignore[attr-defined]
     application.state.draining = False  # type: ignore[attr-defined]
     application.state.readonly = readonly  # type: ignore[attr-defined]

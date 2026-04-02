@@ -17,11 +17,14 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
+from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
     from pathlib import Path
 
     from bernstein.core.server import SSEBus
+    from bernstein.core.tenanting import TenantRegistry
 
 router = APIRouter()
 
@@ -39,6 +42,24 @@ def _get_sse_bus(request: Request) -> SSEBus:
 
 def _get_sdd_dir(request: Request) -> Path:
     return request.app.state.sdd_dir  # type: ignore[no-any-return]
+
+
+def _get_tenant_registry(request: Request) -> TenantRegistry | None:
+    registry = getattr(request.app.state, "tenant_registry", None)
+    return registry if registry is not None else None
+
+
+def _resolve_request_tenant_scope(request: Request, requested_tenant: str | None = None) -> str:
+    try:
+        return resolve_tenant_scope(
+            request_tenant_id(request),
+            requested_tenant,
+            registry=_get_tenant_registry(request),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _build_breakdowns(tracker: Any) -> dict[str, Any]:
@@ -110,7 +131,7 @@ async def cost_events(request: Request) -> StreamingResponse:
 
 
 @router.get("/costs")
-async def get_costs(request: Request) -> JSONResponse:
+async def get_costs(request: Request, tenant: str | None = None) -> JSONResponse:
     """Aggregate cost data across all runs.
 
     Scans every persisted cost file in ``.sdd/runtime/costs/``, aggregates
@@ -122,14 +143,19 @@ async def get_costs(request: Request) -> JSONResponse:
 
     sdd_dir = _get_sdd_dir(request)
     costs_dir = sdd_dir / "runtime" / "costs"
+    tenant_id = _resolve_request_tenant_scope(request, tenant)
+    tenant_registry = _get_tenant_registry(request)
+    tenant_config = tenant_registry.get(tenant_id) if tenant_registry is not None else None
+    tenant_budget = float(tenant_config.budget_usd or 0.0) if tenant_config is not None else 0.0
 
     empty: dict[str, Any] = {
         "total_spent_usd": 0.0,
-        "total_budget_usd": 0.0,
+        "total_budget_usd": tenant_budget,
         "attainment_pct": 0.0,
         "per_agent": {},
         "per_model": {},
         "runs": [],
+        "tenant_id": tenant_id,
         "timestamp": time.time(),
     }
     if not costs_dir.exists():
@@ -142,7 +168,7 @@ async def get_costs(request: Request) -> JSONResponse:
     per_agent: dict[str, float] = defaultdict(float)
     per_model: dict[str, float] = defaultdict(float)
     total_spent = 0.0
-    total_budget = 0.0
+    total_budget = tenant_budget
     run_totals: list[dict[str, Any]] = []
 
     for cost_file in cost_files:
@@ -150,16 +176,18 @@ async def get_costs(request: Request) -> JSONResponse:
         tracker = CostTracker.load(sdd_dir, run_id)
         if tracker is None:
             continue
-        total_spent += tracker.spent_usd
-        total_budget += tracker.budget_usd
-        for u in tracker.usages:
+        tenant_usages = [usage for usage in tracker.usages if usage.tenant_id == tenant_id]
+        if not tenant_usages:
+            continue
+        total_spent += sum(usage.cost_usd for usage in tenant_usages)
+        for u in tenant_usages:
             per_agent[u.agent_id] += u.cost_usd
             per_model[u.model] += u.cost_usd
         run_totals.append(
             {
                 "run_id": run_id,
-                "spent_usd": round(tracker.spent_usd, 6),
-                "budget_usd": tracker.budget_usd,
+                "spent_usd": round(sum(usage.cost_usd for usage in tenant_usages), 6),
+                "budget_usd": total_budget,
             }
         )
 
@@ -173,13 +201,14 @@ async def get_costs(request: Request) -> JSONResponse:
             "per_agent": {k: round(v, 6) for k, v in per_agent.items()},
             "per_model": {k: round(v, 6) for k, v in per_model.items()},
             "runs": run_totals,
+            "tenant_id": tenant_id,
             "timestamp": time.time(),
         }
     )
 
 
 @router.get("/costs/live")
-async def get_cost_live(request: Request) -> JSONResponse:
+async def get_cost_live(request: Request, tenant: str | None = None) -> JSONResponse:
     """Return live cost breakdown for the most recent run.
 
     Finds the most recently modified cost file in ``.sdd/runtime/costs/``,
@@ -190,21 +219,41 @@ async def get_cost_live(request: Request) -> JSONResponse:
 
     sdd_dir = _get_sdd_dir(request)
     costs_dir = sdd_dir / "runtime" / "costs"
+    tenant_id = _resolve_request_tenant_scope(request, tenant)
     if not costs_dir.exists():
-        return JSONResponse(content={"spent_usd": 0.0, "budget_usd": 0.0, "per_agent": {}, "per_model": {}})
+        return JSONResponse(
+            content={"spent_usd": 0.0, "budget_usd": 0.0, "per_agent": {}, "per_model": {}, "tenant_id": tenant_id}
+        )
 
     # Find the most recently written cost file
     cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not cost_files:
-        return JSONResponse(content={"spent_usd": 0.0, "budget_usd": 0.0, "per_agent": {}, "per_model": {}})
+        return JSONResponse(
+            content={"spent_usd": 0.0, "budget_usd": 0.0, "per_agent": {}, "per_model": {}, "tenant_id": tenant_id}
+        )
 
     run_id = cost_files[0].stem
     tracker = CostTracker.load(sdd_dir, run_id)
     if tracker is None:
-        return JSONResponse(content={"spent_usd": 0.0, "budget_usd": 0.0, "per_agent": {}, "per_model": {}})
+        return JSONResponse(
+            content={"spent_usd": 0.0, "budget_usd": 0.0, "per_agent": {}, "per_model": {}, "tenant_id": tenant_id}
+        )
 
-    result = tracker.status().to_dict()
-    result.update(_build_breakdowns(tracker))
+    tenant_usages = [usage for usage in tracker.usages if usage.tenant_id == tenant_id]
+    spent_usd = sum(usage.cost_usd for usage in tenant_usages)
+    per_agent: dict[str, float] = defaultdict(float)
+    per_model: dict[str, float] = defaultdict(float)
+    for usage in tenant_usages:
+        per_agent[usage.agent_id] += usage.cost_usd
+        per_model[usage.model] += usage.cost_usd
+    result = {
+        "run_id": run_id,
+        "spent_usd": round(spent_usd, 6),
+        "budget_usd": 0.0,
+        "per_agent": {key: round(value, 6) for key, value in per_agent.items()},
+        "per_model": {key: round(value, 6) for key, value in per_model.items()},
+        "tenant_id": tenant_id,
+    }
     return JSONResponse(content=result)
 
 
