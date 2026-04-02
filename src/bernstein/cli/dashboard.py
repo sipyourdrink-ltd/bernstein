@@ -506,6 +506,18 @@ class AgentWidget(Static):
         if self.agent_cost > 0:
             t.append(f"  ${self.agent_cost:.4f}", style="bold bright_green")
 
+        context_window_tokens = int(a.get("context_window_tokens", 0) or 0)
+        context_utilization_pct = float(a.get("context_utilization_pct", 0.0) or 0.0)
+        if context_window_tokens > 0:
+            context_style = "bold bright_yellow" if a.get("context_utilization_alert") else "bright_cyan"
+            context_capacity = f"{context_window_tokens / 1000:.0f}k" if context_window_tokens >= 1000 else str(
+                context_window_tokens
+            )
+            t.append(
+                f"  CTX {context_utilization_pct:.1f}%/{context_capacity}",
+                style=context_style,
+            )
+
         task_ids: list[str] = a.get("task_ids", [])
         for tid in task_ids[:2]:
             title = self.task_titles.get(tid, tid[:12])

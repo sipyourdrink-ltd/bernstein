@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from bernstein.cli.dashboard import (
+    AgentWidget,
     _build_runtime_subtitle,
     _format_gate_report_lines,
     _format_relative_age,
@@ -187,6 +189,48 @@ async def test_dashboard_data_with_agent(client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
+async def test_dashboard_data_reads_context_window_fields_from_agents_snapshot(tmp_path: Path) -> None:
+    jsonl_path = tmp_path / ".sdd" / "runtime" / "tasks.jsonl"
+    app = create_app(jsonl_path=jsonl_path)
+    agents_path = tmp_path / ".sdd" / "runtime" / "agents.json"
+    agents_path.parent.mkdir(parents=True, exist_ok=True)
+    agents_path.write_text(
+        json.dumps(
+            {
+                "ts": 1_000.0,
+                "agents": [
+                    {
+                        "id": "agent-context",
+                        "role": "backend",
+                        "status": "working",
+                        "model": "sonnet",
+                        "pid": 123,
+                        "task_ids": ["task-001"],
+                        "tokens_used": 170_000,
+                        "token_budget": 200_000,
+                        "context_window_tokens": 200_000,
+                        "context_utilization_pct": 85.0,
+                        "context_utilization_alert": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    transport = ASGITransport(app=app)  # pyright: ignore[reportUnknownArgumentType]
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/dashboard/data")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["agents"][0]["context_window_tokens"] == 200000
+    assert data["agents"][0]["context_utilization_pct"] == 85.0
+    assert data["agents"][0]["context_utilization_alert"] is True
+    assert any("nearing context limit" in alert["message"] for alert in data["alerts"])
+
+
+@pytest.mark.anyio
 async def test_task_gate_report_endpoint_returns_saved_report(client: AsyncClient, jsonl_path: Path) -> None:
     """GET /tasks/{id}/gates returns the saved runtime gate report."""
     created = await client.post("/tasks", json=TASK_PAYLOAD)
@@ -257,6 +301,26 @@ def test_format_gate_report_lines() -> None:
     assert any("BLOCKED" in line for line in lines)
     assert any("lint: fail" in line for line in lines)
     assert any("ruff found 2 issues" in line for line in lines)
+
+
+def test_agent_widget_renders_context_window_utilization() -> None:
+    widget = AgentWidget(
+        {
+            "id": "agent-001",
+            "role": "backend",
+            "model": "sonnet",
+            "status": "working",
+            "runtime_s": 12,
+            "context_window_tokens": 200_000,
+            "context_utilization_pct": 84.5,
+            "context_utilization_alert": True,
+            "task_ids": [],
+        },
+        tasks={},
+    )
+
+    rendered = widget.render().plain
+    assert "CTX 84.5%/200k" in rendered
 
 
 def test_task_retry_count_from_title_and_description() -> None:
