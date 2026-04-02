@@ -516,7 +516,43 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         "Install an adapter (claude/codex/gemini) and set its API key" if not any_adapter_key else "",
     )
 
-    # 12. Compliance mode prerequisites
+    # 12. Context file warnings (CLAUDE.md, AGENTS.md, etc.)
+    from bernstein.context_files_doctor import check_context_files
+
+    context_warnings = check_context_files(workdir)
+    for w in context_warnings:
+        _check(
+            w.name,
+            w.ok,
+            w.detail,
+            w.fix,
+        )
+
+    # 13. MCP server reachability
+    from bernstein.context_files_doctor import check_mcp_servers
+
+    mcp_warnings = check_mcp_servers(workdir)
+    for w in mcp_warnings:
+        _check(
+            w.name,
+            w.ok,
+            w.detail,
+            w.fix,
+        )
+
+    # 14. Permission rule health
+    from bernstein.context_files_doctor import check_permission_rules
+
+    perm_warnings = check_permission_rules(workdir)
+    for w in perm_warnings:
+        _check(
+            w.name,
+            w.ok,
+            w.detail,
+            w.fix,
+        )
+
+    # 15. Compliance mode prerequisites
     from bernstein.core.compliance import load_compliance_config
 
     compliance_cfg = load_compliance_config(workdir / ".sdd")
