@@ -85,7 +85,7 @@ class CachingAdapter(CLIAdapter):
         cache_res = self._caching_mgr.process_prompt(prompt)
 
         # 2. Emit cache break event when prefix is new
-        if cache_res.is_new_prefix:
+        if cache_res.is_new_prefix and not cache_res.expected_drop_reason:
             event = CacheBreakEvent(
                 timestamp=time.time(),
                 reason=CacheBreakReason.SYSTEM,

@@ -38,3 +38,28 @@ def test_timeline_update_data() -> None:
         assert isinstance(text, Text)
         assert "t1" in text.plain
         assert "t2" in text.plain
+
+
+def test_timeline_compaction_entry_rendered() -> None:
+    """Compaction entries render with a distinct marker (⚡, magenta)."""
+    widget = TaskTimeline()
+    now = time.time()
+
+    entries = [
+        TimelineEntry(task_id="t1", title="Task 1", start_time=now - 100, end_time=now - 50, status="done"),
+        TimelineEntry(task_id="comp-1", title="compaction: 20k → 5k tokens", start_time=now - 70, end_time=now - 70, status="done", kind="compaction"),
+    ]
+    widget.update_data(entries)
+
+    with patch("bernstein.tui.timeline.TaskTimeline.size", new_callable=PropertyMock) as mock_size:
+        mock_size.return_value = MagicMock(width=100, height=10)
+        text = widget.render()
+        plain = text.plain
+        assert "⚡" in plain
+        assert "compaction" in plain
+
+
+def test_timeline_kind_defaults_to_task() -> None:
+    """TimelineEntry defaults to 'task' kind for backward compatibility."""
+    entry = TimelineEntry(task_id="t1", title="T1", start_time=0.0, end_time=1.0, status="done")
+    assert entry.kind == "task"
