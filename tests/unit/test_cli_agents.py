@@ -148,7 +148,7 @@ def test_agents_list_shows_local_agents(tmp_path: Path) -> None:
     _write_valid_definition(defs, "alpha-agent")
     _write_valid_definition(defs, "beta-agent")
 
-    runner = CliRunner()
+    runner = CliRunner(env={"COLUMNS": "200"})
     result = runner.invoke(cli, ["agents", "list", "--dir", str(defs)])
     assert result.exit_code == 0
     assert "alpha-agent" in result.output

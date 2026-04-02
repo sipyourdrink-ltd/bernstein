@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import click
 import httpx
 from rich.console import Console
 
@@ -290,6 +291,22 @@ def find_seed_file() -> Path | None:
 def is_process_alive(pid: int) -> bool:
     """Check if a process with the given PID is alive."""
     return is_alive(pid)
+
+
+def is_json() -> bool:
+    """Check if the current CLI context has the JSON flag enabled."""
+    try:
+        ctx = click.get_current_context(silent=True)
+        if ctx and ctx.obj:
+            return ctx.obj.get("JSON", False)
+    except Exception:
+        pass
+    return False
+
+
+def print_json(data: Any) -> None:
+    """Print the given data as a JSON object to the console."""
+    console.print_json(data=data)
 
 
 # ---------------------------------------------------------------------------

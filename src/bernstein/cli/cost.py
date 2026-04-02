@@ -12,6 +12,8 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 
+from bernstein.cli.helpers import is_json, print_json
+
 console = Console()
 
 # ---------------------------------------------------------------------------
@@ -258,6 +260,16 @@ def estimate_cmd(goal: str, role: str, scope: str, complexity: str, metrics_dir:
 
     est_cost = predict_task_cost(task, metrics_dir=Path(metrics_dir))
 
+    if is_json():
+        print_json({
+            "goal": goal,
+            "role": role,
+            "scope": scope,
+            "complexity": complexity,
+            "estimated_cost_usd": round(est_cost, 4)
+        })
+        return
+
     console.print(
         Panel(
             f"[bold]Cost Prediction[/bold]\n\n"
@@ -292,8 +304,8 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
     """Show agent spend: cost, tokens, and duration per model."""
     mdir = Path(metrics_dir)
     if not mdir.exists():
-        if as_json:
-            click.echo(json.dumps({"error": f"Metrics directory not found: {mdir}"}))
+        if as_json or is_json():
+            print_json({"error": f"Metrics directory not found: {mdir}"})
         else:
             console.print(f"[red]Metrics directory not found:[/red] {mdir}")
         raise SystemExit(1)
@@ -304,8 +316,8 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
     rows = _aggregate(task_records, api_records)
 
     if not rows:
-        if as_json:
-            click.echo(json.dumps({"rows": [], "totals": {}}))
+        if as_json or is_json():
+            print_json({"rows": [], "totals": {}})
         else:
             console.print("[dim]No metrics data found.[/dim]")
         return
@@ -348,7 +360,7 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
 
     tasks_done, tasks_failed = _count_task_status(task_records)
 
-    if as_json:
+    if as_json or is_json():
         output = {
             "rows": [
                 {
@@ -373,7 +385,7 @@ def cost_cmd(metrics_dir: str, as_json: bool, share: bool) -> None:
             "tasks_done": tasks_done,
             "tasks_failed": tasks_failed,
         }
-        click.echo(json.dumps(output, indent=2))
+        print_json(output)
         return
 
     # --share: print only the shareable snippet and exit

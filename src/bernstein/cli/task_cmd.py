@@ -18,6 +18,8 @@ import click
 from bernstein.cli.helpers import (
     STATUS_COLORS,
     console,
+    is_json,
+    print_json,
     server_get,
     server_post,
 )
@@ -56,7 +58,9 @@ def _set_cli(cli_group: Any) -> None:  # type: ignore[reportUnusedFunction]
     show_default=True,
 )
 @click.option("--depends-on", multiple=True, metavar="TASK_ID", help="Task IDs this depends on.")
+@click.pass_context
 def add_task(
+    ctx: click.Context,
     title: str,
     role: str,
     description: str,
@@ -79,7 +83,7 @@ def add_task(
         "depends_on": list(depends_on),
     }
 
-    result = server_post("/task", payload)
+    result = server_post("/tasks", payload)
     if result is None:
         from bernstein.cli.errors import server_unreachable
 
@@ -87,9 +91,12 @@ def add_task(
         raise SystemExit(1)
 
     task_id = result.get("id", "?")
-    console.print(
-        f"[green]Task added:[/green] [bold]{task_id}[/bold] — {title} ([dim]role={role}, priority={priority}[/dim])"
-    )
+    if is_json():
+        print_json(result)
+    else:
+        console.print(
+            f"[green]Task added:[/green] [bold]{task_id}[/bold] — {title} ([dim]role={role}, priority={priority}[/dim])"
+        )
 
 
 @click.command("sync", hidden=True)
@@ -216,7 +223,8 @@ def reject(task_id: str, workdir: str) -> None:
 
 @click.command("pending")
 @click.option("--workdir", default=".", help="Project root directory.", type=click.Path())
-def pending(workdir: str) -> None:
+@click.pass_context
+def pending(ctx: click.Context, workdir: str) -> None:
     """List tasks waiting for approval review.
 
     Shows all tasks that have been verified and are waiting for a human
@@ -226,7 +234,24 @@ def pending(workdir: str) -> None:
 
     pending_dir = Path(workdir) / ".sdd" / "runtime" / "pending_approvals"
     if not pending_dir.exists() or not any(pending_dir.glob("*.json")):
-        console.print("[dim]No tasks pending approval.[/dim]")
+        if ctx.obj.get("JSON"):
+            console.print_json(data=[])
+        else:
+            console.print("[dim]No tasks pending approval.[/dim]")
+        return
+
+    results: list[dict[str, Any]] = []
+    for f in sorted(pending_dir.glob("*.json")):
+        try:
+            import json as _json
+
+            data = _json.loads(f.read_text())
+            results.append(data)
+        except Exception:
+            results.append({"task_id": f.stem, "error": "unreadable"})
+
+    if ctx.obj.get("JSON"):
+        console.print_json(data=results)
         return
 
     table = Table(show_header=True, header_style="bold magenta")
@@ -234,18 +259,12 @@ def pending(workdir: str) -> None:
     table.add_column("Title")
     table.add_column("Tests")
 
-    for f in sorted(pending_dir.glob("*.json")):
-        try:
-            import json as _json
-
-            data = _json.loads(f.read_text())
-            table.add_row(
-                data.get("task_id", f.stem),
-                data.get("task_title", ""),
-                data.get("test_summary", ""),
-            )
-        except Exception:
-            table.add_row(f.stem, "[dim]unreadable[/dim]", "")
+    for res in results:
+        table.add_row(
+            res.get("task_id", "?"),
+            res.get("task_title", ""),
+            res.get("test_summary", ""),
+        )
 
     console.print(table)
     console.print("\n[dim]Approve with:[/dim] bernstein approve <task_id>")
