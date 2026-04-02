@@ -1,0 +1,38 @@
+---
+id: "T547"
+title: "MCP transcript sampler"
+status: open
+type: feature
+priority: 3
+scope: large
+complexity: high
+role: backend
+model: auto
+effort: normal
+estimated_minutes: 150
+depends_on: []
+blocks: []
+tags: ["mcp", "control-plane"]
+janitor_signals: []
+context_files: ["/Users/sasha/IdeaProjects/cloned/claude-code/cli/handlers/mcp.tsx", "/Users/sasha/IdeaProjects/cloned/claude-code/services/diagnosticTracking.ts"]
+affected_paths: ["src/bernstein/core/mcp_manager.py", "src/bernstein/core/mcp_registry.py", "src/bernstein/mcp/server.py", "src/bernstein/core/routes/status.py"]
+max_tokens: null
+require_review: true
+require_human_approval: false
+---
+
+## Summary
+
+This ticket hardens Bernstein's MCP control plane around scoped config, auth cleanup, server health, and operator visibility. The second-pass audit shows that lifecycle hygiene is as important as raw connector support.
+
+## Objective & Definition of Done
+
+- [ ] Implement mCP transcript sampler in the MCP manager, registry, or server control-plane path.
+- [ ] Persist or surface the resulting MCP state through status, metrics, or operator commands.
+- [ ] Add tests covering one healthy path and one cleanup, auth, or failure path.
+- [ ] Tests added proving it works
+
+## Verification
+
+- Run targeted unit tests for MCP manager, registry, and status surfaces
+- Run `uv run ruff check src/` and `uv run pyright src/` on touched modules

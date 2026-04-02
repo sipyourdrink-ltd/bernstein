@@ -1,0 +1,38 @@
+---
+id: "T646"
+title: "Cross-repo release train orchestration"
+status: open
+type: feature
+priority: 4
+scope: large
+complexity: high
+role: devops
+model: auto
+effort: normal
+estimated_minutes: 150
+depends_on: []
+blocks: []
+tags: ["ci-cd", "quality"]
+janitor_signals: []
+context_files: ["/Users/sasha/IdeaProjects/personal_projects/bernstein/.sdd/research/future_research_000.md", "/Users/sasha/IdeaProjects/personal_projects/bernstein/.sdd/research/what_devs_want.md"]
+affected_paths: ["src/bernstein/core/ci_fix.py", "src/bernstein/core/quality_gates.py", "src/bernstein/core/approval.py", ".github/workflows/ci.yml"]
+max_tokens: null
+require_review: true
+require_human_approval: false
+---
+
+## Summary
+
+This ticket strengthens Bernstein's CI and release-control surfaces around review, confidence, and recovery. The strategy research consistently points to merge reliability and CI integration as a differentiator.
+
+## Objective & Definition of Done
+
+- [ ] Implement a first deterministic slice of cross-repo release train orchestration in the affected Bernstein runtime or control-plane modules.
+- [ ] Persist or surface the resulting state through `.sdd`, CLI, API, or metrics so operators can inspect it.
+- [ ] Add targeted tests or scenario fixtures covering the main path and one governance or failure edge.
+- [ ] Tests added proving it works
+
+## Verification
+
+- Run targeted unit tests for CI/gate logic and validate any workflow or router changes locally
+- Run `uv run ruff check src/` and `uv run pyright src/` on touched modules

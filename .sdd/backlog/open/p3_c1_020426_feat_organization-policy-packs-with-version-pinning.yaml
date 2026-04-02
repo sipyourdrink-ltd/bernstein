@@ -1,0 +1,38 @@
+---
+id: "T617"
+title: "Organization policy packs with version pinning"
+status: open
+type: feature
+priority: 3
+scope: small
+complexity: low
+role: security
+model: auto
+effort: normal
+estimated_minutes: 30
+depends_on: []
+blocks: []
+tags: ["enterprise", "governance"]
+janitor_signals: []
+context_files: ["/Users/sasha/IdeaProjects/personal_projects/bernstein/.sdd/research/enterprise_needs.md", "/Users/sasha/IdeaProjects/personal_projects/bernstein/.sdd/research/competitive_landscape.md"]
+affected_paths: ["src/bernstein/core/policy.py", "src/bernstein/core/approval.py", "src/bernstein/core/auth.py", "src/bernstein/core/metric_export.py"]
+max_tokens: null
+require_review: false
+require_human_approval: false
+---
+
+## Summary
+
+This ticket closes an enterprise adoption gap surfaced by the research files around governance, auditability, or deployment constraints. Bernstein should implement it as typed deterministic behavior, not policy prose.
+
+## Objective & Definition of Done
+
+- [ ] Implement a first deterministic slice of organization policy packs with version pinning in the affected Bernstein runtime or control-plane modules.
+- [ ] Persist or surface the resulting state through `.sdd`, CLI, API, or metrics so operators can inspect it.
+- [ ] Add targeted tests or scenario fixtures covering the main path and one governance or failure edge.
+- [ ] Tests added proving it works
+
+## Verification
+
+- Run targeted unit tests for the enterprise policy, approval, or export surface touched by the change
+- Run `uv run ruff check src/` and `uv run pyright src/` on touched modules

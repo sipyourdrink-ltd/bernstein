@@ -1,0 +1,38 @@
+---
+id: "T591"
+title: "TUI collapsed section memory"
+status: open
+type: feature
+priority: 2
+scope: small
+complexity: low
+role: frontend
+model: auto
+effort: normal
+estimated_minutes: 30
+depends_on: []
+blocks: []
+tags: ["diagnostics", "tui"]
+janitor_signals: []
+context_files: ["/Users/sasha/IdeaProjects/cloned/claude-code/cli/update.ts", "/Users/sasha/IdeaProjects/cloned/claude-code/components/PromptInput/Notifications.tsx"]
+affected_paths: ["src/bernstein/core/metric_collector.py", "src/bernstein/core/prometheus.py", "src/bernstein/cli/status.py", "src/bernstein/tui/app.py"]
+max_tokens: null
+require_review: false
+require_human_approval: false
+---
+
+## Summary
+
+This ticket improves Bernstein's diagnostics, telemetry, and terminal ergonomics so operators can repair and understand the runtime without scraping logs. The source audit shows that update, doctor, notifications, and UI overlays should work together.
+
+## Objective & Definition of Done
+
+- [ ] Implement tUI collapsed section memory in the metrics, doctor, CLI, or TUI surface that best fits the operator workflow.
+- [ ] Ensure the resulting signal is visible locally without requiring raw log scraping.
+- [ ] Add deterministic tests for rendering, export, privacy, or failure handling as appropriate.
+- [ ] Tests added proving it works
+
+## Verification
+
+- Run targeted unit tests for metrics, status, and TUI code affected by the change
+- Run `uv run ruff check src/` and `uv run pyright src/` on touched modules

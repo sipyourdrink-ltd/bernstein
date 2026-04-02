@@ -24,6 +24,7 @@ class CacheBreakReason(Enum):
     TOOLS = "tools"  # tool definitions or MCP config changed
     MODEL = "model"  # model or tier routing changed
     CONFIG = "config"  # agent config or project settings changed
+    UNKNOWN = "unknown"  # cause not determined
 
 
 # Savings-per-token at Anthropic's cached-input discount (90% off vs standard
@@ -100,6 +101,7 @@ class CacheBreakEvent:
         session_id: Agent session ID that triggered the break.
         model_name: Model name used for the request.
         provider_name: API provider name.
+        changed_fields: List of field-level descriptions (e.g., "role: ...").
     """
 
     timestamp: float
@@ -110,6 +112,7 @@ class CacheBreakEvent:
     session_id: str
     model_name: str = ""
     provider_name: str = ""
+    changed_fields: list[str] = field(default_factory=list[str])
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict."""
@@ -122,6 +125,7 @@ class CacheBreakEvent:
             "session_id": self.session_id,
             "model_name": self.model_name,
             "provider_name": self.provider_name,
+            "changed_fields": self.changed_fields,
         }
 
     def to_json_line(self) -> str:
@@ -140,6 +144,7 @@ class CacheBreakEvent:
             session_id=data["session_id"],
             model_name=data.get("model_name", ""),
             provider_name=data.get("provider_name", ""),
+            changed_fields=data.get("changed_fields", []),
         )
 
 
@@ -191,6 +196,7 @@ class PromptProcessResult:
         hit_count: Number of times this prefix has been reused (before this spawn).
         first_seen: Timestamp when the prefix was first cached (None if reused).
         prefix_tokens: Estimated token count of the prefix.
+        previous_cache_key: Old cache key that was replaced (None if first ever).
     """
 
     cache_key: str
@@ -200,6 +206,7 @@ class PromptProcessResult:
     hit_count: int
     first_seen: float | None = None
     prefix_tokens: int = 0
+    previous_cache_key: str | None = None
 
 
 def compute_cache_key(prefix: str) -> str:
@@ -293,6 +300,7 @@ class PromptCachingManager:
         self._workdir = workdir
         self._manifest = CacheManifest()
         self._manifest_path = workdir / ".sdd" / "caching" / "manifest.jsonl"
+        self._last_active_key: str | None = None
         self._load_manifest()
 
     def _load_manifest(self) -> None:
@@ -344,6 +352,8 @@ class PromptCachingManager:
                 first_seen_at=now,
             )
             self._manifest.entries[cache_key] = entry
+            # Cache break: the new prefix replaces whatever was last used
+            prev_key = self._last_active_key if self._last_active_key != cache_key else None
         else:
             entry = self._manifest.entries[cache_key]
             entry.hit_count += 1
@@ -351,6 +361,9 @@ class PromptCachingManager:
             self._manifest.total_cached_requests += 1
             self._manifest.total_cached_tokens += entry.prefix_tokens
             hit_count = entry.hit_count
+            prev_key = None
+
+        self._last_active_key = cache_key
 
         return PromptProcessResult(
             cache_key=cache_key,
@@ -360,6 +373,7 @@ class PromptCachingManager:
             hit_count=hit_count,
             first_seen=self._manifest.entries[cache_key].first_seen_at if not is_new else time.time(),
             prefix_tokens=self._manifest.entries[cache_key].prefix_tokens,
+            previous_cache_key=prev_key,
         )
 
     def save_manifest(self) -> None:

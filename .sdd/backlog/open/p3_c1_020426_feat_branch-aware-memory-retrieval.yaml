@@ -1,0 +1,38 @@
+---
+id: "T619"
+title: "Branch-aware memory retrieval"
+status: open
+type: feature
+priority: 3
+scope: small
+complexity: low
+role: architect
+model: auto
+effort: normal
+estimated_minutes: 30
+depends_on: []
+blocks: []
+tags: ["memory", "knowledge"]
+janitor_signals: []
+context_files: ["/Users/sasha/IdeaProjects/personal_projects/bernstein/.sdd/research/future_research_001.md", "/Users/sasha/IdeaProjects/personal_projects/bernstein/.sdd/research/what_devs_want.md"]
+affected_paths: ["src/bernstein/core/lessons.py", "src/bernstein/core/session.py", "src/bernstein/core/knowledge_base.py", "src/bernstein/core/traces.py"]
+max_tokens: null
+require_review: false
+require_human_approval: false
+---
+
+## Summary
+
+This ticket addresses one of the strongest developer-demand signals: memory that is useful, inspectable, and safe across sessions. Bernstein should keep memory file-backed and reviewable instead of implicit or magical.
+
+## Objective & Definition of Done
+
+- [ ] Implement a first deterministic slice of branch-aware memory retrieval in the affected Bernstein runtime or control-plane modules.
+- [ ] Persist or surface the resulting state through `.sdd`, CLI, API, or metrics so operators can inspect it.
+- [ ] Add targeted tests or scenario fixtures covering the main path and one governance or failure edge.
+- [ ] Tests added proving it works
+
+## Verification
+
+- Run targeted unit tests for memory retrieval, persistence, and trace interactions changed by the feature
+- Run `uv run ruff check src/` and `uv run pyright src/` on touched modules
