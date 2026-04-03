@@ -4,6 +4,11 @@ Provides:
 - FileSummary: AST-based Python file structure
 - TaskContextBuilder: Rich context for agent tasks
 - File indexing and architecture documentation
+
+Concurrent access is protected by the **memory lock protocol**
+(:mod:`memory_lock_protocol`): PID/mtime-based locks with stale lock
+recovery, and atomic writes with backup/rollback for read-modify-write
+operations (e.g. :func:`append_decision`).
 """
 
 from __future__ import annotations
@@ -12,14 +17,10 @@ import ast
 import json
 import logging
 import subprocess
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from bernstein.core.models import Task
-
+from typing import Any
 
 from bernstein.core.git_context import (
     cochange_files as _git_cochanged_files,
@@ -30,6 +31,7 @@ from bernstein.core.git_context import (
 from bernstein.core.git_context import (
     recent_changes_multi as _recent_git_changes,
 )
+from bernstein.core.memory_lock_protocol import guarded_memory_write
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +256,7 @@ class TaskContextBuilder:
 
         return "\n".join(sections)
 
-    def build_context(self, tasks: list[Task], store: Any | None = None) -> str:
+    def build_context(self, tasks: list[Any], store: Any | None = None) -> str:
         """Build compressed context for a task batch.
 
         Uses ContextCompressor to select only task-relevant files,
@@ -463,8 +465,6 @@ def refresh_knowledge_base(workdir: Path) -> None:
     index = build_file_index(workdir)
 
     # Persist raw index as JSON for other tools
-    from dataclasses import asdict
-
     def _json_serial(obj):
         if isinstance(obj, datetime):
             return obj.isoformat()
@@ -488,11 +488,16 @@ def refresh_knowledge_base(workdir: Path) -> None:
 
 
 def append_decision(workdir: Path, task_id: str, title: str, decision: str) -> None:
-    """Append a key architecture decision to the project knowledge base."""
+    """Append a key architecture decision to the project knowledge base.
+
+    Uses the memory lock protocol (PID/mtime lock + atomic write with backup)
+    to protect the read-modify-write cycle on ``recent_decisions.md`` when
+    concurrent agents log decisions simultaneously.
+    """
     kb_dir = workdir / ".sdd" / "knowledge"
     kb_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Append to JSONL for machine reading
+    # 1. Append to JSONL for machine reading (append-only is naturally atomic at OS level)
     jsonl_path = kb_dir / "decisions.jsonl"
     now_dt = datetime.now()
     record = {
@@ -504,35 +509,35 @@ def append_decision(workdir: Path, task_id: str, title: str, decision: str) -> N
     with jsonl_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
 
-    # 2. Append to Markdown for human reading
+    # 2. Append to Markdown for human reading (read-modify-write = needs lock)
     md_path = kb_dir / "recent_decisions.md"
     ts_str = now_dt.strftime("%Y-%m-%d %H:%M")
     md_entry = f"\n## [{ts_str}] {title} ({task_id})\n{decision}\n"
 
-    content = ""
-    if md_path.exists():
-        content = md_path.read_text(encoding="utf-8")
+    with guarded_memory_write(md_path) as guard:
+        content = guard.original_content or ""
 
-    # Keep header
-    header = "# Recent Decisions\n"
-    if content.startswith("#"):
-        parts = content.split("\n## [", 1)
-        header = parts[0]
-        if not header.endswith("\n"):
-            header += "\n"
-        body = "## [" + parts[1] if len(parts) > 1 else ""
-    else:
-        body = content
+        # Keep header
+        header = "# Recent Decisions\n"
+        if content.startswith("#"):
+            parts = content.split("\n## [", 1)
+            header = parts[0]
+            if not header.endswith("\n"):
+                header += "\n"
+            body = "## [" + parts[1] if len(parts) > 1 else ""
+        else:
+            body = content
 
-    # Split into entries
-    entries = ["## [" + e for e in body.split("## [") if e.strip()]
-    entries.append(md_entry.strip())
+        # Split into entries
+        entries = ["## [" + e for e in body.split("## [") if e.strip()]
+        entries.append(md_entry.strip())
 
-    # Cap at 15
-    if len(entries) > 15:
-        entries = entries[-15:]
+        # Cap at 15
+        if len(entries) > 15:
+            entries = entries[-15:]
 
-    md_path.write_text(header + "\n" + "\n\n".join(entries) + "\n", encoding="utf-8")
+        guard.write_backup()
+        guard.write_new(header + "\n" + "\n\n".join(entries) + "\n")
 
 
 # ---------------------------------------------------------------------------
