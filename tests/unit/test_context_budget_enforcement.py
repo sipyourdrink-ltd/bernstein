@@ -37,7 +37,7 @@ def test_prompt_compressor_drops_low_priority_sections(caplog):
 
     # Budget of 1500 tokens. Should drop 'team' (priority 3).
     compressor = PromptCompressor(token_budget=1500)
-    compressed, original, final, dropped = compressor.compress_sections(sections)
+    _compressed, original, final, dropped = compressor.compress_sections(sections)
 
     assert "team" in dropped
     assert "lessons" not in dropped
@@ -90,7 +90,7 @@ def test_task_context_builder_enforces_budgets(caplog, tmp_path):
 
     with patch_module.patch("bernstein.core.context_compression.ContextCompressor", mock_compressor_cls):
         with patch_module.patch("bernstein.core.rag.CodebaseIndexer", mock_indexer_cls):
-            context = builder.build_context(tasks)
+            _context = builder.build_context(tasks)
 
     # Should have included 2 files (12000 tokens) but not the 3rd (18000 tokens > 15000)
     assert builder.file_context.call_count == 3

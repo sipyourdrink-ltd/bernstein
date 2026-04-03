@@ -75,7 +75,8 @@ class TestLLMSettings:
         s = LLMSettings(_env_file=None)  # type: ignore[call-arg]
         assert s.g4f_base_url == "https://g4f.space/v1"
 
-    def test_openai_base_url_defaults_to_none(self) -> None:
+    def test_openai_base_url_defaults_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         s = LLMSettings(_env_file=None)  # type: ignore[call-arg]
         assert s.openai_base_url is None
 

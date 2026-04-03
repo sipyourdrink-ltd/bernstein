@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -47,7 +48,7 @@ def _make_lock_mgr(locks: list[dict]) -> MagicMock:
 
 def test_edit_event_is_frozen() -> None:
     e = EditEvent(agent_id="a1", file_path="src/foo.py", timestamp=1.0)
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         e.agent_id = "x"  # type: ignore[misc]
 
 

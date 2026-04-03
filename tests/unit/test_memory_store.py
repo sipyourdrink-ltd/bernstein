@@ -133,7 +133,7 @@ def test_get_relevant_empty_tags(store: SQLiteMemoryStore) -> None:
 
 
 def test_task_id_stored(store: SQLiteMemoryStore) -> None:
-    entry_id = store.add("learning", "Learned from task", task_id="TASK-001")
+    _entry_id = store.add("learning", "Learned from task", task_id="TASK-001")
     entries = store.list()
     assert entries[0].task_id == "TASK-001"
 

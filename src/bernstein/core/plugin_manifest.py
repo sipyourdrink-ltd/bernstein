@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -155,15 +155,12 @@ def _validate_entry_point(path: str) -> list[str]:
 
 
 def _validate_string_list(
-    items: list[str],
+    items: list[Any],
     field_name: str,
     max_items: int = _MAX_DECLARATIONS,
 ) -> list[str]:
     """Validate a list of strings."""
     errors: list[str] = []
-    if not isinstance(items, list):
-        errors.append(f"{field_name} must be a list")
-        return errors
 
     if len(items) > max_items:
         errors.append(f"{field_name} exceeds maximum ({len(items)} > {max_items})")
@@ -196,11 +193,11 @@ def validate_manifest(manifest: dict[str, Any]) -> PluginManifest:
     """
     errors: list[str] = []
 
-    # Required fields
-    name = manifest.get("name", "")
-    version = manifest.get("version", "")
-    description = str(manifest.get("description", ""))
-    entry_point = manifest.get("entry_point", "")
+    # Required fields — cast to str for type safety (values come from Any dict)
+    name: str = str(manifest.get("name", ""))
+    version: str = str(manifest.get("version", ""))
+    description: str = str(manifest.get("description", ""))
+    entry_point: str = str(manifest.get("entry_point", ""))
     hooks_raw: Any = manifest.get("hooks", [])
     permissions_raw: Any = manifest.get("required_permissions", [])
 
@@ -214,48 +211,37 @@ def validate_manifest(manifest: dict[str, Any]) -> PluginManifest:
         errors.append("Plugin description is required")
 
     # Field-level validation
-    if isinstance(name, str):
-        errors.extend(_validate_plugin_name(name))
-    if isinstance(version, str):
-        errors.extend(_validate_semver(version))
-    if isinstance(description, str) and len(description) > _MAX_STRING_LENGTH:
+    errors.extend(_validate_plugin_name(name))
+    errors.extend(_validate_semver(version))
+    if len(description) > _MAX_STRING_LENGTH:
         errors.append(f"Description too long ({len(description)} > {_MAX_STRING_LENGTH} chars)")
-    if isinstance(entry_point, str):
-        errors.extend(_validate_entry_point(entry_point))
+    errors.extend(_validate_entry_point(entry_point))
 
     # List fields
-    errors.extend(
-        _validate_string_list(
-            hooks_raw if isinstance(hooks_raw, list) else [],
-            "hooks",
-        )
-    )
-    errors.extend(
-        _validate_string_list(
-            permissions_raw if isinstance(permissions_raw, list) else [],
-            "required_permissions",
-        )
-    )
+    hooks_list: list[Any] = cast("list[Any]", hooks_raw) if isinstance(hooks_raw, list) else []
+    perms_list: list[Any] = cast("list[Any]", permissions_raw) if isinstance(permissions_raw, list) else []
+    errors.extend(_validate_string_list(hooks_list, "hooks"))
+    errors.extend(_validate_string_list(perms_list, "required_permissions"))
 
     # Config schema (optional)
     config_schema: dict[str, Any] | None = None
     if "config_schema" in manifest:
-        cs = manifest["config_schema"]
+        cs: Any = manifest["config_schema"]
         if not isinstance(cs, dict):
             errors.append("config_schema must be a mapping")
         else:
-            config_schema = cs
+            config_schema = cast("dict[str, Any]", cs)
 
     if errors:
         raise ManifestValidationError(errors)
 
     return PluginManifest(
-        name=str(name),
-        version=str(version),
-        description=str(description),
-        entry_point=str(entry_point),
-        hooks=[str(h) for h in hooks_raw],
-        required_permissions=[str(p) for p in permissions_raw],
+        name=name,
+        version=version,
+        description=description,
+        entry_point=entry_point,
+        hooks=[str(h) for h in hooks_list],
+        required_permissions=[str(p) for p in perms_list],
         config_schema=config_schema,
     )
 
@@ -289,4 +275,4 @@ def load_plugin_manifest(path: Path) -> PluginManifest:
     if not isinstance(raw, dict):
         raise ManifestValidationError([f"Expected manifest to be a mapping in {path}"])
 
-    return validate_manifest(raw)
+    return validate_manifest(cast("dict[str, Any]", raw))

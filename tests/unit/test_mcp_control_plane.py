@@ -69,7 +69,7 @@ class TestMCPHealthHistory:
 
     def test_max_events_enforced(self) -> None:
         history = MCPHealthHistory(max_events=3)
-        for i in range(10):
+        for _ in range(10):
             history.record("s", alive=True)
         assert len(history.get_history("s")) == 3
 

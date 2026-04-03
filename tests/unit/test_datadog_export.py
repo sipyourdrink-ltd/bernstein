@@ -50,7 +50,7 @@ class TestDogStatsDExporter:
     def test_flush_restoring_buffer_on_failure(self) -> None:
         exporter = DogStatsDExporter(DogStatsDConfig(host="192.0.2.1", port=9999))
         exporter.record_counter("fail.test", value=1)
-        initial_len = len(exporter._buf)
+        _initial_len = len(exporter._buf)
         exporter.flush()
         # Buffer may be cleared on flush call; the important thing is flush() was attempted
         # On network failure, the implementation restores the buffer

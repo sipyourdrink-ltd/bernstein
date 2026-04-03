@@ -123,7 +123,6 @@ def _validate_layer(source: SettingsSource, raw: Mapping[str, Any]) -> dict[str,
                 f"{source.name} layer: key '{key}' expected {expected_type.__name__}, "
                 f"got {type(value).__name__} ({value!r})",
             )
-            actual_value = value  # unreachable, keeps type checker happy
 
         # Enumerated check.
         if allowed is not None and actual_value not in allowed:

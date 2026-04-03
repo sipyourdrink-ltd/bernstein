@@ -96,7 +96,7 @@ class TestRBACConfig:
     def test_rbac_yaml_exists(self) -> None:
         from pathlib import Path
 
-        rbac_path = Path(__file__).parents[2] / ".sdd" / "config" / "rbac.yaml"
+        _rbac_path = Path(__file__).parents[2] / ".sdd" / "config" / "rbac.yaml"
         # The config may not exist in test env, so just check the format would work
         import yaml
 

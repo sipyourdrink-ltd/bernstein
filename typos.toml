@@ -3,3 +3,33 @@ extend-ignore-re = [
     # Test intentionally checks for substring "truncat"
     '"truncat" in content',
 ]
+
+[default.extend-words]
+# Variable names and abbreviations in code
+ba = "ba"            # ba_table = Budget & Approval table (manifest_cmd.py)
+nd = "nd"            # nd = number of diffs (benchmarks/run_benchmark.py)
+opps = "opps"        # opps = opportunities (test_evolution_e2e.py, test_evolution_loop.py)
+ded = "ded"          # injection_ded = injection deduction (memory_sanitizer.py)
+mis = "mis"          # false positive on partial words
+
+# Technical terms used consistently in the codebase
+unparseable = "unparseable"
+Unparseable = "Unparseable"
+
+# Proper nouns and product names
+Hashi = "Hashi"      # HashiCorp
+
+[default.extend-identifiers]
+# Truncated benchmark task names (generated data)
+architec = "architec"
+
+[files]
+extend-exclude = [
+    # Binary assets (typos cannot meaningfully check filenames of binaries)
+    "docs/assets/*.png",
+    # Generated benchmark results contain truncated task names
+    "benchmarks/results/*.json",
+]
+
+[type.md]
+extend-words = { PN = "PN" }  # "PNGs" in markdown docs

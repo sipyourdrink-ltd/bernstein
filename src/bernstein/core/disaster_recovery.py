@@ -65,22 +65,46 @@ _EXCLUDE_DIRS = (
 _MANIFEST_FILE = "manifest.json"
 
 
-def _get_crypto(encrypt: bool, password: str | None = None) -> Fernet | None:
-    """Return a Fernet cipher for encryption, or None."""
+_PBKDF2_SALT_LEN = 16
+_PBKDF2_ITERATIONS = 600_000
+
+
+def _get_crypto(
+    encrypt: bool,
+    password: str | None = None,
+    salt: bytes | None = None,
+) -> tuple[Fernet | None, bytes | None]:
+    """Return a (Fernet cipher, salt) pair for encryption, or (None, None).
+
+    When *password* is given, derives the key via PBKDF2-SHA256.  If *salt*
+    is not provided a fresh random salt is generated (use for encryption);
+    pass the stored salt back for decryption.
+    """
     if not encrypt:
-        return None
+        return None, None
+
+    import base64
+    import os
 
     from cryptography.fernet import Fernet
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
     if password:
-        key = hashlib.sha256(password.encode()).digest()[:32]
-        import base64
-
+        if salt is None:
+            salt = os.urandom(_PBKDF2_SALT_LEN)
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=_PBKDF2_ITERATIONS,
+        )
+        key = kdf.derive(password.encode())
         key_b64 = base64.urlsafe_b64encode(key)
     else:
         key_b64 = None  # type: ignore[assignment]
 
-    return Fernet(key_b64 if key_b64 else Fernet.generate_key())  # type: ignore[arg-type]
+    return Fernet(key_b64 if key_b64 else Fernet.generate_key()), salt  # type: ignore[arg-type]
 
 
 def backup_sdd(
@@ -147,13 +171,15 @@ def backup_sdd(
     # If encryption requested, encrypt the tarball
     final_dest = dest
     if encrypt:
-        fernet = _get_crypto(True, password)
+        fernet, salt = _get_crypto(True, password)
         assert fernet is not None
 
         tar_data = dest.read_bytes()
         encrypted = fernet.encrypt(tar_data)
         encrypted_dest = dest.with_suffix(dest.suffix + ".enc")
-        encrypted_dest.write_bytes(encrypted)
+        # Prepend salt (if password-derived) so restore can re-derive the key
+        prefix = salt if salt is not None else b""
+        encrypted_dest.write_bytes(prefix + encrypted)
         final_dest = encrypted_dest
 
         # Delete unencrypted tarball
@@ -196,7 +222,12 @@ def restore_sdd(
     # Handle encrypted file
     data = source.read_bytes()
     if decrypt:
-        fernet = _get_crypto(True, password)
+        # If password-derived, the first _PBKDF2_SALT_LEN bytes are the salt
+        salt: bytes | None = None
+        if password and len(data) > _PBKDF2_SALT_LEN:
+            salt = data[:_PBKDF2_SALT_LEN]
+            data = data[_PBKDF2_SALT_LEN:]
+        fernet, _ = _get_crypto(True, password, salt=salt)
         assert fernet is not None
         data = fernet.decrypt(data)
 
@@ -233,13 +264,7 @@ def restore_sdd(
         fileobj=io.BytesIO(data) if decrypt else source.open("rb"),
         mode="r:*",
     ) as tar:
-        # Safety: ensure we don't write outside sdd_path
-        for member in tar.getmembers():
-            member_path = (sdd_path / member.name).resolve()
-            if not str(member_path).startswith(str(sdd_path)):
-                raise ValueError(f"Path traversal detected: {member.name}")
-
-        tar.extractall(path=sdd_path)
+        tar.extractall(path=sdd_path, filter="data")
 
     # Count restored files
     restored = sum(1 for _ in sdd_path.rglob("*") if _.is_file())

@@ -231,4 +231,5 @@ def _draw_text(
 
 def _text_bbox(draw: ImageDraw.ImageDraw, text: str, font: FontType) -> tuple[int, int, int, int]:
     """Typed wrapper around Pillow ``ImageDraw.textbbox``."""
-    return draw.textbbox((0, 0), text, font=font)  # pyright: ignore[reportUnknownMemberType]
+    x0, y0, x1, y1 = draw.textbbox((0, 0), text, font=font)  # pyright: ignore[reportUnknownMemberType]
+    return int(x0), int(y0), int(x1), int(y1)

@@ -150,5 +150,5 @@ class TestRestoreSdd:
             tar.addfile(info, io.BytesIO(data))
 
         restore_dir = tmp_path / "restore" / ".sdd"
-        with pytest.raises(ValueError, match="Path traversal"):
+        with pytest.raises((ValueError, tarfile.OutsideDestinationError)):
             restore_sdd(malicious_tar, restore_dir)

@@ -224,7 +224,7 @@ class TestGuardedMemoryWrite:
         lock_path = target.with_suffix(target.suffix + ".lock")
         target.touch()
 
-        with guarded_memory_write(target) as guard:
+        with guarded_memory_write(target) as _guard:
             # Lock file should exist while inside the block
             assert lock_path.exists()
 

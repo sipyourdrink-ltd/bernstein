@@ -263,7 +263,7 @@ class TestBuildIncidentTimeline:
         sample_incident,
         sample_error_metrics,
     ) -> None:
-        result = build_incident_timeline(
+        _result = build_incident_timeline(
             incident_id="INC-TEST-001",
             workdir=sdd_dir.parent,
             window_before_s=600,

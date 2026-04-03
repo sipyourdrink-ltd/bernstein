@@ -138,7 +138,7 @@ def func():
 
         output_path = tmp_path / "docs.md"
 
-        docs = generate_docs_for_package(package_dir, output_path=output_path)
+        _docs = generate_docs_for_package(package_dir, output_path=output_path)
 
         assert output_path.exists()
         assert "# API Documentation" in output_path.read_text()

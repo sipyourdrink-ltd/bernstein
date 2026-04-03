@@ -62,7 +62,7 @@ def test_hook_not_triggered_on_allow(tmp_path: Path):
         task = Task(id="T1", title="test", role="backend", description="test")
         config = GuardrailsConfig(secrets=True)
 
-        results = run_guardrails(diff, task, config, tmp_path)
+        _results = run_guardrails(diff, task, config, tmp_path)
 
         # Hook should NOT be called for ALLOW
         assert not plugin.mock.called

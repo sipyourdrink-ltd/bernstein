@@ -109,7 +109,7 @@ class TestMerkleSeal:
             log.log("task.transition", "orchestrator", "task", f"T{i}")
 
         # Compute Merkle seal
-        tree, seal = compute_seal(audit_dir)
+        tree, _seal = compute_seal(audit_dir)
         root = tree.root.hash
         assert root  # Non-empty hex string
         assert len(root) == 64  # SHA-256 hex digest
