@@ -215,6 +215,10 @@ def maybe_retry_task(
     if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:
         new_model = "opus"
         new_effort = "max"
+    elif task.deadline is not None and time.time() > task.deadline:
+        # Deadline exceeded: escalate to highest effort model immediately
+        new_model = "opus"
+        new_effort = "max"
     elif next_retry == 1:
         # First retry: bump effort one level, keep model
         idx = effort_ladder.index(current_effort) if current_effort in effort_ladder else 2
@@ -270,6 +274,7 @@ def maybe_retry_task(
         "estimated_minutes": progressive_minutes,
         "model": new_model,
         "effort": new_effort,
+        "deadline": task.deadline,
     }
 
     try:

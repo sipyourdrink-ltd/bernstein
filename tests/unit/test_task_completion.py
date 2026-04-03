@@ -50,11 +50,14 @@ def _orch(tmp_path: Path, session: AgentSession) -> Any:
     def _find_session_for_task(task_id: str) -> AgentSession | None:
         return session if task_id in session.task_ids else None
 
+    spawner = MagicMock()
+    spawner._traces = {}
+
     return SimpleNamespace(
         _processed_done_tasks=set(),
         _executor=MagicMock(),
         _find_session_for_task=_find_session_for_task,
-        _spawner=MagicMock(),
+        _spawner=spawner,
         _record_provider_health=MagicMock(),
         _approval_gate=None,
         _post_bulletin=MagicMock(),
@@ -110,6 +113,8 @@ def test_process_completed_tasks_records_quality_gate_failure(tmp_path: Path, ma
     orch._quality_gate_config = object()
     orch._spawner.get_worktree_path.return_value = tmp_path / "worktree"
     orch._spawner.reap_completed_agent.return_value = SimpleNamespace(success=True, conflicting_files=[])
+    orch._cost_tracker.budget_usd = 0.0
+    orch._cost_tracker.spent_usd = 1.5
     collector = _collector_for(task.id, session.id)
     gate_result = SimpleNamespace(
         passed=False,

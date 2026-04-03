@@ -759,10 +759,10 @@ def process_completed_tasks(
 
         # Record per-turn budget snapshot in the trace for post-run analysis.
         _tracer = orch._spawner._traces.get(session.id) if hasattr(orch, "_spawner") else None
-        if _tracer is not None:
+        if _tracer is not None and hasattr(_tracer, "turn_count"):
             _total_tokens = _tokens_in + _tokens_out
-            _budget = orch._cost_tracker.budget_usd
-            _spent = orch._cost_tracker.spent_usd
+            _budget = float(orch._cost_tracker.budget_usd)
+            _spent = float(orch._cost_tracker.spent_usd)
             _remaining = max(_budget - _spent, 0.0) if _budget > 0 else 0
             _step = record_turn_budget(
                 _tracer,

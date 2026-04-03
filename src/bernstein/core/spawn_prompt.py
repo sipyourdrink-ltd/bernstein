@@ -372,9 +372,11 @@ def _render_prompt(
         lesson_context = lesson_context[: lesson_budget * 4] + "..."
 
     # Assemble final prompt as named sections for budget-aware compression
+    from bernstein.core.section_dedup import deduplicate_section
+
     named_sections: list[tuple[str, str]] = [
         ("role", role_prompt),
-        ("git_safety", _render_git_safety_protocol()),
+        ("git_safety", deduplicate_section(_render_git_safety_protocol())),
     ]
     if specialist_block:
         named_sections.append(("specialists", specialist_block))
@@ -390,10 +392,12 @@ def _render_prompt(
         named_sections.append(
             (
                 "team awareness",
-                f"\n## Team awareness\n"
-                f"Other agents are working in parallel. Recent activity:\n{bulletin_summary}\n\n"
-                f"If you need to create a shared utility, check if it already exists first.\n"
-                f"If you define an API endpoint, use consistent naming with existing endpoints.\n",
+                deduplicate_section(
+                    f"\n## Team awareness\n"
+                    f"Other agents are working in parallel. Recent activity:\n{bulletin_summary}\n\n"
+                    f"If you need to create a shared utility, check if it already exists first.\n"
+                    f"If you define an API endpoint, use consistent naming with existing endpoints.\n",
+                ),
             )
         )
     try:
@@ -405,23 +409,25 @@ def _render_prompt(
     except Exception as exc:
         logger.debug("Recommendation rendering failed: %s", exc)
     if project_context:
-        named_sections.append(("project", f"\n## Project context\n{project_context}\n"))
-    named_sections.append(("instructions", f"\n## Instructions\n{instructions}\n"))
+        named_sections.append(("project", deduplicate_section(f"\n## Project context\n{project_context}\n")))
+    named_sections.append(("instructions", deduplicate_section(f"\n## Instructions\n{instructions}\n")))
     if session_id:
         try:
             heartbeat_instructions = HeartbeatMonitor(workdir).inject_heartbeat_instructions(session_id)
             named_sections.append(
                 (
                     "heartbeat",
-                    "\n## Heartbeat (background)\n"
-                    "Run this in the background to report progress:\n"
-                    f"```bash\n{heartbeat_instructions}\n```\n",
+                    deduplicate_section(
+                        "\n## Heartbeat (background)\n"
+                        "Run this in the background to report progress:\n"
+                        f"```bash\n{heartbeat_instructions}\n```\n",
+                    ),
                 )
             )
         except Exception as exc:
             logger.debug("Heartbeat instructions unavailable: %s", exc)
     if session_id:
-        named_sections.append(("signal", _render_signal_check(session_id)))
+        named_sections.append(("signal", deduplicate_section(_render_signal_check(session_id))))
 
     if meta_messages:
         nudges_block = "\n## Operational nudges\n" + "\n".join(f"- {m}" for m in meta_messages) + "\n"

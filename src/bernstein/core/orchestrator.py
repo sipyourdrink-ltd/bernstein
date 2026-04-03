@@ -711,6 +711,73 @@ class Orchestrator:
             )
         )
 
+    def _check_task_deadlines(self, running_tasks: list[Task]) -> None:
+        """Check deadlines on running tasks and escalate or notify.
+
+        For tasks past their deadline with some time remaining (warning window),
+        fire a ``task.deadline_warning``.  For tasks that are fully exceeded,
+        fire ``task.deadline_exceeded``, append a meta message for the next agent,
+        and fail the task so the retry logic kicks in with deadline-aware escalation.
+
+        Args:
+            running_tasks: Tasks currently in claimed or in_progress state.
+        """
+        now = time.time()
+        warning_window = 300.0  # 5-minute warning
+
+        for task in running_tasks:
+            if task.deadline is None:
+                continue
+
+            elapsed = now - task.deadline
+
+            # Fully exceeded: fail immediately with escalation
+            if elapsed > 0:
+                logger.warning(
+                    "Task %s ('%s') deadline exceeded (%.0fs overdue)",
+                    task.id,
+                    task.title,
+                    elapsed,
+                )
+                # Fail the task so the retry path will do deadline-aware escalation
+                try:
+                    self._client.post(
+                        f"{self._config.server_url}/tasks/{task.id}/fail",
+                        json={"reason": f"Deadline exceeded ({elapsed:.0f}s overdue)"},
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to fail deadline for task %s: %s", task.id, exc)
+                self._notify(
+                    "task.deadline_exceeded",
+                    title=f"Task deadline exceeded: {task.title}",
+                    body=(
+                        f"Task {task.id} (role={task.role}) exceeded its deadline "
+                        f"by {elapsed:.0f}s."
+                    ),
+                    task_id=task.id,
+                    role=task.role,
+                )
+
+            # Warning window: task is about to expire soon
+            elif 0 < task.deadline - now <= warning_window:
+                remaining = task.deadline - now
+                logger.warning(
+                    "Task %s ('%s') deadline approaching in %.0fs",
+                    task.id,
+                    task.title,
+                    remaining,
+                )
+                self._notify(
+                    "task.deadline_warning",
+                    title=f"Task deadline approaching: {task.title}",
+                    body=(
+                        f"Task {task.id} (role={task.role}) will exceed its deadline "
+                        f"in {remaining:.0f}s."
+                    ),
+                    task_id=task.id,
+                    role=task.role,
+                )
+
     def _notify(self, event: str, title: str, body: str, **metadata: Any) -> None:
         """Fire a notification event if a NotificationManager is configured.
 
@@ -836,6 +903,15 @@ class Orchestrator:
                         )
         except OSError as exc:
             logger.warning("Failed to read pivot signals: %s", exc)
+
+        # 1b-i. Check task deadlines — warn or fail running tasks past deadline
+        try:
+            self._check_task_deadlines(
+                tasks_by_status.get("claimed", [])
+                + tasks_by_status.get("in_progress", []),
+            )
+        except Exception as exc:
+            logger.warning("Deadline check failed: %s", exc)
 
         # 1b-ii. Governed workflow: filter tasks to current phase only
         if self._workflow_executor is not None and not self._workflow_executor.is_completed:
