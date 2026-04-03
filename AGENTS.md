@@ -225,7 +225,7 @@ All three must pass before committing. No exceptions, no "fix later."
 | `signals.py`                                        | Pivot signal system for strategic re-evaluation of tickets |
 | `store.py` / `store_redis.py` / `store_postgres.py` | Abstract TaskStore base class for pluggable storage backends |
 | `store_factory.py`                                  | Storage backend factory for the Bernstein task server |
-| `sync.py`                                           | Sync .sdd/backlog/*.md files with the task server |
+| `sync.py`                                           | Sync .sdd/backlog/*.yaml files with the task server |
 | `task_store.py`                                     | Thread-safe in-memory task store with JSONL persistence |
 | `token_monitor.py`                                  | Token growth monitor with auto-intervention |
 | `traces.py`                                         | Agent execution trace storage, parsing, and replay utilities |
@@ -289,7 +289,7 @@ All three must pass before committing. No exceptions, no "fix later."
 | `env_isolation.py`   | Environment variable isolation for spawned agents |
 | `gemini.py`          | Google Gemini CLI adapter |
 | `generic.py`         | Generic CLI adapter for arbitrary coding agent CLIs |
-| `manager.py`         |  |
+| `manager.py`         | Manager adapter — spawns the internal Python ManagerAgent as a CLI participant |
 | `qwen.py`            | Qwen CLI adapter for OpenAI compatible models |
 | `registry.py`        | Adapter registry — look up CLI adapters by name |
 | `roo_code.py`        | Roo Code CLI adapter |
@@ -406,7 +406,8 @@ All three must pass before committing. No exceptions, no "fix later."
 | `.sdd/`                    | All runtime state (never commit `.sdd/runtime/`) |
 | `.sdd/backlog/open/`       | YAML task specs waiting to be picked up |
 | `.sdd/backlog/claimed/`    | Tasks currently being worked |
-| `.sdd/backlog/closed/`     | Completed/cancelled tasks |
+| `.sdd/backlog/done/`       | Completed tasks (automated sync moves files here) |
+| `.sdd/backlog/closed/`     | Completed tasks (manual sprint scripts move files here) |
 | `.sdd/runtime/`            | PIDs, logs, session state, signal files |
 | `.sdd/metrics/`            | JSONL metric records |
 | `.sdd/traces/`             | JSONL agent traces |
@@ -422,7 +423,7 @@ All three must pass before committing. No exceptions, no "fix later."
 ### Files
 - `snake_case.py` for all Python modules
 - Test files: `test_<module_name>.py` mirrors source structure
-- Backlog task files: `<id>-<kebab-description>.md`
+- Backlog task files: `p{priority}_c{complexity}_{date}_{type}_{slug}.yaml`
 - Role templates: `<role-name>.md` or `<role-name>/` directory
 
 ### Classes
@@ -589,7 +590,7 @@ Any import used only for type annotations must be under `if TYPE_CHECKING:`. Ruf
 Files in `templates/roles/` are Jinja2 templates. The `TemplateRenderer` in `templates/renderer.py` resolves them. When adding a new role, create `templates/roles/<role>.md` and register it in the role catalog.
 
 ### `.sdd/backlog/claimed/` is the source of truth during execution
-When an agent starts, the task file moves from `open/` → `claimed/`. On success it moves to `closed/done/`; on failure to `closed/failed/`. If you find tasks stuck in `claimed/`, the agent likely crashed — run janitor cleanup or use `bernstein gc`.
+When an agent starts, the task file moves from `open/` → `claimed/`. On success the automated sync system moves it to `done/`. If you find tasks stuck in `claimed/`, the agent likely crashed — run janitor cleanup or use `bernstein gc`. Note: manual sprint scripts may move completed tickets to `closed/` instead — both directories are checked by cleanup commands.
 
 ### Rule enforcement runs after quality gates — `.bernstein/rules.yaml` is optional
 `rule_enforcer.py` reads `.bernstein/rules.yaml` from the working directory (not `.sdd/`). If the file is absent, enforcement is silently skipped — no error. `error`-severity violations hard-block merge; `warning` violations are soft-flags only. Violations are appended to `.sdd/metrics/rule_violations.jsonl`.
@@ -697,7 +698,7 @@ completing tasks? Does this make the system more observable when things go wrong
 
 Check `.sdd/backlog/open/` for YAML task specs. Each file has a role, priority,
 and description. Take tasks matching your role. Use `bernstein status` to see
-what's running. Prioritize by priority field (1=critical, 2=normal, 3=nice).
+what's running. Prioritize by priority field (1=critical, 2=normal, 3=nice-to-have). Note: ticket filenames use a 0-based prefix (p0/p1/p2/p3/p4) but the task server normalises priority to 1–3 on ingestion.
 
 When picking tasks: prefer tasks where you can make measurable progress in
 15-30 minutes. If a task seems too large, decompose it into subtasks. If a

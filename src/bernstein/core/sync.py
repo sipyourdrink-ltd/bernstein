@@ -1,9 +1,10 @@
 """Sync .sdd/backlog/*.yaml files with the task server.
 
-Two tracking systems exist: static backlog .md files (authored by humans or agents)
-and the dynamic task server (tasks.jsonl). This module bridges them:
+Two tracking systems exist: static backlog files (.yaml or .md, authored by
+humans or agents) and the dynamic task server (tasks.jsonl).  This module
+bridges them:
 - On demand or at startup, create server tasks for new backlog files.
-- When a task is done on the server, move its backlog file to backlog/done/.
+- When a task is done on the server, move its backlog file to backlog/closed/.
 """
 
 from __future__ import annotations
@@ -33,10 +34,10 @@ class BacklogTask:
         title: Task title from the first ``# `` heading.
         description: Full file content.
         role: Agent role (e.g. ``backend``, ``qa``).
-        priority: Numeric priority (1 = critical, 2 = normal, 3 = low).
+        priority: Numeric priority (1=critical, 2=normal, 3=nice-to-have).
         scope: Task scope (``small``, ``medium``, ``large``).
         complexity: Task complexity (``low``, ``medium``, ``high``).
-        source_file: Basename of the originating .md file.
+        source_file: Basename of the originating backlog file.
     """
 
     title: str
@@ -50,14 +51,14 @@ class BacklogTask:
 
 
 def parse_backlog_file(path: Path) -> BacklogTask | None:
-    """Parse a backlog .md file into a BacklogTask.
+    """Parse a backlog file (.yaml or .md) into a BacklogTask.
 
     Supports two formats:
     1. **YAML frontmatter** (``---`` delimited block at the top of the file).
     2. **Markdown bold fields** — lines like ``**Role:** backend``.
 
     Args:
-        path: Path to the ``.md`` file.
+        path: Path to the backlog file.
 
     Returns:
         Parsed BacklogTask, or None if the file cannot be parsed.
@@ -101,15 +102,17 @@ def _file_to_slug(filename: str) -> str:
     """Convert a backlog filename to a slug for fuzzy matching.
 
     ``"115-wire-tier-aware-router.md"`` → ``"wire-tier-aware-router"``
+    ``"p0_c1_030426_feat_api-preconnect.yaml"`` → ``"api-preconnect"``
 
     Args:
         filename: Basename of the backlog file.
 
     Returns:
-        Slug without leading number prefix or ``.md`` extension.
+        Slug without leading number/prefix or file extension.
     """
     name = re.sub(r"^\d+-", "", filename)
-    name = re.sub(r"\.md$", "", name)
+    name = re.sub(r"^p\d+_c\d+_\d+_\w+_", "", name)
+    name = re.sub(r"\.(md|yaml)$", "", name)
     return name.lower()
 
 
@@ -221,12 +224,12 @@ def sync_backlog_to_server(
     """Sync ``.sdd/backlog/open/*.yaml`` files with the running task server.
 
     Steps:
-    1. Scan ``backlog/open/`` for ``.md`` files.
+    1. Scan ``backlog/open/`` for ``.yaml`` and ``.md`` files.
     2. For each file, create a task on the server if one with the same title
        does not already exist (fuzzy-matched via slug normalisation).
        The source filename is embedded in the description for traceability.
     3. For each ``done`` task on the server, move the matching backlog file
-       from ``backlog/open/`` to ``backlog/done/``.
+       from ``backlog/open/`` to ``backlog/closed/``.
 
     Args:
         workdir: Project root directory (parent of ``.sdd/``).

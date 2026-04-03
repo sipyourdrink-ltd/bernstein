@@ -3340,3 +3340,82 @@ if __name__ == "__main__":
     except Exception:
         logger.exception("Orchestrator crashed")
         sys.exit(1)
+# ---------------------------------------------------------------------------
+# Meta-messages for orchestrator nudges (T567)
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
+import time
+
+@dataclass
+class OrchestratorNudge:
+    """Meta-message for nudging orchestrator behavior."""
+    nudge_type: str
+    message: str
+    priority: int = 1  # 1=low, 2=medium, 3=high
+    timestamp: float = field(default_factory=time.time)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    acknowledged: bool = False
+
+class OrchestratorNudgeManager:
+    """Manages meta-messages for orchestrator nudges."""
+    
+    def __init__(self):
+        self.nudges: List[OrchestratorNudge] = []
+        self._lock = threading.Lock()
+    
+    def add_nudge(
+        self,
+        nudge_type: str,
+        message: str,
+        priority: int = 1,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> OrchestratorNudge:
+        """Add a nudge to the orchestrator."""
+        nudge = OrchestratorNudge(
+            nudge_type=nudge_type,
+            message=message,
+            priority=priority,
+            metadata=metadata or {}
+        )
+        
+        with self._lock:
+            self.nudges.append(nudge)
+        
+        logger.info(f"Orchestrator nudge added: {nudge_type} - {message}")
+        return nudge
+    
+    def get_pending_nudges(self, priority_threshold: int = 0) -> List[OrchestratorNudge]:
+        """Get pending nudges above priority threshold."""
+        with self._lock:
+            return [
+                nudge for nudge in self.nudges
+                if not nudge.acknowledged and nudge.priority >= priority_threshold
+            ]
+    
+    def acknowledge_nudge(self, nudge: OrchestratorNudge) -> None:
+        """Mark a nudge as acknowledged."""
+        with self._lock:
+            nudge.acknowledged = True
+    
+    def clear_acknowledged(self) -> None:
+        """Clear acknowledged nudges."""
+        with self._lock:
+            self.nudges = [nudge for nudge in self.nudges if not nudge.acknowledged]
+
+# Global nudge manager
+_nudge_manager = OrchestratorNudgeManager()
+
+def nudge_orchestrator(
+    nudge_type: str,
+    message: str,
+    priority: int = 1,
+    metadata: Optional[Dict[str, Any]] = None
+) -> OrchestratorNudge:
+    """Send a meta-message nudge to the orchestrator (T567)."""
+    return _nudge_manager.add_nudge(nudge_type, message, priority, metadata)
+
+def get_orchestrator_nudges(priority_threshold: int = 0) -> List[OrchestratorNudge]:
+    """Get pending orchestrator nudges."""
+    return _nudge_manager.get_pending_nudges(priority_threshold)

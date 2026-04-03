@@ -225,3 +225,114 @@ def _write_colored_output(role: str, session_id: str, text: str) -> None:
     colored = _colorize_agent_output(role, session_id, text)
     _sys.stdout.write(colored)
     _sys.stdout.flush()
+# ---------------------------------------------------------------------------
+# Max output tokens escalation signal (T565)
+# ---------------------------------------------------------------------------
+
+def check_token_escalation(
+    task_id: str,
+    role: str,
+    model: str,
+    requested_tokens: int,
+    max_allowed_tokens: int,
+    escalation_reason: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """Check for token escalation and signal if needed."""
+    from bernstein.core.router import signal_max_tokens_escalation
+    
+    if requested_tokens > max_allowed_tokens:
+        signal_max_tokens_escalation(
+            task_id=task_id,
+            role=role,
+            model=model,
+            requested_tokens=requested_tokens,
+            max_allowed_tokens=max_allowed_tokens,
+            escalation_reason=escalation_reason,
+            metadata=metadata
+        )
+# ---------------------------------------------------------------------------
+# Permission denied hooks for retry hints (T570)
+# ---------------------------------------------------------------------------
+
+import re
+from typing import Optional, Dict, Any, Callable
+from dataclasses import dataclass
+from typing import List, Optional as Opt
+
+@dataclass
+class PermissionDeniedHint:
+    """Hint for handling permission denied errors."""
+    pattern: str  # Regex pattern to match error messages
+    suggestion: str  # Suggested fix or retry hint
+    priority: int = 1  # Priority (higher = more important)
+    context: Dict[str, Any] = None  # Additional context for the hint
+
+class PermissionDeniedHook:
+    """Hook system for permission denied errors with retry hints."""
+    
+    def __init__(self):
+        self.hooks: List[PermissionDeniedHint] = []
+        self._register_default_hooks()
+    
+    def _register_default_hooks(self):
+        """Register default permission denied patterns."""
+        default_hooks = [
+            PermissionDeniedHint(
+                pattern=r"permission denied|access denied|permission.*denied",
+                suggestion="Check file permissions and ensure the process has write access",
+                priority=1
+            ),
+            PermissionDeniedHint(
+                pattern=r"EACCES|EACCES",
+                suggestion="Check file permissions and ownership",
+                priority=2
+            ),
+            PermissionDeniedHint(
+                pattern=r"read-only filesystem|read only",
+                suggestion="Filesystem is mounted as read-only. Check mount options.",
+                priority=2
+            ),
+            PermissionDeniedHint(
+                pattern=r"operation not permitted|operation not permitted",
+                suggestion="Check if the process has the required capabilities",
+                priority=2
+            ),
+            PermissionDeniedHint(
+                pattern=r"permission.*denied.*git",
+                suggestion="Check git repository permissions and SSH keys",
+                priority=1
+            )
+        ]
+        
+        for hook in default_hooks:
+            self.register_hook(hook)
+    
+    def register_hook(self, pattern: str, suggestion: str, priority: int = 1) -> None:
+        """Register a new permission denied hook."""
+        hook = PermissionDeniedHint(
+            pattern=pattern,
+            suggestion=suggestion,
+            priority=priority
+        )
+        self.hooks.append(hook)
+        # Sort by priority (higher priority first)
+        self.hooks.sort(key=lambda x: x.priority, reverse=True)
+    
+    def get_hint(self, error_message: str) -> Optional[str]:
+        """Get hint for a permission denied error."""
+        for hook in self.hooks:
+            if re.search(hook.pattern, error_message, re.IGNORECASE):
+                return hook.suggestion
+        return None
+
+# Global permission denied hook manager
+_permission_hook_manager = PermissionDeniedHook()
+
+def get_permission_hint(error_message: str) -> Optional[str]:
+    """Get a hint for a permission denied error."""
+    return _permission_hook_manager.get_hint(error_message)
+
+def register_permission_hook(pattern: str, suggestion: str, priority: int = 1) -> None:
+    """Register a permission denied hook."""
+    _permission_hook_manager.register_hook(pattern, suggestion, priority)

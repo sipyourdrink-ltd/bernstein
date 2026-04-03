@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from rich.text import Text
@@ -406,6 +407,7 @@ class ShortcutsFooter(Static):
         "t retry",
         "k kill",
         "s spawn",
+        "c scratchpad",
         "r refresh",
         "S hard-stop",
         "q quit",
@@ -577,8 +579,8 @@ def get_agent_role_color(role: str) -> str:
     return AGENT_ROLE_COLORS_TUI.get(role, "dim")
 
 
-def format_agent_label(role: str, session_id: str) -> Text:
-    """Format color-coded agent label for TUI (T562)."""
+def format_agent_label_text(role: str, session_id: str) -> Text:
+    """Format color-coded agent label for TUI as Text object (T562)."""
     color = get_agent_role_color(role)
     return Text(f"{role}:{session_id[:8]}", style=color)
 
@@ -590,19 +592,183 @@ def format_agent_label(role: str, session_id: str) -> Text:
 
 def render_compaction_marker(timestamp: float, duration: float = 0.0) -> str:
     """Render a compaction event marker for the timeline (T563)."""
-    from datetime import datetime
-
     time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
     if duration > 0:
         return f"⚡ Compaction at {time_str} ({duration:.1f}s)"
     return f"⚡ Compaction at {time_str}"
 
 
-def format_compaction_event(entry: TimelineEntry) -> str:
-    """Format a compaction event for display (T563)."""
-    if entry.kind == "compaction":
-        if entry.end_time:
-            duration = entry.end_time - entry.start_time
-            return f"⚡ Compaction ({duration:.1f}s)"
-        return "⚡ Compaction"
-    return entry.title
+# ---------------------------------------------------------------------------
+# Scratchpad viewer widget (T408)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ScratchpadEntry:
+    """Single file entry in the scratchpad.
+
+    Attributes:
+        name: Filename (relative to scratchpad root).
+        path: Full absolute path to the file.
+        size: File size in bytes.
+        modified: Unix timestamp of last modification.
+    """
+
+    name: str
+    path: Path
+    size: int
+    modified: float
+
+    @property
+    def size_display(self) -> str:
+        """Human-readable file size."""
+        if self.size < 1024:
+            return f"{self.size}B"
+        if self.size < 1024 * 1024:
+            return f"{self.size / 1024:.1f}K"
+        return f"{self.size / (1024 * 1024):.1f}M"
+
+    @property
+    def relative_display(self) -> str:
+        """Path relative to .sdd prefix for display."""
+        parts = self.path.parts
+        try:
+            sdd_idx = parts.index(".sdd")
+            return "/".join(parts[sdd_idx:])
+        except ValueError:
+            return self.name
+
+
+def list_scratchpad_files(scratchpad_root: Path | None = None) -> list[ScratchpadEntry]:
+    """List all files in the scratchpad directory.
+
+    Args:
+        scratchpad_root: Path to scratchpad root. If None, scans
+            .sdd/runtime/scratchpad/ under current directory.
+
+    Returns:
+        List of ScratchpadEntry sorted by modification time (newest first).
+    """
+    if scratchpad_root is None:
+        scratchpad_root = Path.cwd() / ".sdd" / "runtime" / "scratchpad"
+
+    if not scratchpad_root.exists():
+        return []
+
+    entries: list[ScratchpadEntry] = []
+    try:
+        for item in scratchpad_root.rglob("*"):
+            if item.is_file():
+                stat = item.stat()
+                entries.append(
+                    ScratchpadEntry(
+                        name=item.name,
+                        path=item,
+                        size=stat.st_size,
+                        modified=stat.st_mtime,
+                    )
+                )
+    except PermissionError:
+        pass
+
+    # Sort newest first
+    entries.sort(key=lambda e: e.modified, reverse=True)
+    return entries
+
+
+def filter_scratchpad_entries(entries: list[ScratchpadEntry], query: str) -> list[ScratchpadEntry]:
+    """Filter scratchpad entries by filename or path substring.
+
+    Args:
+        entries: List of scratchpad entries.
+        query: Search string (case-insensitive substring match).
+
+    Returns:
+        Filtered list of entries.
+    """
+    if not query:
+        return entries
+    query_lower = query.lower()
+    return [e for e in entries if query_lower in e.name.lower() or query_lower in e.relative_display.lower()]
+
+
+class ScratchpadViewer(DataTable):
+    """DataTable widget showing scratchpad files with search capability.
+
+    Columns: Path | Size | Modified
+    Supports filtering by filename or path substring.
+    """
+
+    DEFAULT_CSS = """
+    ScratchpadViewer {
+        height: auto;
+        max-height: 60%;
+    }
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._all_entries: list[ScratchpadEntry] = []
+        self._current_filter: str = ""
+
+    def on_mount(self) -> None:
+        """Set up columns when mounted."""
+        self.add_columns("Path", "Size", "Modified")
+        self.cursor_type = "row"
+        self.zebra_stripes = True
+
+    def refresh_entries(self, entries: list[ScratchpadEntry] | None = None) -> None:
+        """Refresh the scratchpad file list.
+
+        Args:
+            entries: Pre-fetched entries, or None to re-scan filesystem.
+        """
+        if entries is not None:
+            self._all_entries = entries
+        else:
+            self._all_entries = list_scratchpad_files()
+
+        self._apply_filter()
+
+    def _apply_filter(self) -> None:
+        """Re-render the table with the current filter applied."""
+        from datetime import datetime
+
+        self.clear()
+        filtered = filter_scratchpad_entries(self._all_entries, self._current_filter)
+
+        for entry in filtered:
+            modified_str = datetime.fromtimestamp(entry.modified).strftime("%H:%M:%S")
+            self.add_row(
+                Text(entry.relative_display, style="cyan"),
+                Text(entry.size_display, style="dim"),
+                Text(modified_str, style="dim"),
+                key=str(entry.path),
+            )
+
+    def set_filter(self, query: str) -> None:
+        """Set the filename/path filter and refresh display.
+
+        Args:
+            query: Search substring (case-insensitive).
+        """
+        self._current_filter = query
+        self._apply_filter()
+
+    @property
+    def current_filter(self) -> str:
+        """Get the current filter query."""
+        return self._current_filter
+
+    def get_selected_entry(self) -> ScratchpadEntry | None:
+        """Get the entry for the currently selected row.
+
+        Returns:
+            The selected ScratchpadEntry, or None if nothing selected.
+        """
+        if self.cursor_row < 0 or self.cursor_row >= len(self._all_entries):
+            return None
+        filtered = filter_scratchpad_entries(self._all_entries, self._current_filter)
+        if self.cursor_row < len(filtered):
+            return filtered[self.cursor_row]
+        return None
