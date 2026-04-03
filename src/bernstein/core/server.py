@@ -1147,6 +1147,11 @@ def create_app(
 
     application.include_router(acp_router)
 
+    # Approval routes for interactive TUI/HTTP approval gate management
+    from bernstein.core.routes.approvals import router as approvals_router
+
+    application.include_router(approvals_router)
+
     # Plan approval routes (always mounted; returns 503 if plan_mode is off)
     from bernstein.core.routes.plans import router as plans_router
 

@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from rich.text import Text
-from textual.widgets import DataTable, RichLog, Static
+from textual.containers import Container, Vertical
+from textual.widgets import DataTable, Label, RichLog, Static
 
 # Sparkline characters for cost trend visualization
 SPARKLINE_CHARS = "▁▂▃▄▅▆▇█"
@@ -946,3 +947,143 @@ class CoordinatorDashboard(DataTable[Text]):
                 Text(row.elapsed, style="dim"),
                 key=row.task_id,
             )
+
+
+# ---------------------------------------------------------------------------
+# ApprovalPanel — interactive permission approval widget
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ApprovalEntry:
+    """One pending approval request."""
+
+    task_id: str
+    task_title: str
+    session_id: str
+    diff_preview: str
+    test_summary: str
+
+
+class ApprovalPanel(Static):
+    """Interactive panel showing pending approval requests.
+
+    Operators can select a pending request, view diff/test details,
+    and approve or deny it via the server API.
+    """
+
+    DEFAULT_CSS = """
+    ApprovalPanel {
+        height: 1fr;
+        border: tall $primary 50%;
+        content-align: center middle;
+    }
+    .approval-info {
+        margin-left: 1;
+    }
+    .approval-empty {
+        color: $text-muted 50%;
+        text-align: center;
+    }
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialise the panel.
+
+        Args:
+            *args: Static args.
+            **kwargs: Static kwargs.
+        """
+        super().__init__(*args, **kwargs)
+        self._pending: list[ApprovalEntry] = []
+        self._selected_index: int = -1
+
+    def on_mount(self) -> None:
+        """Build the layout with left-side list and right-side details."""
+        self._build_layout()
+
+    def _build_layout(self) -> None:
+        """Create split layout (list + details)."""
+        # Two-pane layout: list on left, details on right
+        container = Container(id="approval-container")
+        self.mount(container)
+
+        list_view = DataTable(id="approval-list")
+        details_view = Vertical(Label("", id="approval-details"), id="approval-details-pane")
+
+        container.mount(list_view, details_view)
+
+        list_view.add_columns("Task", "Title")
+        list_view.cursor_type = "row"
+        list_view.zebra_stripes = True
+
+    def refresh_entries(self, entries: list[ApprovalEntry]) -> None:
+        """Populate the panel with new pending approvals."""
+        self._pending = entries
+        self._selected_index = -1
+        table = self.query_one("#approval-list", DataTable)
+        table.clear()
+        for entry in entries:
+            table.add_row(
+                Text(entry.task_id, style="cyan"),
+                Text(entry.title[:60] if hasattr(entry, "title") else entry.task_title[:60], style="dim"),
+                key=entry.task_id,
+            )
+        if not entries:
+            self.query_one("#approval-details", Label).update("No pending approvals.")
+            self.query_one("#approval-details", Label).add_class("approval-empty")
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handle row selection to show details."""
+        if event.data_table.id == "approval-list":
+            key = str(event.cursor_row.key) if event.cursor_row else ""
+            try:
+                idx = next(i for i, e in enumerate(self._pending) if e.task_id == key)
+                self._selected_index = idx
+                entry = self._pending[idx]
+                details_label = self.query_one("#approval-details", Label)
+                details = (
+                    f"\n[b]Task:[/b] {entry.task_id}\n"
+                    f"[b]Title:[/b] {entry.task_title}\n"
+                    f"[b]Session:[/b] {entry.session_id}\n"
+                    f"[b]Tests:[/b] {entry.test_summary}\n"
+                    f"\n[b]Diff preview (first 500 chars):[/b]\n"
+                    f"[dim]{entry.diff_preview[:500]}[/dim]"
+                    if entry.diff_preview
+                    else ""
+                )
+                details_label.update(details)
+                details_label.remove_class("approval-empty")
+            except StopIteration:
+                pass
+
+    async def action_approve(self) -> None:
+        """Approve the currently selected pending task."""
+        if self._selected_index < 0:
+            return
+        entry = self._pending[self._selected_index]
+        self.app.post_message(
+            ApprovalAction(approved=True, task_id=entry.task_id, reason="Approved via TUI")
+        )
+
+    async def action_reject(self) -> None:
+        """Reject the currently selected pending task."""
+        if self._selected_index < 0:
+            return
+        entry = self._pending[self._selected_index]
+        self.app.post_message(
+            ApprovalAction(approved=False, task_id=entry.task_id, reason="Rejected via TUI")
+        )
+
+    def on_approval_action(self, event: ApprovalAction) -> None:
+        """Handle approval action from self or parent."""
+        self.notify("Approval sent: " + ("approved" if event.approved else "rejected"))
+
+
+@dataclass
+class ApprovalAction:
+    """Message posted when user approves or rejects a pending task."""
+
+    approved: bool
+    task_id: str
+    reason: str = ""
