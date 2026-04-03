@@ -655,17 +655,19 @@ def predict_task_cost(task: Task, metrics_dir: Path | None = None) -> float:
             estimated_tokens = (weight * estimated_tokens) + ((1 - weight) * hist_tokens)
 
     return round(estimated_tokens * cost_per_1k, 4)
+
+
 # ---------------------------------------------------------------------------
 # Per-model cache read/write pricing tiers (T569)
 # ---------------------------------------------------------------------------
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, List
-import json
+
 
 @dataclass
 class CachePricingTier:
     """Pricing tier for cache read/write operations."""
+
     model: str
     provider: str
     cache_read_usd_per_1m: float  # USD per 1 million cache read tokens
@@ -673,111 +675,119 @@ class CachePricingTier:
     standard_read_usd_per_1m: float  # USD per 1 million standard read tokens
     standard_write_usd_per_1m: float  # USD per 1 million standard write tokens
     savings_percentage: float = 0.0  # Percentage savings vs standard pricing
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
 
 class CachePricingRegistry:
     """Registry for per-model cache read/write pricing tiers."""
-    
+
     def __init__(self):
-        self.tiers: Dict[str, CachePricingTier] = {}
+        self.tiers: dict[str, CachePricingTier] = {}
         self._load_default_tiers()
-    
+
     def _load_default_tiers(self) -> None:
         """Load default cache pricing tiers for common models."""
         # Anthropic models
-        self.register_tier(CachePricingTier(
-            model="claude-3-5-sonnet",
-            provider="anthropic",
-            cache_read_usd_per_1m=0.30,
-            cache_write_usd_per_1m=0.30,
-            standard_read_usd_per_1m=3.00,
-            standard_write_usd_per_1m=15.00,
-            savings_percentage=0.90  # 90% savings for cached reads
-        ))
-        
-        self.register_tier(CachePricingTier(
-            model="claude-3-5-haiku",
-            provider="anthropic",
-            cache_read_usd_per_1m=0.10,
-            cache_write_usd_per_1m=0.10,
-            standard_read_usd_per_1m=0.80,
-            standard_write_usd_per_1m=3.00,
-            savings_percentage=0.875  # 87.5% savings
-        ))
-        
+        self.register_tier(
+            CachePricingTier(
+                model="claude-3-5-sonnet",
+                provider="anthropic",
+                cache_read_usd_per_1m=0.30,
+                cache_write_usd_per_1m=0.30,
+                standard_read_usd_per_1m=3.00,
+                standard_write_usd_per_1m=15.00,
+                savings_percentage=0.90,  # 90% savings for cached reads
+            )
+        )
+
+        self.register_tier(
+            CachePricingTier(
+                model="claude-3-5-haiku",
+                provider="anthropic",
+                cache_read_usd_per_1m=0.10,
+                cache_write_usd_per_1m=0.10,
+                standard_read_usd_per_1m=0.80,
+                standard_write_usd_per_1m=3.00,
+                savings_percentage=0.875,  # 87.5% savings
+            )
+        )
+
         # OpenAI models
-        self.register_tier(CachePricingTier(
-            model="gpt-4o",
-            provider="openai",
-            cache_read_usd_per_1m=0.25,
-            cache_write_usd_per_1m=0.25,
-            standard_read_usd_per_1m=2.50,
-            standard_write_usd_per_1m=10.00,
-            savings_percentage=0.90  # 90% savings
-        ))
-        
+        self.register_tier(
+            CachePricingTier(
+                model="gpt-4o",
+                provider="openai",
+                cache_read_usd_per_1m=0.25,
+                cache_write_usd_per_1m=0.25,
+                standard_read_usd_per_1m=2.50,
+                standard_write_usd_per_1m=10.00,
+                savings_percentage=0.90,  # 90% savings
+            )
+        )
+
         # Google models
-        self.register_tier(CachePricingTier(
-            model="gemini-1.5-pro",
-            provider="google",
-            cache_read_usd_per_1m=0.20,
-            cache_write_usd_per_1m=0.20,
-            standard_read_usd_per_1m=1.25,
-            standard_write_usd_per_1m=5.00,
-            savings_percentage=0.84  # 84% savings
-        ))
-    
+        self.register_tier(
+            CachePricingTier(
+                model="gemini-1.5-pro",
+                provider="google",
+                cache_read_usd_per_1m=0.20,
+                cache_write_usd_per_1m=0.20,
+                standard_read_usd_per_1m=1.25,
+                standard_write_usd_per_1m=5.00,
+                savings_percentage=0.84,  # 84% savings
+            )
+        )
+
     def register_tier(self, tier: CachePricingTier) -> None:
         """Register a cache pricing tier."""
         key = f"{tier.provider}:{tier.model}"
         self.tiers[key] = tier
         logger.info(f"Registered cache pricing tier: {key}")
-    
-    def get_tier(self, provider: str, model: str) -> Optional[CachePricingTier]:
+
+    def get_tier(self, provider: str, model: str) -> CachePricingTier | None:
         """Get cache pricing tier for a provider/model."""
         key = f"{provider}:{model}"
         return self.tiers.get(key)
-    
+
     def calculate_cache_savings(
         self,
         provider: str,
         model: str,
         tokens: int,
-        operation: str = "read"  # "read" or "write"
+        operation: str = "read",  # "read" or "write"
     ) -> float:
         """Calculate cache savings for a given operation."""
         tier = self.get_tier(provider, model)
         if not tier:
             return 0.0
-        
+
         if operation == "read":
             standard_cost = (tokens / 1_000_000) * tier.standard_read_usd_per_1m
             cache_cost = (tokens / 1_000_000) * tier.cache_read_usd_per_1m
         else:  # write
             standard_cost = (tokens / 1_000_000) * tier.standard_write_usd_per_1m
             cache_cost = (tokens / 1_000_000) * tier.cache_write_usd_per_1m
-        
+
         return max(0, standard_cost - cache_cost)
-    
-    def get_all_tiers(self) -> List[CachePricingTier]:
+
+    def get_all_tiers(self) -> list[CachePricingTier]:
         """Get all registered cache pricing tiers."""
         return list(self.tiers.values())
+
 
 # Global cache pricing registry
 _cache_pricing_registry = CachePricingRegistry()
 
-def get_cache_pricing_tier(provider: str, model: str) -> Optional[CachePricingTier]:
+
+def get_cache_pricing_tier(provider: str, model: str) -> CachePricingTier | None:
     """Get cache pricing tier for a provider/model (T569)."""
     return _cache_pricing_registry.get_tier(provider, model)
 
-def calculate_cache_operation_savings(
-    provider: str,
-    model: str,
-    tokens: int,
-    operation: str = "read"
-) -> float:
+
+def calculate_cache_operation_savings(provider: str, model: str, tokens: int, operation: str = "read") -> float:
     """Calculate savings for a cache operation (T569)."""
     return _cache_pricing_registry.calculate_cache_savings(provider, model, tokens, operation)
+
 
 def register_cache_pricing_tier(tier: CachePricingTier) -> None:
     """Register a cache pricing tier."""

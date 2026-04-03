@@ -7,14 +7,13 @@ correlated from logs, metrics, and traces.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from bernstein.cli.helpers import SERVER_URL, find_seed_file, server_get
+from bernstein.cli.helpers import find_seed_file, server_get
 
 console = Console()
 
@@ -76,7 +75,7 @@ def incident_cmd(
     Pass an INCIDENT_ID to view its timeline, or --list to see all incidents.
     """
     seed_path = find_seed_file()
-    _ = seed_path  # noqa: F841 — ensure seed file exists
+    _ = seed_path
 
     if list_mode:
         _list_incidents(json_mode)
