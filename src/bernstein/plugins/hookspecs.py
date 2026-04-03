@@ -128,6 +128,14 @@ class BernsteinSpec:
             tokens_after: Token count after compaction.
         """
 
+    @hookspec
+    def on_pre_compact(self, payload: Any) -> None:
+        """Called before context compaction runs (T492)."""
+
+    @hookspec
+    def on_post_compact(self, payload: Any) -> None:
+        """Called after context compaction completes (T492)."""
+
     @hookspec(firstresult=True)
     def on_permission_denied(self, task_id: str, reason: str, tool: str, args: dict[str, Any]) -> str | None:
         """Called when a tool or action permission is denied.
