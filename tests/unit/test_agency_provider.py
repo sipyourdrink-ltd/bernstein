@@ -82,17 +82,32 @@ class TestParseFile:
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents[0].source == "agency"
 
-    def test_engineering_maps_to_backend_role(self, tmp_path: Path) -> None:
+    def test_code_reviewer_inferred_as_reviewer(self, tmp_path: Path) -> None:
+        """Smart role inference overrides division-based 'backend' for Code Reviewer."""
         f = tmp_path / "engineering-code-reviewer.md"
         f.write_text(FULL_AGENT_MD)
         agents = AgencyProvider._parse_file(f, division="engineering")
-        assert agents[0].role == "backend"
+        assert agents[0].role == "reviewer"
 
     def test_design_maps_to_architect_role(self, tmp_path: Path) -> None:
         f = tmp_path / "design-ui-specialist.md"
         f.write_text(MINIMAL_AGENT_MD.replace("Minimal Agent", "UI Specialist"))
         agents = AgencyProvider._parse_file(f, division="design")
         assert agents[0].role == "architect"
+
+    def test_engineering_backend_stays_backend(self, tmp_path: Path) -> None:
+        """Agent with 'backend' signals in engineering division keeps backend role."""
+        backend_md = FULL_AGENT_MD.replace("Code Reviewer", "Backend API Builder").replace(
+            "Expert code reviewer focused on correctness and security.",
+            "Backend API developer specializing in REST and microservices.",
+        ).replace(
+            "capabilities: [code-review, security-analysis, static-analysis]",
+            "capabilities: [api-design, rest, database]",
+        )
+        f = tmp_path / "engineering-backend-builder.md"
+        f.write_text(backend_md)
+        agents = AgencyProvider._parse_file(f, division="engineering")
+        assert agents[0].role == "backend"
 
     def test_unknown_division_kept_as_is(self, tmp_path: Path) -> None:
         f = tmp_path / "xr-spatial-agent.md"
@@ -334,7 +349,8 @@ class TestCatalogRegistryIntegration:
         for a in agents:
             registry.register_agent(a)
 
-        match = registry.match("backend", "review code quality")
+        # Code Reviewer is now inferred as "reviewer" role, not "backend"
+        match = registry.match("reviewer", "review code quality")
         assert match is not None
         assert match.name == "Code Reviewer"
 
@@ -353,7 +369,8 @@ class TestCatalogRegistryIntegration:
         for a in agents:
             registry.register_agent(a)
 
-        match = registry.match("backend", "review code")
+        # Code Reviewer is now inferred as "reviewer" role
+        match = registry.match("reviewer", "review code")
         assert match is not None
         assert "Code Reviewer" in match.system_prompt
 
@@ -364,17 +381,24 @@ class TestCatalogRegistryIntegration:
         eng = tmp_path / "engineering"
         eng.mkdir()
 
-        security_md = FULL_AGENT_MD.replace(
+        # Two backend agents with different capabilities
+        api_md = FULL_AGENT_MD.replace(
             "capabilities: [code-review, security-analysis, static-analysis]",
-            "capabilities: [authentication, jwt, oauth]",
-        ).replace("name: Code Reviewer", "name: Auth Specialist")
-        (eng / "auth-specialist.md").write_text(security_md)
+            "capabilities: [api-design, rest, microservice]",
+        ).replace("name: Code Reviewer", "name: API Builder").replace(
+            "Expert code reviewer focused on correctness and security.",
+            "Backend API developer for REST microservices.",
+        )
+        (eng / "api-builder.md").write_text(api_md)
 
-        generic_md = FULL_AGENT_MD.replace(
+        db_md = FULL_AGENT_MD.replace(
             "capabilities: [code-review, security-analysis, static-analysis]",
-            "capabilities: [refactoring, cleanup]",
-        ).replace("name: Code Reviewer", "name: Refactorer")
-        (eng / "refactorer.md").write_text(generic_md)
+            "capabilities: [database, sql, postgres]",
+        ).replace("name: Code Reviewer", "name: DB Specialist").replace(
+            "Expert code reviewer focused on correctness and security.",
+            "Backend database developer and optimizer.",
+        )
+        (eng / "db-specialist.md").write_text(db_md)
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -383,9 +407,9 @@ class TestCatalogRegistryIntegration:
         for a in agents:
             registry.register_agent(a)
 
-        match = registry.match("backend", "implement JWT authentication and oauth flow")
+        match = registry.match("backend", "design REST API for microservice architecture")
         assert match is not None
-        assert match.name == "Auth Specialist"
+        assert match.name == "API Builder"
 
     def test_fetched_agents_tools_in_catalog_agent(self, tmp_path: Path) -> None:
         """Tools parsed from frontmatter are accessible on the CatalogAgent."""
@@ -402,7 +426,7 @@ class TestCatalogRegistryIntegration:
         for a in agents:
             registry.register_agent(a)
 
-        match = registry.match("backend", "review code")
+        match = registry.match("reviewer", "review code")
         assert match is not None
         assert match.tools == ["ruff", "mypy", "pytest"]
 
