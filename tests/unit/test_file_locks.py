@@ -1,3 +1,4 @@
+# pyright: reportPrivateUsage=false
 """Tests for the FileLockManager file-level locking system."""
 
 from __future__ import annotations
@@ -8,7 +9,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bernstein.core.file_locks import FileLock, FileLockManager
+from bernstein.core.file_locks import (
+    FileLock,
+    FileLockManager,
+    get_concurrency_safe_tools,
+    get_concurrency_unsafe_tools,
+    get_tool_definition,
+    partition_tools_by_concurrency,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -112,6 +120,78 @@ def test_release_enables_reacquire_by_other_agent(mgr: FileLockManager) -> None:
     mgr.release("a1")
     conflicts = mgr.acquire(["src/foo.py"], agent_id="a2", task_id="t2")
     assert conflicts == []
+
+
+# ---------------------------------------------------------------------------
+# Tool concurrency safety classification (T438)
+# ---------------------------------------------------------------------------
+
+
+class TestToolDefinition:
+    def test_known_safe_tool(self) -> None:
+        defn = get_tool_definition("read_file")
+        assert defn.concurrency_safe is True
+        assert defn.name == "read_file"
+
+    def test_known_unsafe_tool(self) -> None:
+        defn = get_tool_definition("bash")
+        assert defn.concurrency_safe is False
+        assert defn.name == "bash"
+
+    def test_unknown_tool_defaults_unsafe(self) -> None:
+        defn = get_tool_definition("some_weird_tool")
+        assert defn.concurrency_safe is False
+        assert defn.name == "some_weird_tool"
+
+    def test_case_insensitive(self) -> None:
+        assert get_tool_definition("Bash").concurrency_safe is False
+        assert get_tool_definition("Read_File").concurrency_safe is True
+
+
+class TestConcurrencyToolListing:
+    def test_safe_tools_non_empty(self) -> None:
+        safe = get_concurrency_safe_tools()
+        assert len(safe) > 0
+        assert "read_file" in safe
+
+    def test_unsafe_tools_non_empty(self) -> None:
+        unsafe = get_concurrency_unsafe_tools()
+        assert len(unsafe) > 0
+        assert "bash" in unsafe
+
+    def test_safe_and_unsafe_disjoint(self) -> None:
+        safe = set(get_concurrency_safe_tools())
+        unsafe = set(get_concurrency_unsafe_tools())
+        assert not (safe & unsafe)
+
+
+class TestPartitionToolsByConcurrency:
+    def test_empty_list(self) -> None:
+        safe, unsafe = partition_tools_by_concurrency([])
+        assert safe == []
+        assert unsafe == []
+
+    def test_mixed_tools(self) -> None:
+        safe, unsafe = partition_tools_by_concurrency(
+            ["read_file", "bash", "grep", "write_file"]
+        )
+        assert set(safe) == {"read_file", "grep"}
+        assert set(unsafe) == {"bash", "write_file"}
+
+    def test_all_safe(self) -> None:
+        safe, unsafe = partition_tools_by_concurrency(["read_file", "list_directory"])
+        assert unsafe == []
+        assert set(safe) == {"read_file", "list_directory"}
+
+    def test_all_unsafe(self) -> None:
+        safe, unsafe = partition_tools_by_concurrency(["bash", "write_file"])
+        assert safe == []
+        assert set(unsafe) == {"bash", "write_file"}
+
+    def test_unknown_tool_treated_as_unsafe(self) -> None:
+        safe, unsafe = partition_tools_by_concurrency(["unknown_tool_xyz"])
+        assert safe == []
+        assert unsafe == ["unknown_tool_xyz"]
 
 
 # ---------------------------------------------------------------------------
@@ -239,3 +319,6 @@ def test_expired_lock_allows_reacquire(workdir: Path) -> None:
     )
     conflicts = mgr.acquire(["src/foo.py"], agent_id="a2", task_id="t2")
     assert conflicts == []
+
+
+# ---------------------------------------------------------------------------
