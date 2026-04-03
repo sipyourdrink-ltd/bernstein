@@ -7,10 +7,12 @@ API usage patterns, error rates, and cost efficiency.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -806,6 +808,8 @@ class MetricsCollector:
             should_flush = (
                 len(self._buffer) >= self._buffer_limit or (time.time() - self._last_flush) >= self._flush_interval
             )
+        # Fire plugin hook so plugins can observe/forward metrics in real time
+        self._emit_metric_hook(metric_type.value, value, labels)
         if should_flush:
             self._flush_buffer()
 
@@ -834,6 +838,27 @@ class MetricsCollector:
     def flush(self) -> None:
         """Flush the write buffer to disk. Call this each orchestrator tick."""
         self._flush_buffer()
+
+    # ---------------------------------------------------------------------------
+    # Plugin integration
+    # ---------------------------------------------------------------------------
+
+    @staticmethod
+    def _emit_metric_hook(metric_type: str, value: float, labels: dict[str, str]) -> None:
+        """Fire the ``on_metric_record`` plugin hook.
+
+        Args:
+            metric_type: Metric type name.
+            value: Numeric metric value.
+            labels: Key-value labels attached to the point.
+        """
+        try:
+            from bernstein.plugins.manager import get_plugin_manager
+
+            pm = get_plugin_manager()
+            pm.hook.on_metric_record(metric_type=metric_type, value=value, labels=labels)
+        except Exception:
+            logger.debug("Plugin hook on_metric_record failed (swallowed)", exc_info=True)
 
     def __del__(self) -> None:
         """Flush remaining buffered metrics on garbage collection."""
@@ -1162,9 +1187,6 @@ def get_collector(metrics_dir: Path | None = None) -> MetricsCollector:
 # Expected drop notifications for cache baselines (T564)
 # ---------------------------------------------------------------------------
 
-from dataclasses import dataclass, field
-from datetime import datetime
-
 
 @dataclass
 class CacheBaselineDrop:
@@ -1175,7 +1197,7 @@ class CacheBaselineDrop:
     current_value: float
     drop_percentage: float
     threshold: float
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

@@ -6,6 +6,7 @@ import json
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -408,6 +409,29 @@ class TestJsonlFileWriting:
         today = datetime.now().strftime("%Y-%m-%d")
         expected = collector._metrics_dir / f"api_usage_{today}.jsonl"
         assert expected.exists()
+
+    def test_write_metric_fires_plugin_hook(self, collector: MetricsCollector) -> None:
+        """Verify metric recording fires the on_metric_record plugin hook."""
+        with patch("bernstein.plugins.manager.get_plugin_manager") as mock_get:
+            mock_pm = MagicMock()
+            mock_get.return_value = mock_pm
+            collector._write_metric_point(MetricType.ERROR_RATE, 42.0, {"task_id": "t1"})
+            mock_pm.hook.on_metric_record.assert_called_once_with(
+                metric_type="error_rate",
+                value=42.0,
+                labels={"task_id": "t1"},
+            )
+
+    def test_write_metric_hook_failure_is_swallowed(self, collector: MetricsCollector) -> None:
+        """Plugin hook failures should not crash metric recording."""
+        with patch("bernstein.plugins.manager.get_plugin_manager", side_effect=RuntimeError("boom")):
+            # Should not raise
+            collector._write_metric_point(MetricType.ERROR_RATE, 1.0, {})
+            collector.flush()
+            # JSONL file should still exist
+            today = datetime.now().strftime("%Y-%m-%d")
+            f = collector._metrics_dir / f"error_rate_{today}.jsonl"
+            assert f.exists()
 
 
 # ---------------------------------------------------------------------------

@@ -45,6 +45,26 @@ class BernsteinSpec:
         """
 
     @hookspec
+    def on_pre_task_create(
+        self,
+        task_id: str,
+        role: str,
+        title: str,
+        description: str,
+    ) -> None:
+        """Called before a task is created — hooks may block by raising.
+
+        Implementations running shell scripts can exit with code 2 to
+        block task creation (T719).
+
+        Args:
+            task_id: Unique task identifier (pre-generated).
+            role: Agent role assigned to the task.
+            title: Human-readable task title.
+            description: Full task description text.
+        """
+
+    @hookspec
     def on_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
         """Called when a task transitions to the ``done`` state.
 
@@ -162,4 +182,22 @@ class BernsteinSpec:
             tool: Tool name that failed.
             error: Error message or exit code detail.
             batch_id: Optional ID grouping concurrent tool calls.
+        """
+
+    @hookspec
+    def on_metric_record(
+        self,
+        metric_type: str,
+        value: float,
+        labels: dict[str, Any],
+    ) -> None:
+        """Called when a metric point is recorded.
+
+        Plugins can consume this hook to observe, transform, or forward
+        metric data in real time (e.g. ship to external monitoring).
+
+        Args:
+            metric_type: Metric type name (e.g. ``"task_duration_s"``).
+            value: Numeric metric value.
+            labels: Arbitrary key-value labels attached to the point.
         """
