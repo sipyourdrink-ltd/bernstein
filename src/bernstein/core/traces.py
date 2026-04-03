@@ -884,3 +884,58 @@ def build_crash_bundle(
         bundle["runtime_files"] = [f.name for f in runtime_dir.iterdir() if f.is_file()][:30]
 
     return bundle
+# ---------------------------------------------------------------------------
+# Max output tokens escalation signal (T565)
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any
+
+@dataclass
+class TokenEscalationEvent:
+    """Token escalation event for traces."""
+    task_id: str
+    role: str
+    model: str
+    requested_tokens: int
+    max_allowed_tokens: int
+    escalation_reason: str
+    timestamp: float = field(default_factory=time.time)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+def record_token_escalation(
+    trace: AgentTrace,
+    task_id: str,
+    role: str,
+    model: str,
+    requested_tokens: int,
+    max_allowed_tokens: int,
+    escalation_reason: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """Record a token escalation event in the trace."""
+    escalation = TokenEscalationEvent(
+        task_id=task_id,
+        role=role,
+        model=model,
+        requested_tokens=requested_tokens,
+        max_allowed_tokens=max_allowed_tokens,
+        escalation_reason=escalation_reason,
+        metadata=metadata or {}
+    )
+    
+    # Add as a trace step
+    step = TraceStep(
+        type="plan",
+        timestamp=escalation.timestamp,
+        detail=f"Token escalation: requested {requested_tokens} tokens (max: {max_allowed_tokens}) - {escalation_reason}",
+        tokens=requested_tokens,
+        turn_number=len(trace.steps) + 1
+    )
+    trace.steps.append(step)
+    
+    logger.warning(
+        f"Token escalation recorded in trace {trace.trace_id}: "
+        f"{role} task {task_id} requested {requested_tokens} tokens "
+        f"(max: {max_allowed_tokens}) for {model}"
+    )

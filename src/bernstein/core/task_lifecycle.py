@@ -1958,3 +1958,46 @@ def deprioritize_old_unclaimed_tasks(
                 logger.debug("Failed to deprioritize task %s: %s", task.id, exc)
 
     return deprioritized_count
+# ---------------------------------------------------------------------------
+# Permission denied hooks for retry hints (T570)
+# ---------------------------------------------------------------------------
+
+def handle_permission_denied_error(
+    error_message: str,
+    task_id: str,
+    role: str,
+    retry_count: int
+) -> Dict[str, Any]:
+    """Handle permission denied errors with retry hints."""
+    from bernstein.core.worker import get_permission_hint
+    
+    hint = get_permission_hint(error_message)
+    
+    if hint:
+        logger.warning(
+            f"Permission denied for task {task_id} ({role}): {error_message}\n"
+            f"Hint: {hint}"
+        )
+        
+        # Determine if we should retry
+        should_retry = retry_count < 2  # Max 2 retries for permission issues
+        
+        return {
+            "permission_denied": True,
+            "error_message": error_message,
+            "hint": hint,
+            "should_retry": should_retry,
+            "retry_count": retry_count,
+            "max_retries": 2
+        }
+    else:
+        logger.warning(f"Permission denied for task {task_id} ({role}): {error_message}")
+        
+        return {
+            "permission_denied": True,
+            "error_message": error_message,
+            "hint": None,
+            "should_retry": False,
+            "retry_count": retry_count,
+            "max_retries": 2
+        }

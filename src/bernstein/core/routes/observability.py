@@ -644,3 +644,45 @@ async def get_changelog(request: Request, days: int = 30) -> dict[str, Any]:
     changelog = generate_changelog(workdir, period_days=days)
 
     return {"markdown": changelog, "period_days": days}
+
+
+@router.get("/observability/incidents")
+async def list_incidents(request: Request) -> dict[str, Any]:
+    """List all known incidents.
+
+    Returns:
+        Dict with 'incidents' list.
+    """
+    from bernstein.core.incident_timeline import list_incidents
+
+    workdir = _get_workdir(request)
+    return {"incidents": list_incidents(workdir)}
+
+
+@router.get("/observability/incident-timeline/{incident_id}")
+async def get_incident_timeline(
+    request: Request,
+    incident_id: str,
+    window_before: int = 600,
+    window_after: int = 300,
+) -> dict[str, Any]:
+    """Build a correlated incident timeline from logs, metrics, and traces.
+
+    Args:
+        request: FastAPI request.
+        incident_id: The incident ID to build a timeline for.
+        window_before: Seconds before incident to include (default 600).
+        window_after: Seconds after incident to include (default 300).
+
+    Returns:
+        Dict with incident metadata and sorted timeline events.
+    """
+    from bernstein.core.incident_timeline import build_incident_timeline
+
+    workdir = _get_workdir(request)
+    return build_incident_timeline(
+        incident_id=incident_id,
+        workdir=workdir,
+        window_before_s=float(window_before),
+        window_after_s=float(window_after),
+    )

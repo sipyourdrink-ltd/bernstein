@@ -18,6 +18,7 @@ from bernstein.tui.timeline import TaskTimeline, TimelineEntry
 from bernstein.tui.widgets import (
     ActionBar,
     AgentLogWidget,
+    ScratchpadViewer,
     ShortcutsFooter,
     StatusBar,
     TaskListWidget,
@@ -108,6 +109,8 @@ class BernsteinApp(App[None]):
         Binding("x", "cancel_task", "Cancel task", show=False),
         Binding("t", "retry_task", "Retry task", show=False),
         Binding("v", "toggle_timeline", "Timeline", show=True),
+        Binding("c", "toggle_scratchpad", "Scratchpad", show=True),
+        Binding("/", "scratchpad_filter", "Filter scratchpad", show=False),
         Binding("escape", "close_action_bar", "Close", show=False),
         Binding("up", "cursor_up", "Up", show=False),
         Binding("down", "cursor_down", "Down", show=False),
@@ -136,15 +139,17 @@ class BernsteinApp(App[None]):
         with Vertical(id="main-body"):
             yield TaskListWidget(id="task-list")
             yield TaskTimeline(id="task-timeline")
+            yield ScratchpadViewer(id="scratchpad-viewer")
             yield ActionBar(id="action-bar")
             yield AgentLogWidget(id="agent-log")
         yield ShortcutsFooter(id="shortcuts-footer")
 
     def on_mount(self) -> None:
         """Start the periodic poll timer after mounting."""
-        # Hide action bar and timeline initially.
+        # Hide action bar, timeline, and scratchpad initially.
         self.query_one("#action-bar", ActionBar).display = False
         self.query_one("#task-timeline", TaskTimeline).display = False
+        self.query_one("#scratchpad-viewer", ScratchpadViewer).display = False
 
         self.set_interval(self._poll_interval, self.action_refresh)
 
@@ -199,6 +204,57 @@ class BernsteinApp(App[None]):
                 for e in data.get("entries", [])
             ]
             self.query_one("#task-timeline", TaskTimeline).update_data(entries)
+
+    def action_toggle_scratchpad(self) -> None:
+        """Show/hide the scratchpad viewer."""
+        scratchpad = self.query_one("#scratchpad-viewer", ScratchpadViewer)
+        scratchpad.display = not scratchpad.display
+        if scratchpad.display:
+            self.run_worker(self._refresh_scratchpad())
+            scratchpad.focus()
+
+    async def _refresh_scratchpad(self) -> None:
+        """Fetch scratchpad entries and update widget."""
+        from bernstein.tui.widgets import list_scratchpad_files
+
+        entries = list_scratchpad_files()
+        self.query_one("#scratchpad-viewer", ScratchpadViewer).refresh_entries(entries)
+
+    def action_scratchpad_filter(self) -> None:
+        """Open scratchpad filter input."""
+        # Toggle scratchpad if not visible
+        scratchpad = self.query_one("#scratchpad-viewer", ScratchpadViewer)
+        if not scratchpad.display:
+            scratchpad.display = True
+            self.run_worker(self._refresh_scratchpad())
+
+        # Show filter prompt in status bar
+        self._prompt_scratchpad_filter()
+
+    def _prompt_scratchpad_filter(self) -> None:
+        """Show filter prompt for scratchpad viewer."""
+        from textual.widgets import Input
+
+        # Check if filter input already exists
+        existing = self.query("#scratchpad-filter")
+        if existing:
+            existing.first().remove()
+            return
+
+        input_widget = Input(placeholder="Filter scratchpad files...", id="scratchpad-filter")
+        self.mount(input_widget)
+        input_widget.focus()
+
+    def on_input_submitted(self, event: Any) -> None:
+        """Handle filter input submission."""
+        from textual.widgets import Input
+
+        if isinstance(event, Input.Submitted) and event.input.id == "scratchpad-filter":
+            query = event.value
+            scratchpad = self.query_one("#scratchpad-viewer", ScratchpadViewer)
+            scratchpad.set_filter(query)
+            event.input.remove()
+            scratchpad.focus()
 
     def action_toggle_action_bar(self) -> None:
         """Toggle the action bar for the selected task."""

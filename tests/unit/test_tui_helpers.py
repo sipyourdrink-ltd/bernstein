@@ -226,3 +226,144 @@ def test_build_cache_hit_sparkline_low_hit_rate() -> None:
     bar = build_cache_hit_sparkline([0.0, 0.1, 0.2])
     assert "%" in bar
     assert "red" in bar
+
+
+# ---------------------------------------------------------------------------
+# Scratchpad viewer tests (T408)
+# ---------------------------------------------------------------------------
+
+
+def test_scratchpad_entry_size_display_bytes() -> None:
+    """Small files display in bytes."""
+    from bernstein.tui.widgets import ScratchpadEntry
+
+    entry = ScratchpadEntry(name="test.txt", path=Path("/fake/test.txt"), size=500, modified=0.0)
+    assert entry.size_display == "500B"
+
+
+def test_scratchpad_entry_size_display_kb() -> None:
+    """Medium files display in KB."""
+    from bernstein.tui.widgets import ScratchpadEntry
+
+    entry = ScratchpadEntry(name="test.txt", path=Path("/fake/test.txt"), size=2048, modified=0.0)
+    assert "K" in entry.size_display
+
+
+def test_scratchpad_entry_size_display_mb() -> None:
+    """Large files display in MB."""
+    from bernstein.tui.widgets import ScratchpadEntry
+
+    entry = ScratchpadEntry(name="test.txt", path=Path("/fake/test.txt"), size=2 * 1024 * 1024, modified=0.0)
+    assert "M" in entry.size_display
+
+
+def test_scratchpad_entry_relative_display_with_sdd(tmp_path: Path) -> None:
+    """Paths under .sdd show relative display."""
+    from bernstein.tui.widgets import ScratchpadEntry
+
+    path = tmp_path / ".sdd" / "runtime" / "scratchpad" / "run1" / "note.txt"
+    entry = ScratchpadEntry(name="note.txt", path=path, size=100, modified=0.0)
+    assert entry.relative_display.startswith(".sdd/")
+
+
+def test_scratchpad_entry_relative_display_no_sdd(tmp_path: Path) -> None:
+    """Paths without .sdd fall back to name."""
+    from bernstein.tui.widgets import ScratchpadEntry
+
+    path = tmp_path / "some" / "other" / "file.txt"
+    entry = ScratchpadEntry(name="file.txt", path=path, size=100, modified=0.0)
+    assert entry.relative_display == "file.txt"
+
+
+def test_list_scratchpad_files_empty(tmp_path: Path) -> None:
+    """Missing scratchpad directory returns empty list."""
+    from bernstein.tui.widgets import list_scratchpad_files
+
+    result = list_scratchpad_files(tmp_path / "nonexistent")
+    assert result == []
+
+
+def test_list_scratchpad_files_with_files(tmp_path: Path) -> None:
+    """Scratchpad with files returns entries sorted newest first."""
+    import time
+
+    from bernstein.tui.widgets import list_scratchpad_files
+
+    scratchpad = tmp_path / ".sdd" / "runtime" / "scratchpad"
+    scratchpad.mkdir(parents=True)
+
+    # Create files with different modification times
+    old_file = scratchpad / "old.txt"
+    old_file.write_text("old")
+    time.sleep(0.01)
+    new_file = scratchpad / "new.txt"
+    new_file.write_text("new")
+
+    result = list_scratchpad_files(scratchpad)
+    assert len(result) == 2
+    assert result[0].name == "new.txt"  # Newest first
+    assert result[1].name == "old.txt"
+
+
+def test_list_scratchpad_files_nested(tmp_path: Path) -> None:
+    """Scratchpad with nested directories lists all files."""
+    from bernstein.tui.widgets import list_scratchpad_files
+
+    scratchpad = tmp_path / ".sdd" / "runtime" / "scratchpad"
+    worker_dir = scratchpad / "worker-1"
+    worker_dir.mkdir(parents=True)
+    (worker_dir / "state.json").write_text("{}")
+    (scratchpad / "shared.txt").write_text("shared")
+
+    result = list_scratchpad_files(scratchpad)
+    assert len(result) == 2
+    names = {e.name for e in result}
+    assert "state.json" in names
+    assert "shared.txt" in names
+
+
+def test_filter_scratchpad_entries_empty_query() -> None:
+    """Empty query returns all entries."""
+    from bernstein.tui.widgets import ScratchpadEntry, filter_scratchpad_entries
+
+    entries = [
+        ScratchpadEntry(name="a.txt", path=Path("/a.txt"), size=100, modified=0.0),
+        ScratchpadEntry(name="b.txt", path=Path("/b.txt"), size=200, modified=0.0),
+    ]
+    result = filter_scratchpad_entries(entries, "")
+    assert len(result) == 2
+
+
+def test_filter_scratchpad_entries_by_name() -> None:
+    """Filter matches by filename."""
+    from bernstein.tui.widgets import ScratchpadEntry, filter_scratchpad_entries
+
+    entries = [
+        ScratchpadEntry(name="config.json", path=Path("/config.json"), size=100, modified=0.0),
+        ScratchpadEntry(name="notes.txt", path=Path("/notes.txt"), size=200, modified=0.0),
+    ]
+    result = filter_scratchpad_entries(entries, "config")
+    assert len(result) == 1
+    assert result[0].name == "config.json"
+
+
+def test_filter_scratchpad_entries_case_insensitive() -> None:
+    """Filter is case-insensitive."""
+    from bernstein.tui.widgets import ScratchpadEntry, filter_scratchpad_entries
+
+    entries = [
+        ScratchpadEntry(name="Config.JSON", path=Path("/Config.JSON"), size=100, modified=0.0),
+    ]
+    result = filter_scratchpad_entries(entries, "config")
+    assert len(result) == 1
+
+
+def test_filter_scratchpad_entries_by_path() -> None:
+    """Filter matches by path substring."""
+    from bernstein.tui.widgets import ScratchpadEntry, filter_scratchpad_entries
+
+    entries = [
+        ScratchpadEntry(name="state.json", path=Path("/.sdd/runtime/scratchpad/worker-1/state.json"), size=100, modified=0.0),
+    ]
+    result = filter_scratchpad_entries(entries, "worker-1")
+    assert len(result) == 1
