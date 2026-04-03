@@ -1877,6 +1877,8 @@ class Orchestrator:
 
     def _should_auto_decompose(self, task: Task) -> bool:
         """Delegate to task_lifecycle.should_auto_decompose."""
+        if not self._config.auto_decompose:
+            return False
         return should_auto_decompose(task, self._decomposed_task_ids)
 
     def _auto_decompose_task(self, task: Task) -> None:

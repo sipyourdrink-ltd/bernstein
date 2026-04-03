@@ -979,6 +979,7 @@ class OrchestratorConfig:
     server_url: str = "http://localhost:8052"
     evolution_enabled: bool = True
     evolution_tick_interval: int = 30
+    auto_decompose: bool = True
     max_task_retries: int = 2
     kill_on_memory_leak: bool = False
     evolve_mode: bool = False
