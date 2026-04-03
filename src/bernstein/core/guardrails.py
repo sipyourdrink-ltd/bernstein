@@ -394,8 +394,43 @@ def get_guardrail_stats(workdir: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Main entrypoint
+# Always-allow integration
 # ---------------------------------------------------------------------------
+
+
+def _check_always_allow_for_diff(
+    diff: str,
+    engine: AlwaysAllowEngine,
+) -> list[PermissionDecision]:
+    """Check all modified files against always-allow rules.
+
+    Files matching an always-allow rule receive an ALLOW decision.
+    Non-matching files receive a neutral ALLOW (they fall through to
+    other checks).
+
+    Args:
+        diff: Git diff output string.
+        engine: Loaded always-allow rule engine.
+
+    Returns:
+        List with one PermissionDecision for the "always_allow" check.
+    """
+    changed_files = _parse_diff_files(diff)
+    matched_files: list[str] = []
+
+    for filepath in changed_files:
+        result = check_always_allow("write_file", filepath, engine)
+        if result.matched:
+            matched_files.append(filepath)
+
+    if matched_files:
+        return [
+            PermissionDecision(
+                type=DecisionType.ALLOW,
+                reason=f"Always-allowed files: {', '.join(matched_files)}",
+            )
+        ]
+    return [PermissionDecision(type=DecisionType.ALLOW, reason="No always-allow matches")]
 
 
 def run_guardrails(
@@ -404,6 +439,7 @@ def run_guardrails(
     config: GuardrailsConfig,
     workdir: Path,
     bypass_enabled: bool = False,
+    always_allow_engine: AlwaysAllowEngine | None = None,
 ) -> list[GuardrailResult]:
     """Run all enabled guardrail checks on an agent's diff and record events.
 
@@ -413,12 +449,22 @@ def run_guardrails(
         config: Which checks to run and their thresholds.
         workdir: Project root for writing metrics.
         bypass_enabled: Whether non-immune checks can be bypassed.
+        always_allow_engine: Loaded always-allow rules (loaded from
+            ``.bernstein/always_allow.yaml``).  When a modified file matches
+            an always-allow rule, scope and permission checks are skipped
+            for that file.
 
     Returns:
         List of GuardrailResult, one per enabled check.
     """
     graph = DecisionGraph(bypass_enabled=bypass_enabled)
     decisions: dict[str, list[PermissionDecision]] = {}
+
+    # Always-allow check — highest precedence for matched files
+    if always_allow_engine is not None:
+        decisions["always_allow"] = _check_always_allow_for_diff(
+            diff, always_allow_engine
+        )
 
     # Mandatory checks that cannot be disabled
     decisions["immune_path_enforcement"] = check_immune_paths(diff)
