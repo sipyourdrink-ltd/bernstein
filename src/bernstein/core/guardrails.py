@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.always_allow import (
     AlwaysAllowEngine,
@@ -22,9 +22,11 @@ from bernstein.core.always_allow import (
 )
 from bernstein.core.license_scanner import check_license_obligations
 from bernstein.core.models import GuardrailResult, Task
-from bernstein.core.permission_rules import PermissionRuleEngine
 from bernstein.core.permissions import AgentPermissions, check_file_permissions
 from bernstein.core.policy_engine import DecisionGraph, DecisionType, PermissionDecision
+
+if TYPE_CHECKING:
+    from bernstein.core.permission_rules import PermissionRuleEngine
 
 logger = logging.getLogger(__name__)
 
