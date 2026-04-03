@@ -20,6 +20,7 @@ from bernstein.core.memory_lock_protocol import (
     _release_lock,
     _safe_unlink,
     guarded_memory_write,
+    renew_lock,
 )
 
 # ---------------------------------------------------------------------------
@@ -288,6 +289,66 @@ class TestGuardedMemoryWriteConcurrencySimulation:
         # At least some will succeed (one thread will always win)
         content = target.read_text().strip()
         assert content in ("original", "thread_0", "thread_1", "thread_2")
+
+
+class TestRenewLock:
+    def test_renew_updates_mtime(self, tmp_path: Path) -> None:
+        """Renewing a live lock updates the mtime so the TTL clock resets."""
+        lock_path = tmp_path / "test.lock"
+        info = _acquire_lock(lock_path, ttl_seconds=60)
+
+        # Set mtime to 60 seconds in the past
+        now = time.time()
+        os.utime(lock_path, (now - 60, now - 60))
+        old_mtime = lock_path.stat().st_mtime
+
+        result = renew_lock(info)
+        new_mtime = lock_path.stat().st_mtime
+
+        assert result is True
+        assert new_mtime > old_mtime
+
+    def test_renew_returns_false_for_missing_lock(self, tmp_path: Path) -> None:
+        lock_path = tmp_path / "test.lock"
+        info = _acquire_lock(lock_path, ttl_seconds=60)
+        _safe_unlink(lock_path)  # Simulate crash/release before renewal
+
+        assert renew_lock(info) is False
+
+    def test_renew_returns_false_for_stolen_lock(self, tmp_path: Path) -> None:
+        """If another process reclaimed the lock, renewal is silently skipped."""
+        lock_path = tmp_path / "test.lock"
+        info = _acquire_lock(lock_path, ttl_seconds=60)
+
+        # Simulate another process reclaiming with a different PID in the JSON
+        stolen = {"pid": 99999, "acquired_at": time.time()}
+        lock_path.write_text(json.dumps(stolen), encoding="utf-8")
+
+        assert renew_lock(info) is False
+
+    def test_renew_wrong_calling_pid(self, tmp_path: Path) -> None:
+        """LockInfo PID != os.getpid() → returns False without touching file."""
+        lock_path = tmp_path / "ghost.lock"
+        fake_info = LockInfo(pid=99999, acquired_at=time.time(), lock_file_path=lock_path)
+        assert renew_lock(fake_info) is False
+
+    def test_renew_prevents_stale_detection(self, tmp_path: Path) -> None:
+        """A renewed lock should not appear stale even if the original mtime is old."""
+        lock_path = tmp_path / "test.lock"
+        info = _acquire_lock(lock_path, ttl_seconds=60)
+
+        # Make the lock look almost-expired
+        now = time.time()
+        os.utime(lock_path, (now - 55, now - 55))
+        assert _is_lock_stale(lock_path, ttl_seconds=60) is False  # Not yet stale
+
+        # Simulate 6 more seconds pass (total 61s > ttl)
+        os.utime(lock_path, (now - 61, now - 61))
+        assert _is_lock_stale(lock_path, ttl_seconds=60) is True  # Now stale
+
+        # Renew resets mtime — no longer stale
+        renew_lock(info)
+        assert _is_lock_stale(lock_path, ttl_seconds=60) is False
 
 
 class TestSafeUnlink:
