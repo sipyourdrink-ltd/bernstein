@@ -1054,6 +1054,9 @@ class AgentSpawner:
         result: SpawnResult | None = None
 
         while True:
+            # Remote spawn already succeeded — skip the local adapter loop entirely
+            if remote_spawned:
+                break
             if not remote_spawned:
                 attempt_errors: list[str] = []
                 disabled_providers: dict[str, bool] = {}
@@ -1239,19 +1242,21 @@ class AgentSpawner:
                 break
 
         # Post-spawn session setup
-        session.pid = result.pid
-        session.abort_reason = result.abort_reason
-        session.abort_detail = result.abort_detail
-        session.finish_reason = result.finish_reason
-        transition_agent(
-            session,
-            "working",
-            actor="spawner",
-            reason="agent process started",
-        )
-        if result.log_path:
-            session.log_path = str(result.log_path)
-        if result.proc is not None:
+        if result is not None:
+            session.pid = result.pid
+            session.abort_reason = result.abort_reason
+            session.abort_detail = result.abort_detail
+            session.finish_reason = result.finish_reason
+            if result.log_path:
+                session.log_path = str(result.log_path)
+        if session.status != "working":
+            transition_agent(
+                session,
+                "working",
+                actor="spawner",
+                reason="agent process started",
+            )
+        if result is not None and result.proc is not None:
             self._procs[session_id] = result.proc  # type: ignore[assignment]
             # Register stdin pipe for real-time IPC (if available)
             proc_stdin = getattr(result.proc, "stdin", None)
