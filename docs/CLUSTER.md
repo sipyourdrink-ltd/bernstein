@@ -27,10 +27,10 @@ Core implementation paths:
 ### 1) Start a central server reachable from workers
 
 ```bash
-bernstein run --remote --goal "Build feature X"
+bernstein conduct --remote --goal "Build feature X"
 ```
 
-`--remote` binds the server for remote access.
+The `conduct` command (alias for `run`) supports `--remote` which binds the server to `0.0.0.0` for cluster access. The `--remote` flag is not available on the standard `bernstein run` command.
 
 ### 2) Start workers
 

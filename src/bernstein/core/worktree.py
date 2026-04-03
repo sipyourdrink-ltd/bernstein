@@ -44,9 +44,28 @@ class WorktreeSetupConfig:
     finds a fully-provisioned checkout instead of a bare tree.
 
     Attributes:
-        symlink_dirs: Directory names to symlink from repo_root into the
-            worktree.  Useful for large build artefacts like ``node_modules``
-            or ``.venv`` that are expensive to recreate per worktree.
+        symlink_dirs: Directory names or relative paths to symlink from
+            repo_root into the worktree.  Useful for large, read-heavy
+            directories like ``node_modules``, ``.venv``, ``dist/``, or
+            ``build/`` that are expensive to recreate per worktree.
+
+            **OS caveats:**
+
+            - **macOS / Linux:** Symlinks work natively with no restrictions.
+            - **Windows:** Requires Developer Mode enabled or Administrator
+              privileges to create symlinks.  When unavailable, ``OSError``
+              is caught and logged as a warning — the worktree remains usable
+              without the symlinked directories (agents may need to reinstall
+              dependencies, increasing setup time).
+            - **Cross-filesystem:** On Windows, symlinks across different
+              drives (e.g. ``C:`` → ``D:``) need special privileges and may
+              fail with ``EXDEV``.  On Unix, cross-device symlinks are
+              supported by the kernel, so this is not an issue.
+            - **Mixed-OS teams:** If the same repo is shared between macOS
+              and Windows agents, expect different behavior.  Windows agents
+              without symlink support will duplicate directories, consuming
+              additional disk space and setup time.
+
         copy_files: File names (relative to repo root) to copy into the
             worktree.  Suitable for ``.env`` files that should not be shared
             via symlink (each agent may write its own port/secret overrides).
@@ -140,6 +159,7 @@ def setup_worktree_env(
             logger.debug("Skipping symlink for %r: target already exists", dir_name)
             continue
         try:
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.symlink_to(source)
             logger.info("Symlinked worktree/%s -> %s", dir_name, source)
         except OSError as exc:

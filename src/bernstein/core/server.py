@@ -1165,6 +1165,11 @@ def create_app(
     application.include_router(gateway_router)
     application.state.mcp_gateway = None  # type: ignore[attr-defined]
 
+    # SLO and error budget endpoints
+    from bernstein.core.routes.slo import router as slo_router
+
+    application.include_router(slo_router)
+
     return application
 
 

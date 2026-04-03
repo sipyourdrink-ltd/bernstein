@@ -2,6 +2,45 @@
 
 All notable project changes are tracked here (code + docs).
 
+## [1.4.11] — 2026-04-03
+
+### Added
+- **Bernstein doctor** — comprehensive pre-flight health check: adapters, API keys, ports, `.sdd/` integrity, MCP servers. Auto-repair mode with `--fix`.
+- **Per-agent token progress** — real-time token usage tracking per spawned agent, surfaced in `bernstein status`.
+- **Context injection token budget** — explicit budgets for injected context (files, lessons, RAG chunks) with graceful truncation and priority ordering.
+- **Output style customization** — configurable agent output format via markdown templates.
+- **Installation mismatch detection** — detects gaps between expected and installed adapter capabilities.
+- **API preconnect warmup** — connection warmup before heavy runs to reduce first-request latency.
+- **Worker badge identity** — process identification visible in `bernstein ps` and Activity Monitor.
+- **TUI keybinding system** — configurable keyboard shortcuts in the Textual dashboard.
+- **Progressive permission prompts** — per-agent permission levels for fine-grained control.
+- **Activity tracking metrics** — session-level activity statistics and agent usage patterns.
+- **Away summary generation** — summarize what happened while you were away.
+- **Commit attribution stats** — per-agent commit statistics.
+- **Session analytics** — cumulative insights across runs.
+- **Settings snapshot in traces** — agent settings preserved in execution traces.
+- **Side question support** — agents can ask clarifying questions mid-task.
+- **Diff folding display** — folded diff rendering in agent output.
+- **Word-level diff rendering** — character-level change highlighting.
+- **Contextual tips system** — in-context hints for agents.
+- **Session tag system** — tag and filter runs.
+- **Rename session** — session renaming command.
+- **Security review command** — `bernstein security-review` for vulnerability assessment.
+- **Cumulative progress tracking** — progress tracking across runs.
+- **Plugin trust warning** — warns on unverified plugins.
+- **Plugin error reporting** — improved error diagnostics for plugin failures.
+- **Extra usage provisioning** — additional usage quota management.
+- **Truecolor mode detection** — automatic terminal color capability detection.
+- **Dirty flag layout caching** — caching optimizations for dirty project detection.
+- **Release notes display** — show release notes on startup.
+
+### Fixed
+- Context warnings in `bernstein doctor` output for better diagnostics.
+- Circuit breaker for repeated compact failures — prevents agent thrashing.
+
+### Changed
+- Documentation overhaul: README, GETTING_STARTED, ARCHITECTURE, FEATURE_MATRIX, BENCHMARKS, CHANGELOG, CONTRIBUTING all rewritten against v1.4.11 codebase.
+
 ## [1.4.9] — 2026-04-01
 
 ### Added
@@ -146,22 +185,6 @@ All notable project changes are tracked here (code + docs).
 - All documentation references to `bernstein catalog` updated to `bernstein agents`
 - Removed stale "(default)" label from Claude adapter docs (default is now `auto`)
 
-### Architecture (code changes reflected in docs)
-- Routes decomposition: core/routes/ with 11 route modules
-- Orchestrator decomposition: tick_pipeline.py, task_lifecycle.py, agent_lifecycle.py
-- Agent discovery: agent_discovery.py with multi-source detection
-- Quality gates: quality_gates.py for pre-merge verification
-- Rule enforcement: rule_enforcer.py for policy compliance
-- Token monitor: token_monitor.py for real-time token tracking
-- Approval system: approval.py for gated operations
-- MCP integration: mcp_manager.py and mcp_registry.py
-- Cascade router: cascade_router.py for multi-provider routing
-- Batch router: batch_router.py for task batching
-- Circuit breaker: circuit_breaker.py for provider failure handling
-- Semantic cache: semantic_cache.py for prompt deduplication
-- Cross-model verifier: cross_model_verifier.py
-- Store backends: store_postgres.py, store_redis.py, store_factory.py
-
 ## [0.1.0] — 2026-03-28
 
 ### Added
@@ -187,14 +210,3 @@ All notable project changes are tracked here (code + docs).
 - README: test count badge, license badge, benchmark badge
 - Getting Started: fixed test command to use isolated runner
 - Comparison table: added cost budgeting and GitHub Action rows
-
-### Architecture (code changes reflected in docs)
-- CostTracker with BudgetStatus and GET /costs/{run_id} endpoint
-- CIFixPipeline with CILogParser protocol and GitHubActionsParser
-- MCPManager for server lifecycle (start/stop/health check)
-- Textual TUI app with TaskListWidget, AgentLogWidget, StatusBar
-- Process visibility: `bernstein-worker` wrapper, `setproctitle`
-- Prometheus `/metrics` endpoint
-- Pluggy-based plugin system with 6 hook points
-- Isolated test runner (`scripts/run_tests.py`) replacing raw pytest
-- Pyright strict: 780 → 0 errors

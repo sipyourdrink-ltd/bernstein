@@ -93,4 +93,4 @@ Bernstein ships a lot of functionality, but several constraints still matter in 
 
 ---
 
-*Last updated: 2026-04-01.*
+*Last updated: 2026-04-03.*
