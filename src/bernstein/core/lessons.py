@@ -7,6 +7,9 @@ decay over time.
 Lessons are canonical — deduplication prevents storing the same lesson twice.
 Each lesson is immutable once filed, but can be updated with higher confidence
 if the same lesson appears again from a different source.
+
+Concurrent access is protected by the **memory lock protocol** (:mod:`memory_lock_protocol`):
+PID/mtime-based locks with stale lock recovery, and atomic writes with backup/rollback.
 """
 
 from __future__ import annotations
@@ -21,8 +24,8 @@ from typing import TYPE_CHECKING, Any
 from bernstein.core.memory_integrity import (
     build_entry_integrity,
     detect_memory_poisoning,
-    get_last_chain_hash,
 )
+from bernstein.core.memory_lock_protocol import MemoryFileGuard, guarded_memory_write
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,6 +118,10 @@ def file_lesson(
     its confidence instead of creating a duplicate. Otherwise creates a new
     lesson and appends it to lessons.jsonl.
 
+    Uses the memory lock protocol (PID/mtime lock + atomic write with backup)
+    for the read-check-write sequence to prevent race conditions when
+    concurrent agents file lessons simultaneously.
+
     Args:
         sdd_dir: Path to .sdd directory.
         task_id: Task ID that generated this lesson.
@@ -147,36 +154,42 @@ def file_lesson(
         )
         raise ValueError(f"Lesson rejected — {poison.reason}")
 
-    # Check for existing lesson with same tags + content (deduplication)
-    existing_lesson_id = _find_similar_lesson(lessons_path, tags_lower, content)
-    if existing_lesson_id:
-        # Update existing lesson's confidence and version
-        _update_lesson_confidence(lessons_path, existing_lesson_id, confidence_clamped)
-        return existing_lesson_id
+    # Use lock protocol for read-check-write (dedup or update decision)
+    with guarded_memory_write(lessons_path) as guard:
+        existing_lesson_id = _find_similar_lesson_in_content(guard.original_content, tags_lower, content)
+        if existing_lesson_id:
+            # Update existing lesson's confidence and version
+            _update_lesson_confidence_from_content(lessons_path, existing_lesson_id, confidence_clamped, guard)
+            return existing_lesson_id
 
-    # Create new lesson
-    lesson_id = str(uuid.uuid4())
-    lesson = Lesson(
-        lesson_id=lesson_id,
-        tags=tags_lower,
-        content=content,
-        confidence=confidence_clamped,
-        created_timestamp=now,
-        filed_by_agent=agent_id,
-        task_id=task_id,
-        version=1,
-    )
+        # Create new lesson
+        lesson_id = str(uuid.uuid4())
+        lesson = Lesson(
+            lesson_id=lesson_id,
+            tags=tags_lower,
+            content=content,
+            confidence=confidence_clamped,
+            created_timestamp=now,
+            filed_by_agent=agent_id,
+            task_id=task_id,
+            version=1,
+        )
 
-    # Compute integrity fields (content hash + chain hash)
-    lesson_dict = asdict(lesson)
-    prev_chain_hash = get_last_chain_hash(lessons_path)
-    integrity = build_entry_integrity(lesson_dict, prev_chain_hash)
-    lesson_dict.update(integrity.as_dict())
+        # Compute integrity fields (content hash + chain hash)
+        lesson_dict = asdict(lesson)
+        prev_chain_hash = _get_last_chain_hash_from_content(guard.original_content)
+        integrity = build_entry_integrity(lesson_dict, prev_chain_hash)
+        lesson_dict.update(integrity.as_dict())
 
-    # Append to JSONL file (atomic: one JSON object per line)
-    try:
-        with open(lessons_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(lesson_dict) + "\n")
+        # Build new content (append to existing or create new)
+        existing_text = guard.original_content or ""
+        new_line = json.dumps(lesson_dict) + "\n"
+        new_content = existing_text + new_line if existing_text else new_line
+
+        if existing_text:
+            guard.write_backup()
+        guard.write_new(new_content)
+
         logger.info(
             "Filed lesson %s from agent %s on task %s with tags %s (content_hash=%s…)",
             lesson_id,
@@ -185,9 +198,6 @@ def file_lesson(
             tags_lower,
             integrity.content_hash[:12],
         )
-    except OSError as e:
-        logger.error("Failed to write lesson to %s: %s", lessons_path, e)
-        raise
 
     return lesson_id
 
@@ -340,67 +350,6 @@ def _format_lesson_block(lesson: Lesson, now: float) -> str:
     return "\n".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _find_similar_lesson(
-    lessons_path: Path,
-    tags: list[str],
-    content: str,
-) -> str | None:
-    """Find an existing lesson with similar tags and content.
-
-    Uses Jaccard similarity on tags to detect duplicates. If Jaccard >= threshold,
-    considers the lessons identical and returns the existing lesson_id.
-
-    Args:
-        lessons_path: Path to lessons.jsonl.
-        tags: Tags for the new lesson.
-        content: Content for the new lesson.
-
-    Returns:
-        lesson_id of similar lesson, or None if no match found.
-    """
-    if not lessons_path.exists():
-        return None
-
-    new_tags_set = set(tags)
-    content_lower = content.lower()
-
-    try:
-        with open(lessons_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    lesson = _parse_lesson(data)
-                    if lesson is None:
-                        continue
-
-                    # Jaccard similarity on tags
-                    existing_tags = set(lesson.tags)
-                    if not (new_tags_set | existing_tags):
-                        continue
-
-                    intersection = len(new_tags_set & existing_tags)
-                    union = len(new_tags_set | existing_tags)
-                    jaccard = intersection / union if union > 0 else 0.0
-
-                    # If Jaccard is high AND content is similar, it's a duplicate
-                    if jaccard >= _DEDUP_THRESHOLD and _content_similarity(content_lower, lesson.content.lower()) > 0.8:
-                        return lesson.lesson_id
-                except (json.JSONDecodeError, TypeError, KeyError):
-                    continue
-    except OSError:
-        pass
-
-    return None
-
-
 def _content_similarity(s1: str, s2: str) -> float:
     """Compute a simple similarity score between two strings (0-1).
 
@@ -414,51 +363,6 @@ def _content_similarity(s1: str, s2: str) -> float:
     intersection = len(words1 & words2)
     union = len(words1 | words2)
     return intersection / union
-
-
-def _update_lesson_confidence(
-    lessons_path: Path,
-    lesson_id: str,
-    new_confidence: float,
-) -> None:
-    """Update confidence and version of an existing lesson.
-
-    Reads the entire file, finds the lesson, increments version and updates
-    confidence, then rewrites the file.
-
-    Args:
-        lessons_path: Path to lessons.jsonl.
-        lesson_id: ID of lesson to update.
-        new_confidence: New confidence score.
-    """
-    if not lessons_path.exists():
-        return
-
-    updated = False
-    lines: list[str] = []
-
-    try:
-        with open(lessons_path, encoding="utf-8") as f:
-            for line in f:
-                line_stripped = line.strip()
-                if not line_stripped:
-                    continue
-                try:
-                    data = json.loads(line_stripped)
-                    if data.get("lesson_id") == lesson_id:
-                        # Update confidence and version
-                        data["confidence"] = new_confidence
-                        data["version"] = data.get("version", 1) + 1
-                        updated = True
-                    lines.append(json.dumps(data))
-                except (json.JSONDecodeError, TypeError):
-                    lines.append(line_stripped)
-
-        if updated:
-            with open(lessons_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines) + "\n" if lines else "")
-    except OSError as e:
-        logger.error("Failed to update lesson confidence: %s", e)
 
 
 def _parse_lesson(data: Any) -> Lesson | None:
@@ -487,3 +391,135 @@ def _parse_lesson(data: Any) -> Lesson | None:
     except (KeyError, ValueError, TypeError) as e:
         logger.debug("Failed to parse lesson: %s", e)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers — content-based (lock-protocol aware)
+# ---------------------------------------------------------------------------
+
+
+def _find_similar_lesson_in_content(
+    content: str | None,
+    tags: list[str],
+    lesson_content: str,
+) -> str | None:
+    """Find an existing lesson with similar tags and content in raw JSONL text.
+
+    Like :func:`_find_similar_lesson` but operates on in-memory content
+    rather than reading from disk, for use within a locked section.
+
+    Args:
+        content: Raw JSONL file content (or None if empty).
+        tags: Tags for the new lesson.
+        lesson_content: Content for the new lesson.
+
+    Returns:
+        lesson_id of similar lesson, or None if no match found.
+    """
+    if not content:
+        return None
+
+    new_tags_set = set(tags)
+    content_lower = lesson_content.lower()
+
+    for line in content.split("\n"):
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        try:
+            data = json.loads(line_stripped)
+            lesson = _parse_lesson(data)
+            if lesson is None:
+                continue
+
+            # Jaccard similarity on tags
+            existing_tags = set(lesson.tags)
+            if not (new_tags_set | existing_tags):
+                continue
+
+            intersection = len(new_tags_set & existing_tags)
+            union = len(new_tags_set | existing_tags)
+            jaccard = intersection / union if union > 0 else 0.0
+
+            # If Jaccard is high AND content is similar, it's a duplicate
+            if jaccard >= _DEDUP_THRESHOLD and _content_similarity(content_lower, lesson.content.lower()) > 0.8:
+                return lesson.lesson_id
+        except (json.JSONDecodeError, TypeError, KeyError):
+            continue
+
+    return None
+
+
+def _update_lesson_confidence_from_content(
+    lessons_path: Path,
+    lesson_id: str,
+    new_confidence: float,
+    guard: MemoryFileGuard,
+) -> None:
+    """Update confidence and version of an existing lesson within a guard.
+
+    Modifies the content in the existing guard and writes the result atomically.
+
+    Args:
+        lessons_path: Path to lessons.jsonl (for logging).
+        lesson_id: ID of lesson to update.
+        new_confidence: New confidence score.
+        guard: The active memory file guard holding the current content.
+    """
+    original = guard.original_content
+    if original is None:
+        return
+
+    updated = False
+    lines: list[str] = []
+
+    for line in original.split("\n"):
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        try:
+            data = json.loads(line_stripped)
+            if data.get("lesson_id") == lesson_id:
+                # Update confidence and version
+                data["confidence"] = new_confidence
+                data["version"] = data.get("version", 1) + 1
+                updated = True
+            lines.append(json.dumps(data))
+        except (json.JSONDecodeError, TypeError):
+            lines.append(line_stripped)
+
+    if updated:
+        guard.write_backup()
+        new_content = "\n".join(lines) + "\n"
+        guard.write_new(new_content)
+        logger.debug("Updated confidence for lesson %s in %s", lesson_id, lessons_path)
+
+
+def _get_last_chain_hash_from_content(content: str | None) -> str:
+    """Extract the chain_hash of the last lesson entry from raw JSONL text.
+
+    Args:
+        content: Raw JSONL file content (or None if empty).
+
+    Returns:
+        The chain_hash of the last entry, or ``GENESIS_HASH`` for the first entry.
+    """
+    from bernstein.core.memory_integrity import GENESIS_HASH
+
+    if not content:
+        return GENESIS_HASH
+
+    last_hash: str = GENESIS_HASH
+    for line in content.split("\n"):
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        try:
+            data = json.loads(line_stripped)
+            ch = data.get("chain_hash")
+            if ch:
+                last_hash = ch
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    return last_hash
