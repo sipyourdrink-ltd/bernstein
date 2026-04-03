@@ -133,12 +133,17 @@ class CommandHook:
         self._run_command("on_agent_spawned", session_id=session_id, role=role, model=model)
 
     @hookimpl
-    def on_agent_reaped(self, session_id: str, role: str, outcome: str) -> None:
-        self._run_command("on_agent_reaped", session_id=session_id, role=role, outcome=outcome)
-
-    @hookimpl
     def on_evolve_proposal(self, proposal_id: str, title: str, verdict: str) -> None:
         self._run_command("on_evolve_proposal", proposal_id=proposal_id, title=title, verdict=verdict)
+
+    @hookimpl
+    def on_permission_denied(self, task_id: str, reason: str, tool: str, args: dict[str, Any]) -> str | None:
+        # Command hooks can't easily return a value to firstresult=True
+        # because the CommandHook wrapper currently returns None.
+        # For now, just log it. In a future iteration, we might parse stdout
+        # from the script to get a hint.
+        self._run_command("on_permission_denied", task_id=task_id, reason=reason, tool=tool, **args)
+        return None
 
 
 class PluginManager:
@@ -149,11 +154,10 @@ class PluginManager:
     1. **Entry points** — any installed package that registers hooks under
        the ``bernstein.plugins`` entry-point group.
     2. **bernstein.yaml** ``plugins:`` field — a list of dotted import paths
-       (``"my_package.my_module:MyPlugin"`` or just ``"my_module"``).
+       to be imported and registered as plugins.
 
-    All hook calls are fire-and-forget: exceptions raised by individual
-    plugins are caught, logged, and discarded so a misbehaving plugin cannot
-    crash the orchestrator.
+    The manager handles lifecycle hooks (task creation, agent spawning, etc.)
+    and provides a thread pool for background hooks.
     """
 
     def __init__(self) -> None:
@@ -163,9 +167,31 @@ class PluginManager:
         # Use a small pool for background hooks.
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="BernsteinPluginHook")
 
-    # ------------------------------------------------------------------
-    # Discovery
-    # ------------------------------------------------------------------
+    def fire_task_created(self, task_id: str, role: str, title: str) -> None:
+        self._safe_call("on_task_created", task_id=task_id, role=role, title=title)
+
+    def fire_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
+        self._safe_call("on_task_completed", task_id=task_id, role=role, result_summary=result_summary)
+
+    def fire_task_failed(self, task_id: str, role: str, error: str) -> None:
+        self._safe_call("on_task_failed", task_id=task_id, role=role, error=error)
+
+    def fire_agent_spawned(self, session_id: str, role: str, model: str) -> None:
+        self._safe_call("on_agent_spawned", session_id=session_id, role=role, model=model)
+
+    def fire_agent_reaped(self, session_id: str, role: str, outcome: str) -> None:
+        self._safe_call("on_agent_reaped", session_id=session_id, role=role, outcome=outcome)
+
+    def fire_evolve_proposal(self, proposal_id: str, title: str, verdict: str) -> None:
+        self._safe_call("on_evolve_proposal", proposal_id=proposal_id, title=title, verdict=verdict)
+
+    def fire_permission_denied(self, task_id: str, reason: str, tool: str, args: dict[str, Any]) -> str | None:
+        """Fire on_permission_denied hook and return first non-None hint."""
+        try:
+            return self._pm.hook.on_permission_denied(task_id=task_id, reason=reason, tool=tool, args=args)
+        except Exception as exc:
+            log.warning("on_permission_denied hook failed: %s", exc)
+            return None
 
     def discover_entry_points(self) -> None:
         """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""
@@ -336,76 +362,13 @@ class PluginManager:
             if is_background:
                 log.debug("Finished background hook %r", name)
 
-    def fire_task_created(self, task_id: str, role: str, title: str) -> None:
-        """Fire the ``on_task_created`` hook.
 
-        Args:
-            task_id: Unique task identifier.
-            role: Agent role.
-            title: Task title.
-        """
-        self._safe_call("on_task_created", task_id=task_id, role=role, title=title)
-
-    def fire_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
-        """Fire the ``on_task_completed`` hook.
-
-        Args:
-            task_id: Unique task identifier.
-            role: Agent role.
-            result_summary: Short description of the outcome.
-        """
-        self._safe_call("on_task_completed", task_id=task_id, role=role, result_summary=result_summary)
-
-    def fire_task_failed(self, task_id: str, role: str, error: str) -> None:
-        """Fire the ``on_task_failed`` hook.
-
-        Args:
-            task_id: Unique task identifier.
-            role: Agent role.
-            error: Error description.
-        """
-        self._safe_call("on_task_failed", task_id=task_id, role=role, error=error)
-
-    def fire_agent_spawned(self, session_id: str, role: str, model: str) -> None:
-        """Fire the ``on_agent_spawned`` hook.
-
-        Args:
-            session_id: Unique session identifier.
-            role: Agent role.
-            model: Model identifier.
-        """
-        self._safe_call("on_agent_spawned", session_id=session_id, role=role, model=model)
-
-    def fire_agent_reaped(self, session_id: str, role: str, outcome: str) -> None:
-        """Fire the ``on_agent_reaped`` hook.
-
-        Args:
-            session_id: Unique session identifier.
-            role: Agent role.
-            outcome: Outcome description.
-        """
-        self._safe_call("on_agent_reaped", session_id=session_id, role=role, outcome=outcome)
-
-    def fire_evolve_proposal(self, proposal_id: str, title: str, verdict: str) -> None:
-        """Fire the ``on_evolve_proposal`` hook.
-
-        Args:
-            proposal_id: Unique proposal identifier.
-            title: Proposal title.
-            verdict: Final verdict string.
-        """
-        self._safe_call("on_evolve_proposal", proposal_id=proposal_id, title=title, verdict=verdict)
-
-
-def get_plugin_manager(workdir: Path | None = None, *, reload: bool = False) -> PluginManager:
-    """Return the process-level singleton :class:`PluginManager`.
-
-    The manager is initialised lazily on first call, then cached.  Pass
-    ``reload=True`` to force re-discovery (useful in tests).
+def get_plugin_manager(workdir: Path | None = None, reload: bool = False) -> PluginManager:
+    """Return the global :class:`PluginManager` instance.
 
     Args:
-        workdir: Project root passed to :meth:`PluginManager.load_from_workdir`.
-        reload: If ``True``, discard the cached instance and rebuild.
+        workdir: Project root for loading local plugins.
+        reload: If True, discard any existing manager and create a new one.
 
     Returns:
         The (possibly freshly constructed) :class:`PluginManager`.
@@ -415,3 +378,4 @@ def get_plugin_manager(workdir: Path | None = None, *, reload: bool = False) -> 
         _manager = PluginManager()
         _manager.load_from_workdir(workdir)
     return _manager
+

@@ -446,13 +446,15 @@ def run_guardrails(
         for d in check_decisions:
             graph.add_decision(d)
             # Convert decision to legacy GuardrailResult for compatibility
-            results.append(_decision_to_result(check_name, d, bypass_enabled))
+            results.append(_decision_to_result(task.id, check_name, d, bypass_enabled))
             _record_result(task.id, results[-1], workdir)
 
     return results
 
 
-def _decision_to_result(check_name: str, d: PermissionDecision, bypass_enabled: bool) -> GuardrailResult:
+def _decision_to_result(
+    task_id: str, check_name: str, d: PermissionDecision, bypass_enabled: bool
+) -> GuardrailResult:
     """Translate a PermissionDecision to a legacy GuardrailResult."""
     passed = d.type == DecisionType.ALLOW
     # These types are considered "blocked" if not allowed
@@ -464,6 +466,21 @@ def _decision_to_result(check_name: str, d: PermissionDecision, bypass_enabled: 
         passed = True
         blocked = False
         detail = f"[BYPASSED] {d.reason}"
+
+    # Fire permission denied hook if blocked or ask (T468)
+    if not passed and not (bypass_enabled and not d.bypass_immune):
+        from bernstein.plugins.manager import get_plugin_manager
+
+        pm = get_plugin_manager()
+        # Fire hook to get optional retry hint
+        hint = pm.fire_permission_denied(
+            task_id=task_id,
+            reason=d.reason,
+            tool=check_name,
+            args={"files": d.files},
+        )
+        if hint:
+            detail += f"\n\nRetry Hint: {hint}"
 
     return GuardrailResult(
         check=check_name,

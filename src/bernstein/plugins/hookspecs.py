@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from bernstein.plugins import hookspec
 
 
@@ -90,4 +92,21 @@ class BernsteinSpec:
             proposal_id: Unique proposal identifier.
             title: Proposal title.
             verdict: Final verdict (e.g. ``"accepted"``, ``"rejected"``).
+        """
+
+    @hookspec(firstresult=True)
+    def on_permission_denied(self, task_id: str, reason: str, tool: str, args: dict[str, Any]) -> str | None:
+        """Called when a tool or action permission is denied.
+
+        Implementations can return a structured retry hint (e.g. a safer command
+        or narrowed path) to be surfaced to the agent or UI.
+
+        Args:
+            task_id: Unique task identifier.
+            reason: Why the permission was denied.
+            tool: Tool or action name that was blocked.
+            args: Redacted/safe arguments of the blocked call.
+
+        Returns:
+            Optional retry hint string.
         """
