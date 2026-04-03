@@ -18,6 +18,7 @@ Unparseable = "Unparseable"
 
 # Proper nouns and product names
 Hashi = "Hashi"      # HashiCorp
+certifi = "certifi"  # Python CA certificate package
 
 [default.extend-identifiers]
 # Truncated benchmark task names (generated data)
