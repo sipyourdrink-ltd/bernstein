@@ -22,6 +22,7 @@ from bernstein.core.always_allow import (
 )
 from bernstein.core.license_scanner import check_license_obligations
 from bernstein.core.models import GuardrailResult, Task
+from bernstein.core.permission_rules import PermissionRuleEngine
 from bernstein.core.permissions import AgentPermissions, check_file_permissions
 from bernstein.core.policy_engine import DecisionGraph, DecisionType, PermissionDecision
 
@@ -584,6 +585,27 @@ def check_always_allow_tool(
             if result.matched:
                 return result
     return AlwaysAllowMatch(matched=False, reason=f"No always-allow rule matched {tool_name}")
+
+
+def check_permission_rules(
+    tool_name: str,
+    tool_args: dict[str, Any],
+    engine: PermissionRuleEngine,
+) -> PermissionDecision | None:
+    """Evaluate a tool call against the permission rule engine.
+
+    Returns a :class:`PermissionDecision` when a rule matches, or ``None``
+    when no rule applies (so the caller can fall through to other checks).
+
+    Args:
+        tool_name: Name of the tool being invoked.
+        tool_args: Tool invocation arguments dict.
+        engine: Loaded :class:`PermissionRuleEngine`.
+
+    Returns:
+        A ``PermissionDecision`` if a rule matched, else ``None``.
+    """
+    return engine.evaluate_to_decision(tool_name, tool_args)
 
 
 def run_guardrails(
