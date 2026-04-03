@@ -926,18 +926,19 @@ def reap_dead_agents(
         # Heartbeat proxy: refresh heartbeat_ts using multiple signals.
         # The PID from Popen may refer to a wrapper process that exits while
         # the actual CLI agent (claude/qwen) continues as a child.  We check
-        # three signals in priority order:
+        # four signals — if ANY signal indicates activity, the agent is alive:
         #   1. Process liveness (PID alive → definitely working)
-        #   2. Heartbeat file (agents write these every 30s via background loop)
-        #   3. Log file growth (fallback — log mtime within last 60s)
+        #   2. Heartbeat file mtime
+        #   3. Log file mtime
+        #   4. Worktree directory mtime (agent writing/reading files)
+        _hb_freshness_s = _IDLE_HEARTBEAT_THRESHOLD_S * 0.8
+        _heartbeat_refreshed = False
+
         if _is_process_alive(session.pid):
             session.heartbeat_ts = now
-        else:
-            _heartbeat_refreshed = False
-            # Check heartbeat file written by the agent's background loop.
-            # Use a generous freshness window — agents may take time to start
-            # writing heartbeats, especially qwen which boots slowly.
-            _hb_freshness_s = _IDLE_HEARTBEAT_THRESHOLD_S * 0.8
+            _heartbeat_refreshed = True
+
+        if not _heartbeat_refreshed:
             _hb_path = orch._workdir / ".sdd" / "runtime" / "heartbeats" / f"{session.id}.json"
             try:
                 if _hb_path.exists() and (now - _hb_path.stat().st_mtime) < _hb_freshness_s:
@@ -945,14 +946,26 @@ def reap_dead_agents(
                     _heartbeat_refreshed = True
             except OSError:
                 pass
-            # Fallback: check if log file grew recently
-            if not _heartbeat_refreshed:
-                _log_path = orch._workdir / ".sdd" / "worktrees" / session.id / ".sdd" / "runtime" / f"{session.id}.log"
-                try:
-                    if _log_path.exists() and (now - _log_path.stat().st_mtime) < _hb_freshness_s:
-                        session.heartbeat_ts = now
-                except OSError:
-                    pass
+
+        if not _heartbeat_refreshed:
+            _log_path = orch._workdir / ".sdd" / "worktrees" / session.id / ".sdd" / "runtime" / f"{session.id}.log"
+            try:
+                if _log_path.exists() and (now - _log_path.stat().st_mtime) < _hb_freshness_s:
+                    session.heartbeat_ts = now
+                    _heartbeat_refreshed = True
+            except OSError:
+                pass
+
+        # Fallback: check worktree .git dir mtime — git operations (checkout,
+        # commit) update this, proving the agent is actively working.
+        if not _heartbeat_refreshed:
+            _wt_git = orch._workdir / ".sdd" / "worktrees" / session.id / ".git"
+            try:
+                if _wt_git.exists() and (now - _wt_git.stat().st_mtime) < _hb_freshness_s:
+                    session.heartbeat_ts = now
+                    _heartbeat_refreshed = True
+            except OSError:
+                pass
 
         # Heartbeat timeout
         age = now - session.heartbeat_ts
