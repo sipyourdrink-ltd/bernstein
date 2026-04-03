@@ -468,12 +468,18 @@ class CatalogRegistry:
     def match(self, role: str, task_description: str) -> CatalogAgent | None:
         """Find the best catalog agent for a role and task description.
 
-        Matching strategy:
-        1. Collect all agents whose ``role`` exactly matches *role*.
-        2. Among those, rank by capability overlap with *task_description*
-           (capabilities weighted 2x), then by ``priority``.
-        3. If no exact role match, fall back to capability + description
-           keyword matching across all agents.
+        Three-stage matching strategy:
+
+        1. **Exact role** — agents whose ``role`` field matches *role*.
+           Ranked by capability overlap with *task_description*, then
+           ``priority``.
+        2. **Affine role** — agents whose role is related to *role* (e.g.
+           ``backend`` is affine to ``architect``).  A role-affinity bonus
+           replaces the old unrestricted fuzzy search so that agents from
+           unrelated domains (marketing, brand, etc.) are never selected.
+        3. **Keyword fallback** — only among affine candidates, score by
+           capability and description keyword overlap.  Requires a minimum
+           composite score of ``_MIN_FUZZY_SCORE`` to prevent weak matches.
 
         Args:
             role: Bernstein role name to match (e.g. ``"security"``).
@@ -490,7 +496,6 @@ class CatalogRegistry:
         keywords = {w for w in desc_lower.split() if len(w) > 3}
 
         # 1. Exact role match — rank by capability overlap then priority.
-        #    Exact role wins over fuzzy candidates by design.
         exact: list[CatalogAgent] = [a for a in self.loaded_agents if a.role == role]
         if exact:
             if keywords:
@@ -518,28 +523,61 @@ class CatalogRegistry:
         if not keywords:
             return None
 
-        # 2. Fuzzy match: capabilities (x2) + description keyword overlap.
-        #    Keep only positive overlap so unrelated agents are excluded.
-        scored: list[tuple[int, CatalogAgent]] = []
+        # 2. Affinity-gated fuzzy match — only consider agents from related roles.
+        affine_roles = _ROLE_AFFINITY.get(role, frozenset())
+        scored: list[tuple[float, CatalogAgent]] = []
         for agent in self.loaded_agents:
+            # Gate: skip agents with no role relationship
+            if agent.role != role and agent.role not in affine_roles:
+                continue
+
             cap_score = _capability_score(agent, desc_lower, keywords) * 2
             desc_score = len(keywords & {w for w in agent.description.lower().split() if len(w) > 3})
-            total = cap_score + desc_score
-            if total > 0:
+            affinity_bonus = _AFFINITY_BONUS_EXACT if agent.role == role else _AFFINITY_BONUS_RELATED
+            total = cap_score + desc_score + affinity_bonus
+
+            if total >= _MIN_FUZZY_SCORE:
                 scored.append((total, agent))
 
         if not scored:
+            logger.debug("No affine catalog match for role '%s'", role)
             return None
 
         scored.sort(key=lambda t: (-t[0], t[1].priority))
         winner = scored[0][1]
-        logger.debug(
-            "Catalog fuzzy match: agent '%s' (role=%s) for role '%s'",
+        logger.info(
+            "Catalog affine match: '%s' (role=%s, score=%.0f) for requested role '%s'",
             winner.name,
             winner.role,
+            scored[0][0],
             role,
         )
         return winner
+
+
+# ---------------------------------------------------------------------------
+# Role affinity — which roles can substitute for each other
+# ---------------------------------------------------------------------------
+
+# Each role maps to a frozenset of roles that are "close enough" to consider
+# in fuzzy matching.  This prevents cross-domain disasters like selecting
+# "Brand Guardian" for "architect" or "Code Reviewer" for "devops".
+_ROLE_AFFINITY: dict[str, frozenset[str]] = {
+    "backend": frozenset({"architect", "ml-engineer"}),
+    "frontend": frozenset({"architect"}),
+    "architect": frozenset({"backend", "frontend"}),
+    "qa": frozenset({"reviewer", "security"}),
+    "security": frozenset({"qa", "devops"}),
+    "devops": frozenset({"backend", "security"}),
+    "reviewer": frozenset({"qa", "security"}),
+    "docs": frozenset({"manager"}),
+    "manager": frozenset({"architect", "docs"}),
+    "ml-engineer": frozenset({"backend"}),
+}
+
+_AFFINITY_BONUS_EXACT = 5  # bonus when agent.role == requested role
+_AFFINITY_BONUS_RELATED = 1  # bonus for affine (related) role
+_MIN_FUZZY_SCORE = 3  # minimum composite score to accept a fuzzy match
 
 
 def _capability_score(agent: CatalogAgent, desc_lower: str, keywords: set[str]) -> int:

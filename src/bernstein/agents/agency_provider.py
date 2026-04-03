@@ -24,7 +24,133 @@ logger = logging.getLogger(__name__)
 _DIVISION_ROLE_MAP: dict[str, str] = {
     "engineering": "backend",
     "design": "architect",
+    "testing": "qa",
+    "product": "manager",
+    "project-management": "manager",
+    "specialized": "backend",
 }
+
+# Divisions that are clearly NOT software engineering — agents from these
+# divisions are skipped entirely to avoid polluting the catalog with
+# irrelevant matches (e.g. "Brand Guardian" for an architect role).
+_NON_SOFTWARE_DIVISIONS: frozenset[str] = frozenset(
+    {
+        "marketing",
+        "sales",
+        "support",
+        "paid-media",
+        "strategy",
+        "academic",
+        "spatial-computing",
+        "game-development",
+        "integrations",
+        "examples",
+    }
+)
+
+# Keyword signals for each Bernstein role.  Each entry is a list of
+# (phrase, weight) pairs scored against the agent's NAME only (not the full
+# description, which contains too many false-positive keywords like
+# "security guardrails" on a non-security agent).
+#
+# Multi-word phrases get higher weight to prevent false positives.
+_ROLE_SIGNALS_NAME: dict[str, list[tuple[str, int]]] = {
+    "reviewer": [
+        ("code review", 10),
+        ("reviewer", 8),
+    ],
+    "qa": [
+        ("test", 6),
+        ("tester", 8),
+        ("qa ", 8),
+        ("quality", 6),
+        ("auditor", 4),
+    ],
+    "security": [
+        ("security", 10),
+        ("threat", 8),
+        ("blockchain security", 10),
+    ],
+    "devops": [
+        ("devops", 10),
+        ("automator", 6),
+        ("sre", 8),
+        ("site reliability", 10),
+        ("orchestrator", 4),
+        ("data engineer", 8),
+        ("data consolidation", 6),
+    ],
+    "frontend": [
+        ("frontend", 10),
+        ("front-end", 10),
+        ("ui ", 8),
+        ("ux ", 8),
+        ("ui designer", 10),
+        ("ux architect", 10),
+        ("ux researcher", 8),
+    ],
+    "backend": [
+        ("backend", 10),
+        ("back-end", 10),
+        ("api ", 6),
+        ("database", 6),
+    ],
+    "architect": [
+        ("software architect", 12),
+        ("system architect", 12),
+        ("architect", 6),
+    ],
+    "docs": [
+        ("technical writ", 10),
+        ("documentation", 8),
+    ],
+    "manager": [
+        ("project manage", 10),
+        ("product manage", 10),
+        ("project shepherd", 8),
+        ("sprint", 6),
+    ],
+    "ml-engineer": [
+        ("machine learning", 10),
+        ("ml ", 8),
+        ("ai engineer", 10),
+        ("deep learning", 10),
+        ("data scien", 8),
+    ],
+}
+
+# Phrases in the agent NAME that indicate it is NOT a software engineering
+# agent.  If any phrase matches, the agent is skipped during loading.
+_NON_SOFTWARE_NAME_SIGNALS: list[str] = [
+    "brand",
+    "marketing",
+    "sales",
+    "recruitment",
+    "consulting",
+    "presales",
+    "training designer",
+    "supply chain",
+    "study abroad",
+    "cultural intelligence",
+    "korean business",
+    "french consulting",
+    "nudge engine",
+    "trend research",
+    "whimsy",
+    "visual storytell",
+    "image prompt",
+    "inclusive visuals",
+    "feedback synthesizer",
+    "experiment tracker",
+    "healthcare marketing",
+    "studio operations",
+    "studio producer",
+    "report distribution",
+    "identity graph",
+    "accounts payable",
+    "sales data",
+    "filament",
+]
 
 _DEFAULT_AGENCY_SOURCE = "https://github.com/msitarzewski/agency-agents"
 _SYNC_TTL_SECONDS = 86400  # 24 hours
@@ -42,8 +168,8 @@ def _slugify(name: str) -> str:
 def _division_to_role(division: str) -> str:
     """Map an Agency division name to a Bernstein role string.
 
-    The base of the division (part before the first ``_``) is looked up in
-    ``_DIVISION_ROLE_MAP``; if absent, the base itself is used as the role.
+    Checks the full division name first, then the base component (part before
+    the first ``_`` or ``-``).
 
     Args:
         division: Subdirectory name from the Agency repo (e.g. ``"engineering"``,
@@ -52,8 +178,72 @@ def _division_to_role(division: str) -> str:
     Returns:
         Bernstein role string.
     """
-    base = division.split("_")[0]
+    normalised = division.lower().replace(" ", "-")
+    if normalised in _DIVISION_ROLE_MAP:
+        return _DIVISION_ROLE_MAP[normalised]
+    base = re.split(r"[_-]", normalised)[0]
     return _DIVISION_ROLE_MAP.get(base, base)
+
+
+def _is_non_software_agent(name: str) -> bool:
+    """Return True if the agent name matches a non-software-engineering signal."""
+    name_lower = name.lower()
+    return any(sig in name_lower for sig in _NON_SOFTWARE_NAME_SIGNALS)
+
+
+def _infer_role(
+    name: str,
+    description: str,
+    capabilities: list[str],
+    division_role: str,
+) -> str:
+    """Infer the best Bernstein role from agent metadata.
+
+    Scores the agent's **name** against keyword signals for each Bernstein
+    role.  Only the name is used (not description) because descriptions
+    contain too many incidental keywords that cause false positives
+    (e.g. "security guardrails" on a cost-optimization agent).
+
+    If a clear winner emerges (score >= 6), that role overrides the
+    division-based default.
+
+    Args:
+        name: Agent display name (e.g. "Code Reviewer").
+        description: Agent description text (reserved for future use).
+        capabilities: List of capability keywords (reserved for future use).
+        division_role: Fallback role derived from the Agency division.
+
+    Returns:
+        The inferred Bernstein role, or *division_role* if no signal is strong
+        enough.
+    """
+    name_lower = name.lower()
+
+    best_role = division_role
+    best_score = 0
+
+    for role, signals in _ROLE_SIGNALS_NAME.items():
+        score = 0
+        for phrase, weight in signals:
+            if phrase in name_lower:
+                score += weight
+        if score > best_score:
+            best_score = score
+            best_role = role
+
+    # Only override division role if signal is strong enough.
+    if best_score >= 6:
+        if best_role != division_role:
+            logger.debug(
+                "Role override for '%s': %s -> %s (score=%d)",
+                name,
+                division_role,
+                best_role,
+                best_score,
+            )
+        return best_role
+
+    return division_role
 
 
 class AgencyProvider:
@@ -139,8 +329,13 @@ class AgencyProvider:
         if not name:
             return []
 
+        # Skip agents that are clearly not software engineering personas
+        if _is_non_software_agent(name):
+            logger.debug("Skipping non-software agent: '%s'", name)
+            return []
+
         description: str = str(fm.get("description") or "")
-        role = _division_to_role(division)
+        division_role = _division_to_role(division)
         agent_id = f"agency:{_slugify(name)}"
 
         # Extract capabilities list (e.g. [api-design, authentication, jwt])
@@ -150,6 +345,9 @@ class AgencyProvider:
         # Extract preferred tools list (e.g. [pytest, ruff, mypy])
         raw_tools: list[Any] = list(fm.get("tools") or [])
         tools: list[str] = [str(t) for t in raw_tools]
+
+        # Infer role from agent metadata instead of relying solely on division
+        role = _infer_role(name, description, capabilities, division_role)
 
         return [
             CatalogAgent(
@@ -183,6 +381,9 @@ class AgencyProvider:
             if not division_dir.is_dir():
                 continue
             division = division_dir.name
+            if division.lower() in _NON_SOFTWARE_DIVISIONS:
+                logger.debug("Skipping non-software division: %s", division)
+                continue
             for md_file in sorted(division_dir.glob("*.md")):
                 agents.extend(self._parse_file(md_file, division))
 

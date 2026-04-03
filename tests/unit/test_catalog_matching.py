@@ -85,8 +85,9 @@ def test_match_fuzzy_by_description_keywords() -> None:
     )
     registry.register_agent(agent)
 
-    # Role is "analyst" — no exact match; task description shares keywords
-    result = registry.match("analyst", "Review authentication vulnerabilities in API")
+    # "qa" is affine to "security" — fuzzy match should find SecurityReviewer
+    # via keyword overlap on "authentication" and "vulnerabilities"
+    result = registry.match("qa", "Review authentication vulnerabilities in API")
     assert result is not None
     assert result.name == "SecurityReviewer"
 
@@ -100,13 +101,14 @@ def test_match_fuzzy_no_keyword_overlap_returns_none() -> None:
 
 
 def test_match_fuzzy_picks_highest_overlap() -> None:
-    """When multiple agents have keyword overlap, the one with most shared words wins."""
+    """When multiple affine agents have keyword overlap, the one with most shared words wins."""
     registry = CatalogRegistry()
-    weak = _make_agent("WeakMatch", "other", "General backend service developer.")
-    strong = _make_agent("StrongMatch", "specialist", "Backend REST API service developer.")
+    weak = _make_agent("WeakMatch", "architect", "General backend service developer.")
+    strong = _make_agent("StrongMatch", "architect", "Backend REST API service developer.")
     registry.register_agent(weak)
     registry.register_agent(strong)
 
+    # "architect" is affine to "backend" — fuzzy match ranks by keyword overlap
     result = registry.match("backend", "Build backend REST API service")
     assert result is not None
     assert result.name == "StrongMatch"
