@@ -503,9 +503,11 @@ class Orchestrator:
         self._convergence_guard = ConvergenceGuard(config.convergence)
 
         # AgentOps: SLO tracking, error budget, runbooks, incident response.
-        # Reset error budget each run — stale failure data from prior runs
-        # should not throttle a fresh run's agent capacity.
-        self._slo_tracker = SLOTracker()  # fresh tracker, no persistence from prior runs
+        # Reset error budget AND metric collector each run — stale failure
+        # data from prior runs must not throttle a fresh run's agent capacity.
+        self._slo_tracker = SLOTracker()
+        # Clear prior-run task metrics so error budget starts at 0/0
+        get_collector().reset_task_metrics()
         self._runbook_engine = RunbookEngine()
         self._incident_manager = IncidentManager()
         self._consecutive_failures: int = 0
