@@ -9,10 +9,14 @@ Nested conditionals are NOT supported in v1.
 
 from __future__ import annotations
 
+import logging
 import re
+import subprocess
 from pathlib import Path
 
 from bernstein import _BUNDLED_TEMPLATES_DIR  # type: ignore[reportPrivateUsage]
+
+logger = logging.getLogger(__name__)
 
 
 class TemplateError(Exception):
@@ -26,6 +30,7 @@ _DEFAULT_TEMPLATES_DIR = _BUNDLED_TEMPLATES_DIR / "roles"
 _IF_BLOCK_RE = re.compile(r"\{\{#IF\s+(\w+)\}\}(.*?)\{\{/IF\}\}", re.DOTALL)
 _IF_NOT_BLOCK_RE = re.compile(r"\{\{#IF_NOT\s+(\w+)\}\}(.*?)\{\{/IF_NOT\}\}", re.DOTALL)
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
+_SHELL_CMD_RE = re.compile(r"!" + "`" + r"([^`]+)" + "`")
 
 
 def _resolve_conditionals(template: str, context: dict[str, str]) -> str:
@@ -52,6 +57,47 @@ def _resolve_conditionals(template: str, context: dict[str, str]) -> str:
     result = _IF_BLOCK_RE.sub(_replace_if, template)
     result = _IF_NOT_BLOCK_RE.sub(_replace_if_not, result)
     return result
+
+
+def _execute_shell_commands(template: str) -> str:
+    """Execute shell command tokens and substitute their stdout (T678).
+
+    The ``!`command` syntax embeds command output into the template.
+    Commands are executed with a 10-second timeout.
+
+    Args:
+        template: Template with ``!`command` tokens.
+
+    Returns:
+        Template with command output substituted.
+    """
+
+    def _run_cmd(match: re.Match[str]) -> str:
+        cmd = match.group(1).strip()
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "Shell command in template exited %d: %s",
+                    result.returncode,
+                    result.stderr[:200],
+                )
+                return f"[shell command failed: {cmd}]"
+            return result.stdout.strip()
+        except subprocess.TimeoutExpired:
+            logger.warning("Shell command in template timed out: %s", cmd)
+            return f"[shell command timed out: {cmd}]"
+        except Exception as exc:
+            logger.warning("Shell command in template failed: %s: %s", cmd, exc)
+            return f"[shell command error: {cmd}]"
+
+    return _SHELL_CMD_RE.sub(_run_cmd, template)
 
 
 def _substitute_placeholders(template: str, context: dict[str, str]) -> str:
@@ -83,7 +129,8 @@ def render_template(template_path: Path, context: dict[str, str]) -> str:
 
     Processing order:
       1. Resolve {{#IF VAR}}...{{/IF}} and {{#IF_NOT VAR}}...{{/IF_NOT}} blocks.
-      2. Substitute remaining {{VAR}} placeholders.
+      2. Execute ``!`command` shell command tokens.
+      3. Substitute remaining {{VAR}} placeholders.
 
     Args:
         template_path: Absolute or relative path to the template file.
@@ -106,6 +153,7 @@ def render_template(template_path: Path, context: dict[str, str]) -> str:
         raise TemplateError(f"Cannot read template {path}: {exc}") from exc
 
     rendered = _resolve_conditionals(raw, context)
+    rendered = _execute_shell_commands(rendered)
     rendered = _substitute_placeholders(rendered, context)
     return rendered
 
