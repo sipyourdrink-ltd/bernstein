@@ -364,7 +364,7 @@ class TestQwenAdapterSpawn:
         inner = _inner_cmd(popen.call_args.args[0])
         assert "-y" in inner
 
-    def test_default_provider_maps_sonnet_to_coder_model(self, tmp_path: Path) -> None:
+    def test_default_provider_maps_sonnet_to_qwen_plus(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=303)
         settings_mock = _make_llm_settings()
@@ -380,9 +380,9 @@ class TestQwenAdapterSpawn:
             )
         inner = _inner_cmd(popen.call_args.args[0])
         assert "--model" in inner
-        assert inner[inner.index("--model") + 1] == "coder-model"
+        assert inner[inner.index("--model") + 1] == "qwen3.6-plus"
 
-    def test_default_provider_maps_opus_to_qwen_max(self, tmp_path: Path) -> None:
+    def test_default_provider_maps_opus_to_qwen_plus(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
         proc_mock = _make_popen_mock(pid=304)
         settings_mock = _make_llm_settings()
@@ -397,7 +397,7 @@ class TestQwenAdapterSpawn:
                 session_id="q4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert inner[inner.index("--model") + 1] == "qwen-max"
+        assert inner[inner.index("--model") + 1] == "qwen3.6-plus"
 
     def test_openrouter_provider_sets_auth_type(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
