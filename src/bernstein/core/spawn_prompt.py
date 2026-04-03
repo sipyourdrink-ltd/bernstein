@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re as _re
 import subprocess as _subprocess
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.context_recommendations import RecommendationEngine
@@ -21,6 +22,87 @@ if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Cache-safe parameters for forked agents
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CacheSafeParams:
+    """Parameters that forked agents must preserve for prompt-cache stability.
+
+    When an agent spawns a child (forked) agent, the cache key depends on
+    the system prompt prefix remaining identical.  This structure documents
+    which values MUST be preserved unchanged to keep the cache valid, and
+    which may vary per fork without breaking it.
+
+    Stable fields (must match parent for cache reuse):
+        role: Agent role name used for the role template.
+        templates_hash: SHA-256 hash of the templates directory contents.
+        project_context_hash: SHA-256 hash of ``.sdd/project.md``.
+        git_safety_protocol: The git safety rules injected into every prompt.
+        agent_protocol_prefix: Any protocol prefix shared across all agents.
+
+    Variable fields (allowed to differ without breaking the cache):
+        task_descriptions: Text describing the assigned tasks.
+        specialist_descriptions: Descriptions of available specialist agents.
+        fork_messages: Additional messages appended to the user content.
+        session_id: Agent session identifier for signal file paths.
+    """
+
+    # Stable fields (cache key depends on these)
+    role: str
+    templates_hash: str
+    project_context_hash: str
+    git_safety_protocol: str
+    agent_protocol_prefix: str = ""
+
+    # Variable fields (do NOT affect cache key)
+    task_descriptions: str = ""
+    specialist_descriptions: str = ""
+    fork_messages: list[str] = field(default_factory=list[str])
+    session_id: str = ""
+
+    def compute_cache_key(self) -> str:
+        """Compute the stable cache key from the invariant fields.
+
+        Returns:
+            SHA-256 hex digest of the cache-stable prefix.
+        """
+        import hashlib
+
+        stable = (
+            f"{self.role}\n"
+            f"{self.templates_hash}\n"
+            f"{self.project_context_hash}\n"
+            f"{self.git_safety_protocol}\n"
+            f"{self.agent_protocol_prefix}\n"
+        )
+        return hashlib.sha256(stable.encode("utf-8")).hexdigest()
+
+    def validate_against(self, parent: CacheSafeParams) -> list[str]:
+        """Compare this fork's stable fields against the parent's.
+
+        Args:
+            parent: The parent agent's cache-safe parameters.
+
+        Returns:
+            List of field names that have changed (cache break).
+        """
+        breaks: list[str] = []
+        stable_fields = (
+            "role",
+            "templates_hash",
+            "project_context_hash",
+            "git_safety_protocol",
+            "agent_protocol_prefix",
+        )
+        for field_name in stable_fields:
+            if getattr(self, field_name) != getattr(parent, field_name):
+                breaks.append(field_name)
+        return breaks
+
 
 # ---------------------------------------------------------------------------
 # Module-level file cache (mtime-keyed, automatically invalidates on change)
@@ -433,6 +515,43 @@ def _render_prompt(
         nudges_block = "\n## Operational nudges\n" + "\n".join(f"- {m}" for m in meta_messages) + "\n"
         named_sections.append(("meta nudges", nudges_block))
 
+    # Apply staged context collapse (T418): truncate → drop sections → strip metadata
+    try:
+        from bernstein.core.context_collapse import staged_context_collapse
+
+        collapse_result = staged_context_collapse(named_sections)
+        compressed = "".join(content for _, content in collapse_result.sections)
+        if collapse_result.steps:
+            total_freed = sum(s.tokens_freed for s in collapse_result.steps)
+            logger.info(
+                "Context collapsed: %d → %d tokens (%d freed, %d steps, %s)",
+                collapse_result.original_tokens,
+                collapse_result.compressed_tokens,
+                total_freed,
+                len(collapse_result.steps),
+                ", ".join(f"{s.stage.value}({s.section_name})" for s in collapse_result.steps[:5]),
+            )
+        if not collapse_result.within_budget:
+            logger.warning(
+                "Context collapse still above budget: %d tokens (critical sections exceed budget)",
+                collapse_result.compressed_tokens,
+            )
+        if not compressed:
+            raise RuntimeError("Context collapse produced empty prompt")
+        return compressed
+    except Exception as exc:
+        logger.debug(
+            "Staged context collapse failed, falling back to PromptCompressor: %s",
+            exc,
+        )
+        # Fallback: legacy lesson truncation + PromptCompressor
+        from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS
+
+        lesson_budget = DEFAULT_CATEGORY_BUDGETS.get("lessons", 5_000)
+        if lesson_context and (len(lesson_context) // 4) > lesson_budget:
+            logger.info("Truncating lessons: exceeded budget of %d tokens", lesson_budget)
+            lesson_context = lesson_context[: lesson_budget * 4] + "..."
+
     # Apply budget-aware prompt compression
     try:
         from bernstein.core.context_compression import PromptCompressor
@@ -515,6 +634,83 @@ def _render_fallback(
             return agent.prompt_body
 
     return f"You are a {role} specialist."
+
+
+# ---------------------------------------------------------------------------
+# Cache-safe params builder for forked agents
+# ---------------------------------------------------------------------------
+
+#: Stable prompt components that forked agents MUST preserve for cache reuse.
+_CACHEABLE_PROTOCOL_PREFIX = (
+    "## Agent protocol\n"
+    "All agents follow the Bernstein agent protocol:\n"
+    "- Work in an isolated git worktree on a branch named ``agent/<session_id>``.\n"
+    "- Check signal files (WAKEUP, SHUTDOWN, COMMAND) every 60 seconds.\n"
+    "- Report progress via heartbeat and mark tasks complete with curl.\n"
+    "- Never push to main; always create a PR.\n"
+)
+
+
+def build_cache_safe_params(
+    role: str,
+    templates_dir: Path,
+    workdir: Path,
+    *,
+    task_block: str = "",
+    specialist_block: str = "",
+    session_id: str = "",
+) -> CacheSafeParams:
+    """Build cache-safe parameters for a forked agent.
+
+    Computes hashes of stable prompt components so forked agents can
+    validate cache key alignment before spawning.
+
+    Stable fields (affect cache key):
+    - role: The agent's role name
+    - templates_hash: Hash of the templates directory
+    - project_context_hash: Hash of .sdd/project.md
+    - git_safety_protocol: The git safety rules
+    - agent_protocol_prefix: Protocol prefix shared across all agents
+
+    Variable fields (do NOT affect cache key):
+    - task_descriptions: Task-specific content
+    - specialist_descriptions: Specialist agent descriptions
+    - session_id: Unique session identifier
+
+    Args:
+        role: Agent role name (e.g. "backend", "qa").
+        templates_dir: Path to templates/roles/ directory.
+        workdir: Project working directory.
+        task_block: Task descriptions block for this fork.
+        specialist_block: Available specialist agents descriptions.
+        session_id: Agent session ID.
+
+    Returns:
+        A frozen ``CacheSafeParams`` with stable hashes computed.
+    """
+    import hashlib
+
+    # Compute templates_hash: hash all role template files
+    template_hash_data = hashlib.sha256()
+    if templates_dir.is_dir():
+        for tpl_file in sorted(templates_dir.rglob("*.md")):
+            template_hash_data.update(tpl_file.read_bytes())
+    templates_hash = template_hash_data.hexdigest()
+
+    # Compute project context hash
+    project_md = workdir / ".sdd" / "project.md"
+    project_context_hash = hashlib.sha256(project_md.read_bytes() if project_md.is_file() else b"").hexdigest()
+
+    return CacheSafeParams(
+        role=role,
+        templates_hash=templates_hash,
+        project_context_hash=project_context_hash,
+        git_safety_protocol=_render_git_safety_protocol(),
+        agent_protocol_prefix=_CACHEABLE_PROTOCOL_PREFIX,
+        task_descriptions=task_block,
+        specialist_descriptions=specialist_block,
+        session_id=session_id,
+    )
 
 
 # ---------------------------------------------------------------------------
