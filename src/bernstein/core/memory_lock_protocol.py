@@ -287,6 +287,49 @@ def _release_lock(lock_info: LockInfo) -> None:
     logger.debug("Released lock %s (PID %d)", lock_info.lock_file_path, lock_info.pid)
 
 
+def renew_lock(lock_info: LockInfo) -> bool:
+    """Renew a held lock by resetting its modification time.
+
+    Call periodically from long-running operations to prevent the lock
+    from expiring mid-write when the operation might exceed
+    ``DEFAULT_TTL_SECONDS``.  Only renews if the lock file still belongs
+    to the calling process.
+
+    On POSIX this is safe and race-free — if another process has already
+    reclaimed the lock (PID mismatch), the renewal is silently skipped
+    and the caller receives ``False``.
+
+    On Windows the same logic applies, but note that dead-PID detection
+    is unreliable there (PID recycling) so stale locks on Windows rely
+    solely on TTL expiry.
+
+    Args:
+        lock_info: The :class:`LockInfo` returned by :func:`_acquire_lock`.
+
+    Returns:
+        ``True`` if the lock was successfully renewed (mtime updated).
+        ``False`` if the lock no longer exists or belongs to a different PID.
+    """
+    if lock_info.pid != os.getpid():
+        return False
+
+    lock_path = lock_info.lock_file_path
+    if not lock_path.exists():
+        return False
+
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+        if data.get("pid") != lock_info.pid:
+            # Another process reclaimed the lock — do not touch it
+            return False
+        # Update mtime to reset the TTL clock
+        lock_path.touch()
+        logger.debug("Renewed lock %s (PID %d)", lock_path, lock_info.pid)
+        return True
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
 def _safe_unlink(path: Path | None) -> None:
     """Delete *path* if it exists; suppress errors."""
     if path is None:
