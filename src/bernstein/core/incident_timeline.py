@@ -319,7 +319,8 @@ def build_incident_timeline(
     try:
         timeline_path.write_text(json.dumps(timeline_data, indent=2), encoding="utf-8")
     except OSError as exc:
-        logger.warning("Failed to save incident timeline %s: %s", incident_id, exc)
+        safe_id = incident_id.replace("\n", "").replace("\r", "")[:100]
+        logger.warning("Failed to save incident timeline %s: %s", safe_id, exc)
 
     return timeline_data
 

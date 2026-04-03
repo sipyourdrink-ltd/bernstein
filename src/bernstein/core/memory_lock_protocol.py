@@ -241,7 +241,7 @@ def _acquire_lock(lock_path: Path, ttl_seconds: int) -> LockInfo:
                 fd = os.open(
                     str(lock_path),
                     os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o644,
+                    0o600,
                 )
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:

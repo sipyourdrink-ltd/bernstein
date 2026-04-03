@@ -218,9 +218,10 @@ async def github_webhook(request: Request) -> JSONResponse:
             head_branch: str = run.get("head_branch", "")
             retry_count = _count_ci_fix_attempts(store, head_branch)
             if retry_count >= MAX_CI_RETRIES:
+                safe_branch = head_branch.replace("\n", "").replace("\r", "")[:200]
                 logger.warning(
                     "CI fix retry cap reached for branch %r (%d/%d) — skipping",
-                    head_branch,
+                    safe_branch,
                     retry_count,
                     MAX_CI_RETRIES,
                 )
@@ -385,9 +386,10 @@ async def gitlab_webhook(request: Request) -> JSONResponse:
             ref = data.get("object_attributes", {}).get("ref", "")
             retry_count = _count_gitlab_ci_fix_attempts(store, ref)
             if retry_count >= MAX_CI_RETRIES:
+                safe_ref = ref.replace("\n", "").replace("\r", "")[:200]
                 logger.warning(
                     "CI fix retry cap reached for ref %r (%d/%d) — skipping",
-                    ref,
+                    safe_ref,
                     retry_count,
                     MAX_CI_RETRIES,
                 )
