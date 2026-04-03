@@ -50,6 +50,7 @@ class AdaptiveParallelism:
     _outcomes: list[_TaskOutcome] = field(default_factory=list)
     _low_error_since: float | None = None
     _last_adjustment_reason: str = "initial"
+    _slo_constrained_max: int | None = None  # Hard cap from SLO error-budget depletion
 
     _created_at: float = field(default_factory=time.time)
 
@@ -97,6 +98,21 @@ class AdaptiveParallelism:
             return (load1 / cpu_count) * 100.0
         except OSError:
             return 0.0
+
+    def set_slo_constraint(self, max_agents: int | None) -> None:
+        """Set the SLO error-budget cap on concurrent agents.
+
+        Args:
+            max_agents: Maximum agents allowed when SLO budget is depleted.
+                ``None`` clears the constraint (budget recovered).
+        """
+        prev = self._slo_constrained_max
+        self._slo_constrained_max = max_agents
+        if max_agents is not None and prev != max_agents:
+            self._last_adjustment_reason = "slo_budget"
+            logger.warning("Adaptive parallelism: SLO budget cap set to %d agents", max_agents)
+        elif max_agents is None and prev is not None:
+            logger.info("Adaptive parallelism: SLO budget cap cleared")
 
     def effective_max_agents(self) -> int:
         """Compute the effective max_agents for this tick.

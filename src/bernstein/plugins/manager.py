@@ -6,23 +6,38 @@ import importlib
 import json
 import logging
 import os
+import select
 import subprocess
+import sys
 import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import entry_points
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pluggy
 
 from bernstein.core.workspace import is_workspace_trusted
 from bernstein.plugins import hookimpl
-from bernstein.plugins.hookspecs import BernsteinSpec
+from bernstein.plugins.hookspecs import (
+    BernsteinSpec,
+    ElicitationResponse,
+    ElicitationResult,
+)
 
 log = logging.getLogger(__name__)
 
-__all__ = ["SLOW_HOOK_THRESHOLD", "HookBlockingError", "PluginManager", "get_plugin_manager"]
+__all__ = [
+    "DEFAULT_ELICIT_TIMEOUT",
+    "SLOW_HOOK_THRESHOLD",
+    "HookBlockingError",
+    "PluginManager",
+    "get_plugin_manager",
+]
+
+# Default timeout in seconds when waiting for elicitation input.
+DEFAULT_ELICIT_TIMEOUT: float = 30.0
 
 # Threshold in seconds above which a hook execution is logged as "slow".
 SLOW_HOOK_THRESHOLD: float = 1.0
@@ -39,6 +54,77 @@ class HookBlockingError(Exception):
         super().__init__(f"Hook {hook_name!r} blocked orchestration: {stderr}")
         self.hook_name = hook_name
         self.stderr = stderr
+
+
+def _is_interactive() -> bool:
+    """Return True if stdin is a terminal TTY suitable for interaction."""
+    try:
+        return sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def _read_elicitation_stdin(timeout_seconds: float) -> str | None:
+    """Read a single line from stdin within *timeout_seconds*.
+
+    Uses ``select.select`` to poll for input readiness on POSIX systems.
+    On Windows or when select is unavailable, falls back to a blocking
+    read with no timeout.
+
+    Args:
+        timeout_seconds: Maximum seconds to wait for input.
+
+    Returns:
+        The stripped line the user typed, or ``None`` if the timeout
+        expired or stdin was closed unexpectedly.
+
+    Raises:
+        KeyboardInterrupt: Propagated if the user presses Ctrl+C.
+    """
+    try:
+        if not _is_interactive():
+            return None
+
+        try:
+            ready = select.select([sys.stdin], [], [], timeout_seconds)
+        except (ValueError, OSError):
+            # select failed (e.g. on Windows with a pipe); fall back.
+            ready = ([sys.stdin], [], [])  # type: ignore[assignment]
+
+        if not ready[0]:
+            return None  # timeout
+
+        line = sys.stdin.readline()
+        if not line:
+            return None  # EOF
+        return line.strip()
+    except KeyboardInterrupt:
+        raise
+
+
+def _match_option(normalised: str, options: list[str]) -> str | None:
+    """Match user input against available elicitation options.
+
+    Args:
+        normalised: Lower-case, stripped user input.
+        options: List of valid options.
+
+    Returns:
+        The matched option (preserving original casing), or ``None``
+        if no match is found.
+    """
+    # Check for numeric index (1-based).
+    if normalised.isdigit():
+        idx = int(normalised)
+        if 1 <= idx <= len(options):
+            return options[idx - 1]
+        return None
+
+    # Check for exact or case-insensitive match.
+    for opt in options:
+        if opt.lower() == normalised:
+            return opt
+    return None
 
 
 class CommandHook:
@@ -86,6 +172,64 @@ class CommandHook:
         self._seen.add(key)
         return False
 
+    # --- Template variable substitution (T451) ---
+
+    # Supported template variables in hook script commands and arguments.
+    # These are resolved at invocation time so hook scripts stay portable
+    # across machines without hard-coded absolute paths.
+    _TEMPLATE_VARS: ClassVar[dict[str, str]] = {}
+
+    def _resolve_template_vars(self, hooks_dir: Path) -> dict[str, str]:
+        """Resolve template variables for hook script substitution (T451).
+
+        Variables:
+            PLUGIN_ROOT: Root directory of the plugin containing hook scripts.
+            DATA_DIR: Project data directory (.bernstein/ or equivalent).
+            HOOKS_DIR: Directory containing hook scripts.
+            WORK_DIR: Current working directory (project root).
+            BERNSTEIN_HOME: Path to the global ~/.bernstein directory.
+
+        Unknown variables in script content are replaced with empty string.
+
+        Args:
+            hooks_dir: Path to the .bernstein/hooks directory.
+
+        Returns:
+            Dict mapping variable names (without ${}) to resolved values.
+        """
+        from bernstein.core.home import BernsteinHome
+
+        home_dir: BernsteinHome = BernsteinHome.default()
+
+        return {
+            "PLUGIN_ROOT": str(self._plugin_root) if self._plugin_root else "",
+            "DATA_DIR": str(hooks_dir.parent),
+            "HOOKS_DIR": str(hooks_dir),
+            "WORK_DIR": str(Path.cwd()),
+            "BERNSTEIN_HOME": str(home_dir.path),
+        }
+
+    def _substitute_template(self, text: str, vars: dict[str, str]) -> str:
+        """Replace ${VAR} placeholders with resolved values (T451).
+
+        Unknown variables are replaced with empty string to avoid leaking
+        unexpanded placeholders into environment variables or stdin.
+
+        Args:
+            text: Text potentially containing ${VAR} placeholders.
+            vars: Mapping of variable names to resolved values.
+
+        Returns:
+            Text with all known placeholders substituted.
+        """
+        import re as _re
+
+        def _replacer(m: _re.Match[str]) -> str:
+            var_name = m.group(1)
+            return vars.get(var_name, "")
+
+        return _re.sub(r"\$\{(\w+)\}", _replacer, text)
+
     def _run_command(self, hook_name: str, **kwargs: Any) -> None:
         hook_path = self._hooks_dir / hook_name
         if not hook_path.is_dir():
@@ -108,15 +252,23 @@ class CommandHook:
 
             log.debug("Executing hook script: %s", script)
             try:
-                # Pass arguments via environment variables
-                env = os.environ.copy()
-                for key, value in kwargs.items():
-                    env[f"BERNSTEIN_HOOK_{key.upper()}"] = str(value)
+                # Resolve template variables for substitution (T451)
+                tpl_vars = self._resolve_template_vars(self._hooks_dir)
 
-                # Also pass as JSON via stdin
+                # Apply template substitution to all kwargs
+                sub_kwargs: dict[str, str] = {}
+                for key, value in kwargs.items():
+                    sub_kwargs[key] = self._substitute_template(str(value), tpl_vars)
+
+                # Pass arguments via environment variables (with template substitution)
+                env = os.environ.copy()
+                for key, value in sub_kwargs.items():
+                    env[f"BERNSTEIN_HOOK_{key.upper()}"] = value
+
+                # Also pass as JSON via stdin (with template substitution applied)
                 proc = subprocess.run(
                     [str(script)],
-                    input=json.dumps(kwargs),
+                    input=json.dumps(sub_kwargs),
                     text=True,
                     capture_output=True,
                     env=env,
@@ -541,9 +693,102 @@ class PluginManager:
         """Fire on_teammate_idle hook when an agent has no more work (T681)."""
         self._safe_call("on_teammate_idle", session_id=session_id, role=role, queue_depth=queue_depth)
 
-    def fire_elicitation(self, session_id: str, prompt: str, options: list[str]) -> None:
-        """Fire on_elicitation hook when an LLM requests human input (T681)."""
+    # ------------------------------------------------------------------
+    # Elicitation protocol (T452)
+    # ------------------------------------------------------------------
+
+    def fire_elicitation(
+        self,
+        session_id: str,
+        prompt: str,
+        options: list[str],
+        *,
+        timeout_seconds: float = DEFAULT_ELICIT_TIMEOUT,
+    ) -> ElicitationResponse:
+        """Fire on_elicitation hook when an LLM requests human input (T681/T452).
+
+        Displays the prompt and available options, then waits for the operator
+        to type a response.  If no input arrives within *timeout_seconds* the
+        response will have result ``TIMEOUT``.  If stdin is not a TTY the
+        result will be ``NON_INTERACTIVE``.
+
+        Args:
+            session_id: The agent session that requested elicitation.
+            prompt: Question text to display.
+            options: Allowed responses; rendered as numbered choices.
+            timeout_seconds: How long to wait before timing out.
+
+        Returns:
+            An :class:`ElicitationResponse` describing the outcome.
+        """
+        if not _is_interactive():
+            log.warning(
+                "Elicitation requested for session %s, but stdin is not a TTY — returning non_interactive",
+                session_id,
+            )
+            self._safe_call("on_elicitation", session_id=session_id, prompt=prompt, options=options)
+            return ElicitationResponse(
+                result=ElicitationResult.NON_INTERACTIVE,
+            )
+
+        self._display_elicitation_prompt(prompt, options)
         self._safe_call("on_elicitation", session_id=session_id, prompt=prompt, options=options)
+
+        raw_response = _read_elicitation_stdin(timeout_seconds)
+
+        if raw_response is None:
+            # Time expired or EOF
+            log.debug("Elicitation for session %s timed out after %.0fs", session_id, timeout_seconds)
+            return ElicitationResponse(
+                result=ElicitationResult.TIMEOUT,
+            )
+
+        # Validate against options if provided; otherwise accept free-form.
+        if options:
+            normalised = raw_response.lower().strip()
+            # Accept numeric index shortcuts (1-based) as well as the literal option.
+            matched = _match_option(normalised, options)
+            if matched is not None:
+                resp = ElicitationResponse(
+                    result=ElicitationResult.RESPONDED,
+                    value=matched,
+                )
+            else:
+                log.debug(
+                    "Elicitation response %r from session %s does not match any option %s",
+                    raw_response,
+                    session_id,
+                    options,
+                )
+                resp = ElicitationResponse(
+                    result=ElicitationResult.RESPONDED,
+                    value=raw_response,
+                )
+        else:
+            resp = ElicitationResponse(
+                result=ElicitationResult.RESPONDED,
+                value=raw_response,
+            )
+
+        self._safe_call(
+            "on_elicitation_result",
+            session_id=session_id,
+            prompt=prompt,
+            response=resp.value,
+        )
+        return resp
+
+    @staticmethod
+    def _display_elicitation_prompt(prompt: str, options: list[str]) -> None:
+        """Render an elicitation prompt to stdout for the operator to see."""
+        sys.stdout.write(f"\n[bernstein elicitation] {prompt}\n")
+        if options:
+            for i, opt in enumerate(options, 1):
+                sys.stdout.write(f"  {i}. {opt}\n")
+            sys.stdout.write("Type a number, option text, or a custom response: ")
+        else:
+            sys.stdout.write("Response: ")
+        sys.stdout.flush()
 
     def fire_elicitation_result(self, session_id: str, prompt: str, response: str) -> None:
         """Fire on_elicitation_result after human input is provided (T681)."""
@@ -603,6 +848,53 @@ class PluginManager:
             file_path=file_path,
             change_type=change_type,
         )
+
+    def fire_agent_hook(
+        self,
+        session_id: str,
+        hook_name: str,
+        hook_input: dict[str, Any],
+        conversation_context: list[dict[str, str]],
+        model: str | None = None,
+        max_tokens: int = 4096,
+        timeout_seconds: float = 30.0,
+    ) -> dict[str, Any] | None:
+        """Fire on_agent_hook — forked LLM call with isolated context (T457).
+
+        Invokes plugin hooks with a forked LLM context slice.  The hook
+        result should be a structured decision (``allow``/``deny``/``ask``).
+        On timeout or error the hook returns a safe ``deny`` default.
+
+        Args:
+            session_id: Parent agent session identifier.
+            hook_name: Hook name (e.g. ``"policy_check"``).
+            hook_input: Structured input for the hook.
+            conversation_context: Bounded message history (role + content).
+            model: Optional model override for the forked call.
+            max_tokens: Token budget for the forked LLM response.
+            timeout_seconds: Max wall-clock seconds for the LLM call.
+
+        Returns:
+            Decision dict with ``decision`` and optional ``reason``, or
+            ``None`` when no plugin implements the hook.  On LLM failure
+            returns ``{"decision": "deny", "reason": "hook_timeout_or_error"}``.
+        """
+        # Truncate conversation context to last N messages to bound input size
+        bounded_context = conversation_context[-20:] if len(conversation_context) > 20 else conversation_context
+
+        try:
+            return self._pm.hook.on_agent_hook(
+                session_id=session_id,
+                hook_name=hook_name,
+                hook_input=hook_input,
+                conversation_context=bounded_context,
+                model=model,
+                max_tokens=max_tokens,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as exc:
+            log.warning("on_agent_hook %r failed: %s, defaulting to deny", hook_name, exc)
+            return {"decision": "deny", "reason": "hook_timed_out_or_error"}
 
     def discover_entry_points(self) -> None:
         """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""

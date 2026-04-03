@@ -2,9 +2,91 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from bernstein.plugins import hookspec
+
+
+class ElicitationResult(Enum):
+    """Outcome of a hook elicitation prompt."""
+
+    RESPONDED = "responded"
+    """User provided a response."""
+
+    TIMEOUT = "timeout"
+    """Timed out waiting for user input."""
+
+    CANCELLED = "cancelled"
+    """User cancelled the prompt (e.g., Ctrl+C or 'q')."""
+
+    NON_INTERACTIVE = "non_interactive"
+    """Stdin is not a TTY and no response was available."""
+
+
+# Elicitation result values for structured protocol.
+ELICIT_RESPONSE = "response"
+"""JSON key for elicitation response payload."""
+
+ELICIT_STATUS_OK = "ok"
+"""JSON status value indicating success."""
+
+ELICIT_STATUS_TIMEOUT = "timeout"
+"""JSON status value indicating a timeout."""
+
+ELICIT_STATUS_CANCEL = "cancel"
+"""JSON status value indicating cancellation."""
+
+ELICIT_STATUS_NON_INTERACTIVE = "non_interactive"
+"""JSON status value for non-interactive mode."""
+
+
+class ElicitationRequest:
+    """Structured elicitation request for interactive protocol (T452).
+
+    Holds the prompt text, allowed response options, and timeout.
+    A TUI or CLI frontend can render this and write the selected option
+    (or arbitrary text) to its own stdin, or return it directly.
+
+    Args:
+        session_id: The agent session that requested elicitation.
+        prompt: The question text to display.
+        options: Allowed responses (may be empty for free-form).
+        timeout_seconds: How long to wait for input before timing out.
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        prompt: str,
+        options: list[str] | None = None,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        self.session_id = session_id
+        self.prompt = prompt
+        self.options = options or []
+        self.timeout_seconds = timeout_seconds
+
+    def to_json(self) -> dict[str, Any]:
+        """Serialise as a JSON dict for passing to hook subprocesses."""
+        return {
+            "session_id": self.session_id,
+            "prompt": self.prompt,
+            "options": self.options,
+            "timeout_seconds": self.timeout_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ElicitationResponse:
+    """Result of an elicitation prompt."""
+
+    result: ElicitationResult
+    """How the prompt concluded."""
+
+    value: str = ""
+    """User-provided response (only meaningful when result == RESPONDED or CANCELLED)."""
 
 
 class BernsteinSpec:
@@ -477,4 +559,45 @@ class BernsteinSpec:
             metric_type: Metric type name (e.g. ``"task_duration_s"``).
             value: Numeric metric value.
             labels: Arbitrary key-value labels attached to the point.
+        """
+
+    @hookspec(firstresult=True)
+    def on_agent_hook(
+        self,
+        session_id: str,
+        hook_name: str,
+        hook_input: dict[str, Any],
+        conversation_context: list[dict[str, str]],
+        model: str | None = None,
+        max_tokens: int = 4096,
+        timeout_seconds: float = 30.0,
+    ) -> dict[str, Any] | None:
+        """Forked LLM hook with isolated context and bounded budgets (T457).
+
+        This hook spawns a lightweight LLM call with the hook input and a
+        bounded slice of the conversation context.  The result is an LLM
+        decision (allow, deny, ask) used for AI-powered policy enforcement.
+
+        The LLM call runs in a separate task with a strict token budget and
+        timeout.  On failure (timeout, API error) it degrades to a safe
+        default (``deny``).
+
+        Args:
+            session_id: Parent agent session identifier.
+            hook_name: Name of the hook being invoked (e.g.
+                ``"policy_check"``, ``"summarize"``).
+            hook_input: Structured input for the hook.
+            conversation_context: Bounded message history to provide context.
+                Each item should have ``"role"`` and ``"content"`` keys.
+            model: Optional model override for the forked call.
+                Defaults to the session's configured model.
+            max_tokens: Token budget for the forked LLM response.
+                Defaults to 4096.
+            timeout_seconds: Maximum wall-clock seconds for the LLM call.
+                Defaults to 30.
+
+        Returns:
+            Structured decision JSON with ``decision`` (``"allow"``,
+            ``"deny"``, or ``"ask"``) and optional ``reason`` field.
+            Returns ``None`` if no plugin implements the hook.
         """
