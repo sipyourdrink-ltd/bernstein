@@ -528,8 +528,68 @@ def compute_cache_cost(
 
 
 # ---------------------------------------------------------------------------
-# Cache-safe forked agent params (T597)
+# Cache-safe forked agent params (T597 / T446)
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CacheSafeParams:
+    """Typed structure for forked agent parameters that preserve cache safety.
+
+    When an agent forks a sub-agent, the sub-agent should reuse the parent's
+    system prefix to maximise cache hits.  This dataclass ensures all
+    required fields are present and typed correctly so prompt-cache keys
+    remain stable.
+
+    Attributes:
+        inherited_cache_key: SHA-256 cache key from the parent's system prefix.
+        system_prefix: Full system prompt prefix to be inherited by the child.
+        fork_role: Role override for the forked agent (empty = inherit parent).
+        fork_model: Model override for the forked agent (empty = inherit parent).
+        fork_messages: Optional conversation messages to pass to the forked
+            agent for continuation context.
+        cache_safe: Always True when built via this class — signals to the
+            spawner that prompt caching is safe.
+    """
+
+    inherited_cache_key: str
+    system_prefix: str
+    fork_role: str = ""
+    fork_model: str = ""
+    fork_messages: list[dict[str, str]] = field(default_factory=lambda: list[dict[str, str]]())
+    cache_safe: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a dict suitable for passing to the spawner."""
+        result: dict[str, Any] = {
+            "inherited_cache_key": self.inherited_cache_key,
+            "system_prefix": self.system_prefix,
+            "role": self.fork_role,
+            "model": self.fork_model,
+            "cache_safe": self.cache_safe,
+        }
+        if self.fork_messages:
+            result["fork_messages"] = self.fork_messages
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CacheSafeParams:
+        """Reconstruct a CacheSafeParams from a dict (e.g., serialized state).
+
+        Args:
+            data: Dict with the same keys as :meth:`to_dict`.
+
+        Returns:
+            New CacheSafeParams instance.
+        """
+        return cls(
+            inherited_cache_key=data["inherited_cache_key"],
+            system_prefix=data["system_prefix"],
+            fork_role=data.get("role", ""),
+            fork_model=data.get("model", ""),
+            fork_messages=data.get("fork_messages", []),
+            cache_safe=data.get("cache_safe", True),
+        )
 
 
 def build_cache_safe_fork_params(
@@ -537,30 +597,34 @@ def build_cache_safe_fork_params(
     parent_system_prefix: str,
     fork_role: str = "",
     fork_model: str = "",
-) -> dict[str, Any]:
-    """Build parameters for a forked agent that preserve cache safety (T597).
+    fork_messages: list[dict[str, str]] | None = None,
+) -> CacheSafeParams:
+    """Build cache-safe parameters for a forked sub-agent (T597 / T446).
 
     When an agent forks a sub-agent, the sub-agent should reuse the parent's
-    system prefix to maximise cache hits.  This function returns a dict of
-    parameters the spawner can pass to the forked agent.
+    system prefix to maximise cache hits.  Returns a typed ``CacheSafeParams``
+    that the spawner can use to preserve the parent's prompt-cache prefix.
 
     Args:
-        parent_cache_key: Cache key of the parent agent's system prefix.
-        parent_system_prefix: The parent's system prefix text.
-        fork_role: Role override for the forked agent (empty = inherit).
-        fork_model: Model override for the forked agent (empty = inherit).
+        parent_cache_key: SHA-256 cache key of the parent agent's system prefix.
+        parent_system_prefix: The parent's system prefix text for the child to
+            inherit (ensures cache prefix alignment).
+        fork_role: Role override for the forked agent (empty = inherit parent).
+        fork_model: Model override for the forked agent (empty = inherit parent).
+        fork_messages: Optional conversation messages to pass to the forked
+            agent for continuation context.
 
     Returns:
-        Dict with ``inherited_cache_key``, ``system_prefix``, ``role``,
-        ``model``, and ``cache_safe`` flag.
+        CacheSafeParams instance with stable cache key and inheritance data.
     """
-    return {
-        "inherited_cache_key": parent_cache_key,
-        "system_prefix": parent_system_prefix,
-        "role": fork_role,
-        "model": fork_model,
-        "cache_safe": True,
-    }
+    return CacheSafeParams(
+        inherited_cache_key=parent_cache_key,
+        system_prefix=parent_system_prefix,
+        fork_role=fork_role,
+        fork_model=fork_model,
+        fork_messages=fork_messages or [],
+        cache_safe=True,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import tempfile
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import Mock
+
+import pytest
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.caching_adapter import CachingAdapter
@@ -15,8 +18,10 @@ from bernstein.core.prompt_caching import (
     CacheBreakReason,
     CacheEntry,
     CacheManifest,
+    CacheSafeParams,
     PromptCachingManager,
     _estimate_tokens,
+    build_cache_safe_fork_params,
     compute_cache_key,
     extract_system_prefix,
     make_prompt_cache_key,
@@ -749,3 +754,141 @@ def test_unexpected_drop_still_emits_break(tmp_path: Path) -> None:
     assert break_file.exists()
     text = break_file.read_text()
     assert "sess-surprise" in text
+
+
+# ---------------------------------------------------------------------------
+# CacheSafeParams & build_cache_safe_fork_params (T446)
+# ---------------------------------------------------------------------------
+
+
+class TestCacheSafeParams:
+    """Tests for the CacheSafeParams typed structure."""
+
+    def test_defaults(self) -> None:
+        """CacheSafeParams has sensible defaults."""
+        params = CacheSafeParams(
+            inherited_cache_key="abc123",
+            system_prefix="You are an engineer.",
+        )
+        assert params.fork_role == ""
+        assert params.fork_model == ""
+        assert params.fork_messages == []
+        assert params.cache_safe is True
+
+    def test_to_dict_includes_all_fields(self) -> None:
+        """to_dict() produces all expected keys."""
+        msg = [{"role": "user", "content": "hello"}]
+        params = CacheSafeParams(
+            inherited_cache_key="key1",
+            system_prefix="prefix",
+            fork_role="qa",
+            fork_model="haiku",
+            fork_messages=msg,
+            cache_safe=True,
+        )
+        d = params.to_dict()
+        assert d["inherited_cache_key"] == "key1"
+        assert d["system_prefix"] == "prefix"
+        assert d["role"] == "qa"
+        assert d["model"] == "haiku"
+        assert d["fork_messages"] == msg
+        assert d["cache_safe"] is True
+
+    def test_to_dict_omits_empty_fork_messages(self) -> None:
+        """to_dict() omits fork_messages when it is an empty list."""
+        params = CacheSafeParams(
+            inherited_cache_key="key1",
+            system_prefix="prefix",
+        )
+        d = params.to_dict()
+        assert "fork_messages" not in d
+
+    def test_from_dict_roundtrip(self) -> None:
+        """from_dict() reconstructs the original instance."""
+        msg = [{"role": "assistant", "content": "done"}]
+        original = CacheSafeParams(
+            inherited_cache_key="ck",
+            system_prefix="sp",
+            fork_role="devops",
+            fork_model="opus",
+            fork_messages=msg,
+            cache_safe=True,
+        )
+        reconstructed = CacheSafeParams.from_dict(original.to_dict())
+        assert reconstructed.inherited_cache_key == original.inherited_cache_key
+        assert reconstructed.system_prefix == original.system_prefix
+        assert reconstructed.fork_role == original.fork_role
+        assert reconstructed.fork_model == original.fork_model
+        assert reconstructed.fork_messages == original.fork_messages
+        assert reconstructed.cache_safe == original.cache_safe
+
+    def test_from_dict_defaults_correct(self) -> None:
+        """from_dict() handles missing optional keys gracefully."""
+        data = {
+            "inherited_cache_key": "k",
+            "system_prefix": "p",
+        }
+        params = CacheSafeParams.from_dict(data)
+        assert params.fork_role == ""
+        assert params.fork_model == ""
+        assert params.fork_messages == []
+        assert params.cache_safe is True
+
+    def test_is_frozen(self) -> None:
+        """CacheSafeParams is immutable (frozen dataclass)."""
+        params = CacheSafeParams(
+            inherited_cache_key="k",
+            system_prefix="p",
+        )
+        with pytest.raises(FrozenInstanceError):
+            params.fork_role = "new"  # type: ignore[misc]
+
+
+class TestBuildCacheSafeForkParams:
+    """Tests for the build_cache_safe_fork_params helper."""
+
+    def test_returns_cache_safe_params(self) -> None:
+        """Returns a CacheSafeParams with the provided values."""
+        msgs = [{"role": "user", "content": "fix this"}]
+        result = build_cache_safe_fork_params(
+            parent_cache_key="parent_key",
+            parent_system_prefix="parent_prefix",
+            fork_role="debugger",
+            fork_model="sonnet",
+            fork_messages=msgs,
+        )
+        assert result.inherited_cache_key == "parent_key"
+        assert result.system_prefix == "parent_prefix"
+        assert result.fork_role == "debugger"
+        assert result.fork_model == "sonnet"
+        assert result.fork_messages == msgs
+        assert result.cache_safe is True
+
+    def test_defaults_to_empty_role_and_model(self) -> None:
+        """role and model default to empty strings for parent inheritance."""
+        result = build_cache_safe_fork_params(
+            parent_cache_key="pk",
+            parent_system_prefix="ps",
+        )
+        assert result.fork_role == ""
+        assert result.fork_model == ""
+        assert result.fork_messages == []
+
+    def test_default_empty_fork_messages(self) -> None:
+        """fork_messages defaults to empty list when not provided."""
+        result = build_cache_safe_fork_params(
+            parent_cache_key="pk",
+            parent_system_prefix="ps",
+        )
+        assert result.fork_messages == []
+
+    def test_stable_cache_key_alignment(self) -> None:
+        """Inherited cache key matches the compute_cache_key of the system prefix."""
+        system_prefix = "You are a senior backend engineer.\n\n## Context\n"
+        expected_key = compute_cache_key(system_prefix)
+        result = build_cache_safe_fork_params(
+            parent_cache_key=expected_key,
+            parent_system_prefix=system_prefix,
+        )
+        assert result.inherited_cache_key == expected_key
+        assert result.system_prefix == system_prefix
