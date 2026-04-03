@@ -56,6 +56,7 @@ from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.cost import cost_cmd, estimate_cmd
 from bernstein.cli.diff_cmd import diff_cmd
+from bernstein.cli.disaster_recovery_cmd import dr_group
 from bernstein.cli.eval_benchmark_cmd import (
     benchmark_group,
     eval_group,
@@ -687,4 +688,5 @@ cli.add_command(worker, "worker")
 cli.add_command(diff_cmd, "diff")
 cli.add_command(merge_cmd, "merge")
 cli.add_command(changelog_cmd, "changelog")
+cli.add_command(dr_group, "dr")
 cli.add_command(incident_cmd, "incident")

@@ -294,6 +294,7 @@ class TaskCreate(BaseModel):
     batch_eligible: bool = False  # Non-urgent: eligible for provider batch APIs at ~50% cost
     completion_signals: list[CompletionSignalSchema] = Field(default_factory=lambda: list[CompletionSignalSchema]())
     slack_context: dict[str, Any] | None = None  # Slack slash command metadata
+    deadline: float | None = None  # Epoch timestamp when task must be complete
 
 
 class WebhookTaskCreate(TaskCreate):
@@ -334,6 +335,7 @@ class TaskResponse(BaseModel):
     completion_signals: list[dict[str, str]] = Field(default_factory=lambda: list[dict[str, str]]())
     slack_context: dict[str, Any] | None = None
     created_at: float
+    deadline: float | None = None
     progress_log: list[ProgressEntry] = Field(default_factory=lambda: list[ProgressEntry]())
     version: int = 1
 
