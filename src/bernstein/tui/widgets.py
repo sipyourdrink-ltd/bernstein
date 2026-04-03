@@ -1062,18 +1062,14 @@ class ApprovalPanel(Static):
         if self._selected_index < 0:
             return
         entry = self._pending[self._selected_index]
-        self.app.post_message(
-            ApprovalAction(approved=True, task_id=entry.task_id, reason="Approved via TUI")
-        )
+        self.app.post_message(ApprovalAction(approved=True, task_id=entry.task_id, reason="Approved via TUI"))
 
     async def action_reject(self) -> None:
         """Reject the currently selected pending task."""
         if self._selected_index < 0:
             return
         entry = self._pending[self._selected_index]
-        self.app.post_message(
-            ApprovalAction(approved=False, task_id=entry.task_id, reason="Rejected via TUI")
-        )
+        self.app.post_message(ApprovalAction(approved=False, task_id=entry.task_id, reason="Rejected via TUI"))
 
     def on_approval_action(self, event: ApprovalAction) -> None:
         """Handle approval action from self or parent."""
