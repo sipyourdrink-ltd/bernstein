@@ -1,4 +1,4 @@
-"""GitHub webhook route and alerts endpoint."""
+"""GitHub and GitLab webhook routes and alerts endpoint."""
 
 from __future__ import annotations
 
@@ -248,6 +248,187 @@ async def github_webhook(request: Request) -> JSONResponse:
         content={
             "event_type": event.event_type,
             "action": event.action,
+            "tasks_created": len(created_ids),
+            "task_ids": created_ids,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# GitLab CI webhooks
+# ---------------------------------------------------------------------------
+
+
+def _count_gitlab_ci_fix_attempts(store: TaskStore, ref: str) -> int:
+    """Count active ci-fix tasks for *ref* to enforce the retry cap.
+
+    Args:
+        store: Task store.
+        ref: Git branch/ref name from the GitLab pipeline payload.
+
+    Returns:
+        Number of ci-fix tasks still consuming the retry budget.
+    """
+    from bernstein.core.models import TaskStatus
+
+    _ACTIVE = {
+        TaskStatus.OPEN,
+        TaskStatus.CLAIMED,
+        TaskStatus.IN_PROGRESS,
+        TaskStatus.FAILED,
+    }
+    tasks = store.list_tasks()
+    return sum(
+        1 for t in tasks if t.title.startswith("[ci-fix]") and ref in t.description and t.status in _ACTIVE
+    )
+
+
+def _gitlab_pipeline_to_task(payload: dict[str, Any], retry_count: int) -> dict[str, Any] | None:
+    """Convert a failed GitLab pipeline webhook into a ci-fix task payload.
+
+    Args:
+        payload: Raw GitLab pipeline webhook JSON payload.
+        retry_count: Current number of active ci-fix attempts for this ref.
+
+    Returns:
+        Task dict for store.create(), or None if no actionable failure found.
+    """
+    attrs = payload.get("object_attributes", {})
+    pipeline_id = attrs.get("id", "?")
+    ref = attrs.get("ref", "main")
+    sha = attrs.get("sha", "")
+    project = payload.get("project", {})
+    repo_name = project.get("path_with_namespace", project.get("name", "unknown"))
+
+    # Attempt to extract failure details from build traces.
+    builds = payload.get("builds", [])
+    failed_builds = [b for b in builds if b.get("status") in ("failed", "canceled")]
+
+    summaries: list[str] = []
+    for build in failed_builds[:5]:
+        build_name = build.get("name", "unknown")
+        stage = build.get("stage", "unknown")
+        summaries.append(f"- Job **{build_name}** (stage: {stage}) failed")
+
+    if not summaries:
+        summaries.append(f"- Pipeline {pipeline_id} failed (no detailed job info in webhook)")
+
+    # Escalate model on retries.
+    from bernstein.github_app.ci_router import MAX_CI_RETRIES
+
+    if retry_count >= 2:
+        model = "opus"
+        effort = "max"
+    else:
+        model = "sonnet"
+        effort = "high"
+
+    description = (
+        f"GitLab CI pipeline failed on ``{ref}`` in ``{repo_name}``.\n\n"
+        f"## Failed jobs\n" + "\n".join(summaries) + f"\n\n"
+        f"Pipeline: {attrs.get('url', 'N/A')}\n"
+        f"Commit: {sha}\n"
+        f"Retry attempt: {retry_count + 1}/{MAX_CI_RETRIES}\n\n"
+        f"Review the pipeline logs, identify root causes, and apply fixes.\n"
+    )
+
+    return {
+        "title": f"[ci-fix] GitLab pipeline {pipeline_id} on {ref}",
+        "description": description,
+        "role": "qa",
+        "priority": "1",
+        "model": model,
+        "effort": effort,
+        "require_review": True,
+    }
+
+
+@router.post("/webhooks/gitlab", status_code=200)
+async def gitlab_webhook(request: Request) -> JSONResponse:
+    """Receive a GitLab CI webhook, verify token, and create ci-fix tasks.
+
+    Handles the following event types:
+    - ``pipeline`` (failed) — creates a ci-fix task, capped at
+      ``MAX_CI_RETRIES`` active attempts per branch.
+    - ``job`` (failed) — creates a ci-fix task for the specific job.
+
+    Reads ``GITLAB_WEBHOOK_TOKEN`` from environment. GitLab sends a simple
+    plaintext token in the ``x-gitlab-token`` header.
+    Returns 200 on success, 401 on bad/missing token.
+    """
+    from bernstein.github_app.ci_router import MAX_CI_RETRIES
+
+    store = _get_store(request)
+    body_bytes = await request.body()
+    body = body_bytes.decode("utf-8") if body_bytes else ""
+
+    # Verify GitLab webhook token.
+    gitlab_token = os.environ.get("GITLAB_WEBHOOK_TOKEN", "")
+    provided_token = request.headers.get("x-gitlab-token", "")
+    if gitlab_token and provided_token:
+        if not hmac.compare_digest(provided_token, gitlab_token):
+            return JSONResponse(status_code=401, content={"detail": "Invalid GitLab webhook token"})
+    elif gitlab_token and not provided_token:
+        return JSONResponse(status_code=401, content={"detail": "Missing GitLab webhook token"})
+
+    try:
+        import json
+
+        data: dict[str, Any] = json.loads(body) if body else {}
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"detail": "Bad JSON payload"})
+
+    event_type = data.get("object_kind", "")
+    task_payloads: list[dict[str, Any]] = []
+
+    if event_type == "pipeline":
+        status = data.get("object_attributes", {}).get("status", "")
+        if status == "failed":
+            ref = data.get("object_attributes", {}).get("ref", "")
+            retry_count = _count_gitlab_ci_fix_attempts(store, ref)
+            if retry_count >= MAX_CI_RETRIES:
+                logger.warning(
+                    "CI fix retry cap reached for ref %r (%d/%d) — skipping",
+                    ref,
+                    retry_count,
+                    MAX_CI_RETRIES,
+                )
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "event_type": event_type,
+                        "tasks_created": 0,
+                        "task_ids": [],
+                        "skipped_reason": f"max_retries_reached ({retry_count}/{MAX_CI_RETRIES})",
+                    },
+                )
+            task = _gitlab_pipeline_to_task(data, retry_count=retry_count)
+            if task is not None:
+                task_payloads.append(task)
+
+    elif event_type == "job":
+        build_status = data.get("build_status", "")
+        if build_status == "failed":
+            task = _gitlab_pipeline_to_task(data, retry_count=0)
+            if task is not None:
+                task_payloads.append(task)
+
+    if not task_payloads:
+        return JSONResponse(
+            status_code=200,
+            content={"event_type": event_type, "tasks_created": 0, "task_ids": []},
+        )
+
+    created_ids: list[str] = []
+    tenant_id = request_tenant_id(request)
+    for payload_dict in task_payloads:
+        task = await store.create(TaskCreate(**payload_dict, tenant_id=tenant_id))
+        created_ids.append(task.id)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "event_type": event_type,
             "tasks_created": len(created_ids),
             "task_ids": created_ids,
         },
