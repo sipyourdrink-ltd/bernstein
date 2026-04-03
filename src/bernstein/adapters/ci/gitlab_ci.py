@@ -20,15 +20,15 @@ logger = logging.getLogger(__name__)
 
 # GitLab CI runner section_start/end markers.
 # Example: section_start:1704067200:step1\r<section_end:1704067210:step1
-_SECTION_START_RE = re.compile(r'section_start:\d+:(\S+)\r?\[.*?\]\r?\n')
-_SECTION_END_RE = re.compile(r'section_end:\d+:(\S+)\r?\n')
+_SECTION_START_RE = re.compile(r"section_start:\d+:(\S+)\r?\[.*?\]\r?\n")
+_SECTION_END_RE = re.compile(r"section_end:\d+:(\S+)\r?\n")
 
 # ANSI escape sequences — GitLab CI logs are heavily styled.
-_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 # Error / failure indicators in GitLab CI logs.
 _GITLAB_ERROR_RE = re.compile(
-    r'^(?:ERROR|FATAL|FAILED|WARNING|Traceback|#<\w+Error)',
+    r"^(?:ERROR|FATAL|FAILED|WARNING|Traceback|#<\w+Error)",
     re.MULTILINE,
 )
 
@@ -62,7 +62,7 @@ def _strip_ansi(text: str) -> str:
     Returns:
         Clean text without ANSI escape codes.
     """
-    return _ANSI_RE.sub('', text)
+    return _ANSI_RE.sub("", text)
 
 
 def _extract_steps(clean_log: str) -> list[GitLabCIStep]:
@@ -100,7 +100,7 @@ def _extract_job_name(clean_log: str) -> str:
     Returns:
         Extracted job name, or ``"gitlab_ci"`` as fallback.
     """
-    return 'gitlab_ci'
+    return "gitlab_ci"
 
 
 class GitLabCIParser:
@@ -114,7 +114,7 @@ class GitLabCIParser:
         name: Parser identifier (``"gitlab_ci"``).
     """
 
-    name: str = 'gitlab_ci'
+    name: str = "gitlab_ci"
 
     def parse(self, raw_log: str) -> list[CIFailure]:
         """Parse a GitLab CI job log into structured CI failures.
