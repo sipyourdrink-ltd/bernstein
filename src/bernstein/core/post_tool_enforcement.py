@@ -160,11 +160,11 @@ def run_post_tool_enforcement(
 
     if secrets_found:
         logger.debug(
-            "Post-tool redaction: %d secret(s) found in tool output — session=%s, tool=%s, patterns=%s",
+            "Post-tool redaction: %d secret(s) found in tool output — session=%s, tool=%s, pattern_names=%s",
             len(secrets_found),
             session_id,
             tool,
-            secrets_found,
+            [name for name in secrets_found],
         )
 
     _write_audit(audit, workdir)
@@ -218,7 +218,8 @@ def _write_audit(audit: AuditRecord, workdir: Path | None) -> None:
             "tool": audit.tool,
             "raw_length": audit.raw_output_length,
             "redacted_length": audit.redacted_output_length,
-            "secrets_found": audit.secrets_found,
+            "secrets_found_count": len(audit.secrets_found),
+            "secret_pattern_names": list(audit.secrets_found),
             "dangerous": audit.dangerous,
             "blocked": audit.blocked,
         }

@@ -37,7 +37,7 @@ dependencies = [
     "opentelemetry-api>=1.30.0",
     "opentelemetry-sdk>=1.30.0",
     "opentelemetry-exporter-otlp>=1.30.0",
-    "pillow>=10.0",
+    "pillow>=12.1.1",
     "pyfiglet>=1.0",
     "terminaltexteffects>=0.11",
     "websockets>=14.0",
@@ -46,7 +46,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "pyright"]
 ml = ["scikit-learn>=1.5"]
-graphics = ["term-image>=0.7"]
+graphics = []  # term-image disabled: caps pillow<11, conflicts with CVE-2026-25990 fix
 
 [project.scripts]
 bernstein = "bernstein.cli.main:cli"
