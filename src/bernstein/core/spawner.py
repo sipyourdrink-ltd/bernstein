@@ -1048,13 +1048,11 @@ class AgentSpawner:
                         break
                     attempted.add(attempt_key)
 
-
                     try:
                         target_adapter = self._get_adapter_by_name(adapter_name)
                     except Exception as exc:
                         attempt_errors.append(f"{adapter_name}: {exc}")
                         break
-
 
                     try:
                         spawn_start = time.perf_counter()
@@ -1119,7 +1117,6 @@ class AgentSpawner:
                     except (SpawnError, Exception) as exc:
                         attempt_errors.append(f"{adapter_name}: {exc}")
 
-
                         # Check for auth error (T499)
                         is_auth_error = False
                         log_path = spawn_cwd / ".sdd" / "logs" / f"{session_id}.log"
@@ -1135,7 +1132,6 @@ class AgentSpawner:
                             )
                             is_auth_error = True
 
-
                         if is_auth_error and target_adapter.supports_auth_refresh():
                             refresh_key = (provider_name, "auth_refresh")
                             if refresh_key not in attempted:
@@ -1145,7 +1141,6 @@ class AgentSpawner:
                                     # Re-try same provider once after refresh
                                     attempted.remove(attempt_key)
                                     continue
-
 
                         logger.warning(
                             "Agent spawn failed (session=%s provider=%s adapter=%s): %s",
@@ -1169,12 +1164,10 @@ class AgentSpawner:
                         except RouterError:
                             provider_name = None
 
-
                 for prov, was_available in disabled_providers.items():
                     provider_cfg = self._router.state.providers.get(prov) if self._router is not None else None
                     if provider_cfg is not None:
                         provider_cfg.available = was_available
-
 
                 if result is None:
                     error_text = "; ".join(attempt_errors) or "no viable spawn attempts"
@@ -1185,7 +1178,9 @@ class AgentSpawner:
                             signals_dir = spawn_cwd / ".sdd" / "runtime" / "signals"
                             logger.warning(
                                 "Unattended retry: cycle %d/%d, sleeping %.0fs",
-                                _unattended_attempt, _unattended_max, delay,
+                                _unattended_attempt,
+                                _unattended_max,
+                                delay,
                             )
                             _unattended_policy.wait_with_heartbeats(
                                 session_id,

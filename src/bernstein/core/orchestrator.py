@@ -1141,9 +1141,7 @@ class Orchestrator:
             self._slo_tracker.save(self._workdir / ".sdd" / "metrics")
 
             # Apply error-budget-driven throttling adjustments
-            adjusted_max, _ = apply_error_budget_adjustments(
-                self._config.max_agents, self._slo_tracker
-            )
+            adjusted_max, _ = apply_error_budget_adjustments(self._config.max_agents, self._slo_tracker)
             self._adaptive_parallelism.set_slo_constraint(
                 adjusted_max if adjusted_max != self._config.max_agents else None
             )
