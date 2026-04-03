@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio as _asyncio
 import logging
+import time
+import urllib.request as _urllib_request
+from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -192,9 +199,6 @@ async def tavily_search(query: str, max_results: int = 5) -> str:
 # API preconnect pool warming (T581)
 # ---------------------------------------------------------------------------
 
-import asyncio as _asyncio
-import urllib.request as _urllib_request
-
 
 async def preconnect_api(
     base_url: str,
@@ -242,12 +246,6 @@ async def preconnect_api(
 # ---------------------------------------------------------------------------
 # OAuth refresh on 401/403 errors (T568)
 # ---------------------------------------------------------------------------
-
-import time
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 class LLMOAuthRefreshHandler:

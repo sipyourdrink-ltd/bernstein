@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -936,9 +939,6 @@ def build_crash_bundle(
 # Max output tokens escalation signal (T565)
 # ---------------------------------------------------------------------------
 
-from dataclasses import dataclass, field
-from typing import Any
-
 
 @dataclass
 class TokenEscalationEvent:
@@ -951,7 +951,7 @@ class TokenEscalationEvent:
     max_allowed_tokens: int
     escalation_reason: str
     timestamp: float = field(default_factory=time.time)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=lambda: {})
 
 
 def record_token_escalation(
@@ -979,7 +979,7 @@ def record_token_escalation(
     step = TraceStep(
         type="plan",
         timestamp=escalation.timestamp,
-        detail=f"Token escalation: requested {requested_tokens} tokens (max: {max_allowed_tokens}) - {escalation_reason}",
+        detail=f"Token escalation: requested {requested_tokens} tokens (max: {max_allowed_tokens}) - {escalation_reason}",  # noqa: E501
         tokens=requested_tokens,
         turn_number=len(trace.steps) + 1,
     )

@@ -340,13 +340,12 @@ def _collect_mcp_servers(data: dict[str, Any], out: dict[str, dict[str, Any]]) -
 
 def _check_mcp_env_credentials(cfg: dict[str, Any]) -> list[str]:
     """Return list of missing env-var keys that look like secrets."""
-    env = cfg.get("env")
-    if not isinstance(env, dict):
+    env_raw = cfg.get("env")
+    if not isinstance(env_raw, dict):
         return []
+    env: dict[str, Any] = {str(k): v for k, v in env_raw.items()}
     missing: list[str] = []
     for ek in env:
-        if not isinstance(ek, str):
-            continue
         upper = ek.upper()
         has_secret = any(p in upper for p in _SECRETS_PATTERNS)
         if has_secret and not os.environ.get(ek) and not env.get(ek):

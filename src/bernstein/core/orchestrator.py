@@ -20,6 +20,7 @@ import re
 import signal
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -3359,8 +3360,6 @@ if __name__ == "__main__":
 # Meta-messages for orchestrator nudges (T567)
 # ---------------------------------------------------------------------------
 
-from dataclasses import dataclass, field
-
 
 @dataclass
 class OrchestratorNudge:
@@ -3410,7 +3409,8 @@ class OrchestratorNudgeManager:
 
 
 # Global nudge manager
-_nudge_manager = OrchestratorNudgeManager()
+nudge_manager = OrchestratorNudgeManager()
+_nudge_manager = nudge_manager  # backward-compat alias
 
 
 def nudge_orchestrator(

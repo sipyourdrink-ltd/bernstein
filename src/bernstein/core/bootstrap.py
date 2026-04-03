@@ -11,6 +11,7 @@ Entry points:
 
 from __future__ import annotations
 
+import asyncio as _asyncio
 import concurrent.futures
 import contextlib
 import logging
@@ -20,6 +21,7 @@ import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from typing import TypeVar as _TypeVar
 
 import httpx
 from rich.console import Console
@@ -676,9 +678,6 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # Initialization timeout guard (T583)
 # ---------------------------------------------------------------------------
-
-import asyncio as _asyncio
-from typing import TypeVar as _TypeVar
 
 _T = _TypeVar("_T")
 

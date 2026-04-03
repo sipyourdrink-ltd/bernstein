@@ -1965,7 +1965,7 @@ def deprioritize_old_unclaimed_tasks(
 # ---------------------------------------------------------------------------
 
 
-def handle_permission_denied_error(error_message: str, task_id: str, role: str, retry_count: int) -> Dict[str, Any]:
+def handle_permission_denied_error(error_message: str, task_id: str, role: str, retry_count: int) -> dict[str, Any]:
     """Handle permission denied errors with retry hints."""
     from bernstein.core.worker import get_permission_hint
 

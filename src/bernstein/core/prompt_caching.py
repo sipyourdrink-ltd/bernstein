@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -565,7 +567,7 @@ def build_cache_safe_fork_params(
 # Cache break detection with diff generation (T561)
 # ---------------------------------------------------------------------------
 
-import difflib as _difflib
+import difflib as _difflib  # noqa: E402
 
 
 @dataclass
@@ -577,7 +579,7 @@ class CacheBreak:
     new_hash: str
     old_content: str
     new_content: str
-    diff_lines: list[str] = field(default_factory=list)
+    diff_lines: list[str] = field(default_factory=lambda: [])
     timestamp: float = field(default_factory=time.time)
 
     def generate_diff(self, context_lines: int = 3) -> None:
@@ -631,10 +633,6 @@ def detect_cache_break(
 # Expected drop notifications for cache baselines (T564)
 # ---------------------------------------------------------------------------
 
-import asyncio
-from dataclasses import dataclass, field
-from datetime import datetime
-
 
 @dataclass
 class CacheBaselineAlert:
@@ -645,8 +643,8 @@ class CacheBaselineAlert:
     current_value: float
     drop_percentage: float
     threshold: float
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    metadata: dict[str, Any] = field(default_factory=lambda: {})
 
 
 class CacheBaselineMonitor:
@@ -720,7 +718,7 @@ _baseline_monitor.add_alert_handler(on_baseline_drop)
 # ---------------------------------------------------------------------------
 
 
-def calculate_cache_cost_savings(provider: str, model: str, tokens: int, operation: str = "read") -> Dict[str, Any]:
+def calculate_cache_cost_savings(provider: str, model: str, tokens: int, operation: str = "read") -> dict[str, Any]:
     """Calculate cache cost savings using pricing tiers (T569)."""
     from bernstein.core.cost import calculate_cache_operation_savings, get_cache_pricing_tier
 

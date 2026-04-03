@@ -483,6 +483,6 @@ def check_nudges_during_tick() -> None:
             # Implementation would adjust speed/quality tradeoff
 
         # Acknowledge the nudge
-        from bernstein.core.orchestrator import _nudge_manager
+        from bernstein.core.orchestrator import nudge_manager
 
-        _nudge_manager.acknowledge_nudge(nudge)
+        nudge_manager.acknowledge_nudge(nudge)

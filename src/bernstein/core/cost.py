@@ -22,7 +22,7 @@ import json
 import logging
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
@@ -661,7 +661,6 @@ def predict_task_cost(task: Task, metrics_dir: Path | None = None) -> float:
 # Per-model cache read/write pricing tiers (T569)
 # ---------------------------------------------------------------------------
 
-from dataclasses import dataclass, field
 
 
 @dataclass
@@ -675,7 +674,7 @@ class CachePricingTier:
     standard_read_usd_per_1m: float  # USD per 1 million standard read tokens
     standard_write_usd_per_1m: float  # USD per 1 million standard write tokens
     savings_percentage: float = 0.0  # Percentage savings vs standard pricing
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=lambda: {})
 
 
 class CachePricingRegistry:

@@ -178,11 +178,11 @@ def _extract_h1_title(lines: list[str]) -> str:
 
 
 def _parse_priority(raw: object) -> int:
-    """Normalise a raw priority value to the internal 1–3 scale.
+    """Normalise a raw priority value to the internal 1-3 scale.
 
-    Ticket YAML files may use a 0–4 scale (p0=critical … p4=future).
-    The task server and all routing/scheduling code use 1–3:
-      0,1 → 1 (critical)  |  2 → 2 (normal)  |  3,4 → 3 (nice-to-have)
+    Ticket YAML files may use a 0-4 scale (p0=critical ... p4=future).
+    The task server and all routing/scheduling code use 1-3:
+      0,1 -> 1 (critical)  |  2 -> 2 (normal)  |  3,4 -> 3 (nice-to-have)
     """
     match = re.search(r"\d+", str(raw))
     if not match:

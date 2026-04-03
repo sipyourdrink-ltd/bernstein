@@ -20,7 +20,9 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 # Setup minimal logging for the worker
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -185,46 +187,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-# ---------------------------------------------------------------------------
-# Color-coded agent identity in all output (T562)
-# ---------------------------------------------------------------------------
-
-import sys as _sys
-
-# ANSI color codes for agent roles
-_AGENT_COLORS: dict[str, str] = {
-    "manager": "\033[1;36m",  # bright cyan
-    "backend": "\033[1;32m",  # bright green
-    "frontend": "\033[1;33m",  # bright yellow
-    "qa": "\033[1;35m",  # bright magenta
-    "security": "\033[1;31m",  # bright red
-    "architect": "\033[1;34m",  # bright blue
-    "devops": "\033[1;37m",  # bright white
-    "docs": "\033[1;90m",  # bright black (gray)
-    "reviewer": "\033[1;95m",  # bright magenta
-    "ml-engineer": "\033[1;96m",  # bright cyan
-    "prompt-engineer": "\033[1;93m",  # bright yellow
-    "retrieval": "\033[1;92m",  # bright green
-    "vp": "\033[1;97m",  # bright white
-    "analyst": "\033[1;94m",  # bright blue
-    "resolver": "\033[1;91m",  # bright red
-    "visionary": "\033[1;95m",  # bright magenta
-}
-_RESET = "\033[0m"
-
-
-def _colorize_agent_output(role: str, session_id: str, text: str) -> str:
-    """Prefix agent output with color-coded role tag (T562)."""
-    color = _AGENT_COLORS.get(role, "\033[1;90m")  # default: bright gray
-    tag = f"[{role}:{session_id[:8]}]"
-    return f"{color}{tag}{_RESET} {text}"
-
-
-def _write_colored_output(role: str, session_id: str, text: str) -> None:
-    """Write color-coded output to stdout/stderr (T562)."""
-    colored = _colorize_agent_output(role, session_id, text)
-    _sys.stdout.write(colored)
-    _sys.stdout.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -260,10 +222,6 @@ def check_token_escalation(
 # Permission denied hooks for retry hints (T570)
 # ---------------------------------------------------------------------------
 
-import re
-from dataclasses import dataclass
-from typing import Any
-
 
 @dataclass
 class PermissionDeniedHint:
@@ -272,7 +230,7 @@ class PermissionDeniedHint:
     pattern: str  # Regex pattern to match error messages
     suggestion: str  # Suggested fix or retry hint
     priority: int = 1  # Priority (higher = more important)
-    context: dict[str, Any] = None  # Additional context for the hint
+    context: dict[str, Any] = field(default_factory=lambda: {})
 
 
 class PermissionDeniedHook:
@@ -311,7 +269,8 @@ class PermissionDeniedHook:
         ]
 
         for hook in default_hooks:
-            self.register_hook(hook)
+            self.hooks.append(hook)
+        self.hooks.sort(key=lambda x: x.priority, reverse=True)
 
     def register_hook(self, pattern: str, suggestion: str, priority: int = 1) -> None:
         """Register a new permission denied hook."""
