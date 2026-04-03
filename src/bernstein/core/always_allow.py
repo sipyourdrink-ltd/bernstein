@@ -60,7 +60,7 @@ class AlwaysAllowRule:
     tool: str
     input_pattern: str
     input_field: str = "path"
-    content_patterns: list[str] = field(default_factory=lambda: [])
+    content_patterns: list[str] = field(default_factory=list)
     description: str = ""
 
 
@@ -87,7 +87,7 @@ class AlwaysAllowEngine:
         rules: Loaded rule set.
     """
 
-    rules: list[AlwaysAllowRule] = field(default_factory=lambda: [])
+    rules: list[AlwaysAllowRule] = field(default_factory=list)
 
     def match(
         self,
@@ -123,7 +123,7 @@ class AlwaysAllowEngine:
             return AlwaysAllowMatch(
                 matched=True,
                 rule_id=rule.id,
-                reason=f"Always-allow rule '{rule.id}' matched: {rule.description or rule.input_pattern}",
+                reason=(f"Always-allow rule '{rule.id}' matched: {rule.description or rule.input_pattern}"),
             )
         return AlwaysAllowMatch(
             matched=False,
@@ -189,10 +189,11 @@ def load_always_allow_rules(workdir: Path) -> AlwaysAllowEngine:
     if default_rules_path.exists():
         try:
             raw = yaml.safe_load(default_rules_path.read_text(encoding="utf-8"))
-            raw_items = _coerce_raw(raw)
         except Exception as exc:
             logger.warning("Failed to load %s: %s", default_rules_path, exc)
             raw_items = []
+        else:
+            raw_items = _coerce_raw(raw)
     else:
         raw_items = []
 
@@ -202,9 +203,13 @@ def load_always_allow_rules(workdir: Path) -> AlwaysAllowEngine:
         if rules_path.exists():
             try:
                 raw = yaml.safe_load(rules_path.read_text(encoding="utf-8"))
-                raw_items = _coerce_raw(raw)
             except Exception as exc:
                 logger.warning("Failed to load %s: %s", rules_path, exc)
+            else:
+                raw_items = _coerce_raw(raw)
+
+    if not raw_items:
+        return AlwaysAllowEngine()
 
     parsed: list[AlwaysAllowRule] = []
     for i, entry in enumerate(raw_items, start=1):
@@ -216,8 +221,8 @@ def load_always_allow_rules(workdir: Path) -> AlwaysAllowEngine:
                 i,
             )
             continue
-        content_patterns_raw: Any = entry.get("content_patterns", [])
-        content_patterns: list[str] = [str(cp) for cp in content_patterns_raw if isinstance(cp, str)]
+        cp_raw: object = entry.get("content_patterns", [])
+        content_patterns: list[str] = [str(cp) for cp in cp_raw if isinstance(cp, str)]
         parsed.append(
             AlwaysAllowRule(
                 id=entry.get("id", f"aa-{tool.lower()}-{i}"),
@@ -232,7 +237,7 @@ def load_always_allow_rules(workdir: Path) -> AlwaysAllowEngine:
     return AlwaysAllowEngine(rules=parsed)
 
 
-def _coerce_raw(raw: object) -> list[dict[str, object]]:
+def _coerce_raw(raw: Any) -> list[dict[str, Any]]:
     """Best-effort coerce of YAML-parsed data into a list of dicts.
 
     Handles both a top-level list and a dict with ``always_allow`` key.
@@ -244,14 +249,12 @@ def _coerce_raw(raw: object) -> list[dict[str, object]]:
         List of dicts (empty list on wrong type).
     """
     if isinstance(raw, dict) and "always_allow" in raw:
-        obj: object = raw["always_allow"]
-    else:
-        obj = raw
-    if not isinstance(obj, list):
+        raw = raw["always_allow"]
+    if not isinstance(raw, list):
         return []
 
-    result: list[dict[str, object]] = []
-    for item in obj:
+    result: list[dict[str, Any]] = []
+    for item in raw:
         if isinstance(item, dict):
             result.append(dict(item))
     return result
