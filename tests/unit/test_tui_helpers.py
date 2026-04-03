@@ -460,7 +460,7 @@ def _make_step(
     timestamp: float,
     duration_ms: int = 0,
     detail: str = "",
-) -> "Any":
+) -> Any:
     """Create a TraceStep for testing."""
     from bernstein.core.traces import TraceStep
 
@@ -666,3 +666,85 @@ class TestRenderWaterfallBatches:
         assert "B0" in plain
         assert "B1" in plain
         assert "B2" in plain
+
+    def test_serial_batch_uses_full_block_bar_char(self) -> None:
+        """Serial batches use full block █ for the timing bar."""
+        from bernstein.core.traces import group_trace_steps_into_batches
+        from bernstein.tui.widgets import render_waterfall_batches
+
+        steps = [_make_step("orient", 1000.0, duration_ms=2000)]
+        batches = group_trace_steps_into_batches(steps)
+        result = render_waterfall_batches(batches, bar_width=20)
+
+        assert "\u2588" in result.plain  # █ full block for serial
+
+    def test_concurrent_batch_uses_striped_bar_char(self) -> None:
+        """Concurrent batches use dark shade ▓ for the timing bar."""
+        from bernstein.core.traces import group_trace_steps_into_batches
+        from bernstein.tui.widgets import render_waterfall_batches
+
+        steps = [
+            _make_step("orient", 1000.0),
+            _make_step("edit", 1000.1),
+        ]
+        batches = group_trace_steps_into_batches(steps)
+        result = render_waterfall_batches(batches, bar_width=20)
+
+        assert "\u2593" in result.plain  # ▓ dark shade for concurrent
+
+    def test_duration_annotation_milliseconds(self) -> None:
+        """Batches shorter than 1 second annotate with ms suffix."""
+        from bernstein.core.traces import group_trace_steps_into_batches
+        from bernstein.tui.widgets import render_waterfall_batches
+
+        steps = [_make_step("orient", 1000.0, duration_ms=300)]
+        batches = group_trace_steps_into_batches(steps)
+        result = render_waterfall_batches(batches, bar_width=20)
+
+        assert "ms" in result.plain
+
+    def test_duration_annotation_seconds(self) -> None:
+        """Batches 1 second or longer annotate with .Xs suffix."""
+        from bernstein.core.traces import group_trace_steps_into_batches
+        from bernstein.tui.widgets import render_waterfall_batches
+
+        steps = [_make_step("orient", 1000.0, duration_ms=2500)]
+        batches = group_trace_steps_into_batches(steps)
+        result = render_waterfall_batches(batches, bar_width=20)
+
+        assert "2.5s" in result.plain
+
+    def test_waterfall_from_parsed_log(self, tmp_path: Path) -> None:
+        """Full pipeline: parse agent log → batch steps → render waterfall."""
+        from bernstein.core.traces import group_trace_steps_into_batches, parse_agent_log
+        from bernstein.tui.widgets import render_waterfall_batches
+
+        log_file = tmp_path / "agent.log"
+        log_file.write_text(
+            "[Read] /src/app.py\n"
+            "[Edit] /src/app.py\n"
+            "[Bash] pytest\n"
+        )
+
+        steps = parse_agent_log(log_file)
+        assert len(steps) >= 1
+
+        batches = group_trace_steps_into_batches(steps)
+        result = render_waterfall_batches(batches, bar_width=30)
+
+        plain = result.plain
+        assert "B0" in plain
+        assert "No trace" not in plain
+
+    def test_batch_id_sequential(self) -> None:
+        """Batch IDs are assigned sequentially starting from 0."""
+        from bernstein.core.traces import group_trace_steps_into_batches
+
+        steps = [
+            _make_step("orient", 1000.0),
+            _make_step("edit", 1002.0),
+            _make_step("verify", 1005.0),
+        ]
+        batches = group_trace_steps_into_batches(steps)
+
+        assert [b.batch_id for b in batches] == [0, 1, 2]
