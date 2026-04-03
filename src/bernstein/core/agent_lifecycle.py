@@ -865,21 +865,33 @@ def reap_dead_agents(
                 handle_orphaned_task(orch, task_id, session, tasks_snapshot)
             continue
 
-        # Heartbeat proxy: if the agent process is alive, refresh heartbeat_ts.
-        # Agents don't write HEARTBEAT files, so we use process liveness and
-        # log file growth as proxy signals.  This prevents premature reaping
-        # of agents that are legitimately working (Claude Code sessions can
-        # take 5+ minutes for complex tasks).
+        # Heartbeat proxy: refresh heartbeat_ts using multiple signals.
+        # The PID from Popen may refer to a wrapper process that exits while
+        # the actual CLI agent (claude/qwen) continues as a child.  We check
+        # three signals in priority order:
+        #   1. Process liveness (PID alive → definitely working)
+        #   2. Heartbeat file (agents write these every 30s via background loop)
+        #   3. Log file growth (fallback — log mtime within last 60s)
         if _is_process_alive(session.pid):
             session.heartbeat_ts = now
         else:
-            # Process is dead — check if log file grew recently.
-            _log_path = orch._workdir / ".sdd" / "worktrees" / session.id / ".sdd" / "runtime" / f"{session.id}.log"
+            _heartbeat_refreshed = False
+            # Check heartbeat file written by the agent's background loop
+            _hb_path = orch._workdir / ".sdd" / "runtime" / "heartbeats" / f"{session.id}.json"
             try:
-                if _log_path.exists() and (now - _log_path.stat().st_mtime) < 30:
+                if _hb_path.exists() and (now - _hb_path.stat().st_mtime) < 60:
                     session.heartbeat_ts = now
+                    _heartbeat_refreshed = True
             except OSError:
                 pass
+            # Fallback: check if log file grew recently
+            if not _heartbeat_refreshed:
+                _log_path = orch._workdir / ".sdd" / "worktrees" / session.id / ".sdd" / "runtime" / f"{session.id}.log"
+                try:
+                    if _log_path.exists() and (now - _log_path.stat().st_mtime) < 60:
+                        session.heartbeat_ts = now
+                except OSError:
+                    pass
 
         # Heartbeat timeout
         age = now - session.heartbeat_ts
