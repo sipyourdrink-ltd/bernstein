@@ -7,7 +7,7 @@ goal: >
 
 cli: auto  # auto-detect: claude + qwen
 
-max_agents: 4  # 2 Claude Code + 2 Qwen (free tier)
+max_agents: 6  # 3 Claude Code + 3 Qwen (free tier)
 
 # Route tasks to two agents: Claude Code (primary) + Qwen (secondary, free).
 # Claude handles complex tasks (manager, architect, security, backend).
