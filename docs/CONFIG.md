@@ -144,6 +144,52 @@ For security-sensitive deployments, prefer explicit config in `bernstein.yaml` o
 
 ---
 
+## Always-allow rules (`.bernstein/always_allow.yaml`)
+
+Always-allow rules short-circuit approval prompts when a tool invocation matches a known-safe signature. For example, allowing `grep` on `src/*` paths while still asking or denying `grep` on `/etc`.
+
+**Precedence:** Always-allow rules take **highest precedence** — a match overrides any ASK or DENY from other guardrails. `IMMUNE` and `SAFETY` decisions (e.g. secret detection, immune-path enforcement) are **never** overridden.
+
+### Rule schema
+
+```yaml
+# .bernstein/always_allow.yaml
+- id: safe-grep-src           # unique kebab-case ID
+  tool: grep                  # tool name to match (case-insensitive)
+  input_pattern: "src/.*"     # regex (if contains .* or ^ or $) or glob
+  input_field: path           # which arg to match against (default: path)
+  content_patterns:           # optional: ALL must be present in full_content
+    - "--include=*.py"
+    - "--recursive"
+  description: "Recursive Python grep on src/ only"
+```
+
+Alternatively, embed under an `always_allow:` key in `.bernstein/rules.yaml`.
+
+### Pattern syntax
+
+| Pattern | Interpreted as |
+|---------|----------------|
+| `src/.*` | Regex (contains `.*`) |
+| `^tests/` | Regex (anchored) |
+| `tests/*` | Glob |
+
+### `content_patterns`
+
+When `content_patterns` is specified, **all** listed strings must appear in the full tool invocation content for the rule to fire. This enables narrower constraints, e.g. allowing `grep` only when both `--include=*.py` and the path are present.
+
+### Precedence summary
+
+```
+IMMUNE / SAFETY   — never overridden (secrets, immune paths)
+ALWAYS-ALLOW      — overrides ASK and DENY when a rule matches
+DENY              — blocks by rule
+ASK               — prompts user
+ALLOW             — default pass-through
+```
+
+---
+
 ## Runtime bridges
 
 Bernstein's production bridge configuration lives in `bernstein.yaml`.

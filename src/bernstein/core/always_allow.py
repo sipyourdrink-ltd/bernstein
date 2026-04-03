@@ -76,7 +76,7 @@ class AlwaysAllowEngine:
                 continue
             if rule.content_patterns:
                 content = full_content or input_value
-                if all(cp not in content for cp in rule.content_patterns):
+                if not all(cp in content for cp in rule.content_patterns):
                     continue
             return AlwaysAllowMatch(
                 matched=True,
