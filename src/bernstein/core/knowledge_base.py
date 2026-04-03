@@ -533,3 +533,82 @@ def append_decision(workdir: Path, task_id: str, title: str, decision: str) -> N
         entries = entries[-15:]
 
     md_path.write_text(header + "\n" + "\n\n".join(entries) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Memory staleness caveat (T584)
+# ---------------------------------------------------------------------------
+
+_STALENESS_THRESHOLD_SECONDS = 86_400  # 1 day
+
+
+def memory_staleness_caveat(entry_ts: float, *, threshold_seconds: float = _STALENESS_THRESHOLD_SECONDS) -> str:
+    """Return a staleness caveat string for a memory entry (T584).
+
+    Args:
+        entry_ts: Unix timestamp when the memory entry was created.
+        threshold_seconds: Age threshold for staleness (default: 1 day).
+
+    Returns:
+        Empty string if fresh; a warning string if stale.
+    """
+    import time
+
+    age_seconds = time.time() - entry_ts
+    if age_seconds < threshold_seconds:
+        return ""
+    age_days = age_seconds / 86_400
+    return f"[Note: this memory is {age_days:.1f} days old and may be outdated]"
+
+
+# ---------------------------------------------------------------------------
+# Memory truncation warning (T586)
+# ---------------------------------------------------------------------------
+
+_MEMORY_TOKEN_BUDGET = 4_000  # ~16 KB of text
+_MEMORY_LINE_BUDGET = 200
+
+
+def truncate_memory_with_warning(
+    items: list[str],
+    *,
+    token_budget: int = _MEMORY_TOKEN_BUDGET,
+    line_budget: int = _MEMORY_LINE_BUDGET,
+) -> tuple[list[str], str]:
+    """Truncate memory items to fit within budget, returning a warning (T586).
+
+    Args:
+        items: Memory items to truncate.
+        token_budget: Approximate token budget (chars / 4).
+        line_budget: Maximum number of lines.
+
+    Returns:
+        Tuple of (truncated_items, warning_text).  Warning is empty if no
+        truncation occurred.
+    """
+    if not items:
+        return [], ""
+
+    kept: list[str] = []
+    total_chars = 0
+    total_lines = 0
+    removed_count = 0
+
+    for item in items:
+        item_chars = len(item)
+        item_lines = item.count("\n") + 1
+        if (total_chars + item_chars) // 4 > token_budget or total_lines + item_lines > line_budget:
+            removed_count += 1
+            continue
+        kept.append(item)
+        total_chars += item_chars
+        total_lines += item_lines
+
+    if removed_count == 0:
+        return kept, ""
+
+    warning = (
+        f"[Memory truncated: {removed_count} item(s) removed to fit within "
+        f"token budget ({token_budget} tokens / {line_budget} lines)]"
+    )
+    return kept, warning

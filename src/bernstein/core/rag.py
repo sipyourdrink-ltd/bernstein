@@ -503,3 +503,143 @@ def build_or_update_index(project_root: Path) -> CodebaseIndexer:
         elapsed,
     )
     return indexer
+
+
+# ---------------------------------------------------------------------------
+# Query guard concurrency (T587)
+# ---------------------------------------------------------------------------
+
+import threading as _threading
+from enum import Enum as _Enum
+
+
+class QueryGuardState(_Enum):
+    """State of the query guard (T587)."""
+
+    IDLE = "idle"
+    DISPATCHING = "dispatching"
+    RUNNING = "running"
+
+
+class QueryGuard:
+    """Generation-counted concurrency guard for RAG queries (T587).
+
+    Prevents overlapping orchestrator ticks from issuing concurrent RAG
+    queries.  Each new dispatch increments the generation counter;
+    stale callbacks from previous generations are silently discarded.
+
+    Usage::
+
+        guard = QueryGuard()
+        gen = guard.start()
+        results = indexer.search(query)
+        if guard.is_current(gen):
+            process(results)
+    """
+
+    def __init__(self) -> None:
+        self._lock = _threading.Lock()
+        self._generation: int = 0
+        self._state: QueryGuardState = QueryGuardState.IDLE
+
+    @property
+    def state(self) -> QueryGuardState:
+        """Current guard state."""
+        return self._state
+
+    def start(self) -> int:
+        """Begin a new query dispatch, returning the current generation.
+
+        Increments the generation counter and transitions to DISPATCHING.
+
+        Returns:
+            Current generation number.
+        """
+        with self._lock:
+            self._generation += 1
+            self._state = QueryGuardState.DISPATCHING
+            return self._generation
+
+    def mark_running(self, generation: int) -> bool:
+        """Transition to RUNNING if *generation* is still current.
+
+        Args:
+            generation: Generation returned by :meth:`start`.
+
+        Returns:
+            True if the generation is current and state was updated.
+        """
+        with self._lock:
+            if self._generation != generation:
+                return False
+            self._state = QueryGuardState.RUNNING
+            return True
+
+    def finish(self, generation: int) -> None:
+        """Transition back to IDLE if *generation* is still current.
+
+        Args:
+            generation: Generation returned by :meth:`start`.
+        """
+        with self._lock:
+            if self._generation == generation:
+                self._state = QueryGuardState.IDLE
+
+    def is_current(self, generation: int) -> bool:
+        """Return True if *generation* matches the current generation.
+
+        Args:
+            generation: Generation to check.
+
+        Returns:
+            True if the generation is still current.
+        """
+        with self._lock:
+            return self._generation == generation
+
+    def cancel(self) -> None:
+        """Cancel any in-progress query by incrementing the generation."""
+        with self._lock:
+            self._generation += 1
+            self._state = QueryGuardState.IDLE
+
+
+# ---------------------------------------------------------------------------
+# Background query throttling (T595)
+# ---------------------------------------------------------------------------
+
+
+class BackgroundQueryThrottle:
+    """Rate-limiter for background RAG queries (T595).
+
+    Prevents background indexing and search from saturating the SQLite
+    connection or CPU during active orchestration.
+
+    Args:
+        min_interval_seconds: Minimum seconds between background queries.
+    """
+
+    def __init__(self, min_interval_seconds: float = 2.0) -> None:
+        self._min_interval = min_interval_seconds
+        self._last_query_ts: float = 0.0
+        self._lock = _threading.Lock()
+
+    def should_throttle(self) -> bool:
+        """Return True if a background query should be deferred.
+
+        Returns:
+            True if the minimum interval has not elapsed since the last query.
+        """
+        with self._lock:
+            return (time.time() - self._last_query_ts) < self._min_interval
+
+    def record_query(self) -> None:
+        """Record that a background query was issued."""
+        with self._lock:
+            self._last_query_ts = time.time()
+
+    def wait_if_needed(self) -> None:
+        """Block until the throttle interval has elapsed."""
+        while self.should_throttle():
+            time.sleep(0.1)
+        self.record_query()

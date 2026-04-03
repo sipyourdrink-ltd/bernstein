@@ -669,3 +669,49 @@ if __name__ == "__main__":
                 format="%(asctime)s %(levelname)s %(name)s: %(message)s",
             )
         run_watchdog(Path.cwd(), _args.port)
+
+
+# ---------------------------------------------------------------------------
+# Initialization timeout guard (T583)
+# ---------------------------------------------------------------------------
+
+import asyncio as _asyncio
+import functools as _functools
+from typing import TypeVar as _TypeVar, Callable as _Callable, Awaitable as _Awaitable
+
+_T = _TypeVar("_T")
+
+INIT_TIMEOUT_SECONDS: float = 30.0
+
+
+async def with_init_timeout(
+    coro: _Awaitable[_T],
+    *,
+    timeout: float = INIT_TIMEOUT_SECONDS,
+    context: str = "initialization",
+) -> _T:
+    """Wrap an awaitable with a 30-second initialization timeout guard (T583).
+
+    Prevents deadlocks during startup by raising :class:`asyncio.TimeoutError`
+    if the awaitable does not complete within *timeout* seconds.
+
+    Args:
+        coro: Awaitable to wrap.
+        timeout: Timeout in seconds (default: 30).
+        context: Human-readable context for the timeout log message.
+
+    Returns:
+        Result of the awaitable.
+
+    Raises:
+        asyncio.TimeoutError: If the awaitable exceeds *timeout* seconds.
+    """
+    try:
+        return await _asyncio.wait_for(coro, timeout=timeout)
+    except _asyncio.TimeoutError:
+        logger.error(
+            "Initialization timeout after %.0fs during '%s' — possible deadlock",
+            timeout,
+            context,
+        )
+        raise

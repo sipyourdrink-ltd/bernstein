@@ -7,6 +7,7 @@ the correct working directory.
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import subprocess
 from dataclasses import dataclass, field
@@ -305,3 +306,66 @@ class Workspace:
         except (subprocess.CalledProcessError, OSError, ValueError):
             pass
         return 0, 0
+
+
+# ---------------------------------------------------------------------------
+# Workspace trust gating for hooks (T579)
+# ---------------------------------------------------------------------------
+
+_TRUST_FILE = ".sdd/runtime/workspace_trust.json"
+
+
+def is_workspace_trusted(workdir: Path) -> bool:
+    """Return True if the workspace has been explicitly trusted (T579).
+
+    Trust is stored in ``.sdd/runtime/workspace_trust.json``.  Hooks should
+    not execute until trust is granted.
+
+    Args:
+        workdir: Project root directory.
+
+    Returns:
+        True if the workspace is trusted.
+    """
+    trust_path = workdir / _TRUST_FILE
+    if not trust_path.exists():
+        return False
+    try:
+        data = _json.loads(trust_path.read_text(encoding="utf-8"))
+        return bool(data.get("trusted", False))
+    except (OSError, _json.JSONDecodeError):
+        return False
+
+
+def grant_workspace_trust(workdir: Path, *, granted_by: str = "operator") -> None:
+    """Grant trust to the workspace, enabling hook execution (T579).
+
+    Args:
+        workdir: Project root directory.
+        granted_by: Who granted trust (for audit trail).
+    """
+    import time
+
+    trust_path = workdir / _TRUST_FILE
+    trust_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "trusted": True,
+        "granted_at": time.time(),
+        "granted_by": granted_by,
+    }
+    trust_path.write_text(_json.dumps(payload), encoding="utf-8")
+    logger.info("Workspace trust granted by '%s' at %s", granted_by, workdir)
+
+
+def revoke_workspace_trust(workdir: Path) -> None:
+    """Revoke workspace trust, disabling hook execution (T579).
+
+    Args:
+        workdir: Project root directory.
+    """
+    trust_path = workdir / _TRUST_FILE
+    try:
+        trust_path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("Failed to revoke workspace trust: %s", exc)
+    logger.info("Workspace trust revoked at %s", workdir)

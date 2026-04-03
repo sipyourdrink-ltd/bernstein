@@ -594,3 +594,87 @@ def get_oauth_expiry_dashboard(snapshots: list[MCPCapabilitySnapshot]) -> list[d
                 }
             )
     return dashboard
+
+
+# ---------------------------------------------------------------------------
+# OAuth refresh on 401/403 errors (T568)
+# ---------------------------------------------------------------------------
+
+
+class OAuthRefreshError(Exception):
+    """Raised when an OAuth token refresh attempt fails."""
+
+
+def should_attempt_oauth_refresh(status_code: int) -> bool:
+    """Return True if *status_code* warrants an OAuth token refresh (T568).
+
+    Args:
+        status_code: HTTP response status code.
+
+    Returns:
+        True for 401 (Unauthorized) and 403 (Forbidden).
+    """
+    return status_code in (401, 403)
+
+
+def refresh_oauth_token(
+    server_name: str,
+    *,
+    refresh_url: str,
+    client_id: str,
+    refresh_token: str,
+    timeout: float = 10.0,
+) -> str:
+    """Attempt to refresh an OAuth token for an MCP server (T568).
+
+    Performs a single bounded refresh attempt.  Raises
+    :class:`OAuthRefreshError` on failure so callers can decide whether to
+    retry or surface the error.
+
+    Args:
+        server_name: Name of the MCP server (for logging).
+        refresh_url: Token refresh endpoint URL.
+        client_id: OAuth client ID.
+        refresh_token: Current refresh token.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        New access token string.
+
+    Raises:
+        OAuthRefreshError: If the refresh request fails.
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    payload = urllib.parse.urlencode(
+        {
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "refresh_token": refresh_token,
+        }
+    ).encode()
+
+    req = urllib.request.Request(
+        refresh_url,
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            import json as _json
+
+            data = _json.loads(resp.read().decode())
+            access_token = data.get("access_token")
+            if not access_token:
+                raise OAuthRefreshError(f"No access_token in refresh response for '{server_name}'")
+            logger.info("OAuth token refreshed for MCP server '%s'", server_name)
+            return str(access_token)
+    except urllib.error.HTTPError as exc:
+        raise OAuthRefreshError(
+            f"OAuth refresh failed for '{server_name}': HTTP {exc.code}"
+        ) from exc
+    except Exception as exc:
+        raise OAuthRefreshError(f"OAuth refresh failed for '{server_name}': {exc}") from exc

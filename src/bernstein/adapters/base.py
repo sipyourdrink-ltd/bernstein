@@ -62,6 +62,8 @@ def build_worker_cmd(
     role: str,
     session_id: str,
     pid_dir: Path,
+    workdir: Path,
+    log_path: Path,
     model: str = "",
 ) -> list[str]:
     """Wrap a CLI command with bernstein-worker for process visibility.
@@ -74,6 +76,8 @@ def build_worker_cmd(
         role: Agent role (qa, backend, etc.).
         session_id: Unique session identifier.
         pid_dir: Directory for PID metadata JSON files.
+        workdir: Project root directory.
+        log_path: Path to the agent log file.
         model: Model name for metadata display.
 
     Returns:
@@ -89,6 +93,10 @@ def build_worker_cmd(
         session_id,
         "--pid-dir",
         str(pid_dir),
+        "--workdir",
+        str(workdir),
+        "--log-path",
+        str(log_path),
         "--model",
         model,
         "--",
@@ -278,3 +286,14 @@ class CLIAdapter(ABC):
             True if refresh was successful, False otherwise.
         """
         return False
+
+    def cancel_tool_batch(self, session_id: str, batch_id: str) -> None:
+        """Abort all pending tool calls in a batch.
+
+        Optional: implemented by adapters that support concurrent tool execution.
+
+        Args:
+            session_id: Agent session ID.
+            batch_id: The batch identifier to cancel.
+        """
+        return

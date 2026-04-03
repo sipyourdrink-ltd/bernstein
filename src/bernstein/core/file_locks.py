@@ -17,6 +17,7 @@ import json
 import logging
 import time
 from dataclasses import asdict, dataclass
+from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -209,3 +210,72 @@ class FileLockManager:
             self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError as exc:
             logger.warning("Could not persist file locks to %s: %s", self._path, exc)
+
+
+# ---------------------------------------------------------------------------
+# Tool concurrency safety classification (T576)
+# ---------------------------------------------------------------------------
+
+
+class ToolConcurrencySafety(Enum):
+    """Classification of whether a tool is safe to run concurrently (T576).
+
+    Attributes:
+        SAFE: Read-only or idempotent — may run in parallel with other tools.
+        UNSAFE: Mutates shared state — must be serialized.
+        UNKNOWN: Classification not determined; defaults to conservative UNSAFE.
+    """
+
+    SAFE = "safe"
+    UNSAFE = "unsafe"
+    UNKNOWN = "unknown"
+
+
+#: Built-in tool concurrency classifications.
+#: Tools absent from this map default to UNKNOWN (treated as UNSAFE).
+TOOL_CONCURRENCY_CLASSIFICATIONS: dict[str, ToolConcurrencySafety] = {
+    # Read-only tools — safe to parallelize
+    "read_file": ToolConcurrencySafety.SAFE,
+    "list_directory": ToolConcurrencySafety.SAFE,
+    "search_files": ToolConcurrencySafety.SAFE,
+    "grep": ToolConcurrencySafety.SAFE,
+    "glob": ToolConcurrencySafety.SAFE,
+    "get_file_info": ToolConcurrencySafety.SAFE,
+    # Mutating tools — must be serialized
+    "write_file": ToolConcurrencySafety.UNSAFE,
+    "edit_file": ToolConcurrencySafety.UNSAFE,
+    "create_file": ToolConcurrencySafety.UNSAFE,
+    "delete_file": ToolConcurrencySafety.UNSAFE,
+    "bash": ToolConcurrencySafety.UNSAFE,
+    "execute_command": ToolConcurrencySafety.UNSAFE,
+    "run_terminal_cmd": ToolConcurrencySafety.UNSAFE,
+    "computer_use": ToolConcurrencySafety.UNSAFE,
+}
+
+
+def classify_tool_concurrency(tool_name: str) -> ToolConcurrencySafety:
+    """Return the concurrency safety classification for *tool_name* (T576).
+
+    Args:
+        tool_name: Tool identifier (case-insensitive).
+
+    Returns:
+        :class:`ToolConcurrencySafety` value.  Defaults to
+        :attr:`ToolConcurrencySafety.UNKNOWN` for unrecognised tools.
+    """
+    return TOOL_CONCURRENCY_CLASSIFICATIONS.get(
+        tool_name.lower(), ToolConcurrencySafety.UNKNOWN
+    )
+
+
+def is_tool_concurrency_safe(tool_name: str) -> bool:
+    """Return True only when *tool_name* is explicitly classified as SAFE (T576).
+
+    Args:
+        tool_name: Tool identifier.
+
+    Returns:
+        True if the tool is safe to run concurrently; False otherwise
+        (including UNKNOWN tools, which default to conservative UNSAFE).
+    """
+    return classify_tool_concurrency(tool_name) == ToolConcurrencySafety.SAFE

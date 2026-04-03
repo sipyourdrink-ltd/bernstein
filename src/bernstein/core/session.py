@@ -12,6 +12,7 @@ import json
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any, Literal
 
 DEFAULT_STALE_MINUTES: int = 30
 _SESSION_FILE = Path(".sdd") / "runtime" / "session.json"
@@ -485,3 +486,105 @@ def load_bridge_lineage(workdir: Path, session_id: str | None = None) -> list[Br
     except OSError:
         pass
     return events
+
+
+# ---------------------------------------------------------------------------
+# Task notification protocol for agent status reports (T574)
+# ---------------------------------------------------------------------------
+
+_TASK_NOTIFICATIONS_FILE = Path(".sdd") / "runtime" / "task_notifications.jsonl"
+
+
+@dataclass
+class TaskStatusNotification:
+    """Structured status notification from an agent to the orchestrator (T574).
+
+    Attributes:
+        task_id: Task being reported on.
+        session_id: Agent session emitting the notification.
+        status: Terminal status (``"completed"``, ``"failed"``, ``"killed"``).
+        summary: Human-readable result summary.
+        result: Optional machine-readable result payload.
+        usage: Optional token/cost usage metrics.
+        ts: Unix timestamp of the notification.
+    """
+
+    task_id: str
+    session_id: str
+    status: Literal["completed", "failed", "killed"]
+    summary: str = ""
+    result: dict[str, Any] = field(default_factory=dict[str, Any])
+    usage: dict[str, Any] = field(default_factory=dict[str, Any])
+    ts: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise to a JSON-compatible dict."""
+        return {
+            "task_id": self.task_id,
+            "session_id": self.session_id,
+            "status": self.status,
+            "summary": self.summary,
+            "result": self.result,
+            "usage": self.usage,
+            "ts": self.ts,
+        }
+
+
+def emit_task_notification(workdir: Path, notification: TaskStatusNotification) -> None:
+    """Append a task status notification to the JSONL log (T574).
+
+    Args:
+        workdir: Project root directory.
+        notification: Notification to emit.
+    """
+    notif_path = workdir / _TASK_NOTIFICATIONS_FILE
+    notif_path.parent.mkdir(parents=True, exist_ok=True)
+    with notif_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(notification.to_dict()) + "\n")
+
+
+def load_task_notifications(
+    workdir: Path,
+    task_id: str | None = None,
+) -> list[TaskStatusNotification]:
+    """Load task status notifications from the JSONL log (T574).
+
+    Args:
+        workdir: Project root directory.
+        task_id: If provided, filter to notifications for this task only.
+
+    Returns:
+        List of :class:`TaskStatusNotification` objects.
+    """
+    notif_path = workdir / _TASK_NOTIFICATIONS_FILE
+    if not notif_path.exists():
+        return []
+    notifications: list[TaskStatusNotification] = []
+    try:
+        for line in notif_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if task_id is not None and d.get("task_id") != task_id:
+                continue
+            status = d.get("status", "failed")
+            if status not in ("completed", "failed", "killed"):
+                status = "failed"
+            notifications.append(
+                TaskStatusNotification(
+                    task_id=str(d.get("task_id", "")),
+                    session_id=str(d.get("session_id", "")),
+                    status=status,  # type: ignore[arg-type]
+                    summary=str(d.get("summary", "")),
+                    result=dict(d.get("result", {})),
+                    usage=dict(d.get("usage", {})),
+                    ts=float(d.get("ts", 0.0)),
+                )
+            )
+    except OSError:
+        pass
+    return notifications

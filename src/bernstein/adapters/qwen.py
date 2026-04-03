@@ -124,6 +124,8 @@ class QwenAdapter(CLIAdapter):
             role=session_id.rsplit("-", 1)[0],
             session_id=session_id,
             pid_dir=pid_dir,
+            workdir=workdir,
+            log_path=log_path,
             model=model_config.model,
         )
 

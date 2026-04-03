@@ -545,3 +545,58 @@ class QualityGatePanel(DataTable):
                 duration_str,
                 result.details[:50] + "..." if len(result.details) > 50 else result.details,
             )
+# ---------------------------------------------------------------------------
+# Color-coded agent identity in all output (T562)
+# ---------------------------------------------------------------------------
+
+# Agent role colors for TUI widgets
+AGENT_ROLE_COLORS_TUI: dict[str, str] = {
+    "manager": "cyan",
+    "backend": "green",
+    "frontend": "yellow",
+    "qa": "magenta",
+    "security": "red",
+    "architect": "blue",
+    "devops": "white",
+    "docs": "dim",
+    "reviewer": "magenta",
+    "ml-engineer": "cyan",
+    "prompt-engineer": "yellow",
+    "retrieval": "green",
+    "vp": "white",
+    "analyst": "blue",
+    "resolver": "red",
+    "visionary": "magenta",
+}
+
+
+def get_agent_role_color(role: str) -> str:
+    """Get color for agent role in TUI (T562)."""
+    return AGENT_ROLE_COLORS_TUI.get(role, "dim")
+
+
+def format_agent_label(role: str, session_id: str) -> Text:
+    """Format color-coded agent label for TUI (T562)."""
+    color = get_agent_role_color(role)
+    return Text(f"{role}:{session_id[:8]}", style=color)
+# ---------------------------------------------------------------------------
+# Compaction event indicators (T563)
+# ---------------------------------------------------------------------------
+
+def render_compaction_marker(timestamp: float, duration: float = 0.0) -> str:
+    """Render a compaction event marker for the timeline (T563)."""
+    from datetime import datetime
+    
+    time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
+    if duration > 0:
+        return f"⚡ Compaction at {time_str} ({duration:.1f}s)"
+    return f"⚡ Compaction at {time_str}"
+
+def format_compaction_event(entry: TimelineEntry) -> str:
+    """Format a compaction event for display (T563)."""
+    if entry.kind == "compaction":
+        if entry.end_time:
+            duration = entry.end_time - entry.start_time
+            return f"⚡ Compaction ({duration:.1f}s)"
+        return "⚡ Compaction"
+    return entry.title
