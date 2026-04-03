@@ -8,6 +8,11 @@ triggers an ask or deny.
 Rules take **highest precedence** — an ALLOW from this engine overrides
 any ASK or DENY from other guardrails (except IMMUNE and SAFETY which
 remain bypass-immune).
+
+Supports **content matching** — rules can define ``content_patterns`` that
+match against the full tool invocation text (all args joined), so you can
+approve ``grep`` only when used with ``--include=*.py`` even on ``src/``
+paths.
 """
 
 from __future__ import annotations
@@ -23,7 +28,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
 
 #: A PermissionDecision indicating a match by an always-allow rule.
 #: This sits above ALLOW but below IMMUNE/SAFETY/DENY in precedence — it
@@ -46,6 +50,9 @@ class AlwaysAllowRule:
             primary input argument (e.g. ``src/.*``).
         input_field: Name of the input field to match against
             (defaults to "path" for file tools, "command" for bash).
+        content_patterns: Optional list of patterns that must all appear
+            as substrings in the full tool invocation.  Used to approve
+            tools only when invoked with safe flag combinations.
         description: Human-readable explanation of why this rule is safe.
     """
 
@@ -53,6 +60,7 @@ class AlwaysAllowRule:
     tool: str
     input_pattern: str
     input_field: str = "path"
+    content_patterns: list[str] = field(default_factory=lambda: [])
     description: str = ""
 
 
@@ -79,20 +87,23 @@ class AlwaysAllowEngine:
         rules: Loaded rule set.
     """
 
-    rules: list[AlwaysAllowRule] = field(default_factory=list)
+    rules: list[AlwaysAllowRule] = field(default_factory=lambda: [])
 
     def match(
         self,
         tool_name: str,
         input_value: str,
         input_field: str = "path",
+        full_content: str | None = None,
     ) -> AlwaysAllowMatch:
-        """Check whether *tool_name* with *input_value* matches an always-allow rule.
+        """Check whether *tool_name* with *input_value* matches a rule.
 
         Args:
             tool_name: Tool being invoked.
             input_value: Value of the input field (e.g. file path).
             input_field: Name of the input field being checked.
+            full_content: Optional full invocation text for content-pattern
+                matching.  Falls back to *input_value* when absent.
 
         Returns:
             AlwaysAllowMatch indicating whether a rule matched.
@@ -102,40 +113,53 @@ class AlwaysAllowEngine:
                 continue
             if rule.input_field.lower() != input_field.lower():
                 continue
-            if _pattern_matches(rule.input_pattern, input_value):
-                return AlwaysAllowMatch(
-                    matched=True,
-                    rule_id=rule.id,
-                    reason=f"Always-allow rule '{rule.id}' matched: {rule.description or rule.input_pattern}",
-                )
-        return AlwaysAllowMatch(matched=False, reason=f"No always-allow rule matched {tool_name}")
+            if not _pattern_matches(rule.input_pattern, input_value):
+                continue
+            # Content-pattern checks — all must match (substring semantics)
+            if rule.content_patterns:
+                content = full_content or input_value
+                if any(cp not in content for cp in rule.content_patterns):
+                    continue
+            return AlwaysAllowMatch(
+                matched=True,
+                rule_id=rule.id,
+                reason=f"Always-allow rule '{rule.id}' matched: {rule.description or rule.input_pattern}",
+            )
+        return AlwaysAllowMatch(
+            matched=False,
+            reason=f"No always-allow rule matched {tool_name}",
+        )
 
 
 def _pattern_matches(pattern: str, value: str) -> bool:
-    """Match *value* against *pattern* using regex or glob.
+    """Match *value* against *pattern* using glob by default, regex if anchored.
 
-    If the pattern contains regex-special characters (``.``, ``*``, ``+``,
-    ``^``, ``$``, ``[``, ``]``, ``(``, ``)``) it is treated as a regex.
-    Otherwise it is treated as a glob pattern.
+    If the pattern starts with ``^`` or contains ``.*`` it is treated as an
+    anchored regex.  Otherwise it is treated as a glob pattern (fnmatch).
 
     Args:
-        pattern: Regex or glob pattern.
+        pattern: Regex (anchored) or glob pattern.
         value: Value to match against.
 
     Returns:
-        True when the pattern matches (search, not fullmatch).
+        True when the pattern matches.
     """
     import re
 
-    # Treat patterns with obvious regex syntax as regex
-    regex_chars = {".", "*", "+", "^", "$", "[", "]", "(", ")", "?", "{", "}", "|", "\\"}
-    if any(c in pattern for c in regex_chars):
+    is_regex = pattern.startswith("^") or ".*" in pattern or pattern.endswith("$")
+
+    if is_regex:
         try:
             return re.search(pattern, value) is not None
         except re.error:
             logger.debug("Invalid regex pattern %r — falling back to glob", pattern)
 
     return fnmatch.fnmatch(value, pattern)
+
+
+# ---------------------------------------------------------------------------
+# Public API: loader
+# ---------------------------------------------------------------------------
 
 
 def load_always_allow_rules(workdir: Path) -> AlwaysAllowEngine:
@@ -152,54 +176,90 @@ def load_always_allow_rules(workdir: Path) -> AlwaysAllowEngine:
     Returns:
         AlwaysAllowEngine with loaded rules.
     """
+    try:
+        import yaml
+    except ImportError:
+        logger.warning("PyYAML not installed; cannot load always-allow rules")
+        return AlwaysAllowEngine()
+
     default_rules_path = workdir / ".bernstein" / "always_allow.yaml"
-    rules: list[dict[str, Any]] = []
+    raw_items: list[dict[str, Any]]
 
     # Try dedicated always_allow.yaml first
     if default_rules_path.exists():
         try:
-            import yaml
-
-            data = yaml.safe_load(default_rules_path.read_text(encoding="utf-8"))
-            items: Any = data if isinstance(data, list) else data.get("rules", data.get("always_allow", []))
-            if isinstance(items, list):
-                rules = [r for r in items if isinstance(r, dict)]
+            raw = yaml.safe_load(default_rules_path.read_text(encoding="utf-8"))
+            raw_items = _coerce_raw(raw)
         except Exception as exc:
-            logger.warning("Failed to load always_allow rules from %s: %s", default_rules_path, exc)
+            logger.warning("Failed to load %s: %s", default_rules_path, exc)
+            raw_items = []
+    else:
+        raw_items = []
 
     # Fall back to .bernstein/rules.yaml
-    if not rules:
+    if not raw_items:
         rules_path = workdir / ".bernstein" / "rules.yaml"
         if rules_path.exists():
             try:
-                import yaml
-
-                data = yaml.safe_load(rules_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    aa_section = data.get("always_allow", [])
-                    if isinstance(aa_section, list):
-                        rules = [r for r in aa_section if isinstance(r, dict)]
+                raw = yaml.safe_load(rules_path.read_text(encoding="utf-8"))
+                raw_items = _coerce_raw(raw)
             except Exception as exc:
-                logger.warning("Failed to load always_allow rules from %s: %s", rules_path, exc)
+                logger.warning("Failed to load %s: %s", rules_path, exc)
 
     parsed: list[AlwaysAllowRule] = []
-    for i, entry in enumerate(rules, start=1):
-        tool = entry.get("tool", "")
-        pattern = entry.get("input_pattern", "")
+    for i, entry in enumerate(raw_items, start=1):
+        tool = str(entry.get("tool", ""))
+        pattern = str(entry.get("input_pattern", ""))
         if not tool or not pattern:
-            logger.debug("Skipping always-allow rule %d: missing tool or input_pattern", i)
+            logger.debug(
+                "Skipping always-allow rule %d: missing tool or input_pattern",
+                i,
+            )
             continue
+        content_patterns_raw: Any = entry.get("content_patterns", [])
+        content_patterns: list[str] = [str(cp) for cp in content_patterns_raw if isinstance(cp, str)]
         parsed.append(
             AlwaysAllowRule(
-                id=entry.get("id", f"aa-{entry['tool'].lower()}-{i}"),
+                id=entry.get("id", f"aa-{tool.lower()}-{i}"),
                 tool=tool,
                 input_pattern=pattern,
-                input_field=entry.get("input_field", "path"),
-                description=entry.get("description", ""),
+                input_field=str(entry.get("input_field", "path")),
+                content_patterns=content_patterns,
+                description=str(entry.get("description", "")),
             )
         )
 
     return AlwaysAllowEngine(rules=parsed)
+
+
+def _coerce_raw(raw: object) -> list[dict[str, object]]:
+    """Best-effort coerce of YAML-parsed data into a list of dicts.
+
+    Handles both a top-level list and a dict with ``always_allow`` key.
+
+    Args:
+        raw: Untyped YAML parse result.
+
+    Returns:
+        List of dicts (empty list on wrong type).
+    """
+    if isinstance(raw, dict) and "always_allow" in raw:
+        obj: object = raw["always_allow"]
+    else:
+        obj = raw
+    if not isinstance(obj, list):
+        return []
+
+    result: list[dict[str, object]] = []
+    for item in obj:
+        if isinstance(item, dict):
+            result.append(dict(item))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Public API: runtime check
+# ---------------------------------------------------------------------------
 
 
 def check_always_allow(
@@ -207,6 +267,7 @@ def check_always_allow(
     input_value: str,
     engine: AlwaysAllowEngine,
     input_field: str = "path",
+    full_content: str | None = None,
 ) -> AlwaysAllowMatch:
     """Check whether a tool invocation is always allowed.
 
@@ -215,8 +276,10 @@ def check_always_allow(
         input_value: Value of the tool's primary input.
         engine: Loaded always-allow rule engine.
         input_field: Input field name to match against.
+        full_content: Optional full invocation content for content pattern
+            matching.  Falls back to *input_value* when absent.
 
     Returns:
         AlwaysAllowMatch with match details.
     """
-    return engine.match(tool_name, input_value, input_field)
+    return engine.match(tool_name, input_value, input_field, full_content=full_content)

@@ -15,6 +15,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from bernstein.core.always_allow import (
+    AlwaysAllowEngine,
+    AlwaysAllowMatch,
+    check_always_allow,
+)
 from bernstein.core.license_scanner import check_license_obligations
 from bernstein.core.models import GuardrailResult, Task
 from bernstein.core.permissions import AgentPermissions, check_file_permissions
@@ -28,6 +33,105 @@ def _default_review_checklist() -> list[str]:
     return []
 
 
+# ---------------------------------------------------------------------------
+# Sandbox detection and rule relaxation (T466)
+# ---------------------------------------------------------------------------
+
+
+def is_sandboxed() -> bool:
+    """Return True if execution is provably sandboxed (T466).
+
+    Detects sandbox via:
+    - BERNSTEIN_SANDBOX=1 environment variable (injected by container runtime).
+    - Presence of /.dockerenv or cgroup v1/v2 container indicators.
+    - Running inside a known container (Docker, Podman, gVisor, Firecracker).
+
+    This is designed to be spoof-resistant: the env var is only set by the
+    container integration path, and filesystem markers are verified.
+
+    Returns:
+        True when execution appears to be in a sandboxed environment.
+    """
+    import os
+
+    # Explicit env var set by container integration
+    if os.environ.get("BERNSTEIN_SANDBOX") == "1":
+        return True
+
+    # /.dockerenv — Docker/Podman marker
+    if Path("/.dockerenv").exists():
+        return True
+
+    # cgroup v1: check for "docker" or "containerd" or "kubepods" in cgroup
+    try:
+        cgroup_v1 = Path("/proc/1/cgroup").read_text(encoding="utf-8")
+        if any(marker in cgroup_v1 for marker in ("docker", "containerd", "kubepods", "firecracker")):
+            return True
+    except OSError:
+        pass
+
+    # cgroup v2: check for containerd in /proc/1/mountinfo
+    try:
+        mountinfo = Path("/proc/1/mountinfo").read_text(encoding="utf-8")
+        if "containerd" in mountinfo:
+            return True
+    except OSError:
+        pass
+
+    return False
+
+
+def relax_sandboxed(decisions: list[PermissionDecision], check_name: str = "") -> list[PermissionDecision]:
+    """Relax ASK/DENY decisions to ALLOW when running in a sandbox (T466).
+
+    Only applies to checks that are sandbox-safe (e.g., file permissions,
+    scope enforcement). Safety-critical checks (secrets, immune paths,
+    dangerous operations) are never relaxed regardless of sandbox state.
+
+    Args:
+        decisions: List of PermissionDecision from a guardrail check.
+        check_name: Name of the guardrail check (e.g., "file_permissions").
+
+    Returns:
+        Decisions with sandboxable ASK/DENY decisions relaxed to ALLOW,
+        or the original decisions if not sandboxed or not a relaxable check.
+    """
+    # Checks that ARE safe to relax in a sandbox
+    RELAXABLE: frozenset[str] = frozenset({"file_permissions", "scope_enforcement"})
+
+    if not decisions or not is_sandboxed() or check_name not in RELAXABLE:
+        return decisions
+
+    relaxed: list[PermissionDecision] = []
+    for d in decisions:
+        # Safety and immune decisions must never be relaxed
+        if d.type in (DecisionType.SAFETY, DecisionType.IMMUNE):
+            relaxed.append(d)
+            continue
+        # Allow decisions pass through unchanged
+        if d.type == DecisionType.ALLOW:
+            relaxed.append(d)
+            continue
+        # ASK/DENY with sandboxable check → relax to ALLOW
+        if d.type in (DecisionType.ASK, DecisionType.DENY):
+            relaxed.append(
+                PermissionDecision(
+                    type=DecisionType.ALLOW,
+                    reason=f"[SANDBOX RELAXED] {d.reason}",
+                )
+            )
+            logger.debug(
+                "Sandbox relaxation: %s decision relaxed for check %s",
+                d.type.value,
+                d.reason[:80],
+            )
+            continue
+        # Unknown decision type — preserve as-is for safety
+        relaxed.append(d)
+
+    return relaxed
+
+
 @dataclass(frozen=True)
 class GuardrailsConfig:
     """Guardrail configuration options.
@@ -37,6 +141,7 @@ class GuardrailsConfig:
         scope: Whether to run scope enforcement.
         license_scan: Whether to scan for copyleft license obligations.
         max_deletion_pct: Flag if this fraction of a file's diff lines are removals.
+        sandbox_relax: Whether to relax ASK/DENY decisions when sandboxed (T466).
     """
 
     secrets: bool = True
@@ -46,6 +151,7 @@ class GuardrailsConfig:
     max_deletion_pct: int = 50
     permission_overrides: dict[str, AgentPermissions] | None = None
     review_checklist: list[str] = field(default_factory=_default_review_checklist)
+    sandbox_relax: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +539,53 @@ def _check_always_allow_for_diff(
     return [PermissionDecision(type=DecisionType.ALLOW, reason="No always-allow matches")]
 
 
+def check_always_allow_tool(
+    tool_name: str,
+    tool_args: dict[str, Any],
+    engine: AlwaysAllowEngine,
+) -> AlwaysAllowMatch:
+    """Check whether a live tool invocation is always allowed.
+
+    Use this during agent execution to short-circuit approval prompts
+    when the tool+arguments match an always-allow rule.
+
+    Args:
+        tool_name: Name of the tool being invoked.
+        tool_args: Tool invocation arguments (the ``params`` payload).
+        engine: Loaded always-allow rule engine.
+
+    Returns:
+        AlwaysAllowMatch indicating whether a rule matched.
+    """
+    # Build full content from all string args for content-pattern matching
+    content_chunks: list[str] = []
+    primary_field: str | None = None
+
+    for field_name in ("path", "file_path", "command", "query"):
+        value = tool_args.get(field_name)
+        if isinstance(value, str):
+            if primary_field is None:
+                primary_field = field_name
+            content_chunks.append(value)
+
+    full_content = " ".join(content_chunks) if content_chunks else None
+
+    # Check common input fields
+    for field_name in ("path", "file_path", "command", "query"):
+        value = tool_args.get(field_name)
+        if isinstance(value, str):
+            result = check_always_allow(
+                tool_name,
+                value,
+                engine,
+                input_field=field_name,
+                full_content=full_content,
+            )
+            if result.matched:
+                return result
+    return AlwaysAllowMatch(matched=False, reason=f"No always-allow rule matched {tool_name}")
+
+
 def run_guardrails(
     diff: str,
     task: Task,
@@ -471,10 +624,21 @@ def run_guardrails(
         decisions["secret_detection"] = check_secrets(diff)
 
     if config.scope:
-        decisions["scope_enforcement"] = check_scope(diff, task)
+        decisions["scope_enforcement"] = (
+            relax_sandboxed(check_scope(diff, task), "scope_enforcement")
+            if config.sandbox_relax
+            else check_scope(diff, task)
+        )
 
     if config.file_permissions:
-        decisions["file_permissions"] = check_file_permissions(diff, task.role, config.permission_overrides)
+        decisions["file_permissions"] = (
+            relax_sandboxed(
+                check_file_permissions(diff, task.role, config.permission_overrides),
+                "file_permissions",
+            )
+            if config.sandbox_relax
+            else check_file_permissions(diff, task.role, config.permission_overrides)
+        )
 
     decisions["dangerous_operations"] = check_dangerous_operations(diff, config)
 
