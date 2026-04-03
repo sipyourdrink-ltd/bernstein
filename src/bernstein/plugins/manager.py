@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from importlib.metadata import entry_points
@@ -20,7 +21,10 @@ from bernstein.plugins.hookspecs import BernsteinSpec
 
 log = logging.getLogger(__name__)
 
-__all__ = ["HookBlockingError", "PluginManager", "get_plugin_manager"]
+__all__ = ["SLOW_HOOK_THRESHOLD", "HookBlockingError", "PluginManager", "get_plugin_manager"]
+
+# Threshold in seconds above which a hook execution is logged as "slow".
+SLOW_HOOK_THRESHOLD: float = 1.0
 
 
 # Module-level singleton so the same manager is reused within a process.
@@ -40,10 +44,46 @@ class CommandHook:
     """A plugin that executes shell scripts for hooks.
 
     Discovered in ``.bernstein/hooks/<hook_name>/`` as executable files.
+
+    Each script is tracked by its resolved path so that the same hook script
+    is only executed once even if registered by multiple plugin sources (T455).
     """
 
-    def __init__(self, hooks_dir: Path) -> None:
+    def __init__(
+        self,
+        hooks_dir: Path,
+        plugin_root: str = "",
+        seen: set[tuple[str, str]] | None = None,
+    ) -> None:
+        """Create a CommandHook instance.
+
+        Args:
+            hooks_dir: Directory tree containing hook script subdirectories.
+            plugin_root: Dotted import path or name identifying the plugin
+                source. Used for dedup logging when collisions occur.
+            seen: Shared set tracking registered hook+script combos across all
+                CommandHook instances. Mutated in place.
+        """
         self._hooks_dir = hooks_dir
+        self._plugin_root = plugin_root
+        self._seen: set[tuple[str, str]] = seen if seen is not None else set()
+
+    def _script_key(self, script: Path) -> str:
+        """Return a dedup key for a script based on its resolved path."""
+        return str(script.resolve())
+
+    def _is_duplicate(self, hook_name: str, script: Path) -> bool:
+        """Check and record a hook+script registration.
+
+        Returns True if this combination was already seen (skip execution).
+        First registration wins; subsequent calls with the same key log
+        and are skipped.
+        """
+        key = (hook_name, self._script_key(script))
+        if key in self._seen:
+            return True
+        self._seen.add(key)
+        return False
 
     def _run_command(self, hook_name: str, **kwargs: Any) -> None:
         hook_path = self._hooks_dir / hook_name
@@ -53,6 +93,16 @@ class CommandHook:
         # Find all executable files in the directory
         for script in sorted(hook_path.iterdir()):
             if not os.access(script, os.X_OK) or script.is_dir():
+                continue
+
+            # Deduplicate: skip scripts already registered (T455)
+            if self._is_duplicate(hook_name, script):
+                log.debug(
+                    "Skipping duplicate hook %s/%s (already registered via %s)",
+                    hook_name,
+                    script.name,
+                    self._plugin_root,
+                )
                 continue
 
             log.debug("Executing hook script: %s", script)
@@ -174,6 +224,8 @@ class PluginManager:
         self._registered_names: list[str] = []
         # Use a small pool for background hooks.
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="BernsteinPluginHook")
+        # Shared dedup registry for hook scripts across all CommandHook instances (T455).
+        self._hook_seen: set[tuple[str, str]] = set()
 
     def fire_task_created(self, task_id: str, role: str, title: str) -> None:
         self._safe_call("on_task_created", task_id=task_id, role=role, title=title)
@@ -360,17 +412,37 @@ class PluginManager:
             log.warning("Plugin manager failed to dispatch hook %r: %s", hook_name, exc)
 
     def _invoke_hook(self, name: str, hook_caller: Any, is_background: bool, **kwargs: Any) -> None:
-        """Actually execute the hook and log errors."""
-        if is_background:
-            log.debug("Starting background hook %r", name)
+        """Actually execute the hook and log timing + outcome."""
+        start = time.monotonic()
+        outcome = "success"
         try:
+            if is_background:
+                log.debug("Starting background hook %r", name)
             hook_caller(**kwargs)
         except HookBlockingError:
-            # Re-raise blocking errors so they propagate to the orchestrator.
+            outcome = "blocking_error"
             raise
         except Exception as exc:
+            outcome = "exception"
             log.warning("Plugin hook %r raised an exception: %s", name, exc)
         finally:
+            duration = time.monotonic() - start
+            tag = "background" if is_background else "foreground"
+            if duration >= SLOW_HOOK_THRESHOLD:
+                log.warning(
+                    "Slow hook %s (%s): %.2fs (threshold=%.1fs)",
+                    name,
+                    tag,
+                    duration,
+                    SLOW_HOOK_THRESHOLD,
+                )
+            log.debug(
+                "Hook %s (%s): outcome=%s duration=%.3fs",
+                name,
+                tag,
+                outcome,
+                duration,
+            )
             if is_background:
                 log.debug("Finished background hook %r", name)
 
