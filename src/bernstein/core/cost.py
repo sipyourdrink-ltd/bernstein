@@ -662,7 +662,6 @@ def predict_task_cost(task: Task, metrics_dir: Path | None = None) -> float:
 # ---------------------------------------------------------------------------
 
 
-
 @dataclass
 class CachePricingTier:
     """Pricing tier for cache read/write operations."""
