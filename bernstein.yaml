@@ -5,54 +5,45 @@ goal: >
   Commit each completed task. Do NOT invent new tickets or create tasks
   beyond what is in the backlog files.
 
-cli: auto  # auto-detect: claude + qwen
+cli: claude
 
-max_agents: 6  # 3 Claude Code + 3 Qwen (free tier)
+max_agents: 4
 
-# Runtime-enforced provider/model pins.
-# "provider" controls which CLI adapter spawns the agent.
-# Claude handles complex tasks; Qwen handles simpler ones (free tier).
 role_model_policy:
   manager:
-    provider: claude
     model: opus
     effort: max
   architect:
-    provider: claude
     model: opus
     effort: max
   security:
-    provider: claude
-    model: opus
-    effort: max
+    model: sonnet
+    effort: high
   backend:
-    provider: claude
     model: sonnet
     effort: high
   frontend:
-    provider: qwen
     model: sonnet
     effort: high
   qa:
-    provider: qwen
     model: sonnet
     effort: high
   reviewer:
-    provider: qwen
     model: sonnet
     effort: high
   docs:
-    provider: qwen
+    model: sonnet
+    effort: high
+  devops:
     model: sonnet
     effort: high
 
-# Fallback: if Qwen fails, retry on Claude Code
-fallback:
-  enabled: true
-  target: claude-sonnet        # fallback agent
-  log: true                    # log fallback events to .sdd/metrics/fallbacks.jsonl
+budget: "$0"
 
-budget: "$0"  # no cap — run until rate limits, then wait and resume
+# Disable features that use OpenRouter LLM calls — key is exhausted,
+# and these features inflate the backlog with junk tasks.
+evolution_enabled: false   # no upgrade/self-improve tasks
+auto_decompose: false      # no LLM-based task splitting
 
 constraints:
   - "Python 3.12+, strict typing (Pyright strict), Ruff linting"
@@ -68,8 +59,8 @@ quality_gates:
   enabled: true
   lint: true
   lint_command: "ruff check ."
-  type_check: false        # slow; enable if you want pyright gate
-  tests: false             # enable if you want tests to run as a merge gate
+  type_check: false
+  tests: false
 
 context_files:
   - docs/DESIGN.md
