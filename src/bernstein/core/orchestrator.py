@@ -94,6 +94,7 @@ from bernstein.core.runtime_state import (
 from bernstein.core.semantic_cache import ResponseCacheManager
 from bernstein.core.signals import read_unresolved_pivots
 from bernstein.core.slo import SLOTracker
+from bernstein.core.task_grouping import compact_small_tasks
 from bernstein.core.task_lifecycle import (
     auto_decompose_task,
     claim_and_spawn_batches,
@@ -120,7 +121,6 @@ from bernstein.core.tick_pipeline import (
 from bernstein.core.tick_pipeline import (
     total_spent_cache as total_spent_cache,
 )
-from bernstein.core.task_grouping import compact_small_tasks
 from bernstein.core.token_monitor import check_token_growth
 from bernstein.core.wal import WALWriter
 from bernstein.core.watchdog import WatchdogManager, collect_watchdog_findings
