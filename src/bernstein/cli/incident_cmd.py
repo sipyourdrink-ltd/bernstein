@@ -7,6 +7,7 @@ correlated from logs, metrics, and traces.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import click
 from rich.console import Console
@@ -99,7 +100,11 @@ def _list_incidents(json_mode: bool) -> None:
         console.print(f"[red]Error fetching incidents: {exc}[/red]")
         return
 
-    incidents = data.get("incidents", [])
+    if data is None:
+        console.print("[red]No response from server.[/red]")
+        return
+
+    incidents: list[dict[str, Any]] = data.get("incidents", [])
 
     if json_mode:
         click.echo(json.dumps(incidents, indent=2))
@@ -143,13 +148,18 @@ def _list_incidents(json_mode: bool) -> None:
 
 def _show_timeline(incident_id: str, json_mode: bool, window_before: int, window_after: int) -> None:
     """Show the timeline for a specific incident."""
+    path = (
+        f"/observability/incident-timeline/{incident_id}"
+        f"?window_before={window_before}&window_after={window_after}"
+    )
     try:
-        data = server_get(
-            f"/observability/incident-timeline/{incident_id}",
-            params={"window_before": window_before, "window_after": window_after},
-        )
+        data = server_get(path)
     except Exception as exc:
         console.print(f"[red]Error fetching incident timeline: {exc}[/red]")
+        return
+
+    if data is None:
+        console.print("[red]No response from server.[/red]")
         return
 
     if "error" in data:
@@ -161,11 +171,12 @@ def _show_timeline(incident_id: str, json_mode: bool, window_before: int, window
         return
 
     # Render header
-    severity = data.get("severity", "?")
-    sev_style = {"sev1": "bold red", "sev2": "yellow", "sev3": "blue"}.get(severity, "white")
-    title = data.get("title", "?")
-    status = data.get("status", "?")
-    event_count = data.get("event_count", 0)
+    # Render header
+    severity: str = str(data.get("severity", "?"))
+    sev_style: str = {"sev1": "bold red", "sev2": "yellow", "sev3": "blue"}.get(severity, "white")
+    title: str = str(data.get("title", "?"))
+    status: str = str(data.get("status", "?"))
+    event_count: int = int(data.get("event_count", 0))
 
     header = (
         f"Incident [bold cyan]{incident_id}[/bold cyan] "
@@ -173,7 +184,8 @@ def _show_timeline(incident_id: str, json_mode: bool, window_before: int, window
         f"Status: {status} | Events: {event_count}"
     )
 
-    blast = data.get("blast_radius", [])
+    blast_raw: list[Any] = list(data.get("blast_radius") or [])
+    blast: list[str] = [str(x) for x in blast_raw]
     if blast:
         header += f"\nBlast radius: {', '.join(blast[:10])}"
         if len(blast) > 10:
@@ -182,7 +194,7 @@ def _show_timeline(incident_id: str, json_mode: bool, window_before: int, window
     console.print(Panel(header, title="Incident Timeline", border_style="magenta"))
 
     # Render timeline events
-    events = data.get("events", [])
+    events: list[dict[str, Any]] = data.get("events", [])
     if not events:
         console.print("[dim]No timeline events found.[/dim]")
         return
@@ -196,13 +208,13 @@ def _show_timeline(incident_id: str, json_mode: bool, window_before: int, window
     table.add_column("Summary")
 
     for ev in events:
-        kind = ev.get("kind", "?")
-        color = _KIND_COLORS.get(kind, "white")
-        icon = _KIND_ICONS.get(kind, "?")
-        ts = ev.get("timestamp", 0)
-        time_str = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(ts)) if ts else "?"
-        source = ev.get("source", "?")
-        summary = ev.get("summary", "?")
+        kind: str = str(ev.get("kind", "?"))
+        color: str = _KIND_COLORS.get(kind, "white")
+        icon: str = _KIND_ICONS.get(kind, "?")
+        ts: float = float(ev.get("timestamp") or 0)
+        time_str: str = _time.strftime("%Y-%m-%d %H:%M:%S", _time.localtime(ts)) if ts else "?"
+        source: str = str(ev.get("source", "?"))
+        summary: str = str(ev.get("summary", "?"))
 
         table.add_row(
             time_str,
@@ -214,8 +226,8 @@ def _show_timeline(incident_id: str, json_mode: bool, window_before: int, window
     console.print(table)
 
     # Print root cause and remediation if available
-    root_cause = data.get("root_cause", "")
-    remediation = data.get("remediation", "")
+    root_cause: str = str(data.get("root_cause", ""))
+    remediation: str = str(data.get("remediation", ""))
     if root_cause:
         console.print(Panel(root_cause, title="Root Cause", border_style="red"))
     if remediation:
