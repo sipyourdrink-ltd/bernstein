@@ -27,6 +27,8 @@ class TestBuildWorkerCmd:
             role="qa",
             session_id="qa-abc123",
             pid_dir=tmp_path,
+            workdir=tmp_path,
+            log_path=tmp_path / "qa-abc123.log",
             model="claude-sonnet-4-6",
         )
         assert result[0] == sys.executable
@@ -45,6 +47,8 @@ class TestBuildWorkerCmd:
             role="backend",
             session_id="backend-xyz",
             pid_dir=tmp_path,
+            workdir=tmp_path,
+            log_path=tmp_path / "backend-xyz.log",
             model="gpt-4o",
         )
         assert "--model" in result
