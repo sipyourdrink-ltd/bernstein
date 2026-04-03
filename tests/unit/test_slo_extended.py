@@ -44,7 +44,7 @@ class TestApplyErrorBudgetAdjustments:
         tracker.error_budget.total_tasks = 20
         tracker.error_budget.failed_tasks = 4  # 80% success < 90% target
         adjusted, override = apply_error_budget_adjustments(6, tracker)
-        assert adjusted == 2  # policy.reduce_max_agents_to
+        assert adjusted == 4  # policy.reduce_max_agents_to (default=4)
         assert override == "opus"
 
     def test_no_adjustment_when_no_tasks(self) -> None:
@@ -56,7 +56,7 @@ class TestApplyErrorBudgetAdjustments:
     def test_model_override_is_policy_value(self) -> None:
         tracker = SLOTracker()
         tracker.error_budget.total_tasks = 10
-        tracker.error_budget.failed_tasks = 2
+        tracker.error_budget.failed_tasks = 4  # must exceed floor of 3
         tracker.error_budget_policy.upgrade_model = "sonnet"
         _, override = apply_error_budget_adjustments(6, tracker)
         assert override == "sonnet"
@@ -117,8 +117,8 @@ class TestSLOStatus:
         assert not eb.is_depleted
 
     def test_budget_exactly_at_depletion(self) -> None:
-        eb = ErrorBudget(total_tasks=10, failed_tasks=1, slo_target=0.90)
-        # budget_total = round(10 * 0.1) = 1, budget_remaining = 0
+        eb = ErrorBudget(total_tasks=10, failed_tasks=3, slo_target=0.90)
+        # budget_total = max(3, round(10 * 0.1)) = 3, budget_remaining = 0
         assert eb.is_depleted
         assert eb.status == SLOStatus.RED
 

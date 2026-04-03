@@ -21,12 +21,13 @@ def test_slo_tracker_initial_state() -> None:
 def test_error_budget_burn_rate() -> None:
     """Test burn rate calculation."""
     tracker = SLOTracker()
-    # 90% target. 10 tasks, 2 failed -> 20% failure rate.
+    # 90% target. 10 tasks, 4 failed -> 40% failure rate.
     # allowed failure rate = 10%
-    # burn rate = 20 / 10 = 2.0
+    # burn rate = 40 / 10 = 4.0
+    # budget_total = max(3, round(10 * 0.1)) = 3, remaining = 3 - 4 = -1 -> depleted
     tracker.error_budget.total_tasks = 10
-    tracker.error_budget.failed_tasks = 2
-    assert tracker.error_budget.burn_rate == pytest.approx(2.0)
+    tracker.error_budget.failed_tasks = 4
+    assert tracker.error_budget.burn_rate == pytest.approx(4.0)
     assert tracker.error_budget.is_depleted
 
 
@@ -34,7 +35,7 @@ def test_error_budget_remediation() -> None:
     """Test remediation actions when budget is depleted."""
     tracker = SLOTracker()
     tracker.error_budget.total_tasks = 10
-    tracker.error_budget.failed_tasks = 2  # 80% success < 90% target
+    tracker.error_budget.failed_tasks = 4  # 60% success, exceeds floor of 3
 
     actions = tracker.error_budget_policy.get_actions(tracker.error_budget)
     assert ErrorBudgetAction.REDUCE_AGENTS in actions
