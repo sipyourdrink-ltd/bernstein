@@ -92,9 +92,11 @@ jobs:
       - name: Coverage report (3.13 only)
         if: matrix.python-version == '3.13' && always()
         run: |
-          uv run pytest tests/unit/ --cov=bernstein --cov-report=xml:coverage.xml \
-            --cov-fail-under=85 \
-            -x -q --tb=no --no-header 2>/dev/null || true
+          uv run pytest tests/unit/ \
+            --cov=bernstein --cov-report=xml:coverage.xml \
+            -q --tb=no --no-header \
+            --timeout=120 || true
+          ls -la coverage.xml 2>/dev/null || echo "WARNING: coverage.xml was not generated"
       - name: Upload coverage
         if: matrix.python-version == '3.13' && always()
         uses: codecov/codecov-action@v5
