@@ -11,7 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from bernstein.core.models import AgentSession, Complexity, ModelConfig, Scope, TaskStatus
+from bernstein.core.convergence_guard import ConvergenceGuard
+from bernstein.core.models import AgentSession, Complexity, ConvergenceGuardConfig, ModelConfig, Scope, TaskStatus
 from bernstein.core.orchestrator import TickResult
 from bernstein.core.task_lifecycle import (
     _enqueue_paired_test_task,
@@ -297,6 +298,58 @@ def test_claim_and_spawn_batches_sets_xl_timeout_bucket_for_high_risk_batch(tmp_
         claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
 
     assert session.timeout_s == 120 * 60
+
+
+def test_claim_and_spawn_batches_blocked_by_high_error_rate(tmp_path: Path, make_task: Any) -> None:
+    """claim_and_spawn_batches skips the entire spawn wave when convergence guard detects high error rate."""
+    orch = _claim_orch(tmp_path)
+    # Wire a convergence guard with a low error-rate threshold
+    cg = ConvergenceGuard(ConvergenceGuardConfig(max_error_rate=0.3))
+    # Record failures to push error rate above the threshold
+    import time
+
+    now = time.time()
+    for _ in range(8):
+        cg.record_failure(now=now)
+    for _ in range(2):
+        cg.record_success(now=now)
+    # error rate is 0.8 > 0.3 threshold
+    orch._convergence_guard = cg
+
+    task = make_task(id="T-blocked", role="backend")
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    # Spawn must not happen — convergence guard blocked it
+    orch._client.post.assert_not_called()
+    orch._spawner.spawn_for_tasks.assert_not_called()
+    assert result.spawned == []
+
+
+def test_claim_and_spawn_batches_allowed_when_converged(tmp_path: Path, make_task: Any) -> None:
+    """claim_and_spawn_batches proceeds normally when convergence guard passes."""
+    orch = _claim_orch(tmp_path)
+    # Wire a convergence guard with all-success history
+    cg = ConvergenceGuard()
+    import time
+
+    now = time.time()
+    for _ in range(5):
+        cg.record_success(now=now)
+    orch._convergence_guard = cg
+    orch._merge_queue = []
+
+    task = make_task(id="T-ok", role="backend")
+    session = AgentSession(id="A-ok", role="backend", task_ids=[task.id], model_config=ModelConfig("sonnet", "high"))
+    orch._spawner.spawn_for_tasks.return_value = session
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    # Task was claimed and spawned
+    orch._client.post.assert_called()
+    assert result.spawned == [session.id]
 
 
 def test_process_completed_tasks_moves_ticket_and_caches_verified_result(tmp_path: Path, make_task: Any) -> None:
