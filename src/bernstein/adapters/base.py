@@ -257,9 +257,15 @@ class CLIAdapter(ABC):
             return False
 
     def kill(self, pid: int) -> None:
-        """Terminate the agent process."""
+        """Terminate the agent process and its entire process group.
+
+        Processes are spawned with ``start_new_session=True``, so the PID
+        equals the PGID.  Using the PID directly avoids ``os.getpgid()``
+        failing when the wrapper process has already exited — this prevents
+        orphan child processes from accumulating.
+        """
         with contextlib.suppress(OSError):
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            os.killpg(pid, signal.SIGTERM)
 
     @abstractmethod
     def name(self) -> str:

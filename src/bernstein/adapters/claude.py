@@ -300,13 +300,18 @@ class ClaudeCodeAdapter(CLIAdapter):
             return False
 
     def kill(self, pid: int) -> None:
+        # The claude process is spawned with start_new_session=True, so
+        # its PID equals its PGID.  Use the PID directly as PGID instead
+        # of os.getpgid() which fails when the process is already dead —
+        # this ensures we kill the entire session group including any
+        # child processes (the actual claude CLI) that outlive the wrapper.
         with contextlib.suppress(OSError):
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            os.killpg(pid, signal.SIGTERM)
         # Also kill the wrapper process
         wrapper_pid = self._wrapper_pids.pop(pid, None)
         if wrapper_pid:
             with contextlib.suppress(OSError):
-                os.kill(wrapper_pid, signal.SIGTERM)
+                os.killpg(wrapper_pid, signal.SIGTERM)
         self._procs.pop(pid, None)
 
     def name(self) -> str:
