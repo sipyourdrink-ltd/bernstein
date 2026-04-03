@@ -72,7 +72,7 @@ class SkillDefinition:
     description: str
     source: SkillSource
     origin: str  # Path or URL where the skill was loaded from
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=lambda: {})  # pyright: ignore[reportUnknownVariableType]
 
     @property
     def priority_key(self) -> str:
@@ -253,7 +253,7 @@ class SkillResolver:
                 warnings.append(f"Skill file {skill_file} missing 'name' field")
                 continue
 
-            meta = {k: v for k, v in data.items() if k not in {"name", "description"}}
+            meta: dict[str, Any] = {k: v for k, v in data.items() if k not in {"name", "description"}}
             skills.append(
                 SkillDefinition(
                     name=name,
