@@ -69,6 +69,8 @@ class BernsteinClient:
             if isinstance(timeout, httpx.Timeout)
             else httpx.Timeout(timeout),
         )
+        # ETag cache: maps cache-key → (etag, cached_json_data)
+        self._etag_cache: dict[str, tuple[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Context manager
@@ -83,6 +85,58 @@ class BernsteinClient:
     def close(self) -> None:
         """Close the underlying HTTP connection pool."""
         self._client.close()
+
+    def clear_etag_cache(self) -> None:
+        """Clear all cached ETags (useful for testing or forced refresh)."""
+        self._etag_cache.clear()
+
+    # ------------------------------------------------------------------
+    # ETag-aware GET helper
+    # ------------------------------------------------------------------
+
+    def _get_conditional(
+        self, path: str, params: dict[str, str] | None = None
+    ) -> Any:
+        """Perform a GET request using If-None-Match / 304 conditional logic.
+
+        On a 304 response the previously cached JSON payload is returned
+        without deserialising a new body.  The ETag cache is updated
+        whenever the server returns a fresh ``ETag`` response header.
+
+        Args:
+            path: URL path relative to ``base_url``.
+            params: Optional query parameters.
+
+        Returns:
+            Parsed JSON from the server (or from the cache on 304).
+
+        Raises:
+            httpx.HTTPStatusError: On 4xx / 5xx responses.
+        """
+        cache_key = path
+        if params:
+            qs = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+            cache_key = f"{path}?{qs}"
+
+        req_headers: dict[str, str] = {}
+        if cache_key in self._etag_cache:
+            etag, _ = self._etag_cache[cache_key]
+            req_headers["If-None-Match"] = etag
+
+        resp = self._client.get(path, params=params or {}, headers=req_headers)
+
+        if resp.status_code == 304:
+            log.debug("ETag cache hit (304): %s", cache_key)
+            _, cached_data = self._etag_cache[cache_key]
+            return cached_data
+
+        resp.raise_for_status()
+        data = resp.json()
+
+        if etag_val := resp.headers.get("ETag"):
+            self._etag_cache[cache_key] = (etag_val, data)
+
+        return data
 
     # ------------------------------------------------------------------
     # Task operations
@@ -140,15 +194,18 @@ class BernsteinClient:
     def get_task(self, task_id: str) -> TaskResponse:
         """Fetch a single task by ID.
 
+        Uses ETag-based conditional requests; returns cached data on 304.
+
         Raises:
             httpx.HTTPStatusError: 404 if the task does not exist.
         """
-        resp = self._client.get(f"/tasks/{task_id}")
-        resp.raise_for_status()
-        return TaskResponse.from_api_response(resp.json())
+        data = self._get_conditional(f"/tasks/{task_id}")
+        return TaskResponse.from_api_response(data)
 
     def list_tasks(self, status: TaskStatus | str | None = None) -> list[TaskResponse]:
         """Return all tasks, optionally filtered by *status*.
+
+        Uses ETag-based conditional requests; returns cached data on 304.
 
         Args:
             status: If provided, only tasks in this state are returned.
@@ -158,9 +215,7 @@ class BernsteinClient:
             params["status"] = (
                 status.value if isinstance(status, TaskStatus) else status
             )
-        resp = self._client.get("/tasks", params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._get_conditional("/tasks", params or None)
         tasks_raw: list[dict[str, Any]] = (
             data if isinstance(data, list) else data.get("tasks", [])
         )
@@ -193,10 +248,12 @@ class BernsteinClient:
         resp.raise_for_status()
 
     def get_status(self) -> StatusSummary:
-        """Return aggregate statistics from ``GET /status``."""
-        resp = self._client.get("/status")
-        resp.raise_for_status()
-        return StatusSummary.from_api_response(resp.json())
+        """Return aggregate statistics from ``GET /status``.
+
+        Uses ETag-based conditional requests; returns cached data on 304.
+        """
+        data = self._get_conditional("/status")
+        return StatusSummary.from_api_response(data)
 
     def health(self) -> bool:
         """Return ``True`` if the server is reachable and healthy."""
@@ -236,6 +293,8 @@ class AsyncBernsteinClient:
             if isinstance(timeout, httpx.Timeout)
             else httpx.Timeout(timeout),
         )
+        # ETag cache: maps cache-key → (etag, cached_json_data)
+        self._etag_cache: dict[str, tuple[str, Any]] = {}
 
     async def __aenter__(self) -> AsyncBernsteinClient:
         return self
@@ -246,6 +305,44 @@ class AsyncBernsteinClient:
     async def aclose(self) -> None:
         """Close the underlying async HTTP connection pool."""
         await self._client.aclose()
+
+    def clear_etag_cache(self) -> None:
+        """Clear all cached ETags (useful for testing or forced refresh)."""
+        self._etag_cache.clear()
+
+    async def _get_conditional(
+        self, path: str, params: dict[str, str] | None = None
+    ) -> Any:
+        """Async GET with If-None-Match / 304 conditional logic.
+
+        On a 304 response the previously cached JSON payload is returned
+        without deserialising a new body.  The ETag cache is updated
+        whenever the server returns a fresh ``ETag`` response header.
+        """
+        cache_key = path
+        if params:
+            qs = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+            cache_key = f"{path}?{qs}"
+
+        req_headers: dict[str, str] = {}
+        if cache_key in self._etag_cache:
+            etag, _ = self._etag_cache[cache_key]
+            req_headers["If-None-Match"] = etag
+
+        resp = await self._client.get(path, params=params or {}, headers=req_headers)
+
+        if resp.status_code == 304:
+            log.debug("ETag cache hit (304): %s", cache_key)
+            _, cached_data = self._etag_cache[cache_key]
+            return cached_data
+
+        resp.raise_for_status()
+        data = resp.json()
+
+        if etag_val := resp.headers.get("ETag"):
+            self._etag_cache[cache_key] = (etag_val, data)
+
+        return data
 
     async def create_task(
         self,
@@ -278,21 +375,26 @@ class AsyncBernsteinClient:
         return TaskResponse.from_api_response(resp.json())
 
     async def get_task(self, task_id: str) -> TaskResponse:
-        resp = await self._client.get(f"/tasks/{task_id}")
-        resp.raise_for_status()
-        return TaskResponse.from_api_response(resp.json())
+        """Fetch a single task by ID (async).
+
+        Uses ETag-based conditional requests; returns cached data on 304.
+        """
+        data = await self._get_conditional(f"/tasks/{task_id}")
+        return TaskResponse.from_api_response(data)
 
     async def list_tasks(
         self, status: TaskStatus | str | None = None
     ) -> list[TaskResponse]:
+        """Return all tasks, optionally filtered by *status* (async).
+
+        Uses ETag-based conditional requests; returns cached data on 304.
+        """
         params: dict[str, str] = {}
         if status is not None:
             params["status"] = (
                 status.value if isinstance(status, TaskStatus) else status
             )
-        resp = await self._client.get("/tasks", params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        data = await self._get_conditional("/tasks", params or None)
         tasks_raw: list[dict[str, Any]] = (
             data if isinstance(data, list) else data.get("tasks", [])
         )
@@ -313,9 +415,12 @@ class AsyncBernsteinClient:
         resp.raise_for_status()
 
     async def get_status(self) -> StatusSummary:
-        resp = await self._client.get("/status")
-        resp.raise_for_status()
-        return StatusSummary.from_api_response(resp.json())
+        """Return aggregate statistics from ``GET /status`` (async).
+
+        Uses ETag-based conditional requests; returns cached data on 304.
+        """
+        data = await self._get_conditional("/status")
+        return StatusSummary.from_api_response(data)
 
     async def health(self) -> bool:
         try:
