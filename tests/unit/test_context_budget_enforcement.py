@@ -15,7 +15,7 @@ def test_prompt_compressor_logs_category_overflow(caplog):
     sections = [
         ("role", "role prompt"),
         ("files context", "a" * (DEFAULT_CATEGORY_BUDGETS["files"] * 4 + 100)),
-        ("lessons", "lesson content")
+        ("lessons", "lesson content"),
     ]
 
     compressor = PromptCompressor(token_budget=100_000)
@@ -23,15 +23,16 @@ def test_prompt_compressor_logs_category_overflow(caplog):
 
     assert "Section 'files context' exceeds category budget" in caplog.text
 
+
 def test_prompt_compressor_drops_low_priority_sections(caplog):
     caplog.set_level(logging.INFO)
     # Total tokens will be ~2500
     sections = [
-        ("role", "r" * 400),        # 100 tokens, priority 10
-        ("tasks", "t" * 400),       # 100 tokens, priority 10
-        ("lessons", "l" * 4000),    # 1000 tokens, priority 4
-        ("team", "m" * 4000),       # 1000 tokens, priority 3
-        ("instructions", "i" * 400) # 100 tokens, priority 10
+        ("role", "r" * 400),  # 100 tokens, priority 10
+        ("tasks", "t" * 400),  # 100 tokens, priority 10
+        ("lessons", "l" * 4000),  # 1000 tokens, priority 4
+        ("team", "m" * 4000),  # 1000 tokens, priority 3
+        ("instructions", "i" * 400),  # 100 tokens, priority 10
     ]
 
     # Budget of 1500 tokens. Should drop 'team' (priority 3).
@@ -43,11 +44,13 @@ def test_prompt_compressor_drops_low_priority_sections(caplog):
     assert final < original
     assert "Prompt budget exceeded; dropped sections: team" in caplog.text
 
+
 # Minimal patch helper since we don't have mock.patch readily available in a clean way without imports
 class patch_module:
     @staticmethod
     def patch(target, new_obj):
         import importlib
+
         module_path, attr_name = target.rsplit(".", 1)
         module = importlib.import_module(module_path)
 
@@ -56,10 +59,12 @@ class patch_module:
                 self.original = getattr(module, attr_name)
                 setattr(module, attr_name, new_obj)
                 return new_obj
+
             def __exit__(self, exc_type, exc_val, exc_tb):
                 setattr(module, attr_name, self.original)
 
         return ContextManager()
+
 
 def test_task_context_builder_enforces_budgets(caplog, tmp_path):
     caplog.set_level(logging.INFO)

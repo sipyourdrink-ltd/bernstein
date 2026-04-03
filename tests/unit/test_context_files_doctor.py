@@ -81,11 +81,7 @@ class TestCheckMcpServers:
     def test_mcp_server_command_found(self, project_dir: Path) -> None:
         claude_dir = project_dir / ".claude"
         claude_dir.mkdir(parents=True)
-        settings = {
-            "mcpServers": {
-                "example": {"command": "python3", "args": ["-m", "example"]}
-            }
-        }
+        settings = {"mcpServers": {"example": {"command": "python3", "args": ["-m", "example"]}}}
         (claude_dir / "settings.json").write_text(json.dumps(settings))
         results = check_mcp_servers(project_dir)
         warn = _first_ok(results, "MCP server: example")
@@ -95,11 +91,7 @@ class TestCheckMcpServers:
     def test_mcp_server_command_not_found(self, project_dir: Path) -> None:
         claude_dir = project_dir / ".claude"
         claude_dir.mkdir(parents=True)
-        settings = {
-            "mcpServers": {
-                "bad-server": {"command": "nonexistent-binary-xyz"}
-            }
-        }
+        settings = {"mcpServers": {"bad-server": {"command": "nonexistent-binary-xyz"}}}
         (claude_dir / "settings.json").write_text(json.dumps(settings))
         results = check_mcp_servers(project_dir)
         warn = _first_bad(results)

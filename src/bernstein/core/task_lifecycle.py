@@ -724,6 +724,26 @@ def claim_and_spawn_batches(
         logger.debug("Skipping claim/spawn: orchestrator is shutting down")
         return
 
+    # Convergence guard: block entire spawn wave if system is overloaded.
+    _cg = getattr(orch, "_convergence_guard", None)
+    if _cg is not None:
+        _merge_queue = getattr(orch, "_merge_queue", None)
+        _pending_merges = len(_merge_queue) if _merge_queue is not None else 0
+        _error_rate = _cg.current_error_rate()
+        _spawn_rate = _cg.current_spawn_rate()
+        _cg_status = _cg.is_converged(
+            pending_merges=_pending_merges,
+            active_agents=alive_count,
+            error_rate=_error_rate if _error_rate >= 0 else None,
+            spawn_rate=_spawn_rate,
+        )
+        if not _cg_status.ready:
+            logger.warning(
+                "Convergence guard blocking spawn wave: %s",
+                "; ".join(_cg_status.reasons),
+            )
+            return
+
     base = orch._config.server_url
     spawn_analyzer = SpawnAnalyzer()
     if not hasattr(orch, "_spawn_failure_history"):
@@ -1125,6 +1145,10 @@ def claim_and_spawn_batches(
             orch._spawn_failures.pop(batch_key, None)
             spawn_failure_history.pop(batch_key, None)
             _spawned_per_role[batch[0].role] += 1
+            # Track spawn rate in convergence guard
+            _convergence = getattr(orch, "_convergence_guard", None)
+            if _convergence is not None:
+                _convergence.record_spawn()
             # Track active-agent count for rate-limit load spreading
             _rl_tracker = getattr(orch, "_rate_limit_tracker", None)
             if _rl_tracker is not None and session.provider:
@@ -1543,6 +1567,15 @@ def process_completed_tasks(
             logger.warning("Failed to persist cost tracker: %s", exc)
 
         _collector.complete_task(task.id, success=janitor_passed, janitor_passed=janitor_passed, cost_usd=_cost_usd)
+
+        # Record success/failure in convergence guard for error rate tracking
+        _convergence_cg = getattr(orch, "_convergence_guard", None)
+        if _convergence_cg is not None:
+            if janitor_passed:
+                _convergence_cg.record_success()
+            else:
+                _convergence_cg.record_failure()
+
         try:
             _budget = CompletionBudget(orch._workdir)
             _budget.record_attempt(

@@ -496,6 +496,12 @@ class Orchestrator:
         # a MergeResult reports conflicting_files.
         self._merge_queue = MergeQueue()
 
+        # Convergence guard: blocks spawn waves when merge queue, active
+        # agent count, error rate, or spawn rate exceed safe thresholds.
+        from bernstein.core.convergence_guard import ConvergenceGuard
+
+        self._convergence_guard = ConvergenceGuard(config.convergence)
+
         # AgentOps: SLO tracking, error budget, runbooks, incident response.
         # Reset error budget each run — stale failure data from prior runs
         # should not throttle a fresh run's agent capacity.

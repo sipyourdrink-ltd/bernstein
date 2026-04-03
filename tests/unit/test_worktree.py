@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from bernstein.core.git_basic import GitResult
-from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig, apply_sparse_checkout
+from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
 
 
 @pytest.fixture

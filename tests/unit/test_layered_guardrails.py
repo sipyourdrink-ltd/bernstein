@@ -27,6 +27,7 @@ def test_run_guardrails_bypass_ask(tmp_path: Path):
     assert scope_res.passed is True
     assert "[BYPASSED]" in scope_res.detail
 
+
 def test_run_guardrails_bypass_immune_stays_blocked(tmp_path: Path):
     # Mock diff that triggers an immune path violation
     diff = "diff --git a/bernstein.yaml b/bernstein.yaml\n+new content"

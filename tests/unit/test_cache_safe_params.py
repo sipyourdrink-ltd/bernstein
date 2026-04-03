@@ -218,9 +218,7 @@ class TestBuildCacheSafeParams:
     def test_build_with_templates(self, tmp_path: Path) -> None:
         templates_dir = tmp_path / "templates" / "roles" / "backend"
         templates_dir.mkdir(parents=True)
-        (templates_dir.parent / "system_prompt.md").write_text(
-            "You are a backend specialist.", encoding="utf-8"
-        )
+        (templates_dir.parent / "system_prompt.md").write_text("You are a backend specialist.", encoding="utf-8")
         workdir = tmp_path
 
         params = build_cache_safe_params(

@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.always_allow import (
     AlwaysAllowEngine,
-    AlwaysAllowMatch,
     AlwaysAllowRule,
     check_always_allow,
     load_always_allow_rules,
@@ -17,8 +14,6 @@ from bernstein.core.guardrails import (
     _check_always_allow_for_diff,
     check_always_allow_tool,
 )
-from bernstein.core.policy_engine import DecisionType
-
 
 # ---------------------------------------------------------------------------
 # Rule/pattern matching
@@ -260,10 +255,7 @@ always_allow:
 class TestAlwaysAllowGuardrailsIntegration:
     def test_check_always_allow_for_diff_matches_src_files(self) -> None:
         """Files under src/ matched by rule get always-allow decision."""
-        diff = (
-            "diff --git a/src/foo.py b/src/foo.py\n"
-            "--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
-        )
+        diff = "diff --git a/src/foo.py b/src/foo.py\n--- a/src/foo.py\n+++ b/src/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
         engine = AlwaysAllowEngine(
             rules=[
                 AlwaysAllowRule(id="safe-src", tool="write_file", input_pattern="src/.*"),
@@ -276,10 +268,7 @@ class TestAlwaysAllowGuardrailsIntegration:
 
     def test_check_always_allow_for_diff_no_match(self) -> None:
         """Files NOT matching rules get neutral ALLOW."""
-        diff = (
-            "diff --git a/etc/shadow b/etc/shadow\n"
-            "--- /dev/null\n+++ b/etc/shadow\n@@ -0,0 +1 @@\n+secret\n"
-        )
+        diff = "diff --git a/etc/shadow b/etc/shadow\n--- /dev/null\n+++ b/etc/shadow\n@@ -0,0 +1 @@\n+secret\n"
         engine = AlwaysAllowEngine(
             rules=[
                 AlwaysAllowRule(id="safe-src", tool="write_file", input_pattern="src/.*"),

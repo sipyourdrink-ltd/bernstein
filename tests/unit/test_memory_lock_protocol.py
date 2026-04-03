@@ -7,7 +7,6 @@ import os
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -22,7 +21,6 @@ from bernstein.core.memory_lock_protocol import (
     _safe_unlink,
     guarded_memory_write,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -108,6 +106,7 @@ class TestAcquireLock:
         lock_path = tmp_path / "test.lock"
         # Create a lock held by a subprocess we keep running
         import subprocess
+
         proc = subprocess.Popen(["sleep", "10"])
         try:
             _write_lock_file(lock_path, pid=proc.pid, age_seconds=0)

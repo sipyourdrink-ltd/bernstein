@@ -25,7 +25,9 @@ class TestPermissionExplanation:
         assert "authentication" in rendered
 
     def test_render_with_rationale_wrap(self) -> None:
-        long_rationale = "This is a very long rationale that should wrap across multiple lines when rendered in the terminal output"
+        long_rationale = (
+            "This is a very long rationale that should wrap across multiple lines when rendered in the terminal output"
+        )
         exp = PermissionExplanation(
             summary="Run npm install",
             tool_name="codex",

@@ -71,11 +71,13 @@ class TestFirstResultHooks:
 
     def test_on_pre_tool_use_is_firstresult(self) -> None:
         import inspect
+
         src = inspect.getsource(BernsteinSpec.on_pre_tool_use)
         assert "firstresult" in src
 
     def test_on_permission_denied_is_firstresult(self) -> None:
         import inspect
+
         src = inspect.getsource(BernsteinSpec.on_permission_denied)
         assert "firstresult" in src
 

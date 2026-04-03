@@ -138,11 +138,12 @@ _VALID_TRANSITIONS: dict[tuple[AgentTurnState, AgentTurnEvent], AgentTurnState] 
     (AgentTurnState.TOOL_USE, AgentTurnEvent.TOOL_COMPLETED): AgentTurnState.RUNNING,
     (AgentTurnState.TOOL_USE, AgentTurnEvent.TASK_FAILED): AgentTurnState.FAILED,
     # COMPACTING -> RUNNING or FAILED
-    (AgentTurnState.COMPACTING, AgentTurnEvent.TOOL_COMPLETED): AgentTurnState.RUNNING,
+    (AgentTurnState.COMPACTING, AgentTurnEvent.VERIFY_REQUESTED): AgentTurnState.RUNNING,
     (AgentTurnState.COMPACTING, AgentTurnEvent.TASK_FAILED): AgentTurnState.FAILED,
-    # VERIFYING -> COMPLETING or FAILED
+    # VERIFYING -> COMPLETING, FAILED, or back to RUNNING (if compaction needed)
     (AgentTurnState.VERIFYING, AgentTurnEvent.TASK_COMPLETED): AgentTurnState.COMPLETING,
     (AgentTurnState.VERIFYING, AgentTurnEvent.TASK_FAILED): AgentTurnState.FAILED,
+    (AgentTurnState.VERIFYING, AgentTurnEvent.COMPACT_NEEDED): AgentTurnState.RUNNING,
     # COMPLETING -> REAPED (terminal - no further transitions out of COMPLETING
     # except implicit reset by the caller after REAPED)
     (AgentTurnState.COMPLETING, AgentTurnEvent.AGENT_REAPED): AgentTurnState.REAPED,

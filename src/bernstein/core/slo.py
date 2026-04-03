@@ -147,6 +147,12 @@ class ErrorBudget:
         elif not self.is_depleted:
             self._depleted_since = None
 
+    def reset(self) -> None:
+        """Reset error budget state."""
+        self.total_tasks = 0
+        self.failed_tasks = 0
+        self._depleted_since = None
+
 
 @dataclass
 class ErrorBudgetPolicy:

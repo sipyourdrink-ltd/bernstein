@@ -53,9 +53,30 @@ def sample_error_metrics(sdd_dir, sample_incident):
     """Write sample error_rate JSONL metrics."""
     now = sample_incident["created_at"]
     lines = [
-        json.dumps({"timestamp": now - 400, "metric_type": "error_rate", "value": 1.0, "labels": {"error_type": "timeout", "provider": "openrouter", "role": "backend"}}),
-        json.dumps({"timestamp": now - 200, "metric_type": "error_rate", "value": 1.0, "labels": {"error_type": "rate_limit", "provider": "openrouter", "role": "qa"}}),
-        json.dumps({"timestamp": now + 100, "metric_type": "error_rate", "value": 0.5, "labels": {"error_type": "llm_failed", "provider": "anthropic", "role": "backend"}}),
+        json.dumps(
+            {
+                "timestamp": now - 400,
+                "metric_type": "error_rate",
+                "value": 1.0,
+                "labels": {"error_type": "timeout", "provider": "openrouter", "role": "backend"},
+            }
+        ),
+        json.dumps(
+            {
+                "timestamp": now - 200,
+                "metric_type": "error_rate",
+                "value": 1.0,
+                "labels": {"error_type": "rate_limit", "provider": "openrouter", "role": "qa"},
+            }
+        ),
+        json.dumps(
+            {
+                "timestamp": now + 100,
+                "metric_type": "error_rate",
+                "value": 0.5,
+                "labels": {"error_type": "llm_failed", "provider": "anthropic", "role": "backend"},
+            }
+        ),
     ]
     today = time.strftime("%Y-%m-%d")
     path = sdd_dir / "metrics" / f"error_rate_{today}.jsonl"
@@ -68,8 +89,22 @@ def sample_task_metrics(sdd_dir, sample_incident):
     """Write sample task_completion_time JSONL metrics."""
     now = sample_incident["created_at"]
     lines = [
-        json.dumps({"timestamp": now - 500, "metric_type": "task_completion_time", "value": 45.2, "labels": {"task_id": "task-aaa", "role": "backend", "success": False}}),
-        json.dumps({"timestamp": now - 100, "metric_type": "task_completion_time", "value": 30.1, "labels": {"task_id": "task-bbb", "role": "qa", "success": True}}),
+        json.dumps(
+            {
+                "timestamp": now - 500,
+                "metric_type": "task_completion_time",
+                "value": 45.2,
+                "labels": {"task_id": "task-aaa", "role": "backend", "success": False},
+            }
+        ),
+        json.dumps(
+            {
+                "timestamp": now - 100,
+                "metric_type": "task_completion_time",
+                "value": 30.1,
+                "labels": {"task_id": "task-bbb", "role": "qa", "success": True},
+            }
+        ),
     ]
     today = time.strftime("%Y-%m-%d")
     path = sdd_dir / "metrics" / f"task_completion_time_{today}.jsonl"
@@ -91,10 +126,38 @@ def sample_trace(sdd_dir, sample_incident):
         "spawn_ts": now - 500,
         "end_ts": now - 100,
         "steps": [
-            {"type": "spawn", "timestamp": now - 500, "detail": "Agent spawned", "files": [], "tokens": 0, "duration_ms": 0},
-            {"type": "edit", "timestamp": now - 450, "detail": "Edited src/main.py", "files": ["src/main.py"], "tokens": 200, "duration_ms": 1500},
-            {"type": "verify", "timestamp": now - 400, "detail": "Tests failed", "files": [], "tokens": 50, "duration_ms": 3000},
-            {"type": "fail", "timestamp": now - 350, "detail": "Agent crashed: timeout", "files": [], "tokens": 0, "duration_ms": 0},
+            {
+                "type": "spawn",
+                "timestamp": now - 500,
+                "detail": "Agent spawned",
+                "files": [],
+                "tokens": 0,
+                "duration_ms": 0,
+            },
+            {
+                "type": "edit",
+                "timestamp": now - 450,
+                "detail": "Edited src/main.py",
+                "files": ["src/main.py"],
+                "tokens": 200,
+                "duration_ms": 1500,
+            },
+            {
+                "type": "verify",
+                "timestamp": now - 400,
+                "detail": "Tests failed",
+                "files": [],
+                "tokens": 50,
+                "duration_ms": 3000,
+            },
+            {
+                "type": "fail",
+                "timestamp": now - 350,
+                "detail": "Agent crashed: timeout",
+                "files": [],
+                "tokens": 0,
+                "duration_ms": 0,
+            },
         ],
         "outcome": "failed",
     }
@@ -108,7 +171,14 @@ def sample_api_metrics(sdd_dir, sample_incident):
     """Write sample api_usage JSONL with a failure."""
     now = sample_incident["created_at"]
     lines = [
-        json.dumps({"timestamp": now - 250, "metric_type": "api_usage", "value": 1.0, "labels": {"provider": "openrouter", "model": "sonnet", "success": False, "latency_ms": 5000}}),
+        json.dumps(
+            {
+                "timestamp": now - 250,
+                "metric_type": "api_usage",
+                "value": 1.0,
+                "labels": {"provider": "openrouter", "model": "sonnet", "success": False, "latency_ms": 5000},
+            }
+        ),
     ]
     today = time.strftime("%Y-%m-%d")
     path = sdd_dir / "metrics" / f"api_usage_{today}.jsonl"

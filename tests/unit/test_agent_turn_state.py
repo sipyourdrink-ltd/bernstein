@@ -84,7 +84,7 @@ class TestValidTransitions:
     def test_compacting_to_running(self, sm: AgentTurnStateMachine) -> None:
         result = sm.transition(
             AgentTurnState.COMPACTING,
-            AgentTurnEvent.TOOL_COMPLETED,
+            AgentTurnEvent.VERIFY_REQUESTED,
         )
         assert result is AgentTurnState.RUNNING
 
@@ -108,6 +108,16 @@ class TestValidTransitions:
             AgentTurnEvent.TASK_FAILED,
         )
         assert result is AgentTurnState.FAILED
+
+    def test_verifying_back_to_running_on_compact(
+        self,
+        sm: AgentTurnStateMachine,
+    ) -> None:
+        result = sm.transition(
+            AgentTurnState.VERIFYING,
+            AgentTurnEvent.COMPACT_NEEDED,
+        )
+        assert result is AgentTurnState.RUNNING
 
     def test_completing_to_reaped(self, sm: AgentTurnStateMachine) -> None:
         result = sm.transition(
@@ -180,10 +190,27 @@ class TestFullLifecycle:
         state = AgentTurnState.RUNNING
         state = sm.transition(state, AgentTurnEvent.COMPACT_NEEDED)
         assert state is AgentTurnState.COMPACTING
-        state = sm.transition(state, AgentTurnEvent.TOOL_COMPLETED)
+        state = sm.transition(state, AgentTurnEvent.VERIFY_REQUESTED)
         assert state is AgentTurnState.RUNNING
         state = sm.transition(state, AgentTurnEvent.VERIFY_REQUESTED)
         assert state is AgentTurnState.VERIFYING
+
+    def test_verify_compact_then_complete(self, sm: AgentTurnStateMachine) -> None:
+        """VERIFYING -> RUNNING (compact needed) -> verifying -> completing -> reaped."""
+        state = AgentTurnState.IDLE
+        state = sm.transition(state, AgentTurnEvent.TASK_CLAIMED)
+        state = sm.transition(state, AgentTurnEvent.AGENT_SPAWNED)
+        state = sm.transition(state, AgentTurnEvent.AGENT_SPAWNED)  # RUNNING
+        state = sm.transition(state, AgentTurnEvent.VERIFY_REQUESTED)
+        assert state is AgentTurnState.VERIFYING
+        state = sm.transition(state, AgentTurnEvent.COMPACT_NEEDED)
+        assert state is AgentTurnState.RUNNING
+        state = sm.transition(state, AgentTurnEvent.VERIFY_REQUESTED)
+        assert state is AgentTurnState.VERIFYING
+        state = sm.transition(state, AgentTurnEvent.TASK_COMPLETED)
+        assert state is AgentTurnState.COMPLETING
+        state = sm.transition(state, AgentTurnEvent.AGENT_REAPED)
+        assert state is AgentTurnState.REAPED
 
 
 # ---------------------------------------------------------------------------
@@ -343,3 +370,11 @@ class TestDescribe:
         edges = sm.describe(AgentTurnState.IDLE)
         assert len(edges) == 1
         assert edges[0] == ("task_claimed", "claiming")
+
+    def test_verifying_has_compact_fallback(self, sm: AgentTurnStateMachine) -> None:
+        edges = sm.describe(AgentTurnState.VERIFYING)
+        edge_map = {evt: tgt for evt, tgt in edges}
+        assert "task_completed" in edge_map
+        assert "task_failed" in edge_map
+        assert "compact_needed" in edge_map
+        assert edge_map["compact_needed"] == "running"

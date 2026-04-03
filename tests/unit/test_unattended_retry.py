@@ -5,21 +5,17 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from bernstein.adapters.base import SpawnError, SpawnResult
-from bernstein.core.models import AgentSession, ModelConfig, Task
+from bernstein.core.models import Task
 from bernstein.core.rate_limit_tracker import (
     UnattendedRetryPolicy,
     is_unattended_mode,
 )
-
-if TYPE_CHECKING:
-    pass
-
+from bernstein.core.spawner import AgentSpawner
 
 # ---------------------------------------------------------------------------
 # is_unattended_mode tests
@@ -195,7 +191,7 @@ class TestUnattendedSpawnerRetry:
         with patch.dict("os.environ", {"BERNSTEIN_UNATTENDED": "1"}):
             adapter = MagicMock()
             adapter.name.return_value = "test-adapter"
-            # First two calls raise RateLimitError, third succeeds
+            # First two calls raise SpawnError, third succeeds
             success_result = SpawnResult(pid=42, log_path=tmp_path / "test.log")
             adapter.spawn.side_effect = [
                 SpawnError("429 Too Many Requests"),
@@ -209,14 +205,21 @@ class TestUnattendedSpawnerRetry:
             backend_dir.mkdir(parents=True)
             (backend_dir / "system_prompt.md").write_text("You are a backend agent.")
 
-            spawner = _make_minimal_spawner(adapter, templates_dir, tmp_path)
-            tasks = [Task(id="T1", title="test", role="backend", description="test")]
+            # Use a short delay policy for fast tests
+            mock_policy = MagicMock()
+            mock_policy.max_retries = 5
+            with patch(
+                "bernstein.core.rate_limit_tracker.UnattendedRetryPolicy",
+                return_value=mock_policy,
+            ):
+                spawner = _make_minimal_spawner(adapter, templates_dir, tmp_path)
+                tasks = [Task(id="T1", title="test", role="backend", description="test")]
 
-            with _mock_path_exists(tmp_path):
-                session = spawner.spawn_for_tasks(tasks)
+                with _mock_path_exists(tmp_path):
+                    session = spawner.spawn_for_tasks(tasks)
 
-            assert session.pid == 42
-            assert adapter.spawn.call_count == 3
+                assert session.pid == 42
+                assert adapter.spawn.call_count == 3
 
     def test_spawner_raises_after_max_retries_in_unattended_mode(self, tmp_path: Path) -> None:
         """When all retry attempts are exhausted, the spawner raises."""
@@ -231,12 +234,18 @@ class TestUnattendedSpawnerRetry:
             backend_dir.mkdir(parents=True)
             (backend_dir / "system_prompt.md").write_text("You are a backend agent.")
 
-            spawner = _make_minimal_spawner(adapter, templates_dir, tmp_path)
-            tasks = [Task(id="T1", title="test", role="backend", description="test")]
+            mock_policy = MagicMock()
+            mock_policy.max_retries = 2
+            with patch(
+                "bernstein.core.rate_limit_tracker.UnattendedRetryPolicy",
+                return_value=mock_policy,
+            ):
+                spawner = _make_minimal_spawner(adapter, templates_dir, tmp_path)
+                tasks = [Task(id="T1", title="test", role="backend", description="test")]
 
-            with _mock_path_exists(tmp_path):
-                with pytest.raises(RuntimeError, match="All spawn attempts failed"):
-                    spawner.spawn_for_tasks(tasks)
+                with _mock_path_exists(tmp_path):
+                    with pytest.raises(RuntimeError, match="All spawn attempts failed"):
+                        spawner.spawn_for_tasks(tasks)
 
     def test_no_retry_when_not_in_unattended_mode(self, tmp_path: Path) -> None:
         """When unattended mode is OFF, rate-limit errors raise immediately."""
@@ -267,8 +276,9 @@ def _make_minimal_spawner(
     tmp_path: Path,
 ) -> AgentSpawner:
     spawner = AgentSpawner(adapter, templates_dir, tmp_path)
-    spawner._get_adapter_by_name = MagicMock(return_value=adapter)
-    spawner._infer_adapter_name_for_provider = MagicMock(return_value="test-adapter")
+    spawner._get_adapter_by_name = MagicMock(return_value=adapter)  # pyright: ignore[reportPrivateUsage]
+    spawner._infer_adapter_name_for_provider = MagicMock(return_value="test-adapter")  # pyright: ignore[reportPrivateUsage]
+    spawner._rate_limit_tracker = None  # pyright: ignore[reportAttributeAccessIssue]
     return spawner
 
 

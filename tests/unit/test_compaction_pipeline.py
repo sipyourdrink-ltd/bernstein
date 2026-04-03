@@ -8,7 +8,6 @@ import pytest
 
 from bernstein.core.compaction_pipeline import (
     CompactionPipeline,
-    CompactionResult,
     PostCompactPayload,
     PreCompactPayload,
     _estimate_tokens,

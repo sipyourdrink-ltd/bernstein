@@ -15,7 +15,7 @@ import signal
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -34,7 +34,29 @@ from bernstein.core.tick_pipeline import (
 )
 from bernstein.evolution.types import MetricsRecord
 
+if TYPE_CHECKING:
+    from bernstein.core.abort_chain import AbortChain
+
 logger = logging.getLogger(__name__)
+
+
+def _propagate_abort_to_children(orch: Any, session_id: str) -> None:
+    """Cascade abort signals to all children of the given session, if chained.
+
+    Looks for ``_abort_chain`` on the orchestrator.  When present,
+    calls ``propagate_abort`` followed by ``cleanup`` for the session.
+
+    Args:
+        orch: Orchestrator instance.
+        session_id: Session ID whose children should receive abort signals.
+    """
+    chain: AbortChain | None = getattr(orch, "_abort_chain", None)
+    if chain is None:
+        return
+    try:
+        chain.propagate_abort(session_id)
+    finally:
+        chain.cleanup(session_id)
 
 
 def classify_agent_abort_reason(session: AgentSession) -> tuple[AbortReason, str]:
@@ -104,6 +126,7 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
                 abort_detail=abort_detail,
                 finish_reason=session.finish_reason or "agent_exit",
             )
+            _propagate_abort_to_children(orch, session.id)
             # Record failure timestamp for cooldown
             if session.role:
                 # Use session.id or adapter name if available.
@@ -143,6 +166,7 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
                     session = orch._agents.get(sid)
                     if session:
                         orch._spawner.kill(session)
+                        _propagate_abort_to_children(orch, sid)
                         transition_agent(session, "dead", actor="memory_guard", reason="memory leak")
 
     expired = [k for k, (_, ts) in orch._spawn_failures.items() if now - ts > orch._SPAWN_BACKOFF_MAX_S]
@@ -731,6 +755,7 @@ def check_loops_and_deadlocks(orch: Any) -> None:
         )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
+        _propagate_abort_to_children(orch, loop.agent_id)
         detector.clear_wait(loop.agent_id)
         if lock_mgr is not None:
             lock_mgr.release(loop.agent_id)
@@ -818,6 +843,7 @@ def reap_dead_agents(
                 runtime,
             )
             orch._spawner.kill(session)
+            _propagate_abort_to_children(orch, session.id)
             result.reaped.append(session.id)
             _release_file_ownership(orch, session.id)
             _release_task_to_session(orch, session.task_ids)
@@ -864,6 +890,7 @@ def reap_dead_agents(
                 age,
             )
             orch._spawner.kill(session)
+            _propagate_abort_to_children(orch, session.id)
             result.reaped.append(session.id)
             # Release file ownership
             _release_file_ownership(orch, session.id)
@@ -1048,6 +1075,7 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
         )
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
+        _propagate_abort_to_children(orch, session.id)
         orch._idle_shutdown_ts.pop(session.id, None)
         with contextlib.suppress(OSError):
             orch._signal_mgr.clear_signals(session.id)
@@ -1082,6 +1110,7 @@ def check_kill_signals(orch: Any, result: Any) -> None:
             continue
         logger.info("Kill signal received for %s, terminating", session_id)
         orch._spawner.kill(session)
+        _propagate_abort_to_children(orch, session_id)
         result.reaped.append(session_id)
 
 

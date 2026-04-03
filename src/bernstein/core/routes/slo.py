@@ -33,12 +33,6 @@ def _get_tracker(request: Request) -> SLOTracker:
     return _tracker
 
 
-def _reset_tracker() -> None:
-    """Reset the module-level tracker (test hook only)."""
-    global _tracker
-    _tracker = None
-
-
 @router.get("/slo")
 def get_slo_status(request: Request) -> JSONResponse:
     """Return current SLO dashboard data."""
@@ -75,7 +69,5 @@ def reset_slo_state(request: Request) -> JSONResponse:
     tracker = _get_tracker(request)
     for target in tracker.targets.values():
         target.current = 0.0
-    tracker.error_budget.total_tasks = 0
-    tracker.error_budget.failed_tasks = 0
-    tracker.error_budget._depleted_since = None
+    tracker.error_budget.reset()
     return JSONResponse({"status": "reset"})

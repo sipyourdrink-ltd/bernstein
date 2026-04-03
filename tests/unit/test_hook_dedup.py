@@ -17,7 +17,7 @@ def _make_hook_script(hooks_dir: Path, hook_name: str, script_name: str) -> Path
     script_dir = hooks_dir / hook_name
     script_dir.mkdir(parents=True, exist_ok=True)
     script = script_dir / script_name
-    script.write_text("#!/bin/bash\necho '{\"status\":\"ok\"}'\n", encoding="utf-8")
+    script.write_text('#!/bin/bash\necho \'{"status":"ok"}\'\n', encoding="utf-8")
     script.chmod(0o755)
     return script
 
@@ -136,6 +136,7 @@ class TestHookDedupByPluginRoot:
     def test_logging_on_duplicate_registration(self, tmp_path: Path, caplog) -> None:
         """Duplicate hook registration produces a debug log line."""
         import logging
+
         hooks_dir = tmp_path / "hooks"
         hooks_dir.mkdir()
         hook = CommandHook(hooks_dir, plugin_root="dup_plugin")

@@ -195,10 +195,9 @@ class IntegrationMockAdapter(CLIAdapter):
             marker_dir = self.sdd_path.resolve() / "runtime"
             marker_dir.mkdir(parents=True, exist_ok=True)
 
-            markers = "\n".join(f"(Path('{marker_dir}') / 'DONE_{tid}').write_text('done')" for tid in task_ids)
+            markers_lines = "\n".join(f"(Path('{marker_dir}') / 'DONE_{tid}').write_text('done')" for tid in task_ids)
 
-            script_body = f"""
-import os
+            script_body = f"""import os
 import subprocess
 import sys
 import time
@@ -218,13 +217,13 @@ try:
     # Git ops
     res = subprocess.run(["git", "add", "."], cwd="{workdir}", check=False, capture_output=True, text=True)
     print(f"git add: {{res.returncode}} {{res.stdout}} {{res.stderr}}")
-    
+
     res = subprocess.run(["git", "commit", "-m", "mock work"], cwd="{workdir}", check=False, capture_output=True, text=True)
     print(f"git commit: {{res.returncode}} {{res.stdout}} {{res.stderr}}")
 
     # Completion markers
     print(f"Writing markers to {marker_dir}...")
-    {{markers}}
+{markers_lines}
     print("Wrote markers successfully")
     time.sleep(1.0)
 except Exception as e:

@@ -16,8 +16,14 @@ class TestClassifyRole:
 
     def test_worker_roles(self) -> None:
         for role in [
-            "backend", "frontend", "qa", "security", "devops", "worker",
-            "backend-engineer", "frontend-engineer",
+            "backend",
+            "frontend",
+            "qa",
+            "security",
+            "devops",
+            "worker",
+            "backend-engineer",
+            "frontend-engineer",
         ]:
             assert classify_role(role) == "worker", f"Expected worker for {role}"
 

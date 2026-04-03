@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from bernstein.core.models import Task, TaskStatus
-from bernstein.core.notifications import NotificationEvent, _PD_SEVERITY
+from bernstein.core.notifications import _PD_SEVERITY
 
 
 class TestDeadlineNotificationEvents:

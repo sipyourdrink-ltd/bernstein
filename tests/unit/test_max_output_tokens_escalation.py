@@ -18,7 +18,7 @@ def test_task_serialization_includes_max_output_tokens():
         "max_output_tokens": 8192,
         "scope": "medium",
         "complexity": "medium",
-        "task_type": "standard"
+        "task_type": "standard",
     }
     task = Task.from_dict(raw)
     assert task.max_output_tokens == 8192
@@ -26,6 +26,7 @@ def test_task_serialization_includes_max_output_tokens():
     # Check default
     task_default = Task.from_dict({"id": "T2", "title": "t", "description": "d", "role": "r"})
     assert task_default.max_output_tokens is None
+
 
 def test_agent_lifecycle_detects_max_output_tokens_finish_reason():
     orch = MagicMock()
@@ -35,7 +36,7 @@ def test_agent_lifecycle_detects_max_output_tokens_finish_reason():
         task_ids=["T1"],
         model_config=ModelConfig("sonnet", "high"),
         status="working",
-        finish_reason="max_output_tokens"
+        finish_reason="max_output_tokens",
     )
     orch._agents = {"A1": session}
     orch._spawner.check_alive.return_value = False
@@ -54,7 +55,7 @@ def test_agent_lifecycle_detects_max_output_tokens_finish_reason():
         "role": "backend",
         "scope": "medium",
         "complexity": "medium",
-        "task_type": "standard"
+        "task_type": "standard",
     }
     mock_resp = MagicMock()
     mock_resp.json.return_value = task_raw
@@ -70,6 +71,7 @@ def test_agent_lifecycle_detects_max_output_tokens_finish_reason():
         assert kwargs["transition_reason"] == TransitionReason.MAX_OUTPUT_TOKENS
         assert kwargs["finish_reason"] == "max_output_tokens"
 
+
 def test_retry_escalates_max_output_tokens():
     task = Task(
         id="T1",
@@ -80,7 +82,7 @@ def test_retry_escalates_max_output_tokens():
         scope=Scope.MEDIUM,
         complexity=Complexity.MEDIUM,
         task_type=TaskType.STANDARD,
-        estimated_minutes=10
+        estimated_minutes=10,
     )
     client = MagicMock()
     client.post.return_value = MagicMock(status_code=200)
@@ -96,7 +98,7 @@ def test_retry_escalates_max_output_tokens():
         server_url="http://server",
         max_task_retries=3,
         retried_task_ids=set(),
-        tasks_snapshot=tasks_snapshot
+        tasks_snapshot=tasks_snapshot,
     )
 
     assert client.post.called
@@ -105,6 +107,7 @@ def test_retry_escalates_max_output_tokens():
     payload = retry_call.kwargs["json"]
     assert "max_output_tokens" in payload
     assert payload["max_output_tokens"] == 8192
+
 
 def test_retry_escalates_max_output_tokens_from_default():
     task = Task(
@@ -116,7 +119,7 @@ def test_retry_escalates_max_output_tokens_from_default():
         scope=Scope.MEDIUM,
         complexity=Complexity.MEDIUM,
         task_type=TaskType.STANDARD,
-        estimated_minutes=10
+        estimated_minutes=10,
     )
     client = MagicMock()
     client.post.return_value = MagicMock(status_code=200)
@@ -131,7 +134,7 @@ def test_retry_escalates_max_output_tokens_from_default():
         server_url="http://server",
         max_task_retries=3,
         retried_task_ids=set(),
-        tasks_snapshot=tasks_snapshot
+        tasks_snapshot=tasks_snapshot,
     )
 
     retry_call = next(c for c in client.post.call_args_list if "title" in c.kwargs.get("json", {}))

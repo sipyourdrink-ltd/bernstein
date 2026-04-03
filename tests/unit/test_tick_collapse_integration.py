@@ -117,9 +117,7 @@ class TestCollapsePromptSections:
             ("instructions", "Do it.\n" + "z" * 8_000),  # ~2000 tokens
             ("context-extra", "extra" * 100),  # ~100 tokens
         ]
-        result_sections, result = collapse_prompt_sections(
-            sections, token_budget=15_000
-        )
+        result_sections, result = collapse_prompt_sections(sections, token_budget=15_000)
 
         names = [name for name, _ in result_sections]
         # Critical sections must remain

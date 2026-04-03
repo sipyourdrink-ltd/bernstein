@@ -73,7 +73,9 @@ def modified_snapshot() -> NotebookSnapshot:
         kernel_name="python3",
         language="python",
         cells=[
-            NotebookCell(index=0, cell_type="code", source="import numpy as np\nx = np.array([1, 2, 3])", execution_count=1),
+            NotebookCell(
+                index=0, cell_type="code", source="import numpy as np\nx = np.array([1, 2, 3])", execution_count=1
+            ),
             NotebookCell(index=1, cell_type="markdown", source="# Updated Title\nThis is modified."),
             NotebookCell(index=2, cell_type="code", source="print(x * 2)", execution_count=3),
         ],

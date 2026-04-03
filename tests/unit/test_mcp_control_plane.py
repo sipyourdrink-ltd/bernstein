@@ -133,9 +133,7 @@ class TestGetOAuthExpiryDashboard:
     def test_only_servers_with_oauth_expiry_included(self) -> None:
         snaps = [
             MCPCapabilitySnapshot(captured_at=time.time(), server_name="a", alive=True),
-            MCPCapabilitySnapshot(
-                captured_at=time.time(), server_name="b", alive=True, oauth_expiry=time.time() + 100
-            ),
+            MCPCapabilitySnapshot(captured_at=time.time(), server_name="b", alive=True, oauth_expiry=time.time() + 100),
         ]
         dashboard = get_oauth_expiry_dashboard(snaps)
         assert len(dashboard) == 1
@@ -143,9 +141,7 @@ class TestGetOAuthExpiryDashboard:
 
     def test_expiring_soon_flag(self) -> None:
         snaps = [
-            MCPCapabilitySnapshot(
-                captured_at=time.time(), server_name="c", alive=True, oauth_expiry=time.time() + 60
-            )
+            MCPCapabilitySnapshot(captured_at=time.time(), server_name="c", alive=True, oauth_expiry=time.time() + 60)
         ]
         dashboard = get_oauth_expiry_dashboard(snaps)
         assert dashboard[0]["expiring_soon"] is True

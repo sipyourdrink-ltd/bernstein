@@ -1,354 +1,236 @@
-"""Hierarchical abort chain for agent tool execution (T442).
+"""Parent-to-child abort propagation for agent delegation trees.
 
-Implements a three-level abort system:
-    1. **SESSION** — tears down the entire agent session.
-    2. **SIBLING** — aborts other tools executing concurrently with the
-       triggered tool, but allows the session to continue.
-    3. **TOOL** — aborts only the current tool invocation, leaving the
-       agent process and sibling tools unaffected.
+When a parent agent is killed or aborted, all child agents spawned by it
+must also receive an abort signal.  :class:`AbortChain` tracks the
+parent-child relationship graph and cascades ``SHUTDOWN`` signals to
+every descendant.
 
-Each level can propagate or contain failures independently so operators
-can stop work at the right granularity without leaving orphaned tools or
-inconsistent agent state.
+Usage::
+
+    chain = AbortChain(signals_dir=workdir / ".sdd" / "runtime" / "signals")
+    chain.register_child(parent_session_id, child_session_id)
+    ...
+    chain.propagate_abort(parent_session_id)  # cascades SHUTDOWN to all children
+    chain.cleanup(parent_session_id)
 """
 
 from __future__ import annotations
 
 import logging
-import os
-import signal as _signal
-import threading
-import time
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from collections import deque
+from threading import Lock
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Enums
-# ---------------------------------------------------------------------------
+class AbortChainEntry(TypedDict):
+    """Edge in the abort chain: parent session ID to a set of child session IDs."""
+
+    children: set[str]
 
 
-class AbortLevel(Enum):
-    """Scope of an abort operation (T442).
-
-    Attributes:
-        TOOL: Abort only the current tool invocation. The agent continues.
-        SIBLING: Abort all tools running concurrently with the triggered tool,
-            but let the agent session continue.
-        SESSION: Tear down the entire agent session, including all tools.
-    """
-
-    TOOL = "tool"
-    SIBLING = "sibling"
-    SESSION = "session"
-
-
-class AbortPropagation(Enum):
-    """Whether an abort at one level propagates to higher levels (T442).
-
-    Attributes:
-        CONTAIN: The abort stays at the current level.  No propagation.
-        PROPAGATE: The abort escalates to the next higher level.
-    """
-
-    CONTAIN = "contain"
-    PROPAGATE = "propagate"
-
-
-# ---------------------------------------------------------------------------
-# Data types
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class AbortSignal:
-    """Record of an abort event in the chain.
-
-    Attributes:
-        level: Abort scope (TOOL, SIBLING, or SESSION).
-        reason: Human-readable reason or error summary.
-        detail: Optional long-form detail string.
-        tool_name: Name of the tool that triggered the abort (if any).
-        propagated: True if this abort was escalated to a higher level.
-    """
-
-    level: AbortLevel
-    reason: str
-    detail: str = ""
-    tool_name: str | None = None
-    propagated: bool = False
-
-    def escalate(self) -> AbortSignal:
-        """Return an escalated version of this signal at the next level.
-
-        TOOL → SIBLING, SIBLING → SESSION, SESSION → unchanged.
-
-        Returns:
-            New AbortSignal with escalated level and propagated flag set.
-        """
-        next_level = {
-            AbortLevel.TOOL: AbortLevel.SIBLING,
-            AbortLevel.SIBLING: AbortLevel.SESSION,
-            AbortLevel.SESSION: AbortLevel.SESSION,
-        }
-        escalated = next_level[self.level]
-        if escalated == self.level:
-            return self
-        return AbortSignal(
-            level=escalated,
-            reason=f"escalated from {self.level.value}: {self.reason}",
-            detail=self.detail,
-            tool_name=self.tool_name,
-            propagated=True,
-        )
-
-
-@dataclass(frozen=True)
-class AbortChainPolicy:
-    """Configurable policy for abort propagation (T442).
-
-    Attributes:
-        tool_propagation: Whether TOOL-level aborts propagate to SIBLING.
-        sibling_propagation: Whether SIBLING-level aborts propagate to SESSION.
-        session_aborts_immediately: When True, SESSION abort sends SIGTERM
-            followed by SIGKILL after a grace period.
-        session_grace_ms: Grace period before SIGKILL after SESSION abort.
-    """
-
-    tool_propagation: AbortPropagation = AbortPropagation.CONTAIN
-    sibling_propagation: AbortPropagation = AbortPropagation.PROPAGATE
-    session_aborts_immediately: bool = True
-    session_grace_ms: int = 2_000
-
-
-# ---------------------------------------------------------------------------
-# AbortChain — core state machine
-# ---------------------------------------------------------------------------
-
-
-@dataclass
 class AbortChain:
-    """Hierarchical abort state for an agent session (T442).
+    """Tracks parent-child agent relationships and propagates abort signals.
 
-    Thread-safe.  Tracks the current abort state and coordinates shutdown
-    events across tool, sibling, and session levels.
+    The abort chain is a DAG where each node is an agent session ID and edges
+    represent "spawned by" relationships.  When ``propagate_abort`` is called
+    on a parent, the ``SHUTDOWN`` signal file is written for every descendant
+    in the subtree.
 
-    Usage::
-
-        chain = AbortChain()
-
-        # In tool execution wrapper:
-        if chain.should_abort(AbortLevel.TOOL):
-            handle_tool_abort(chain.pop_signal())
-        elif chain.should_abort(AbortLevel.SIBLING):
-            handle_sibling_abort(chain.pop_signal())
-        elif chain.should_abort(AbortLevel.SESSION):
-            handle_session_abort(chain.pop_signal())
-
-        # Trigger an abort from anywhere:
-        chain.trigger(AbortLevel.TOOL, "timeout", tool_name="bash")
-    """
-
-    policy: AbortChainPolicy = field(default_factory=AbortChainPolicy)
-    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
-    _current_level: AbortLevel | None = field(default=None, init=False, repr=False)
-    _signal: AbortSignal | None = field(default=None, init=False, repr=False)
-    _shutdown_event: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
-
-    def trigger(
-        self,
-        level: AbortLevel,
-        reason: str,
-        *,
-        tool_name: str | None = None,
-        detail: str = "",
-    ) -> AbortSignal:
-        """Trigger an abort at the given level.
-
-        Applies propagation policy: if the current level's propagation is
-        ``PROPAGATE``, the abort escalates to the next level.
-
-        Args:
-            level: Abort level to trigger.
-            reason: Short reason string.
-            tool_name: Name of the tool that triggered the abort.
-            detail: Optional long-form detail.
-
-        Returns:
-            The final AbortSignal (possibly escalated).
-        """
-        with self._lock:
-            sig = AbortSignal(level=level, reason=reason, detail=detail, tool_name=tool_name)
-            log_msg = "Abort triggered: level=%s, reason=%s"
-            log_args: list[Any] = [level.value, reason]
-
-            # Apply propagation (loop until no further escalation)
-            escalation_map: dict[AbortLevel, AbortPropagation] = {
-                AbortLevel.TOOL: self.policy.tool_propagation,
-                AbortLevel.SIBLING: self.policy.sibling_propagation,
-                AbortLevel.SESSION: AbortPropagation.PROPAGATE,  # SESSION is always terminal
-            }
-
-            effective_sig = sig
-            while True:
-                prop = escalation_map[effective_sig.level]
-                if prop == AbortPropagation.PROPAGATE and effective_sig.level != AbortLevel.SESSION:
-                    escalated = effective_sig.escalate()
-                    log_msg += ", escalated to %s"
-                    log_args.append(escalated.level.value)
-                    effective_sig = escalated
-                else:
-                    break
-
-            self._current_level = effective_sig.level
-            self._signal = effective_sig
-
-            if effective_sig.level == AbortLevel.SESSION:
-                self._shutdown_event.set()
-
-            logger.warning(log_msg, *log_args)
-            return effective_sig
-
-    def pop_signal(self) -> AbortSignal | None:
-        """Pop and consume the current abort signal (thread-safe).
-
-        Returns:
-            AbortSignal if one is pending, None otherwise.
-        """
-        with self._lock:
-            sig = self._signal
-            if sig is not None:
-                self._signal = None
-            return sig
-
-    def should_abort(self, level: AbortLevel) -> bool:
-        """Check if the system should abort at the given level.
-
-        Returns True when the current abort state is at *level* or higher
-        (SESSION > SIBLING > TOOL).
-
-        Args:
-            level: Abort level to check.
-
-        Returns:
-            True if an abort at this level or above is pending.
-        """
-        level_order = {AbortLevel.TOOL: 0, AbortLevel.SIBLING: 1, AbortLevel.SESSION: 2}
-        min_order = level_order[level]
-        with self._lock:
-            if self._current_level is None:
-                return False
-            return level_order[self._current_level] >= min_order
-
-    def reset(self) -> None:
-        """Clear all abort state (for reuse in a new session).
-
-        Warning: this is a hard reset.  Only call when the session has
-        fully terminated and no tool processes are running.
-        """
-        with self._lock:
-            self._current_level = None
-            self._signal = None
-            self._shutdown_event = threading.Event()
-
-    @property
-    def is_session_aborted(self) -> bool:
-        """Return True if a SESSION-level abort has been triggered."""
-        return self._shutdown_event.is_set()
-
-    def wait_for_shutdown(self, timeout: float | None = None) -> bool:
-        """Block until a SESSION-level abort is triggered.
-
-        Args:
-            timeout: Maximum seconds to wait (None = wait forever).
-
-        Returns:
-            True if shutdown was triggered, False if timed out.
-        """
-        return self._shutdown_event.wait(timeout=timeout)
-
-
-# ---------------------------------------------------------------------------
-# Session abort helper: SIGTERM → grace → SIGKILL
-# ---------------------------------------------------------------------------
-
-
-def abort_session_agent(
-    pid: int,
-    *,
-    grace_ms: int = 2_000,
-    reason: str = "session abort",
-) -> None:
-    """Gracefully terminate an agent session process (T442).
-
-    Sends SIGTERM, waits for the grace period, then sends SIGKILL if the
-    process is still alive.
+    Thread-safe: all mutations are guarded by a lock since the orchestrator
+    tick runs in a single thread but tests may exercise concurrently.
 
     Args:
-        pid: Process ID of the agent session.
-        grace_ms: Grace period in milliseconds between SIGTERM and SIGKILL.
-        reason: Human-readable reason logged for auditing.
+        signals_dir: Path to ``.sdd/runtime/signals/`` where ``SHUTDOWN``
+            files are written.
     """
 
-    logger.warning("Aborting agent session PID %d: %s", pid, reason)
-    try:
-        os.kill(pid, _signal.SIGTERM)
-    except OSError as exc:
-        logger.debug("SIGTERM to PID %d failed: %s (process may already be gone)", pid, exc)
-        return
+    __slots__ = ("_graph", "_lock", "_signals_dir")
 
-    deadline = time.monotonic() + grace_ms / 1_000
-    while time.monotonic() < deadline:
+    def __init__(self, *, signals_dir: Path) -> None:
+        self._signals_dir = signals_dir
+        self._graph: dict[str, set[str]] = {}
+        self._lock = Lock()
+
+    # ------------------------------------------------------------------
+    # Registration
+    # ------------------------------------------------------------------
+
+    def register_child(self, parent_session_id: str, child_session_id: str) -> None:
+        """Record that *child_session_id* was spawned by *parent_session_id*.
+
+        Args:
+            parent_session_id: The parent agent's session UUID.
+            child_session_id: The child agent's session UUID.
+        """
+        with self._lock:
+            if parent_session_id not in self._graph:
+                self._graph[parent_session_id] = set()
+            self._graph[parent_session_id].add(child_session_id)
+
+        logger.debug("AbortChain: registered child %s under parent %s", child_session_id, parent_session_id)
+
+    # ------------------------------------------------------------------
+    # Propagation
+    # ------------------------------------------------------------------
+
+    def propagate_abort(self, session_id: str) -> list[str]:
+        """Cascade an abort signal to all descendants of *session_id*.
+
+        Walks the subtree rooted at *session_id* in breadth-first order and
+        writes a ``SHUTDOWN`` file for every child session found.
+        Returns the list of session IDs that received the signal.
+
+        Args:
+            session_id: The session being aborted (its children receive the
+                cascaded signal).
+
+        Returns:
+            List of child session IDs that were sent a ``SHUTDOWN`` signal.
+        """
+        descendants = self._collect_descendants(session_id)
+        aborted: list[str] = []
+
+        for child_id in descendants:
+            if self._write_shutdown(child_id, session_id):
+                aborted.append(child_id)
+
+        if aborted:
+            logger.info(
+                "AbortChain: propagated abort from %s to %d child(ren): %s",
+                session_id,
+                len(aborted),
+                ", ".join(aborted),
+            )
+
+        return aborted
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def cleanup(self, session_id: str) -> None:
+        """Remove *session_id* from the abort chain.
+
+        Removes *session_id* as a parent key.  Children of this session are
+        **not** removed from the graph — they may still be running and need
+        independent cleanup.  If *session_id* appears as a child of another
+        parent, that edge is also removed.
+
+        Args:
+            session_id: The session ID to remove.
+        """
+        with self._lock:
+            # Remove as parent key (its children references stay)
+            self._graph.pop(session_id, None)
+
+            # Remove as child from any parent
+            for children in self._graph.values():
+                children.discard(session_id)
+
+        logger.debug("AbortChain: cleaned up session %s", session_id)
+
+    # ------------------------------------------------------------------
+    # Introspection (tests / diagnostics)
+    # ------------------------------------------------------------------
+
+    def get_children(self, session_id: str) -> set[str]:
+        """Return the direct children of *session_id*.
+
+        Args:
+            session_id: The parent session ID.
+
+        Returns:
+            Set of direct child session IDs (empty if none).
+        """
+        with self._lock:
+            return set(self._graph.get(session_id, set()))
+
+    def size(self) -> int:
+        """Return the total number of tracked edges."""
+        with self._lock:
+            return sum(len(children) for children in self._graph.values())
+
+    def snapshot(self) -> dict[str, set[str]]:
+        """Return a copy of the full graph for diagnostics.
+
+        Returns:
+            Dict mapping parent session IDs to sets of child session IDs.
+        """
+        with self._lock:
+            return {parent: set(children) for parent, children in self._graph.items()}
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _collect_descendants(self, session_id: str) -> list[str]:
+        """BFS collect all descendants of *session_id*.
+
+        Args:
+            session_id: Root of the subtree to walk.
+
+        Returns:
+            Ordered list of all descendant session IDs.
+        """
+        with self._lock:
+            children = set(self._graph.get(session_id, set()))
+
+        visited: set[str] = set()
+        result: list[str] = []
+        queue: deque[str] = deque(children)
+
+        while queue:
+            current = queue.popleft()
+            if current in visited:
+                continue
+            visited.add(current)
+            result.append(current)
+            # Enforce the lock around every graph access
+            with self._lock:
+                grandchildren = set(self._graph.get(current, set()))
+            for gc in grandchildren:
+                if gc not in visited:
+                    queue.append(gc)
+
+        return result
+
+    def _write_shutdown(self, child_session_id: str, parent_session_id: str) -> bool:
+        """Write a SHUTDOWN signal file for *child_session_id*.
+
+        Args:
+            child_session_id: The child session receiving the abort.
+            parent_session_id: The parent that triggered the abort (used in
+                the shutdown message).
+
+        Returns:
+            ``True`` if the signal file was written successfully.
+        """
         try:
-            os.kill(pid, 0)
-        except OSError:
-            logger.info("Agent session PID %d exited gracefully", pid)
-            return
-        time.sleep(0.05)
-
-    # Process still alive — SIGKILL
-    logger.warning("Agent PID %d did not exit within %d ms; sending SIGKILL", pid, grace_ms)
-    try:
-        os.kill(pid, _signal.SIGKILL)
-    except OSError as exc:
-        logger.debug("SIGKILL to PID %d failed: %s", pid, exc)
-
-
-# ---------------------------------------------------------------------------
-# Convenience: create abort chain with common policies
-# ---------------------------------------------------------------------------
-
-
-def default_abort_chain() -> AbortChain:
-    """Create an AbortChain with the default policy (tool-contained, sibling-escalates).
-
-    Returns:
-        Configured AbortChain instance.
-    """
-    return AbortChain(
-        policy=AbortChainPolicy(
-            tool_propagation=AbortPropagation.CONTAIN,
-            sibling_propagation=AbortPropagation.PROPAGATE,
-            session_grace_ms=2_000,
-        )
-    )
-
-
-def strict_abort_chain() -> AbortChain:
-    """Create an AbortChain where all levels propagate upward.
-
-    Any tool abort escalates to sibling abort, which escalates to session abort.
-
-    Returns:
-        Strictly propagating AbortChain instance.
-    """
-    return AbortChain(
-        policy=AbortChainPolicy(
-            tool_propagation=AbortPropagation.PROPAGATE,
-            sibling_propagation=AbortPropagation.PROPAGATE,
-            session_grace_ms=1_000,
-        )
-    )
+            signal_dir = self._signals_dir / child_session_id
+            signal_dir.mkdir(parents=True, exist_ok=True)
+            content = (
+                f"# ABORT CHAIN — Parent killed/aborted\n"
+                f"Parent session: {parent_session_id}\n"
+                f"Your session: {child_session_id}\n"
+                f"Your parent agent was killed or aborted.\n"
+                f"Save your work and exit immediately.\n"
+            )
+            (signal_dir / "SHUTDOWN").write_text(content, encoding="utf-8")
+            logger.info(
+                "AbortChain: SHUTDOWN written for child %s (parent %s)",
+                child_session_id,
+                parent_session_id,
+            )
+            return True
+        except OSError as exc:
+            logger.warning(
+                "AbortChain: failed to write SHUTDOWN for child %s: %s",
+                child_session_id,
+                exc,
+            )
+            return False

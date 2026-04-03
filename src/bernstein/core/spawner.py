@@ -20,9 +20,18 @@ from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.effectiveness import EffectivenessScorer
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
 from bernstein.core.heartbeat import HeartbeatMonitor
+from bernstein.core.in_process_agent import InProcessAgent
 from bernstein.core.lessons import gather_lessons_for_context
 from bernstein.core.lifecycle import transition_agent
-from bernstein.core.models import AbortReason, AgentSession, IsolationMode, ModelConfig, Task, TransitionReason
+from bernstein.core.models import (
+    AbortReason,
+    AgentBackend,
+    AgentSession,
+    IsolationMode,
+    ModelConfig,
+    Task,
+    TransitionReason,
+)
 from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
@@ -573,6 +582,7 @@ class AgentSpawner:
         max_tokens_per_task: dict[str, int] | None = None,
         role_model_policy: dict[str, dict[str, str]] | None = None,
         runtime_bridge: RuntimeBridge | None = None,
+        backend: AgentBackend = AgentBackend.SUBPROCESS,
     ) -> None:
         self._enable_caching = enable_caching
         self._adapter_cache: dict[str, CLIAdapter] = {}
@@ -627,6 +637,14 @@ class AgentSpawner:
                 self._container_mgr = ContainerManager(container_config, workdir)
             except ContainerError as exc:
                 logger.warning("Container runtime unavailable, falling back to subprocess: %s", exc)
+
+        # Backend selection
+        self._backend = backend
+        self._in_process: InProcessAgent | None = None
+        if backend == AgentBackend.IN_PROCESS:
+            pid_dir = workdir / ".sdd" / "runtime" / "pids"
+            self._in_process = InProcessAgent(adapter, workdir, pid_dir=pid_dir)
+            logger.info("In-process agent backend enabled (wrapping %s)", adapter.name())
 
     def set_shutdown_event(self, shutdown_event: threading.Event | None) -> None:
         """Attach the orchestrator shutdown event for spawn/worktree guards."""
@@ -1035,7 +1053,7 @@ class AgentSpawner:
         _unattended_attempt = 0
         result: SpawnResult | None = None
 
-        while _unattended_attempt < _unattended_max:
+        while True:
             if not remote_spawned:
                 attempt_errors: list[str] = []
                 disabled_providers: dict[str, bool] = {}
@@ -1056,7 +1074,18 @@ class AgentSpawner:
 
                     try:
                         spawn_start = time.perf_counter()
-                        if self._sandbox is not None:
+                        if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+                            # In-process: run the adapter's subprocess via
+                            # a thread inside the current Python process
+                            fake_pid, actual_log_path = self._in_process.run(
+                                prompt=prompt,
+                                workdir=spawn_cwd,
+                                model_config=model_config,
+                                session_id=session_id,
+                                mcp_config=effective_mcp,
+                            )
+                            result = SpawnResult(pid=fake_pid, log_path=actual_log_path)
+                        elif self._sandbox is not None:
                             result = self._spawn_in_sandbox(
                                 session_id=session_id,
                                 prompt=prompt,
@@ -1206,29 +1235,30 @@ class AgentSpawner:
                                     pass
                             continue
                     raise RuntimeError(f"All spawn attempts failed for session {session_id}: {error_text}")
+                # Success — exit the retry loop
                 break
-            logger.debug("DEBUG: result=%r, result.pid=%r", result, result.pid if result is not None else "N/A")
-            session.pid = result.pid
-            session.abort_reason = result.abort_reason
-            session.abort_detail = result.abort_detail
-            session.finish_reason = result.finish_reason
-            transition_agent(
-                session,
-                "working",
-                actor="spawner",
-                reason="agent process started",
-            )
-            if result.log_path:
-                session.log_path = str(result.log_path)
-            if result.proc is not None:
-                self._procs[session_id] = result.proc  # type: ignore[assignment]
-                # Register stdin pipe for real-time IPC (if available)
-                proc_stdin = getattr(result.proc, "stdin", None)
-                if proc_stdin is not None:
-                    from bernstein.core.agent_ipc import register_stdin_pipe
 
-                    register_stdin_pipe(session_id, proc_stdin)
-            break
+        # Post-spawn session setup
+        session.pid = result.pid
+        session.abort_reason = result.abort_reason
+        session.abort_detail = result.abort_detail
+        session.finish_reason = result.finish_reason
+        transition_agent(
+            session,
+            "working",
+            actor="spawner",
+            reason="agent process started",
+        )
+        if result.log_path:
+            session.log_path = str(result.log_path)
+        if result.proc is not None:
+            self._procs[session_id] = result.proc  # type: ignore[assignment]
+            # Register stdin pipe for real-time IPC (if available)
+            proc_stdin = getattr(result.proc, "stdin", None)
+            if proc_stdin is not None:
+                from bernstein.core.agent_ipc import register_stdin_pipe
+
+                register_stdin_pipe(session_id, proc_stdin)
 
         # Create and persist the initial trace
         # Serialize task fields to JSON-safe types (convert Enums to their values)
@@ -1638,6 +1668,15 @@ class AgentSpawner:
                 return False
             return True
 
+        # In-process backend: check via InProcessAgent
+        if self._in_process is not None:
+            alive = self._in_process.is_alive(session.id)
+            if not alive:
+                exit_code_val = self._in_process.wait(session.id, timeout=0.1)
+                if exit_code_val is not None:
+                    session.exit_code = exit_code_val
+            return alive
+
         if session.pid is None:
             return False
         return self._adapter.is_alive(session.pid)
@@ -1673,6 +1712,12 @@ class AgentSpawner:
             if handle is not None:
                 container_mgr.destroy(handle)
             self._sandbox_managers.pop(session.id, None)
+        elif self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+            self._in_process.stop(session.id)
+            exit_code_val = self._in_process.wait(session.id, timeout=5.0)
+            if exit_code_val is not None:
+                session.exit_code = exit_code_val
+            self._in_process.cleanup(session.id)
         elif session.pid is not None:
             self._adapter.kill(session.pid)
         if session.status != "dead":
@@ -1702,6 +1747,9 @@ class AgentSpawner:
         agent branch back into the current branch.  On conflict, aborts
         the merge and returns the MergeResult so the caller can route to
         a resolver agent or re-queue the task.
+
+        For in-process agents, waits on the thread and cleans up the session
+        but skips worktree merge (no worktree created for in-process agents).
 
         Args:
             session: The AgentSession whose underlying process should be reaped.
@@ -1733,17 +1781,65 @@ class AgentSpawner:
                 self._sandbox_managers.pop(session.id, None)
                 logger.info("Agent %s container destroyed", session.id)
 
-            proc = self._procs.pop(session.id, None)
-            if proc is not None:
-                try:
-                    proc.terminate()
-                except Exception as exc:
-                    logger.warning("reap_completed_agent: terminate failed for %s: %s", session.id, exc)
-                try:
-                    session.exit_code = proc.wait(timeout=5)
-                except Exception as exc:
-                    logger.warning("reap_completed_agent: wait failed for %s: %s", session.id, exc)
-            logger.info("Agent %s process reaped", session.id)
+            # Clean up in-process agent
+            in_process_reaped = False
+            if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
+                exit_code_val = self._in_process.wait(session.id, timeout=5.0)
+                if exit_code_val is not None:
+                    session.exit_code = exit_code_val
+                self._in_process.cleanup(session.id)
+                in_process_reaped = True
+                logger.info("Agent %s in-process agent cleaned up", session.id)
+
+            if in_process_reaped:
+                # In-process agents: pop worktree dicts (no merge to do) and
+                # skip to trace finalization.
+                self._worktree_paths.pop(session.id, None)
+                self._worktree_roots.pop(session.id, None)
+            else:
+                proc = self._procs.pop(session.id, None)
+                if proc is not None:
+                    try:
+                        proc.terminate()
+                    except Exception as exc:
+                        logger.warning("reap_completed_agent: terminate failed for %s: %s", session.id, exc)
+                    try:
+                        session.exit_code = proc.wait(timeout=5)
+                    except Exception as exc:
+                        logger.warning("reap_completed_agent: wait failed for %s: %s", session.id, exc)
+                logger.info("Agent %s process reaped", session.id)
+
+                # Merge worktree branch back and clean up
+                worktree_path = self._worktree_paths.pop(session.id, None)
+                worktree_root = self._worktree_roots.pop(session.id, self._workdir.resolve())
+                worktree_mgr = self._worktree_managers.get(worktree_root)
+                merge_result: MergeResult | None = None
+                if worktree_path is not None and worktree_mgr is not None:
+                    if not skip_merge:
+                        merge_start = time.perf_counter()
+                        merge_result = self._merge_worktree_branch(session.id, repo_root=worktree_root)
+                        merge_duration.observe(time.perf_counter() - merge_start)
+
+                        from bernstein.core.metric_collector import get_collector
+
+                        merge_ok = merge_result is not None and merge_result.success
+                        for task_id in session.task_ids:
+                            get_collector().record_merge_result(task_id, success=merge_ok)
+
+                        # Push merged work to remote so nothing is lost
+                        if merge_result and merge_result.success:
+                            from bernstein.core.git_ops import safe_push
+
+                            push_result = safe_push(worktree_root, "main")
+                            if push_result.ok:
+                                logger.info("Pushed merged work from %s to origin/main", session.id)
+                            else:
+                                logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
+                    worktree_mgr.cleanup(session.id)
+
+                outcome = "completed" if session.status != "dead" else "timed_out"
+                get_plugin_manager().fire_agent_reaped(session_id=session.id, role=session.role, outcome=outcome)
+                return merge_result
 
         # Finalize trace with outcome and parsed log steps
         trace = self._traces.pop(session.id, None)

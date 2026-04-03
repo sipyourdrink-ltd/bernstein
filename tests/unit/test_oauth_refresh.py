@@ -21,7 +21,7 @@ def test_spawner_retries_after_auth_refresh(tmp_path: Path):
     adapter.supports_auth_refresh.return_value = True
     adapter.refresh_auth.return_value = True
     # First spawn fails, second succeeds
-    adapter.spawn.side_effect = [SpawnError("Auth failed"), MagicMock(pid=123, log_path=tmp_path/"test.log")]
+    adapter.spawn.side_effect = [SpawnError("Auth failed"), MagicMock(pid=123, log_path=tmp_path / "test.log")]
 
     templates_dir = tmp_path / "templates"
     backend_dir = templates_dir / "backend"
@@ -41,8 +41,10 @@ def test_spawner_retries_after_auth_refresh(tmp_path: Path):
 
     # We patch Path.exists to return True for log files, but we must let the templates be found
     orig_exists = Path.exists
+
     def mock_exists(self):
-        if ".log" in str(self): return True
+        if ".log" in str(self):
+            return True
         return orig_exists(self)
 
     with patch("pathlib.Path.exists", side_effect=mock_exists, autospec=True):
@@ -51,6 +53,7 @@ def test_spawner_retries_after_auth_refresh(tmp_path: Path):
     assert adapter.refresh_auth.called
     assert adapter.spawn.call_count == 2
     assert session.pid == 123
+
 
 def test_spawner_fails_if_refresh_unsupported(tmp_path: Path):
     tracker = MagicMock()
@@ -76,8 +79,10 @@ def test_spawner_fails_if_refresh_unsupported(tmp_path: Path):
     tasks = [Task(id="T1", title="test", role="backend", description="test")]
 
     orig_exists = Path.exists
+
     def mock_exists(self):
-        if ".log" in str(self): return True
+        if ".log" in str(self):
+            return True
         return orig_exists(self)
 
     with patch("pathlib.Path.exists", side_effect=mock_exists, autospec=True):

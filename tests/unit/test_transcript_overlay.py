@@ -35,9 +35,7 @@ def traces_dir(tmp_path: Path) -> Path:
             "steps": [{"type": "complete", "detail": "All tests passed"}],
         },
     ]
-    (sd / "task-001.jsonl").write_text(
-        "\n".join(json.dumps(r) for r in jsonl_content) + "\n"
-    )
+    (sd / "task-001.jsonl").write_text("\n".join(json.dumps(r) for r in jsonl_content) + "\n")
 
     # Single JSON trace file
     json_trace = {
@@ -81,25 +79,19 @@ class TestSearchTranscripts:
 
     def test_no_matches(self, empty_traces_dir: Path) -> None:
         """Query not found in any trace returns empty."""
-        results, total = search_transcripts(
-            "zzznotfound", empty_traces_dir.parent.parent
-        )
+        results, total = search_transcripts("zzznotfound", empty_traces_dir.parent.parent)
         assert results == []
         assert total == 0
 
     def test_case_insensitive_jsonl(self, traces_dir: Path) -> None:
         """Case-insensitive matching in JSONL files."""
-        results, total = search_transcripts(
-            "BACKEND", traces_dir.parent.parent
-        )
+        results, total = search_transcripts("BACKEND", traces_dir.parent.parent)
         assert total == 1
         assert any("backend" in r.matched_text.lower() for r in results)
 
     def test_jsonl_line_search(self, traces_dir: Path) -> None:
         """JSONL search returns matching lines with context."""
-        results, total = search_transcripts(
-            "tests passed", traces_dir.parent.parent
-        )
+        results, total = search_transcripts("tests passed", traces_dir.parent.parent)
         assert total >= 1
         entry = results[0]
         assert entry.line_number is not None
@@ -108,45 +100,31 @@ class TestSearchTranscripts:
 
     def test_json_structured_search(self, traces_dir: Path) -> None:
         """Single JSON file is parsed and searched structurally."""
-        results, total = search_transcripts(
-            "architect", traces_dir.parent.parent
-        )
+        results, total = search_transcripts("architect", traces_dir.parent.parent)
         assert total >= 1
         assert any("architect" in r.matched_text.lower() for r in results)
 
     def test_context_lines_included(self, traces_dir: Path) -> None:
         """Context lines appear around the matched line."""
-        results, total = search_transcripts(
-            "Spawned", traces_dir.parent.parent
-        )
+        results, total = search_transcripts("Spawned", traces_dir.parent.parent)
         assert total >= 1
         entry = results[0]
         # Context lines should be present (the JSONL file has 2 lines)
-        all_text = (
-            entry.matched_text
-            + " ".join(entry.context_before)
-            + " ".join(entry.context_after)
-        )
+        all_text = entry.matched_text + " ".join(entry.context_before) + " ".join(entry.context_after)
         assert "spawn" in all_text.lower()
 
     def test_pagination_first_page(self, traces_dir: Path) -> None:
         """Pagination returns at most max_results matches."""
         # Query that matches everything
-        results, total = search_transcripts(
-            "", traces_dir.parent.parent, max_results=1
-        )
+        results, total = search_transcripts("", traces_dir.parent.parent, max_results=1)
         assert len(results) <= 1
         # total should still reflect all matches across all pages
         assert total >= 1
 
     def test_pagination_second_page(self, traces_dir: Path) -> None:
         """Page 2 skips first page results."""
-        results_p1, total = search_transcripts(
-            "", traces_dir.parent.parent, max_results=1, page=1
-        )
-        results_p2, total2 = search_transcripts(
-            "", traces_dir.parent.parent, max_results=1, page=2
-        )
+        results_p1, total = search_transcripts("", traces_dir.parent.parent, max_results=1, page=1)
+        results_p2, total2 = search_transcripts("", traces_dir.parent.parent, max_results=1, page=2)
         assert total == total2
         if total >= 2:
             assert len(results_p2) == 1
@@ -154,9 +132,7 @@ class TestSearchTranscripts:
 
     def test_custom_context_lines(self, traces_dir: Path) -> None:
         """context_lines parameter controls context width."""
-        results, total = search_transcripts(
-            "Spawned", traces_dir.parent.parent, context_lines=0
-        )
+        results, total = search_transcripts("Spawned", traces_dir.parent.parent, context_lines=0)
         assert total >= 1
         entry = results[0]
         assert entry.context_before == []

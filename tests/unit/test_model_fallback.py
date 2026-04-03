@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
-
 from bernstein.core.model_fallback import (
     DEFAULT_529_STRIKE_LIMIT,
-    FallbackResult,
-    FallbackState,
     ModelFallbackTracker,
     get_fallback_tracker,
     reset_fallback_tracker,
 )
-
 
 # ---------------------------------------------------------------------------
 # Module-level singleton

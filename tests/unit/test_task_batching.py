@@ -1,5 +1,5 @@
 """Tests for task batching with file overlap awareness and small task
-compaction. """
+compaction."""
 
 from __future__ import annotations
 

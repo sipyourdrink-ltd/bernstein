@@ -17,9 +17,11 @@ def hooks_dir(tmp_path: Path) -> Path:
     d.mkdir(parents=True)
     return d
 
+
 def _create_script(path: Path, content: str):
     path.write_text(content)
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
 
 def test_hook_receives_json_stdin(hooks_dir: Path, tmp_path: Path):
     # Script that writes its stdin to a file
@@ -37,8 +39,10 @@ def test_hook_receives_json_stdin(hooks_dir: Path, tmp_path: Path):
     received = json.loads(output_file.read_text())
     assert received == args
 
+
 def test_hook_returns_json_stdout(hooks_dir: Path, tmp_path: Path, caplog):
     import logging
+
     caplog.set_level(logging.DEBUG)
 
     # Script that returns valid JSON
@@ -53,8 +57,10 @@ def test_hook_returns_json_stdout(hooks_dir: Path, tmp_path: Path, caplog):
     # Success JSON should be parsed silently
     assert "malformed JSON" not in caplog.text
 
+
 def test_hook_returns_error_json(hooks_dir: Path, tmp_path: Path, caplog):
     import logging
+
     caplog.set_level(logging.WARNING)
 
     # Script that returns error JSON but exit code 0 (non-blocking error)
@@ -67,6 +73,7 @@ def test_hook_returns_error_json(hooks_dir: Path, tmp_path: Path, caplog):
     pm.fire_task_created(task_id="t1", role="r", title="t")
 
     assert "reported error: Something went wrong" in caplog.text
+
 
 def test_hook_blocking_error_with_json(hooks_dir: Path, tmp_path: Path):
     # Script that returns error JSON and exit code 2
@@ -81,8 +88,10 @@ def test_hook_blocking_error_with_json(hooks_dir: Path, tmp_path: Path):
 
     assert "Blocking failure" in str(excinfo.value)
 
+
 def test_hook_malformed_json_warning(hooks_dir: Path, tmp_path: Path, caplog):
     import logging
+
     caplog.set_level(logging.WARNING)
 
     # Script that returns invalid JSON

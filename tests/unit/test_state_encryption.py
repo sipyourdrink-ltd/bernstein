@@ -162,6 +162,7 @@ class TestKeyManager:
 
     def test_key_file_has_restricted_permissions(self, tmp_path: Path) -> None:
         import os
+
         sdd = tmp_path / ".sdd"
         km = KeyManager(sdd)
         km.ensure_key()

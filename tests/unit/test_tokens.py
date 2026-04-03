@@ -84,6 +84,7 @@ class TestAgentTokenTracker:
 
     def test_global_tracker_is_singleton(self) -> None:
         from bernstein.tokens import get_token_tracker
+
         a = get_token_tracker()
         b = get_token_tracker()
         assert a is b

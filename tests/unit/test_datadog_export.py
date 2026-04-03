@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import json
-import socket
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from bernstein.core.datadog_export import (
     DogStatsDConfig,
@@ -61,9 +58,7 @@ class TestDogStatsDExporter:
 
     def test_record_metric_point_maps_type(self) -> None:
         exporter = DogStatsDExporter()
-        exporter.record_metric_point(
-            "task_completion_time", 2.5, {"role": "backend", "status": "ok"}
-        )
+        exporter.record_metric_point("task_completion_time", 2.5, {"role": "backend", "status": "ok"})
         line = exporter._buf[0]
         assert "task.completion.time:2.5|h" in line
         assert "role:backend" in line

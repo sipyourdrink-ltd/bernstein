@@ -420,6 +420,9 @@ class CatalogRegistry:
     def _load_generic_entry(self, entry: CatalogEntry) -> dict[str, dict[str, Any]]:
         """Load role metadata from a generic local YAML catalog.
 
+        Also discovers ``SKILL.md`` files in the catalog directory, parsing
+        their YAML frontmatter into role metadata.
+
         Args:
             entry: A catalog entry with ``type="generic"``.
 
@@ -453,6 +456,11 @@ class CatalogRegistry:
                 "model": str(raw.get(fm.get("model", "model"), "sonnet")),
                 "effort": str(raw.get(fm.get("effort", "effort"), "normal")),
             }
+
+        # Discover SKILL.md files — these use frontmatter metadata instead
+        # of a separate YAML file.
+        results.update(_load_skill_md_files(catalog_dir))
+
         return results
 
     # -- Agent matching -------------------------------------------------------
@@ -620,3 +628,44 @@ def _parse_catalog_entry(raw: dict[str, Any]) -> CatalogEntry:
         glob=glob_pattern,
         field_map=field_map_typed,
     )
+
+
+def _load_skill_md_files(catalog_dir: Path) -> dict[str, dict[str, Any]]:
+    """Discover and load ``SKILL.md`` files in *catalog_dir* and subdirectories.
+
+    Scans each immediate subdirectory and the root of *catalog_dir* for
+    files matching ``SKILL.md``.  Parsed frontmatter fields (``name``,
+    ``description``, ``effort``) are mapped to catalog role metadata.
+
+    Files without frontmatter are skipped unless the filename stem (minus
+    ``.md``) can serve as the role name.
+
+    Args:
+        catalog_dir: Directory to search for ``SKILL.md`` files.
+
+    Returns:
+        Mapping of role name → metadata dict (``description``, ``model``,
+        ``effort``).
+    """
+    from bernstein.core.skill_md import load_skill_md as _load_skill_md
+
+    results: dict[str, dict[str, Any]] = {}
+
+    # Scan root and immediate subdirectories.
+    candidates: list[Path] = []
+    for item in sorted(catalog_dir.iterdir()):
+        if item.is_file() and item.name == "SKILL.md":
+            candidates.append(item)
+        elif item.is_dir():
+            skill_file = item / "SKILL.md"
+            if skill_file.is_file():
+                candidates.append(skill_file)
+
+    for path in candidates:
+        role_from_stem = path.parent.name if path.parent != catalog_dir else path.stem.rstrip(".")
+        skill = _load_skill_md(path, role_fallback=role_from_stem or None)
+        if skill is None:
+            continue
+        results[skill.name] = skill.to_catalog_agent_fields()
+
+    return results

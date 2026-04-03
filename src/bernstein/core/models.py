@@ -706,6 +706,21 @@ class IsolationMode(StrEnum):
     CONTAINER = "container"
 
 
+class AgentBackend(StrEnum):
+    """Agent execution backend.
+
+    SUBPROCESS (default) launches each agent as a separate OS process.
+    TMUX runs the agent in a tmux session for manual inspection.
+    IN_PROCESS runs the agent as a Python thread in the same process
+    for lightweight, fast tasks — use with caution, crashes can take
+    down the task server.
+    """
+
+    SUBPROCESS = "subprocess"
+    TMUX = "tmux"
+    IN_PROCESS = "in_process"
+
+
 @dataclass(frozen=True)
 class ContainerIsolationConfig:
     """Container isolation settings for the orchestrator.
@@ -914,6 +929,27 @@ class SmtpConfig:
     to_addresses: list[str]
 
 
+@dataclass(frozen=True)
+class ConvergenceGuardConfig:
+    """Thresholds for the convergence guard (T723).
+
+    Attributes:
+        max_pending_merges: Maximum merges in the queue before blocking spawns.
+        max_active_agents: Maximum concurrent alive agents before blocking spawns.
+        max_error_rate: Maximum recent failure rate (0.0-1.0) before blocking spawns.
+        max_spawn_rate: Maximum spawns per minute before blocking spawns.
+        error_rate_window_seconds: Look-back window for computing error rate.
+        spawn_rate_window_seconds: Look-back window for computing spawn rate.
+    """
+
+    max_pending_merges: int = 10
+    max_active_agents: int = 8
+    max_error_rate: float = 0.5
+    max_spawn_rate: float = 12.0
+    error_rate_window_seconds: int = 300  # 5 minutes
+    spawn_rate_window_seconds: int = 60  # 1 minute
+
+
 @dataclass
 class OrchestratorConfig:
     """Configuration for the orchestrator main loop.
@@ -974,6 +1010,7 @@ class OrchestratorConfig:
     batch: BatchConfig = field(default_factory=BatchConfig)
     max_cost_per_agent: float = 0.0  # Hard per-agent spend cap (0 = unlimited)
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
+    convergence: ConvergenceGuardConfig = field(default_factory=ConvergenceGuardConfig)
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""

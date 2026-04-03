@@ -395,7 +395,10 @@ class TestWorkspaceTrustGating:
         pm = PluginManager(workdir=tmp_path)  # untrusted
 
         result = pm.fire_permission_denied(
-            task_id="t1", reason="blocked", tool="shell", args={"cmd": {"type": "#file/edit"}},
+            task_id="t1",
+            reason="blocked",
+            tool="shell",
+            args={"cmd": {"type": "#file/edit"}},
         )
         assert result is None
 
@@ -412,16 +415,17 @@ class TestWorkspaceTrustGating:
 
         class _HintPlugin:
             @hookimpl
-            def on_permission_denied(
-                self, task_id: str, reason: str, tool: str, args: dict[str, Any]
-            ) -> str:
+            def on_permission_denied(self, task_id: str, reason: str, tool: str, args: dict[str, Any]) -> str:
                 return "use safe command"
 
         pm = PluginManager(workdir=tmp_path)
         pm.register(_HintPlugin(), name="hint")
 
         result = pm.fire_permission_denied(
-            task_id="t1", reason="blocked", tool="shell", args={"cmd": "#file/edit"},
+            task_id="t1",
+            reason="blocked",
+            tool="shell",
+            args={"cmd": "#file/edit"},
         )
         assert result == "use safe command"
 

@@ -172,9 +172,7 @@ class TestPartitionToolsByConcurrency:
         assert unsafe == []
 
     def test_mixed_tools(self) -> None:
-        safe, unsafe = partition_tools_by_concurrency(
-            ["read_file", "bash", "grep", "write_file"]
-        )
+        safe, unsafe = partition_tools_by_concurrency(["read_file", "bash", "grep", "write_file"])
         assert set(safe) == {"read_file", "grep"}
         assert set(unsafe) == {"bash", "write_file"}
 

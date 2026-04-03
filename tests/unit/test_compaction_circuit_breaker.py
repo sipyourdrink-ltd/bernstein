@@ -35,6 +35,7 @@ def test_circuit_breaker_opens_after_three_failures():
     assert monitor.compaction_fail_count == 4
     assert monitor.should_compact() is False
 
+
 def test_circuit_breaker_resets_on_success():
     monitor = TokenGrowthMonitor(session_id="test-session")
 
@@ -54,6 +55,7 @@ def test_circuit_breaker_resets_on_success():
     # Trigger intervention again - should allow compaction
     monitor.intervention_triggered = True
     assert monitor.should_compact() is True
+
 
 def test_should_compact_respects_intervention_triggered():
     monitor = TokenGrowthMonitor(session_id="test-session")

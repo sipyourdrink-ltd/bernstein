@@ -17,9 +17,11 @@ def hooks_dir(tmp_path: Path) -> Path:
     d.mkdir(parents=True)
     return d
 
+
 def _create_script(path: Path, content: str):
     path.write_text(content)
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
 
 def test_exit_code_0_success(hooks_dir: Path, caplog):
     caplog.set_level(logging.DEBUG)
@@ -34,6 +36,7 @@ def test_exit_code_0_success(hooks_dir: Path, caplog):
     # Should not log any warnings or errors
     assert "exited with code" not in caplog.text
 
+
 def test_exit_code_2_blocks(hooks_dir: Path):
     script = hooks_dir / "block.sh"
     _create_script(script, "#!/bin/sh\necho 'Stop right there!' >&2\nexit 2")
@@ -46,6 +49,7 @@ def test_exit_code_2_blocks(hooks_dir: Path):
 
     assert "Stop right there!" in str(excinfo.value)
     assert "on_task_created" in str(excinfo.value)
+
 
 def test_exit_code_1_warns(hooks_dir: Path, caplog):
     caplog.set_level(logging.WARNING)
@@ -60,6 +64,7 @@ def test_exit_code_1_warns(hooks_dir: Path, caplog):
 
     assert "exited with code 1" in caplog.text
     assert "Just a warning" in caplog.text
+
 
 def test_other_exit_code_warns(hooks_dir: Path, caplog):
     caplog.set_level(logging.WARNING)

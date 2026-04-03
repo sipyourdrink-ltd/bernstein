@@ -67,8 +67,8 @@ def test_cost_tracker_agent_summaries() -> None:
     """Test per-agent cost summaries."""
     tracker = CostTracker(run_id="test-run")
     tracker.record("agent-A", "t1", "sonnet", 1000, 0)  # 0.003
-    tracker.record("agent-A", "t2", "sonnet", 500, 0)   # 0.0015
-    tracker.record("agent-B", "t3", "opus", 1000, 0)    # 0.005
+    tracker.record("agent-A", "t2", "sonnet", 500, 0)  # 0.0015
+    tracker.record("agent-B", "t3", "opus", 1000, 0)  # 0.005
 
     summaries = tracker.agent_summaries()
     # Sorted by cost descending: agent-B (0.005) then agent-A (0.0045)

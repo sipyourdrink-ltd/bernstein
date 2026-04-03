@@ -68,12 +68,7 @@ class TestRoleStats:
 
 class TestRunGitLog:
     NUMSTAT_OUTPUT = (
-        "Alice <alice@example.com>\n"
-        "10\t5\tsrc/foo.py\n"
-        "3\t0\tsrc/bar.py\n"
-        "\n"
-        "Bob <bob@example.com>\n"
-        "0\t2\tREADME.md\n"
+        "Alice <alice@example.com>\n10\t5\tsrc/foo.py\n3\t0\tsrc/bar.py\n\nBob <bob@example.com>\n0\t2\tREADME.md\n"
     )
 
     @patch("subprocess.run")
@@ -93,6 +88,7 @@ class TestRunGitLog:
     @patch("subprocess.run")
     def test_git_failure_raises_error(self, mock_run: MagicMock) -> None:
         import subprocess
+
         mock_run.return_value = MagicMock(returncode=128, stdout="", stderr="not a git repo")
         with pytest.raises(subprocess.CalledProcessError):
             _run_git_log()
@@ -126,10 +122,7 @@ class TestRunGitLog:
 
 class TestCollectCommitStats:
     NUMSTAT = (
-        "backend dev <dev@example.com>\n"
-        "20\t5\tsrc/main.py\n\n"
-        "qa tester <qa@example.com>\n"
-        "2\t0\ttests/test_main.py\n"
+        "backend dev <dev@example.com>\n20\t5\tsrc/main.py\n\nqa tester <qa@example.com>\n2\t0\ttests/test_main.py\n"
     )
     AUTHOR_LOG = "backend dev <dev@example.com>\nbackend dev <dev@example.com>\nqa tester <qa@example.com>\n"
 

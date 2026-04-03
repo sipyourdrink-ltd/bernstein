@@ -8,7 +8,6 @@ from bernstein.adapters.ci.gitlab_ci import GitLabCIParser
 from bernstein.core.ci_fix import CIFailureKind
 from bernstein.core.ci_log_parser import CILogParser
 
-
 # ---------------------------------------------------------------------------
 # Helper: sample log fixtures
 # ---------------------------------------------------------------------------
@@ -29,16 +28,10 @@ _SAMPLE_ANSI_LOG = (
     "section_end:1704067210:pytest\r\n"
 )
 
-_SAMPLE_CLEAN_LOG = (
-    "section_start:1704067220:build\r\n"
-    "Build succeeded.\r\n"
-    "section_end:1704067220:build\r\n"
-)
+_SAMPLE_CLEAN_LOG = "section_start:1704067220:build\r\nBuild succeeded.\r\nsection_end:1704067220:build\r\n"
 
 _SAMPLE_NO_SECTIONS_LOG = (
-    "Running ruff check src/\n"
-    "src/bar.py:5:1: E501 Line too long (120 > 88 characters)\n"
-    "Found 1 error.\n"
+    "Running ruff check src/\nsrc/bar.py:5:1: E501 Line too long (120 > 88 characters)\nFound 1 error.\n"
 )
 
 _SAMPLE_ERROR_LOG = (

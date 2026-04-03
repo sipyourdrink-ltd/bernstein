@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import threading
 
-import pytest
-
 from bernstein.core.section_dedup import (
     SectionDeduplicator,
     deduplicate_section,

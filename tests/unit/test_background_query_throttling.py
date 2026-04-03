@@ -47,10 +47,7 @@ class TestClassifyRequest:
 
     def test_is_spawn_overrides_no_task(self) -> None:
         tracker = RateLimitTracker()
-        assert (
-            tracker.classify_request(has_task_id=False, is_spawn=True)
-            == RequestPriority.FOREGROUND
-        )
+        assert tracker.classify_request(has_task_id=False, is_spawn=True) == RequestPriority.FOREGROUND
 
 
 # ---------------------------------------------------------------------------
