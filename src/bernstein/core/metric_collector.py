@@ -229,6 +229,12 @@ class MetricsCollector:
         self._last_flush: float = time.time()
         self._lock: threading.Lock = threading.Lock()
 
+    def reset_task_metrics(self) -> None:
+        """Clear all task metrics. Called on orchestrator restart so stale
+        failure data from prior runs doesn't poison the error budget."""
+        with self._lock:
+            self._task_metrics.clear()
+
     @property
     def task_metrics(self) -> dict[str, TaskMetrics]:
         """Access per-task metrics."""
