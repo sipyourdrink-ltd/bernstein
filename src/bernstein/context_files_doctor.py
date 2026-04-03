@@ -12,7 +12,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -340,10 +340,10 @@ def _collect_mcp_servers(data: dict[str, Any], out: dict[str, dict[str, Any]]) -
 
 def _check_mcp_env_credentials(cfg: dict[str, Any]) -> list[str]:
     """Return list of missing env-var keys that look like secrets."""
-    env_raw = cfg.get("env")
+    env_raw: Any = cfg.get("env")
     if not isinstance(env_raw, dict):
         return []
-    env: dict[str, Any] = {str(k): v for k, v in env_raw.items()}
+    env: dict[str, Any] = cast("dict[str, Any]", env_raw)
     missing: list[str] = []
     for ek in env:
         upper = ek.upper()

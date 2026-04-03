@@ -18,6 +18,8 @@ from bernstein.tui.timeline import TaskTimeline, TimelineEntry
 from bernstein.tui.widgets import (
     ActionBar,
     AgentLogWidget,
+    ApprovalEntry,
+    ApprovalPanel,
     CoordinatorDashboard,
     CoordinatorRow,
     ScratchpadViewer,
@@ -114,6 +116,7 @@ class BernsteinApp(App[None]):
         Binding("v", "toggle_timeline", "Timeline", show=True),
         Binding("c", "toggle_scratchpad", "Scratchpad", show=True),
         Binding("w", "toggle_coordinator", "Coordinator", show=True),
+        Binding("a", "toggle_approvals", "Approvals", show=True),
         Binding("/", "scratchpad_filter", "Filter scratchpad", show=False),
         Binding("escape", "close_action_bar", "Close", show=False),
         Binding("up", "cursor_up", "Up", show=False),
@@ -145,6 +148,7 @@ class BernsteinApp(App[None]):
             yield TaskTimeline(id="task-timeline")
             yield ScratchpadViewer(id="scratchpad-viewer")
             yield CoordinatorDashboard(id="coordinator-dashboard")
+            yield ApprovalPanel(id="approval-panel")
             yield ActionBar(id="action-bar")
             yield AgentLogWidget(id="agent-log")
         yield ShortcutsFooter(id="shortcuts-footer")
@@ -156,6 +160,7 @@ class BernsteinApp(App[None]):
         self.query_one("#task-timeline", TaskTimeline).display = False
         self.query_one("#scratchpad-viewer", ScratchpadViewer).display = False
         self.query_one("#coordinator-dashboard", CoordinatorDashboard).display = False
+        self.query_one("#approval-panel", ApprovalPanel).display = False
 
         self.set_interval(self._poll_interval, self.action_refresh)
 
@@ -269,6 +274,31 @@ class BernsteinApp(App[None]):
         if dashboard.display:
             self._refresh_coordinator_dashboard()
             dashboard.focus()
+
+    def action_toggle_approvals(self) -> None:
+        """Show/hide the interactive approval panel."""
+        panel = self.query_one("#approval-panel", ApprovalPanel)
+        panel.display = not panel.display
+        if panel.display:
+            self.run_worker(self._refresh_approvals())
+            panel.focus()
+
+    async def _refresh_approvals(self) -> None:
+        """Fetch pending approvals from the server."""
+        data = _get("/approvals")
+        if data and isinstance(data, dict):
+            entries = [
+                ApprovalEntry(
+                    task_id=cast("dict[str, Any]", item)["task_id"],
+                    task_title=cast("dict[str, Any]", item).get("task_title", ""),
+                    session_id=cast("dict[str, Any]", item).get("session_id", ""),
+                    diff_preview=cast("dict[str, Any]", item).get("diff", ""),
+                    test_summary=cast("dict[str, Any]", item).get("test_summary", ""),
+                )
+                for item in data.get("pending", [])
+                if isinstance(item, dict) and "task_id" in item
+            ]
+            self.query_one("#approval-panel", ApprovalPanel).refresh_entries(entries)
 
     def _refresh_coordinator_dashboard(self) -> None:
         """Populate coordinator dashboard from current task data."""

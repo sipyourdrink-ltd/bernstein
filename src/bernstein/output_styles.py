@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -92,13 +92,12 @@ def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
         return {}, body
 
     try:
-        data = yaml.safe_load(fm_text)
+        raw = yaml.safe_load(fm_text)
     except Exception:
         logger.warning("Invalid YAML frontmatter in output style")
-        data = {}
+        raw = {}
 
-    if not isinstance(data, dict):
-        data = {}
+    data: dict[str, Any] = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
     return data, body
 
 
@@ -169,8 +168,9 @@ def load_output_styles(project_dir: Path) -> StyleConfig:
     yaml_path = project_dir / "bernstein.yaml"
     if yaml_path.exists() and yaml is not None:
         try:
-            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and "output_style" in data:
+            raw_yaml = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            data: dict[str, Any] = cast("dict[str, Any]", raw_yaml) if isinstance(raw_yaml, dict) else {}
+            if "output_style" in data:
                 preferred: str = str(data["output_style"]).lower()
                 for s in config.available:
                     if s.name.lower() == preferred:

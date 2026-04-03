@@ -10,7 +10,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,7 +81,7 @@ def _load_incident_json(incident_id: str, runtime_dir: Path) -> dict[str, Any] |
 def cast_to_dict(obj: Any) -> dict[str, Any]:
     """Cast an object to dict, returning empty dict on failure."""
     if isinstance(obj, dict):
-        return dict(obj)
+        return obj  # type: ignore[return-value]
     return {}
 
 
@@ -335,8 +335,9 @@ def list_incidents(workdir: Path) -> list[dict[str, Any]]:
         if path.stem.endswith("-timeline"):
             continue
         try:
-            data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
+            parsed: Any = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                data: dict[str, Any] = cast("dict[str, Any]", parsed)
                 incidents.append(
                     {
                         "id": data.get("id", path.stem),
