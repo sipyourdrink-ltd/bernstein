@@ -438,3 +438,142 @@ def validate_worktree_slug(slug: str) -> str:
     if not _SLUG_PATTERN.match(slug):
         raise WorktreeError(f"Worktree slug contains invalid characters (allowed: a-z A-Z 0-9 - _ .): {slug!r}")
     return slug
+
+
+# ---------------------------------------------------------------------------
+# Worktree lock file protocol (T580)
+# ---------------------------------------------------------------------------
+
+_WORKTREE_LOCK_DIR = ".sdd/worktrees/.locks"
+
+
+def write_worktree_lock(repo_root: Path, session_id: str, pid: int) -> Path:
+    """Write a PID-based lock file for an active worktree (T580).
+
+    Args:
+        repo_root: Repository root directory.
+        session_id: Agent session identifier.
+        pid: Worker process PID.
+
+    Returns:
+        Path to the written lock file.
+    """
+    lock_dir = repo_root / _WORKTREE_LOCK_DIR
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{session_id}.lock"
+    payload = {
+        "session_id": session_id,
+        "pid": pid,
+        "created_at": __import__("time").time(),
+    }
+    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+    return lock_path
+
+
+def remove_worktree_lock(repo_root: Path, session_id: str) -> None:
+    """Remove the lock file for a worktree session (T580).
+
+    Args:
+        repo_root: Repository root directory.
+        session_id: Agent session identifier.
+    """
+    lock_path = repo_root / _WORKTREE_LOCK_DIR / f"{session_id}.lock"
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("Failed to remove worktree lock for %s: %s", session_id, exc)
+
+
+def is_worktree_lock_stale(repo_root: Path, session_id: str) -> bool:
+    """Return True if the worktree lock is stale (process no longer alive) (T580).
+
+    Args:
+        repo_root: Repository root directory.
+        session_id: Agent session identifier.
+
+    Returns:
+        True if the lock file is absent or the recorded PID is dead.
+    """
+    lock_path = repo_root / _WORKTREE_LOCK_DIR / f"{session_id}.lock"
+    if not lock_path.exists():
+        return True
+    try:
+        data = json.loads(lock_path.read_text(encoding="utf-8"))
+        pid = int(data.get("pid", 0))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+        return False  # process is alive
+    except OSError:
+        return True  # process is dead
+
+
+# ---------------------------------------------------------------------------
+# Sparse checkout for agent worktrees (T573)
+# ---------------------------------------------------------------------------
+
+
+def apply_sparse_checkout(
+    worktree_path: Path,
+    sparse_paths: list[str],
+    *,
+    timeout: int = 30,
+) -> bool:
+    """Apply sparse checkout to a worktree (T573).
+
+    Enables ``git sparse-checkout`` in cone mode and sets the given paths.
+    Falls back gracefully if the git version does not support sparse checkout.
+
+    Args:
+        worktree_path: Path to the worktree directory.
+        sparse_paths: List of paths/patterns to include in the sparse checkout.
+        timeout: Command timeout in seconds.
+
+    Returns:
+        True if sparse checkout was applied, False if unsupported or skipped.
+    """
+    if not sparse_paths:
+        return False
+
+    try:
+        # Enable sparse checkout
+        result = subprocess.run(
+            ["git", "sparse-checkout", "init", "--cone"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "git sparse-checkout init failed for %s: %s",
+                worktree_path,
+                result.stderr.strip(),
+            )
+            return False
+
+        # Set the paths
+        result = subprocess.run(
+            ["git", "sparse-checkout", "set", *sparse_paths],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "git sparse-checkout set failed for %s: %s",
+                worktree_path,
+                result.stderr.strip(),
+            )
+            return False
+
+        logger.info("Applied sparse checkout to %s: %s", worktree_path, sparse_paths)
+        return True
+
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.warning("Sparse checkout failed for %s: %s", worktree_path, exc)
+        return False
