@@ -48,6 +48,26 @@ class ProviderStatus(Enum):
     RATE_LIMITED = "rate_limited"
 
 
+class PrivacyLevel(Enum):
+    """Analytics privacy presets controlling what metric data is collected and exported.
+
+    Attributes:
+        FULL: All data collected — task IDs, agent IDs, costs, tokens, error detail.
+        STANDARD: Aggregate-safe — strip individual task/agent/session identifiers
+            from labels, but retain cost and performance signals.
+        MINIMAL: Counts only — suppress identifiers, cost, and token data; only
+            aggregate success/failure counts are retained.
+    """
+
+    FULL = "full"
+    STANDARD = "standard"
+    MINIMAL = "minimal"
+
+
+_STANDARD_STRIP: frozenset[str] = frozenset({"task_id", "agent_id", "session_id"})
+_MINIMAL_STRIP: frozenset[str] = frozenset({"task_id", "agent_id", "session_id", "cost_usd", "tokens_used"})
+
+
 @dataclass
 class MetricPoint:
     """A single metric data point."""
@@ -212,9 +232,15 @@ class MetricsCollector:
         metrics_dir: Directory to store metrics files.
     """
 
-    def __init__(self, metrics_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        metrics_dir: Path | None = None,
+        *,
+        privacy_level: PrivacyLevel = PrivacyLevel.FULL,
+    ) -> None:
         self._metrics_dir = metrics_dir or Path.cwd() / ".sdd" / "metrics"
         self._metrics_dir.mkdir(parents=True, exist_ok=True)
+        self._privacy_level = privacy_level
 
         # In-memory tracking
         self._task_metrics: dict[str, TaskMetrics] = {}
@@ -234,6 +260,27 @@ class MetricsCollector:
         failure data from prior runs doesn't poison the error budget."""
         with self._lock:
             self._task_metrics.clear()
+
+    @property
+    def privacy_level(self) -> PrivacyLevel:
+        """Return the active analytics privacy preset."""
+        return self._privacy_level
+
+    def apply_privacy_filter(self, labels: dict[str, str]) -> dict[str, str]:
+        """Strip label keys that are disallowed under the active privacy preset.
+
+        Args:
+            labels: Raw label dict to filter.
+
+        Returns:
+            Filtered copy; the original is never mutated.
+        """
+        if self._privacy_level is PrivacyLevel.FULL:
+            return labels
+        if self._privacy_level is PrivacyLevel.STANDARD:
+            return {k: v for k, v in labels.items() if k not in _STANDARD_STRIP}
+        # MINIMAL
+        return {k: v for k, v in labels.items() if k not in _MINIMAL_STRIP}
 
     @property
     def task_metrics(self) -> dict[str, TaskMetrics]:
@@ -336,8 +383,8 @@ class MetricsCollector:
             labels,
         )
 
-        # Write cost efficiency metric if cost > 0
-        if cost_usd > 0:
+        # Write cost efficiency metric if cost > 0 and privacy allows it
+        if cost_usd > 0 and self._privacy_level is not PrivacyLevel.MINIMAL:
             self._write_metric_point(
                 MetricType.COST_EFFICIENCY,
                 cost_usd,
@@ -350,7 +397,7 @@ class MetricsCollector:
             )
 
         # Write token usage — enables avg-tokens-per-task queries in /quality
-        if tokens_used > 0:
+        if tokens_used > 0 and self._privacy_level is not PrivacyLevel.MINIMAL:
             self._write_metric_point(
                 MetricType.API_USAGE,
                 float(tokens_used),
@@ -801,7 +848,7 @@ class MetricsCollector:
             "timestamp": time.time(),
             "metric_type": metric_type.value,
             "value": value,
-            "labels": labels,
+            "labels": self.apply_privacy_filter(labels),
         }
 
         with self._lock:
@@ -1066,7 +1113,7 @@ class MetricsCollector:
             "success_rate": successful_tasks / total_tasks if total_tasks > 0 else 1.0,
             "janitor_pass_rate": janitor_passed / total_tasks if total_tasks > 0 else 1.0,
             "total_agents": total_agents,
-            "total_cost_usd": self.get_total_cost(),
+            "total_cost_usd": 0.0 if self._privacy_level is PrivacyLevel.MINIMAL else self.get_total_cost(),
             "avg_completion_time_seconds": self.get_avg_completion_time(),
             "provider_stats": provider_stats,
             "provider_health": {p: h.status.value for p, h in self._provider_health.items()},

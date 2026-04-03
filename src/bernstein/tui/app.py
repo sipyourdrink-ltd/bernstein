@@ -27,6 +27,7 @@ from bernstein.tui.widgets import (
     StatusBar,
     TaskListWidget,
     TaskRow,
+    ToolObserverWidget,
     WaterfallWidget,
     classify_role,
 )
@@ -119,6 +120,7 @@ class BernsteinApp(App[None]):
         Binding("c", "toggle_scratchpad", "Scratchpad", show=True),
         Binding("w", "toggle_coordinator", "Coordinator", show=True),
         Binding("a", "toggle_approvals", "Approvals", show=True),
+        Binding("l", "toggle_tool_observer", "Tool calls", show=True),
         Binding("/", "scratchpad_filter", "Filter scratchpad", show=False),
         Binding("escape", "close_action_bar", "Close", show=False),
         Binding("up", "cursor_up", "Up", show=False),
@@ -152,6 +154,7 @@ class BernsteinApp(App[None]):
             yield ScratchpadViewer(id="scratchpad-viewer")
             yield CoordinatorDashboard(id="coordinator-dashboard")
             yield ApprovalPanel(id="approval-panel")
+            yield ToolObserverWidget(id="tool-observer")
             yield ActionBar(id="action-bar")
             yield AgentLogWidget(id="agent-log")
         yield ShortcutsFooter(id="shortcuts-footer")
@@ -165,6 +168,7 @@ class BernsteinApp(App[None]):
         self.query_one("#scratchpad-viewer", ScratchpadViewer).display = False
         self.query_one("#coordinator-dashboard", CoordinatorDashboard).display = False
         self.query_one("#approval-panel", ApprovalPanel).display = False
+        self.query_one("#tool-observer", ToolObserverWidget).display = False
 
         self.set_interval(self._poll_interval, self.action_refresh)
 
