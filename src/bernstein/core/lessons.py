@@ -36,6 +36,36 @@ _DECAY_FACTOR = 0.7  # 70% of original confidence after DECAY_DAYS
 # Similarity threshold for deduplicating lessons (Jaccard on tags + keyword match)
 _DEDUP_THRESHOLD = 0.75
 
+# Staleness threshold: lessons older than this get a caveat (T652)
+_STALENESS_DAYS = 1
+
+
+def compute_lesson_staleness(created_timestamp: float, now: float | None = None) -> float:
+    """Return the age of a lesson in days (T652).
+
+    Args:
+        created_timestamp: Unix timestamp when the lesson was filed.
+        now: Override for current time (useful for testing).
+
+    Returns:
+        Age in days.
+    """
+    reference = now if now is not None else time.time()
+    return (reference - created_timestamp) / 86400
+
+
+def is_lesson_stale(created_timestamp: float, now: float | None = None) -> bool:
+    """Return True if a lesson is older than the staleness threshold (T652).
+
+    Args:
+        created_timestamp: Unix timestamp when the lesson was filed.
+        now: Override for current time (useful for testing).
+
+    Returns:
+        True when the lesson age exceeds ``_STALENESS_DAYS``.
+    """
+    return compute_lesson_staleness(created_timestamp, now) > _STALENESS_DAYS
+
 
 @dataclass(frozen=True)
 class Lesson:
@@ -243,14 +273,17 @@ def get_lessons_for_agent(
 def gather_lessons_for_context(
     sdd_dir: Path,
     task_tags: list[str],
+    now: float | None = None,
 ) -> str:
     """Format lessons into a string for injection into agent context.
 
     Retrieves relevant lessons and formats them as a markdown section.
+    Lessons older than ``_STALENESS_DAYS`` receive a staleness caveat.
 
     Args:
         sdd_dir: Path to .sdd directory.
         task_tags: Tags describing the task.
+        now: Override for current time (useful for testing).
 
     Returns:
         Markdown-formatted string of lessons, or empty string if none found.
@@ -259,11 +292,16 @@ def gather_lessons_for_context(
     if not lessons:
         return ""
 
+    reference = now if now is not None else time.time()
     lines = ["## Prior Agent Lessons", ""]
     for lesson in lessons:
+        stale = is_lesson_stale(lesson.created_timestamp, reference)
         lines.append(f"**Tags:** {', '.join(lesson.tags)}")
         lines.append(f"**Confidence:** {lesson.confidence:.2f}")
         lines.append(f"**From task:** {lesson.task_id}")
+        if stale:
+            age_days = compute_lesson_staleness(lesson.created_timestamp, reference)
+            lines.append(f"**Staleness:** This lesson is {age_days:.0f} days old and may be outdated.")
         lines.append("")
         lines.append(lesson.content)
         lines.append("")

@@ -9,9 +9,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bernstein.core.lessons import (
+    _STALENESS_DAYS,
+    compute_lesson_staleness,
     file_lesson,
     gather_lessons_for_context,
     get_lessons_for_agent,
+    is_lesson_stale,
 )
 from bernstein.core.spawner import _extract_tags_from_tasks
 
@@ -550,3 +553,79 @@ class TestLessonSpawnerIntegration:
         )
 
         assert "Prior Agent Lessons" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Lesson staleness (T652)
+# ---------------------------------------------------------------------------
+
+
+class TestLessonStaleness:
+    def test_compute_lesson_staleness(self) -> None:
+        now = 1_000_000.0
+        created = now - (2 * 86400)  # 2 days ago
+        assert compute_lesson_staleness(created, now) == pytest.approx(2.0)
+
+    def test_is_lesson_stale_when_fresh(self) -> None:
+        now = 1_000_000.0
+        created = now - (0.5 * 86400)  # 12 hours ago
+        assert is_lesson_stale(created, now) is False
+
+    def test_is_lesson_stale_when_old(self) -> None:
+        now = 1_000_000.0
+        created = now - (2 * 86400)  # 2 days ago
+        assert is_lesson_stale(created, now) is True
+
+    def test_staleness_constant(self) -> None:
+        assert _STALENESS_DAYS == 1
+
+
+class TestGatherLessonsWithStaleness:
+    def test_fresh_lesson_no_staleness_warning(self, tmp_path: Path) -> None:
+        """Fresh lessons (<1d old) should not have staleness warnings."""
+        sdd = tmp_path / ".sdd"
+        now = 1_000_000.0
+        # File lesson with timestamp 12 hours ago
+        lessons_path = sdd / "memory"
+        lessons_path.mkdir(parents=True)
+        created_ts = now - (0.5 * 86400)
+        lesson_data = {
+            "lesson_id": "lesson-1",
+            "tags": ["auth"],
+            "content": "Always check JWT tokens.",
+            "confidence": 0.9,
+            "created_timestamp": created_ts,
+            "filed_by_agent": "agent-1",
+            "task_id": "task-1",
+            "version": 1,
+        }
+        (lessons_path / "lessons.jsonl").write_text(json.dumps(lesson_data))
+
+        result = gather_lessons_for_context(sdd, ["auth"], now=now)
+        assert "Always check JWT tokens" in result
+        assert "may be outdated" not in result
+
+    def test_stale_lesson_has_staleness_warning(self, tmp_path: Path) -> None:
+        """Lessions >1d old should include staleness caveat."""
+        sdd = tmp_path / ".sdd"
+        now = 1_000_000.0
+        # File lesson with timestamp 3 days ago
+        lessons_path = sdd / "memory"
+        lessons_path.mkdir(parents=True)
+        created_ts = now - (3 * 86400)
+        lesson_data = {
+            "lesson_id": "lesson-1",
+            "tags": ["auth"],
+            "content": "Always use bcrypt for passwords.",
+            "confidence": 0.9,
+            "created_timestamp": created_ts,
+            "filed_by_agent": "agent-1",
+            "task_id": "task-1",
+            "version": 1,
+        }
+        (lessons_path / "lessons.jsonl").write_text(json.dumps(lesson_data))
+
+        result = gather_lessons_for_context(sdd, ["auth"], now=now)
+        assert "Always use bcrypt" in result
+        assert "may be outdated" in result
+        assert "3" in result  # age in days
