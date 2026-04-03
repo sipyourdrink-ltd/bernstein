@@ -104,6 +104,26 @@ def _render_signal_check(session_id: str) -> str:
     )
 
 
+def _render_git_safety_protocol() -> str:
+    """Return git safety rules injected into every agent prompt (T727).
+
+    Prevents agents from performing dangerous git operations.
+
+    Returns:
+        Markdown block with git safety rules.
+    """
+    return (
+        "## Git safety protocol\n"
+        "You MUST follow these git safety rules at all times:\n"
+        "- NEVER use ``--force`` or ``-f`` with ``git push``.  Force-push is prohibited.\n"
+        "- NEVER skip or bypass git hooks (e.g. ``--no-verify``, ``--no-commit-hooks``).\n"
+        "- NEVER commit secrets, API keys, tokens, or credentials.\n"
+        "- ALWAYS review changes with ``git diff`` before staging.\n"
+        "- ALWAYS commit from a worktree branch (``agent/<session_id>``), never ``main``.\n"
+        "- If a hook blocks, do not bypass it.  Ask the orchestrator for guidance.\n"
+    )
+
+
 def _extract_tags_from_tasks(tasks: list[Task]) -> list[str]:
     """Derive lesson-retrieval tags from a batch of tasks.
 
@@ -350,7 +370,10 @@ def _render_prompt(
         lesson_context = lesson_context[: lesson_budget * 4] + "..."
 
     # Assemble final prompt as named sections for budget-aware compression
-    named_sections: list[tuple[str, str]] = [("role", role_prompt)]
+    named_sections: list[tuple[str, str]] = [
+        ("role", role_prompt),
+        ("git_safety", _render_git_safety_protocol()),
+    ]
     if specialist_block:
         named_sections.append(("specialists", specialist_block))
     named_sections.append(("tasks", f"\n## Assigned tasks\n{task_block}"))
