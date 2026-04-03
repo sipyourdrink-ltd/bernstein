@@ -571,6 +571,6 @@ def test_multiple_agents_same_drained_role_all_exit(tmp_path: Path) -> None:
 
 def test_idle_constants_sensible() -> None:
     assert _IDLE_GRACE_S == 30.0
-    assert _IDLE_HEARTBEAT_THRESHOLD_S == 90.0
-    assert _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S == 60.0
+    assert _IDLE_HEARTBEAT_THRESHOLD_S == 300.0
+    assert _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S == 120.0
     assert _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S < _IDLE_HEARTBEAT_THRESHOLD_S
