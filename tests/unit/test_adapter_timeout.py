@@ -173,7 +173,7 @@ class TestWatchdogKillSequence:
         adapter = GeminiAdapter()
 
         with (
-            patch("bernstein.adapters.base.os.getpgid", side_effect=OSError("no such process")),
+            patch("bernstein.adapters.base.os.getpgid", return_value=777),
             patch("bernstein.adapters.base.os.killpg", side_effect=OSError("no such process")),
         ):
             timer = adapter._start_timeout_watchdog(pid=777, timeout_seconds=0, session_id="test-dead")

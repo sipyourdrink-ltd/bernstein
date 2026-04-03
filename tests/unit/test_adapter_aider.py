@@ -338,22 +338,16 @@ class TestAiderIsAlive:
 
 
 class TestAiderKill:
-    def test_calls_killpg(self) -> None:
+    def test_calls_killpg_with_pid_as_pgid(self) -> None:
+        """kill() uses pid directly as pgid (start_new_session=True)."""
         adapter = AiderAdapter()
-        with (
-            patch("bernstein.adapters.base.os.getpgid", return_value=555) as mock_getpgid,
-            patch("bernstein.adapters.base.os.killpg") as mock_killpg,
-        ):
+        with patch("bernstein.adapters.base.os.killpg") as mock_killpg:
             adapter.kill(555)
-        mock_getpgid.assert_called_once_with(555)
         mock_killpg.assert_called_once_with(555, signal.SIGTERM)
 
     def test_does_not_raise_on_oserror(self) -> None:
         adapter = AiderAdapter()
-        with (
-            patch("bernstein.adapters.base.os.getpgid", return_value=556),
-            patch("bernstein.adapters.base.os.killpg", side_effect=OSError("no process")),
-        ):
+        with patch("bernstein.adapters.base.os.killpg", side_effect=OSError("no process")):
             adapter.kill(556)  # must not raise
 
 
