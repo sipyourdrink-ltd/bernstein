@@ -132,10 +132,7 @@ class PermissionRuleEngine:
                     matched=True,
                     rule_id=rule.id,
                     action=rule.action,
-                    reason=(
-                        f"Permission rule '{rule.id}' matched: "
-                        f"{rule.description or rule.action.value}"
-                    ),
+                    reason=(f"Permission rule '{rule.id}' matched: {rule.description or rule.action.value}"),
                 )
         return RuleMatch(matched=False, reason="No permission rule matched")
 
@@ -227,24 +224,24 @@ def _glob_to_regex(pattern: str) -> str:
     n = len(pattern)
     while i < n:
         ch = pattern[i]
-        if ch == '*' and i + 1 < n and pattern[i + 1] == '*':
+        if ch == "*" and i + 1 < n and pattern[i + 1] == "*":
             # ** matches anything including path separators
             parts.append(".*")
             i += 2
             # Skip trailing / after **
-            if i < n and pattern[i] == '/':
+            if i < n and pattern[i] == "/":
                 i += 1
-        elif ch == '*':
+        elif ch == "*":
             # * matches anything except path separators
             parts.append("[^/]*")
             i += 1
-        elif ch == '?':
+        elif ch == "?":
             parts.append("[^/]")
             i += 1
-        elif ch == '[':
+        elif ch == "[":
             # Pass through character classes
             j = i + 1
-            while j < n and pattern[j] != ']':
+            while j < n and pattern[j] != "]":
                 j += 1
             parts.append(pattern[i : j + 1])
             i = j + 1
@@ -290,9 +287,7 @@ def load_permission_rules(workdir: Path) -> PermissionRuleEngine:
 
         raw = yaml.safe_load(rules_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        logger.warning(
-            "Failed to load permission rules from %s: %s", rules_path, exc
-        )
+        logger.warning("Failed to load permission rules from %s: %s", rules_path, exc)
         return PermissionRuleEngine()
 
     if not isinstance(raw, dict):
@@ -303,9 +298,7 @@ def load_permission_rules(workdir: Path) -> PermissionRuleEngine:
     if not isinstance(raw_rules, list):
         return PermissionRuleEngine()
 
-    return PermissionRuleEngine(
-        rules=_parse_rules(cast("list[object]", raw_rules))
-    )
+    return PermissionRuleEngine(rules=_parse_rules(cast("list[object]", raw_rules)))
 
 
 def _parse_rules(raw_rules: list[object]) -> list[PermissionRule]:
