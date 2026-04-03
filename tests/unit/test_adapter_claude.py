@@ -334,40 +334,27 @@ class TestKill:
         ClaudeCodeAdapter._procs[50] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[50] = 51
 
-        with (
-            patch("bernstein.adapters.claude.os.getpgid", return_value=50) as mock_getpgid,
-            patch("bernstein.adapters.claude.os.killpg") as mock_killpg,
-            patch("bernstein.adapters.claude.os.kill"),
-        ):
+        with patch("bernstein.adapters.claude.os.killpg") as mock_killpg:
             adapter.kill(50)
 
-        mock_getpgid.assert_called_once_with(50)
-        mock_killpg.assert_called_once_with(50, signal.SIGTERM)
+        mock_killpg.assert_any_call(50, signal.SIGTERM)
 
     def test_kills_wrapper_process(self) -> None:
         adapter = ClaudeCodeAdapter()
         ClaudeCodeAdapter._procs[60] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[60] = 61
 
-        with (
-            patch("bernstein.adapters.claude.os.getpgid", return_value=60),
-            patch("bernstein.adapters.claude.os.killpg"),
-            patch("bernstein.adapters.claude.os.kill") as mock_kill,
-        ):
+        with patch("bernstein.adapters.claude.os.killpg") as mock_killpg:
             adapter.kill(60)
 
-        mock_kill.assert_called_once_with(61, signal.SIGTERM)
+        mock_killpg.assert_any_call(61, signal.SIGTERM)
 
     def test_removes_pid_from_tracking(self) -> None:
         adapter = ClaudeCodeAdapter()
         ClaudeCodeAdapter._procs[70] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[70] = 71
 
-        with (
-            patch("bernstein.adapters.claude.os.getpgid", return_value=70),
-            patch("bernstein.adapters.claude.os.killpg"),
-            patch("bernstein.adapters.claude.os.kill"),
-        ):
+        with patch("bernstein.adapters.claude.os.killpg"):
             adapter.kill(70)
 
         assert 70 not in ClaudeCodeAdapter._procs
@@ -379,11 +366,7 @@ class TestKill:
         ClaudeCodeAdapter._procs[80] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[80] = 81
 
-        with (
-            patch("bernstein.adapters.claude.os.getpgid", return_value=80),
-            patch("bernstein.adapters.claude.os.killpg", side_effect=OSError("no process")),
-            patch("bernstein.adapters.claude.os.kill"),
-        ):
+        with patch("bernstein.adapters.claude.os.killpg", side_effect=OSError("no process")):
             adapter.kill(80)  # must not raise
 
     def test_handles_oserror_from_wrapper_kill(self) -> None:
@@ -392,11 +375,12 @@ class TestKill:
         ClaudeCodeAdapter._procs[90] = MagicMock()
         ClaudeCodeAdapter._wrapper_pids[90] = 91
 
-        with (
-            patch("bernstein.adapters.claude.os.getpgid", return_value=90),
-            patch("bernstein.adapters.claude.os.killpg"),
-            patch("bernstein.adapters.claude.os.kill", side_effect=OSError("no process")),
-        ):
+        # killpg succeeds for main pid (90), raises OSError for wrapper (91)
+        def _killpg_side_effect(pgid: int, sig: int) -> None:
+            if pgid == 91:
+                raise OSError("no process")
+
+        with patch("bernstein.adapters.claude.os.killpg", side_effect=_killpg_side_effect):
             adapter.kill(90)  # must not raise
 
     def test_kill_without_tracked_wrapper(self) -> None:
@@ -405,14 +389,11 @@ class TestKill:
         ClaudeCodeAdapter._procs[100] = MagicMock()
         # _wrapper_pids intentionally not set for pid 100
 
-        with (
-            patch("bernstein.adapters.claude.os.getpgid", return_value=100),
-            patch("bernstein.adapters.claude.os.killpg"),
-            patch("bernstein.adapters.claude.os.kill") as mock_kill,
-        ):
+        with patch("bernstein.adapters.claude.os.killpg") as mock_killpg:
             adapter.kill(100)
 
-        mock_kill.assert_not_called()
+        # Only the main process group is killed, no wrapper
+        mock_killpg.assert_called_once_with(100, signal.SIGTERM)
 
 
 # ---------------------------------------------------------------------------

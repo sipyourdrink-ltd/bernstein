@@ -140,17 +140,12 @@ class TestAdapterContract:
 
     def test_kill_does_not_raise(self, name: str, factory: Any) -> None:
         adapter = factory()
-        with (
-            patch("bernstein.adapters.base.os.getpgid", return_value=999),
-            patch("bernstein.adapters.base.os.killpg"),
-        ):
+        with patch("bernstein.adapters.base.os.killpg"):
             adapter.kill(999)  # must not raise
 
     def test_kill_suppresses_oserror(self, name: str, factory: Any) -> None:
         adapter = factory()
-        with (
-            patch("bernstein.adapters.base.os.getpgid", side_effect=OSError("no such process")),
-        ):
+        with patch("bernstein.adapters.base.os.killpg", side_effect=OSError("no such process")):
             adapter.kill(99999)  # must not raise
 
     def test_detect_tier_returns_none_or_api_tier_info(self, name: str, factory: Any) -> None:
