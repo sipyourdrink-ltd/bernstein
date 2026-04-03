@@ -89,20 +89,32 @@ class TestParseFile:
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents[0].role == "reviewer"
 
-    def test_design_maps_to_architect_role(self, tmp_path: Path) -> None:
+    def test_design_ui_specialist_inferred_as_frontend(self, tmp_path: Path) -> None:
+        """Smart inference overrides design division's 'architect' for UI agents."""
         f = tmp_path / "design-ui-specialist.md"
         f.write_text(MINIMAL_AGENT_MD.replace("Minimal Agent", "UI Specialist"))
+        agents = AgencyProvider._parse_file(f, division="design")
+        assert agents[0].role == "frontend"
+
+    def test_design_division_fallback_to_architect(self, tmp_path: Path) -> None:
+        """Agents in design division with no strong signal keep 'architect' role."""
+        f = tmp_path / "design-generic.md"
+        f.write_text(MINIMAL_AGENT_MD.replace("Minimal Agent", "Design Lead"))
         agents = AgencyProvider._parse_file(f, division="design")
         assert agents[0].role == "architect"
 
     def test_engineering_backend_stays_backend(self, tmp_path: Path) -> None:
         """Agent with 'backend' signals in engineering division keeps backend role."""
-        backend_md = FULL_AGENT_MD.replace("Code Reviewer", "Backend API Builder").replace(
-            "Expert code reviewer focused on correctness and security.",
-            "Backend API developer specializing in REST and microservices.",
-        ).replace(
-            "capabilities: [code-review, security-analysis, static-analysis]",
-            "capabilities: [api-design, rest, database]",
+        backend_md = (
+            FULL_AGENT_MD.replace("Code Reviewer", "Backend API Builder")
+            .replace(
+                "Expert code reviewer focused on correctness and security.",
+                "Backend API developer specializing in REST and microservices.",
+            )
+            .replace(
+                "capabilities: [code-review, security-analysis, static-analysis]",
+                "capabilities: [api-design, rest, database]",
+            )
         )
         f = tmp_path / "engineering-backend-builder.md"
         f.write_text(backend_md)
@@ -382,21 +394,29 @@ class TestCatalogRegistryIntegration:
         eng.mkdir()
 
         # Two backend agents with different capabilities
-        api_md = FULL_AGENT_MD.replace(
-            "capabilities: [code-review, security-analysis, static-analysis]",
-            "capabilities: [api-design, rest, microservice]",
-        ).replace("name: Code Reviewer", "name: API Builder").replace(
-            "Expert code reviewer focused on correctness and security.",
-            "Backend API developer for REST microservices.",
+        api_md = (
+            FULL_AGENT_MD.replace(
+                "capabilities: [code-review, security-analysis, static-analysis]",
+                "capabilities: [api-design, rest, microservice]",
+            )
+            .replace("name: Code Reviewer", "name: API Builder")
+            .replace(
+                "Expert code reviewer focused on correctness and security.",
+                "Backend API developer for REST microservices.",
+            )
         )
         (eng / "api-builder.md").write_text(api_md)
 
-        db_md = FULL_AGENT_MD.replace(
-            "capabilities: [code-review, security-analysis, static-analysis]",
-            "capabilities: [database, sql, postgres]",
-        ).replace("name: Code Reviewer", "name: DB Specialist").replace(
-            "Expert code reviewer focused on correctness and security.",
-            "Backend database developer and optimizer.",
+        db_md = (
+            FULL_AGENT_MD.replace(
+                "capabilities: [code-review, security-analysis, static-analysis]",
+                "capabilities: [database, sql, postgres]",
+            )
+            .replace("name: Code Reviewer", "name: DB Specialist")
+            .replace(
+                "Expert code reviewer focused on correctness and security.",
+                "Backend database developer and optimizer.",
+            )
         )
         (eng / "db-specialist.md").write_text(db_md)
 
