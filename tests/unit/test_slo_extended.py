@@ -39,13 +39,14 @@ class TestApplyErrorBudgetAdjustments:
         assert adjusted == 6
         assert override is None
 
-    def test_reduce_agents_when_depleted(self) -> None:
+    def test_throttling_disabled(self) -> None:
+        """SLO throttling is disabled — always returns config values."""
         tracker = SLOTracker()
         tracker.error_budget.total_tasks = 20
-        tracker.error_budget.failed_tasks = 4  # 80% success < 90% target
+        tracker.error_budget.failed_tasks = 4
         adjusted, override = apply_error_budget_adjustments(6, tracker)
-        assert adjusted == 4  # policy.reduce_max_agents_to (default=4)
-        assert override == "opus"
+        assert adjusted == 6
+        assert override is None
 
     def test_no_adjustment_when_no_tasks(self) -> None:
         tracker = SLOTracker()
@@ -53,13 +54,14 @@ class TestApplyErrorBudgetAdjustments:
         assert adjusted == 6
         assert override is None
 
-    def test_model_override_is_policy_value(self) -> None:
+    def test_model_override_disabled(self) -> None:
+        """SLO throttling disabled — no model override even when depleted."""
         tracker = SLOTracker()
         tracker.error_budget.total_tasks = 10
-        tracker.error_budget.failed_tasks = 4  # must exceed floor of 3
+        tracker.error_budget.failed_tasks = 4
         tracker.error_budget_policy.upgrade_model = "sonnet"
         _, override = apply_error_budget_adjustments(6, tracker)
-        assert override == "sonnet"
+        assert override is None
 
 
 # ===================================================================
