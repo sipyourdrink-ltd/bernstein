@@ -66,12 +66,12 @@ class QwenAdapter(CLIAdapter):
         """Build the qwen CLI command list (without the final prompt argument)."""
         cmd: list[str] = ["qwen", "-y"]
 
-        if provider == "default":
-            # Map internal abstract models to native Qwen OAuth models
-            if model_name in ("opus", "sonnet"):
-                model_name = "qwen3.6-plus"
-            elif model_name == "haiku":
-                model_name = "qwen3-coder-plus"
+        # Always map abstract model names (opus/sonnet/haiku) to native Qwen
+        # models — these are Bernstein-internal names, not valid Qwen model IDs.
+        if model_name in ("opus", "sonnet"):
+            model_name = "qwen3.6-plus"
+        elif model_name == "haiku":
+            model_name = "qwen3-coder-plus"
 
         cmd.extend(["--model", model_name])
 
