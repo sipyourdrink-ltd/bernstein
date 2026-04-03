@@ -432,6 +432,96 @@ def test_record_turn_budget_updates_trace() -> None:
     assert "turn 1" in step.detail
 
     # Second turn accumulates
-    step2 = record_turn_budget(trace, turn_number=2, allocated=25000, consumed=8000, remaining=17000)
+    record_turn_budget(trace, turn_number=2, allocated=25000, consumed=8000, remaining=17000)
     assert trace.turn_count == 2
     assert trace.total_consumed == 13000  # 5000 + 8000
+
+
+def test_record_compaction_boundary_creates_compact_step() -> None:
+    """record_compaction_boundary creates a step with type='compact'."""
+    from bernstein.core.traces import record_compaction_boundary
+
+    trace = AgentTrace(
+        trace_id="t1",
+        session_id="s-1",
+        task_ids=["task-1"],
+        agent_role="backend",
+        model="sonnet",
+        effort="normal",
+        spawn_ts=0.0,
+    )
+    step = record_compaction_boundary(
+        trace,
+        correlation_id="comp-001",
+        tokens_before=18000,
+        tokens_after=5000,
+        reason="token_budget",
+    )
+    trace.steps.append(step)
+
+    assert step.type == "compact"
+    assert step.compaction_correlation_id == "comp-001"
+    assert step.compaction_tokens_before == 18000
+    assert step.compaction_tokens_after == 5000
+    assert step.compaction_reason == "token_budget"
+    assert step.tokens == 13000  # saved tokens
+    assert "compaction v1" in step.detail
+    assert "18000" in step.detail
+    assert "5000" in step.detail
+
+
+def test_record_compaction_boundary_serialization_roundtrip() -> None:
+    """Compaction fields survive to_dict / from_dict roundtrip."""
+    from bernstein.core.traces import record_compaction_boundary
+
+    trace = AgentTrace(
+        trace_id="t2",
+        session_id="s-2",
+        task_ids=["task-2"],
+        agent_role="qa",
+        model="opus",
+        effort="high",
+        spawn_ts=0.0,
+    )
+    step = record_compaction_boundary(
+        trace,
+        correlation_id="comp-002",
+        tokens_before=10000,
+        tokens_after=9000,
+        reason="reactive_fallback",
+    )
+
+    data = step.to_dict()
+    assert data["type"] == "compact"
+    assert data["compaction_correlation_id"] == "comp-002"
+    assert data["compaction_tokens_before"] == 10000
+
+    restored = TraceStep.from_dict(data)
+    assert restored.type == "compact"
+    assert restored.compaction_tokens_after == 9000
+    assert restored.compaction_reason == "reactive_fallback"
+
+
+def test_record_compaction_boundary_zero_savings() -> None:
+    """Compaction with no token reduction still records cleanly."""
+    from bernstein.core.traces import record_compaction_boundary
+
+    trace = AgentTrace(
+        trace_id="t3",
+        session_id="s-3",
+        task_ids=["task-3"],
+        agent_role="backend",
+        model="sonnet",
+        effort="normal",
+        spawn_ts=0.0,
+    )
+    step = record_compaction_boundary(
+        trace,
+        correlation_id="comp-003",
+        tokens_before=5000,
+        tokens_after=5000,
+        reason="manual",
+    )
+    assert step.tokens == 0  # no savings
+    assert step.compaction_tokens_before == 5000
+    assert step.compaction_tokens_after == 5000

@@ -33,7 +33,7 @@ class TraceStep:
         duration_ms: Duration in milliseconds (if known).
     """
 
-    type: Literal["spawn", "orient", "plan", "edit", "verify", "complete", "fail"]
+    type: Literal["spawn", "orient", "plan", "edit", "verify", "complete", "fail", "compact"]
     timestamp: float
     detail: str = ""
     files: list[str] = field(default_factory=lambda: [])
@@ -44,6 +44,11 @@ class TraceStep:
     allocated_budget: int = 0
     consumed_this_turn: int = 0
     remaining_budget: int = 0
+    # Compaction boundary metadata (v1 — namespaced, forward-compatible)
+    compaction_correlation_id: str = ""
+    compaction_tokens_before: int = 0
+    compaction_tokens_after: int = 0
+    compaction_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -61,6 +66,10 @@ class TraceStep:
             allocated_budget=cast("int", d.get("allocated_budget", 0)),
             consumed_this_turn=cast("int", d.get("consumed_this_turn", 0)),
             remaining_budget=cast("int", d.get("remaining_budget", 0)),
+            compaction_correlation_id=d.get("compaction_correlation_id", ""),
+            compaction_tokens_before=cast("int", d.get("compaction_tokens_before", 0)),
+            compaction_tokens_after=cast("int", d.get("compaction_tokens_after", 0)),
+            compaction_reason=d.get("compaction_reason", ""),
         )
 
 
@@ -628,6 +637,46 @@ def record_turn_budget(
     return step
 
 
+def record_compaction_boundary(
+    trace: AgentTrace,
+    correlation_id: str,
+    tokens_before: int,
+    tokens_after: int,
+    reason: str,
+) -> TraceStep:
+    """Create a TraceStep marking a context compaction boundary.
+
+    The marker is versioned via namespaced fields (``compaction_*``) so
+    existing trace consumers are unaffected — the fields are optional and
+    default to empty / zero.
+
+    Args:
+        trace: The agent trace to annotate.
+        correlation_id: Unique correlation ID for this compaction event.
+        tokens_before: Token count before compaction.
+        tokens_after: Token count after compaction.
+        reason: Why compaction was triggered (e.g., ``"token_budget"``).
+
+    Returns:
+        The created TraceStep (caller should append to ``trace.steps``).
+    """
+    saved = tokens_before - tokens_after if tokens_before > tokens_after else 0
+    step = TraceStep(
+        type="compact",
+        timestamp=time.time(),
+        detail=(
+            f"compaction v1: {tokens_before} -> {tokens_after} "
+            f"(-{saved} tokens), reason={reason}"
+        ),
+        tokens=saved,
+        compaction_correlation_id=correlation_id,
+        compaction_tokens_before=tokens_before,
+        compaction_tokens_after=tokens_after,
+        compaction_reason=reason,
+    )
+    return step
+
+
 # ---------------------------------------------------------------------------
 # Fuzzy patch match confidence scoring (T566)
 # ---------------------------------------------------------------------------
@@ -889,7 +938,8 @@ def build_crash_bundle(
 # ---------------------------------------------------------------------------
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Any
+
 
 @dataclass
 class TokenEscalationEvent:
@@ -901,7 +951,7 @@ class TokenEscalationEvent:
     max_allowed_tokens: int
     escalation_reason: str
     timestamp: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 def record_token_escalation(
     trace: AgentTrace,
@@ -911,7 +961,7 @@ def record_token_escalation(
     requested_tokens: int,
     max_allowed_tokens: int,
     escalation_reason: str,
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None
 ) -> None:
     """Record a token escalation event in the trace."""
     escalation = TokenEscalationEvent(
@@ -923,7 +973,7 @@ def record_token_escalation(
         escalation_reason=escalation_reason,
         metadata=metadata or {}
     )
-    
+
     # Add as a trace step
     step = TraceStep(
         type="plan",
@@ -933,7 +983,7 @@ def record_token_escalation(
         turn_number=len(trace.steps) + 1
     )
     trace.steps.append(step)
-    
+
     logger.warning(
         f"Token escalation recorded in trace {trace.trace_id}: "
         f"{role} task {task_id} requested {requested_tokens} tokens "

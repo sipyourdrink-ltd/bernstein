@@ -34,6 +34,7 @@ class MetricType(Enum):
     PARALLELISM_LEVEL = "parallelism_level"
     QUEUE_DEPTH = "queue_depth"
     MERGE_RESULT = "merge_result"
+    COMPACTION = "compaction"
 
 
 class ProviderStatus(Enum):
@@ -907,6 +908,36 @@ class MetricsCollector:
                 "open": str(queue_depth_open),
                 "claimed": str(queue_depth_claimed),
                 "failed": str(queue_depth_failed),
+            },
+        )
+
+    def record_compaction(
+        self,
+        session_id: str,
+        tokens_before: int,
+        tokens_after: int,
+        reason: str = "token_budget",
+    ) -> None:
+        """Record a context compaction event.
+
+        Increments a compaction counter and stores the tokens-saved delta
+        for post-run analysis.
+
+        Args:
+            session_id: Agent session ID.
+            tokens_before: Token count before compaction.
+            tokens_after: Token count after compaction.
+            reason: Why compaction was triggered.
+        """
+        saved = max(0, tokens_before - tokens_after)
+        self._write_metric_point(
+            MetricType.COMPACTION,
+            float(saved),
+            {
+                "session_id": session_id,
+                "tokens_before": str(tokens_before),
+                "tokens_after": str(tokens_after),
+                "reason": reason,
             },
         )
 
