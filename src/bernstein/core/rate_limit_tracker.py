@@ -46,6 +46,7 @@ class RequestPriority(enum.Enum):
     FOREGROUND = "foreground"
     BACKGROUND = "background"
 
+
 # Text patterns that indicate a rate-limit / 429 event in agent logs.
 # Checked case-insensitively against the last 500 lines of the log.
 _RATE_LIMIT_PATTERNS: tuple[str, ...] = (
@@ -540,12 +541,7 @@ class UnattendedRetryPolicy:
         except OSError as exc:
             logger.debug("Failed to create signal dir for unattended heartbeat: %s", exc)
             return
-        content = (
-            f"# UNATTENDED RETRY HEARTBEAT\n"
-            f"Attempt: {attempt}\n"
-            f"Reason: {reason}\n"
-            f"Timestamp: {time.time()}\n"
-        )
+        content = f"# UNATTENDED RETRY HEARTBEAT\nAttempt: {attempt}\nReason: {reason}\nTimestamp: {time.time()}\n"
         try:
             (signal_dir / "HEARTBEAT").write_text(content, encoding="utf-8")
         except OSError as exc:

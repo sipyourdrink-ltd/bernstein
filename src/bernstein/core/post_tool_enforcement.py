@@ -37,7 +37,9 @@ _OUTPUT_SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "generic_secret",
-        re.compile(r"(?i)(?<![a-z_])(?:password|secret|api_key|apikey|access_token|auth_token)\s*[:=]\s*['\"]?[a-zA-Z0-9_\-./+=]{8,}"),
+        re.compile(
+            r"(?i)(?<![a-z_])(?:password|secret|api_key|apikey|access_token|auth_token)\s*[:=]\s*['\"]?[a-zA-Z0-9_\-./+=]{8,}"
+        ),
     ),
     ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
     ("credit_card", re.compile(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b")),
