@@ -68,10 +68,10 @@ class QwenAdapter(CLIAdapter):
 
         if provider == "default":
             # Map internal abstract models to native Qwen OAuth models
-            if model_name == "opus":
-                model_name = "qwen-max"
-            elif model_name == "sonnet":
-                model_name = "coder-model"
+            if model_name in ("opus", "sonnet"):
+                model_name = "qwen3.6-plus"
+            elif model_name == "haiku":
+                model_name = "qwen3-coder-plus"
 
         cmd.extend(["--model", model_name])
 

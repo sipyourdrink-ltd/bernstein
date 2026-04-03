@@ -180,7 +180,7 @@ class TestQwenAdapterSpawn:
                 session_id="qwen-s7",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert inner[inner.index("--model") + 1] == "qwen-max"
+        assert inner[inner.index("--model") + 1] == "qwen3.6-plus"
 
     def test_sonnet_maps_to_coder_model_on_default(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()
@@ -197,7 +197,7 @@ class TestQwenAdapterSpawn:
                 session_id="qwen-s8",
             )
         inner = _inner_cmd(popen.call_args.args[0])
-        assert inner[inner.index("--model") + 1] == "coder-model"
+        assert inner[inner.index("--model") + 1] == "qwen3.6-plus"
 
     def test_tavily_flags_when_key_set(self, tmp_path: Path) -> None:
         adapter = QwenAdapter()

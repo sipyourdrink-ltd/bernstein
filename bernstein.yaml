@@ -1,64 +1,55 @@
 goal: >
-  Implement tickets from .sdd/backlog/open/ numbered 001-004 (highest priority).
+  Implement tickets from .sdd/backlog/open/ by priority (p0 first, then p1, p2).
   Read each ticket file for requirements. Implement, write tests, run
   uv run ruff check src/ and uv run pytest tests/unit/RELEVANT_FILE.py -x -q.
   Commit each completed task. Do NOT invent new tickets or create tasks
   beyond what is in the backlog files.
 
-cli: auto  # use all detected agents: claude, codex, gemini
+cli: auto  # auto-detect: claude + qwen
 
-max_agents: 8  # 6 Claude + 1 Codex + 1 Gemini
+max_agents: 4  # 2 Claude Code + 2 Qwen (free tier)
 
-# Route tasks to the best agent per role.
-# Claude gets 80%+ of work ($200 Max plan = best limits + models).
-# Codex/Gemini for cross-review and cheap tasks.
+# Route tasks to two agents: Claude Code (primary) + Qwen (secondary, free).
+# Claude handles complex tasks (manager, architect, security, backend).
+# Qwen handles simpler tasks (qa, docs, frontend) — qwen3.6-plus is free.
 routing:
-  manager: claude-opus         # planning — strongest reasoning (80.8% SWE-bench)
+  manager: claude-opus         # planning — strongest reasoning
   architect: claude-opus       # design decisions
   security: claude-opus        # deep analysis
-  backend: claude-sonnet       # bulk implementation (79.6% SWE-bench, unlimited on Max)
-  frontend: claude-sonnet      # UI work
-  qa: claude-sonnet            # test writing
-  reviewer: codex-gpt-5.4     # cross-model review (different model catches different bugs)
-  docs: gemini-flash           # documentation (free tier, fast)
+  backend: claude-sonnet       # bulk implementation
+  frontend: qwen               # UI work (qwen3.6-plus, free)
+  qa: qwen                     # test writing (qwen3.6-plus, free)
+  reviewer: qwen               # cross-model review (different model catches different bugs)
+  docs: qwen                   # documentation (free)
 
-# Runtime-enforced provider/model pins. Provider names come from
-# .sdd/config/providers.yaml.
+# Runtime-enforced provider/model pins.
 role_model_policy:
   manager:
-    provider: claude_premium
     model: opus
     effort: max
   architect:
-    provider: claude_premium
     model: opus
     effort: max
   security:
-    provider: claude_premium
     model: opus
     effort: max
   backend:
-    provider: claude_standard
     model: sonnet
     effort: high
   frontend:
-    provider: claude_standard
     model: sonnet
     effort: high
   qa:
-    provider: claude_standard
     model: sonnet
     effort: high
   reviewer:
-    provider: codex_standard
-    model: o3
+    model: sonnet
     effort: high
   docs:
-    provider: gemini_cheap
-    model: gemini-2.5-flash
+    model: sonnet
     effort: high
 
-# Fallback: if non-Claude agent fails, retry on Claude Code
+# Fallback: if Qwen fails, retry on Claude Code
 fallback:
   enabled: true
   target: claude-sonnet        # fallback agent
