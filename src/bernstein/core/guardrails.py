@@ -462,9 +462,7 @@ def run_guardrails(
 
     # Always-allow check — highest precedence for matched files
     if always_allow_engine is not None:
-        decisions["always_allow"] = _check_always_allow_for_diff(
-            diff, always_allow_engine
-        )
+        decisions["always_allow"] = _check_always_allow_for_diff(diff, always_allow_engine)
 
     # Mandatory checks that cannot be disabled
     decisions["immune_path_enforcement"] = check_immune_paths(diff)

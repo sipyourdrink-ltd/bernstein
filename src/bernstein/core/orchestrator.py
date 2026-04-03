@@ -750,10 +750,7 @@ class Orchestrator:
                 self._notify(
                     "task.deadline_exceeded",
                     title=f"Task deadline exceeded: {task.title}",
-                    body=(
-                        f"Task {task.id} (role={task.role}) exceeded its deadline "
-                        f"by {elapsed:.0f}s."
-                    ),
+                    body=(f"Task {task.id} (role={task.role}) exceeded its deadline by {elapsed:.0f}s."),
                     task_id=task.id,
                     role=task.role,
                 )
@@ -770,10 +767,7 @@ class Orchestrator:
                 self._notify(
                     "task.deadline_warning",
                     title=f"Task deadline approaching: {task.title}",
-                    body=(
-                        f"Task {task.id} (role={task.role}) will exceed its deadline "
-                        f"in {remaining:.0f}s."
-                    ),
+                    body=(f"Task {task.id} (role={task.role}) will exceed its deadline in {remaining:.0f}s."),
                     task_id=task.id,
                     role=task.role,
                 )
@@ -907,8 +901,7 @@ class Orchestrator:
         # 1b-i. Check task deadlines — warn or fail running tasks past deadline
         try:
             self._check_task_deadlines(
-                tasks_by_status.get("claimed", [])
-                + tasks_by_status.get("in_progress", []),
+                tasks_by_status.get("claimed", []) + tasks_by_status.get("in_progress", []),
             )
         except Exception as exc:
             logger.warning("Deadline check failed: %s", exc)

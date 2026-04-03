@@ -15,10 +15,12 @@ from __future__ import annotations
 import fnmatch
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bernstein.core.policy_engine import DecisionType, PermissionDecision
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
