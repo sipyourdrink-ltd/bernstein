@@ -331,9 +331,11 @@ def apply_error_budget_adjustments(
     Returns:
         (adjusted_max_agents, model_override_or_none)
     """
-    actions = tracker.error_budget_policy.get_actions(tracker.error_budget)
-    if not actions:
-        return config_max_agents, None
+    # SLO throttling is disabled: the error budget calculation counts stale
+    # tasks from previous runs and "already resolved" agent deaths as real
+    # failures, creating a death spiral that reduces agents to 0.  Until
+    # the SLO data source is fixed, return config values unchanged.
+    return config_max_agents, None
 
     max_agents = config_max_agents
     model_override: str | None = None
