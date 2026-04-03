@@ -89,7 +89,7 @@ rules:
   - id: no-hardcoded-secrets
     type: forbidden_pattern
     description: "No hardcoded credentials or secrets in source code"
-    pattern: '(?i)(password|passwd|api_key|secret|token)\s*=\s*["\x27][^"'\''\s]{8,}["\x27]'
+    pattern: "(?i)(password|passwd|api_key|secret|token)\\s*=\\s*[\"'][^\"'\\s]{8,}[\"']"
     files: "*.py"
     exclude:
       - "tests/**"
@@ -114,7 +114,7 @@ rules:
   - id: changelog-exists
     type: required_file
     description: "Project must have a CHANGELOG.md"
-    path: CHANGELOG.md
+    path: docs/CHANGELOG.md
     severity: warning
     message: "Create CHANGELOG.md to track user-facing changes."
 
