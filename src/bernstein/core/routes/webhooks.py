@@ -278,9 +278,7 @@ def _count_gitlab_ci_fix_attempts(store: TaskStore, ref: str) -> int:
         TaskStatus.FAILED,
     }
     tasks = store.list_tasks()
-    return sum(
-        1 for t in tasks if t.title.startswith("[ci-fix]") and ref in t.description and t.status in _ACTIVE
-    )
+    return sum(1 for t in tasks if t.title.startswith("[ci-fix]") and ref in t.description and t.status in _ACTIVE)
 
 
 def _gitlab_pipeline_to_task(payload: dict[str, Any], retry_count: int) -> dict[str, Any] | None:
