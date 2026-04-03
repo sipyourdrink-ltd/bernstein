@@ -192,7 +192,7 @@ def render_queue_review_prompt(
         '    {"action": "reassign", "task_id": "<id>", "new_role": "<role>", "reason": "..."},',
         "    // cancel a stalled or pointless task:",
         '    {"action": "cancel", "task_id": "<id>", "reason": "..."},',
-        "    // change priority (1=critical, 2=high, 3=medium, 4=low):",
+        "    // change priority (1=critical, 2=normal, 3=nice-to-have):",
         '    {"action": "change_priority", "task_id": "<id>", "new_priority": 1, "reason": "..."},',
         "    // inject a missing task:",
         '    {"action": "add_task", "title": "...", "role": "...", '

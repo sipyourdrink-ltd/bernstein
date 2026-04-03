@@ -676,3 +676,102 @@ def refresh_oauth_token(
         raise OAuthRefreshError(f"OAuth refresh failed for '{server_name}': HTTP {exc.code}") from exc
     except Exception as exc:
         raise OAuthRefreshError(f"OAuth refresh failed for '{server_name}': {exc}") from exc
+# ---------------------------------------------------------------------------
+# OAuth refresh on 401/403 errors (T568)
+# ---------------------------------------------------------------------------
+
+import httpx as _httpx
+from typing import Optional, Dict, Any, Callable
+import time
+
+class OAuthRefreshHandler:
+    """Handles OAuth token refresh on 401/403 errors."""
+    
+    def __init__(self):
+        self.refresh_callbacks: Dict[str, Callable[[], Optional[str]]] = {}
+        self.last_refresh_attempt: Dict[str, float] = {}
+        self.refresh_cooldown = 60  # seconds between refresh attempts
+    
+    def register_refresh_callback(
+        self,
+        server_name: str,
+        refresh_callback: Callable[[], Optional[str]]
+    ) -> None:
+        """Register a refresh callback for an MCP server."""
+        self.refresh_callbacks[server_name] = refresh_callback
+        logger.info(f"Registered OAuth refresh callback for MCP server: {server_name}")
+    
+    def handle_auth_error(
+        self,
+        server_name: str,
+        error_code: int,
+        error_message: str
+    ) -> bool:
+        """Handle 401/403 errors by attempting OAuth refresh."""
+        if error_code not in (401, 403):
+            return False
+        
+        current_time = time.time()
+        last_attempt = self.last_refresh_attempt.get(server_name, 0)
+        
+        # Check cooldown
+        if current_time - last_attempt < self.refresh_cooldown:
+            logger.debug(f"OAuth refresh cooldown active for {server_name}")
+            return False
+        
+        refresh_callback = self.refresh_callbacks.get(server_name)
+        if not refresh_callback:
+            logger.warning(f"No OAuth refresh callback registered for {server_name}")
+            return False
+        
+        logger.info(f"Attempting OAuth refresh for MCP server: {server_name}")
+        self.last_refresh_attempt[server_name] = current_time
+        
+        try:
+            new_token = refresh_callback()
+            if new_token:
+                logger.info(f"OAuth refresh successful for {server_name}")
+                return True
+            else:
+                logger.warning(f"OAuth refresh failed for {server_name}: no token returned")
+                return False
+        except Exception as e:
+            logger.error(f"OAuth refresh error for {server_name}: {e}")
+            return False
+    
+    def should_retry_after_refresh(
+        self,
+        server_name: str,
+        error_code: int,
+        retry_count: int
+    ) -> bool:
+        """Determine if a request should be retried after OAuth refresh."""
+        if error_code not in (401, 403):
+            return False
+        
+        if retry_count >= 2:  # Max 2 retries after refresh
+            return False
+        
+        current_time = time.time()
+        last_attempt = self.last_refresh_attempt.get(server_name, 0)
+        
+        # Only retry if we recently attempted a refresh
+        return current_time - last_attempt < 30  # 30 seconds window
+
+# Global OAuth refresh handler
+_oauth_refresh_handler = OAuthRefreshHandler()
+
+def handle_mcp_auth_error(
+    server_name: str,
+    error_code: int,
+    error_message: str
+) -> bool:
+    """Handle MCP server authentication errors with OAuth refresh (T568)."""
+    return _oauth_refresh_handler.handle_auth_error(server_name, error_code, error_message)
+
+def register_mcp_oauth_refresh(
+    server_name: str,
+    refresh_callback: Callable[[], Optional[str]]
+) -> None:
+    """Register OAuth refresh callback for an MCP server."""
+    _oauth_refresh_handler.register_refresh_callback(server_name, refresh_callback)

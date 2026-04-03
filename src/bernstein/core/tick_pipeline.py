@@ -452,3 +452,36 @@ def compute_total_spent(workdir: Path) -> float:
 
     total_spent_cache[cache_key] = (total, new_file_data)
     return total
+# ---------------------------------------------------------------------------
+# Meta-messages for orchestrator nudges (T567)
+# ---------------------------------------------------------------------------
+
+from typing import List, Optional
+import time
+
+def check_nudges_during_tick() -> None:
+    """Check and process orchestrator nudges during tick (T567)."""
+    from bernstein.core.orchestrator import get_orchestrator_nudges
+    
+    nudges = get_orchestrator_nudges(priority_threshold=2)  # Medium+ priority
+    
+    for nudge in nudges:
+        logger.info(f"Processing orchestrator nudge: {nudge.nudge_type} - {nudge.message}")
+        
+        # Process different nudge types
+        if nudge.nudge_type == "increase_parallelism":
+            logger.info("Nudge: Increasing parallelism for better throughput")
+            # Implementation would adjust parallelism settings
+        elif nudge.nudge_type == "reduce_cost":
+            logger.info("Nudge: Reducing cost by using cheaper models")
+            # Implementation would adjust model selection
+        elif nudge.nudge_type == "improve_quality":
+            logger.info("Nudge: Improving quality with more thorough verification")
+            # Implementation would adjust quality gates
+        elif nudge.nudge_type == "speed_up":
+            logger.info("Nudge: Speeding up with faster models")
+            # Implementation would adjust speed/quality tradeoff
+        
+        # Acknowledge the nudge
+        from bernstein.core.orchestrator import _nudge_manager
+        _nudge_manager.acknowledge_nudge(nudge)

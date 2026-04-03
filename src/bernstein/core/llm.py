@@ -237,3 +237,101 @@ async def preconnect_api(
     except Exception as exc:
         logger.debug("API preconnect failed (non-fatal): %s — %s", base_url, exc)
         return False
+# ---------------------------------------------------------------------------
+# OAuth refresh on 401/403 errors (T568)
+# ---------------------------------------------------------------------------
+
+import httpx as _httpx
+from typing import Optional, Dict, Any, Callable
+import time
+
+class LLMOAuthRefreshHandler:
+    """Handles OAuth token refresh for LLM providers on 401/403 errors."""
+    
+    def __init__(self):
+        self.refresh_callbacks: Dict[str, Callable[[], Optional[str]]] = {}
+        self.last_refresh_attempt: Dict[str, float] = {}
+        self.refresh_cooldown = 60  # seconds between refresh attempts
+    
+    def register_provider_refresh(
+        self,
+        provider: str,
+        refresh_callback: Callable[[], Optional[str]]
+    ) -> None:
+        """Register OAuth refresh callback for an LLM provider."""
+        self.refresh_callbacks[provider] = refresh_callback
+        logger.info(f"Registered OAuth refresh for LLM provider: {provider}")
+    
+    def handle_llm_auth_error(
+        self,
+        provider: str,
+        error_code: int,
+        error_message: str
+    ) -> bool:
+        """Handle 401/403 errors from LLM providers."""
+        if error_code not in (401, 403):
+            return False
+        
+        current_time = time.time()
+        last_attempt = self.last_refresh_attempt.get(provider, 0)
+        
+        # Check cooldown
+        if current_time - last_attempt < self.refresh_cooldown:
+            logger.debug(f"OAuth refresh cooldown active for LLM provider: {provider}")
+            return False
+        
+        refresh_callback = self.refresh_callbacks.get(provider)
+        if not refresh_callback:
+            logger.warning(f"No OAuth refresh registered for LLM provider: {provider}")
+            return False
+        
+        logger.info(f"Attempting OAuth refresh for LLM provider: {provider}")
+        self.last_refresh_attempt[provider] = current_time
+        
+        try:
+            new_token = refresh_callback()
+            if new_token:
+                logger.info(f"OAuth refresh successful for LLM provider: {provider}")
+                return True
+            else:
+                logger.warning(f"OAuth refresh failed for {provider}: no token returned")
+                return False
+        except Exception as e:
+            logger.error(f"OAuth refresh error for {provider}: {e}")
+            return False
+
+# Global LLM OAuth refresh handler
+_llm_oauth_handler = LLMOAuthRefreshHandler()
+
+def handle_llm_auth_error(
+    provider: str,
+    error_code: int,
+    error_message: str
+) -> bool:
+    """Handle LLM provider authentication errors with OAuth refresh (T568)."""
+    return _llm_oauth_handler.handle_llm_auth_error(provider, error_code, error_message)
+
+def register_llm_oauth_refresh(
+    provider: str,
+    refresh_callback: Callable[[], Optional[str]]
+) -> None:
+    """Register OAuth refresh callback for an LLM provider."""
+    _llm_oauth_handler.register_provider_refresh(provider, refresh_callback)
+
+def retry_with_oauth_refresh(
+    provider: str,
+    error_code: int,
+    retry_count: int
+) -> bool:
+    """Determine if an LLM request should be retried after OAuth refresh."""
+    if error_code not in (401, 403):
+        return False
+    
+    if retry_count >= 2:  # Max 2 retries after refresh
+        return False
+    
+    current_time = time.time()
+    last_attempt = _llm_oauth_handler.last_refresh_attempt.get(provider, 0)
+    
+    # Only retry if we recently attempted a refresh
+    return current_time - last_attempt < 30  # 30 seconds window
