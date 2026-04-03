@@ -19,6 +19,7 @@ import logging
 import time
 import uuid
 from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.memory_integrity import (
@@ -32,7 +33,49 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Lessons older than this many days have reduced relevance
+
+# ---------------------------------------------------------------------------
+# Memory type taxonomy (T651)
+# ---------------------------------------------------------------------------
+
+
+class MemoryType(StrEnum):
+    """Typed memory categories for lesson classification.
+
+    Inspired by memdir/memoryTypes.ts typed categories.
+
+    - USER: Observations from agent workflow — slowest decay.
+    - FEEDBACK: Corrections from human review — fastest decay (assumes fix).
+    - PROJECT: Project-specific conventions — medium decay.
+    - REFERENCE: External docs/best practices — slow decay.
+    """
+
+    USER = "user"
+    FEEDBACK = "feedback"
+    PROJECT = "project"
+    REFERENCE = "reference"
+
+
+# Per-type decay rates (in days — faster decay = lower half-life)
+# Rationale (T651):
+# - user: Workflow observations, moderate persistence → 30 days.
+# - feedback: Human corrections, assume fix applied → 7 days.
+# - project: Project-specific conventions → 14 days.
+# - reference: External best practices, slowly evolving → 90 days.
+_TYPE_DECAY_DAYS: dict[MemoryType, int] = {
+    MemoryType.USER: 30,
+    MemoryType.FEEDBACK: 7,
+    MemoryType.PROJECT: 14,
+    MemoryType.REFERENCE: 90,
+}
+_TYPE_DECAY_FACTOR: dict[MemoryType, float] = {
+    MemoryType.USER: 0.7,
+    MemoryType.FEEDBACK: 0.7,
+    MemoryType.PROJECT: 0.7,
+    MemoryType.REFERENCE: 0.7,
+}
+
+# Legacy defaults for untyped lessons
 _DECAY_DAYS = 30
 _DECAY_FACTOR = 0.7  # 70% of original confidence after DECAY_DAYS
 
@@ -87,6 +130,7 @@ class Lesson:
         created_timestamp: Unix timestamp when first filed.
         filed_by_agent: Agent ID that filed this lesson.
         task_id: Task ID that generated this lesson.
+        memory_type: Typed memory category (T651).
         version: Version counter; incremented when confidence is updated.
     """
 
@@ -97,6 +141,7 @@ class Lesson:
     created_timestamp: float
     filed_by_agent: str
     task_id: str
+    memory_type: MemoryType = MemoryType.USER
     version: int = 1
     # Integrity fields (OWASP ASI06 2026 — Memory Provenance & Integrity)
     content_hash: str | None = None  # SHA-256 of immutable fields
@@ -111,6 +156,7 @@ def file_lesson(
     content: str,
     tags: list[str],
     confidence: float = 0.8,
+    memory_type: MemoryType = MemoryType.USER,
 ) -> str:
     """File a lesson when an agent completes a task.
 
@@ -129,6 +175,7 @@ def file_lesson(
         content: The lesson text.
         tags: Tags for retrieval (e.g., ["auth", "security"]).
         confidence: Confidence score 0-1 (default 0.8).
+        memory_type: Typed memory category (T651).
 
     Returns:
         The lesson_id (string UUID) of the filed or updated lesson.
@@ -156,7 +203,12 @@ def file_lesson(
 
     # Use lock protocol for read-check-write (dedup or update decision)
     with guarded_memory_write(lessons_path) as guard:
-        existing_lesson_id = _find_similar_lesson_in_content(guard.original_content, tags_lower, content)
+        existing_lesson_id = _find_similar_lesson_in_content(
+            guard.original_content,
+            tags_lower,
+            content,
+            memory_type,
+        )
         if existing_lesson_id:
             # Update existing lesson's confidence and version
             _update_lesson_confidence_from_content(lessons_path, existing_lesson_id, confidence_clamped, guard)
@@ -172,6 +224,7 @@ def file_lesson(
             created_timestamp=now,
             filed_by_agent=agent_id,
             task_id=task_id,
+            memory_type=memory_type,
             version=1,
         )
 
@@ -250,10 +303,12 @@ def get_lessons_for_agent(
                     if overlap == 0:
                         continue  # No tag match
 
-                    # Apply decay and recompute confidence
+                    # Apply per-type decay (T651)
                     age_days = (now - lesson.created_timestamp) / (24 * 3600)
-                    if age_days > _DECAY_DAYS:
-                        decay = _DECAY_FACTOR ** (age_days / _DECAY_DAYS)
+                    decay_days = _TYPE_DECAY_DAYS.get(lesson.memory_type, _DECAY_DAYS)
+                    decay_factor = _TYPE_DECAY_FACTOR.get(lesson.memory_type, _DECAY_FACTOR)
+                    if age_days > decay_days:
+                        decay = decay_factor ** (age_days / decay_days)
                         decayed_confidence = lesson.confidence * decay
                     else:
                         decayed_confidence = lesson.confidence
@@ -269,6 +324,7 @@ def get_lessons_for_agent(
                         created_timestamp=lesson.created_timestamp,
                         filed_by_agent=lesson.filed_by_agent,
                         task_id=lesson.task_id,
+                        memory_type=lesson.memory_type,
                         version=lesson.version,
                     )
                     lessons_with_score.append((lesson_with_decay, relevance))
@@ -326,7 +382,7 @@ def gather_lessons_for_context(
 
 
 def _format_lesson_block(lesson: Lesson, now: float) -> str:
-    """Format a single lesson as a markdown block (T652, T654).
+    """Format a single lesson as a markdown block (T651, T652, T654).
 
     Args:
         lesson: Lesson instance to format.
@@ -337,6 +393,7 @@ def _format_lesson_block(lesson: Lesson, now: float) -> str:
     """
     stale = is_lesson_stale(lesson.created_timestamp, now)
     parts = [
+        f"**Type:** {lesson.memory_type.value}",
         f"**Tags:** {', '.join(lesson.tags)}",
         f"**Confidence:** {lesson.confidence:.2f}",
         f"**From task:** {lesson.task_id}",
@@ -375,6 +432,12 @@ def _parse_lesson(data: Any) -> Lesson | None:
         Lesson instance, or None if parsing fails.
     """
     try:
+        raw_type = data.get("memory_type", "user")
+        try:
+            memory_type = MemoryType(raw_type)
+        except ValueError:
+            memory_type = MemoryType.USER
+
         return Lesson(
             lesson_id=str(data["lesson_id"]),
             tags=[t.lower().strip() for t in data.get("tags", [])],
@@ -383,6 +446,7 @@ def _parse_lesson(data: Any) -> Lesson | None:
             created_timestamp=float(data["created_timestamp"]),
             filed_by_agent=str(data["filed_by_agent"]),
             task_id=str(data["task_id"]),
+            memory_type=memory_type,
             version=int(data.get("version", 1)),
             content_hash=data.get("content_hash") or None,
             prev_hash=data.get("prev_hash") or None,
@@ -402,16 +466,19 @@ def _find_similar_lesson_in_content(
     content: str | None,
     tags: list[str],
     lesson_content: str,
+    memory_type: MemoryType,
 ) -> str | None:
     """Find an existing lesson with similar tags and content in raw JSONL text.
 
     Like :func:`_find_similar_lesson` but operates on in-memory content
     rather than reading from disk, for use within a locked section.
+    Dedup also requires matching memory_type (T651).
 
     Args:
         content: Raw JSONL file content (or None if empty).
         tags: Tags for the new lesson.
         lesson_content: Content for the new lesson.
+        memory_type: Memory type for the new lesson (dedup check).
 
     Returns:
         lesson_id of similar lesson, or None if no match found.
@@ -430,6 +497,10 @@ def _find_similar_lesson_in_content(
             data = json.loads(line_stripped)
             lesson = _parse_lesson(data)
             if lesson is None:
+                continue
+
+            # Dedup requires matching memory_type (T651)
+            if lesson.memory_type != memory_type:
                 continue
 
             # Jaccard similarity on tags

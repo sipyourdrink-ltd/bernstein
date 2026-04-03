@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from pathlib import Path
@@ -11,16 +10,13 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.lessons import (
+    MemoryType,
     _find_similar_lesson_in_content,
     _get_last_chain_hash_from_content,
-    _update_lesson_confidence_from_content,
     file_lesson,
-    gather_lessons_for_context,
-    get_lessons_for_agent,
 )
 from bernstein.core.memory_integrity import GENESIS_HASH
-from bernstein.core.memory_lock_protocol import MemoryFileGuard, _safe_unlink, guarded_memory_write
-
+from bernstein.core.memory_lock_protocol import guarded_memory_write
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -181,29 +177,26 @@ class TestLessonContentHelpers:
         content = (
             '{"lesson_id":"abc","tags":["auth"],"content":"Use JWT",'
             '"confidence":0.9,"created_timestamp":1000000.0,'
-            '"filed_by_agent":"x","task_id":"t1"}\n'
+            '"filed_by_agent":"x","task_id":"t1","memory_type":"user"}\n'
         )
-        result = _find_similar_lesson_in_content(content, ["auth"], "Use JWT")
+        result = _find_similar_lesson_in_content(content, ["auth"], "Use JWT", MemoryType.USER)
         assert result == "abc"
 
     def test_find_similar_lesson_in_content_no_match(self) -> None:
         content = (
             '{"lesson_id":"abc","tags":["auth"],"content":"Use JWT",'
             '"confidence":0.9,"created_timestamp":1000000.0,'
-            '"filed_by_agent":"x","task_id":"t1"}\n'
+            '"filed_by_agent":"x","task_id":"t1","memory_type":"user"}\n'
         )
-        result = _find_similar_lesson_in_content(content, ["database"], "Use SQL")
+        result = _find_similar_lesson_in_content(content, ["database"], "Use SQL", MemoryType.USER)
         assert result is None
 
     def test_find_similar_lesson_in_content_empty(self) -> None:
-        assert _find_similar_lesson_in_content(None, ["auth"], "test") is None
-        assert _find_similar_lesson_in_content("", ["auth"], "test") is None
+        assert _find_similar_lesson_in_content(None, ["auth"], "test", MemoryType.USER) is None
+        assert _find_similar_lesson_in_content("", ["auth"], "test", MemoryType.USER) is None
 
     def test_get_last_chain_hash_from_content(self) -> None:
-        content = (
-            '{"lesson_id":"a","chain_hash":"hash1"}\n'
-            '{"lesson_id":"b","chain_hash":"hash2"}\n'
-        )
+        content = '{"lesson_id":"a","chain_hash":"hash1"}\n{"lesson_id":"b","chain_hash":"hash2"}\n'
         result = _get_last_chain_hash_from_content(content)
         assert result == "hash2"
 
