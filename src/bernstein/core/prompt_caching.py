@@ -719,26 +719,17 @@ _baseline_monitor.add_alert_handler(on_baseline_drop)
 # Per-model cache read/write pricing tiers (T569)
 # ---------------------------------------------------------------------------
 
-def calculate_cache_cost_savings(
-    provider: str,
-    model: str,
-    tokens: int,
-    operation: str = "read"
-) -> Dict[str, Any]:
+
+def calculate_cache_cost_savings(provider: str, model: str, tokens: int, operation: str = "read") -> Dict[str, Any]:
     """Calculate cache cost savings using pricing tiers (T569)."""
     from bernstein.core.cost import calculate_cache_operation_savings, get_cache_pricing_tier
-    
+
     tier = get_cache_pricing_tier(provider, model)
     if not tier:
-        return {
-            "savings_usd": 0.0,
-            "savings_percentage": 0.0,
-            "tier_available": False,
-            "tokens": tokens
-        }
-    
+        return {"savings_usd": 0.0, "savings_percentage": 0.0, "tier_available": False, "tokens": tokens}
+
     savings = calculate_cache_operation_savings(provider, model, tokens, operation)
-    
+
     return {
         "savings_usd": savings,
         "savings_percentage": tier.savings_percentage,
@@ -750,22 +741,19 @@ def calculate_cache_cost_savings(
         "cache_read_price_per_1m": tier.cache_read_usd_per_1m,
         "cache_write_price_per_1m": tier.cache_write_usd_per_1m,
         "standard_read_price_per_1m": tier.standard_read_usd_per_1m,
-        "standard_write_price_per_1m": tier.standard_write_usd_per_1m
+        "standard_write_price_per_1m": tier.standard_write_usd_per_1m,
     }
 
+
 def record_cache_cost_metrics(
-    provider: str,
-    model: str,
-    tokens: int,
-    operation: str = "read",
-    cache_hit: bool = True
+    provider: str, model: str, tokens: int, operation: str = "read", cache_hit: bool = True
 ) -> None:
     """Record cache cost metrics for analytics (T569)."""
     if not cache_hit:
         return
-    
+
     savings_data = calculate_cache_cost_savings(provider, model, tokens, operation)
-    
+
     if savings_data["tier_available"] and savings_data["savings_usd"] > 0:
         logger.info(
             f"Cache {operation} savings: ${savings_data['savings_usd']:.6f} "

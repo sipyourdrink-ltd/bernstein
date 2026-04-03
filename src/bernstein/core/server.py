@@ -1195,83 +1195,87 @@ def __getattr__(name: str) -> Any:
             _app = get_app()
         return _app
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # ---------------------------------------------------------------------------
 # Task notification protocol for agent status reports (T574)
 # ---------------------------------------------------------------------------
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List
-import time
-import asyncio
+
 
 @dataclass
 class AgentStatusNotification:
     """Notification for agent status reports."""
+
     agent_id: str
     session_id: str
     role: str
     status: str  # "starting", "working", "completed", "failed", "stalled"
-    task_id: Optional[str] = None
+    task_id: str | None = None
     progress: float = 0.0  # 0.0 to 1.0
     message: str = ""
     timestamp: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
 
 class TaskNotificationManager:
     """Manages task notifications for agent status reports."""
-    
+
     def __init__(self):
-        self.notifications: List[AgentStatusNotification] = []
-        self._subscribers: List[asyncio.Queue] = []
+        self.notifications: list[AgentStatusNotification] = []
+        self._subscribers: list[asyncio.Queue] = []
         self._lock = asyncio.Lock()
         self._max_notifications = 1000  # Keep last 1000 notifications
-    
+
     async def notify_agent_status(self, notification: AgentStatusNotification) -> None:
         """Notify agent status to all subscribers."""
         async with self._lock:
             # Add notification
             self.notifications.append(notification)
-            
+
             # Keep only recent notifications
             if len(self.notifications) > self._max_notifications:
-                self.notifications = self.notifications[-self._max_notifications:]
-            
+                self.notifications = self.notifications[-self._max_notifications :]
+
             # Notify subscribers
             for queue in self._subscribers:
                 try:
                     await queue.put(notification)
                 except Exception as e:
                     logger.warning(f"Failed to notify subscriber: {e}")
-    
+
     async def subscribe(self) -> asyncio.Queue:
         """Subscribe to agent status notifications."""
         queue = asyncio.Queue()
         async with self._lock:
             self._subscribers.append(queue)
         return queue
-    
+
     async def unsubscribe(self, queue: asyncio.Queue) -> None:
         """Unsubscribe from agent status notifications."""
         async with self._lock:
             if queue in self._subscribers:
                 self._subscribers.remove(queue)
-    
-    def get_recent_notifications(self, limit: int = 100) -> List[AgentStatusNotification]:
+
+    def get_recent_notifications(self, limit: int = 100) -> list[AgentStatusNotification]:
         """Get recent agent status notifications."""
         return self.notifications[-limit:]
 
+
 # Global task notification manager
 _task_notification_manager = TaskNotificationManager()
+
 
 async def notify_agent_status(
     agent_id: str,
     session_id: str,
     role: str,
     status: str,
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
     progress: float = 0.0,
     message: str = "",
-    metadata: Optional[Dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Send agent status notification (T574)."""
     notification = AgentStatusNotification(
@@ -1282,12 +1286,11 @@ async def notify_agent_status(
         task_id=task_id,
         progress=progress,
         message=message,
-        metadata=metadata or {}
+        metadata=metadata or {},
     )
-    
+
     await _task_notification_manager.notify_agent_status(notification)
-    
+
     logger.info(
-        f"Agent status notification: {agent_id} ({role}) - {status} "
-        f"(task: {task_id}, progress: {progress:.0%})"
+        f"Agent status notification: {agent_id} ({role}) - {status} (task: {task_id}, progress: {progress:.0%})"
     )

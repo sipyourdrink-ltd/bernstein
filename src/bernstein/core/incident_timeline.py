@@ -10,10 +10,11 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     pass
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,12 @@ def _collect_error_events(metrics_dir: Path, start_ts: float, end_ts: float) -> 
                         kind="error",
                         source="metrics",
                         summary=summary,
-                        details={"error_type": error_type, "provider": provider, "role": role, "value": rec.get("value")},
+                        details={
+                            "error_type": error_type,
+                            "provider": provider,
+                            "role": role,
+                            "value": rec.get("value"),
+                        },
                     )
                 )
     return events
@@ -159,7 +165,11 @@ def _collect_trace_events(traces_dir: Path, start_ts: float, end_ts: float) -> l
                     kind = "agent_spawned"
                 elif step_type == "fail":
                     kind = "agent_crashed"
-                summary = f"[{agent_role}/{model}] {step_type}: {detail[:120]}" if detail else f"[{agent_role}/{model}] {step_type}"
+                summary = (
+                    f"[{agent_role}/{model}] {step_type}: {detail[:120]}"
+                    if detail
+                    else f"[{agent_role}/{model}] {step_type}"
+                )
                 events.append(
                     TimelineEvent(
                         timestamp=ts,
