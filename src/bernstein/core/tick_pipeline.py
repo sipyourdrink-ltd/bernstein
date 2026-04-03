@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import TypedDict
 
 from bernstein.core.backlog_parser import parse_backlog_text
+from bernstein.core.context_collapse import staged_context_collapse
 from bernstein.core.models import Task, TaskType
 
 if TYPE_CHECKING:
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     import httpx
 
     from bernstein.core.agent_log_aggregator import AgentLogSummary
+    from bernstein.core.context_collapse import CollapseResult
 
 logger = logging.getLogger(__name__)
 
@@ -486,3 +488,85 @@ def check_nudges_during_tick() -> None:
         from bernstein.core.orchestrator import nudge_manager
 
         nudge_manager.acknowledge_nudge(nudge)
+
+
+# ---------------------------------------------------------------------------
+# Context collapse integration (T418)
+# ---------------------------------------------------------------------------
+
+
+def collapse_prompt_sections(
+    sections: list[tuple[str, str]],
+    token_budget: int = 50_000,
+    *,
+    task_ids: list[str] | None = None,
+) -> tuple[list[tuple[str, str]], CollapseResult]:
+    """Apply staged context collapse to prompt sections before spawn (T418).
+
+    This function is designed to be called from the orchestrator tick
+    pipeline right before building the final spawn prompt.  It invokes
+    the three-stage collapse (truncate → drop → strip metadata) so that
+    retries start from a smaller, valid prompt rather than failing with
+    an oversized context window.
+
+    Args:
+        sections: Ordered list of (section_name, content) pairs from the
+            spawn prompt builder.
+        token_budget: Maximum allowed estimated token count.  Defaults to
+            50,000 (~50% of a 100k-token context window).
+        task_ids: Task IDs for log context (optional).
+
+    Returns:
+        Tuple of:
+        - Collapsed sections: ready for the CLI adapter.
+        - CollapseResult: diagnostics (token counts, steps, within_budget).
+    """
+    task_ctx = f" for tasks {task_ids}" if task_ids else ""
+    total_tokens = sum(max(0, len(c) // 4) for _, c in sections)
+    if total_tokens <= token_budget:
+        # Build a within-budget result without performing any collapse
+        from bernstein.core.context_collapse import CollapseResult
+
+        result = CollapseResult(
+            sections=sections,
+            original_tokens=total_tokens,
+            compressed_tokens=total_tokens,
+            steps=[],
+            within_budget=True,
+        )
+        logger.debug(
+            "Prompt sections for tick within budget%s: %d tokens (limit %d)",
+            task_ctx,
+            total_tokens,
+            token_budget,
+        )
+        return sections, result
+
+    logger.info(
+        "Prompt sections exceed token budget%s: %d > %d tokens — applying staged collapse",
+        task_ctx,
+        total_tokens,
+        token_budget,
+    )
+    result = staged_context_collapse(sections, token_budget=token_budget)
+
+    if not result.within_budget:
+        logger.warning(
+            "Context collapse still over budget%s after all stages: %d > %d tokens; "
+            "critical sections alone exceed the budget",
+            task_ctx,
+            result.compressed_tokens,
+            token_budget,
+        )
+    else:
+        freed = result.original_tokens - result.compressed_tokens
+        logger.info(
+            "Context collapse freed %d tokens%s (%d → %d, %.0f%% reduction)",
+            freed,
+            task_ctx,
+            result.original_tokens,
+            result.compressed_tokens,
+            (freed / max(1, result.original_tokens)) * 100,
+        )
+
+    return result.sections, result
