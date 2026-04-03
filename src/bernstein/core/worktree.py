@@ -273,6 +273,10 @@ class WorktreeManager:
 
         logger.info("Created worktree %s (branch %s)", worktree_path, branch_name)
 
+        # Write lock file for stale detection (T487)
+        worker_pid = os.getpid()
+        write_worktree_lock(self.repo_root, session_id, pid=worker_pid)
+
         if self._setup_config is not None:
             setup_worktree_env(self.repo_root, worktree_path, self._setup_config)
 
@@ -314,12 +318,18 @@ class WorktreeManager:
         except Exception as exc:
             logger.warning("Failed to delete branch %s: %s", branch_name, exc)
 
+        # 3. Remove lock file
+        remove_worktree_lock(self.repo_root, session_id)
+
         logger.info("Cleaned up worktree for session %s", session_id)
 
     def cleanup_all_stale(self) -> int:
         """Remove all worktrees under the base dir from prior runs.
 
         Called at startup to ensure stale worktrees don't block new spawns.
+
+        Uses both PID-file and lock-file stale detection. Active worktrees
+        (live process or valid lock) are never removed.
 
         Returns:
             Number of worktrees cleaned up.
@@ -339,15 +349,21 @@ class WorktreeManager:
             return 0
         cleaned = 0
         for entry in self._base_dir.iterdir():
-            if entry.is_dir():
+            if entry.is_dir() and entry.name != ".locks":
                 session_id = entry.name
-                if self._session_has_live_pid(session_id):
+                if self._is_session_live(session_id):
                     logger.debug("Keeping live worktree %s during stale cleanup", session_id)
                     continue
                 logger.info("Cleaning stale worktree: %s", session_id)
                 self.cleanup(session_id)
                 cleaned += 1
         return cleaned
+
+    def _is_session_live(self, session_id: str) -> bool:
+        """Return True if the session still has a live process or lock."""
+        pid_alive = self._session_has_live_pid(session_id)
+        lock_not_stale = not is_worktree_lock_stale(self.repo_root, session_id)
+        return pid_alive or lock_not_stale
 
     def _session_has_live_pid(self, session_id: str) -> bool:
         """Return True when the session has a live recorded worker process."""
