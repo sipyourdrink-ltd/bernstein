@@ -157,6 +157,283 @@ class BernsteinSpec:
         """Called after context compaction completes (T492)."""
 
     @hookspec(firstresult=True)
+    def on_pre_tool_use(
+        self,
+        session_id: str,
+        tool: str,
+        tool_input: dict[str, Any],
+    ) -> str | None:
+        """Called before a tool is executed — hooks may block with exit code 2 (T681).
+
+        Implementations can return a structured denial hint or raise
+        :class:`~bernstein.plugins.manager.HookBlockingError` via command hooks
+        to prevent tool execution entirely.
+
+        Args:
+            session_id: Agent session identifier.
+            tool: Tool name about to be executed.
+            tool_input: Redacted/safe copy of the tool arguments.
+
+        Returns:
+            Optional denial hint string, or None to allow execution.
+        """
+
+    @hookspec
+    def on_post_tool_use(
+        self,
+        session_id: str,
+        tool: str,
+        tool_input: dict[str, Any],
+        result: str,
+        success: bool,
+    ) -> None:
+        """Called after a tool execution completes, regardless of outcome (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            tool: Tool name that was executed.
+            tool_input: Tool arguments that were passed.
+            result: stdout/captured output from the tool.
+            success: Whether the tool exited with code 0.
+        """
+
+    @hookspec
+    def on_post_tool_use_failure(
+        self,
+        session_id: str,
+        tool: str,
+        tool_input: dict[str, Any],
+        error: str,
+        retries: int,
+    ) -> None:
+        """Called when a tool execution fails after retry attempts (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            tool: Tool name that failed.
+            tool_input: Tool arguments that were passed.
+            error: Combined error output from the tool.
+            retries: Number of retry attempts made.
+        """
+
+    @hookspec
+    def on_notification(self, session_id: str, level: str, message: str) -> None:
+        """Called when an important event should be surfaced to the operator (T681).
+
+        Args:
+            session_id: Agent session identifier (or ``""`` for system-wide).
+            level: Notification severity (``"info"``, ``"warn"``, ``"error"``).
+            message: Human-readable notification text.
+        """
+
+    @hookspec
+    def on_user_prompt_submit(self, session_id: str, prompt: str) -> None:
+        """Called when a human submits a prompt via task description or TUI (T681).
+
+        Args:
+            session_id: Agent session that will receive the prompt.
+            prompt: The submitted prompt text.
+        """
+
+    @hookspec
+    def on_session_start(self, session_id: str, role: str, task_id: str) -> None:
+        """Called when an agent session begins, before any tool runs (T681).
+
+        Args:
+            session_id: New agent session identifier.
+            role: Agent role (e.g. ``"backend"``).
+            task_id: Task the agent was spawned for.
+        """
+
+    @hookspec
+    def on_session_end(self, session_id: str, role: str, reason: str) -> None:
+        """Called when an agent session ends (normal exit, timeout, or crash) (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            role: Agent role that was running.
+            reason: End reason (``"completed"``, ``"killed"``, ``"timeout"``, ``"crash"``).
+        """
+
+    @hookspec
+    def on_stop(self, session_id: str, reason: str, signal: str = "SIGTERM") -> None:
+        """Called when a stop/shutdown is initiated for an agent session (T681).
+
+        Args:
+            session_id: Agent session being stopped.
+            reason: Stop reason (e.g. ``"user_initiated"``, ``"budget_exceeded"``).
+            signal: OS signal sent to the agent process.
+        """
+
+    @hookspec
+    def on_stop_failure(self, session_id: str, reason: str, error: str) -> None:
+        """Called when a stop attempt fails to terminate the agent (T681).
+
+        Args:
+            session_id: Agent session that failed to stop.
+            reason: Original stop reason attempted.
+            error: Error explaining why stop failed.
+        """
+
+    @hookspec
+    def on_subagent_start(self, session_id: str, sub_id: str, role: str) -> None:
+        """Called when a parent agent spawns a sub-agent (T681).
+
+        Args:
+            session_id: Parent agent session identifier.
+            sub_id: Sub-agent session identifier.
+            role: Sub-agent role.
+        """
+
+    @hookspec
+    def on_subagent_stop(self, session_id: str, sub_id: str, outcome: str) -> None:
+        """Called when a sub-agent finishes or is aborted (T681).
+
+        Args:
+            session_id: Parent agent session identifier.
+            sub_id: Sub-agent session identifier.
+            outcome: Sub-agent outcome (``"completed"``, ``"aborted"``).
+        """
+
+    @hookspec
+    def on_permission_request(
+        self,
+        session_id: str,
+        tool: str,
+        mode: str,
+    ) -> None:
+        """Called before permission resolution — hooks can observe or pre-decide (T681).
+
+        In headless mode this fires before auto-deny/auto-allow resolution.
+
+        Args:
+            session_id: Agent session identifier.
+            tool: Tool requesting permission.
+            mode: Permission mode (``"allow"``, ``"deny"``, ``"ask"``).
+        """
+
+    @hookspec
+    def on_setup(self, session_id: str, role: str, workdir: str) -> None:
+        """Called during initial workspace/worktree setup for an agent (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            role: Agent role.
+            workdir: Path to the agent's worktree directory.
+        """
+
+    @hookspec
+    def on_teammate_idle(self, session_id: str, role: str, queue_depth: int) -> None:
+        """Called when an agent reports it has no more work to do (T681).
+
+        Useful for swarm orchestration and dynamic task fan-out.
+
+        Args:
+            session_id: Idle agent session identifier.
+            role: Agent role.
+            queue_depth: Number of remaining open tasks.
+        """
+
+    @hookspec
+    def on_elicitation(
+        self,
+        session_id: str,
+        prompt: str,
+        options: list[str],
+    ) -> None:
+        """Called when an LLM requests human input (elicitation) (T681).
+
+        Args:
+            session_id: Agent session making the request.
+            prompt: The elicitation question text.
+            options: Allowed response options.
+        """
+
+    @hookspec
+    def on_elicitation_result(
+        self,
+        session_id: str,
+        prompt: str,
+        response: str,
+    ) -> None:
+        """Called after human input is provided for a pending elicitation (T681).
+
+        Args:
+            session_id: Agent session that made the request.
+            prompt: The original elicitation question.
+            response: Human's response.
+        """
+
+    @hookspec
+    def on_config_change(self, key: str, old_value: str, new_value: str) -> None:
+        """Called when a relevant configuration value changes at runtime (T681).
+
+        Args:
+            key: Configuration key that changed (e.g. ``"model"``).
+            old_value: Previous value.
+            new_value: New value.
+        """
+
+    @hookspec
+    def on_worktree_create(
+        self,
+        session_id: str,
+        worktree_path: str,
+        branch: str,
+    ) -> None:
+        """Called when a new git worktree is created for agent isolation (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            worktree_path: Path to the new worktree.
+            branch: Branch name the worktree points to.
+        """
+
+    @hookspec
+    def on_worktree_remove(self, session_id: str, worktree_path: str) -> None:
+        """Called when an agent's worktree is cleaned up (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            worktree_path: Path to the removed worktree.
+        """
+
+    @hookspec
+    def on_instructions_loaded(self, session_id: str, role: str, source_paths: list[str]) -> None:
+        """Called after all instruction files (CLAUDE.md, AGENTS.md, etc.) are loaded (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            role: Agent role.
+            source_paths: List of instruction file paths loaded.
+        """
+
+    @hookspec
+    def on_cwd_changed(self, session_id: str, old_cwd: str, new_cwd: str) -> None:
+        """Called when the agent's working directory changes (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            old_cwd: Previous working directory.
+            new_cwd: New working directory.
+        """
+
+    @hookspec
+    def on_file_changed(
+        self,
+        session_id: str,
+        file_path: str,
+        change_type: str,
+    ) -> None:
+        """Called when a file is created, modified, or deleted in the worktree (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            file_path: Path to the changed file.
+            change_type: Type of change (``"created"``, ``"modified"``, ``"deleted"``).
+        """
+
+    @hookspec(firstresult=True)
     def on_permission_denied(self, task_id: str, reason: str, tool: str, args: dict[str, Any]) -> str | None:
         """Called when a tool or action permission is denied.
 

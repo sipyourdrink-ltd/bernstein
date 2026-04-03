@@ -220,6 +220,145 @@ class CommandHook:
         self._run_command("on_permission_denied", task_id=task_id, reason=reason, tool=tool, **args)
         return None
 
+    # --- Additional hooks for T681 (22 new lifecycle events) ---
+
+    @hookimpl
+    def on_pre_tool_use(
+        self,
+        session_id: str,
+        tool: str,
+        tool_input: dict[str, Any],
+    ) -> str | None:
+        self._run_command("on_pre_tool_use", session_id=session_id, tool=tool, tool_input=tool_input)
+        return None
+
+    @hookimpl
+    def on_post_tool_use(
+        self,
+        session_id: str,
+        tool: str,
+        tool_input: dict[str, Any],
+        result: str,
+        success: bool,
+    ) -> None:
+        self._run_command(
+            "on_post_tool_use",
+            session_id=session_id,
+            tool=tool,
+            tool_input=tool_input,
+            result=result,
+            success=success,
+        )
+
+    @hookimpl
+    def on_post_tool_use_failure(
+        self,
+        session_id: str,
+        tool: str,
+        tool_input: dict[str, Any],
+        error: str,
+        retries: int,
+    ) -> None:
+        self._run_command(
+            "on_post_tool_use_failure",
+            session_id=session_id,
+            tool=tool,
+            tool_input=tool_input,
+            error=error,
+            retries=retries,
+        )
+
+    @hookimpl
+    def on_notification(self, session_id: str, level: str, message: str) -> None:
+        self._run_command("on_notification", session_id=session_id, level=level, message=message)
+
+    @hookimpl
+    def on_user_prompt_submit(self, session_id: str, prompt: str) -> None:
+        self._run_command("on_user_prompt_submit", session_id=session_id, prompt=prompt)
+
+    @hookimpl
+    def on_session_start(self, session_id: str, role: str, task_id: str) -> None:
+        self._run_command("on_session_start", session_id=session_id, role=role, task_id=task_id)
+
+    @hookimpl
+    def on_session_end(self, session_id: str, role: str, reason: str) -> None:
+        self._run_command("on_session_end", session_id=session_id, role=role, reason=reason)
+
+    @hookimpl
+    def on_stop(self, session_id: str, reason: str, signal: str = "SIGTERM") -> None:
+        self._run_command("on_stop", session_id=session_id, reason=reason, signal=signal)
+
+    @hookimpl
+    def on_stop_failure(self, session_id: str, reason: str, error: str) -> None:
+        self._run_command("on_stop_failure", session_id=session_id, reason=reason, error=error)
+
+    @hookimpl
+    def on_subagent_start(self, session_id: str, sub_id: str, role: str) -> None:
+        self._run_command("on_subagent_start", session_id=session_id, sub_id=sub_id, role=role)
+
+    @hookimpl
+    def on_subagent_stop(self, session_id: str, sub_id: str, outcome: str) -> None:
+        self._run_command("on_subagent_stop", session_id=session_id, sub_id=sub_id, outcome=outcome)
+
+    @hookimpl
+    def on_permission_request(self, session_id: str, tool: str, mode: str) -> None:
+        self._run_command("on_permission_request", session_id=session_id, tool=tool, mode=mode)
+
+    @hookimpl
+    def on_setup(self, session_id: str, role: str, workdir: str) -> None:
+        self._run_command("on_setup", session_id=session_id, role=role, workdir=workdir)
+
+    @hookimpl
+    def on_teammate_idle(self, session_id: str, role: str, queue_depth: int) -> None:
+        self._run_command("on_teammate_idle", session_id=session_id, role=role, queue_depth=queue_depth)
+
+    @hookimpl
+    def on_elicitation(self, session_id: str, prompt: str, options: list[str]) -> None:
+        self._run_command("on_elicitation", session_id=session_id, prompt=prompt, options=options)
+
+    @hookimpl
+    def on_elicitation_result(self, session_id: str, prompt: str, response: str) -> None:
+        self._run_command("on_elicitation_result", session_id=session_id, prompt=prompt, response=response)
+
+    @hookimpl
+    def on_config_change(self, key: str, old_value: str, new_value: str) -> None:
+        self._run_command("on_config_change", key=key, old_value=old_value, new_value=new_value)
+
+    @hookimpl
+    def on_worktree_create(self, session_id: str, worktree_path: str, branch: str) -> None:
+        self._run_command(
+            "on_worktree_create",
+            session_id=session_id,
+            worktree_path=worktree_path,
+            branch=branch,
+        )
+
+    @hookimpl
+    def on_worktree_remove(self, session_id: str, worktree_path: str) -> None:
+        self._run_command("on_worktree_remove", session_id=session_id, worktree_path=worktree_path)
+
+    @hookimpl
+    def on_instructions_loaded(self, session_id: str, role: str, source_paths: list[str]) -> None:
+        self._run_command(
+            "on_instructions_loaded",
+            session_id=session_id,
+            role=role,
+            source_paths=source_paths,
+        )
+
+    @hookimpl
+    def on_cwd_changed(self, session_id: str, old_cwd: str, new_cwd: str) -> None:
+        self._run_command("on_cwd_changed", session_id=session_id, old_cwd=old_cwd, new_cwd=new_cwd)
+
+    @hookimpl
+    def on_file_changed(self, session_id: str, file_path: str, change_type: str) -> None:
+        self._run_command(
+            "on_file_changed",
+            session_id=session_id,
+            file_path=file_path,
+            change_type=change_type,
+        )
+
 
 class PluginManager:
     """Discovers, loads, and invokes Bernstein plugins.
@@ -296,6 +435,174 @@ class PluginManager:
     def fire_tool_error(self, session_id: str, tool: str, error: str, batch_id: str | None = None) -> None:
         """Fire on_tool_error hook."""
         self._safe_call("on_tool_error", session_id=session_id, tool=tool, error=error, batch_id=batch_id)
+
+    # --- Fire methods for T681 lifecycle event hooks ---
+
+    def fire_pre_tool_use(
+        self,
+        session_id: str,
+        tool: str,
+        tool_input: dict[str, Any],
+    ) -> str | None:
+        """Fire on_pre_tool_use hook — can block via HookBlockingError (T681).
+
+        Returns:
+            Optional denial hint from a firstresult hook, or None.
+        """
+        try:
+            return self._pm.hook.on_pre_tool_use(
+                session_id=session_id,
+                tool=tool,
+                tool_input=tool_input,
+            )
+        except HookBlockingError:
+            raise
+        except Exception as exc:
+            log.warning("on_pre_tool_use hook failed: %s", exc)
+            return None
+
+    def fire_post_tool_use(
+        self,
+        session_id: str,
+        tool: str,
+        tool_input: dict[str, Any],
+        result: str,
+        success: bool,
+    ) -> None:
+        """Fire on_post_tool_use hook after tool execution (T681)."""
+        self._safe_call(
+            "on_post_tool_use",
+            session_id=session_id,
+            tool=tool,
+            tool_input=tool_input,
+            result=result,
+            success=success,
+        )
+
+    def fire_post_tool_use_failure(
+        self,
+        session_id: str,
+        tool: str,
+        tool_input: dict[str, Any],
+        error: str,
+        retries: int,
+    ) -> None:
+        """Fire on_post_tool_use_failure when a tool fails after retries (T681)."""
+        self._safe_call(
+            "on_post_tool_use_failure",
+            session_id=session_id,
+            tool=tool,
+            tool_input=tool_input,
+            error=error,
+            retries=retries,
+        )
+
+    def fire_notification(self, session_id: str, level: str, message: str) -> None:
+        """Fire on_notification hook for operator-visible events (T681)."""
+        self._safe_call("on_notification", session_id=session_id, level=level, message=message)
+
+    def fire_user_prompt_submit(self, session_id: str, prompt: str) -> None:
+        """Fire on_user_prompt_submit hook (T681)."""
+        self._safe_call("on_user_prompt_submit", session_id=session_id, prompt=prompt)
+
+    def fire_session_start(self, session_id: str, role: str, task_id: str) -> None:
+        """Fire on_session_start hook when an agent session begins (T681)."""
+        self._safe_call("on_session_start", session_id=session_id, role=role, task_id=task_id)
+
+    def fire_session_end(self, session_id: str, role: str, reason: str) -> None:
+        """Fire on_session_end hook when an agent session terminates (T681)."""
+        self._safe_call("on_session_end", session_id=session_id, role=role, reason=reason)
+
+    def fire_stop(self, session_id: str, reason: str, signal: str = "SIGTERM") -> None:
+        """Fire on_stop hook when a stop/shutdown is initiated (T681)."""
+        self._safe_call("on_stop", session_id=session_id, reason=reason, signal=signal)
+
+    def fire_stop_failure(self, session_id: str, reason: str, error: str) -> None:
+        """Fire on_stop_failure hook when a stop attempt fails (T681)."""
+        self._safe_call("on_stop_failure", session_id=session_id, reason=reason, error=error)
+
+    def fire_subagent_start(self, session_id: str, sub_id: str, role: str) -> None:
+        """Fire on_subagent_start hook when spawning a sub-agent (T681)."""
+        self._safe_call("on_subagent_start", session_id=session_id, sub_id=sub_id, role=role)
+
+    def fire_subagent_stop(self, session_id: str, sub_id: str, outcome: str) -> None:
+        """Fire on_subagent_stop hook when a sub-agent ends (T681)."""
+        self._safe_call("on_subagent_stop", session_id=session_id, sub_id=sub_id, outcome=outcome)
+
+    def fire_permission_request(self, session_id: str, tool: str, mode: str) -> None:
+        """Fire on_permission_request hook before permission resolution (T681)."""
+        self._safe_call("on_permission_request", session_id=session_id, tool=tool, mode=mode)
+
+    def fire_setup(self, session_id: str, role: str, workdir: str) -> None:
+        """Fire on_setup hook during workspace/worktree setup (T681)."""
+        self._safe_call("on_setup", session_id=session_id, role=role, workdir=workdir)
+
+    def fire_teammate_idle(self, session_id: str, role: str, queue_depth: int) -> None:
+        """Fire on_teammate_idle hook when an agent has no more work (T681)."""
+        self._safe_call("on_teammate_idle", session_id=session_id, role=role, queue_depth=queue_depth)
+
+    def fire_elicitation(self, session_id: str, prompt: str, options: list[str]) -> None:
+        """Fire on_elicitation hook when an LLM requests human input (T681)."""
+        self._safe_call("on_elicitation", session_id=session_id, prompt=prompt, options=options)
+
+    def fire_elicitation_result(self, session_id: str, prompt: str, response: str) -> None:
+        """Fire on_elicitation_result after human input is provided (T681)."""
+        self._safe_call("on_elicitation_result", session_id=session_id, prompt=prompt, response=response)
+
+    def fire_config_change(self, key: str, old_value: str, new_value: str) -> None:
+        """Fire on_config_change hook when a runtime config value changes (T681)."""
+        self._safe_call("on_config_change", key=key, old_value=old_value, new_value=new_value)
+
+    def fire_worktree_create(
+        self,
+        session_id: str,
+        worktree_path: str,
+        branch: str,
+    ) -> None:
+        """Fire on_worktree_create hook when a new worktree is created (T681)."""
+        self._safe_call(
+            "on_worktree_create",
+            session_id=session_id,
+            worktree_path=worktree_path,
+            branch=branch,
+        )
+
+    def fire_worktree_remove(self, session_id: str, worktree_path: str) -> None:
+        """Fire on_worktree_remove hook when a worktree is cleaned up (T681)."""
+        self._safe_call("on_worktree_remove", session_id=session_id, worktree_path=worktree_path)
+
+    def fire_instructions_loaded(
+        self,
+        session_id: str,
+        role: str,
+        source_paths: list[str],
+    ) -> None:
+        """Fire on_instructions_loaded hook after instruction files are read (T681)."""
+        self._safe_call(
+            "on_instructions_loaded",
+            session_id=session_id,
+            role=role,
+            source_paths=source_paths,
+        )
+
+    def fire_cwd_changed(self, session_id: str, old_cwd: str, new_cwd: str) -> None:
+        """Fire on_cwd_changed hook when the agent's working directory changes (T681)."""
+        self._safe_call("on_cwd_changed", session_id=session_id, old_cwd=old_cwd, new_cwd=new_cwd)
+
+    def fire_file_changed(self, session_id: str, file_path: str, change_type: str) -> None:
+        """Fire on_file_changed hook when a worktree file changes (T681).
+
+        Args:
+            session_id: Agent session identifier.
+            file_path: Path to the changed file.
+            change_type: ``"created"``, ``"modified"``, or ``"deleted"``.
+        """
+        self._safe_call(
+            "on_file_changed",
+            session_id=session_id,
+            file_path=file_path,
+            change_type=change_type,
+        )
 
     def discover_entry_points(self) -> None:
         """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""
