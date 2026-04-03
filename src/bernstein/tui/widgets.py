@@ -841,11 +841,7 @@ def render_model_tier_table() -> list[tuple[str, str]]:
     for entry in entries:
         model_label = f"{entry.model} (${entry.total_usd_per_1m:.2f}/1M blended)"
         cache_detail = entry.cache_info
-        detail = (
-            f"input ${entry.input_usd_per_1m:.2f}/M, "
-            f"output ${entry.output_usd_per_1m:.2f}/M; "
-            f"cache {cache_detail}"
-        )
+        detail = f"input ${entry.input_usd_per_1m:.2f}/M, output ${entry.output_usd_per_1m:.2f}/M; cache {cache_detail}"
         rows.append((model_label, detail))
     return rows
 
@@ -857,8 +853,14 @@ def render_model_tier_table() -> list[tuple[str, str]]:
 # Coordinator mode role sets
 ROLE_COORDINATOR = {"coordinator", "manager", "lead"}
 ROLE_WORKER = {
-    "backend", "frontend", "qa", "security", "devops", "worker",
-    "backend-engineer", "frontend-engineer",
+    "backend",
+    "frontend",
+    "qa",
+    "security",
+    "devops",
+    "worker",
+    "backend-engineer",
+    "frontend-engineer",
 }
 
 

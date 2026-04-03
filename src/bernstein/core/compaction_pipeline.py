@@ -13,10 +13,12 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Callable
+
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +146,7 @@ def summarize_context(
         # Deterministic structural summary for testing
         lines = text.splitlines()
         headers = [line for line in lines if line.startswith("#")]
-        return (
-            f"[context compacted: {len(lines)} lines → "
-            f"{len(headers)} headers; see correlation log for detail]"
-        )
+        return f"[context compacted: {len(lines)} lines → {len(headers)} headers; see correlation log for detail]"
 
     # With a real LLM, call it.  The caller passes an async callable.
     # This module doesn't block on IO — the orchestrator awaits it.
@@ -206,7 +205,10 @@ class CompactionPipeline:
 
         # Stage 1: Pre-compact hooks
         pre_hook_ok = self._run_pre_compact_hooks(
-            session_id, working_text, tokens_before, reason,
+            session_id,
+            working_text,
+            tokens_before,
+            reason,
         )
 
         # Stage 2: Strip media
