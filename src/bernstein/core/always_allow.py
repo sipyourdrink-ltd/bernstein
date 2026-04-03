@@ -116,21 +116,19 @@ def _load_entries(path: Path) -> list[dict[str, object]]:
         logger.warning("Failed to load YAML from %s: %s", path, exc)
         return []
 
-    items: object
     if isinstance(raw, dict) and "always_allow" in raw:
         mapping = cast("dict[str, object]", raw)
-        items = mapping.get("always_allow", [])
+        aa_section = mapping.get("always_allow", [])
+        items: dict[str, object] | list[object] | None = cast("dict[str, object] | list[object] | None", aa_section)
+    elif isinstance(raw, (dict, list)):
+        items = cast("dict[str, object] | list[object]", raw)
     else:
-        items = raw
+        items = None
 
     if isinstance(items, dict):
-        return [cast("dict[str, object]", items)]
+        return [items]
     if isinstance(items, list):
-        return [
-            cast("dict[str, object]", item)
-            for item in cast("list[object]", items)
-            if isinstance(item, dict)
-        ]
+        return [cast("dict[str, object]", item) for item in items if isinstance(item, dict)]
     return []
 
 
@@ -154,9 +152,7 @@ def load_always_allow_rules(workdir: Path) -> AlwaysAllowEngine:
         _cp_val = entry.get("content_patterns")
         if isinstance(_cp_val, list):
             content_patterns = [
-                str(cp).strip()
-                for cp in cast("list[object]", _cp_val)
-                if isinstance(cp, (str, int, float))
+                str(cp).strip() for cp in cast("list[object]", _cp_val) if isinstance(cp, (str, int, float))
             ]
         else:
             content_patterns = []
