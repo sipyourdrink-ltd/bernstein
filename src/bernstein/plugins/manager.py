@@ -434,8 +434,7 @@ class PluginManager:
             return True
         if not is_workspace_trusted(self._workdir):
             log.warning(
-                "Hook execution gated: workspace is not trusted (%s). "
-                "Run the trust command to enable hook execution.",
+                "Hook execution gated: workspace is not trusted (%s). Run the trust command to enable hook execution.",
                 self._workdir,
             )
             return False
