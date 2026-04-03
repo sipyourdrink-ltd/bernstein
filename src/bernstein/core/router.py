@@ -1404,8 +1404,6 @@ def select_round_robin_agent(
 # Max output tokens escalation signal (T565)
 # ---------------------------------------------------------------------------
 
-from dataclasses import dataclass, field
-
 
 @dataclass
 class MaxTokensEscalation:
@@ -1498,9 +1496,9 @@ def signal_max_tokens_escalation(
 
 def consider_cache_pricing_in_routing(
     provider: str, model: str, estimated_tokens: int, task_complexity: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Consider cache pricing tiers when routing tasks (T569)."""
-    from bernstein.core.cost import get_cache_pricing_tier
+    from bernstein.core.cost import calculate_cache_operation_savings, get_cache_pricing_tier
 
     tier = get_cache_pricing_tier(provider, model)
     if not tier:

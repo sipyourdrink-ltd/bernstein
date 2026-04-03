@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import re as _re
+import subprocess as _subprocess
 from typing import TYPE_CHECKING, Any
 
 from bernstein.core.context_recommendations import RecommendationEngine
@@ -595,9 +597,6 @@ def inject_git_safety_protocol(prompt: str, session_id: str = "") -> str:
 # ---------------------------------------------------------------------------
 # Shell command embedding in role templates (T588)
 # ---------------------------------------------------------------------------
-
-import re as _re
-import subprocess as _subprocess
 
 _SHELL_CMD_PATTERN = _re.compile(r"!`([^`]+)`")
 

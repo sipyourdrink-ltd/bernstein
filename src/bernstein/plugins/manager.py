@@ -196,6 +196,22 @@ class CommandHook:
         self._run_command("on_evolve_proposal", proposal_id=proposal_id, title=title, verdict=verdict)
 
     @hookimpl
+    def on_pre_task_create(
+        self,
+        task_id: str,
+        role: str,
+        title: str,
+        description: str,
+    ) -> None:
+        self._run_command(
+            "on_pre_task_create",
+            task_id=task_id,
+            role=role,
+            title=title,
+            description=description,
+        )
+
+    @hookimpl
     def on_permission_denied(self, task_id: str, reason: str, tool: str, args: dict[str, Any]) -> str | None:
         # Command hooks can't easily return a value to firstresult=True
         # because the CommandHook wrapper currently returns None.
@@ -231,6 +247,26 @@ class PluginManager:
 
     def fire_task_created(self, task_id: str, role: str, title: str) -> None:
         self._safe_call("on_task_created", task_id=task_id, role=role, title=title)
+
+    def fire_pre_task_create(self, task_id: str, role: str, title: str, description: str) -> None:
+        """Fire pre-task-create hooks that can block the operation (T719).
+
+        Args:
+            task_id: Unique task identifier (generated before creation).
+            role: Agent role assigned to the task.
+            title: Human-readable task title.
+            description: Task description text.
+
+        Raises:
+            HookBlockingError: If a hook exits with code 2, blocking creation.
+        """
+        self._safe_call(
+            "on_pre_task_create",
+            task_id=task_id,
+            role=role,
+            title=title,
+            description=description,
+        )
 
     def fire_task_completed(self, task_id: str, role: str, result_summary: str) -> None:
         self._safe_call("on_task_completed", task_id=task_id, role=role, result_summary=result_summary)

@@ -144,7 +144,7 @@ def parse_notebook(path: Path) -> NotebookSnapshot | None:
 
     for i, cell_data in enumerate(raw_cells):
         cell_type = cell_data.get("cell_type", "code")
-        source_lines = cell_data.get("source", [])
+        source_lines: list[Any] | str = cell_data.get("source", [])
 
         # Source can be a list of lines or a single string
         source = "".join(source_lines) if isinstance(source_lines, list) else str(source_lines)
@@ -191,7 +191,7 @@ def parse_notebook_from_dict(data: dict[str, Any], path: str = "") -> NotebookSn
 
     for i, cell_data in enumerate(raw_cells):
         cell_type = cell_data.get("cell_type", "code")
-        source_lines = cell_data.get("source", [])
+        source_lines: list[Any] | str = cell_data.get("source", [])
 
         source = "".join(source_lines) if isinstance(source_lines, list) else str(source_lines)
 

@@ -68,7 +68,7 @@ from bernstein.core.server import (
 from bernstein.core.task_store import ArchiveRecord, SnapshotEntry
 from bernstein.core.telemetry import start_span
 from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
-from bernstein.plugins.manager import get_plugin_manager
+from bernstein.plugins.manager import HookBlockingError, get_plugin_manager
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -169,6 +169,18 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
     )
 
     with start_span("task.create", {"task.role": effective_body.role, "task.title": effective_body.title}):
+        # Pre-create hook: may block via HookBlockingError (T719)
+        try:
+            pm = get_plugin_manager()
+            pm.fire_pre_task_create(
+                task_id="",  # ID not yet assigned — use empty string
+                role=effective_body.role,
+                title=effective_body.title,
+                description=effective_body.description,
+            )
+        except HookBlockingError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         task = await store.create(effective_body)
         append_assessment_log(
             request.app.state.sdd_dir,

@@ -630,7 +630,7 @@ TICKETS: list[dict] = [
             ["Detect fork mode in skill frontmatter", "Run skill as forked agent with isolated context", "Test: forked skill runs in separate agent process"],
             "tools/SkillTool/", "plugin-skill-ecosystem"),
     _ticket(791, 3, 3, "plugin-migration-path", "Create migration path from built-in to plugin",
-            "Built-in features should be migrateable to plugins.",
+            "Built-in features should be migratable to plugins.",
             ["Create createMovedToPluginFeature() helper", "Show redirect message when old feature used", "Test: moved feature redirects to plugin"],
             "commands/security-review.ts", "plugin-skill-ecosystem"),
     _ticket(792, 2, 1, "skill-arg-substitution", "Support argument substitution in skill prompts",

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,7 +51,7 @@ class StyleConfig:
     """Container for all loaded output styles."""
 
     active_style: OutputStyle | None = None
-    available: list[OutputStyle] = field(default_factory=list)
+    available: list[OutputStyle] = field(default_factory=lambda: [])
 
     def get_prompt(self) -> str:
         """Return the combined style prompt, or empty string if no active style."""
@@ -67,7 +67,7 @@ class StyleConfig:
 _DEFAULT_FILES = ["compact.md", "terse.md", "detailed.md"]
 
 
-def _parse_frontmatter(content: str) -> tuple[dict[str, object], str]:
+def _parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     """Split YAML frontmatter from markdown body.
 
     Args:
@@ -171,7 +171,7 @@ def load_output_styles(project_dir: Path) -> StyleConfig:
         try:
             data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
             if isinstance(data, dict) and "output_style" in data:
-                preferred = str(data["output_style"]).lower()
+                preferred: str = str(data["output_style"]).lower()
                 for s in config.available:
                     if s.name.lower() == preferred:
                         config.active_style = s

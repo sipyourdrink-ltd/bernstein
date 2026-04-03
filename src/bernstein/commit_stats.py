@@ -35,7 +35,7 @@ class RoleStats:
 class CommitStatsResult:
     """Top-level result of a commit-stats query."""
 
-    roles: dict[str, RoleStats] = field(default_factory=dict)
+    roles: dict[str, RoleStats] = field(default_factory=lambda: {})
     total_commits: int = 0
     total_lines_added: int = 0
     total_lines_deleted: int = 0

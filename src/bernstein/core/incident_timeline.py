@@ -40,7 +40,7 @@ class TimelineEvent:
     ]
     source: str  # e.g. "metrics", "traces", "incident", "slo"
     summary: str
-    details: dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=lambda: {})
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -81,7 +81,7 @@ def _load_incident_json(incident_id: str, runtime_dir: Path) -> dict[str, Any] |
 def cast_to_dict(obj: Any) -> dict[str, Any]:
     """Cast an object to dict, returning empty dict on failure."""
     if isinstance(obj, dict):
-        return obj
+        return dict(obj)
     return {}
 
 
@@ -335,7 +335,7 @@ def list_incidents(workdir: Path) -> list[dict[str, Any]]:
         if path.stem.endswith("-timeline"):
             continue
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 incidents.append(
                     {

@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -856,7 +856,7 @@ class MetricsCollector:
             from bernstein.plugins.manager import get_plugin_manager
 
             pm = get_plugin_manager()
-            pm.hook.on_metric_record(metric_type=metric_type, value=value, labels=labels)
+            pm.hook.on_metric_record(metric_type=metric_type, value=value, labels=labels)  # type: ignore[union-attr]
         except Exception:
             logger.debug("Plugin hook on_metric_record failed (swallowed)", exc_info=True)
 
@@ -1197,8 +1197,8 @@ class CacheBaselineDrop:
     current_value: float
     drop_percentage: float
     threshold: float
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    metadata: dict[str, Any] = field(default_factory=dict)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
+    metadata: dict[str, Any] = field(default_factory=lambda: {})
 
 
 class CacheBaselineCollector:

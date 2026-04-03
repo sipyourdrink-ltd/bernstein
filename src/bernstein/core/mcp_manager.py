@@ -14,7 +14,10 @@ import logging
 import subprocess
 import time
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -681,11 +684,6 @@ def refresh_oauth_token(
 # ---------------------------------------------------------------------------
 # OAuth refresh on 401/403 errors (T568)
 # ---------------------------------------------------------------------------
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 class OAuthRefreshHandler:

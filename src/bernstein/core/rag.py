@@ -15,8 +15,10 @@ import ast
 import logging
 import os
 import sqlite3
+import threading as _threading
 import time
 from dataclasses import dataclass
+from enum import Enum as _Enum
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -508,9 +510,6 @@ def build_or_update_index(project_root: Path) -> CodebaseIndexer:
 # ---------------------------------------------------------------------------
 # Query guard concurrency (T587)
 # ---------------------------------------------------------------------------
-
-import threading as _threading
-from enum import Enum as _Enum
 
 
 class QueryGuardState(_Enum):

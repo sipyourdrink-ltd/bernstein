@@ -9,12 +9,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import signal
 import threading
 import time
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
 
     from starlette.responses import Response as StarletteResponse
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -1200,8 +1203,6 @@ def __getattr__(name: str) -> Any:
 # ---------------------------------------------------------------------------
 # Task notification protocol for agent status reports (T574)
 # ---------------------------------------------------------------------------
-
-from dataclasses import dataclass, field
 
 
 @dataclass
