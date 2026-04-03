@@ -16,6 +16,7 @@ from typing import Any, cast
 
 import pluggy
 
+from bernstein.core.workspace import is_workspace_trusted
 from bernstein.plugins import hookimpl
 from bernstein.plugins.hookspecs import BernsteinSpec
 
@@ -218,10 +219,11 @@ class PluginManager:
     and provides a thread pool for background hooks.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, workdir: Path | None = None) -> None:
         self._pm = pluggy.PluginManager("bernstein")
         self._pm.add_hookspecs(BernsteinSpec)
         self._registered_names: list[str] = []
+        self._workdir = workdir
         # Use a small pool for background hooks.
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="BernsteinPluginHook")
         # Shared dedup registry for hook scripts across all CommandHook instances (T455).
@@ -247,6 +249,8 @@ class PluginManager:
 
     def fire_permission_denied(self, task_id: str, reason: str, tool: str, args: dict[str, Any]) -> str | None:
         """Fire on_permission_denied hook and return first non-None hint."""
+        if not self._check_workspace_trust():
+            return None
         try:
             return self._pm.hook.on_permission_denied(task_id=task_id, reason=reason, tool=tool, args=args)
         except Exception as exc:
@@ -386,6 +390,9 @@ class PluginManager:
     def _safe_call(self, hook_name: str, **kwargs: Any) -> None:
         """Invoke a hook, swallowing all exceptions from individual plugins.
 
+        If the workspace is not trusted, all hooks are silently skipped with
+        a warning log (T456).
+
         If the hook is marked as ``background=True`` in its specification,
         it will be scheduled for asynchronous execution in a thread pool.
 
@@ -393,6 +400,9 @@ class PluginManager:
             hook_name: Name of the hook attribute on ``self._pm.hook``.
             **kwargs: Arguments forwarded to the hook.
         """
+        if not self._check_workspace_trust():
+            return
+
         try:
             hook_caller = getattr(self._pm.hook, hook_name)
             spec = getattr(hook_caller, "spec", None)
@@ -410,6 +420,26 @@ class PluginManager:
             raise
         except Exception as exc:
             log.warning("Plugin manager failed to dispatch hook %r: %s", hook_name, exc)
+
+    def _check_workspace_trust(self) -> bool:
+        """Check whether the workspace is trusted for hook execution (T456).
+
+        Returns True if hooks are allowed to run, False if they should be
+        skipped because trust has not been granted.
+
+        Returns:
+            True when hooks are allowed, False when gated.
+        """
+        if self._workdir is None or self._workdir == Path.cwd():
+            return True
+        if not is_workspace_trusted(self._workdir):
+            log.warning(
+                "Hook execution gated: workspace is not trusted (%s). "
+                "Run the trust command to enable hook execution.",
+                self._workdir,
+            )
+            return False
+        return True
 
     def _invoke_hook(self, name: str, hook_caller: Any, is_background: bool, **kwargs: Any) -> None:
         """Actually execute the hook and log timing + outcome."""
@@ -459,6 +489,6 @@ def get_plugin_manager(workdir: Path | None = None, reload: bool = False) -> Plu
     """
     global _manager
     if _manager is None or reload:
-        _manager = PluginManager()
+        _manager = PluginManager(workdir=workdir)
         _manager.load_from_workdir(workdir)
     return _manager

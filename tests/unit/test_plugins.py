@@ -344,6 +344,88 @@ def test_get_plugin_manager_reload() -> None:
     assert pm1 is not pm2
 
 
+class TestWorkspaceTrustGating:
+    """Tests for workspace trust gating of hook execution (T456)."""
+
+    def test_hooks_run_when_trusted(self, tmp_path: Path) -> None:
+        """Hooks execute normally when workspace trust is granted."""
+        import json as _json
+
+        # Grant trust
+        trust_dir = tmp_path / ".sdd" / "runtime"
+        trust_dir.mkdir(parents=True)
+        (trust_dir / "workspace_trust.json").write_text(
+            _json.dumps({"trusted": True, "granted_by": "test", "granted_at": 0}),
+            encoding="utf-8",
+        )
+
+        pm = PluginManager(workdir=tmp_path)
+        plugin = _CollectorPlugin()
+        pm.register(plugin, name="c")
+
+        pm.fire_task_created(task_id="t1", role="backend", title="Build auth")
+
+        assert len(plugin.calls) == 1
+        assert plugin.calls[0][0] == "on_task_created"
+
+    def test_hooks_skipped_when_untrusted(self, tmp_path: Path) -> None:
+        """Hooks are no-ops when workspace is not trusted."""
+        # No trust file — workspace is untrusted
+        pm = PluginManager(workdir=tmp_path)
+        plugin = _CollectorPlugin()
+        pm.register(plugin, name="c")
+
+        pm.fire_task_created(task_id="t1", role="backend", title="Build auth")
+
+        # Must not have fired any hooks
+        assert len(plugin.calls) == 0
+
+    def test_hooks_run_without_workdir(self) -> None:
+        """Hooks execute when no workdir is set (defaults to trusting)."""
+        pm = PluginManager()
+        plugin = _CollectorPlugin()
+        pm.register(plugin, name="c")
+
+        pm.fire_task_completed(task_id="t2", role="qa", result_summary="ok")
+
+        assert len(plugin.calls) == 1
+
+    def test_fire_permission_denied_gated(self, tmp_path: Path) -> None:
+        """fire_permission_denied returns None when trust is gated."""
+        pm = PluginManager(workdir=tmp_path)  # untrusted
+
+        result = pm.fire_permission_denied(
+            task_id="t1", reason="blocked", tool="shell", args={"cmd": {"type": "#file/edit"}},
+        )
+        assert result is None
+
+    def test_fire_permission_denied_trusted(self, tmp_path: Path) -> None:
+        """fire_permission_denied runs hooks when trusted."""
+        import json as _json
+
+        trust_dir = tmp_path / ".sdd" / "runtime"
+        trust_dir.mkdir(parents=True)
+        (trust_dir / "workspace_trust.json").write_text(
+            _json.dumps({"trusted": True, "granted_by": "test", "granted_at": 0}),
+            encoding="utf-8",
+        )
+
+        class _HintPlugin:
+            @hookimpl
+            def on_permission_denied(
+                self, task_id: str, reason: str, tool: str, args: dict[str, Any]
+            ) -> str:
+                return "use safe command"
+
+        pm = PluginManager(workdir=tmp_path)
+        pm.register(_HintPlugin(), name="hint")
+
+        result = pm.fire_permission_denied(
+            task_id="t1", reason="blocked", tool="shell", args={"cmd": "#file/edit"},
+        )
+        assert result == "use safe command"
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
