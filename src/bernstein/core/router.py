@@ -1489,45 +1489,39 @@ def signal_max_tokens_escalation(
         escalation_reason=escalation_reason,
         metadata=metadata,
     )
+
+
 # ---------------------------------------------------------------------------
 # Per-model cache read/write pricing tiers (T569)
 # ---------------------------------------------------------------------------
 
+
 def consider_cache_pricing_in_routing(
-    provider: str,
-    model: str,
-    estimated_tokens: int,
-    task_complexity: str
+    provider: str, model: str, estimated_tokens: int, task_complexity: str
 ) -> Dict[str, Any]:
     """Consider cache pricing tiers when routing tasks (T569)."""
     from bernstein.core.cost import get_cache_pricing_tier
-    
+
     tier = get_cache_pricing_tier(provider, model)
     if not tier:
-        return {
-            "cache_pricing_available": False,
-            "recommended_for_caching": False,
-            "estimated_savings_usd": 0.0
-        }
-    
+        return {"cache_pricing_available": False, "recommended_for_caching": False, "estimated_savings_usd": 0.0}
+
     # Calculate potential savings
-    estimated_savings = calculate_cache_operation_savings(
-        provider, model, estimated_tokens, "read"
-    )
-    
+    estimated_savings = calculate_cache_operation_savings(provider, model, estimated_tokens, "read")
+
     # Determine if this model is recommended for caching
     # Higher savings percentage and complex tasks benefit more from caching
     recommended = (
-        tier.savings_percentage >= 0.8 and  # At least 80% savings
-        estimated_tokens >= 1000 and  # At least 1k tokens
-        task_complexity in ["high", "medium"]  # Complex tasks
+        tier.savings_percentage >= 0.8  # At least 80% savings
+        and estimated_tokens >= 1000  # At least 1k tokens
+        and task_complexity in ["high", "medium"]  # Complex tasks
     )
-    
+
     return {
         "cache_pricing_available": True,
         "recommended_for_caching": recommended,
         "estimated_savings_usd": estimated_savings,
         "savings_percentage": tier.savings_percentage,
         "provider": provider,
-        "model": model
+        "model": model,
     }
