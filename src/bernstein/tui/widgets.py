@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+import json
+import time
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual.containers import Container, Vertical
@@ -1245,3 +1248,194 @@ class WaterfallWidget(Static):
         width = max(self.size.width - 4, 20)
         bar_w = max(width - 30, 20)
         return render_waterfall_batches(self._batches, bar_width=bar_w)
+
+
+# ---------------------------------------------------------------------------
+# Live tool execution observer (T405)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ToolObserverEntry:
+    """A single completed tool call event for the live observer.
+
+    Attributes:
+        tool_name: Name of the tool that was called.
+        session_id: Agent session that invoked the tool.
+        total_ms: Wall-clock execution time in milliseconds.
+        timestamp: Unix epoch when the call completed.
+        status: Completion status — always ``"done"`` for JSONL-sourced records.
+    """
+
+    tool_name: str
+    session_id: str
+    total_ms: float
+    timestamp: float
+    status: str = field(default="done")
+
+
+def read_new_tool_calls(
+    jsonl_path: Path,
+    file_pos: int = 0,
+    max_records: int = 50,
+) -> tuple[list[ToolObserverEntry], int]:
+    """Read new tool call records from a JSONL file since *file_pos*.
+
+    Performs an incremental read by seeking to *file_pos* and reading only
+    the bytes written since the last poll, so repeated calls are O(new data).
+
+    Args:
+        jsonl_path: Path to ``tool_timing.jsonl``.
+        file_pos: Byte offset from the last successful read (0 on first call).
+        max_records: Cap on how many new entries to return in a single call.
+
+    Returns:
+        A tuple of ``(new_entries, new_file_position)``.  When the file does
+        not exist or is unreadable, returns ``([], file_pos)`` unchanged.
+    """
+    if not jsonl_path.exists():
+        return [], file_pos
+
+    entries: list[ToolObserverEntry] = []
+    new_pos = file_pos
+
+    try:
+        with jsonl_path.open("rb") as f:
+            f.seek(file_pos)
+            for raw_line in f:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    data: dict[str, Any] = json.loads(line)
+                    entries.append(
+                        ToolObserverEntry(
+                            tool_name=str(data["tool_name"]),
+                            session_id=str(data.get("session_id", "")),
+                            total_ms=float(data.get("total_ms", 0.0)),
+                            timestamp=float(data.get("timestamp", 0.0)),
+                        )
+                    )
+                except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                    continue
+            new_pos = f.tell()
+    except OSError:
+        return [], file_pos
+
+    # Trim to cap so a single burst of records doesn't flood the buffer.
+    if len(entries) > max_records:
+        entries = entries[-max_records:]
+
+    return entries, new_pos
+
+
+def render_tool_observer(
+    entries: deque[ToolObserverEntry],
+    now: float | None = None,
+) -> Text:
+    """Render tool observer ring-buffer contents as Rich Text.
+
+    Entries are shown newest-first with tool name, duration, abbreviated
+    session ID, and age since completion.
+
+    Args:
+        entries: Ring buffer of :class:`ToolObserverEntry` (most recent last).
+        now: Reference timestamp for age computation; defaults to ``time.time()``.
+
+    Returns:
+        Rich :class:`~rich.text.Text` ready for a Textual ``Static`` widget.
+    """
+    if now is None:
+        now = time.time()
+
+    text = Text()
+    if not entries:
+        text.append("Waiting for tool calls\u2026", style="dim")
+        return text
+
+    # Header row
+    text.append(f"{'Tool':<22}{'Duration':>9}  {'Session':<10}  Age\n", style="bold dim")
+
+    for entry in reversed(entries):  # newest first
+        age_s = max(0.0, now - entry.timestamp)
+        age_str = f"{age_s:.0f}s" if age_s < 60 else f"{age_s / 60:.0f}m"
+
+        dur_ms = entry.total_ms
+        dur_str = f"{dur_ms / 1000:.2f}s" if dur_ms >= 1000 else f"{dur_ms:.0f}ms"
+
+        sess_short = entry.session_id[:10] if len(entry.session_id) > 10 else entry.session_id
+
+        # Color by duration thresholds
+        if dur_ms < 500:
+            dur_color = "green"
+        elif dur_ms < 3000:
+            dur_color = "yellow"
+        else:
+            dur_color = "red"
+
+        text.append("\u2713 ", style="green")
+        text.append(f"{entry.tool_name:<20}", style="cyan")
+        text.append(f"{dur_str:>9}", style=dur_color)
+        text.append(f"  {sess_short:<10}", style="dim")
+        text.append(f"  {age_str}", style="dim")
+        text.append("\n")
+
+    return text
+
+
+class ToolObserverWidget(Static):
+    """Live tool execution observer widget (T405).
+
+    Polls ``tool_timing.jsonl`` incrementally on each refresh and maintains
+    a ring buffer of the last :attr:`MAX_RECORDS` completed tool calls.
+    Display shows tool name, wall-clock duration (colour-coded by speed),
+    abbreviated session ID, and age since completion.
+
+    Usage::
+
+        widget = ToolObserverWidget(id="tool-observer")
+        # Call refresh_from_jsonl() periodically to pull new records.
+        widget.refresh_from_jsonl()
+    """
+
+    DEFAULT_CSS = """
+    ToolObserverWidget {
+        height: auto;
+        max-height: 60%;
+        border: tall $primary 30%;
+        padding: 0 1;
+    }
+    """
+
+    MAX_RECORDS: ClassVar[int] = 50
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialise the observer.
+
+        Args:
+            **kwargs: Forwarded to :class:`~textual.widgets.Static`.
+        """
+        super().__init__(**kwargs)
+        self._ring: deque[ToolObserverEntry] = deque(maxlen=self.MAX_RECORDS)
+        self._file_pos: int = 0
+        self._jsonl_path: Path = Path.cwd() / ".sdd" / "metrics" / "tool_timing.jsonl"
+
+    def refresh_from_jsonl(self, jsonl_path: Path | None = None) -> None:
+        """Pull new records from JSONL into the ring buffer and repaint.
+
+        This is O(new bytes) — safe to call on every poll cycle even under
+        high tool churn, because only newly appended lines are read.
+
+        Args:
+            jsonl_path: Override path to ``tool_timing.jsonl``; uses the
+                default ``.sdd/metrics/tool_timing.jsonl`` when ``None``.
+        """
+        path = jsonl_path or self._jsonl_path
+        new_entries, new_pos = read_new_tool_calls(path, self._file_pos, self.MAX_RECORDS)
+        self._file_pos = new_pos
+        self._ring.extend(new_entries)
+        self.refresh()
+
+    def render(self) -> Text:
+        """Render the current ring buffer as a Rich text table."""
+        return render_tool_observer(self._ring)

@@ -1,48 +1,34 @@
-%global pypi_name bernstein
-%global pypi_version 1.4.11
-
-Name:           python-%{pypi_name}
-Version:        %{pypi_version}
+Name:           bernstein
+Version:        1.4.11
 Release:        1%{?dist}
-Summary:        Declarative agent orchestration for engineering teams
-
+Summary:        Multi-agent orchestration for AI coding agents
 License:        Apache-2.0
-URL:            https://pypi.org/project/%{pypi_name}/
-Source0:        %{pypi_source %{pypi_name} %{pypi_version}}
-
+URL:            https://github.com/chernistry/bernstein
 BuildArch:      noarch
-BuildRequires:  python3-devel >= 3.12
-BuildRequires:  python3-pip
-BuildRequires:  python3-setuptools
-BuildRequires:  pyproject-rpm-macros
-
 Requires:       python3 >= 3.12
 
 %description
-Bernstein is a declarative multi-agent orchestration system for
-engineering teams. It spawns short-lived CLI coding agents, coordinates
-them via a file-based state directory, and works with any CLI agent
-(Claude Code, Codex, Gemini CLI, etc.).
-
-%prep
-%autosetup -n %{pypi_name}-%{pypi_version}
-
-%generate_buildrequires
-%pyproject_buildrequires
-
-%build
-%pyproject_wheel
+Orchestrate parallel AI coding agents. Runs Claude Code, Codex, Gemini CLI
+and others in parallel with git worktree isolation and quality gates.
 
 %install
-%pyproject_install
-%pyproject_save_files %{pypi_name}
+mkdir -p %{buildroot}%{_bindir}
+cat > %{buildroot}%{_bindir}/bernstein << 'WRAPPER'
+#!/bin/bash
+if command -v pipx &>/dev/null; then
+    exec pipx run bernstein "$@"
+elif command -v uvx &>/dev/null; then
+    exec uvx bernstein "$@"
+else
+    exec python3 -m pip install --user bernstein &>/dev/null && exec python3 -m bernstein "$@"
+fi
+WRAPPER
+chmod 755 %{buildroot}%{_bindir}/bernstein
 
-%files -f %{pyproject_files}
-%license LICENSE
-%doc README.md
+%files
 %{_bindir}/bernstein
-%{_bindir}/bernstein-worker
 
 %changelog
 * Thu Apr 03 2026 Alex Chernysh <alex@alexchernysh.com> - 1.4.11-1
-- Initial RPM package
+- Switch to wrapper RPM: installs via pipx/uvx instead of native Python RPM
+- Fixes COPR build failures from missing Fedora packages for Python deps
