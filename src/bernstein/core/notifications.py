@@ -1,10 +1,10 @@
 """Webhook notification system for Bernstein run events.
 
-Supports Slack Block Kit, Discord embeds, Telegram bot messages, and
-generic JSON webhooks. Each ``NotificationTarget`` subscribes to a list
-of event names; ``NotificationManager`` dispatches only to interested
-targets. All errors are swallowed so that notification failures never
-crash a run.
+Supports Slack Block Kit, Discord embeds, Telegram bot messages, PagerDuty
+incidents, and generic JSON webhooks. Each ``NotificationTarget`` subscribes
+to a list of event names; ``NotificationManager`` dispatches only to
+interested targets. All errors are swallowed so that notification failures
+never crash a run.
 
 Events
 ------
@@ -18,8 +18,12 @@ Events
     All tasks are done; includes cost and duration summary.
 ``budget.warning``
     Cumulative spend is approaching the configured budget cap.
+``budget.exhausted``
+    Cost budget fully exhausted — orchestration must stop.
 ``approval.needed``
     A task is blocked waiting for human review.
+``incident.critical``
+    Critical incident detected (high failure rate, agent crash loop, etc.).
 """
 
 from __future__ import annotations
@@ -52,8 +56,22 @@ NotificationEvent = Literal[
     "task.failed",
     "run.completed",
     "budget.warning",
+    "budget.exhausted",
     "approval.needed",
+    "incident.critical",
 ]
+
+# PagerDuty severity mapping per event
+_PD_SEVERITY: dict[str, str] = {
+    "run.started": "info",
+    "task.completed": "info",
+    "task.failed": "warning",
+    "run.completed": "info",
+    "budget.warning": "warning",
+    "budget.exhausted": "critical",
+    "approval.needed": "warning",
+    "incident.critical": "critical",
+}
 
 # Discord / Slack color codes per event
 _RED = 0xFF0000
@@ -67,7 +85,9 @@ _EVENT_COLOR: dict[str, int] = {
     "task.failed": _RED,
     "run.completed": _BLUE,
     "budget.warning": _ORANGE,
+    "budget.exhausted": _RED,
     "approval.needed": _ORANGE,
+    "incident.critical": _RED,
 }
 
 
@@ -81,18 +101,20 @@ class NotificationTarget:
     """A single notification destination.
 
     Attributes:
-        type: Formatter to use (``slack``, ``discord``, ``telegram``, ``webhook``, ``desktop``).
+        type: Formatter to use (``slack``, ``discord``, ``telegram``, ``webhook``, ``desktop``, ``pagerduty``).
         url: Webhook URL or Telegram API base URL.
         events: List of event names this target cares about.
         token: Telegram bot token (required when ``type == "telegram"``).
         chat_id: Telegram chat/channel ID (required when ``type == "telegram"``).
+        routing_key: PagerDuty integration / events API routing key.
     """
 
-    type: Literal["slack", "discord", "telegram", "webhook", "email", "desktop"]
+    type: Literal["slack", "discord", "telegram", "webhook", "email", "desktop", "pagerduty"]
     url: str
     events: list[str] = field(default_factory=list[str])
     token: str | None = None
     chat_id: str | None = None
+    routing_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -224,6 +246,31 @@ def format_webhook(payload: NotificationPayload) -> dict[str, Any]:
     }
 
 
+def format_pagerduty(payload: NotificationPayload, routing_key: str) -> dict[str, Any]:
+    """Format a payload as a PagerDuty Events API v2 incident.
+
+    Args:
+        payload: The notification payload.
+        routing_key: PagerDuty integration key.
+
+    Returns:
+        Dict suitable for POST-ing to ``https://events.pagerduty.com/v2/enqueue``.
+    """
+    return {
+        "routing_key": routing_key,
+        "event_action": "trigger",
+        "dedup_key": f"bernstein:{payload.event}",
+        "payload": {
+            "summary": f"{payload.title}: {payload.body}",
+            "source": "bernstein",
+            "severity": _PD_SEVERITY.get(payload.event, "info"),
+            "component": "orchestrator",
+            "custom_details": payload.metadata,
+        },
+    }
+
+
+
 # ---------------------------------------------------------------------------
 # Manager
 # ---------------------------------------------------------------------------
@@ -316,6 +363,29 @@ class NotificationManager:
 
             elif target.type == "desktop":
                 self._send_desktop_notification(payload)
+
+            elif target.type == "pagerduty":
+                if not target.routing_key:
+                    logger.warning(
+                        "PagerDuty notification skipped: no routing_key configured for event=%s",
+                        payload.event,
+                    )
+                    return
+                body = format_pagerduty(payload, target.routing_key)
+                resp = httpx.post(
+                    "https://events.pagerduty.com/v2/enqueue",
+                    json=body,
+                    timeout=10.0,
+                )
+                if resp.status_code < 300:
+                    logger.info("PagerDuty incident created: event=%s", payload.event)
+                else:
+                    logger.warning(
+                        "PagerDuty returned %d: event=%s body=%s",
+                        resp.status_code,
+                        payload.event,
+                        resp.text[:200],
+                    )
 
             else:  # generic webhook
                 body = format_webhook(payload)

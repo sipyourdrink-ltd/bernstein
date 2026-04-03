@@ -986,7 +986,7 @@ class Orchestrator:
                 _bs.budget_usd,
             )
             self._notify(
-                "budget.warning",
+                "budget.exhausted",
                 "Budget cap reached",
                 f"Spending cap of ${_bs.budget_usd:.2f} reached. "
                 f"${_bs.spent_usd:.2f} spent ({_bs.percentage_used * 100:.0f}%). "
@@ -1079,13 +1079,26 @@ class Orchestrator:
             # Check for incidents
             all_counted = self._slo_tracker.error_budget.total_tasks
             failed_counted = self._slo_tracker.error_budget.failed_tasks
-            self._incident_manager.check_for_incidents(
+            incident = self._incident_manager.check_for_incidents(
                 failed_task_count=failed_counted,
                 total_task_count=all_counted,
                 consecutive_failures=self._consecutive_failures,
                 error_budget_depleted=self._slo_tracker.error_budget.is_depleted,
             )
             self._incident_manager.save(self._workdir / ".sdd" / "runtime")
+
+            # Notify PagerDuty on SEV1/SEV2 incidents
+            if incident is not None and incident.severity in ("sev1", "sev2"):
+                self._notify(
+                    "incident.critical",
+                    f"Incident [{incident.severity.value.upper()}]: {incident.title}",
+                    incident.description,
+                    incident_id=incident.id,
+                    severity=incident.severity.value,
+                    failed_tasks=str(failed_counted),
+                    total_tasks=str(all_counted),
+                    consecutive_failures=str(self._consecutive_failures),
+                )
 
         # 4c. Check heartbeat-based staleness; send WAKEUP/SHUTDOWN as needed
         check_stale_agents(self)
