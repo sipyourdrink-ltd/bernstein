@@ -2,7 +2,7 @@
 
 This registry maps workflow specs in `docs/workflows/` to current implementation status in the codebase.
 
-Last updated: 2026-04-01
+Last updated: 2026-04-03
 
 ---
 
@@ -20,6 +20,7 @@ Last updated: 2026-04-01
 | Protocol compatibility matrix | `WORKFLOW-protocol-compatibility-matrix.md` | Partial | Docs and checks exist; matrix should not be treated as source-of-truth for runtime health |
 | Compatibility table generation | `WORKFLOW-compatibility-table-generation.md` | Partial | Documentation/support workflow |
 | Release breaking-change detection | `WORKFLOW-release-breaking-change-detection.md` | Partial | CI/release process workflow |
+| Context collapse with drain retry | `WORKFLOW-context-collapse-drain-retry.md` | Draft | T493 — bounded drain retry loop for spawn prompt context overflow |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
@@ -45,6 +46,14 @@ Trigger config path: `.sdd/config/triggers.yaml`
 - `src/bernstein/core/ci_log_parser.py`
 - `src/bernstein/github_app/mapper.py`
 - `src/bernstein/github_app/webhooks.py`
+
+### Context collapse and prompt budget workflows
+
+- `src/bernstein/core/context_collapse.py` — 3-stage collapse pipeline (truncate, drop, strip)
+- `src/bernstein/core/context_compression.py` — PromptCompressor fallback
+- `src/bernstein/core/spawn_prompt.py` — prompt assembly + collapse integration
+- `src/bernstein/core/tick_pipeline.py` — tick-level collapse entry point
+- `src/bernstein/core/auto_compact.py` — circuit breaker for runtime compaction
 
 ### Retry, scheduling, and lifecycle workflows
 
