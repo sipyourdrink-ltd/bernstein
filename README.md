@@ -6,8 +6,19 @@
   <img alt="Bernstein" src="docs/assets/logo-light.svg" width="340">
 </picture>
 
+<br>
+
 ### Declarative agent orchestration for engineering teams.
 ### One YAML. Multiple coding agents. Ship while you sleep.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tui.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/tui.svg">
+  <img alt="Bernstein TUI — live task dashboard" src="docs/assets/tui.svg" width="700">
+</picture>
+
+<p align="center"><strong>Web dashboard</strong> — real-time task monitoring, cost tracking, agent status</p>
+<p align="center"><img alt="Bernstein Web Dashboard" src="docs/assets/web-dashboard.png" width="700" style="border-radius:8px"></p>
 
 [![CI](https://github.com/chernistry/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/chernistry/bernstein/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/chernistry/bernstein/graph/badge.svg)](https://codecov.io/gh/chernistry/bernstein)
@@ -18,11 +29,12 @@
 [![COPR](https://img.shields.io/badge/copr-alexchernysh%2Fbernstein-blue)](https://copr.fedorainfracloud.org/coprs/alexchernysh/bernstein/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776ab?logo=python&logoColor=white)](https://python.org)
 [![License](https://img.shields.io/github/license/chernistry/bernstein)](LICENSE)
+[![Benchmark](https://img.shields.io/badge/benchmark-1.78x_faster-brightgreen)](docs/BENCHMARKS.md)
 [![MCP Compatible](https://img.shields.io/badge/MCP-1.0%2C%201.1-blue)](docs/compatibility.md)
 [![A2A Compatible](https://img.shields.io/badge/A2A-0.2%2C%200.3-blue)](docs/compatibility.md)
 [![Sponsor](https://img.shields.io/badge/sponsor-GitHub%20%2F%20OpenCollective-ff69b4?logo=github&logoColor=white)](https://github.com/sponsors/chernistry)
 
-[Documentation](docs/GETTING_STARTED.md) · [Architecture](docs/ARCHITECTURE.md) · [Benchmarks](docs/BENCHMARKS.md) · [Changelog](docs/CHANGELOG.md)
+[Homepage](https://alexchernysh.com/bernstein) | [Documentation](https://chernistry.github.io/bernstein/) | [Getting Started](docs/GETTING_STARTED.md) | [Known Limitations](docs/KNOWN_LIMITATIONS.md)
 
 </div>
 
@@ -30,7 +42,15 @@
 
 If you're running one agent at a time, you're leaving performance on the table. Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and commits the results. You come back to working code, passing tests, and a clean git history.
 
-> **Think of it as what Kubernetes did for containers, but for AI coding agents.** You declare a goal. The control plane decomposes it into tasks. Short-lived agents execute them in isolated git worktrees — like pods. A janitor verifies the output before anything lands.
+No framework to learn. No vendor lock-in. Works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Cursor](https://www.cursor.com), [Aider](https://aider.chat), [Amp](https://ampcode.com), [Roo Code](https://github.com/RooVetGit/Roo-Code), [Goose](https://block.github.io/goose/), [Qwen](https://github.com/QwenLM/Qwen-Agent), and any CLI tool that accepts a prompt flag.
+
+> **Think of it as what Kubernetes did for containers, but for AI coding agents.** You declare a goal. The control plane decomposes it into tasks. Short-lived agents execute them in isolated git worktrees -- like pods. A janitor verifies the output before anything lands.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/architecture.svg">
+  <img alt="Architecture" src="docs/assets/architecture.svg" width="650">
+</picture>
 
 ```bash
 pip install bernstein                    # any platform
@@ -90,7 +110,10 @@ Bernstein ships with adapters for 12 CLI agents. If you have any of these instal
 | [Qwen](https://github.com/QwenLM/Qwen-Agent) | qwen3-coder, qwen-max | `npm install -g qwen-code` |
 | [Roo Code](https://github.com/RooVetGit/Roo-Code) | opus 4.6, sonnet 4.6, gpt-4o | VS Code extension (headless CLI) |
 
-Prefer a different agent? Bring your own — the `generic` adapter accepts any CLI tool with a `--prompt-flag` interface. Mix models in the same run: cheap free-tier agents for boilerplate, heavy models for architecture.
+Prefer a different agent? Bring your own -- the `generic` adapter accepts any CLI tool with a `--prompt-flag` interface. Mix models in the same run: cheap free-tier agents for boilerplate, heavy models for architecture.
+
+> [!TIP]
+> Run `bernstein --headless` for CI pipelines -- no TUI, structured JSON output, non-zero exit on failure.
 
 ## Shipped features
 
@@ -197,11 +220,48 @@ bernstein github setup       # print setup instructions
 bernstein github test-webhook  # verify configuration
 ```
 
+## Agent catalogs
+
+Hire specialist agents from [Agency](https://github.com/msitarzewski/agency-agents) (100+ agents) or define your own:
+
+```yaml
+# bernstein.yaml
+catalogs:
+  - name: agency
+    type: agency
+    enabled: true
+```
+
+The spawner matches the best agent for each role using keyword-based role inference and affinity scoring.
+
+<details>
+<summary><strong>Watch: terminal demo (GIF)</strong></summary>
+
+<img alt="Bernstein terminal demo" src="docs/assets/loading.gif" width="700">
+</details>
+
+## How it compares
+
+|  | Bernstein | CrewAI | AutoGen | LangGraph | Ruflo |
+|---|---|---|---|---|---|
+| Orchestrator type | Deterministic code | LLM-driven | LLM-driven | Graph + LLM | LLM-driven |
+| Agent model | Any CLI agent | Python classes | Python agents | Nodes + edges | Claude only |
+| Parallel execution | Native | Sequential | Async | Graph-based | Sequential |
+| Git isolation | Worktrees | None | None | None | Branches |
+| Verification | Janitor + quality gates | None built-in | None built-in | Conditional edges | Self-check |
+| Cost tracking | Built-in | Manual | Manual | Manual | Built-in |
+| State persistence | File-based (.sdd/) | In-memory | In-memory | Checkpointer | Cloud |
+| Self-evolution | Built-in | No | No | No | Yes |
+| Plan files | YAML stages + steps | Python code | Python code | Python code | No |
+| Agent catalogs | Yes (Agency + custom) | No | No | No | No |
+
+**[Full comparison pages](docs/compare/README.md)** -- detailed feature matrices, benchmark data, and "when to use X instead" guides for Conductor, Crystal, Stoneforge, [GitHub Agent HQ](docs/compare/bernstein-vs-github-agent-hq.md), and single-agent workflows.
+
 ## Comparisons
 
-- [Bernstein vs. GitHub Agent HQ](docs/compare/bernstein-vs-github-agent-hq.md) — open-source alternative to GitHub's multi-agent system
-- [Full comparison index](docs/compare/README.md) — Conductor, Crystal, Stoneforge, single-agent baseline, and more
-- [Benchmark data](docs/BENCHMARKS.md) — 1.78× faster, 23% lower cost vs. single-agent baseline
+- [Bernstein vs. GitHub Agent HQ](docs/compare/bernstein-vs-github-agent-hq.md) -- open-source alternative to GitHub's multi-agent system
+- [Full comparison index](docs/compare/README.md) -- Conductor, Crystal, Stoneforge, single-agent baseline, and more
+- [Benchmark data](docs/BENCHMARKS.md) -- 1.78x faster, 23% lower cost vs. single-agent baseline
 
 ## Origin
 
@@ -241,6 +301,23 @@ Bernstein's roadmap is public. Near-term work focuses on adoption and the govern
 | **Enterprise** | Dynamic policy hot-reload without restart | 2026 |
 | **Adoption** | JetBrains IDE extension | 2026 |
 | **Governance** | Task-specific model constraints ("role=security must use opus-only") | 2026 |
+
+## Support Bernstein
+
+Bernstein is free and open-source. If it saves you time, consider sponsoring:
+
+- [GitHub Sponsors](https://github.com/sponsors/chernistry)
+- [Open Collective](https://opencollective.com/bernstein)
+
+All sponsorship proceeds fund development, infrastructure, and open-source sustainability.
+
+## Contributing
+
+PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and code style. [Open an issue](https://github.com/chernistry/bernstein/issues) for bugs and feature requests.
+
+## License
+
+[Apache License 2.0](LICENSE)
 
 ---
 
