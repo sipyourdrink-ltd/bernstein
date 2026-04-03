@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -52,6 +53,14 @@ class ApprovalDecisionRequest(BaseModel):
 
 _PENDING_DIR = Path(".sdd/runtime/pending_approvals")
 _APPROVALS_DIR = Path(".sdd/runtime/approvals")
+
+_TASK_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _validate_task_id(task_id: str) -> None:
+    """Raise 400 if task_id contains unexpected characters."""
+    if not _TASK_ID_RE.fullmatch(task_id):
+        raise HTTPException(status_code=400, detail="Invalid task_id format")
 
 
 def _pending_dir() -> Path:
@@ -117,6 +126,7 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
     Returns:
         Success message.
     """
+    _validate_task_id(task_id)
     approvals_dir = _approvals_dir()
     pending_path = _pending_dir() / f"{task_id}.json"
     approved_path = approvals_dir / f"{task_id}.approved"
@@ -148,6 +158,7 @@ async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, 
     Returns:
         Success message.
     """
+    _validate_task_id(task_id)
     approvals_dir = _approvals_dir()
     pending_path = _pending_dir() / f"{task_id}.json"
     rejected_path = approvals_dir / f"{task_id}.rejected"
