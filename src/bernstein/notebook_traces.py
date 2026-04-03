@@ -147,10 +147,7 @@ def parse_notebook(path: Path) -> NotebookSnapshot | None:
         source_lines = cell_data.get("source", [])
 
         # Source can be a list of lines or a single string
-        if isinstance(source_lines, list):
-            source = "".join(source_lines)
-        else:
-            source = str(source_lines)
+        source = "".join(source_lines) if isinstance(source_lines, list) else str(source_lines)
 
         execution_count = cell_data.get("execution_count")
         outputs = cell_data.get("outputs", [])
@@ -196,10 +193,7 @@ def parse_notebook_from_dict(data: dict[str, Any], path: str = "") -> NotebookSn
         cell_type = cell_data.get("cell_type", "code")
         source_lines = cell_data.get("source", [])
 
-        if isinstance(source_lines, list):
-            source = "".join(source_lines)
-        else:
-            source = str(source_lines)
+        source = "".join(source_lines) if isinstance(source_lines, list) else str(source_lines)
 
         execution_count = cell_data.get("execution_count")
         outputs = cell_data.get("outputs", [])
@@ -292,10 +286,7 @@ def diff_notebooks(
                 )
 
             # Check for execution
-            if (
-                old_cell.execution_count != new_cell.execution_count
-                and new_cell.execution_count is not None
-            ):
+            if old_cell.execution_count != new_cell.execution_count and new_cell.execution_count is not None:
                 events.append(
                     NotebookEditEvent(
                         path=new.path,
