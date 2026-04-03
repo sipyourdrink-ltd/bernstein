@@ -600,7 +600,7 @@ def expand_shell_commands(template: str, *, timeout: int = 5, workdir: Path | No
         try:
             result = _subprocess.run(
                 cmd,
-                shell=True,  # noqa: S602
+                shell=True,
                 capture_output=True,
                 text=True,
                 timeout=timeout,

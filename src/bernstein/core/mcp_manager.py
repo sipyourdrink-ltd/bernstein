@@ -673,8 +673,6 @@ def refresh_oauth_token(
             logger.info("OAuth token refreshed for MCP server '%s'", server_name)
             return str(access_token)
     except urllib.error.HTTPError as exc:
-        raise OAuthRefreshError(
-            f"OAuth refresh failed for '{server_name}': HTTP {exc.code}"
-        ) from exc
+        raise OAuthRefreshError(f"OAuth refresh failed for '{server_name}': HTTP {exc.code}") from exc
     except Exception as exc:
         raise OAuthRefreshError(f"OAuth refresh failed for '{server_name}': {exc}") from exc

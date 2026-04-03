@@ -111,9 +111,12 @@ class TaskTimeline(Static):
             text.append("\n")
 
         return text
+
+
 # ---------------------------------------------------------------------------
 # Compaction event indicators in TUI timeline (T563)
 # ---------------------------------------------------------------------------
+
 
 def add_compaction_marker(
     timeline: TaskTimeline,

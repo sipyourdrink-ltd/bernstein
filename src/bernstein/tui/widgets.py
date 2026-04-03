@@ -545,6 +545,8 @@ class QualityGatePanel(DataTable):
                 duration_str,
                 result.details[:50] + "..." if len(result.details) > 50 else result.details,
             )
+
+
 # ---------------------------------------------------------------------------
 # Color-coded agent identity in all output (T562)
 # ---------------------------------------------------------------------------
@@ -579,18 +581,22 @@ def format_agent_label(role: str, session_id: str) -> Text:
     """Format color-coded agent label for TUI (T562)."""
     color = get_agent_role_color(role)
     return Text(f"{role}:{session_id[:8]}", style=color)
+
+
 # ---------------------------------------------------------------------------
 # Compaction event indicators (T563)
 # ---------------------------------------------------------------------------
 
+
 def render_compaction_marker(timestamp: float, duration: float = 0.0) -> str:
     """Render a compaction event marker for the timeline (T563)."""
     from datetime import datetime
-    
+
     time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
     if duration > 0:
         return f"⚡ Compaction at {time_str} ({duration:.1f}s)"
     return f"⚡ Compaction at {time_str}"
+
 
 def format_compaction_event(entry: TimelineEntry) -> str:
     """Format a compaction event for display (T563)."""

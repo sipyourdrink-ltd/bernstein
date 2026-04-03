@@ -193,22 +193,22 @@ import sys as _sys
 
 # ANSI color codes for agent roles
 _AGENT_COLORS: dict[str, str] = {
-    "manager": "\033[1;36m",      # bright cyan
-    "backend": "\033[1;32m",      # bright green
-    "frontend": "\033[1;33m",     # bright yellow
-    "qa": "\033[1;35m",           # bright magenta
-    "security": "\033[1;31m",     # bright red
-    "architect": "\033[1;34m",    # bright blue
-    "devops": "\033[1;37m",       # bright white
-    "docs": "\033[1;90m",         # bright black (gray)
-    "reviewer": "\033[1;95m",     # bright magenta
+    "manager": "\033[1;36m",  # bright cyan
+    "backend": "\033[1;32m",  # bright green
+    "frontend": "\033[1;33m",  # bright yellow
+    "qa": "\033[1;35m",  # bright magenta
+    "security": "\033[1;31m",  # bright red
+    "architect": "\033[1;34m",  # bright blue
+    "devops": "\033[1;37m",  # bright white
+    "docs": "\033[1;90m",  # bright black (gray)
+    "reviewer": "\033[1;95m",  # bright magenta
     "ml-engineer": "\033[1;96m",  # bright cyan
     "prompt-engineer": "\033[1;93m",  # bright yellow
-    "retrieval": "\033[1;92m",    # bright green
-    "vp": "\033[1;97m",           # bright white
-    "analyst": "\033[1;94m",      # bright blue
-    "resolver": "\033[1;91m",     # bright red
-    "visionary": "\033[1;95m",    # bright magenta
+    "retrieval": "\033[1;92m",  # bright green
+    "vp": "\033[1;97m",  # bright white
+    "analyst": "\033[1;94m",  # bright blue
+    "resolver": "\033[1;91m",  # bright red
+    "visionary": "\033[1;95m",  # bright magenta
 }
 _RESET = "\033[0m"
 

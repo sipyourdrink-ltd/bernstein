@@ -592,6 +592,8 @@ def _status_dot(status: str) -> str:
         A single unicode character or Nerd Font glyph.
     """
     return get_status_icon(status)
+
+
 # ---------------------------------------------------------------------------
 # Color-coded agent identity in all output (T562)
 # ---------------------------------------------------------------------------

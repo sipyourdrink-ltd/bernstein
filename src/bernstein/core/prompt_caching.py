@@ -12,6 +12,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -457,11 +458,11 @@ def generate_cache_break_diff(old_prefix: str, new_prefix: str) -> list[str]:
     for group in difflib.SequenceMatcher(None, old_lines, new_lines).get_grouped_opcodes(n=1):
         for tag, i1, i2, j1, j2 in group:
             if tag == "replace":
-                changes.append(f"changed lines {i1+1}-{i2}: {old_lines[i1]!r} → {new_lines[j1]!r}")
+                changes.append(f"changed lines {i1 + 1}-{i2}: {old_lines[i1]!r} → {new_lines[j1]!r}")
             elif tag == "delete":
-                changes.append(f"removed lines {i1+1}-{i2}: {old_lines[i1]!r}")
+                changes.append(f"removed lines {i1 + 1}-{i2}: {old_lines[i1]!r}")
             elif tag == "insert":
-                changes.append(f"added lines {j1+1}-{j2}: {new_lines[j1]!r}")
+                changes.append(f"added lines {j1 + 1}-{j2}: {new_lines[j1]!r}")
 
     return changes[:10]  # cap at 10 changes for readability
 
@@ -559,12 +560,12 @@ def build_cache_safe_fork_params(
         "cache_safe": True,
     }
 
+
 # ---------------------------------------------------------------------------
 # Cache break detection with diff generation (T561)
 # ---------------------------------------------------------------------------
 
 import difflib as _difflib
-from typing import Optional as _Optional
 
 
 @dataclass
@@ -597,8 +598,8 @@ def detect_cache_break(
     old_content: str,
     new_content: str,
     *,
-    reason: _Optional[CacheBreakReason] = None,
-) -> _Optional[CacheBreak]:
+    reason: CacheBreakReason | None = None,
+) -> CacheBreak | None:
     """Detect and analyze a cache break between two prompt contents (T561).
 
     Args:
@@ -624,78 +625,84 @@ def detect_cache_break(
     )
     break_obj.generate_diff()
     return break_obj
+
+
 # ---------------------------------------------------------------------------
 # Expected drop notifications for cache baselines (T564)
 # ---------------------------------------------------------------------------
 
-import asyncio as _asyncio
-from typing import Callable, Optional, List, Dict, Any
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 import asyncio
+from dataclasses import dataclass, field
+from datetime import datetime
+
 
 @dataclass
 class CacheBaselineAlert:
     """Alert for cache baseline drops."""
+
     baseline_name: str
     previous_value: float
     current_value: float
     drop_percentage: float
     threshold: float
     timestamp: datetime = field(default_factory=datetime.utcnow)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
 
 class CacheBaselineMonitor:
     """Monitors cache baseline metrics and alerts on significant drops."""
-    
+
     def __init__(self, alert_threshold: float = 0.1):  # 10% drop threshold
         self.alert_threshold = alert_threshold
-        self.baselines: Dict[str, float] = {}
-        self.alert_handlers: List[Callable[[CacheBaselineAlert], None]] = []
+        self.baselines: dict[str, float] = {}
+        self.alert_handlers: list[Callable[[CacheBaselineAlert], None]] = []
         self._lock = asyncio.Lock()
-    
-    async def update_baseline(self, name: str, current_value: float) -> Optional[CacheBaselineAlert]:
+
+    async def update_baseline(self, name: str, current_value: float) -> CacheBaselineAlert | None:
         """Update baseline and return alert if significant drop detected."""
         async with self._lock:
             previous = self.baselines.get(name)
             self.baselines[name] = current_value
-            
+
             if previous is not None and previous > 0:
                 drop_pct = (previous - current_value) / previous
-                
+
                 if drop_pct >= self.alert_threshold:
                     alert = CacheBaselineAlert(
                         baseline_name=name,
                         previous_value=previous,
                         current_value=current_value,
                         drop_percentage=drop_pct,
-                        threshold=self.alert_threshold
+                        threshold=self.alert_threshold,
                     )
-                    
+
                     # Notify all handlers
                     for handler in self.alert_handlers:
                         try:
                             handler(alert)
                         except Exception as e:
                             logger.warning(f"Alert handler failed: {e}")
-                    
+
                     return alert
             return None
-    
+
     def add_alert_handler(self, handler: Callable[[CacheBaselineAlert], None]) -> None:
         """Add a handler for baseline drop alerts."""
         self.alert_handlers.append(handler)
-    
-    def get_baseline(self, name: str) -> Optional[float]:
+
+    def get_baseline(self, name: str) -> float | None:
         """Get current baseline value."""
         return self.baselines.get(name)
+
 
 # Global monitor instance
 _baseline_monitor = CacheBaselineMonitor()
 
-def monitor_cache_baseline(name: str, current_value: float) -> Optional[CacheBaselineAlert]:
+
+def monitor_cache_baseline(name: str, current_value: float) -> CacheBaselineAlert | None:
     """Monitor cache baseline and return alert if significant drop detected."""
     return asyncio.run(_baseline_monitor.update_baseline(name, current_value))
+
 
 def on_baseline_drop(alert: CacheBaselineAlert) -> None:
     """Default handler for baseline drop alerts."""
@@ -704,6 +711,7 @@ def on_baseline_drop(alert: CacheBaselineAlert) -> None:
         f"dropped by {alert.drop_percentage:.1%} "
         f"({alert.previous_value:.2f} → {alert.current_value:.2f})"
     )
+
 
 # Register default handler
 _baseline_monitor.add_alert_handler(on_baseline_drop)
