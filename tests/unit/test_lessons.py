@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bernstein.core.lessons import (
+    _MAX_LESSON_CHARS,
     _STALENESS_DAYS,
+    _TRUNCATION_WARNING,
     compute_lesson_staleness,
     file_lesson,
     gather_lessons_for_context,
@@ -629,3 +631,83 @@ class TestGatherLessonsWithStaleness:
         assert "Always use bcrypt" in result
         assert "may be outdated" in result
         assert "3" in result  # age in days
+
+
+class TestMemoryTruncation:
+    """T654 — truncation warnings when memory exceeds budget."""
+
+    def test_truncation_warning_when_exceeds_budget(self, tmp_path: Path) -> None:
+        """When lessons overflow, a truncation notice should be appended."""
+        sdd = tmp_path / ".sdd"
+        lessons_path = sdd / "memory"
+        lessons_path.mkdir(parents=True)
+
+        # Write a single very long lesson
+        content = "A" * 5000  # Exceeds default budget of 4000
+        now = 1_000_000.0
+        lesson_data = {
+            "lesson_id": "lesson-1",
+            "tags": ["auth"],
+            "content": content,
+            "confidence": 0.9,
+            "created_timestamp": now,
+            "filed_by_agent": "agent-1",
+            "task_id": "task-1",
+            "version": 1,
+        }
+        (lessons_path / "lessons.jsonl").write_text(json.dumps(lesson_data))
+
+        result = gather_lessons_for_context(sdd, ["auth"], now=now)
+        # Should be truncated with warning
+        assert len(result) < len(content) + 50  # some overhead
+        assert "context window limits" in result
+
+    def test_no_truncation_when_under_budget(self, tmp_path: Path) -> None:
+        """Short lessons should not trigger truncation."""
+        sdd = tmp_path / ".sdd"
+        lessons_path = sdd / "memory"
+        lessons_path.mkdir(parents=True)
+
+        now = 1_000_000.0
+        lesson_data = {
+            "lesson_id": "lesson-1",
+            "tags": ["auth"],
+            "content": "Keep passwords short.",
+            "confidence": 0.9,
+            "created_timestamp": now,
+            "filed_by_agent": "agent-1",
+            "task_id": "task-1",
+            "version": 1,
+        }
+        (lessons_path / "lessons.jsonl").write_text(json.dumps(lesson_data))
+
+        result = gather_lessons_for_context(sdd, ["auth"], now=now)
+        assert _TRUNCATION_WARNING not in result
+        assert "Keep passwords short" in result
+
+    def test_truncation_respects_custom_limit(self, tmp_path: Path) -> None:
+        """Custom max_chars should be honoured."""
+        sdd = tmp_path / ".sdd"
+        lessons_path = sdd / "memory"
+        lessons_path.mkdir(parents=True)
+
+        now = 1_000_000.0
+        lesson_data = {
+            "lesson_id": "lesson-1",
+            "tags": ["auth"],
+            "content": "Test lesson for truncation.",
+            "confidence": 0.9,
+            "created_timestamp": now,
+            "filed_by_agent": "agent-1",
+            "task_id": "task-1",
+            "version": 1,
+        }
+        (lessons_path / "lessons.jsonl").write_text(json.dumps(lesson_data))
+
+        result = gather_lessons_for_context(sdd, ["auth"], now=now, max_chars=50)
+        assert "context window limits" in result
+
+    def test_truncation_constants(self) -> None:
+        """Verify the constants are positive and non-empty."""
+        assert _MAX_LESSON_CHARS > 0
+        assert len(_TRUNCATION_WARNING) > 0

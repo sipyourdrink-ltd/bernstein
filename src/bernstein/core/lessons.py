@@ -39,6 +39,11 @@ _DEDUP_THRESHOLD = 0.75
 # Staleness threshold: lessons older than this get a caveat (T652)
 _STALENESS_DAYS = 1
 
+# Truncation budget: max characters for lesson context (T654)
+# ~4000 chars ≈ ~1000 tokens, leaving room for other context sections.
+_MAX_LESSON_CHARS = 4000
+_TRUNCATION_WARNING = "\n\n---\n**Note:** Some lessons were omitted due to context window limits."
+
 
 def compute_lesson_staleness(created_timestamp: float, now: float | None = None) -> float:
     """Return the age of a lesson in days (T652).
@@ -274,16 +279,20 @@ def gather_lessons_for_context(
     sdd_dir: Path,
     task_tags: list[str],
     now: float | None = None,
+    max_chars: int = _MAX_LESSON_CHARS,
 ) -> str:
     """Format lessons into a string for injection into agent context.
 
     Retrieves relevant lessons and formats them as a markdown section.
     Lessons older than ``_STALENESS_DAYS`` receive a staleness caveat.
+    Output is truncated at *max_chars* with a truncation warning appended
+    when the budget is exceeded (T654).
 
     Args:
         sdd_dir: Path to .sdd directory.
         task_tags: Tags describing the task.
         now: Override for current time (useful for testing).
+        max_chars: Maximum output length before truncation occurs.
 
     Returns:
         Markdown-formatted string of lessons, or empty string if none found.
@@ -295,18 +304,40 @@ def gather_lessons_for_context(
     reference = now if now is not None else time.time()
     lines = ["## Prior Agent Lessons", ""]
     for lesson in lessons:
-        stale = is_lesson_stale(lesson.created_timestamp, reference)
-        lines.append(f"**Tags:** {', '.join(lesson.tags)}")
-        lines.append(f"**Confidence:** {lesson.confidence:.2f}")
-        lines.append(f"**From task:** {lesson.task_id}")
-        if stale:
-            age_days = compute_lesson_staleness(lesson.created_timestamp, reference)
-            lines.append(f"**Staleness:** This lesson is {age_days:.0f} days old and may be outdated.")
-        lines.append("")
-        lines.append(lesson.content)
-        lines.append("")
+        lesson_block = _format_lesson_block(lesson, reference)
+        # Check if adding this lesson would exceed the budget
+        candidate = "\n".join([*lines, lesson_block])
+        if len(candidate) > max_chars:
+            # Skip this lesson — if any lessons remain, append truncation notice
+            return "\n".join(lines) + _TRUNCATION_WARNING
+        lines.append(lesson_block)
 
     return "\n".join(lines)
+
+
+def _format_lesson_block(lesson: Lesson, now: float) -> str:
+    """Format a single lesson as a markdown block (T652, T654).
+
+    Args:
+        lesson: Lesson instance to format.
+        now: Current time reference for staleness computation.
+
+    Returns:
+        Formatted markdown string for the lesson.
+    """
+    stale = is_lesson_stale(lesson.created_timestamp, now)
+    parts = [
+        f"**Tags:** {', '.join(lesson.tags)}",
+        f"**Confidence:** {lesson.confidence:.2f}",
+        f"**From task:** {lesson.task_id}",
+    ]
+    if stale:
+        age_days = compute_lesson_staleness(lesson.created_timestamp, now)
+        parts.append(f"**Staleness:** This lesson is {age_days:.0f} days old and may be outdated.")
+    parts.append("")
+    parts.append(lesson.content)
+    parts.append("")
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
