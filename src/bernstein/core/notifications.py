@@ -59,6 +59,8 @@ NotificationEvent = Literal[
     "budget.exhausted",
     "approval.needed",
     "incident.critical",
+    "task.deadline_warning",
+    "task.deadline_exceeded",
 ]
 
 # PagerDuty severity mapping per event
@@ -71,6 +73,8 @@ _PD_SEVERITY: dict[str, str] = {
     "budget.exhausted": "critical",
     "approval.needed": "warning",
     "incident.critical": "critical",
+    "task.deadline_warning": "warning",
+    "task.deadline_exceeded": "critical",
 }
 
 # Discord / Slack color codes per event

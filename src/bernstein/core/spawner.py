@@ -398,6 +398,10 @@ def _render_prompt(
         indexer = CodebaseIndexer(workdir)
         if indexer.file_count() > 0:
             query = " ".join(t.title for t in tasks)
+            # Cache the query key so that identical query sets reuse the same RAG results
+            from bernstein.core.section_dedup import deduplicate_section
+
+            # Build RAG results
             # Find top N relevant files
             rag_cfg = getattr(spawner_config, "rag", None)
             max_files = rag_cfg.max_files if rag_cfg else 5
@@ -420,11 +424,13 @@ def _render_prompt(
 
                         lines.append(f"### {res['path']} (score: {res['score']:.2f})\n```\n{content}\n```")
                         total_chars += len(content)
-                smart_context = "\n".join(lines) + "\n"
+                smart_context = deduplicate_section("\n".join(lines) + "\n")
     except Exception as rag_exc:
         logger.debug("Smart context injection failed: %s", rag_exc)
 
     # Assemble final prompt
+    from bernstein.core.section_dedup import deduplicate_section
+
     sections = [role_prompt]
     if specialist_block:
         sections.append(specialist_block)
@@ -432,7 +438,7 @@ def _render_prompt(
     if lesson_context:
         sections.append(f"\n{lesson_context}\n")
     if persistent_memory_context:
-        sections.append(f"\n{persistent_memory_context}\n")
+        sections.append(deduplicate_section(f"\n{persistent_memory_context}\n"))
     if smart_context:
         sections.append(f"\n{smart_context}\n")
     if rich_context:
@@ -442,10 +448,12 @@ def _render_prompt(
         sections.append(predecessor_ctx)
     if bulletin_summary:
         sections.append(
-            f"\n## Team awareness\n"
-            f"Other agents are working in parallel. Recent activity:\n{bulletin_summary}\n\n"
-            f"If you need to create a shared utility, check if it already exists first.\n"
-            f"If you define an API endpoint, use consistent naming with existing endpoints.\n"
+            deduplicate_section(
+                f"\n## Team awareness\n"
+                f"Other agents are working in parallel. Recent activity:\n{bulletin_summary}\n\n"
+                f"If you need to create a shared utility, check if it already exists first.\n"
+                f"If you define an API endpoint, use consistent naming with existing endpoints.\n"
+            )
         )
     try:
         rec_engine = RecommendationEngine(workdir)
@@ -456,7 +464,7 @@ def _render_prompt(
     except Exception as exc:
         logger.debug("Recommendation rendering failed: %s", exc)
     if project_context:
-        sections.append(f"\n## Project context\n{project_context}\n")
+        sections.append(deduplicate_section(f"\n## Project context\n{project_context}\n"))
     if token_budget > 0:
         if token_budget >= 1_000_000:
             budget_hint = f"~{token_budget // 1_000_000}M"
@@ -465,23 +473,27 @@ def _render_prompt(
         else:
             budget_hint = str(token_budget)
         sections.append(
-            f"\n## Token budget\n"
-            f"You have {budget_hint} tokens for this task. Plan your work accordingly — "
-            f"focus on the task, avoid unnecessary exploration, and wrap up promptly.\n"
+            deduplicate_section(
+                f"\n## Token budget\n"
+                f"You have {budget_hint} tokens for this task. Plan your work accordingly — "
+                f"focus on the task, avoid unnecessary exploration, and wrap up promptly.\n"
+            )
         )
-    sections.append(f"\n## Instructions\n{instructions}\n")
+    sections.append(deduplicate_section(f"\n## Instructions\n{instructions}\n"))
     if session_id:
         try:
             heartbeat_instructions = HeartbeatMonitor(workdir).inject_heartbeat_instructions(session_id)
             sections.append(
-                "\n## Heartbeat (background)\n"
-                "Run this in the background to report progress:\n"
-                f"```bash\n{heartbeat_instructions}\n```\n"
+                deduplicate_section(
+                    "\n## Heartbeat (background)\n"
+                    "Run this in the background to report progress:\n"
+                    f"```bash\n{heartbeat_instructions}\n```\n"
+                )
             )
         except Exception as exc:
             logger.debug("Heartbeat instructions unavailable: %s", exc)
     if session_id:
-        sections.append(_render_signal_check(session_id))
+        sections.append(deduplicate_section(_render_signal_check(session_id)))
 
     if meta_messages:
         nudges_block = "\n## Operational nudges\n" + "\n".join(f"- {m}" for m in meta_messages) + "\n"
