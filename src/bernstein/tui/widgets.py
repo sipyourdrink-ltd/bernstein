@@ -876,14 +876,7 @@ class CoordinatorRow:
 
 
 def classify_role(role: str) -> str:
-    """Return 'coordinator', 'worker', or 'other' for a role label.
-
-    Args:
-        role: Role string to classify.
-
-    Returns:
-        Classification label.
-    """
+    """Return 'coordinator', 'worker', or 'other' for a role label."""
     r = role.lower().strip()
     if r in ROLE_COORDINATOR:
         return "coordinator"
@@ -893,14 +886,7 @@ def classify_role(role: str) -> str:
 
 
 def build_coordinator_summary(tasks: list[CoordinatorRow]) -> str:
-    """Build a one-line summary of coordinator-worker relationships.
-
-    Args:
-        tasks: All tasks to analyze.
-
-    Returns:
-        Human-readable summary string.
-    """
+    """Build a one-line summary of coordinator-worker relationships."""
     coordinators = [t for t in tasks if classify_role(t.role) == "coordinator"]
     workers = [t for t in tasks if classify_role(t.role) == "worker"]
     coord_active = sum(1 for c in coordinators if c.status == "in_progress")

@@ -363,7 +363,85 @@ def test_filter_scratchpad_entries_by_path() -> None:
     from bernstein.tui.widgets import ScratchpadEntry, filter_scratchpad_entries
 
     entries = [
-        ScratchpadEntry(name="state.json", path=Path("/.sdd/runtime/scratchpad/worker-1/state.json"), size=100, modified=0.0),
+        ScratchpadEntry(
+            name="state.json", path=Path("/.sdd/runtime/scratchpad/worker-1/state.json"), size=100, modified=0.0
+        ),
     ]
     result = filter_scratchpad_entries(entries, "worker-1")
     assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# Cost tier visualization tests (T411)
+# ---------------------------------------------------------------------------
+
+
+def test_build_model_tier_entries_nonempty() -> None:
+    """Tier entries are generated for all models."""
+    from bernstein.tui.widgets import build_model_tier_entries
+
+    entries = build_model_tier_entries()
+    assert len(entries) > 0
+    # Cheapest first
+    assert entries[0].total_usd_per_1m <= entries[-1].total_usd_per_1m
+
+
+def test_model_tier_entry_has_required_fields() -> None:
+    """Each entry has all required cost data."""
+    from bernstein.tui.widgets import ModelTierEntry
+
+    entry = ModelTierEntry(
+        model="sonnet",
+        input_usd_per_1m=3.0,
+        output_usd_per_1m=15.0,
+        cache_read_usd_per_1m=0.3,
+        cache_write_usd_per_1m=3.75,
+        total_usd_per_1m=9.0,
+    )
+    assert entry.model == "sonnet"
+    assert entry.total_usd_per_1m == 9.0
+
+
+def test_model_tier_cache_info_configured() -> None:
+    """Cache info shows read/write pricing when configured."""
+    from bernstein.tui.widgets import ModelTierEntry
+
+    entry = ModelTierEntry(
+        model="sonnet",
+        input_usd_per_1m=3.0,
+        output_usd_per_1m=15.0,
+        cache_read_usd_per_1m=0.3,
+        cache_write_usd_per_1m=3.75,
+        total_usd_per_1m=9.0,
+    )
+    assert "read" in entry.cache_info
+    assert "write" in entry.cache_info
+    assert entry.cache_info != "not configured"
+
+
+def test_model_tier_cache_info_not_configured() -> None:
+    """Cache info shows 'not configured' when no cache pricing."""
+    from bernstein.tui.widgets import ModelTierEntry
+
+    entry = ModelTierEntry(
+        model="gpt-5.4",
+        input_usd_per_1m=2.5,
+        output_usd_per_1m=15.0,
+        cache_read_usd_per_1m=None,
+        cache_write_usd_per_1m=None,
+        total_usd_per_1m=8.75,
+    )
+    assert entry.cache_info == "not configured"
+
+
+def test_render_model_tier_table() -> None:
+    """render_model_tier_table returns label/value pairs."""
+    from bernstein.tui.widgets import render_model_tier_table
+
+    rows = render_model_tier_table()
+    assert len(rows) > 0
+    for label, detail in rows:
+        assert "$" in label
+        assert "input" in detail
+        assert "output" in detail
+        assert "cache" in detail

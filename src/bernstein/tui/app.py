@@ -18,11 +18,14 @@ from bernstein.tui.timeline import TaskTimeline, TimelineEntry
 from bernstein.tui.widgets import (
     ActionBar,
     AgentLogWidget,
+    CoordinatorDashboard,
+    CoordinatorRow,
     ScratchpadViewer,
     ShortcutsFooter,
     StatusBar,
     TaskListWidget,
     TaskRow,
+    classify_role,
 )
 
 # ---------------------------------------------------------------------------
@@ -110,6 +113,7 @@ class BernsteinApp(App[None]):
         Binding("t", "retry_task", "Retry task", show=False),
         Binding("v", "toggle_timeline", "Timeline", show=True),
         Binding("c", "toggle_scratchpad", "Scratchpad", show=True),
+        Binding("w", "toggle_coordinator", "Coordinator", show=True),
         Binding("/", "scratchpad_filter", "Filter scratchpad", show=False),
         Binding("escape", "close_action_bar", "Close", show=False),
         Binding("up", "cursor_up", "Up", show=False),
@@ -140,6 +144,7 @@ class BernsteinApp(App[None]):
             yield TaskListWidget(id="task-list")
             yield TaskTimeline(id="task-timeline")
             yield ScratchpadViewer(id="scratchpad-viewer")
+            yield CoordinatorDashboard(id="coordinator-dashboard")
             yield ActionBar(id="action-bar")
             yield AgentLogWidget(id="agent-log")
         yield ShortcutsFooter(id="shortcuts-footer")
@@ -150,6 +155,7 @@ class BernsteinApp(App[None]):
         self.query_one("#action-bar", ActionBar).display = False
         self.query_one("#task-timeline", TaskTimeline).display = False
         self.query_one("#scratchpad-viewer", ScratchpadViewer).display = False
+        self.query_one("#coordinator-dashboard", CoordinatorDashboard).display = False
 
         self.set_interval(self._poll_interval, self.action_refresh)
 
@@ -255,6 +261,29 @@ class BernsteinApp(App[None]):
             scratchpad.set_filter(query)
             event.input.remove()
             scratchpad.focus()
+
+    def action_toggle_coordinator(self) -> None:
+        """Show/hide the coordinator mode dashboard."""
+        dashboard = self.query_one("#coordinator-dashboard", CoordinatorDashboard)
+        dashboard.display = not dashboard.display
+        if dashboard.display:
+            self._refresh_coordinator_dashboard()
+            dashboard.focus()
+
+    def _refresh_coordinator_dashboard(self) -> None:
+        """Populate coordinator dashboard from current task data."""
+        rows = [
+            CoordinatorRow(
+                role=tr.role,
+                task_id=tr.task_id,
+                title=tr.title,
+                status=tr.status,
+                elapsed=tr.elapsed,
+            )
+            for tr in self._current_rows
+        ]
+        rows.sort(key=lambda row: {"coordinator": 0, "worker": 1}.get(classify_role(row.role), 2))
+        self.query_one("#coordinator-dashboard", CoordinatorDashboard).refresh_data(rows)
 
     def action_toggle_action_bar(self) -> None:
         """Toggle the action bar for the selected task."""
