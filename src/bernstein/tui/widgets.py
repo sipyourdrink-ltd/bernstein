@@ -1190,10 +1190,7 @@ def render_waterfall_batches(
 
         # Duration annotation
         batch_dur_ms = int((batch.end_ts - batch.start_ts) * 1000)
-        if batch_dur_ms >= 1000:
-            dur_str = f" {batch_dur_ms / 1000:.1f}s"
-        else:
-            dur_str = f" {batch_dur_ms}ms"
+        dur_str = f" {batch_dur_ms / 1000:.1f}s" if batch_dur_ms >= 1000 else f" {batch_dur_ms}ms"
         text.append(dur_str, style="dim")
 
         text.append("\n")
@@ -1202,11 +1199,7 @@ def render_waterfall_batches(
         if is_abort:
             indent = " " * 8
             reason_short = batch.abort_reason[:60] + ("\u2026" if len(batch.abort_reason) > 60 else "")
-            trig = (
-                f" \u2190 triggered by B{batch.triggering_batch_id}"
-                if batch.triggering_batch_id is not None
-                else ""
-            )
+            trig = f" \u2190 triggered by B{batch.triggering_batch_id}" if batch.triggering_batch_id is not None else ""
             text.append(f"{indent}\u2717 {reason_short}{trig}\n", style="red")
 
     return text

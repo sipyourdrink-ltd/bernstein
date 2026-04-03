@@ -35,7 +35,7 @@ from bernstein.core.tick_pipeline import (
 from bernstein.evolution.types import MetricsRecord
 
 if TYPE_CHECKING:
-    from bernstein.core.abort_chain import AbortChain, AbortPolicy, AbortScope
+    from bernstein.core.abort_chain import AbortChain, AbortPolicy
 
 logger = logging.getLogger(__name__)
 

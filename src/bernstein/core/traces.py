@@ -914,10 +914,7 @@ def _flush_tool_batch(
         return
     batch_id = len(out)
     start_ts = min(s.timestamp for s in steps)
-    end_ts = max(
-        s.timestamp + (s.duration_ms / 1000.0 if s.duration_ms else threshold_s)
-        for s in steps
-    )
+    end_ts = max(s.timestamp + (s.duration_ms / 1000.0 if s.duration_ms else threshold_s) for s in steps)
     is_concurrent = len(steps) > 1
     fail_steps = [s for s in steps if s.type == "fail"]
     abort_reason = fail_steps[0].detail if fail_steps else ""
@@ -978,9 +975,7 @@ def group_trace_steps_into_batches(
             continue
         for j in range(i - 1, -1, -1):
             prev = batches[j]
-            if not prev.abort_reason and any(
-                s.type not in ("complete", "fail") for s in prev.steps
-            ):
+            if not prev.abort_reason and any(s.type not in ("complete", "fail") for s in prev.steps):
                 batch.triggering_batch_id = prev.batch_id
                 break
 
