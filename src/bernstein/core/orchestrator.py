@@ -120,6 +120,7 @@ from bernstein.core.tick_pipeline import (
 from bernstein.core.tick_pipeline import (
     total_spent_cache as total_spent_cache,
 )
+from bernstein.core.task_grouping import compact_small_tasks
 from bernstein.core.token_monitor import check_token_growth
 from bernstein.core.wal import WALWriter
 from bernstein.core.watchdog import WatchdogManager, collect_watchdog_findings
@@ -935,6 +936,7 @@ class Orchestrator:
             priority_overrides=priority_overrides,
             task_created_at=task_created_at,
         )
+        batches = compact_small_tasks(batches, self._config.max_tasks_per_agent)
 
         # Track which task IDs are already assigned to active agents
         assigned_task_ids: set[str] = set()
