@@ -63,6 +63,7 @@ from bernstein.cli.eval_benchmark_cmd import (
 from bernstein.cli.evolve_cmd import evolve
 from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.graph_cmd import graph_group
+from bernstein.cli.incident_cmd import incident_cmd
 from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
 from bernstein.cli.manifest_cmd import manifest_group
 from bernstein.cli.memory_cmd import memory_group
@@ -686,3 +687,4 @@ cli.add_command(worker, "worker")
 cli.add_command(diff_cmd, "diff")
 cli.add_command(merge_cmd, "merge")
 cli.add_command(changelog_cmd, "changelog")
+cli.add_command(incident_cmd, "incident")

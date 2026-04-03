@@ -41,6 +41,7 @@ from bernstein.core.tick_pipeline import (
     CompletionData,
     fail_task,
 )
+from bernstein.core.traces import record_turn_budget
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -755,6 +756,26 @@ def process_completed_tasks(
             orch._cost_tracker.save(orch._workdir / ".sdd")
         except OSError as exc:
             logger.warning("Failed to persist cost tracker: %s", exc)
+
+        # Record per-turn budget snapshot in the trace for post-run analysis.
+        _tracer = orch._spawner._traces.get(session.id) if hasattr(orch, "_spawner") else None
+        if _tracer is not None:
+            _total_tokens = _tokens_in + _tokens_out
+            _budget = orch._cost_tracker.budget_usd
+            _spent = orch._cost_tracker.spent_usd
+            _remaining = max(_budget - _spent, 0.0) if _budget > 0 else 0
+            _step = record_turn_budget(
+                _tracer,
+                turn_number=1,  # Each agent session is one turn per task
+                allocated=int(_budget * 1_000_000) if _budget > 0 else 0,
+                consumed=_total_tokens,
+                remaining=int(_remaining * 1_000_000) if _budget > 0 else 0,
+            )
+            _tracer.steps.append(_step)
+            try:
+                orch._spawner._trace_store.write(_tracer)
+            except OSError as exc:
+                logger.warning("Failed to persist turn budget trace for %s: %s", session.id, exc)
 
         # Cost anomaly checks: per-task ceiling, token ratio, retry spiral.
         _complexity = getattr(task, "complexity", "medium") or "medium"
