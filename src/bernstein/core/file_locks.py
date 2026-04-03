@@ -231,6 +231,87 @@ class ToolConcurrencySafety(Enum):
     UNKNOWN = "unknown"
 
 
+@dataclass(frozen=True)
+class ToolDefinition:
+    """Tool metadata with concurrency safety flag (T438).
+
+    Attributes:
+        name: Tool identifier.
+        concurrency_safe: True when the tool is safe to run concurrently
+            with other tools (read-only/idempotent).  Defaults conservatively
+            to False for unknown tools.
+    """
+
+    name: str
+    concurrency_safe: bool = False
+
+
+def _build_tool_registry() -> dict[str, ToolDefinition]:
+    """Build the tool registry from the concurrency classification map.
+
+    Returns:
+        Dict mapping tool names to :class:`ToolDefinition` instances.
+    """
+    return {
+        name: ToolDefinition(name=name, concurrency_safe=safety == ToolConcurrencySafety.SAFE)
+        for name, safety in TOOL_CONCURRENCY_CLASSIFICATIONS.items()
+    }
+
+
+def get_tool_definition(name: str) -> ToolDefinition:
+    """Return the tool definition for *name*, with concurrency safety (T438).
+
+    Unknown tools receive a default definition with ``concurrency_safe=False``.
+
+    Args:
+        name: Tool identifier (case-insensitive).
+
+    Returns:
+        :class:`ToolDefinition` with the concurrency safety flag.
+    """
+    key = name.lower()
+    if key in _TOOL_REGISTRY:
+        return _TOOL_REGISTRY[key]
+    return ToolDefinition(name=name, concurrency_safe=False)
+
+
+def get_concurrency_safe_tools() -> list[str]:
+    """Return all registered tool names classified as concurrency safe (T438).
+
+    Returns:
+        Sorted list of tool names safe to run in parallel.
+    """
+    return sorted(name for name, defn in _TOOL_REGISTRY.items() if defn.concurrency_safe)
+
+
+def get_concurrency_unsafe_tools() -> list[str]:
+    """Return all registered tool names classified as NOT concurrency safe (T438).
+
+    Returns:
+        Sorted list of tool names that must be serialized.
+    """
+    return sorted(name for name, defn in _TOOL_REGISTRY.items() if not defn.concurrency_safe)
+
+
+def partition_tools_by_concurrency(tool_names: list[str]) -> tuple[list[str], list[str]]:
+    """Partition tool names into concurrency-safe and unsafe buckets (T438).
+
+    Args:
+        tool_names: List of tool identifiers.
+
+    Returns:
+        Tuple of (safe_tools, unsafe_tools) lists.
+    """
+    safe: list[str] = []
+    unsafe: list[str] = []
+    for name in tool_names:
+        if get_tool_definition(name).concurrency_safe:
+            safe.append(name)
+        else:
+            unsafe.append(name)
+    return safe, unsafe
+
+
 #: Built-in tool concurrency classifications.
 #: Tools absent from this map default to UNKNOWN (treated as UNSAFE).
 TOOL_CONCURRENCY_CLASSIFICATIONS: dict[str, ToolConcurrencySafety] = {
@@ -264,6 +345,10 @@ def classify_tool_concurrency(tool_name: str) -> ToolConcurrencySafety:
         :attr:`ToolConcurrencySafety.UNKNOWN` for unrecognised tools.
     """
     return TOOL_CONCURRENCY_CLASSIFICATIONS.get(tool_name.lower(), ToolConcurrencySafety.UNKNOWN)
+
+
+# Initialize tool registry after all constants are defined
+_TOOL_REGISTRY = _build_tool_registry()
 
 
 def is_tool_concurrency_safe(tool_name: str) -> bool:
