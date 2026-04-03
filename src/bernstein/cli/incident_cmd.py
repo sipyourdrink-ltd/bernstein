@@ -148,10 +148,7 @@ def _list_incidents(json_mode: bool) -> None:
 
 def _show_timeline(incident_id: str, json_mode: bool, window_before: int, window_after: int) -> None:
     """Show the timeline for a specific incident."""
-    path = (
-        f"/observability/incident-timeline/{incident_id}"
-        f"?window_before={window_before}&window_after={window_after}"
-    )
+    path = f"/observability/incident-timeline/{incident_id}?window_before={window_before}&window_after={window_after}"
     try:
         data = server_get(path)
     except Exception as exc:
