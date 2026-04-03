@@ -150,12 +150,23 @@ def load_always_allow_rules(workdir: Path) -> AlwaysAllowEngine:
         pattern = str(entry.get("input_pattern", "")).strip()
         if not tool or not pattern:
             continue
+        # Extract content_patterns if present
+        _cp_val = entry.get("content_patterns")
+        if isinstance(_cp_val, list):
+            content_patterns = [
+                str(cp).strip()
+                for cp in cast("list[object]", _cp_val)
+                if isinstance(cp, (str, int, float))
+            ]
+        else:
+            content_patterns = []
         parsed.append(
             AlwaysAllowRule(
                 id=str(entry.get("id", f"aa-{tool.lower()}-{i}")),
                 tool=tool,
                 input_pattern=pattern,
                 input_field=str(entry.get("input_field", "path")),
+                content_patterns=content_patterns,
                 description=str(entry.get("description", "")),
             )
         )
