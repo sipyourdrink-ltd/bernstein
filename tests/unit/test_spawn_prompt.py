@@ -122,3 +122,40 @@ def test_render_prompt_falls_back_and_includes_context_sections(tmp_path: Path, 
     assert "Research auth" in prompt
     assert "Other agents are working in parallel" in prompt
     assert "Signal files — check periodically" in prompt
+
+
+def test_render_prompt_includes_git_safety_protocol(tmp_path: Path, make_task: Any) -> None:
+    """_render_prompt always injects the git safety protocol section."""
+    task = make_task(id="T-1", role="backend", title="Do something", description="Description.")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    with (
+        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt(
+            [task],
+            templates_dir=templates_dir,
+            workdir=tmp_path,
+            session_id="A-1",
+        )
+
+    assert "Git safety protocol" in prompt
+    assert "--force" in prompt
+    assert "no-verify" in prompt
+    assert "NEVER commit secrets" in prompt
+
+
+def test_render_git_safety_protocol_content() -> None:
+    """_render_git_safety_protocol produces the expected safety rules."""
+    from bernstein.core.spawn_prompt import _render_git_safety_protocol
+
+    safety = _render_git_safety_protocol()
+    assert "Git safety protocol" in safety
+    assert "--force" in safety
+    assert "no-verify" in safety
+    assert "secrets" in safety
+    assert "git diff" in safety
+    assert "agent/" in safety
