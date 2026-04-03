@@ -607,7 +607,7 @@ def bootstrap_from_goal(
 
             import asyncio
 
-            asyncio.run(_post_all())
+            asyncio.run(with_init_timeout(_post_all(), context="posting tasks from plan file"))
         console.print(f"[green]→[/green] Posted {len(tasks)} tasks from plan file")
         backlog_count = len(tasks)
     elif backlog_count > 0:
