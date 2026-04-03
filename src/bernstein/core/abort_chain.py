@@ -145,12 +145,12 @@ class AbortChain:
             written (``SHUTDOWN``, ``TOOL_ABORT``).
     """
 
-    __slots__ = ("_graph", "_parent_of", "_lock", "_signals_dir")
+    __slots__ = ("_graph", "_lock", "_parent_of", "_signals_dir")
 
     def __init__(self, *, signals_dir: Path) -> None:
         self._signals_dir = signals_dir
-        self._graph: dict[str, set[str]] = {}   # parent  → {children}
-        self._parent_of: dict[str, str] = {}    # child   → parent  (reverse index)
+        self._graph: dict[str, set[str]] = {}  # parent  → {children}
+        self._parent_of: dict[str, str] = {}  # child   → parent  (reverse index)
         self._lock = Lock()
 
     # ------------------------------------------------------------------
