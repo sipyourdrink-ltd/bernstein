@@ -263,9 +263,7 @@ def classify_tool_concurrency(tool_name: str) -> ToolConcurrencySafety:
         :class:`ToolConcurrencySafety` value.  Defaults to
         :attr:`ToolConcurrencySafety.UNKNOWN` for unrecognised tools.
     """
-    return TOOL_CONCURRENCY_CLASSIFICATIONS.get(
-        tool_name.lower(), ToolConcurrencySafety.UNKNOWN
-    )
+    return TOOL_CONCURRENCY_CLASSIFICATIONS.get(tool_name.lower(), ToolConcurrencySafety.UNKNOWN)
 
 
 def is_tool_concurrency_safe(tool_name: str) -> bool:

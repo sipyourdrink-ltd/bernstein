@@ -26,6 +26,8 @@ from rich.console import Console
 from rich.status import Status
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable as _Awaitable
+
     from bernstein.core.models import Task
 
 # Import from sub-modules (facade re-exports)
@@ -676,15 +678,14 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 
 import asyncio as _asyncio
-import functools as _functools
-from typing import TypeVar as _TypeVar, Callable as _Callable, Awaitable as _Awaitable
+from typing import TypeVar as _TypeVar
 
 _T = _TypeVar("_T")
 
 INIT_TIMEOUT_SECONDS: float = 30.0
 
 
-async def with_init_timeout(
+async def with_init_timeout[T](
     coro: _Awaitable[_T],
     *,
     timeout: float = INIT_TIMEOUT_SECONDS,
@@ -708,7 +709,7 @@ async def with_init_timeout(
     """
     try:
         return await _asyncio.wait_for(coro, timeout=timeout)
-    except _asyncio.TimeoutError:
+    except TimeoutError:
         logger.error(
             "Initialization timeout after %.0fs during '%s' — possible deadlock",
             timeout,
