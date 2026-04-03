@@ -336,28 +336,3 @@ def apply_error_budget_adjustments(
     # failures, creating a death spiral that reduces agents to 0.  Until
     # the SLO data source is fixed, return config values unchanged.
     return config_max_agents, None
-
-    max_agents = config_max_agents
-    model_override: str | None = None
-
-    if ErrorBudgetAction.REDUCE_AGENTS in actions:
-        target = tracker.error_budget_policy.reduce_max_agents_to
-        # Never reduce below half the configured max — over-throttling kills
-        # self-developing projects where early failures are expected.
-        floor = max(2, (config_max_agents + 1) // 2)
-        max_agents = min(max_agents, max(target, floor))
-        if max_agents < config_max_agents:
-            logger.warning(
-                "Error budget depleted: reducing max_agents from %d to %d",
-                config_max_agents,
-                max_agents,
-            )
-
-    if ErrorBudgetAction.UPGRADE_MODEL in actions:
-        model_override = tracker.error_budget_policy.upgrade_model
-        logger.warning(
-            "Error budget depleted: upgrading model to %s",
-            model_override,
-        )
-
-    return max_agents, model_override
