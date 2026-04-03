@@ -94,6 +94,40 @@ class BernsteinSpec:
             verdict: Final verdict (e.g. ``"accepted"``, ``"rejected"``).
         """
 
+    @hookspec
+    def on_task_hook_rejection(
+        self,
+        task_id: str,
+        operation: str,
+        hook_name: str,
+        error: str,
+    ) -> None:
+        """Called when a hook rejects a task operation (T589).
+
+        Args:
+            task_id: Task ID that was rejected.
+            operation: Operation that was blocked (e.g. ``"create"``, ``"complete"``).
+            hook_name: Name of the hook that rejected the operation.
+            error: Error message from the hook.
+        """
+
+    @hookspec
+    def on_compaction(
+        self,
+        session_id: str,
+        reason: str,
+        tokens_before: int,
+        tokens_after: int,
+    ) -> None:
+        """Called when context compaction occurs for an agent session (T599).
+
+        Args:
+            session_id: Agent session ID.
+            reason: Compaction trigger reason.
+            tokens_before: Token count before compaction.
+            tokens_after: Token count after compaction.
+        """
+
     @hookspec(firstresult=True)
     def on_permission_denied(self, task_id: str, reason: str, tool: str, args: dict[str, Any]) -> str | None:
         """Called when a tool or action permission is denied.
@@ -109,4 +143,15 @@ class BernsteinSpec:
 
         Returns:
             Optional retry hint string.
+        """
+
+    @hookspec
+    def on_tool_error(self, session_id: str, tool: str, error: str, batch_id: str | None = None) -> None:
+        """Called when a tool execution fails (non-zero exit or exception).
+
+        Args:
+            session_id: Unique agent session identifier.
+            tool: Tool name that failed.
+            error: Error message or exit code detail.
+            batch_id: Optional ID grouping concurrent tool calls.
         """

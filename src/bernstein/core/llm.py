@@ -186,3 +186,54 @@ async def tavily_search(query: str, max_results: int = 5) -> str:
     except Exception as exc:
         logger.error("Tavily search failed: %s", exc)
         return f"(Web search failed: {exc})"
+
+
+# ---------------------------------------------------------------------------
+# API preconnect pool warming (T581)
+# ---------------------------------------------------------------------------
+
+import asyncio as _asyncio
+import urllib.request as _urllib_request
+
+
+async def preconnect_api(
+    base_url: str,
+    *,
+    timeout: float = 10.0,
+) -> bool:
+    """Warm the HTTP connection pool with a HEAD request (T581).
+
+    Fires a fire-and-forget HEAD request to *base_url* to establish the
+    TCP connection before the first real API call.  Skips local/proxy
+    providers (localhost, 127.x, 0.0.0.0).
+
+    Args:
+        base_url: API base URL to warm.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        True if the preconnect succeeded, False otherwise.
+    """
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(base_url)
+    host = parsed.hostname or ""
+    # Skip local/proxy providers
+    if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or host.startswith("192.168."):
+        logger.debug("Skipping preconnect for local provider: %s", base_url)
+        return False
+
+    try:
+        loop = _asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: _urllib_request.urlopen(
+                _urllib_request.Request(base_url, method="HEAD"),
+                timeout=timeout,
+            ),
+        )
+        logger.debug("API preconnect succeeded: %s", base_url)
+        return True
+    except Exception as exc:
+        logger.debug("API preconnect failed (non-fatal): %s — %s", base_url, exc)
+        return False

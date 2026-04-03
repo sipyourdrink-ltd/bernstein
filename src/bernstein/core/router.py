@@ -1397,3 +1397,89 @@ def select_round_robin_agent(
     selected = active_agents[_last_used_agent_index]
 
     return selected
+# ---------------------------------------------------------------------------
+# Max output tokens escalation signal (T565)
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any
+import time
+
+@dataclass
+class MaxTokensEscalation:
+    """Signal for max output tokens escalation."""
+    task_id: str
+    role: str
+    model: str
+    requested_tokens: int
+    max_allowed_tokens: int
+    escalation_reason: str
+    timestamp: float = field(default_factory=time.time)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+class TokenEscalationTracker:
+    """Tracks and signals max output tokens escalations."""
+    
+    def __init__(self):
+        self.escalations: list[MaxTokensEscalation] = []
+        self._lock = threading.Lock()
+    
+    def record_escalation(
+        self,
+        task_id: str,
+        role: str,
+        model: str,
+        requested_tokens: int,
+        max_allowed_tokens: int,
+        escalation_reason: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> MaxTokensEscalation:
+        """Record a max output tokens escalation."""
+        escalation = MaxTokensEscalation(
+            task_id=task_id,
+            role=role,
+            model=model,
+            requested_tokens=requested_tokens,
+            max_allowed_tokens=max_allowed_tokens,
+            escalation_reason=escalation_reason,
+            metadata=metadata or {}
+        )
+        
+        with self._lock:
+            self.escalations.append(escalation)
+        
+        logger.warning(
+            f"Max output tokens escalation: {role} task {task_id} "
+            f"requested {requested_tokens} tokens (max: {max_allowed_tokens}) "
+            f"for {model} - {escalation_reason}"
+        )
+        
+        return escalation
+    
+    def get_recent_escalations(self, limit: int = 10) -> list[MaxTokensEscalation]:
+        """Get recent escalations."""
+        with self._lock:
+            return self.escalations[-limit:]
+
+# Global escalation tracker
+_escalation_tracker = TokenEscalationTracker()
+
+def signal_max_tokens_escalation(
+    task_id: str,
+    role: str,
+    model: str,
+    requested_tokens: int,
+    max_allowed_tokens: int,
+    escalation_reason: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> MaxTokensEscalation:
+    """Signal a max output tokens escalation (T565)."""
+    return _escalation_tracker.record_escalation(
+        task_id=task_id,
+        role=role,
+        model=model,
+        requested_tokens=requested_tokens,
+        max_allowed_tokens=max_allowed_tokens,
+        escalation_reason=escalation_reason,
+        metadata=metadata
+    )

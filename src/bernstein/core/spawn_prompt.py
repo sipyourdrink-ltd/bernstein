@@ -484,3 +484,137 @@ def _render_fallback(
             return agent.prompt_body
 
     return f"You are a {role} specialist."
+
+
+# ---------------------------------------------------------------------------
+# Meta-messages for orchestrator nudges (T567)
+# ---------------------------------------------------------------------------
+
+_META_MESSAGE_HEADER = "<!-- ORCHESTRATOR META -->"
+_META_MESSAGE_FOOTER = "<!-- /ORCHESTRATOR META -->"
+
+
+def build_meta_message(nudge: str, *, phase: str = "", policy: str = "") -> str:
+    """Build an orchestrator meta-message envelope (T567).
+
+    Meta-messages are injected into agent context as operational instructions
+    (nudges, policy reminders, phase hints) without appearing as user/assistant
+    content.  They are wrapped in HTML comment markers so they are invisible
+    to the model's conversational context but parseable by tooling.
+
+    Args:
+        nudge: The nudge text to inject.
+        phase: Optional phase hint (e.g. ``"retry"``, ``"compaction"``).
+        policy: Optional policy reminder text.
+
+    Returns:
+        Formatted meta-message string.
+    """
+    parts = [_META_MESSAGE_HEADER]
+    if phase:
+        parts.append(f"phase: {phase}")
+    if policy:
+        parts.append(f"policy: {policy}")
+    parts.append(nudge)
+    parts.append(_META_MESSAGE_FOOTER)
+    return "\n".join(parts)
+
+
+def extract_meta_messages(prompt: str) -> list[str]:
+    """Extract all meta-message blocks from a prompt string (T567).
+
+    Args:
+        prompt: Full prompt text.
+
+    Returns:
+        List of meta-message content strings (without envelope markers).
+    """
+    import re
+
+    pattern = re.compile(
+        re.escape(_META_MESSAGE_HEADER) + r"(.*?)" + re.escape(_META_MESSAGE_FOOTER),
+        re.DOTALL,
+    )
+    return [m.group(1).strip() for m in pattern.finditer(prompt)]
+
+
+# ---------------------------------------------------------------------------
+# Git safety protocol prompts (T582)
+# ---------------------------------------------------------------------------
+
+GIT_SAFETY_PROTOCOL = """\
+## Git Safety Protocol
+
+You MUST follow these git safety rules at all times:
+- Never use `git push --force` or `git push -f` on shared branches.
+- Never use `--no-verify` to skip git hooks.
+- Never commit secrets, API keys, or credentials.
+- Always commit to your assigned worktree branch (`agent/{session_id}`).
+- Never modify `.git/hooks` or git configuration files.
+- Always verify staged changes with `git diff --cached` before committing.
+"""
+
+
+def inject_git_safety_protocol(prompt: str, session_id: str = "") -> str:
+    """Inject the git safety protocol into an agent prompt (T582).
+
+    Args:
+        prompt: Base prompt text.
+        session_id: Agent session ID for branch name substitution.
+
+    Returns:
+        Prompt with git safety protocol appended.
+    """
+    protocol = GIT_SAFETY_PROTOCOL.replace("{session_id}", session_id or "SESSION_ID")
+    return f"{prompt}\n\n{protocol}"
+
+
+# ---------------------------------------------------------------------------
+# Shell command embedding in role templates (T588)
+# ---------------------------------------------------------------------------
+
+import re as _re
+import subprocess as _subprocess
+
+_SHELL_CMD_PATTERN = _re.compile(r"!`([^`]+)`")
+
+
+def expand_shell_commands(template: str, *, timeout: int = 5, workdir: Path | None = None) -> str:
+    """Expand ``!`command``` syntax in a template string (T588).
+
+    Executes each shell command and replaces the marker with its stdout.
+    Commands that fail or time out are replaced with an empty string and
+    a warning comment.
+
+    Args:
+        template: Template text that may contain ``!`command``` markers.
+        timeout: Per-command timeout in seconds.
+        workdir: Working directory for command execution.
+
+    Returns:
+        Template with all shell command markers replaced.
+    """
+
+    def _run_cmd(match: _re.Match[str]) -> str:
+        cmd = match.group(1).strip()
+        try:
+            result = _subprocess.run(
+                cmd,
+                shell=True,  # noqa: S602
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=workdir,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            logger.warning("Shell command in template failed (exit %d): %s", result.returncode, cmd)
+            return f"<!-- shell command failed: {cmd} -->"
+        except _subprocess.TimeoutExpired:
+            logger.warning("Shell command in template timed out: %s", cmd)
+            return f"<!-- shell command timed out: {cmd} -->"
+        except Exception as exc:
+            logger.warning("Shell command in template error: %s — %s", cmd, exc)
+            return f"<!-- shell command error: {cmd} -->"
+
+    return _SHELL_CMD_PATTERN.sub(_run_cmd, template)

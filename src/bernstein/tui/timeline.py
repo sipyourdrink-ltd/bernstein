@@ -111,3 +111,31 @@ class TaskTimeline(Static):
             text.append("\n")
 
         return text
+# ---------------------------------------------------------------------------
+# Compaction event indicators in TUI timeline (T563)
+# ---------------------------------------------------------------------------
+
+def add_compaction_marker(
+    timeline: TaskTimeline,
+    timestamp: float,
+    *,
+    title: str = "Compaction",
+    duration_seconds: float = 0.0,
+) -> None:
+    """Add a compaction event marker to the timeline (T563).
+
+    Args:
+        timeline: TaskTimeline instance.
+        timestamp: Unix timestamp when compaction started.
+        title: Display title for the compaction event.
+        duration_seconds: Duration of compaction in seconds.
+    """
+    entry = TimelineEntry(
+        task_id=f"compaction_{int(timestamp)}",
+        title=title,
+        start_time=timestamp,
+        end_time=timestamp + duration_seconds if duration_seconds > 0 else None,
+        status="compaction",
+        kind="compaction",
+    )
+    timeline.update_data([entry])

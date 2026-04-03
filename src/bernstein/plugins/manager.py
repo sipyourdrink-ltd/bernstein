@@ -133,6 +133,14 @@ class CommandHook:
         self._run_command("on_agent_spawned", session_id=session_id, role=role, model=model)
 
     @hookimpl
+    def on_agent_reaped(self, session_id: str, role: str, outcome: str) -> None:
+        self._run_command("on_agent_reaped", session_id=session_id, role=role, outcome=outcome)
+
+    @hookimpl
+    def on_tool_error(self, session_id: str, tool: str, error: str, batch_id: str | None = None) -> None:
+        self._run_command("on_tool_error", session_id=session_id, tool=tool, error=error, batch_id=batch_id)
+
+    @hookimpl
     def on_evolve_proposal(self, proposal_id: str, title: str, verdict: str) -> None:
         self._run_command("on_evolve_proposal", proposal_id=proposal_id, title=title, verdict=verdict)
 
@@ -192,6 +200,10 @@ class PluginManager:
         except Exception as exc:
             log.warning("on_permission_denied hook failed: %s", exc)
             return None
+
+    def fire_tool_error(self, session_id: str, tool: str, error: str, batch_id: str | None = None) -> None:
+        """Fire on_tool_error hook."""
+        self._safe_call("on_tool_error", session_id=session_id, tool=tool, error=error, batch_id=batch_id)
 
     def discover_entry_points(self) -> None:
         """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""

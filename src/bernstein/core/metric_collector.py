@@ -1125,3 +1125,50 @@ def get_collector(metrics_dir: Path | None = None) -> MetricsCollector:
     if _default_collector is None:
         _default_collector = MetricsCollector(metrics_dir)
     return _default_collector
+# ---------------------------------------------------------------------------
+# Expected drop notifications for cache baselines (T564)
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, Any, Optional
+
+@dataclass
+class CacheBaselineDrop:
+    """Record of a cache baseline drop event."""
+    baseline_name: str
+    previous_value: float
+    current_value: float
+    drop_percentage: float
+    threshold: float
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+class CacheBaselineCollector:
+    """Collects and records cache baseline drop events."""
+    
+    def __init__(self, metrics_dir: Path):
+        self.metrics_dir = metrics_dir
+        self.cache_drops_file = metrics_dir / "cache_baseline_drops.jsonl"
+        self.cache_drops_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    def record_drop(self, drop: CacheBaselineDrop) -> None:
+        """Record a cache baseline drop event."""
+        record = {
+            "baseline_name": drop.baseline_name,
+            "previous_value": drop.previous_value,
+            "current_value": drop.current_value,
+            "drop_percentage": drop.drop_percentage,
+            "threshold": drop.threshold,
+            "timestamp": drop.timestamp.isoformat(),
+            "metadata": drop.metadata
+        }
+        
+        with open(self.cache_drops_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+        
+        logger.warning(
+            f"Cache baseline drop recorded: {drop.baseline_name} "
+            f"dropped by {drop.drop_percentage:.1%} "
+            f"({drop.previous_value:.2f} → {drop.current_value:.2f})"
+        )

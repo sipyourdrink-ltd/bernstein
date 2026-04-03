@@ -592,3 +592,38 @@ def _status_dot(status: str) -> str:
         A single unicode character or Nerd Font glyph.
     """
     return get_status_icon(status)
+# ---------------------------------------------------------------------------
+# Color-coded agent identity in all output (T562)
+# ---------------------------------------------------------------------------
+
+# Agent role colors for Rich console
+AGENT_ROLE_COLORS: dict[str, str] = {
+    "manager": "cyan",
+    "backend": "green",
+    "frontend": "yellow",
+    "qa": "magenta",
+    "security": "red",
+    "architect": "blue",
+    "devops": "white",
+    "docs": "dim",
+    "reviewer": "magenta",
+    "ml-engineer": "cyan",
+    "prompt-engineer": "yellow",
+    "retrieval": "green",
+    "vp": "white",
+    "analyst": "blue",
+    "resolver": "red",
+    "visionary": "magenta",
+}
+
+
+def format_agent_tag(role: str, session_id: str) -> Text:
+    """Format a color-coded agent tag for CLI output (T562)."""
+    color = AGENT_ROLE_COLORS.get(role, "dim")
+    return Text(f"[{role}:{session_id[:8]}]", style=color)
+
+
+def colorize_agent_output(role: str, session_id: str, text: str) -> Text:
+    """Colorize agent output with role tag (T562)."""
+    tag = format_agent_tag(role, session_id)
+    return Text.assemble(tag, " ", text)

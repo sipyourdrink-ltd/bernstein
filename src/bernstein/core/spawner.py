@@ -1879,3 +1879,57 @@ def _select_batch_config(
         configs,
         key=lambda c: (model_rank.get(c.model, 0), effort_rank.get(c.effort, 0)),
     )
+
+
+# ---------------------------------------------------------------------------
+# Worker tool allowlist per spawn (T578)
+# ---------------------------------------------------------------------------
+
+_TOOL_ALLOWLIST_ENV_VAR = "BERNSTEIN_TOOL_ALLOWLIST"
+
+
+def build_tool_allowlist_env(allowed_tools: list[str]) -> dict[str, str]:
+    """Build environment variables encoding a tool allowlist for a spawned agent (T578).
+
+    The allowlist is passed via the ``BERNSTEIN_TOOL_ALLOWLIST`` environment
+    variable as a comma-separated list.  The worker wrapper reads this and
+    enforces it before dispatching tool calls.
+
+    Args:
+        allowed_tools: List of tool names the agent is permitted to invoke.
+
+    Returns:
+        Dict of environment variables to merge into the spawn environment.
+    """
+    if not allowed_tools:
+        return {}
+    return {_TOOL_ALLOWLIST_ENV_VAR: ",".join(allowed_tools)}
+
+
+def parse_tool_allowlist_env() -> list[str] | None:
+    """Parse the tool allowlist from the current process environment (T578).
+
+    Returns:
+        List of allowed tool names, or None if no allowlist is configured.
+    """
+    import os
+
+    raw = os.environ.get(_TOOL_ALLOWLIST_ENV_VAR, "").strip()
+    if not raw:
+        return None
+    return [t.strip() for t in raw.split(",") if t.strip()]
+
+
+def check_tool_allowed(tool_name: str, allowlist: list[str] | None) -> bool:
+    """Return True if *tool_name* is permitted by *allowlist* (T578).
+
+    Args:
+        tool_name: Tool to check.
+        allowlist: Permitted tools, or None to allow all.
+
+    Returns:
+        True if the tool is allowed.
+    """
+    if allowlist is None:
+        return True
+    return tool_name in allowlist

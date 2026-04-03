@@ -425,3 +425,285 @@ class PromptCachingManager:
             "estimated_savings_usd": round(self._manifest.total_cached_tokens * CACHED_SAVINGS_PER_TOKEN, 6),
             "manifest_path": str(self._manifest_path),
         }
+
+
+# ---------------------------------------------------------------------------
+# Cache break detection with diff generation (T561)
+# ---------------------------------------------------------------------------
+
+
+def generate_cache_break_diff(old_prefix: str, new_prefix: str) -> list[str]:
+    """Generate a human-readable diff summary for a cache break (T561).
+
+    Compares the old and new system prefixes and returns a list of
+    field-level change descriptions suitable for logging or trace embedding.
+
+    Args:
+        old_prefix: Previous system prefix (before the break).
+        new_prefix: New system prefix (after the break).
+
+    Returns:
+        List of change description strings.
+    """
+    import difflib
+
+    if old_prefix == new_prefix:
+        return []
+
+    old_lines = old_prefix.splitlines()
+    new_lines = new_prefix.splitlines()
+
+    changes: list[str] = []
+    for group in difflib.SequenceMatcher(None, old_lines, new_lines).get_grouped_opcodes(n=1):
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "replace":
+                changes.append(f"changed lines {i1+1}-{i2}: {old_lines[i1]!r} → {new_lines[j1]!r}")
+            elif tag == "delete":
+                changes.append(f"removed lines {i1+1}-{i2}: {old_lines[i1]!r}")
+            elif tag == "insert":
+                changes.append(f"added lines {j1+1}-{j2}: {new_lines[j1]!r}")
+
+    return changes[:10]  # cap at 10 changes for readability
+
+
+# ---------------------------------------------------------------------------
+# Per-model cache read/write pricing tiers (T569)
+# ---------------------------------------------------------------------------
+
+
+_CACHE_PRICING: dict[str, dict[str, float]] = {
+    # Model → {cache_read_per_1m, cache_write_per_1m}
+    # Anthropic Claude 3.x / 4.x (approximate)
+    "claude-3-5-sonnet": {"cache_read_per_1m": 0.30, "cache_write_per_1m": 3.75},
+    "claude-3-5-haiku": {"cache_read_per_1m": 0.08, "cache_write_per_1m": 1.00},
+    "claude-3-opus": {"cache_read_per_1m": 1.50, "cache_write_per_1m": 18.75},
+    "claude-sonnet-4": {"cache_read_per_1m": 0.30, "cache_write_per_1m": 3.75},
+    "claude-haiku-4": {"cache_read_per_1m": 0.08, "cache_write_per_1m": 1.00},
+    "claude-opus-4": {"cache_read_per_1m": 1.50, "cache_write_per_1m": 18.75},
+    # Default fallback
+    "_default": {"cache_read_per_1m": 0.30, "cache_write_per_1m": 3.75},
+}
+
+
+def get_cache_pricing(model_name: str) -> dict[str, float]:
+    """Return cache read/write pricing for *model_name* (T569).
+
+    Args:
+        model_name: Model identifier (partial match supported).
+
+    Returns:
+        Dict with ``cache_read_per_1m`` and ``cache_write_per_1m`` in USD.
+    """
+    model_lower = model_name.lower()
+    for key, pricing in _CACHE_PRICING.items():
+        if key == "_default":
+            continue
+        if key in model_lower or model_lower.startswith(key):
+            return dict(pricing)
+    return dict(_CACHE_PRICING["_default"])
+
+
+def compute_cache_cost(
+    model_name: str,
+    cache_read_tokens: int,
+    cache_write_tokens: int,
+) -> float:
+    """Compute the USD cost for cache read and write tokens (T569).
+
+    Args:
+        model_name: Model identifier.
+        cache_read_tokens: Number of tokens read from cache.
+        cache_write_tokens: Number of tokens written to cache.
+
+    Returns:
+        Total USD cost for the cache operations.
+    """
+    pricing = get_cache_pricing(model_name)
+    read_cost = (cache_read_tokens / 1_000_000) * pricing["cache_read_per_1m"]
+    write_cost = (cache_write_tokens / 1_000_000) * pricing["cache_write_per_1m"]
+    return read_cost + write_cost
+
+
+# ---------------------------------------------------------------------------
+# Cache-safe forked agent params (T597)
+# ---------------------------------------------------------------------------
+
+
+def build_cache_safe_fork_params(
+    parent_cache_key: str,
+    parent_system_prefix: str,
+    fork_role: str = "",
+    fork_model: str = "",
+) -> dict[str, Any]:
+    """Build parameters for a forked agent that preserve cache safety (T597).
+
+    When an agent forks a sub-agent, the sub-agent should reuse the parent's
+    system prefix to maximise cache hits.  This function returns a dict of
+    parameters the spawner can pass to the forked agent.
+
+    Args:
+        parent_cache_key: Cache key of the parent agent's system prefix.
+        parent_system_prefix: The parent's system prefix text.
+        fork_role: Role override for the forked agent (empty = inherit).
+        fork_model: Model override for the forked agent (empty = inherit).
+
+    Returns:
+        Dict with ``inherited_cache_key``, ``system_prefix``, ``role``,
+        ``model``, and ``cache_safe`` flag.
+    """
+    return {
+        "inherited_cache_key": parent_cache_key,
+        "system_prefix": parent_system_prefix,
+        "role": fork_role,
+        "model": fork_model,
+        "cache_safe": True,
+    }
+
+# ---------------------------------------------------------------------------
+# Cache break detection with diff generation (T561)
+# ---------------------------------------------------------------------------
+
+import difflib as _difflib
+from typing import Optional as _Optional
+
+
+@dataclass
+class CacheBreak:
+    """Record of a cache break with diff analysis (T561)."""
+
+    reason: CacheBreakReason
+    old_hash: str
+    new_hash: str
+    old_content: str
+    new_content: str
+    diff_lines: list[str] = field(default_factory=list)
+    timestamp: float = field(default_factory=time.time)
+
+    def generate_diff(self, context_lines: int = 3) -> None:
+        """Generate a unified diff between old and new content."""
+        old_lines = self.old_content.splitlines(keepends=True)
+        new_lines = self.new_content.splitlines(keepends=True)
+        diff = _difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile="cached",
+            tofile="current",
+            n=context_lines,
+        )
+        self.diff_lines = list(diff)
+
+
+def detect_cache_break(
+    old_content: str,
+    new_content: str,
+    *,
+    reason: _Optional[CacheBreakReason] = None,
+) -> _Optional[CacheBreak]:
+    """Detect and analyze a cache break between two prompt contents (T561).
+
+    Args:
+        old_content: Previously cached content.
+        new_content: Current content.
+        reason: Optional classification of the break.
+
+    Returns:
+        CacheBreak object if a break is detected, None otherwise.
+    """
+    old_hash = hashlib.sha256(old_content.encode()).hexdigest()
+    new_hash = hashlib.sha256(new_content.encode()).hexdigest()
+
+    if old_hash == new_hash:
+        return None
+
+    break_obj = CacheBreak(
+        reason=reason or CacheBreakReason.UNKNOWN,
+        old_hash=old_hash,
+        new_hash=new_hash,
+        old_content=old_content,
+        new_content=new_content,
+    )
+    break_obj.generate_diff()
+    return break_obj
+# ---------------------------------------------------------------------------
+# Expected drop notifications for cache baselines (T564)
+# ---------------------------------------------------------------------------
+
+import asyncio as _asyncio
+from typing import Callable, Optional, List, Dict, Any
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+import asyncio
+
+@dataclass
+class CacheBaselineAlert:
+    """Alert for cache baseline drops."""
+    baseline_name: str
+    previous_value: float
+    current_value: float
+    drop_percentage: float
+    threshold: float
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+class CacheBaselineMonitor:
+    """Monitors cache baseline metrics and alerts on significant drops."""
+    
+    def __init__(self, alert_threshold: float = 0.1):  # 10% drop threshold
+        self.alert_threshold = alert_threshold
+        self.baselines: Dict[str, float] = {}
+        self.alert_handlers: List[Callable[[CacheBaselineAlert], None]] = []
+        self._lock = asyncio.Lock()
+    
+    async def update_baseline(self, name: str, current_value: float) -> Optional[CacheBaselineAlert]:
+        """Update baseline and return alert if significant drop detected."""
+        async with self._lock:
+            previous = self.baselines.get(name)
+            self.baselines[name] = current_value
+            
+            if previous is not None and previous > 0:
+                drop_pct = (previous - current_value) / previous
+                
+                if drop_pct >= self.alert_threshold:
+                    alert = CacheBaselineAlert(
+                        baseline_name=name,
+                        previous_value=previous,
+                        current_value=current_value,
+                        drop_percentage=drop_pct,
+                        threshold=self.alert_threshold
+                    )
+                    
+                    # Notify all handlers
+                    for handler in self.alert_handlers:
+                        try:
+                            handler(alert)
+                        except Exception as e:
+                            logger.warning(f"Alert handler failed: {e}")
+                    
+                    return alert
+            return None
+    
+    def add_alert_handler(self, handler: Callable[[CacheBaselineAlert], None]) -> None:
+        """Add a handler for baseline drop alerts."""
+        self.alert_handlers.append(handler)
+    
+    def get_baseline(self, name: str) -> Optional[float]:
+        """Get current baseline value."""
+        return self.baselines.get(name)
+
+# Global monitor instance
+_baseline_monitor = CacheBaselineMonitor()
+
+def monitor_cache_baseline(name: str, current_value: float) -> Optional[CacheBaselineAlert]:
+    """Monitor cache baseline and return alert if significant drop detected."""
+    return asyncio.run(_baseline_monitor.update_baseline(name, current_value))
+
+def on_baseline_drop(alert: CacheBaselineAlert) -> None:
+    """Default handler for baseline drop alerts."""
+    logger.warning(
+        f"Cache baseline drop detected: {alert.baseline_name} "
+        f"dropped by {alert.drop_percentage:.1%} "
+        f"({alert.previous_value:.2f} → {alert.current_value:.2f})"
+    )
+
+# Register default handler
+_baseline_monitor.add_alert_handler(on_baseline_drop)
