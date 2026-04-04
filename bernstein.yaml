@@ -7,7 +7,7 @@ goal: >
 
 cli: claude
 
-max_agents: 4
+max_agents: 6
 
 role_model_policy:
   manager:

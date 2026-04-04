@@ -321,7 +321,7 @@ class AgentCacheTracker:
     # OrderedDict preserves insertion order and supports popitem(last=False)
     # for deterministic FIFO eviction.
     _entries: OrderedDict[str, str] = field(
-        default_factory=OrderedDict,
+        default_factory=OrderedDict[str, str],
         repr=False,
     )
 

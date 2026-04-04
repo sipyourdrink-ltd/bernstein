@@ -850,6 +850,29 @@ def claim_and_spawn_batches(
             )
             continue
 
+        # Response cache: skip spawning if an identical task was already completed.
+        # Check the semantic cache for a verified result — if found, complete the
+        # task immediately (zero tokens, instant result).
+        _response_cache: Any = getattr(orch, "_response_cache", None)
+        if _response_cache is not None and len(batch) == 1:
+            _task = batch[0]
+            try:
+                from bernstein.core.semantic_cache import ResponseCacheManager
+
+                _cache_key = ResponseCacheManager.task_key(_task.role, _task.title, _task.description)
+                _cached_entry, _sim = _response_cache.lookup_entry(_cache_key)
+                if _cached_entry is not None and _cached_entry.verified:
+                    logger.info(
+                        "Cache hit for task '%s' (sim=%.2f) — skipping agent spawn",
+                        _task.title,
+                        _sim,
+                    )
+                    complete_task(orch._client, orch._config.server_url, _task.id, _cached_entry.response)
+                    result.verified.append(_task.id)
+                    continue
+            except Exception as exc:
+                logger.debug("Response cache lookup failed for %s: %s", _task.id, exc)
+
         # Skip if any owned files overlap with active agents
         _batch_sessions = getattr(orch, "_batch_sessions", {})
         _ownership_sessions = {**orch._agents, **(_batch_sessions if isinstance(_batch_sessions, dict) else {})}

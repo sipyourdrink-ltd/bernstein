@@ -197,7 +197,7 @@ class TokenRefreshScheduler:
     _manager: JWTManager
     _session_id: str
     _user_id: str | None = field(default=None)
-    _scopes: list[str] = field(default_factory=list)
+    _scopes: list[str] = field(default_factory=list[str])
     _refresh_buffer: float = field(default=_REFRESH_BUFFER_SECONDS)
     _max_failures: int = field(default=_MAX_REFRESH_FAILURES)
 

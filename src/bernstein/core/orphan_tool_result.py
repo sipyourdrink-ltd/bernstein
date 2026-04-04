@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class OrphanRepairResult:
 
     messages: list[dict[str, Any]]
     orphan_count: int
-    orphan_ids: list[str] = field(default_factory=list)
+    orphan_ids: list[str] = field(default_factory=list[str])
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +113,10 @@ def find_orphaned_tool_uses(
             for block in content:
                 if not isinstance(block, dict):
                     continue
-                if block.get("type") == "tool_use":
-                    tool_id = block.get("id", "")
-                    tool_name = block.get("name", "unknown_tool")
+                b = cast("dict[str, Any]", block)
+                if b.get("type") == "tool_use":
+                    tool_id = cast(str, b.get("id", ""))
+                    tool_name = cast(str, b.get("name", "unknown_tool"))
                     if tool_id:
                         pending.append((idx, tool_id, tool_name))
 
@@ -123,8 +124,9 @@ def find_orphaned_tool_uses(
             for block in content:
                 if not isinstance(block, dict):
                     continue
-                if block.get("type") == "tool_result":
-                    tid = block.get("tool_use_id", "")
+                b = cast("dict[str, Any]", block)
+                if b.get("type") == "tool_result":
+                    tid = cast(str, b.get("tool_use_id", ""))
                     if tid:
                         resolved_ids.add(tid)
 
