@@ -366,8 +366,7 @@ class ClaudeCodeAdapter(CLIAdapter):
             "        _turns = msg.get('num_turns', 0)\n"
             "        _dur = msg.get('duration_ms', 0)\n"
             "        print(f'[RESULT] subtype={_subtype} cost=${_cost:.4f}'"
-            "              f' turns={_turns} duration={_dur}ms', flush=True)\n"
-            + completion_write + token_writer
+            "              f' turns={_turns} duration={_dur}ms', flush=True)\n" + completion_write + token_writer
         )
 
     def _launch_process(

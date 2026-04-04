@@ -114,8 +114,7 @@ class TokenBudget:
         """
         self.remaining_tokens = max(0, self.budget_tokens - self.total_logical_spend())
         logger.debug(
-            "Task %s: post-compaction reconcile — effective_remaining=%d "
-            "(budget=%d, pre_compact=%d, current=%d)",
+            "Task %s: post-compaction reconcile — effective_remaining=%d (budget=%d, pre_compact=%d, current=%d)",
             self.task_id,
             self.remaining_tokens,
             self.budget_tokens,
