@@ -11,7 +11,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -99,12 +99,17 @@ def return_claimed_to_open() -> int:
 
     count = 0
     for f in [*claimed_dir.glob("*.yaml"), *claimed_dir.glob("*.md")]:
+        if not f.exists():
+            continue
         num = f.name.split("-")[0]
-        if num in closed_nums:
-            f.unlink()  # already completed — remove duplicate
-        else:
-            f.rename(open_dir / f.name)
-            count += 1
+        try:
+            if num in closed_nums:
+                f.unlink()  # already completed — remove duplicate
+            else:
+                f.rename(open_dir / f.name)
+                count += 1
+        except FileNotFoundError:
+            pass  # already moved by drain coordinator
     return count
 
 
@@ -128,7 +133,13 @@ def save_session_on_stop(workdir: Path) -> None:
 
         resp = _httpx.get(f"{SERVER_URL}/tasks", timeout=3.0, headers=auth_headers())
         resp.raise_for_status()
-        task_list: list[dict[str, Any]] = resp.json() if isinstance(resp.json(), list) else []
+        body = resp.json()
+        if isinstance(body, dict) and "tasks" in body:
+            task_list = cast("list[dict[str, Any]]", body["tasks"])
+        elif isinstance(body, list):
+            task_list = cast("list[dict[str, Any]]", body)
+        else:
+            task_list: list[dict[str, Any]] = []
         done_ids = [t["id"] for t in task_list if t.get("status") == "done"]
         pending_ids = [t["id"] for t in task_list if t.get("status") in ("claimed", "in_progress")]
         state = SessionState(

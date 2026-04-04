@@ -329,7 +329,7 @@ class WorktreeManager:
         # 2. Delete the branch
         try:
             result = branch_delete(self.repo_root, branch_name)
-            if not result.ok:
+            if not result.ok and "not found" not in result.stderr:
                 logger.warning(
                     "git branch -D failed for %s: %s",
                     branch_name,

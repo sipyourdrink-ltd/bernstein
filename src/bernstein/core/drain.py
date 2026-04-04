@@ -329,7 +329,7 @@ class DrainCoordinator:
                 flag = self._workdir / ".sdd" / "runtime" / "draining"
                 flag.parent.mkdir(parents=True, exist_ok=True)
                 flag.write_text("draining", encoding="utf-8")
-                logger.warning("Task server unreachable; wrote draining flag file instead")
+                logger.info("Task server already stopped; wrote draining flag file")
 
         phase.detail = "New task spawning disabled"
 
@@ -639,7 +639,7 @@ class DrainCoordinator:
                 del_result = _run_git(["branch", "-D", branch_name], cwd=self._workdir)
                 if del_result.returncode == 0:
                     branches_deleted += 1
-                else:
+                elif "not found" not in del_result.stderr:
                     logger.warning(
                         "Failed to delete branch %s: %s",
                         branch_name,
@@ -691,8 +691,10 @@ class DrainCoordinator:
 
         completed_sessions = {a.session_id for a in self._agents if a.status == "exited" and a.committed_files > 0}
 
-        for ticket_path in claimed_dir.iterdir():
+        for ticket_path in list(claimed_dir.iterdir()):
             if ticket_path.suffix not in (".yaml", ".yml"):
+                continue
+            if not ticket_path.exists():
                 continue
 
             try:
@@ -708,6 +710,8 @@ class DrainCoordinator:
             try:
                 shutil.move(str(ticket_path), str(dest))
                 logger.info("Moved ticket %s → %s", ticket_path.name, dest.parent.name)
+            except FileNotFoundError:
+                pass  # already moved by another cleanup path
             except OSError as exc:
                 logger.warning("Failed to move ticket %s: %s", ticket_path.name, exc)
 
