@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
+from bernstein.adapters.claude_agents import build_agents_json
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
 
@@ -164,13 +165,14 @@ class ClaudeCodeAdapter(CLIAdapter):
         *,
         role: str = "",
         workdir: Path | None = None,
+        agents_json: dict[str, Any] | None = None,
     ) -> list[str]:
         """Build the claude CLI command with effort mapping.
 
         Uses ``--permission-mode bypassPermissions`` instead of the deprecated
         ``--dangerously-skip-permissions`` flag, adds ``--fallback-model``
-        for automatic failover, and ``--allowedTools`` for role-scoped
-        tool access.
+        for automatic failover, ``--allowedTools`` for role-scoped
+        tool access, and ``--agents`` for per-task subagent definitions.
 
         Args:
             model_config: Model and effort configuration.
@@ -178,6 +180,9 @@ class ClaudeCodeAdapter(CLIAdapter):
             prompt: The task prompt.
             role: Agent role (used for tool allowlisting).
             workdir: Project working directory (used for CLAUDE.md context dirs).
+            agents_json: Custom subagent definitions for ``--agents`` flag.
+                When provided, Claude Code's Agent tool will use these
+                definitions instead of generic defaults.
         """
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         effort = getattr(model_config, "effort", "high")
@@ -222,6 +227,11 @@ class ClaudeCodeAdapter(CLIAdapter):
             claude_md = workdir / "CLAUDE.md"
             if claude_md.exists():
                 cmd.extend(["--add-dir", str(workdir)])
+
+        # Inject per-task subagent definitions so Claude Code's Agent tool
+        # spawns role-scoped subagents instead of generic defaults.
+        if agents_json:
+            cmd.extend(["--agents", json.dumps(agents_json)])
 
         if mcp_config:
             cmd.extend(["--mcp-config", json.dumps(mcp_config)])
@@ -411,7 +421,10 @@ class ClaudeCodeAdapter(CLIAdapter):
         else:
             effective_mcp = {"mcpServers": {"bernstein": bridge_server}}
 
-        cmd = self._build_command(model_config, effective_mcp, prompt, role=role, workdir=workdir)
+        agents_json = build_agents_json(role)
+        cmd = self._build_command(
+            model_config, effective_mcp, prompt, role=role, workdir=workdir, agents_json=agents_json
+        )
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
