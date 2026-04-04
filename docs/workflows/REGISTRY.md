@@ -21,6 +21,7 @@ Last updated: 2026-04-03
 | Compatibility table generation | `WORKFLOW-compatibility-table-generation.md` | Partial | Documentation/support workflow |
 | Release breaking-change detection | `WORKFLOW-release-breaking-change-detection.md` | Partial | CI/release process workflow |
 | Context collapse with drain retry | `WORKFLOW-context-collapse-drain-retry.md` | Draft | T493 — bounded drain retry loop for spawn prompt context overflow |
+| Permission mode hierarchy | `WORKFLOW-permission-mode-hierarchy.md` | Shipped | bypass→plan→auto→default mode hierarchy with severity relaxation + hook resolution |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
@@ -62,6 +63,13 @@ Trigger config path: `.sdd/config/triggers.yaml`
 - `src/bernstein/core/rate_limit_tracker.py`
 - `src/bernstein/core/router.py`
 - `src/bernstein/core/cascade_router.py`
+
+### Permission and approval workflows
+
+- `src/bernstein/core/permission_mode.py` — mode enum, compatibility matrix, resolution
+- `src/bernstein/core/permission_rules.py` — rule engine with severity-based evaluation
+- `src/bernstein/core/permission_matrix.py` — hook-permission resolution matrix
+- `src/bernstein/core/verification_nudge.py` — unverified-completion tracking and alerts
 
 ### Review and quality workflows
 
