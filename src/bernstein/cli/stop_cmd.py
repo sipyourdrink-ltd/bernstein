@@ -36,6 +36,31 @@ from bernstein.core.runtime_state import read_supervisor_state
 # ---------------------------------------------------------------------------
 
 
+def _unregister_mcp_discovery(workdir: Path) -> None:
+    """Remove the Bernstein entry from .claude/mcp.json on shutdown.
+
+    Prevents stale MCP server references in Claude Code sessions after
+    Bernstein has stopped.
+
+    Args:
+        workdir: Project root directory.
+    """
+    mcp_path = workdir / ".claude" / "mcp.json"
+    if not mcp_path.exists():
+        return
+    try:
+        data = json.loads(mcp_path.read_text())
+    except (ValueError, OSError):
+        return
+    servers = data.get("mcpServers", {})
+    if "bernstein" not in servers:
+        return
+    servers.pop("bernstein")
+    data["mcpServers"] = servers
+    with contextlib.suppress(OSError):
+        mcp_path.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def write_shutdown_signals(reason: str = "User requested stop") -> list[str]:
     """Write SHUTDOWN signal files for all active agents.
 
@@ -463,6 +488,9 @@ def hard_stop() -> None:
     except OSError:
         console.print("[yellow]Could not return claimed tickets.[/yellow]")
 
+    # Remove Bernstein from .claude/mcp.json so stale references are cleaned up
+    _unregister_mcp_discovery(Path.cwd())
+
     total = len(killed_pids)
     if total:
         console.print(f"\n[red]Bernstein stopped (hard) — killed {total} process(es).[/red]")
@@ -509,3 +537,4 @@ def stop(timeout: int, force: bool) -> None:
     else:
         console.print("[bold]Soft stop — giving agents time to save…[/bold]\n")
         soft_stop(timeout)
+        _unregister_mcp_discovery(Path.cwd())

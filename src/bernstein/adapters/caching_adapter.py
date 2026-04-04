@@ -86,15 +86,27 @@ class CachingAdapter(CLIAdapter):
 
         # 2. Emit cache break event when prefix is new
         if cache_res.is_new_prefix and not cache_res.expected_drop_reason:
+            import hashlib as _hashlib
+
+            # The component fingerprint is a short hash of the reason class and
+            # new cache key — agents that receive the same upstream change (e.g.
+            # same template update) will produce identical fingerprints, enabling
+            # cross-agent systemic-break correlation.
+            _reason = CacheBreakReason.SYSTEM
+            _fingerprint = _hashlib.sha256(
+                f"{_reason.value}:{cache_res.cache_key}".encode()
+            ).hexdigest()[:16]
+
             event = CacheBreakEvent(
                 timestamp=time.time(),
-                reason=CacheBreakReason.SYSTEM,
+                reason=_reason,
                 old_cache_key=None,
                 new_cache_key=cache_res.cache_key,
                 estimated_token_delta=cache_res.prefix_tokens,
                 session_id=session_id,
                 model_name=getattr(model_config, "model_name", ""),
                 provider_name=getattr(model_config, "provider", ""),
+                component_fingerprint=_fingerprint,
             )
             self._record_cache_break(event)
 
