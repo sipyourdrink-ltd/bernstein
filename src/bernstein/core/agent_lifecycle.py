@@ -208,8 +208,7 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
             # Clean up worktree unless preserved for crash-resume
             _preserved = getattr(orch, "_preserved_worktrees", {})
             _session_preserved = any(
-                orch._spawner.get_worktree_path(session.id) == _preserved.get(tid)
-                for tid in session.task_ids
+                orch._spawner.get_worktree_path(session.id) == _preserved.get(tid) for tid in session.task_ids
             )
             if not _session_preserved:
                 orch._spawner.cleanup_worktree(session.id)
@@ -1003,8 +1002,7 @@ def reap_dead_agents(
             # Clean up worktree unless preserved for crash-resume
             _preserved = getattr(orch, "_preserved_worktrees", {})
             _session_preserved = any(
-                orch._spawner.get_worktree_path(session.id) == _preserved.get(tid)
-                for tid in session.task_ids
+                orch._spawner.get_worktree_path(session.id) == _preserved.get(tid) for tid in session.task_ids
             )
             if not _session_preserved:
                 orch._spawner.cleanup_worktree(session.id)
