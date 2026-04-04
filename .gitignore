@@ -56,3 +56,6 @@ docs/research*
 
 # Marketing
 marketing/*
+
+# Runtime-local MCP config (localhost server, not for sharing)
+.claude/mcp.json
