@@ -315,6 +315,13 @@ async def status_dashboard(request: Request) -> JSONResponse:
         if scan is not None:
             payload["dependency_scan"] = scan.to_dict()
 
+        # Verification nudge summary: unverified completions tracking.
+        from bernstein.core.verification_nudge import load_nudge_summary
+
+        nudge = load_nudge_summary(sdd_dir / "metrics")
+        if nudge.total_completions > 0:
+            payload["verification_nudge"] = nudge.to_dict()
+
     return JSONResponse(content=payload)
 
 
