@@ -1870,10 +1870,10 @@ def test_read_cost_by_role_truncation_reset(tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 async def test_jsonl_write_buffering(tmp_path: Path) -> None:
-    """Creating 20 tasks must produce fewer than 20 file-open operations.
+    """Every mutation must flush to disk immediately (_BUFFER_MAX=1).
 
-    With a buffer of 10, 20 creates trigger exactly 2 batch flushes plus at
-    most 1 final flush — well under 20 individual file opens.
+    With immediate flushing, 20 creates produce exactly 20 file-open
+    operations — no data is left in the buffer that could be lost on crash.
     """
     jsonl = tmp_path / "tasks.jsonl"
     store = TaskStore(jsonl_path=jsonl)
@@ -1895,7 +1895,7 @@ async def test_jsonl_write_buffering(tmp_path: Path) -> None:
             await store.create(req)
         await store.flush_buffer()
 
-    assert open_count < 20, f"Expected fewer than 20 file opens, got {open_count}"
+    assert open_count == 20, f"Expected exactly 20 file opens (immediate flush), got {open_count}"
     # All 20 records must be on disk after the flush
     lines = [ln for ln in jsonl.read_text().splitlines() if ln.strip()]
     assert len(lines) == 20

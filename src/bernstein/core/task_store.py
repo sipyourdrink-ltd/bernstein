@@ -383,7 +383,7 @@ class TaskStore:
                 self._tasks[task_id] = task
                 self._index_add(task)
 
-    _BUFFER_MAX: int = 10
+    _BUFFER_MAX: int = 1
 
     async def _flush_buffer_unlocked(self) -> None:
         """Write buffered JSONL records to disk. Caller must hold self._lock.
@@ -405,11 +405,11 @@ class TaskStore:
         await _retry_io(_write)
 
     async def _append_jsonl(self, record: TaskRecord) -> None:
-        """Buffer a JSON record for batch JSONL writing.
+        """Append a JSON record to the JSONL log, flushing immediately.
 
-        Records accumulate until the buffer reaches _BUFFER_MAX entries, then
-        flush to disk in a single write.  Callers must eventually call
-        flush_buffer() (e.g. on shutdown) to drain any remaining records.
+        Each mutation is flushed to disk right away (_BUFFER_MAX=1) so that
+        no state is lost on a server crash.  The lifespan shutdown handler
+        also calls flush_buffer() as a safety net.
         """
         line = json.dumps(record, default=str) + "\n"
         self._write_buffer.append(line)
