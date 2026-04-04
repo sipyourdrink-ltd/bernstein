@@ -45,10 +45,12 @@ from bernstein.core.server import (
     NodeHeartbeatRequest,
     NodeRegisterRequest,
     NodeResponse,
+    PaginatedTasksResponse,
     SSEBus,
     TaskBlockRequest,
     TaskCancelRequest,
     TaskCompleteRequest,
+    TaskCountsResponse,
     TaskCreate,
     TaskFailRequest,
     TaskPatchRequest,
@@ -409,17 +411,77 @@ async def get_task_snapshots(task_id: str, request: Request) -> list[SnapshotEnt
     ]
 
 
-@router.get("/tasks", response_model=list[TaskResponse])
+@router.get("/tasks")
 async def list_tasks(
     request: Request,
     status: str | None = None,
     cell_id: str | None = None,
     tenant: str | None = None,
-) -> list[TaskResponse]:
-    """List all tasks, optionally filtered by status and/or cell_id."""
+    limit: int | None = None,
+    offset: int | None = None,
+) -> PaginatedTasksResponse | list[TaskResponse]:
+    """List tasks, optionally filtered by status and/or cell_id.
+
+    When ``limit`` or ``offset`` query params are provided the response is a
+    paginated envelope (``{tasks, total, limit, offset}``).  Without them,
+    the legacy flat list is returned for backward compatibility.
+
+    Args:
+        request: FastAPI request.
+        status: If provided, only tasks with this status are returned.
+        cell_id: If provided, only tasks in this cell are returned.
+        tenant: Tenant scope override.
+        limit: Maximum number of tasks to return (max 500).  Triggers
+            paginated response when present.
+        offset: Number of tasks to skip.  Triggers paginated response
+            when present.
+
+    Returns:
+        Paginated response **or** plain list of TaskResponse dicts.
+    """
     store = _get_store(request)
     effective_tenant = _resolve_request_tenant_scope(request, tenant)
-    return [task_to_response(t) for t in store.list_tasks(status, cell_id, tenant_id=effective_tenant)]
+    all_tasks = store.list_tasks(status, cell_id, tenant_id=effective_tenant)
+
+    paginate = limit is not None or offset is not None
+    if paginate:
+        effective_limit = max(1, min(limit or 100, 500))
+        effective_offset = max(0, offset or 0)
+        total = len(all_tasks)
+        page = all_tasks[effective_offset : effective_offset + effective_limit]
+        return PaginatedTasksResponse(
+            tasks=[task_to_response(t) for t in page],
+            total=total,
+            limit=effective_limit,
+            offset=effective_offset,
+        )
+
+    # Legacy: return a flat list for callers that don't pass pagination params.
+    return [task_to_response(t) for t in all_tasks]
+
+
+@router.get("/tasks/counts", response_model=TaskCountsResponse)
+async def task_counts(
+    request: Request,
+    tenant: str | None = None,
+) -> TaskCountsResponse:
+    """Return task counts per status without serialising task bodies.
+
+    This is the lightweight alternative to GET /tasks for orchestrator
+    tick summaries and dashboard polling.
+    """
+    store = _get_store(request)
+    effective_tenant = _resolve_request_tenant_scope(request, tenant)
+    counts = store.count_by_status(tenant_id=effective_tenant)
+    return TaskCountsResponse(
+        open=counts.get("open", 0),
+        claimed=counts.get("claimed", 0),
+        done=counts.get("done", 0),
+        failed=counts.get("failed", 0),
+        blocked=counts.get("blocked", 0),
+        cancelled=counts.get("cancelled", 0),
+        total=counts.get("total", 0),
+    )
 
 
 @router.get("/tasks/archive", response_model=list[ArchiveRecord])

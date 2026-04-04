@@ -71,6 +71,8 @@ def _make_orch(tmp_path: Path, *, evolve_mode: bool = False) -> MagicMock:
     )
     orch._agents = {}
     orch._idle_shutdown_ts = {}
+    # Real path so completion marker checks use the filesystem (not MagicMock).
+    orch._workdir = tmp_path
 
     signal_mgr = MagicMock()
     signal_mgr.read_heartbeat.return_value = None  # no heartbeat by default
@@ -562,6 +564,140 @@ def test_multiple_agents_same_drained_role_all_exit(tmp_path: Path) -> None:
     assert orch._signal_mgr.write_shutdown.call_count == 2
     shutdown_sessions = {call.args[0] for call in orch._signal_mgr.write_shutdown.call_args_list}
     assert shutdown_sessions == {"s-multi-01", "s-multi-02"}
+
+
+# ---------------------------------------------------------------------------
+# Completion marker — instant reap (CRITICAL-002)
+# ---------------------------------------------------------------------------
+
+
+def test_instant_reap_on_completion_marker(tmp_path: Path) -> None:
+    """Agent with completion marker is reaped immediately — no SHUTDOWN, no grace period."""
+    orch = _make_orch(tmp_path)
+    session = _make_session(["T-comp-1"], session_id="s-comp-01")
+    orch._agents["s-comp-01"] = session
+
+    # Create completion marker file
+    completed_dir = tmp_path / ".sdd" / "runtime" / "completed"
+    completed_dir.mkdir(parents=True)
+    marker = completed_dir / "s-comp-01"
+    marker.write_text("done")
+
+    tasks_snapshot = {
+        "done": [],
+        "failed": [],
+        "open": [_make_task(id="T-comp-1", status="open")],
+        "claimed": [],
+        "blocked": [],
+    }
+
+    recycle_idle_agents(orch, tasks_snapshot)
+
+    # Agent should be killed immediately (SIGTERM, not SHUTDOWN)
+    orch._spawner.kill.assert_called_once_with(session)
+    # SHUTDOWN signal must NOT be written (we skip the grace period entirely)
+    orch._signal_mgr.write_shutdown.assert_not_called()
+    # Signal files must be cleaned up
+    orch._signal_mgr.clear_signals.assert_called_once_with("s-comp-01")
+    # Completion marker file must be cleaned up
+    assert not marker.exists()
+
+
+def test_instant_reap_cleans_idle_shutdown_ts(tmp_path: Path) -> None:
+    """Completion marker reap clears any stale SHUTDOWN tracking entry."""
+    orch = _make_orch(tmp_path)
+    session = _make_session(["T-comp-2"], session_id="s-comp-02")
+    orch._agents["s-comp-02"] = session
+    # Simulate a previously sent SHUTDOWN
+    orch._idle_shutdown_ts["s-comp-02"] = 12345.0
+
+    completed_dir = tmp_path / ".sdd" / "runtime" / "completed"
+    completed_dir.mkdir(parents=True)
+    (completed_dir / "s-comp-02").write_text("result text here")
+
+    tasks_snapshot = {
+        "done": [],
+        "failed": [],
+        "open": [_make_task(id="T-comp-2", status="open")],
+        "claimed": [],
+        "blocked": [],
+    }
+
+    recycle_idle_agents(orch, tasks_snapshot)
+
+    orch._spawner.kill.assert_called_once_with(session)
+    assert "s-comp-02" not in orch._idle_shutdown_ts
+
+
+def test_no_instant_reap_without_completion_marker(tmp_path: Path) -> None:
+    """Without completion marker, agent is NOT reaped immediately (normal path)."""
+    orch = _make_orch(tmp_path)
+    session = _make_session(["T-active-99"])
+    orch._agents["s-active-99"] = session
+
+    # No completion marker directory at all
+    tasks_snapshot = {
+        "done": [],
+        "failed": [],
+        "open": [_make_task(id="T-active-99", status="open")],
+        "claimed": [],
+        "blocked": [],
+    }
+
+    recycle_idle_agents(orch, tasks_snapshot)
+
+    # Agent has active task and no marker — should not be touched
+    orch._spawner.kill.assert_not_called()
+    orch._signal_mgr.write_shutdown.assert_not_called()
+
+
+def test_completion_marker_with_result_text(tmp_path: Path) -> None:
+    """Completion marker containing result text triggers instant reap."""
+    orch = _make_orch(tmp_path)
+    session = _make_session(["T-comp-3"], session_id="s-comp-03")
+    orch._agents["s-comp-03"] = session
+
+    completed_dir = tmp_path / ".sdd" / "runtime" / "completed"
+    completed_dir.mkdir(parents=True)
+    marker = completed_dir / "s-comp-03"
+    marker.write_text("All tasks completed successfully. Created 3 files.")
+
+    tasks_snapshot = {
+        "done": [],
+        "failed": [],
+        "open": [_make_task(id="T-comp-3", status="open")],
+        "claimed": [],
+        "blocked": [],
+    }
+
+    recycle_idle_agents(orch, tasks_snapshot)
+
+    orch._spawner.kill.assert_called_once_with(session)
+    assert not marker.exists()
+
+
+def test_completion_marker_dead_agent_skipped(tmp_path: Path) -> None:
+    """Dead agents are skipped even if completion marker exists."""
+    orch = _make_orch(tmp_path)
+    session = _make_session(["T-comp-4"], session_id="s-comp-04")
+    session.status = "dead"
+    orch._agents["s-comp-04"] = session
+
+    completed_dir = tmp_path / ".sdd" / "runtime" / "completed"
+    completed_dir.mkdir(parents=True)
+    (completed_dir / "s-comp-04").write_text("done")
+
+    tasks_snapshot = {
+        "done": [],
+        "failed": [],
+        "open": [],
+        "claimed": [],
+        "blocked": [],
+    }
+
+    recycle_idle_agents(orch, tasks_snapshot)
+
+    orch._spawner.kill.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

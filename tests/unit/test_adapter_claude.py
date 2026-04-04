@@ -532,6 +532,74 @@ class TestSpawnMissingBinary:
 
 
 # ---------------------------------------------------------------------------
+# _wrapper_script() — completion marker (CRITICAL-002)
+# ---------------------------------------------------------------------------
+
+
+class TestWrapperScriptCompletionMarker:
+    """_wrapper_script() generates completion marker code when completion_path is set."""
+
+    def test_completion_path_generates_open_call(self) -> None:
+        """When completion_path is provided, the script writes the marker on result event."""
+        script = ClaudeCodeAdapter._wrapper_script(
+            session_id="s1",
+            completion_path="/tmp/completed/s1",
+        )
+        assert "/tmp/completed/s1" in script
+        assert "open(" in script
+
+    def test_no_completion_path_omits_marker_code(self) -> None:
+        """When completion_path is empty, no marker code is generated."""
+        script = ClaudeCodeAdapter._wrapper_script(session_id="s2")
+        assert "completed" not in script.lower() or "completion" not in script.lower()
+
+    def test_completion_marker_written_on_result_event(self, tmp_path: Path) -> None:
+        """End-to-end: wrapper script writes the completion marker when result JSON is piped in."""
+        marker_path = tmp_path / "completed" / "test-session"
+        marker_path.parent.mkdir(parents=True)
+
+        script = ClaudeCodeAdapter._wrapper_script(
+            session_id="test-session",
+            completion_path=str(marker_path),
+        )
+
+        result_json = json.dumps({"type": "result", "result": "All tasks done"})
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            input=result_json + "\n",
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert proc.returncode == 0
+        assert marker_path.exists()
+        assert marker_path.read_text() == "All tasks done"
+
+    def test_completion_marker_not_written_on_assistant_event(self, tmp_path: Path) -> None:
+        """Wrapper does NOT write completion marker for assistant events."""
+        marker_path = tmp_path / "completed" / "test-session-2"
+        marker_path.parent.mkdir(parents=True)
+
+        script = ClaudeCodeAdapter._wrapper_script(
+            session_id="test-session-2",
+            completion_path=str(marker_path),
+        )
+
+        assistant_json = json.dumps({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "working..."}]},
+        })
+        subprocess.run(
+            [sys.executable, "-c", script],
+            input=assistant_json + "\n",
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert not marker_path.exists()
+
+
+# ---------------------------------------------------------------------------
 # is_rate_limited() — pre-spawn rate limit detection (CRITICAL-003)
 # ---------------------------------------------------------------------------
 
@@ -539,46 +607,30 @@ class TestSpawnMissingBinary:
 class TestIsRateLimited:
     """ClaudeCodeAdapter.is_rate_limited() probes for provider throttling."""
 
-    def _make_run_result(
-        self, *, stderr: str = "", returncode: int = 0
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args=["claude", "--version"],
-            returncode=returncode,
-            stdout="",
-            stderr=stderr,
-        )
+    def _make_run_result(self, *, stderr: str = "", returncode: int = 0) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=["claude", "--version"], returncode=returncode, stdout="", stderr=stderr)
 
     def test_not_rate_limited_when_probe_returns_clean(self) -> None:
         adapter = ClaudeCodeAdapter()
-        with patch(
-            "bernstein.adapters.claude.subprocess.run",
-            return_value=self._make_run_result(),
-        ):
+        with patch("bernstein.adapters.claude.subprocess.run", return_value=self._make_run_result()):
             assert adapter.is_rate_limited() is False
 
     def test_rate_limited_when_stderr_contains_hit_your_limit(self) -> None:
         adapter = ClaudeCodeAdapter()
-        result = self._make_run_result(
-            stderr="Error: You've hit your limit for today", returncode=1
-        )
+        result = self._make_run_result(stderr="Error: You've hit your limit for today", returncode=1)
         with patch("bernstein.adapters.claude.subprocess.run", return_value=result):
             assert adapter.is_rate_limited() is True
 
     def test_rate_limited_when_stderr_contains_rate_limit(self) -> None:
         adapter = ClaudeCodeAdapter()
-        result = self._make_run_result(
-            stderr="rate limit exceeded, try again later", returncode=1
-        )
+        result = self._make_run_result(stderr="rate limit exceeded, try again later", returncode=1)
         with patch("bernstein.adapters.claude.subprocess.run", return_value=result):
             assert adapter.is_rate_limited() is True
 
     def test_cooldown_persists_without_re_probing(self) -> None:
         adapter = ClaudeCodeAdapter()
         result = self._make_run_result(stderr="You've hit your limit")
-        with patch(
-            "bernstein.adapters.claude.subprocess.run", return_value=result
-        ) as mock_run:
+        with patch("bernstein.adapters.claude.subprocess.run", return_value=result) as mock_run:
             assert adapter.is_rate_limited() is True
             # Second call should NOT invoke subprocess again — cached cooldown
             assert adapter.is_rate_limited() is True
@@ -588,10 +640,7 @@ class TestIsRateLimited:
         adapter = ClaudeCodeAdapter()
         result_limited = self._make_run_result(stderr="hit your limit")
         result_ok = self._make_run_result()
-        with patch(
-            "bernstein.adapters.claude.subprocess.run",
-            side_effect=[result_limited, result_ok],
-        ):
+        with patch("bernstein.adapters.claude.subprocess.run", side_effect=[result_limited, result_ok]):
             assert adapter.is_rate_limited() is True
             # Simulate cooldown expiry
             adapter._rate_limit_until = time.time() - 1
@@ -601,9 +650,7 @@ class TestIsRateLimited:
     def test_cached_negative_result_avoids_repeated_probes(self) -> None:
         adapter = ClaudeCodeAdapter()
         result_ok = self._make_run_result()
-        with patch(
-            "bernstein.adapters.claude.subprocess.run", return_value=result_ok
-        ) as mock_run:
+        with patch("bernstein.adapters.claude.subprocess.run", return_value=result_ok) as mock_run:
             assert adapter.is_rate_limited() is False
             # Immediate second call should use cache
             assert adapter.is_rate_limited() is False
@@ -612,9 +659,7 @@ class TestIsRateLimited:
     def test_cache_expires_after_ttl(self) -> None:
         adapter = ClaudeCodeAdapter()
         result_ok = self._make_run_result()
-        with patch(
-            "bernstein.adapters.claude.subprocess.run", return_value=result_ok
-        ) as mock_run:
+        with patch("bernstein.adapters.claude.subprocess.run", return_value=result_ok) as mock_run:
             assert adapter.is_rate_limited() is False
             # Expire the cache
             adapter._rate_limit_checked_at = time.time() - _RATE_LIMIT_CACHE_TTL - 1

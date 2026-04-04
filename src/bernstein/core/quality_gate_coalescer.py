@@ -49,7 +49,7 @@ class _PendingRun:
     task: Task
     run_dir: Path
     workdir: Path
-    kwargs: dict[str, Any] = field(default_factory=dict)
+    kwargs: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 # ---------------------------------------------------------------------------

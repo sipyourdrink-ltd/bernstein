@@ -102,12 +102,82 @@ def collect_completion_data(workdir: Path, session: AgentSession) -> CompletionD
 # ---------------------------------------------------------------------------
 
 
+def infer_affected_paths(task: Task) -> set[str]:
+    """Infer file paths a task is likely to edit from its title and description.
+
+    Scans the combined title + description text for explicit path references
+    (e.g. ``src/bernstein/core/foo.py``) and bare module names (e.g. ``foo.py``).
+    Bare module names are resolved against the ``src/bernstein`` tree; only the
+    first match is kept to avoid false positives.
+
+    Args:
+        task: Task whose content to scan.
+
+    Returns:
+        Set of relative file paths the task is expected to touch.
+    """
+    from pathlib import Path as _Path
+
+    text = f"{task.title} {task.description}"
+
+    # Match explicit paths like src/bernstein/core/foo.py or tests/unit/test_bar.py
+    paths: set[str] = set(re.findall(r"(?:src/bernstein|tests/unit|tests/integration)/\S+\.py", text))
+
+    # Match bare module names like "orchestrator.py" and resolve to real paths
+    for match in re.findall(r"\b(\w+\.py)\b", text):
+        # Skip if we already have a fully qualified path ending with this name
+        if any(p.endswith(match) for p in paths):
+            continue
+        candidates = list(_Path("src/bernstein").rglob(match))
+        if candidates:
+            paths.add(str(candidates[0]))
+
+    return paths
+
+
+def _get_active_agent_files(orch: Any) -> set[str]:
+    """Return the set of files currently being edited by active agents.
+
+    Inspects the git diff in each active agent's worktree to discover which
+    files have uncommitted changes.  Falls back to ``_file_ownership`` entries
+    for agents whose worktree cannot be inspected.
+
+    Args:
+        orch: Orchestrator instance.
+
+    Returns:
+        Set of file paths (relative to repo root) being edited by active agents.
+    """
+    active_files: set[str] = set()
+    spawner = getattr(orch, "_spawner", None)
+
+    for agent_id, session in orch._agents.items():
+        if session.status == "dead":
+            continue
+        # Try to get real changed files from the worktree git diff
+        worktree_path = None
+        if spawner is not None:
+            worktree_path = getattr(spawner, "get_worktree_path", lambda _: None)(agent_id)
+        if worktree_path is not None:
+            changed = _get_changed_files_in_worktree(worktree_path)
+            active_files.update(changed)
+        # Also include statically declared owned_files from file_ownership
+        for fpath, owner in orch._file_ownership.items():
+            if owner == agent_id:
+                active_files.add(fpath)
+
+    return active_files
+
+
 def check_file_overlap(
     batch: list[Task],
     file_ownership: dict[str, str],
     agents: dict[str, AgentSession],
 ) -> bool:
     """Check if any file in the batch is owned by an active agent.
+
+    Checks both explicitly declared ``owned_files`` and paths inferred from the
+    task title/description via :func:`infer_affected_paths`.
 
     Args:
         batch: Tasks to check for file conflicts.
@@ -118,7 +188,9 @@ def check_file_overlap(
         True if there is a conflict, False if safe to spawn.
     """
     for task in batch:
-        for fpath in task.owned_files:
+        # Check both explicit owned_files and inferred paths
+        all_paths = set(task.owned_files) | infer_affected_paths(task)
+        for fpath in all_paths:
             if fpath in file_ownership:
                 owner = file_ownership[fpath]
                 # Only conflict if the owning agent is still alive
@@ -885,6 +957,21 @@ def claim_and_spawn_batches(
         _ownership_sessions = {**orch._agents, **(_batch_sessions if isinstance(_batch_sessions, dict) else {})}
         if check_file_overlap(batch, orch._file_ownership, _ownership_sessions):
             continue
+
+        # Skip if inferred paths overlap with files actively being edited
+        # in other agents' worktrees (hot-file detection — CRITICAL-007).
+        _active_files = _get_active_agent_files(orch)
+        if _active_files:
+            _batch_inferred: set[str] = set()
+            for _t in batch:
+                _batch_inferred |= infer_affected_paths(_t)
+            _overlap = _batch_inferred & _active_files
+            if _overlap:
+                logger.info(
+                    "Skipping batch — file overlap with active agent worktree: %s",
+                    _overlap,
+                )
+                continue
 
         # Check spawn backoff: skip batches that recently failed
         batch_key = frozenset(t.id for t in batch)
@@ -1883,6 +1970,10 @@ def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:
     Uses :class:`~bernstein.core.file_locks.FileLockManager` when available,
     falling back to the legacy ``_file_ownership`` dict for compatibility.
 
+    Also claims ownership for paths inferred from the task title/description
+    (CRITICAL-007) so that subsequent ``check_file_overlap`` calls detect
+    conflicts even when tasks lack explicit ``owned_files``.
+
     Args:
         orch: Orchestrator instance.
         agent_id: The agent claiming ownership.
@@ -1890,18 +1981,20 @@ def _claim_file_ownership(orch: Any, agent_id: str, tasks: list[Task]) -> None:
     """
     lock_manager = getattr(orch, "_lock_manager", None)
     for task in tasks:
-        files = task.owned_files
-        if not files:
+        explicit_files = task.owned_files
+        inferred_files = infer_affected_paths(task)
+        all_files = list(set(explicit_files) | inferred_files)
+        if not all_files:
             continue
         if lock_manager is not None:
             lock_manager.acquire(
-                files,
+                all_files,
                 agent_id=agent_id,
                 task_id=task.id,
                 task_title=task.title,
             )
         # Keep legacy dict in sync so existing code that reads _file_ownership still works
-        for fpath in files:
+        for fpath in all_files:
             orch._file_ownership[fpath] = agent_id
 
 

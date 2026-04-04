@@ -229,17 +229,28 @@ class ClaudeCodeAdapter(CLIAdapter):
         return cmd
 
     @staticmethod
-    def _wrapper_script(session_id: str = "", tokens_path: str = "", heartbeat_path: str = "") -> str:
+    def _wrapper_script(
+        session_id: str = "",
+        tokens_path: str = "",
+        heartbeat_path: str = "",
+        completion_path: str = "",
+    ) -> str:
         """Return the stream-json → human-readable log converter script.
 
         Parses Claude Code's NDJSON stream, extracts human-readable text for
-        the log file, writes token usage to a sidecar, and touches a heartbeat
-        file on every event so the orchestrator knows the agent is alive.
+        the log file, writes token usage to a sidecar, touches a heartbeat
+        file on every event so the orchestrator knows the agent is alive, and
+        writes a completion marker when a ``result`` event is received so the
+        orchestrator can reap the agent immediately instead of waiting for the
+        heartbeat to go stale.
 
         Args:
             session_id: Agent session ID, injected for token sidecar writes.
             tokens_path: Absolute path to the ``.tokens`` sidecar file.
             heartbeat_path: Absolute path to the heartbeat file (touched on each event).
+            completion_path: Absolute path to the completion marker file.  Written
+                when a ``result`` event is parsed, signalling the orchestrator that
+                the agent finished its work and can be reaped immediately.
         """
         token_writer = ""
         if tokens_path:
@@ -269,6 +280,17 @@ class ClaudeCodeAdapter(CLIAdapter):
                 "    except OSError:\n"
                 "        pass\n"
             )
+        # Completion marker: write a file when the agent emits a `result` event
+        # so the orchestrator can reap the slot immediately instead of waiting
+        # for the heartbeat to go stale (saves up to 300s per agent).
+        completion_write = ""
+        if completion_path:
+            completion_write = (
+                "        try:\n"
+                f"            open({completion_path!r}, 'w').write(txt or 'done')\n"
+                "        except OSError:\n"
+                "            pass\n"
+            )
         return (
             "import sys, json\n"
             "seen_text = set()\n"
@@ -294,7 +316,7 @@ class ClaudeCodeAdapter(CLIAdapter):
             "    elif t == 'result':\n"
             "        txt = msg.get('result', '')\n"
             "        if txt:\n"
-            "            print(txt, flush=True)\n" + token_writer
+            "            print(txt, flush=True)\n" + completion_write + token_writer
         )
 
     def _launch_process(
@@ -408,10 +430,14 @@ class ClaudeCodeAdapter(CLIAdapter):
         heartbeat_dir = workdir / ".sdd" / "runtime" / "heartbeats"
         heartbeat_dir.mkdir(parents=True, exist_ok=True)
         heartbeat_path = heartbeat_dir / f"{session_id}.json"
+        completed_dir = workdir / ".sdd" / "runtime" / "completed"
+        completed_dir.mkdir(parents=True, exist_ok=True)
+        completion_path = completed_dir / session_id
         wrapper = self._wrapper_script(
             session_id=session_id,
             tokens_path=str(tokens_path),
             heartbeat_path=str(heartbeat_path),
+            completion_path=str(completion_path),
         )
         env = build_filtered_env(["ANTHROPIC_API_KEY"])
         claude_proc, wrapper_proc = self._launch_process(wrapped_cmd, wrapper, workdir, log_path, env=env)

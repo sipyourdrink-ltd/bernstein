@@ -454,15 +454,7 @@ def install_plugin(source: PluginSource, install_dir: Path) -> PluginInstallResu
         return _install_npm(source, install_dir)
     if isinstance(source, FileSource):
         return _install_file(source, install_dir)
-    if isinstance(source, DirectorySource):
-        return _install_directory(source, install_dir)
-
-    return PluginInstallResult(
-        success=False,
-        install_path=None,
-        source_kind="unknown",
-        error=f"Unknown source type: {type(source).__name__}",
-    )
+    return _install_directory(source, install_dir)
 
 
 def update_plugin(source: PluginSource, install_dir: Path) -> PluginInstallResult:

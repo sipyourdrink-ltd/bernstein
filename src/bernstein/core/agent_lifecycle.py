@@ -602,9 +602,25 @@ def handle_orphaned_task(
                 logger.error("Failed to retry/fail orphaned task %s: %s", task_id, exc)
             error_type = "janitor_failed"
     else:
-        # No completion signals -- check if agent produced output (files modified)
+        # No completion signals -- check if agent produced output.
+        # We check three indicators of success (in order):
+        #   1. Files modified in the working tree (original check)
+        #   2. Git commits on the agent's worktree branch
+        #   3. Agent exited with code 0 (clean exit = success)
         completion_data = collect_completion_data(orch._workdir, session)
         files_changed = len(completion_data.get("files_modified", []))
+
+        # Check for git commits on the agent's worktree branch.
+        # The worktree still exists at this point (cleanup happens after
+        # handle_orphaned_task returns to refresh_agent_states).
+        has_commits = False
+        worktree_path = orch._spawner.get_worktree_path(session.id)
+        if worktree_path is not None:
+            has_commits = _has_git_commits_on_branch(worktree_path)
+
+        # Agent exited with code 0 = clean exit, treat as success
+        clean_exit = session.exit_code == 0
+
         if files_changed > 0:
             # Agent did work but task had no signals -- auto-complete
             try:
@@ -619,6 +635,44 @@ def handle_orphaned_task(
                     "Orphaned task %s auto-completed (%d files modified, no signals) after agent %s died",
                     task_id,
                     files_changed,
+                    session.id,
+                )
+            except httpx.HTTPError as exc:
+                logger.error("Failed to complete orphaned task %s: %s", task_id, exc)
+                error_type = "complete_failed"
+        elif has_commits:
+            # Agent made git commits on its branch — work was done even
+            # though no uncommitted file modifications remain.
+            try:
+                complete_task(
+                    orch._client,
+                    base,
+                    task_id,
+                    f"Auto-completed: agent {session.id} made git commits on branch (no signals to verify)",
+                )
+                success = True
+                logger.info(
+                    "Orphaned task %s auto-completed (git commits detected, no signals) after agent %s died",
+                    task_id,
+                    session.id,
+                )
+            except httpx.HTTPError as exc:
+                logger.error("Failed to complete orphaned task %s: %s", task_id, exc)
+                error_type = "complete_failed"
+        elif clean_exit:
+            # Agent exited with code 0 — treat clean exit as success
+            # even without file modifications or git commits.
+            try:
+                complete_task(
+                    orch._client,
+                    base,
+                    task_id,
+                    f"Auto-completed: agent {session.id} exited cleanly (exit code 0, no signals to verify)",
+                )
+                success = True
+                logger.info(
+                    "Orphaned task %s auto-completed (clean exit code 0, no signals) after agent %s died",
+                    task_id,
                     session.id,
                 )
             except httpx.HTTPError as exc:
@@ -1105,11 +1159,29 @@ def recycle_idle_agents(
     # Heartbeat-idle threshold — tighter in evolve mode for fast turnover
     hb_idle_s = _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S if orch._config.evolve_mode else _IDLE_HEARTBEAT_THRESHOLD_S
 
+    # Completion marker directory — written by the wrapper script when the
+    # agent emits a stream-json ``result`` event.  Presence means the agent
+    # finished its work and can be reaped immediately (no 300s wait).
+    completed_dir = orch._workdir / ".sdd" / "runtime" / "completed"
+
     for session in list(orch._agents.values()):
         if session.status == "dead":
             continue
         if not orch._spawner.check_alive(session):
             continue  # Already dead — refresh_agent_states handles it next tick
+
+        # Fast path: completion marker written by the wrapper script.
+        # The agent already emitted a ``result`` event — reap immediately
+        # via SIGTERM instead of waiting for the heartbeat to go stale.
+        # This saves up to 300s per agent (CRITICAL-002).
+        completion_file = completed_dir / session.id
+        if completion_file.exists():
+            logger.info(
+                "Agent %s has completion marker — reaping immediately",
+                session.id,
+            )
+            _reap_completed_agent(orch, session, completion_file)
+            continue
 
         idle_reason: str | None = None
 
@@ -1141,6 +1213,30 @@ def recycle_idle_agents(
             continue
 
         _recycle_or_kill(orch, session, now, idle_reason)
+
+
+def _reap_completed_agent(orch: Any, session: AgentSession, completion_file: Path) -> None:
+    """Immediately reap an agent that wrote a completion marker.
+
+    Called when the wrapper script detected a ``result`` event in the
+    stream-json output and wrote a marker file.  Unlike the normal
+    SHUTDOWN -> grace-period -> SIGKILL path, this sends SIGTERM directly
+    because the agent has already finished its work.
+
+    Args:
+        orch: Orchestrator instance.
+        session: The completed agent session.
+        completion_file: Path to the completion marker (cleaned up after reap).
+    """
+    with contextlib.suppress(Exception):
+        orch._spawner.kill(session)
+    _propagate_abort_to_children(orch, session.id)
+    orch._idle_shutdown_ts.pop(session.id, None)
+    with contextlib.suppress(OSError):
+        orch._signal_mgr.clear_signals(session.id)
+    with contextlib.suppress(OSError):
+        completion_file.unlink()
+    get_collector().end_agent(session.id)
 
 
 def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) -> None:

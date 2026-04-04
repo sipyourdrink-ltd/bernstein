@@ -555,6 +555,27 @@ class TaskStealResponse(BaseModel):
     total_stolen: int
 
 
+class TaskCountsResponse(BaseModel):
+    """Lightweight status counts — no task bodies."""
+
+    open: int = 0
+    claimed: int = 0
+    done: int = 0
+    failed: int = 0
+    blocked: int = 0
+    cancelled: int = 0
+    total: int = 0
+
+
+class PaginatedTasksResponse(BaseModel):
+    """Paginated list of tasks with total count for cursor math."""
+
+    tasks: list[TaskResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 class BulletinMessageResponse(BaseModel):
     """Single bulletin message in responses."""
 

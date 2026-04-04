@@ -59,6 +59,7 @@ def _make_session(session_id: str, status: str = "working", provider: str | None
     s.context_window_tokens = 0
     s.context_utilization_pct = 0.0
     s.context_utilization_alert = False
+    s.token_budget = 0
     return s
 
 

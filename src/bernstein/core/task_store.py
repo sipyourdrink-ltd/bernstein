@@ -1205,6 +1205,34 @@ class TaskStore:
             tasks = [t for t in tasks if self._dependencies_satisfied(t)]
         return tasks
 
+    def count_by_status(self, tenant_id: str | None = None) -> dict[str, int]:
+        """Return task counts per status without materialising task lists.
+
+        This is O(N) in the worst case when tenant filtering is applied, but
+        avoids serialising full task bodies — ideal for the /tasks/counts
+        endpoint that the orchestrator polls every tick.
+
+        Args:
+            tenant_id: If provided, only count tasks belonging to this tenant.
+
+        Returns:
+            Dict mapping status name -> count, plus a ``total`` key.
+        """
+        if tenant_id is not None:
+            normalized = normalize_tenant_id(tenant_id)
+            counts: dict[str, int] = {}
+            total = 0
+            for ts, bucket in self._by_status.items():
+                n = sum(1 for t in bucket.values() if t.tenant_id == normalized)
+                counts[ts.value] = n
+                total += n
+            counts["total"] = total
+            return counts
+
+        counts = {ts.value: len(bucket) for ts, bucket in self._by_status.items()}
+        counts["total"] = len(self._tasks)
+        return counts
+
     def get_task(self, task_id: str) -> Task | None:
         """Look up a single task by id."""
         return self._tasks.get(task_id)

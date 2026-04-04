@@ -288,6 +288,7 @@ class Orchestrator:
         self._preserved_worktrees: dict[str, Path] = {}  # task_id -> worktree to reuse
         self._running = False
         self._tick_count = 0
+        self._cached_critical_path_ids: set[str] = set()
         self._dependency_scanner = DependencyVulnerabilityScanner(workdir)
         # Track spawn failures per batch for backoff: task_ids -> (fail_count, last_fail_ts)
         self._spawn_failures: dict[frozenset[str], tuple[int, float]] = {}
@@ -931,44 +932,53 @@ class Orchestrator:
             self._check_workflow_approval()
 
         # 1c. Build task graph and compute optimal parallelism
+        #     Graph analysis + dependency validation are expensive — gate behind
+        #     _run_normal. The all_tasks list and task ID cache are always needed.
         all_tasks = [t for status_tasks in tasks_by_status.values() for t in status_tasks]
         self._latest_tasks_by_id = {task.id: task for task in all_tasks}
-        task_graph = TaskGraph(all_tasks)
-        analysis = task_graph.analyse()
-        dep_validator = DependencyValidator()
-        dep_validation = dep_validator.validate(all_tasks)
-        for cycle in dep_validation.cycles:
-            logger.error("Dependency cycle detected: %s", " -> ".join(cycle))
-        for task_id, dep_id, dep_status in dep_validation.stuck_deps:
-            logger.warning(
-                "Task %s depends on %s which is %s — task remains blocked",
-                task_id,
-                dep_id,
-                dep_status,
-            )
-        for warning in dep_validation.warnings:
-            logger.warning("Dependency validation: %s", warning)
-        critical_path_ids = set(dep_validator.critical_path(all_tasks))
 
-        if analysis.parallel_width < self._config.max_agents and analysis.parallel_width > 0:
-            logger.debug(
-                "Graph parallel width (%d) < max_agents (%d) -- dependency filter already limits concurrency",
-                analysis.parallel_width,
-                self._config.max_agents,
-            )
+        if _run_normal:
+            task_graph = TaskGraph(all_tasks)
+            analysis = task_graph.analyse()
+            dep_validator = DependencyValidator()
+            dep_validation = dep_validator.validate(all_tasks)
+            for cycle in dep_validation.cycles:
+                logger.error("Dependency cycle detected: %s", " -> ".join(cycle))
+            for task_id, dep_id, dep_status in dep_validation.stuck_deps:
+                logger.warning(
+                    "Task %s depends on %s which is %s — task remains blocked",
+                    task_id,
+                    dep_id,
+                    dep_status,
+                )
+            for warning in dep_validation.warnings:
+                logger.warning("Dependency validation: %s", warning)
+            critical_path_ids = set(dep_validator.critical_path(all_tasks))
+            # Cache for use in fast ticks
+            self._cached_critical_path_ids = critical_path_ids
 
-        if analysis.bottlenecks:
-            logger.info(
-                "Graph bottleneck(s): %s -- %d downstream tasks blocked",
-                analysis.bottlenecks,
-                sum(len(task_graph.dependents(b)) for b in analysis.bottlenecks),
-            )
+            if analysis.parallel_width < self._config.max_agents and analysis.parallel_width > 0:
+                logger.debug(
+                    "Graph parallel width (%d) < max_agents (%d) -- dependency filter already limits concurrency",
+                    analysis.parallel_width,
+                    self._config.max_agents,
+                )
 
-        # Persist graph snapshot for dashboard / debugging
-        try:
-            task_graph.save(self._workdir / ".sdd" / "runtime")
-        except OSError as exc:
-            logger.debug("Failed to save task graph: %s", exc)
+            if analysis.bottlenecks:
+                logger.info(
+                    "Graph bottleneck(s): %s -- %d downstream tasks blocked",
+                    analysis.bottlenecks,
+                    sum(len(task_graph.dependents(b)) for b in analysis.bottlenecks),
+                )
+
+            # Persist graph snapshot for dashboard / debugging
+            try:
+                task_graph.save(self._workdir / ".sdd" / "runtime")
+            except OSError as exc:
+                logger.debug("Failed to save task graph: %s", exc)
+        else:
+            # Fast tick: reuse cached critical path IDs from last normal tick
+            critical_path_ids = getattr(self, "_cached_critical_path_ids", set())
 
         # 3. Count alive agents, spawn if capacity (capped by graph parallel width)
         # 2b. Rate-limit recovery: restore providers whose throttle window expired.
@@ -1087,8 +1097,9 @@ class Orchestrator:
         # 4. Check done tasks, run janitor, record evolution metrics
         process_completed_tasks(self, done_tasks, result)
 
-        # 4x. Periodic git hygiene: every 5 completed tasks
-        if len(done_tasks) > 0 and self._tick_count % 5 == 0:
+        # 4x. Periodic git hygiene
+        # Gated behind _run_slow — git operations are IO-heavy.
+        if _run_slow and len(done_tasks) > 0:
             try:
                 from bernstein.core.git_hygiene import run_hygiene
 
@@ -1141,11 +1152,14 @@ class Orchestrator:
             )
 
         # Run manager queue review when triggered (periodic correction pass)
-        if self._should_trigger_manager_review(self._failures_since_review):
+        # Gated behind _run_slow — manager review involves an LLM call.
+        if _run_slow and self._should_trigger_manager_review(self._failures_since_review):
             self._run_manager_queue_review()
 
         # 4b.6 AgentOps: update SLOs, check error budget, detect incidents
-        if self._tick_count % 5 == 0:  # every 5 ticks
+        # Gated behind _run_slow — SLO/incident tracking is expensive and
+        # doesn't need sub-minute granularity.
+        if _run_slow:
             collector = get_collector()
             self._slo_tracker.update_from_collector(collector)
             self._slo_tracker.save(self._workdir / ".sdd" / "metrics")
@@ -1199,11 +1213,15 @@ class Orchestrator:
         check_loops_and_deadlocks(self)
 
         # 4d-ii.6 Three-tier watchdog: mechanical checks -> AI triage -> human escalation
-        self._watchdog.sync(collect_watchdog_findings(self))
+        # Gated behind _run_slow — watchdog sync is heavyweight.
+        if _run_slow:
+            self._watchdog.sync(collect_watchdog_findings(self))
 
         # 4d-iii. Cost anomaly detection: burn rate projection, stop on budget overrun
-        for sig in self._anomaly_detector.check_tick(list(self._agents.values()), self._cost_tracker):
-            self._handle_anomaly_signal(sig)
+        # Gated behind _run_slow — anomaly detection doesn't need every-tick granularity.
+        if _run_slow:
+            for sig in self._anomaly_detector.check_tick(list(self._agents.values()), self._cost_tracker):
+                self._handle_anomaly_signal(sig)
 
         # 4d-iv. Real-time cost recording: update budget status from live tokens
         self._record_live_costs()
@@ -1216,11 +1234,13 @@ class Orchestrator:
         reap_dead_agents(self, result, tasks_by_status)
 
         # 6. Run evolution analysis cycle every N ticks
-        if self._evolution is not None and self._tick_count % self._config.evolution_tick_interval == 0:
+        # Gated behind _run_slow — evolution analysis is heavyweight.
+        if _run_slow and self._evolution is not None and self._tick_count % self._config.evolution_tick_interval == 0:
             self._run_evolution_cycle(result)
 
         # 6b. Refresh knowledge base every 5 evolution intervals
-        if self._tick_count % (self._config.evolution_tick_interval * 5) == 0:
+        # Gated behind _run_slow — knowledge base refresh is IO-heavy.
+        if _run_slow and self._tick_count % (self._config.evolution_tick_interval * 5) == 0:
             try:
                 refresh_knowledge_base(self._workdir)
             except OSError as exc:

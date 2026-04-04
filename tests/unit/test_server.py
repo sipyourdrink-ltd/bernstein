@@ -448,6 +448,140 @@ async def test_list_tasks_with_status_filter(client: AsyncClient) -> None:
     assert data[0]["title"] == "Still open"
 
 
+# -- GET /tasks (pagination) -----------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_list_tasks_paginated(client: AsyncClient) -> None:
+    """GET /tasks?limit=1&offset=0 returns paginated envelope."""
+    await client.post("/tasks", json=TASK_PAYLOAD)
+    await client.post("/tasks", json={**TASK_PAYLOAD, "title": "Second"})
+    await client.post("/tasks", json={**TASK_PAYLOAD, "title": "Third"})
+
+    resp = await client.get("/tasks", params={"limit": 2, "offset": 0})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "tasks" in data
+    assert "total" in data
+    assert data["total"] == 3
+    assert len(data["tasks"]) == 2
+    assert data["limit"] == 2
+    assert data["offset"] == 0
+
+
+@pytest.mark.anyio
+async def test_list_tasks_paginated_offset(client: AsyncClient) -> None:
+    """GET /tasks?limit=2&offset=2 returns the remaining tasks."""
+    for i in range(5):
+        await client.post("/tasks", json={**TASK_PAYLOAD, "title": f"Task {i}"})
+
+    resp = await client.get("/tasks", params={"limit": 2, "offset": 2})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 5
+    assert len(data["tasks"]) == 2
+    assert data["offset"] == 2
+
+
+@pytest.mark.anyio
+async def test_list_tasks_paginated_beyond_end(client: AsyncClient) -> None:
+    """GET /tasks?limit=10&offset=100 returns empty page when offset exceeds total."""
+    await client.post("/tasks", json=TASK_PAYLOAD)
+
+    resp = await client.get("/tasks", params={"limit": 10, "offset": 100})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 1
+    assert len(data["tasks"]) == 0
+
+
+@pytest.mark.anyio
+async def test_list_tasks_paginated_with_status_filter(client: AsyncClient) -> None:
+    """Pagination works together with status filter."""
+    for i in range(3):
+        await client.post("/tasks", json={**TASK_PAYLOAD, "title": f"Task {i}"})
+    # Complete one task so it's not 'open' anymore
+    create_resp = await client.post("/tasks", json={**TASK_PAYLOAD, "title": "done"})
+    tid = create_resp.json()["id"]
+    await client.post(f"/tasks/{tid}/claim")
+    await client.post(f"/tasks/{tid}/complete", json={"result_summary": "ok"})
+
+    resp = await client.get("/tasks", params={"status": "open", "limit": 2, "offset": 0})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 3  # only open tasks
+    assert len(data["tasks"]) == 2
+
+
+@pytest.mark.anyio
+async def test_list_tasks_legacy_format_without_pagination(client: AsyncClient) -> None:
+    """GET /tasks without limit/offset returns a flat list (backward compat)."""
+    await client.post("/tasks", json=TASK_PAYLOAD)
+    await client.post("/tasks", json={**TASK_PAYLOAD, "title": "Second"})
+
+    resp = await client.get("/tasks")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Legacy: plain list, not a dict with "tasks" key
+    assert isinstance(data, list)
+    assert len(data) == 2
+
+
+@pytest.mark.anyio
+async def test_list_tasks_limit_clamped_to_max(client: AsyncClient) -> None:
+    """GET /tasks?limit=9999 is clamped to 500."""
+    await client.post("/tasks", json=TASK_PAYLOAD)
+
+    resp = await client.get("/tasks", params={"limit": 9999})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["limit"] == 500
+
+
+# -- GET /tasks/counts ------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_task_counts_empty(client: AsyncClient) -> None:
+    """GET /tasks/counts returns all zeros when no tasks exist."""
+    resp = await client.get("/tasks/counts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["open"] == 0
+    assert data["claimed"] == 0
+    assert data["done"] == 0
+    assert data["failed"] == 0
+    assert data["total"] == 0
+
+
+@pytest.mark.anyio
+async def test_task_counts_reflects_statuses(client: AsyncClient) -> None:
+    """GET /tasks/counts accurately reflects task status distribution."""
+    # Create 3 open tasks
+    for i in range(3):
+        await client.post("/tasks", json={**TASK_PAYLOAD, "title": f"Task {i}"})
+
+    # Claim and complete one
+    create_resp = await client.post("/tasks", json={**TASK_PAYLOAD, "title": "complete-me"})
+    tid = create_resp.json()["id"]
+    await client.post(f"/tasks/{tid}/claim")
+    await client.post(f"/tasks/{tid}/complete", json={"result_summary": "ok"})
+
+    # Claim and fail one
+    create_resp2 = await client.post("/tasks", json={**TASK_PAYLOAD, "title": "fail-me"})
+    tid2 = create_resp2.json()["id"]
+    await client.post(f"/tasks/{tid2}/claim")
+    await client.post(f"/tasks/{tid2}/fail", json={"reason": "boom"})
+
+    resp = await client.get("/tasks/counts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["open"] == 3
+    assert data["done"] == 1
+    assert data["failed"] == 1
+    assert data["total"] == 5
+
+
 # -- GET /status ------------------------------------------------------------
 
 

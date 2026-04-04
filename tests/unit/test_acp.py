@@ -288,7 +288,8 @@ class TestACPRuns:
         # Verify a Bernstein task was created
         tasks_resp = await client.get("/tasks")
         assert tasks_resp.status_code == 200
-        tasks = tasks_resp.json()
+        body = tasks_resp.json()
+        tasks = body["tasks"] if isinstance(body, dict) and "tasks" in body else body
         assert len(tasks) == 1
         assert "Add authentication" in tasks[0]["description"]
 

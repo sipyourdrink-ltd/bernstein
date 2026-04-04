@@ -79,15 +79,19 @@ def _task_from_dict(raw: dict[str, Any]) -> Task:  # type: ignore[reportUnusedFu
     return Task.from_dict(raw)
 
 
+_FETCH_PAGE_SIZE = 100
+
+
 def fetch_all_tasks(
     client: httpx.Client,
     base_url: str,
     statuses: list[str] | None = None,
 ) -> dict[str, list[Task]]:
-    """Fetch all tasks from the server in a single GET /tasks call.
+    """Fetch all tasks from the server using paginated GET /tasks.
 
-    Makes exactly one HTTP request and buckets the results client-side by
-    status, keeping per-tick round-trips to a minimum.
+    Iterates through pages of ``_FETCH_PAGE_SIZE`` tasks until all results
+    are consumed, avoiding a single multi-MB response that caused OOMs
+    with 300+ tasks (CRITICAL-001).
 
     Args:
         client: httpx client.
@@ -104,14 +108,37 @@ def fetch_all_tasks(
     if statuses is None:
         statuses = ["open", "claimed", "done", "failed"]
     by_status: dict[str, list[Task]] = {s: [] for s in statuses}
-    resp = client.get(f"{base_url}/tasks")
-    resp.raise_for_status()
-    for raw in resp.json():
-        task = Task.from_dict(raw)
-        key = task.status.value
-        if key not in by_status:
-            by_status[key] = []
-        by_status[key].append(task)
+
+    offset = 0
+    while True:
+        resp = client.get(
+            f"{base_url}/tasks",
+            params={"limit": _FETCH_PAGE_SIZE, "offset": offset},
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+        # Support both paginated (dict with "tasks") and legacy (bare list) responses
+        if isinstance(body, dict):
+            tasks_raw: list[dict[str, Any]] = body.get("tasks", [])
+            total: int = body.get("total", 0)
+        else:
+            # Legacy: server returned a plain list (pre-pagination)
+            tasks_raw = body
+            total = len(body)
+
+        for raw in tasks_raw:
+            task = Task.from_dict(raw)
+            key = task.status.value
+            if key not in by_status:
+                by_status[key] = []
+            by_status[key].append(task)
+
+        offset += len(tasks_raw)
+        # Stop when we've fetched everything or the page was empty
+        if not tasks_raw or offset >= total:
+            break
+
     return by_status
 
 
