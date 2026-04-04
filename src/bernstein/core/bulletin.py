@@ -392,6 +392,38 @@ class BulletinMessage:
 
 
 @dataclass
+class AgentActivitySummary:
+    """Activity summary broadcast by an agent for cross-agent visibility.
+
+    Attributes:
+        agent_id: Unique agent session identifier.
+        summary: 3-5 word description of current activity state.
+        timestamp: Unix seconds when the summary was posted.
+    """
+
+    agent_id: str
+    summary: str
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialise to a JSON-safe dict."""
+        return {
+            "agent_id": self.agent_id,
+            "summary": self.summary,
+            "timestamp": self.timestamp,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, object]) -> AgentActivitySummary:
+        """Deserialise from a dict."""
+        return cls(
+            agent_id=str(d.get("agent_id", "")),
+            summary=str(d.get("summary", "")),
+            timestamp=float(d.get("timestamp", 0.0) or 0.0),
+        )
+
+
+@dataclass
 class BulletinBoard:
     """Append-only message log for cross-agent communication.
 
@@ -402,6 +434,7 @@ class BulletinBoard:
     _messages: list[BulletinMessage] = field(default_factory=list)  # type: ignore[reportUnknownVariableType]
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _status_notifications: list[AgentStatusNotification] = field(default_factory=list)
+    _activity_summaries: dict[str, AgentActivitySummary] = field(default_factory=dict)
 
     def post(self, msg: BulletinMessage) -> BulletinMessage:
         """Append a message to the board.
@@ -617,3 +650,37 @@ class BulletinBoard:
             result = list(self._status_notifications)
             self._status_notifications.clear()
         return result
+
+    # -- Agent activity summaries ---------------------------------------------
+
+    def post_activity_summary(self, activity_summary: AgentActivitySummary) -> None:
+        """Record the latest activity summary for an agent.
+
+        Only the most-recent summary per agent_id is retained.
+
+        Args:
+            activity_summary: The summary to record.
+        """
+        with self._lock:
+            self._activity_summaries[activity_summary.agent_id] = activity_summary
+
+    def get_latest_activity_summary(self, agent_id: str) -> AgentActivitySummary | None:
+        """Return the latest activity summary for a specific agent.
+
+        Args:
+            agent_id: The agent whose summary to retrieve.
+
+        Returns:
+            The most recent AgentActivitySummary, or None if not found.
+        """
+        with self._lock:
+            return self._activity_summaries.get(agent_id)
+
+    def get_all_activity_summaries(self) -> dict[str, AgentActivitySummary]:
+        """Return the latest activity summary for every agent that has posted one.
+
+        Returns:
+            Mapping of agent_id -> AgentActivitySummary.
+        """
+        with self._lock:
+            return dict(self._activity_summaries)
