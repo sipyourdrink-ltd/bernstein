@@ -223,11 +223,11 @@ class ClaudeCodeAdapter(CLIAdapter):
             claude_effort,
             "--permission-mode",
             "bypassPermissions",
+            "--bare",  # Skip hooks, LSP, plugins, prefetches — 100-200ms faster startup
             "--max-turns",
             str(max_turns),
             "--output-format",
             "stream-json",
-            "--verbose",
         ]
         if fallback_model:
             cmd.extend(["--fallback-model", fallback_model])
@@ -251,10 +251,22 @@ class ClaudeCodeAdapter(CLIAdapter):
         if agents_json:
             cmd.extend(["--agents", json.dumps(agents_json)])
 
+        # Per-task budget cap — prevents runaway token spend
+        cmd.extend(["--max-budget-usd", "5.00"])
+
         if mcp_config:
             cmd.extend(["--mcp-config", json.dumps(mcp_config)])
+
+        # Use --append-system-prompt-file for long addenda to avoid shell
+        # argument length limits and quoting issues.
         if system_addendum:
-            cmd.extend(["--append-system-prompt", system_addendum])
+            import tempfile
+
+            fd, addendum_path = tempfile.mkstemp(suffix=".md", prefix="bernstein-prompt-")
+            os.write(fd, system_addendum.encode())
+            os.close(fd)
+            cmd.extend(["--append-system-prompt-file", addendum_path])
+
         cmd.extend(["-p", prompt])
         return cmd
 
@@ -347,7 +359,15 @@ class ClaudeCodeAdapter(CLIAdapter):
             "    elif t == 'result':\n"
             "        txt = msg.get('result', '')\n"
             "        if txt:\n"
-            "            print(txt, flush=True)\n" + completion_write + token_writer
+            "            print(txt, flush=True)\n"
+            "        # Extract structured result data for orchestrator\n"
+            "        _subtype = msg.get('subtype', 'success')\n"
+            "        _cost = msg.get('total_cost_usd', 0.0)\n"
+            "        _turns = msg.get('num_turns', 0)\n"
+            "        _dur = msg.get('duration_ms', 0)\n"
+            "        print(f'[RESULT] subtype={_subtype} cost=${_cost:.4f}'"
+            "              f' turns={_turns} duration={_dur}ms', flush=True)\n"
+            + completion_write + token_writer
         )
 
     def _launch_process(
