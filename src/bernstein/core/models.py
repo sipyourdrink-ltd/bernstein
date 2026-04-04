@@ -975,7 +975,7 @@ class OrchestratorConfig:
     heartbeat_timeout_s: int = 900  # 15 min — generous until agents implement heartbeat writes
     heartbeat_enabled: bool = True
     max_agent_runtime_s: int = 1800  # 30 min wall-clock kill (agents need time for complex tasks)
-    max_tasks_per_agent: int = 1  # one task per agent = focused, fast
+    max_tasks_per_agent: int = 2  # batch 2 same-role tasks per agent to reduce context overhead
     server_url: str = "http://localhost:8052"
     evolution_enabled: bool = True
     evolution_tick_interval: int = 30

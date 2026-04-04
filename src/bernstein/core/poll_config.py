@@ -91,9 +91,6 @@ def _validate_interval(value: int | None, field: str) -> list[str]:
     if value is None:
         return []
     errors: list[str] = []
-    if not isinstance(value, int):
-        errors.append(f"{field} must be an integer, got {type(value).__name__}")
-        return errors
     if value < MIN_INTERVAL_MS:
         errors.append(f"{field} is {value} ms — below the minimum of {MIN_INTERVAL_MS} ms")
     if value > MAX_INTERVAL_MS:

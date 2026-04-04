@@ -238,8 +238,8 @@ class Orchestrator:
     _MAX_SPAWN_FAILURES: int = 3  # consecutive failures before marking tasks failed
     _MAX_DEAD_AGENTS_KEPT: int = 20  # purge oldest dead agents beyond this
     _MAX_PROCESSED_DONE: int = 500  # cap _processed_done_tasks set size
-    _MANAGER_REVIEW_COMPLETION_THRESHOLD: int = 3  # trigger review after this many completions
-    _MANAGER_REVIEW_STALL_S: float = 300.0  # trigger review after 5 min of no progress
+    _MANAGER_REVIEW_COMPLETION_THRESHOLD: int = 7  # trigger review after this many completions
+    _MANAGER_REVIEW_STALL_S: float = 900.0  # trigger review after 15 min of no progress
 
     def __init__(
         self,
