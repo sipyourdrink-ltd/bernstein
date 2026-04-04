@@ -1,0 +1,8 @@
+name: generic_adapter_spawn
+adapter_class: bernstein.adapters.generic.GenericAdapter
+ctor_kwargs:
+  cli_command: echo
+steps:
+  - prompt: "implement feature X"
+    model: "sonnet"
+    expected_pid: 5678
