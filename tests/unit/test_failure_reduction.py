@@ -250,7 +250,7 @@ class TestAutoDecomposeOnRepeatedFailure:
     """Tasks that have failed 2+ times should be auto-decomposed."""
 
     def _build_orch(self, tmp_path: Path) -> Orchestrator:
-        cfg = OrchestratorConfig(server_url="http://testserver")
+        cfg = OrchestratorConfig(server_url="http://testserver", auto_decompose=True)
         adp = _mock_adapter()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)

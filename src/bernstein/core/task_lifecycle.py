@@ -549,39 +549,44 @@ def should_auto_decompose(
     workdir: Path | None = None,
     force_parallel: bool = False,
 ) -> bool:
-    """Return True if a large task should be decomposed into subtasks.
+    """Return True if a task should be decomposed into subtasks.
 
-    **Disabled by default.** Modern LLMs (Claude Opus/Sonnet with 1M context)
-    can handle any task scope without decomposition.  Decomposition was
-    designed for 8K-32K context models where large tasks would overflow.
-    With 1M context, even a "large" task uses <2% of the window.
+    **Disabled by default.** Requires ``force_parallel=True`` (set when the
+    orchestrator's ``auto_decompose`` config is enabled).
 
-    Decomposition creates more problems than it solves:
-    - Manager agent burns tokens just to plan subtasks
-    - Subtasks create coordination overhead (dependencies, merging)
-    - 5 subtasks x retry = 15 potential failures vs 1 direct attempt
-
-    Returns False unconditionally unless ``force_parallel=True``.
+    When enabled, decomposition triggers for:
+    - LARGE scope tasks
+    - Tasks that have been retried 2+ times (title starts with ``[RETRY N]``
+      where N >= 2)
 
     Args:
         task: The task to check.
         decomposed_task_ids: Set of already-decomposed task IDs.
-        workdir: Repository root for coupling analysis (None = skip analysis).
-        force_parallel: If True, force decomposition (legacy behavior).
+        workdir: Repository root for coupling analysis (unused, kept for API).
+        force_parallel: If True, enable decomposition logic.
 
     Returns:
-        True only when force_parallel is explicitly set.
+        True when force_parallel is set AND the task meets scope/retry criteria.
     """
-
-    # Already queued for decomposition in this session
-    # Modern LLMs handle any task scope without decomposition.
-    # Only decompose when explicitly forced via force_parallel=True.
     if not force_parallel:
         return False
 
     if task.id in decomposed_task_ids:
         return False
-    return not task.title.startswith("[DECOMPOSE]")
+
+    if task.title.startswith("[DECOMPOSE]"):
+        return False
+
+    # Extract retry count from title prefix like "[RETRY 2]"
+    import re
+
+    from bernstein.core.models import Scope as _Scope
+
+    retry_match = re.match(r"^\[RETRY\s+(\d+)\]", task.title)
+    retry_count = int(retry_match.group(1)) if retry_match else 0
+
+    # Decompose if LARGE scope or 2+ retries
+    return task.scope == _Scope.LARGE or retry_count >= 2
 
 
 def create_conflict_resolution_task(

@@ -39,6 +39,8 @@ def _claim_orch(tmp_path: Path) -> Any:
     """Build a small orchestrator stub for claim_and_spawn_batches tests."""
     client = MagicMock()
     client.post.return_value = SimpleNamespace(status_code=200)
+    spawner = MagicMock()
+    spawner._adapter = None
     return SimpleNamespace(
         _config=SimpleNamespace(
             server_url="http://server",
@@ -48,7 +50,7 @@ def _claim_orch(tmp_path: Path) -> Any:
             ab_test=False,
         ),
         _client=client,
-        _spawner=MagicMock(),
+        _spawner=spawner,
         _agents={},
         _file_ownership={},
         _spawn_failures={},
@@ -143,7 +145,8 @@ def test_should_auto_decompose_after_second_retry_even_when_scope_is_medium(make
         scope=Scope.MEDIUM,
     )
 
-    assert should_auto_decompose(task, set()) is True
+    assert should_auto_decompose(task, set()) is False
+    assert should_auto_decompose(task, set(), force_parallel=True) is True
 
 
 def test_claim_and_spawn_batches_respects_max_agent_cap(tmp_path: Path, make_task: Any) -> None:
@@ -198,6 +201,7 @@ def test_claim_and_spawn_batches_aborts_on_claim_transport_error(tmp_path: Path,
 def test_claim_and_spawn_batches_auto_decomposes_large_task_before_claim(tmp_path: Path, make_task: Any) -> None:
     """claim_and_spawn_batches creates a planner task instead of claiming a decomposable large task."""
     orch = _claim_orch(tmp_path)
+    orch._config.auto_decompose = True
     task = make_task(id="T-large", scope=Scope.LARGE)
     result = TickResult()
 
@@ -392,7 +396,7 @@ def test_process_completed_tasks_moves_ticket_and_caches_verified_result(tmp_pat
         git_diff_lines=12,
         source_task_id="T-done",
     )
-    assert result.verified == []
+    assert result.verified == ["T-done"]
 
 
 def test_process_completed_tasks_records_quality_gate_failure_without_closing_ticket(
@@ -424,10 +428,11 @@ def test_process_completed_tasks_records_quality_gate_failure_without_closing_ti
         passed=False,
         gate_results=[SimpleNamespace(gate="lint", blocked=True, passed=False)],
     )
+    orch._gate_coalescer = MagicMock()
+    orch._gate_coalescer.run.return_value = gate_result
 
     with (
         patch("bernstein.core.task_lifecycle.get_collector", return_value=collector),
-        patch("bernstein.core.task_lifecycle.run_quality_gates", return_value=gate_result),
         patch("bernstein.core.task_lifecycle.append_decision"),
     ):
         result = TickResult()

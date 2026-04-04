@@ -40,7 +40,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "roo-code": RooCodeAdapter,
 }
 
-_ENTRYPOINTS_LOADED = False
+_entrypoints_loaded = False
 
 
 def _load_entrypoint_adapters() -> None:
@@ -48,10 +48,10 @@ def _load_entrypoint_adapters() -> None:
 
     Called once on first use. Silently skips malformed plugins.
     """
-    global _ENTRYPOINTS_LOADED
-    if _ENTRYPOINTS_LOADED:
+    global _entrypoints_loaded
+    if _entrypoints_loaded:
         return
-    _ENTRYPOINTS_LOADED = True
+    _entrypoints_loaded = True
     for ep in entry_points(group="bernstein.adapters"):
         try:
             loaded = ep.load()

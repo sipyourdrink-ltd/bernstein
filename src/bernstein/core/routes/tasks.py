@@ -307,6 +307,10 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             if task is None:
                 raise KeyError
             _require_task_access(task, request)
+            # Auto-claim if task reverted to "open" (e.g. after orchestrator
+            # restart reconciliation).  Prevents agents from looping on 409.
+            if task.status.value == "open":
+                await store.claim_by_id(task_id)
             task = await store.complete(task_id, body.result_summary)
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
@@ -346,6 +350,9 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
         if existing_task is None:
             raise KeyError
         _require_task_access(existing_task, request)
+        # Auto-claim if task reverted to "open" (same rationale as /complete).
+        if existing_task.status.value == "open":
+            await store.claim_by_id(task_id)
         task = await store.fail(task_id, body.reason)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None

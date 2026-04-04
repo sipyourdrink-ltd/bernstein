@@ -581,8 +581,10 @@ def _render_prompt(
     project_context = _read_cached(project_md)
 
     # Completion instructions with concrete curl commands and retry logic.
+    # Use --retry-connrefused (not --retry-all-errors) so curl only retries
+    # transient connection failures, NOT 4xx errors like 409 Conflict.
     completion_cmds = "\n".join(
-        f"curl -s --retry 3 --retry-delay 2 --retry-all-errors "
+        f"curl -s -w '\\n%{{http_code}}' --retry 3 --retry-delay 2 --retry-connrefused "
         f"-X POST http://127.0.0.1:8052/tasks/{t.id}/complete "
         f'-H "Content-Type: application/json" '
         f'-d \'{{"result_summary": "Completed: {t.title}"}}\''
@@ -591,8 +593,9 @@ def _render_prompt(
     instructions = (
         f"Complete these tasks. When ALL are done, mark each complete on the task server:\n\n"
         f"```bash\n{completion_cmds}\n```\n\n"
-        f"**Note:** If a curl request fails with a connection error, retry up to 3 times "
-        f"with a 2-second delay. The server may briefly restart during code updates.\n\n"
+        f"**Important:** Only retry on connection refused / network errors. "
+        f"If the server returns HTTP 409 or any other 4xx error, do NOT retry — "
+        f"the task state has changed and retrying will not help. Just exit.\n\n"
         f"Then exit."
     )
 

@@ -183,22 +183,24 @@ def test_should_auto_decompose_decomposes_when_force_parallel(tmp_path: Path) ->
 
 
 def test_should_auto_decompose_decomposes_loosely_coupled_large(tmp_path: Path) -> None:
-    """Loosely coupled LARGE task with no owned_files → decompose."""
+    """Loosely coupled LARGE task with no owned_files → decompose only when force_parallel."""
     task = _task(owned_files=[], scope=Scope.LARGE)
 
     from bernstein.core.task_lifecycle import should_auto_decompose
 
-    # workdir provided but no owned_files → advisor returns multi-agent → decompose
-    assert should_auto_decompose(task, set(), workdir=tmp_path) is True
+    # Default: disabled (modern 1M-context LLMs handle any scope)
+    assert should_auto_decompose(task, set(), workdir=tmp_path) is False
+    assert should_auto_decompose(task, set(), workdir=tmp_path, force_parallel=True) is True
 
 
 def test_should_auto_decompose_no_workdir_decomposes_large(tmp_path: Path) -> None:
-    """Without workdir, falls back to original scope=LARGE rule."""
+    """Without workdir, falls back to original scope=LARGE rule when forced."""
     task = _task(scope=Scope.LARGE)
 
     from bernstein.core.task_lifecycle import should_auto_decompose
 
-    assert should_auto_decompose(task, set(), workdir=None) is True
+    assert should_auto_decompose(task, set(), workdir=None) is False
+    assert should_auto_decompose(task, set(), workdir=None, force_parallel=True) is True
 
 
 def test_should_auto_decompose_skips_small_scope(tmp_path: Path) -> None:

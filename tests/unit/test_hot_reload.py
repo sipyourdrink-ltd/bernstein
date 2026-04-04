@@ -199,10 +199,11 @@ class TestCurlRetryInPrompts:
             workdir,
         )
 
-        # The curl commands should include retry flags
+        # The curl commands should include retry flags (connrefused only, not all errors)
         assert "--retry 3" in prompt
         assert "--retry-delay 2" in prompt
-        assert "--retry-all-errors" in prompt
+        assert "--retry-connrefused" in prompt
+        assert "--retry-all-errors" not in prompt
 
 
 # ---------------------------------------------------------------------------

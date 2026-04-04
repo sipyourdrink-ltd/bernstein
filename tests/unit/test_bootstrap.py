@@ -181,6 +181,7 @@ def test_bootstrap_from_goal_autowrites_seed_on_first_run(
         stack.enter_context(patch.dict(sys.modules, {"bernstein.evolution.invariants": invariants_module}))
         stack.enter_context(patch("bernstein.core.bootstrap.console", fake_console))
         stack.enter_context(patch("bernstein.core.bootstrap.concurrent.futures.ThreadPoolExecutor", _Executor))
+        stack.enter_context(patch("bernstein.core.bootstrap._acquire_pid_lock"))
         stack.enter_context(patch("bernstein.core.agent_discovery.discover_agents_cached", return_value=discovery))
         stack.enter_context(patch("bernstein.core.server_launch._detect_project_type", return_value="python"))
         stack.enter_context(patch("bernstein.core.bootstrap.preflight_checks"))
