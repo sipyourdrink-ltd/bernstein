@@ -74,9 +74,7 @@ def detect_diff_blocks(text: str) -> list[DiffBlock]:
                 blocks.append(DiffBlock(start_line=start, end_line=i, lines=all_lines[start:i]))
             start = i
     if start is not None:
-        blocks.append(
-            DiffBlock(start_line=start, end_line=len(all_lines), lines=all_lines[start:])
-        )
+        blocks.append(DiffBlock(start_line=start, end_line=len(all_lines), lines=all_lines[start:]))
     return blocks
 
 
