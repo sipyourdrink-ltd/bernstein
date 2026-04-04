@@ -468,6 +468,19 @@ def _render_prompt(
     except Exception as rag_exc:
         logger.debug("Smart context injection failed: %s", rag_exc)
 
+    # File-scope context activation: inject role-specific context based on owned files.
+    # Matches task owned_files against .gitignore-style patterns at claim time.
+    file_scope_context = ""
+    try:
+        from bernstein.core.context_activation import activate_context_for_task
+
+        all_owned: list[str] = []
+        for t in tasks:
+            all_owned.extend(t.owned_files)
+        file_scope_context = activate_context_for_task(all_owned)
+    except Exception as exc:
+        logger.debug("File-scope context activation failed: %s", exc)
+
     # Assemble final prompt
     from bernstein.core.section_dedup import deduplicate_section
 
@@ -483,6 +496,10 @@ def _render_prompt(
         sections.append(f"\n{smart_context}\n")
     if rich_context:
         sections.append(f"\n{rich_context}\n")
+    if file_scope_context:
+        sections.append(
+            deduplicate_section(f"\n## File-scope context\n{file_scope_context}\n")
+        )
     predecessor_ctx = _render_predecessor_context(tasks, task_graph)
     if predecessor_ctx:
         sections.append(predecessor_ctx)
