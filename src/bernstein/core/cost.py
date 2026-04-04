@@ -279,6 +279,53 @@ class EpsilonGreedyBandit:
         logger.debug("Bandit[%s]: exploit → %s (cost=%.5f)", role, chosen, dict(qualifying)[chosen])
         return chosen
 
+    def seed_arm(
+        self,
+        role: str,
+        model: str,
+        success_rate: float,
+        virtual_observations: int = 5,
+    ) -> None:
+        """Seed an arm with prior knowledge from effectiveness data.
+
+        Sets initial success/observation counts derived from an external
+        success rate without requiring real observations.  If the arm
+        already has real observations it is left untouched so that actual
+        data always takes precedence over priors.
+
+        Args:
+            role: Task role.
+            model: Model name.
+            success_rate: Prior success rate (0.0-1.0).
+            virtual_observations: Number of synthetic observations to inject.
+                Higher values make the prior harder to override.
+        """
+        key = (role, model)
+        if key in self._arms and self._arms[key].observations > 0:
+            logger.debug(
+                "Bandit[%s/%s]: skipping seed — arm already has %d real observations",
+                role,
+                model,
+                self._arms[key].observations,
+            )
+            return
+        clamped = max(0.0, min(1.0, success_rate))
+        successes = round(clamped * virtual_observations)
+        self._arms[key] = BanditArm(
+            role=role,
+            model=model,
+            observations=virtual_observations,
+            successes=successes,
+        )
+        logger.debug(
+            "Bandit[%s/%s]: seeded with %d/%d virtual observations (rate=%.2f)",
+            role,
+            model,
+            successes,
+            virtual_observations,
+            clamped,
+        )
+
     def record(
         self,
         role: str,

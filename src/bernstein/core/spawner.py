@@ -17,7 +17,6 @@ from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, Spawn
 from bernstein.core.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
-from bernstein.core.effectiveness import EffectivenessScorer
 from bernstein.core.git_ops import MergeResult, merge_with_conflict_detection
 from bernstein.core.heartbeat import HeartbeatMonitor
 from bernstein.core.in_process_agent import InProcessAgent
@@ -800,12 +799,15 @@ class AgentSpawner:
         if len(roles) > 1:
             raise ValueError(f"All tasks in a batch must share the same role, got: {roles}")
 
-        # Route based on highest-complexity task in batch; use TierAwareRouter if available
+        # Route based on highest-complexity task in batch; use TierAwareRouter if available.
+        # Effectiveness data is fed into the bandit as priors (via _select_batch_config →
+        # route_task) so both learning systems share data rather than competing.
         metrics_dir = self._workdir / ".sdd" / "metrics"
         base_config = _select_batch_config(
             tasks,
             templates_dir=self._templates_dir,
             metrics_dir=metrics_dir if metrics_dir.exists() else None,
+            workdir=self._workdir,
         )
         if model_override:
             base_config = ModelConfig(
@@ -833,25 +835,6 @@ class AgentSpawner:
                 max_tokens=base_config.max_tokens,
                 is_batch=base_config.is_batch,
             )
-        elif model_override is None and not tasks[0].model and not tasks[0].effort and not role_policy:
-            try:
-                best = EffectivenessScorer(self._workdir).best_config_for_role(tasks[0].role)
-            except Exception as exc:
-                logger.debug("Effectiveness lookup failed for role %s: %s", tasks[0].role, exc)
-                best = None
-            if best is not None:
-                model_config = ModelConfig(
-                    model=best[0],
-                    effort=best[1],
-                    max_tokens=base_config.max_tokens,
-                    is_batch=base_config.is_batch,
-                )
-                logger.info(
-                    "Effectiveness data suggests %s/%s for role %s",
-                    best[0],
-                    best[1],
-                    tasks[0].role,
-                )
 
         if self._router is not None and self._router.state.providers:
             try:
@@ -1339,6 +1322,7 @@ class AgentSpawner:
             tasks,
             templates_dir=self._templates_dir,
             metrics_dir=metrics_dir if metrics_dir.exists() else None,
+            workdir=self._workdir,
         )
         role = tasks[0].role
         session_id = f"{role}-resume-{uuid.uuid4().hex[:8]}"
@@ -2059,6 +2043,7 @@ def _select_batch_config(
     tasks: list[Task],
     templates_dir: Path | None = None,
     metrics_dir: Path | None = None,
+    workdir: Path | None = None,
 ) -> ModelConfig:
     """Pick the highest-tier model config across all tasks in a batch.
 
@@ -2066,6 +2051,8 @@ def _select_batch_config(
     uses that as the baseline before falling back to heuristic routing.
     If *metrics_dir* is provided, consults the epsilon-greedy bandit for
     non-high-stakes roles to dynamically pick the cheapest viable model.
+    When *workdir* is also provided, effectiveness history seeds the bandit
+    so both learning systems share data.
     Routes each task individually, then picks the most capable config
     so the agent can handle the hardest task in its batch.
 
@@ -2073,6 +2060,7 @@ def _select_batch_config(
         tasks: Non-empty list of tasks.
         templates_dir: Optional path to templates/roles/ for config.yaml lookup.
         metrics_dir: Optional path to .sdd/metrics for bandit state.
+        workdir: Optional project root for effectiveness scorer data.
 
     Returns:
         ModelConfig suitable for the entire batch.
@@ -2105,8 +2093,8 @@ def _select_batch_config(
             return ModelConfig(model="opus", effort="high")
         if task.priority == 1:
             return ModelConfig(model="opus", effort="max")
-        # Consult bandit for standard tasks
-        return route_task(task, bandit_metrics_dir=metrics_dir)
+        # Consult bandit (seeded with effectiveness data) for standard tasks
+        return route_task(task, bandit_metrics_dir=metrics_dir, workdir=workdir)
 
     configs = [_route_for_batch(t) for t in tasks]
     # Sort by model tier (opus > sonnet > haiku) then effort (max > high > normal)

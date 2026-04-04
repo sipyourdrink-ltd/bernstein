@@ -121,6 +121,34 @@ class EffectivenessScorer:
         best_key = max(grouped, key=lambda key: sum(grouped[key]) / len(grouped[key]))
         return best_key
 
+    def export_for_bandit(self, role: str) -> dict[str, float]:
+        """Export success rates per model for bandit seeding.
+
+        Computes the fraction of sessions scoring above the "good" threshold
+        (grade B or better, i.e. total >= 80) for each model used in the
+        given role.  Only models with at least 3 observations are included
+        to avoid noisy priors.
+
+        Args:
+            role: Task role to export data for.
+
+        Returns:
+            Mapping of model name to success rate (0.0-1.0).
+        """
+        records = [record for record in self._history() if record.role == role]
+        if not records:
+            return {}
+        # Use last 50 records to match best_config_for_role window
+        recent = records[-50:]
+        model_results: dict[str, list[bool]] = defaultdict(list)
+        for record in recent:
+            model_results[record.model].append(record.total >= 80)
+        return {
+            model: sum(results) / len(results)
+            for model, results in model_results.items()
+            if len(results) >= 3
+        }
+
     def average_for_model(self, model: str) -> float:
         """Return average effectiveness for a model across all roles."""
         records = [record.total for record in self._history() if record.model == model]

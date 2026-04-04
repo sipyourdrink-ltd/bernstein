@@ -893,13 +893,21 @@ class RouterError(Exception):
 
 
 # Legacy compatibility function - uses default routing rules
-def route_task(task: Task, bandit_metrics_dir: Path | None = None) -> ModelConfig:
+def route_task(
+    task: Task,
+    bandit_metrics_dir: Path | None = None,
+    workdir: Path | None = None,
+) -> ModelConfig:
     """Select model and effort based on task metadata.
 
     If the manager specified model/effort on the task, use those.
     If a bandit_metrics_dir is provided, consults the epsilon-greedy bandit to
     pick the cheapest model that has historically met quality thresholds for
     this task's role.  Falls back to heuristics when no bandit data exists.
+
+    When *workdir* is provided alongside *bandit_metrics_dir*, effectiveness
+    history is used to warm-start the bandit so both learning systems share
+    data instead of competing.
 
     When ``task.batch_eligible`` is True, the returned ModelConfig will have
     ``is_batch=True``, signalling adapters to use provider batch APIs for
@@ -909,18 +917,23 @@ def route_task(task: Task, bandit_metrics_dir: Path | None = None) -> ModelConfi
     Args:
         task: Task to route.
         bandit_metrics_dir: Optional path to ``.sdd/metrics`` for bandit state.
+        workdir: Optional project root for effectiveness scorer data.
 
     Returns:
         ModelConfig with selected model and effort (and is_batch flag).
     """
-    cfg = _select_model_config(task, bandit_metrics_dir)
+    cfg = _select_model_config(task, bandit_metrics_dir, workdir)
     if task.batch_eligible and task.priority != 1:
         logger.debug("Batch routing task %s (%s/%s)", task.id, cfg.model, cfg.effort)
         return ModelConfig(model=cfg.model, effort=cfg.effort, max_tokens=cfg.max_tokens, is_batch=True)
     return cfg
 
 
-def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> ModelConfig:
+def _select_model_config(
+    task: Task,
+    bandit_metrics_dir: Path | None = None,
+    workdir: Path | None = None,
+) -> ModelConfig:
     """Internal: select model/effort without applying batch flag."""
     # Manager-specified overrides take precedence
     if task.model or task.effort:
@@ -997,6 +1010,25 @@ def _select_model_config(task: Task, bandit_metrics_dir: Path | None = None) -> 
             from bernstein.core.cost import CASCADE, EpsilonGreedyBandit
 
             bandit = EpsilonGreedyBandit.load(bandit_metrics_dir)
+
+            # Warm-start bandit with effectiveness data so both systems share knowledge
+            if workdir is not None:
+                try:
+                    from bernstein.core.effectiveness import EffectivenessScorer
+
+                    effectiveness_data = EffectivenessScorer(workdir).export_for_bandit(task.role)
+                    for model, rate in effectiveness_data.items():
+                        bandit.seed_arm(task.role, model, rate)
+                    if effectiveness_data:
+                        bandit.save(bandit_metrics_dir)
+                        logger.debug(
+                            "Seeded bandit for role=%s with effectiveness priors: %s",
+                            task.role,
+                            {m: f"{r:.2f}" for m, r in effectiveness_data.items()},
+                        )
+                except Exception as exc:
+                    logger.debug("Effectiveness seeding failed for role %s: %s", task.role, exc)
+
             # For high-complexity tasks, restrict candidates to sonnet/opus
             candidates = ["sonnet", "opus"] if task.complexity == Complexity.HIGH else list(CASCADE)
             selected = bandit.select(role=task.role, candidate_models=candidates)
