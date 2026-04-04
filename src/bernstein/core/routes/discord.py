@@ -73,9 +73,7 @@ async def discord_interactions(request: Request) -> JSONResponse:
     body = await request.body()
 
     # Verify Discord request signature
-    public_key: str = getattr(request.app.state, "discord_public_key", None) or os.environ.get(
-        "DISCORD_PUBLIC_KEY", ""
-    )
+    public_key: str = getattr(request.app.state, "discord_public_key", None) or os.environ.get("DISCORD_PUBLIC_KEY", "")
     if public_key:
         timestamp = request.headers.get("x-signature-timestamp", "")
         signature = request.headers.get("x-signature-ed25519", "")

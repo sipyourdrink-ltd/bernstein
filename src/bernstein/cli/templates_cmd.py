@@ -74,9 +74,7 @@ def templates_list() -> None:
     console.print()
     console.print(table)
     console.print()
-    console.print(
-        "[dim]Templates are in[/dim] [bold]plans/templates/[/bold] — edit the copy after scaffolding."
-    )
+    console.print("[dim]Templates are in[/dim] [bold]plans/templates/[/bold] — edit the copy after scaffolding.")
     console.print()
 
 

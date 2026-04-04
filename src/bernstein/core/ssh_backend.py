@@ -320,7 +320,7 @@ class SSHBackend:
         Returns:
             True if the connection succeeded, False otherwise.
         """
-        cmd = self._ssh_cmd() + [self._config.ssh_target(), "true"]
+        cmd = [*self._ssh_cmd(), self._config.ssh_target(), "true"]
         try:
             result = subprocess.run(cmd, capture_output=True, timeout=self._config.connect_timeout)
             return result.returncode == 0
@@ -335,10 +335,14 @@ class SSHBackend:
         """Build the base ssh command (without the remote host or command)."""
         args = [
             "ssh",
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", f"ConnectTimeout={self._config.connect_timeout}",
-            "-o", "BatchMode=yes",
-            "-p", str(self._config.port),
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            f"ConnectTimeout={self._config.connect_timeout}",
+            "-o",
+            "BatchMode=yes",
+            "-p",
+            str(self._config.port),
         ]
         if self._config.key:
             key_path = os.path.expanduser(self._config.key)
