@@ -135,17 +135,22 @@ class TestSpawnCommandArgs:
         assert "-p" in cmd
         assert cmd[cmd.index("-p") + 1] == "my-unique-prompt"
 
-    def test_mcp_config_flag_included(self, tmp_path: Path) -> None:
+    def test_mcp_config_includes_user_servers_and_bridge(self, tmp_path: Path) -> None:
         mcp = {"mcpServers": {"my-server": {"command": "npx"}}}
         cmd, _, __ = self._spawn(tmp_path, mcp_config=mcp)
 
         assert "--mcp-config" in cmd
         parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
-        assert parsed == mcp
+        # User's server is preserved
+        assert "my-server" in parsed["mcpServers"]
+        # Bernstein bridge is injected
+        assert "bernstein" in parsed["mcpServers"]
 
-    def test_no_mcp_flag_when_none(self, tmp_path: Path) -> None:
+    def test_bernstein_bridge_injected_when_no_user_mcp(self, tmp_path: Path) -> None:
         cmd, _, __ = self._spawn(tmp_path, mcp_config=None)
-        assert "--mcp-config" not in cmd
+        assert "--mcp-config" in cmd
+        parsed = json.loads(cmd[cmd.index("--mcp-config") + 1])
+        assert "bernstein" in parsed["mcpServers"]
 
 
 # ---------------------------------------------------------------------------

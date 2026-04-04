@@ -87,17 +87,38 @@ class ClaudeCodeAdapter(CLIAdapter):
     _procs: ClassVar[dict[int, subprocess.Popen[bytes]]] = {}
     _wrapper_pids: ClassVar[dict[int, int]] = {}  # claude_pid → wrapper_pid
 
+    # Tool allowlists by role — agents only get the tools they need.
+    # Reduces attack surface and prevents agents from using tools outside
+    # their scope (e.g. qa agent shouldn't use Write to create new files).
+    _ROLE_ALLOWED_TOOLS: ClassVar[dict[str, str]] = {
+        "qa": "Bash Read Grep Glob Agent",
+        "reviewer": "Bash Read Grep Glob",
+        "docs": "Read Write Edit Grep Glob",
+        "security": "Bash Read Grep Glob",
+    }
+
     def _build_command(
         self,
         model_config: ModelConfig,
         mcp_config: dict[str, Any] | None,
         prompt: str,
+        *,
+        role: str = "",
+        workdir: Path | None = None,
     ) -> list[str]:
         """Build the claude CLI command with effort mapping.
 
         Uses ``--permission-mode bypassPermissions`` instead of the deprecated
-        ``--dangerously-skip-permissions`` flag, and adds ``--fallback-model``
-        for automatic failover when the primary model is overloaded.
+        ``--dangerously-skip-permissions`` flag, adds ``--fallback-model``
+        for automatic failover, and ``--allowedTools`` for role-scoped
+        tool access.
+
+        Args:
+            model_config: Model and effort configuration.
+            mcp_config: MCP server definitions to inject.
+            prompt: The task prompt.
+            role: Agent role (used for tool allowlisting).
+            workdir: Project working directory (used for CLAUDE.md context dirs).
         """
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         effort = getattr(model_config, "effort", "high")
@@ -128,6 +149,21 @@ class ClaudeCodeAdapter(CLIAdapter):
         ]
         if fallback_model:
             cmd.extend(["--fallback-model", fallback_model])
+
+        # Role-scoped tool allowlisting: restrict non-coding roles to read-only
+        # tools to prevent unintended modifications.
+        allowed_tools = self._ROLE_ALLOWED_TOOLS.get(role)
+        if allowed_tools:
+            cmd.extend(["--allowedTools", allowed_tools])
+
+        # Inject project CLAUDE.md context so the agent picks up coding standards,
+        # architecture notes, and any task-specific instructions automatically.
+        # --add-dir tells Claude Code to load CLAUDE.md from the given directory.
+        if workdir is not None:
+            claude_md = workdir / "CLAUDE.md"
+            if claude_md.exists():
+                cmd.extend(["--add-dir", str(workdir)])
+
         if mcp_config:
             cmd.extend(["--mcp-config", json.dumps(mcp_config)])
         cmd.extend(["-p", prompt])
@@ -275,14 +311,33 @@ class ClaudeCodeAdapter(CLIAdapter):
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        cmd = self._build_command(model_config, mcp_config, prompt)
+        role = session_id.rsplit("-", 1)[0]  # e.g. "qa" from "qa-abc12345"
+
+        # Inject Bernstein MCP bridge so agents can report progress, check
+        # sibling status, and read the bulletin board.  Uses the existing
+        # bernstein.mcp.server module in stdio transport mode.
+        bridge_server: dict[str, Any] = {
+            "command": sys.executable,
+            "args": ["-m", "bernstein.mcp.server"],
+        }
+        effective_mcp: dict[str, Any] = {}
+        if mcp_config and isinstance(mcp_config, dict):
+            if "mcpServers" in mcp_config:
+                effective_mcp = {**mcp_config}
+                effective_mcp["mcpServers"] = {**mcp_config["mcpServers"], "bernstein": bridge_server}
+            else:
+                effective_mcp = {"mcpServers": {**mcp_config, "bernstein": bridge_server}}
+        else:
+            effective_mcp = {"mcpServers": {"bernstein": bridge_server}}
+
+        cmd = self._build_command(model_config, effective_mcp, prompt, role=role, workdir=workdir)
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         wrapped_cmd = build_worker_cmd(
             cmd,
-            role=session_id.rsplit("-", 1)[0],  # e.g. "qa" from "qa-abc12345"
+            role=role,
             session_id=session_id,
             pid_dir=pid_dir,
             workdir=workdir,
