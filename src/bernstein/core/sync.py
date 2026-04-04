@@ -307,7 +307,7 @@ def sync_backlog_to_server(
         scan_dirs = [backlog_open]
         if backlog_claimed.exists():
             scan_dirs.append(backlog_claimed)
-        all_files = []
+        all_files: list[Path] = []
         for d in scan_dirs:
             all_files.extend(d.glob("*.yaml"))
             all_files.extend(d.glob("*.md"))
