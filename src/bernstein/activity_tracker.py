@@ -148,6 +148,21 @@ class ActivitySession:
     # Query
     # ------------------------------------------------------------------
 
+    def get_summary(self) -> str:
+        """Return a 3-5 word summary of the current activity state.
+
+        Returns:
+            A concise string: "coding in progress", "testing task completed",
+            or "idle no recent activity".
+        """
+        with self._lock:
+            if self._active_category is not None:
+                return f"{self._active_category} in progress"
+            if self._completed:
+                last = max(self._completed, key=lambda m: m.timestamp)
+                return f"{last.category} task completed"
+        return "idle no recent activity"
+
     def get_activity_summary(self, since: float = 0) -> list[ActivityMetric]:
         """Return all completed metrics since the given timestamp.
 
