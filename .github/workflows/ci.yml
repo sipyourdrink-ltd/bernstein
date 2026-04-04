@@ -3,19 +3,38 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "!README.md"
+      - ".sdd/**"
+      - "marketing/**"
+      - "scripts/gen_tickets_*.py"
+      - "benchmarks/**"
+      - "examples/**"
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "!README.md"
+      - ".sdd/**"
+      - "marketing/**"
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+# Per-job concurrency: fast checks always complete, only slow checks get cancelled
+# This prevents the "CI never finishes" problem when agents push frequently
 
 jobs:
+  # ─── Fast checks (never cancelled, <2 min each) ───────────────────────
+
   repo-hygiene:
     name: Repo hygiene
     runs-on: ubuntu-latest
+    concurrency:
+      group: hygiene-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
       - name: Assert .sdd is not tracked
@@ -54,7 +73,10 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
+    concurrency:
+      group: lint-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
@@ -63,10 +85,40 @@ jobs:
       - run: uv run ruff check src/
       - run: uv run ruff format --check src/
 
+  spelling:
+    name: Spelling (typos)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: spelling-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: crate-ci/typos@v1
+
+  actionlint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: actionlint-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+      - uses: reviewdog/action-actionlint@v1
+        with:
+          reporter: github-check
+
+  # ─── Medium checks (cancel old runs, 5-20 min) ────────────────────────
+
   typecheck:
     name: Type check
+    needs: [lint]  # only run if lint passes (fast-fail)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: typecheck-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
@@ -74,10 +126,56 @@ jobs:
           enable-cache: true
       - run: uv run pyright
 
+  dead-code:
+    name: Dead code (Vulture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: deadcode-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv tool install vulture
+      - run: vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs"
+
+  dist-size:
+    name: Package size check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: distsize-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Build and check size
+        run: |
+          uv build
+          MAX_SIZE=$((10 * 1024 * 1024))
+          for f in dist/*.whl; do
+            SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+            echo "$f: $SIZE bytes"
+            if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+              echo "::error::Wheel $f exceeds 10MB limit ($SIZE bytes)"
+              exit 1
+            fi
+          done
+
+  # ─── Slow checks (cancel old runs, 15-45 min) ─────────────────────────
+
   test:
     name: Test (Python ${{ matrix.python-version }})
+    needs: [lint]  # fast-fail: don't waste 45min if lint fails
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    concurrency:
+      group: test-${{ matrix.python-version }}-${{ github.ref }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
@@ -115,64 +213,15 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  spelling:
-    name: Spelling (typos)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - uses: crate-ci/typos@v1
-
-  dead-code:
-    name: Dead code (Vulture)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-      - run: uv tool install vulture
-      - run: vulture src/ vulture_whitelist.py --min-confidence 80 --exclude "tests,docs"
-
-  actionlint:
-    name: Workflow lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - uses: reviewdog/action-actionlint@v1
-        with:
-          reporter: github-check
-
-  dist-size:
-    name: Package size check
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-      - name: Build and check size
-        run: |
-          uv build
-          MAX_SIZE=$((10 * 1024 * 1024))
-          for f in dist/*.whl; do
-            SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
-            echo "$f: $SIZE bytes"
-            if [ "$SIZE" -gt "$MAX_SIZE" ]; then
-              echo "::error::Wheel $f exceeds 10MB limit ($SIZE bytes)"
-              exit 1
-            fi
-          done
-
   sonarcloud:
     name: SonarCloud analysis
     runs-on: ubuntu-latest
     needs: [test]
     if: always()
     timeout-minutes: 15
+    concurrency:
+      group: sonar-${{ github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v6
         with:
@@ -187,12 +236,16 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-  # Auto-fix lint issues and push a fix commit (only on main, only if lint fails)
+  # ─── Post-pipeline (conditional, never cancelled) ──────────────────────
+
   autofix:
     name: Auto-fix lint
     runs-on: ubuntu-latest
     needs: [lint, repo-hygiene]
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    concurrency:
+      group: autofix-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -224,15 +277,6 @@ jobs:
           if [ -n "$TRACKED" ]; then
             echo "$TRACKED" | xargs git rm --cached --
           fi
-      - name: Check for merge conflict markers in Python files
-        if: steps.loop_check.outputs.skip != 'true'
-        run: |
-          for f in $(git diff --cached --name-only --diff-filter=ACMR -- '*.py' 2>/dev/null) \
-                   $(git ls-files -- '*.py'); do
-            if grep -qE '^(<{7} |>{7} )' "$f" 2>/dev/null; then
-              echo "::warning::Merge conflict markers found in $f"
-            fi
-          done
       - name: Commit and push fixes
         if: steps.loop_check.outputs.skip != 'true'
         run: |
@@ -243,7 +287,6 @@ jobs:
           git commit -m "style: auto-fix ruff lint and format"
           git push
 
-  # Auto-close ci-fix issues when CI passes
   close-ci-issues:
     name: Close resolved CI issues
     runs-on: ubuntu-latest
@@ -265,7 +308,6 @@ jobs:
             gh issue close "$NUM" --comment "CI is green again (commit \`${{ github.sha }}\`)." || true
           done
 
-  # Self-healing: open a GitHub Issue on main when CI fails
   self-heal:
     name: Self-heal
     runs-on: ubuntu-latest
@@ -290,7 +332,6 @@ jobs:
             gh issue create --title "$TITLE" --body "$BODY" --label "bug,ci-fix" || true
           fi
 
-  # PR summary comment aggregating all job results
   pr-summary:
     name: PR CI summary
     runs-on: ubuntu-latest
