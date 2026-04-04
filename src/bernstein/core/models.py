@@ -731,11 +731,14 @@ class AgentBackend(StrEnum):
     IN_PROCESS runs the agent as a Python thread in the same process
     for lightweight, fast tasks — use with caution, crashes can take
     down the task server.
+    SSH runs the agent on a remote machine via SSH; requires a ``remote:``
+    section in bernstein.yaml.
     """
 
     SUBPROCESS = "subprocess"
     TMUX = "tmux"
     IN_PROCESS = "in_process"
+    SSH = "ssh"
 
 
 @dataclass(frozen=True)

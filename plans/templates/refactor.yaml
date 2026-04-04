@@ -1,0 +1,120 @@
+# Bernstein Plan Template: Refactor
+#
+# A three-stage plan for safely refactoring existing code.
+# Tests-first ensures regressions are caught before the refactor ships.
+#
+# Usage:
+#   cp plans/templates/refactor.yaml plans/my-refactor.yaml
+#   # Edit name, description, and step details
+#   bernstein run plans/my-refactor.yaml
+
+name: "Refactor"
+description: >
+  Safely refactor existing code: establish test coverage first,
+  perform the refactor, then validate correctness and performance.
+
+constraints:
+  - "Tests must pass before and after each refactor step"
+  - "No behavior changes — pure refactor unless explicitly noted"
+  - "Commit after each stage so rollback is easy"
+
+stages:
+  - name: test-coverage
+    description: "Establish test coverage before touching anything"
+    steps:
+      - title: "Audit existing test coverage"
+        description: >
+          Run the test suite and generate a coverage report.
+          Identify modules and functions with <80% coverage that will be touched
+          by the refactor. Document the gaps in a coverage-gaps.md file.
+          Do not change any production code in this step.
+        role: qa
+        scope: small
+        complexity: low
+        files:
+          - "coverage-gaps.md"
+
+      - title: "Add missing tests for code under refactor"
+        description: >
+          Write tests for any gap areas identified in the audit.
+          Focus on observable behavior (inputs/outputs), not implementation details.
+          Tests must pass against the current (pre-refactor) code.
+          These tests are what protect against regressions.
+        role: qa
+        scope: large
+        complexity: medium
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/ -x -q"
+
+  - name: refactor
+    description: "Perform the refactor"
+    depends_on: [test-coverage]
+    steps:
+      - title: "Refactor: [describe specific change]"
+        description: >
+          Perform the planned refactor. Examples:
+          - Extract a class/module from an oversized file
+          - Replace inheritance hierarchy with composition
+          - Replace dict-based data with typed dataclasses
+          - Eliminate duplicated logic into a shared helper
+          - Replace synchronous I/O with async
+          Make no behavior changes. If a behavior change is needed, file a
+          separate ticket.
+        role: backend
+        scope: large
+        complexity: high
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/ -x -q"
+
+      - title: "Update internal callers"
+        description: >
+          Update all internal callers of the refactored code to use the new API.
+          Run type checks to catch any missed callsites.
+          Do not change the public API unless the refactor requires it.
+        role: backend
+        scope: medium
+        complexity: medium
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/ -x -q"
+
+  - name: validate
+    description: "Validate correctness and check for regressions"
+    depends_on: [refactor]
+    steps:
+      - title: "Run full test suite and type checks"
+        description: >
+          Run the complete test suite (not just the affected modules).
+          Run the type checker in strict mode.
+          Fix any type errors or test failures introduced by the refactor.
+          Coverage should not have regressed from the pre-refactor baseline.
+        role: qa
+        scope: medium
+        complexity: medium
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/ -x -q"
+
+      - title: "Performance validation"
+        description: >
+          If the refactor touched performance-sensitive code, run benchmarks
+          before and after to confirm no regression.
+          Document any performance changes (improvement or acceptable regression)
+          in the PR description.
+        role: qa
+        scope: small
+        complexity: low
+
+      - title: "Clean up and document"
+        description: >
+          Remove any dead code, commented-out sections, or migration shims
+          that are no longer needed after the refactor.
+          Update module docstrings to reflect the new structure.
+          Add an entry to CHANGELOG.md describing what was refactored and why.
+        role: backend
+        scope: small
+        complexity: low
+        files:
+          - "CHANGELOG.md"

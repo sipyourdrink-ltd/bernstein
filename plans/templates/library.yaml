@@ -1,0 +1,142 @@
+# Bernstein Plan Template: Python Library
+#
+# A three-stage plan for building and publishing a Python library.
+# Stages run sequentially; steps within a stage run in parallel.
+#
+# Usage:
+#   cp plans/templates/library.yaml plans/my-library.yaml
+#   # Edit name, description, and step details
+#   bernstein run plans/my-library.yaml
+
+name: "Python Library"
+description: >
+  Build, test, document, and publish a Python library to PyPI.
+
+constraints:
+  - "Python 3.12+"
+  - "Strict type annotations (Pyright strict or mypy --strict)"
+  - "pytest for tests, 90%+ coverage target"
+  - "Google-style docstrings"
+  - "Hatchling build backend"
+
+stages:
+  - name: core
+    description: "Implement the library's core functionality"
+    steps:
+      - title: "Implement core API"
+        description: >
+          Implement the primary public API of the library.
+          All public functions and classes must have type annotations and docstrings.
+          Keep the public surface minimal — add methods only when there's a clear use case.
+          Export the public API cleanly from the package __init__.py.
+        role: backend
+        scope: large
+        complexity: high
+        files:
+          - "src/<package>/__init__.py"
+          - "src/<package>/core.py"
+
+      - title: "Add internal utilities and helpers"
+        description: >
+          Implement private helpers, validators, and utilities used by the core API.
+          Mark internal with _ prefix. No internal symbols in __all__.
+          Handle edge cases: empty inputs, None values, encoding issues.
+        role: backend
+        scope: medium
+        complexity: medium
+        files:
+          - "src/<package>/_utils.py"
+
+      - title: "Implement error types"
+        description: >
+          Define a clear exception hierarchy rooted at a library-specific base error.
+          Include context in exception messages (what failed, what was expected).
+          Document when each exception is raised in the parent function's docstring.
+        role: backend
+        scope: small
+        complexity: low
+        files:
+          - "src/<package>/exceptions.py"
+
+  - name: tests
+    description: "Write comprehensive tests"
+    depends_on: [core]
+    steps:
+      - title: "Write unit tests"
+        description: >
+          Test each public function and class in isolation.
+          Cover happy paths, edge cases (empty, None, boundary values), and error paths.
+          Use parametrize for data-driven tests. Aim for 90%+ line coverage.
+        role: qa
+        scope: large
+        complexity: medium
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/unit/ -x -q"
+
+      - title: "Write property-based tests"
+        description: >
+          Use Hypothesis to fuzz the core API with generated inputs.
+          Define strategies for the library's main input types.
+          Focus on invariants: round-trips, commutativity, idempotency.
+        role: qa
+        scope: medium
+        complexity: medium
+        files:
+          - "tests/test_properties.py"
+
+      - title: "Add type checking and linting"
+        description: >
+          Run Pyright strict (or mypy --strict) and resolve all errors.
+          Run Ruff (or flake8 + isort) and fix all warnings.
+          Add pre-commit hooks or CI step to enforce these checks.
+        role: qa
+        scope: small
+        complexity: low
+        completion_signals:
+          - type: test_passes
+            command: "uv run pyright src/"
+
+  - name: docs-and-publish
+    description: "Document and publish to PyPI"
+    depends_on: [tests]
+    steps:
+      - title: "Write README and usage examples"
+        description: >
+          Write a README with installation instructions, quick-start example,
+          and links to full documentation.
+          Include a real working code example that a new user can copy-paste.
+          Document all configuration options and environment variables.
+        role: docs
+        scope: medium
+        complexity: low
+        files:
+          - "README.md"
+
+      - title: "Set up Sphinx or MkDocs documentation"
+        description: >
+          Configure Sphinx (with autodoc) or MkDocs (with mkdocstrings).
+          Generate API reference from docstrings.
+          Add a changelog (CHANGELOG.md) with the current version entry.
+        role: docs
+        scope: medium
+        complexity: low
+        files:
+          - "docs/"
+          - "CHANGELOG.md"
+
+      - title: "Configure PyPI publishing"
+        description: >
+          Set up pyproject.toml with complete metadata: name, version, description,
+          authors, license, classifiers, URLs.
+          Configure GitHub Actions (or equivalent CI) to publish on version tags.
+          Run `python -m build` to verify sdist and wheel build cleanly.
+        role: devops
+        scope: small
+        complexity: low
+        files:
+          - "pyproject.toml"
+          - ".github/workflows/publish.yml"
+        completion_signals:
+          - type: path_exists
+            path: "dist/"

@@ -129,6 +129,30 @@ catalogs:
 #       lemmas_file: proofs/lemmas.lean  # relative to project root
 
 # ---------------------------------------------------------------------------
+# Remote agent execution (SSH backend)
+# ---------------------------------------------------------------------------
+# Run agents on a remote machine instead of locally.
+# Requires `rsync` and `ssh` to be available on the local machine.
+# The remote host must have the CLI agent (e.g. claude) installed.
+#
+# When this section is present, each agent session is:
+#   1. rsync'd to remote_dir/<session_id>/ on the remote host
+#   2. Executed remotely via SSH
+#   3. rsync'd back to the local workspace on completion
+#
+# remote:
+#   host: "agent-box.example.com"    # Required: hostname or IP
+#   user: "ubuntu"                   # SSH username (default: local $USER)
+#   port: 22                         # SSH port (default: 22)
+#   key: "~/.ssh/id_ed25519"         # Private key path (default: ssh-agent)
+#   remote_dir: "~/bernstein-workdir" # Base dir on remote host
+#   rsync_excludes:                  # Extra patterns to exclude from sync
+#     - ".venv"
+#     - "dist/"
+#   env:                             # Env vars for the remote agent process
+#     ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"  # Expanded from local env
+
+# ---------------------------------------------------------------------------
 # Webhook notifications
 # ---------------------------------------------------------------------------
 # notify:
