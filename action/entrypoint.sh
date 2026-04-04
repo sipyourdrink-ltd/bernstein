@@ -10,7 +10,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Inputs (set by the composite action via env vars)
 # ---------------------------------------------------------------------------
-TASK="${INPUT_TASK:?INPUT_TASK is required}"
+TASK="${INPUT_TASK:-}"
+PLAN="${INPUT_PLAN:-}"
 BUDGET="${INPUT_BUDGET:-5.00}"
 CLI="${INPUT_CLI:-claude}"
 MAX_RETRIES="${INPUT_MAX_RETRIES:-3}"
@@ -217,6 +218,38 @@ ${truncated_logs}
 }
 
 # ---------------------------------------------------------------------------
+# Plan mode  (bernstein run <plan-file>)
+# ---------------------------------------------------------------------------
+run_plan() {
+    gha_group "Running Bernstein plan: ${PLAN}"
+    echo "Plan:   ${PLAN}"
+    echo "Budget: \$${BUDGET}"
+    echo "CLI:    ${CLI}"
+
+    if [ ! -f "$PLAN" ]; then
+        gha_error "Plan file not found: ${PLAN}"
+        gha_endgroup
+        return 1
+    fi
+
+    local status="success"
+    bernstein run "$PLAN" --budget "$BUDGET" --headless || status="failure"
+
+    gha_endgroup
+
+    emit_outputs
+
+    local tasks_completed=0 total_cost="0.00"
+    [ -f ".sdd/run-summary.json" ] && {
+        tasks_completed=$(jq -r '.tasks_completed // 0'    .sdd/run-summary.json 2>/dev/null || echo 0)
+        total_cost=$(jq -r      '.total_cost    // "0.00"' .sdd/run-summary.json 2>/dev/null || echo "0.00")
+    }
+    post_pr_comment "$(build_comment "$status" "$tasks_completed" "$total_cost")"
+
+    [ "$status" = "success" ]
+}
+
+# ---------------------------------------------------------------------------
 # Normal mode  (any task string, including review-pr and decompose)
 # ---------------------------------------------------------------------------
 run_normal() {
@@ -247,7 +280,19 @@ run_normal() {
 # ---------------------------------------------------------------------------
 ensure_config
 
-if [ "$TASK" = "fix-ci" ]; then
+# Validate: exactly one of task or plan must be set
+if [ -z "$TASK" ] && [ -z "$PLAN" ]; then
+    gha_error "Either 'task' or 'plan' input must be provided."
+    exit 1
+fi
+if [ -n "$TASK" ] && [ -n "$PLAN" ]; then
+    gha_error "Provide either 'task' or 'plan', not both."
+    exit 1
+fi
+
+if [ -n "$PLAN" ]; then
+    run_plan
+elif [ "$TASK" = "fix-ci" ]; then
     run_fix_ci
 else
     run_normal

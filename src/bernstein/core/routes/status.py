@@ -704,6 +704,7 @@ async def dashboard_data(request: Request) -> JSONResponse:
                 "created_at": t.created_at,
                 "progress": _task_progress_pct(t),
                 "owned_files": t.owned_files,
+                "depends_on": list(getattr(t, "depends_on", None) or []),
             }
         )
 

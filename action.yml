@@ -11,7 +11,16 @@ inputs:
     description: >
       Task description for Bernstein, or the literal string "fix-ci" to
       automatically download failed job logs and attempt a fix.
-    required: true
+      Mutually exclusive with `plan`.
+    required: false
+    default: ""
+  plan:
+    description: >
+      Path to a Bernstein plan YAML file (e.g. `plans/my-project.yaml`).
+      When set, Bernstein runs the plan with `bernstein run <plan>` instead of
+      a free-text goal. Mutually exclusive with `task`.
+    required: false
+    default: ""
   budget:
     description: "Dollar cap for the run (0 = unlimited)."
     required: false
@@ -69,6 +78,7 @@ runs:
       shell: bash
       env:
         INPUT_TASK: ${{ inputs.task }}
+        INPUT_PLAN: ${{ inputs.plan }}
         INPUT_BUDGET: ${{ inputs.budget }}
         INPUT_CLI: ${{ inputs.cli }}
         INPUT_MAX_RETRIES: ${{ inputs.max-retries }}

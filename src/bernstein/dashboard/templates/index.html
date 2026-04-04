@@ -46,6 +46,11 @@
     .tab-active { border-bottom: 2px solid #4f46e5; color: #e5e5e5; }
     .tab-inactive { border-bottom: 2px solid transparent; color: #737373; }
     .tab-inactive:hover { color: #a3a3a3; }
+    /* Kanban */
+    .kanban-col { min-width: 160px; flex: 1 1 0; }
+    /* DAG */
+    .dag-node rect { rx: 4; ry: 4; }
+    .dag-edge { fill: none; stroke: #4a4a4e; stroke-width: 1.5; }
     @media (max-width: 640px) {
       .stat-grid { grid-template-columns: repeat(2, 1fr); }
       table th:nth-child(6), table td:nth-child(6),
@@ -169,7 +174,17 @@
       <div class="px-3 py-2 border-b border-border">
         <div class="flex items-center justify-between mb-1.5">
           <h2 class="text-xs font-semibold text-text">Tasks</h2>
-          <span class="text-[10px] text-muted tabular" x-text="filteredTasks.length + '/' + tasks.length"></span>
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] text-muted tabular" x-text="filteredTasks.length + '/' + tasks.length"></span>
+            <div class="flex items-center rounded overflow-hidden border border-border text-[9px]">
+              <button @click="taskView='table'"
+                      class="px-1.5 py-0.5 transition-colors"
+                      :class="taskView==='table' ? 'bg-accent/20 text-accent-light' : 'text-muted hover:text-text'">Table</button>
+              <button @click="taskView='kanban'"
+                      class="px-1.5 py-0.5 transition-colors border-l border-border"
+                      :class="taskView==='kanban' ? 'bg-accent/20 text-accent-light' : 'text-muted hover:text-text'">Kanban</button>
+            </div>
+          </div>
         </div>
         <!-- Filter bar -->
         <div class="flex items-center gap-2 flex-wrap">
@@ -210,8 +225,8 @@
           </select>
         </div>
       </div>
-      <!-- Table -->
-      <div class="flex-1 overflow-auto">
+      <!-- Table view -->
+      <div class="flex-1 overflow-auto" x-show="taskView==='table'">
         <table class="w-full text-xs">
           <thead class="sticky top-0 bg-surface z-10">
             <tr class="border-b border-border">
@@ -284,6 +299,41 @@
             </template>
           </tbody>
         </table>
+      </div>
+
+      <!-- Kanban view -->
+      <div class="flex-1 overflow-auto p-2" x-show="taskView==='kanban'">
+        <div class="flex gap-2 h-full min-w-max">
+          <template x-for="col in kanbanCols" :key="col.id">
+            <div class="kanban-col flex flex-col rounded-lg border px-1.5 py-2 bg-bg/50"
+                 :class="col.borderClass">
+              <div class="flex items-center justify-between mb-2 px-1">
+                <span class="text-[10px] font-semibold uppercase tracking-wider" :class="col.colorClass" x-text="col.label"></span>
+                <span class="text-[9px] text-muted" x-text="col.tasks.length"></span>
+              </div>
+              <div class="flex-1 overflow-auto space-y-1.5">
+                <template x-for="task in col.tasks" :key="task.id">
+                  <div class="bg-surface border border-border/50 rounded p-2 text-[10px] cursor-pointer hover:border-accent/30 transition-colors fade-in"
+                       @click="task.assigned_agent ? selectAgent(task.assigned_agent) : null">
+                    <div class="flex items-center justify-between mb-0.5">
+                      <span class="font-mono" :class="task.priority===1?'text-red-400':task.priority===2?'text-yellow-400':'text-muted'" x-text="'P'+task.priority"></span>
+                      <span class="text-accent-light/80" x-text="task.role"></span>
+                    </div>
+                    <div class="text-text truncate" style="max-width:140px" :title="task.title" x-text="task.title"></div>
+                    <template x-if="task.progress > 0 && task.status !== 'done'">
+                      <div class="mt-1.5 h-0.5 bg-border rounded-full overflow-hidden">
+                        <div class="h-full bg-accent rounded-full" :style="'width:'+task.progress+'%'"></div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="col.tasks.length === 0">
+                  <div class="text-center text-muted text-[10px] py-4">Empty</div>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
     </div>
 
@@ -604,6 +654,62 @@
     </div>
   </div>
 
+  <!-- Dependency DAG -->
+  <div class="px-4 pb-4">
+    <div class="bg-surface border border-border rounded-lg overflow-hidden">
+      <button class="w-full px-3 py-2 flex items-center justify-between hover:bg-surface-2/30 transition-colors"
+              @click="dagExpanded = !dagExpanded">
+        <div class="flex items-center gap-2">
+          <h3 class="text-xs font-semibold text-text">Dependency Graph</h3>
+          <span class="text-[10px] text-muted" x-text="tasks.length + ' tasks'"></span>
+          <template x-if="tasks.some(t => t.depends_on && t.depends_on.length > 0)">
+            <span class="text-[9px] px-1.5 py-0.5 rounded bg-accent/10 text-accent-light">
+              <span x-text="tasks.filter(t => t.depends_on && t.depends_on.length > 0).length + ' deps'"></span>
+            </span>
+          </template>
+        </div>
+        <span class="text-muted text-xs" x-text="dagExpanded ? '▲' : '▼'"></span>
+      </button>
+      <div x-show="dagExpanded" class="border-t border-border overflow-auto p-3">
+        <template x-if="dagData.nodes.length === 0">
+          <p class="text-[10px] text-muted text-center py-6">No tasks to display</p>
+        </template>
+        <template x-if="dagData.nodes.length > 0">
+          <svg :width="dagData.svgW" :height="dagData.svgH" class="overflow-visible">
+            <!-- Edges -->
+            <g>
+              <template x-for="(edge, i) in dagData.edges" :key="i">
+                <path class="dag-edge" :d="edge.d" marker-end="url(#arrowhead)"/>
+              </template>
+            </g>
+            <!-- Arrowhead marker -->
+            <defs>
+              <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
+                <polygon points="0 0, 6 2, 0 4" fill="#4a4a4e"/>
+              </marker>
+            </defs>
+            <!-- Nodes -->
+            <g>
+              <template x-for="node in dagData.nodes" :key="node.id">
+                <g class="dag-node cursor-pointer" @click="node.assigned_agent ? selectAgent(node.assigned_agent) : null">
+                  <rect :x="node.x" :y="node.y" :width="node.w" :height="node.h"
+                        :fill="dagStatusFill(node.status)" :stroke="dagStatusStroke(node.status)"
+                        stroke-width="1" rx="4" ry="4"/>
+                  <text :x="node.x + 6" :y="node.y + 13"
+                        fill="#a3a3a3" font-size="9" font-family="ui-monospace,monospace" x-text="node.role"></text>
+                  <text :x="node.x + 6" :y="node.y + 25"
+                        fill="#e5e5e5" font-size="10" font-family="ui-monospace,monospace"
+                        :textLength="node.w - 12" lengthAdjust="spacing"
+                        x-text="node.title.slice(0,22) + (node.title.length > 22 ? '…' : '')"></text>
+                </g>
+              </template>
+            </g>
+          </svg>
+        </template>
+      </div>
+    </div>
+  </div>
+
   <script>
     function dashboard() {
       return {
@@ -642,6 +748,8 @@
         sortCol: 'priority',
         sortAsc: true,
         costTab: 'agent',
+        taskView: 'table',
+        dagExpanded: false,
         _agentEventSource: null,
         _logPollTimer: null,
 
@@ -774,6 +882,85 @@
             if (!isNaN(an) && !isNaN(bn)) return (an - bn) * dir;
             return av.localeCompare(bv) * dir;
           });
+        },
+
+        // Kanban columns
+        get kanbanCols() {
+          return [
+            { id: 'open', label: 'Open', colorClass: 'text-muted', borderClass: 'border-border',
+              tasks: this.tasks.filter(t => t.status === 'open') },
+            { id: 'active', label: 'In Progress', colorClass: 'text-yellow-400', borderClass: 'border-yellow-800/30',
+              tasks: this.tasks.filter(t => ['claimed','in_progress'].includes(t.status)) },
+            { id: 'done', label: 'Done', colorClass: 'text-green-400', borderClass: 'border-green-800/30',
+              tasks: this.tasks.filter(t => t.status === 'done') },
+            { id: 'failed', label: 'Failed / Blocked', colorClass: 'text-red-400', borderClass: 'border-red-800/30',
+              tasks: this.tasks.filter(t => ['failed','blocked','cancelled'].includes(t.status)) },
+          ];
+        },
+
+        // Dependency DAG data — builds nodes+edges with a left-to-right topological layout
+        get dagData() {
+          const tasks = this.tasks;
+          if (!tasks.length) return { nodes: [], edges: [], svgW: 0, svgH: 0 };
+          const idMap = {};
+          for (const t of tasks) idMap[t.id] = t;
+          // Compute level (depth) via memoised recursion with cycle guard
+          const levels = {};
+          const computeLevel = (id, stack) => {
+            if (id in levels) return levels[id];
+            if (stack.has(id)) { levels[id] = 0; return 0; }
+            const t = idMap[id];
+            if (!t || !t.depends_on || !t.depends_on.length) { levels[id] = 0; return 0; }
+            stack.add(id);
+            const maxDep = Math.max(...t.depends_on.map(d => computeLevel(d, stack)));
+            stack.delete(id);
+            levels[id] = maxDep + 1;
+            return levels[id];
+          };
+          for (const t of tasks) computeLevel(t.id, new Set());
+          const maxLevel = Math.max(...Object.values(levels), 0);
+          const byLevel = {};
+          for (const t of tasks) {
+            const l = levels[t.id] ?? 0;
+            (byLevel[l] = byLevel[l] || []).push(t);
+          }
+          const NW = 140, NH = 34, colGap = 56, rowGap = 8, pad = 8;
+          const positions = {};
+          const nodes = [];
+          for (let l = 0; l <= maxLevel; l++) {
+            const group = byLevel[l] || [];
+            const x = pad + l * (NW + colGap);
+            group.forEach((t, i) => {
+              const y = pad + i * (NH + rowGap);
+              nodes.push({ ...t, x, y, w: NW, h: NH });
+              positions[t.id] = { x, y, ex: x + NW, cy: y + NH / 2 };
+            });
+          }
+          const edges = [];
+          for (const t of tasks) {
+            for (const depId of (t.depends_on || [])) {
+              const from = positions[depId], to = positions[t.id];
+              if (from && to) {
+                const mx = (from.ex + to.x) / 2;
+                edges.push({ d: `M${from.ex},${from.cy} C${mx},${from.cy} ${mx},${to.cy} ${to.x},${to.cy}` });
+              }
+            }
+          }
+          const svgW = pad * 2 + (maxLevel + 1) * (NW + colGap) - colGap;
+          const maxRows = Math.max(...Object.values(byLevel).map(g => g.length), 1);
+          const svgH = pad * 2 + maxRows * (NH + rowGap) - rowGap;
+          return { nodes, edges, svgW, svgH };
+        },
+
+        dagStatusFill(status) {
+          const map = { done:'#14532d', failed:'#450a0a', blocked:'#2e1065',
+            in_progress:'#1e1b4b', claimed:'#292524', open:'#1c1917' };
+          return map[status] || '#1c1917';
+        },
+        dagStatusStroke(status) {
+          const map = { done:'#22c55e', failed:'#ef4444', blocked:'#a855f7',
+            in_progress:'#4f46e5', claimed:'#eab308', open:'#525252' };
+          return map[status] || '#525252';
         },
 
         // ---- Initialization ----
