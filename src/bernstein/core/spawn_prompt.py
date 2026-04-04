@@ -533,9 +533,7 @@ def _render_prompt(
         named_sections.append(("meta nudges", nudges_block))
 
     # Strip empty/whitespace-only sections before compression
-    named_sections = [
-        (name, content) for name, content in named_sections if content and content.strip()
-    ]
+    named_sections = [(name, content) for name, content in named_sections if content and content.strip()]
 
     # Log prompt stats for observability
     total_chars = sum(len(content) for _, content in named_sections)
