@@ -45,6 +45,23 @@ description: >
 #   - "CLAUDE.md"
 
 # ---------------------------------------------------------------------------
+# Multi-repo orchestration (optional)
+# ---------------------------------------------------------------------------
+#
+# List the repositories involved when tasks span multiple codebases.
+# Each entry becomes a RepoRef; stages then use the 'repo' field to route
+# their steps to a specific repository working directory.
+#
+# repos:
+#   - path: ../backend          # relative or absolute path to the repo root
+#     branch: feat/my-feature   # branch to work on (default: main)
+#     name: backend             # optional logical name (auto-derived from path)
+#   - path: ../frontend
+#     branch: feat/my-feature
+#   - path: ../shared-types
+#     branch: feat/my-feature
+
+# ---------------------------------------------------------------------------
 # Stages (required)
 # ---------------------------------------------------------------------------
 #
@@ -52,6 +69,9 @@ description: >
 # Use depends_on to express cross-stage dependencies.
 #
 # Each step maps to one task assigned to one agent.
+# In multi-repo plans, add 'repo' at the stage level to route all steps in
+# that stage to a specific repository. Individual steps can override with
+# their own 'repo' field.
 
 stages:
   - name: "Stage Name"
@@ -62,6 +82,10 @@ stages:
     # Stage names this stage depends on. All steps from those stages
     # must complete before any step in this stage can start.
     # depends_on: []
+
+    # Multi-repo: route all steps in this stage to a specific repository.
+    # Steps within the stage can override this with their own 'repo' field.
+    # repo: ../backend
 
     steps:
       - title: "Short step title"

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from bernstein.core.plan_loader import PlanConfig, PlanLoadError, load_plan, load_plan_from_yaml
+from bernstein.core.plan_loader import PlanConfig, PlanLoadError, RepoRef, load_plan, load_plan_from_yaml
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -486,3 +486,156 @@ def test_parallel_steps_share_deps(tmp_path: Path) -> None:
     task_map = {t.title: t for t in tasks}
     assert set(task_map["B1"].depends_on) == {"A1", "A2"}
     assert set(task_map["B2"].depends_on) == {"A1", "A2"}
+
+
+# ---------------------------------------------------------------------------
+# Multi-repo plan support (GH#220)
+# ---------------------------------------------------------------------------
+
+
+def test_load_plan_repos_section(tmp_path: Path) -> None:
+    """Top-level repos list is parsed into PlanConfig.repos."""
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "name": "Full Stack",
+            "repos": [
+                {"path": "../backend", "branch": "feat/user-auth"},
+                {"path": "../frontend", "branch": "feat/user-auth", "name": "web"},
+                {"path": "../shared-types"},
+            ],
+            "stages": [{"name": "S", "steps": [{"title": "T"}]}],
+        },
+    )
+    config, _ = load_plan(plan_file)
+
+    assert len(config.repos) == 3
+    assert config.repos[0].path == "../backend"
+    assert config.repos[0].branch == "feat/user-auth"
+    assert config.repos[0].name == "backend"  # auto-derived from path
+
+    assert config.repos[1].path == "../frontend"
+    assert config.repos[1].name == "web"  # explicit name wins
+
+    assert config.repos[2].path == "../shared-types"
+    assert config.repos[2].branch == "main"  # default branch
+
+
+def test_load_plan_repos_default_empty(tmp_path: Path) -> None:
+    """Plans without a repos section have an empty repos list."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T"}]}]},
+    )
+    config, _ = load_plan(plan_file)
+    assert config.repos == []
+
+
+def test_stage_repo_propagates_to_tasks(tmp_path: Path) -> None:
+    """Tasks inherit the repo declared on their stage."""
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {
+                    "name": "Backend",
+                    "repo": "../backend",
+                    "steps": [{"title": "Add endpoint"}, {"title": "Write tests"}],
+                },
+                {
+                    "name": "Frontend",
+                    "repo": "../frontend",
+                    "steps": [{"title": "Update UI"}],
+                },
+            ]
+        },
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    task_map = {t.title: t for t in tasks}
+
+    assert task_map["Add endpoint"].repo == "../backend"
+    assert task_map["Write tests"].repo == "../backend"
+    assert task_map["Update UI"].repo == "../frontend"
+
+
+def test_step_repo_overrides_stage_repo(tmp_path: Path) -> None:
+    """A step-level repo field takes priority over the stage-level repo."""
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {
+                    "name": "Mixed",
+                    "repo": "../backend",
+                    "steps": [
+                        {"title": "Backend task"},
+                        {"title": "Shared task", "repo": "../shared-types"},
+                    ],
+                }
+            ]
+        },
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    task_map = {t.title: t for t in tasks}
+
+    assert task_map["Backend task"].repo == "../backend"
+    assert task_map["Shared task"].repo == "../shared-types"
+
+
+def test_step_depends_on_repo(tmp_path: Path) -> None:
+    """depends_on_repo is parsed from the step dict."""
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "stages": [
+                {
+                    "name": "App",
+                    "steps": [
+                        {
+                            "title": "Build frontend",
+                            "repo": "../frontend",
+                            "depends_on_repo": "../shared-types",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    assert tasks[0].repo == "../frontend"
+    assert tasks[0].depends_on_repo == "../shared-types"
+
+
+def test_no_repo_on_stage_gives_none(tmp_path: Path) -> None:
+    """Tasks from stages without a repo field have repo=None."""
+    plan_file = _write_plan(
+        tmp_path,
+        {"stages": [{"name": "S", "steps": [{"title": "T"}]}]},
+    )
+    tasks = load_plan_from_yaml(plan_file)
+    assert tasks[0].repo is None
+    assert tasks[0].depends_on_repo is None
+
+
+def test_repos_entry_missing_path_is_skipped(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A repos entry without a path is skipped with a warning."""
+    import logging
+
+    plan_file = _write_plan(
+        tmp_path,
+        {
+            "repos": [{"branch": "main"}],  # no path
+            "stages": [{"name": "S", "steps": [{"title": "T"}]}],
+        },
+    )
+    with caplog.at_level(logging.WARNING, logger="bernstein.core.plan_loader"):
+        config, _ = load_plan(plan_file)
+    assert config.repos == []
+    assert "missing 'path'" in caplog.text
+
+
+def test_repo_ref_name_auto_derived() -> None:
+    """RepoRef derives its name from the last path component when name is empty."""
+    assert RepoRef(path="../backend").name == "backend"
+    assert RepoRef(path="services/auth-service/").name == "auth-service"
+    assert RepoRef(path="../shared-types", name="types").name == "types"

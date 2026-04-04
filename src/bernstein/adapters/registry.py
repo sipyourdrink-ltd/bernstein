@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
+import logging
+from importlib.metadata import entry_points
+
 from bernstein.adapters.aider import AiderAdapter
 from bernstein.adapters.amp import AmpAdapter
 from bernstein.adapters.base import CLIAdapter
@@ -17,6 +21,8 @@ from bernstein.adapters.mock import MockAgentAdapter
 from bernstein.adapters.opencode import OpenCodeAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.roo_code import RooCodeAdapter
+
+logger = logging.getLogger(__name__)
 
 _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "amp": AmpAdapter,
@@ -34,12 +40,40 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "roo-code": RooCodeAdapter,
 }
 
+_ENTRYPOINTS_LOADED = False
+
+
+def _load_entrypoint_adapters() -> None:
+    """Discover and register adapters from the ``bernstein.adapters`` entry-point group.
+
+    Called once on first use. Silently skips malformed plugins.
+    """
+    global _ENTRYPOINTS_LOADED
+    if _ENTRYPOINTS_LOADED:
+        return
+    _ENTRYPOINTS_LOADED = True
+    for ep in entry_points(group="bernstein.adapters"):
+        try:
+            loaded = ep.load()
+            name = ep.name
+            if (inspect.isclass(loaded) and issubclass(loaded, CLIAdapter)) or isinstance(loaded, CLIAdapter):
+                _ADAPTERS[name] = loaded
+            else:
+                logger.warning(
+                    "Ignoring entry-point adapter %r: expected CLIAdapter subclass or instance, got %r",
+                    name,
+                    loaded,
+                )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Failed to load entry-point adapter %r: %s", ep.name, exc)
+
 
 def get_adapter(cli_name: str) -> CLIAdapter:
     """Get adapter by name: 'aider', 'claude', 'codex', 'gemini', 'kilo', 'qwen', or 'generic'.
 
     For 'generic', returns a GenericAdapter with default settings.
     For known adapters, instantiates the corresponding class.
+    Third-party adapters are discovered from the ``bernstein.adapters`` entry-point group.
 
     Args:
         cli_name: Adapter name to look up.
@@ -52,6 +86,8 @@ def get_adapter(cli_name: str) -> CLIAdapter:
     """
     if cli_name == "generic":
         return GenericAdapter(cli_command="generic-cli", display_name="Generic CLI")
+
+    _load_entrypoint_adapters()
 
     adapter_cls = _ADAPTERS.get(cli_name)
     if adapter_cls is None:
