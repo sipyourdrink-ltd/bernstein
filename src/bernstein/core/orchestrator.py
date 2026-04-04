@@ -811,6 +811,18 @@ class Orchestrator:
         base = self._config.server_url
         _tick_http_reads = 0  # counts GET requests this tick (should stay at 1)
 
+        # Phase scheduling: fast ops every tick, normal every 6, slow every 30.
+        # This prevents heavy operations (SLO, evolution, watchdog) from
+        # blocking the fast control loop (spawn, reap, heartbeat).
+        _run_normal = self._tick_count % 6 == 0
+        _run_slow = self._tick_count % 30 == 0
+        logger.debug(
+            "tick #%d phases: fast%s%s",
+            self._tick_count,
+            "+normal" if _run_normal else "",
+            "+slow" if _run_slow else "",
+        )
+
         # Record tick start for deterministic replay
         self._recorder.record("tick_start", tick=self._tick_count)
         if self._quota_poller is not None:
@@ -830,22 +842,24 @@ class Orchestrator:
         # 0. Ingest any new backlog files before fetching tasks.
         #    Rate-limited to 10 files/tick with title dedup to prevent
         #    server overload and duplicate task creation.
-        try:
-            from bernstein.core.roadmap_runtime import emit_roadmap_wave
+        #    Gated behind _run_normal — no need to scan 300 files every tick.
+        if _run_normal:
+            try:
+                from bernstein.core.roadmap_runtime import emit_roadmap_wave
 
-            emitted = emit_roadmap_wave(self._workdir)
-            if emitted:
-                logger.info("Emitted %d roadmap ticket(s) into backlog/open", len(emitted))
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            logger.warning("roadmap wave emission failed: %s", exc)
+                emitted = emit_roadmap_wave(self._workdir)
+                if emitted:
+                    logger.info("Emitted %d roadmap ticket(s) into backlog/open", len(emitted))
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                logger.warning("roadmap wave emission failed: %s", exc)
 
-        try:
-            self.ingest_backlog()
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            logger.warning("ingest_backlog failed: %s", exc)
+            try:
+                self.ingest_backlog()
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                logger.warning("ingest_backlog failed: %s", exc)
 
-        if self._running:
-            self._run_scheduled_dependency_scan()
+            if self._running:
+                self._run_scheduled_dependency_scan()
 
         # 1. Fetch all tasks in a single bulk request, bucketed client-side.
         try:
@@ -1107,8 +1121,9 @@ class Orchestrator:
             except Exception:
                 pass
 
-        # 4x-ii. Periodic worktree garbage collection: every 10 ticks
-        if self._tick_count % 10 == 0:
+        # 4x-ii. Periodic worktree garbage collection
+        # Gated behind _run_slow — worktree GC is IO-heavy.
+        if _run_slow:
             try:
                 active_ids = {s.id for s in self._agents.values() if s.status != "dead"}
                 cleaned = self._spawner.prune_orphan_worktrees(active_ids)
