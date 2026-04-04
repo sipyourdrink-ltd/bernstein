@@ -82,6 +82,7 @@ def _fetch_all() -> dict[str, Any]:
     status = _get("/status")
     costs = _get("/costs")
     quality = _get("/quality")
+    bandit = _get("/routing/bandit")
     # Use /status for task counts instead of fetching all 400+ task objects
     tasks = _get("/tasks")
     pending_approval = 0
@@ -97,6 +98,7 @@ def _fetch_all() -> dict[str, Any]:
         "tasks": tasks,
         "status": status,
         "agents": agents,
+        "bandit": bandit,
         "costs": costs,
         "quality": quality,
         "quarantine": quarantine,
@@ -950,6 +952,128 @@ class DelegationTreePanel(Static):
         return t
 
 
+# -- Expert mode panels -------------------------------------------
+
+
+class ExpertCostPanel(Static):
+    """Expert mode: detailed per-model cost breakdown."""
+
+    can_focus = False
+
+    costs: reactive[dict[str, Any]] = reactive(dict)  # type: ignore[assignment]
+
+    def render(self) -> Text:
+        t = Text()
+        t.append(" COST DETAIL", style="bold bright_cyan")
+        t.append("\n")
+        c = self.costs
+        if not c:
+            t.append(" [dim]no cost data[/dim]", style="")
+            return t
+
+        spent = float(c.get("spent_usd", 0.0))
+        budget = float(c.get("budget_usd", 0.0))
+        per_model: dict[str, float] = c.get("per_model", {})
+
+        t.append(f" ${spent:.4f}", style="bold bright_green")
+        if budget > 0:
+            pct = spent / budget * 100
+            t.append(f" / ${budget:.2f} ({pct:.0f}%)", style="dim")
+        t.append("\n")
+
+        if per_model:
+            t.append("\n", style="")
+            for model, cost in sorted(per_model.items(), key=lambda x: -x[1])[:6]:
+                short = model.replace("claude-", "").replace("-2025", "")[:20]
+                bar_w = 8
+                ratio = cost / spent if spent > 0 else 0.0
+                filled = int(ratio * bar_w)
+                bar = "█" * filled + "░" * (bar_w - filled)
+                t.append(f"  {short:<20}", style="bold")
+                t.append(f" ${cost:.4f}", style="bright_green")
+                t.append(f" {bar}\n", style="dim")
+
+        return t
+
+
+class ExpertBanditPanel(Static):
+    """Expert mode: multi-armed bandit routing statistics."""
+
+    can_focus = False
+
+    bandit: reactive[dict[str, Any]] = reactive(dict)  # type: ignore[assignment]
+
+    def render(self) -> Text:
+        t = Text()
+        t.append(" BANDIT ROUTING", style="bold bright_cyan")
+        t.append("\n")
+        b = self.bandit
+        if not b or b.get("active") is False:
+            t.append(" [dim]not active[/dim]", style="")
+            t.append("\n [dim]--routing bandit to enable[/dim]", style="")
+            return t
+
+        arms: dict[str, Any] = b.get("arms", {})
+        total_pulls = int(b.get("total_pulls", 0))
+        epsilon = float(b.get("epsilon", 0.1))
+
+        t.append(f" {total_pulls} pulls", style="bold")
+        t.append(f"  ε={epsilon:.2f}", style="dim")
+        t.append("\n\n", style="")
+
+        for model, stats in sorted(arms.items(), key=lambda x: -float((x[1] or {}).get("success_rate", 0))):
+            if not isinstance(stats, dict):
+                continue
+            sr = float(stats.get("success_rate", 0.0))
+            pulls = int(stats.get("pulls", 0))
+            short = model.replace("claude-", "").replace("-2025", "")[:18]
+            sr_color = "bright_green" if sr >= 0.9 else ("bright_yellow" if sr >= 0.7 else "bright_red")
+            t.append(f"  {short:<18}", style="bold")
+            t.append(f" {sr * 100:.0f}%", style=f"bold {sr_color}")
+            t.append(f" ({pulls})\n", style="dim")
+
+        return t
+
+
+class ExpertDepsPanel(Static):
+    """Expert mode: task dependency overview."""
+
+    can_focus = False
+
+    tasks: reactive[list[dict[str, Any]]] = reactive(list)  # type: ignore[assignment]
+
+    def render(self) -> Text:
+        t = Text()
+        t.append(" DEPENDENCIES", style="bold bright_cyan")
+        t.append("\n")
+        all_tasks: list[dict[str, Any]] = self.tasks
+
+        tasks_with_deps = [tk for tk in all_tasks if tk.get("depends_on")]
+        blocked = [tk for tk in all_tasks if tk.get("status") == "blocked"]
+
+        if not tasks_with_deps and not blocked:
+            t.append(" [dim]no task dependencies[/dim]", style="")
+            return t
+
+        t.append(f" {len(tasks_with_deps)} with deps", style="bold")
+        if blocked:
+            t.append(f"  {len(blocked)} blocked", style="bold bright_red")
+        t.append("\n\n", style="")
+
+        shown = blocked[:4] if blocked else tasks_with_deps[:4]
+        for task in shown:
+            status = str(task.get("status", ""))
+            title = str(task.get("title", "?"))[:28]
+            deps = task.get("depends_on", [])
+            st_color = "bright_red" if status == "blocked" else "dim"
+            t.append(f"  {title}\n", style=f"bold {st_color}")
+            if isinstance(deps, list):
+                for dep in list(deps)[:2]:
+                    t.append(f"    ← {str(dep)[:22]}\n", style="dim")
+
+        return t
+
+
 # -- Chat input with Escape support -------------------------------
 
 
@@ -1091,6 +1215,19 @@ class BernsteinApp(App[None]):
         padding: 0 1;
         overflow-y: auto;
     }
+
+    #expert-row {
+        height: 10;
+        display: none;
+        border-top: heavy $border;
+    }
+
+    ExpertCostPanel, ExpertBanditPanel, ExpertDepsPanel {
+        width: 1fr;
+        padding: 0 1;
+        overflow-y: auto;
+        border-right: heavy $border;
+    }
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -1101,6 +1238,7 @@ class BernsteinApp(App[None]):
         Binding("p", "prioritize_task", "P0"),
         Binding("t", "retry_task", "Retry"),
         Binding("l", "toggle_activity", "Logs"),
+        Binding("e", "toggle_expert", "Expert"),
         Binding("c", "focus_chat", "Chat"),
         Binding("d", "compare_task", "Diff"),
         Binding("v", "compare_task", "Diff", show=False),
@@ -1114,6 +1252,7 @@ class BernsteinApp(App[None]):
         self._cost_history: deque[float] = deque(maxlen=10)
         self._evolve = False
         self._activity_visible = True
+        self._expert_mode = False
         self._task_titles: dict[str, str] = {}
         self._task_progress: dict[str, int] = {}
         self._activity_summaries: dict[str, str] = {}
@@ -1132,6 +1271,10 @@ class BernsteinApp(App[None]):
         with Vertical(id="activity-bar"):
             yield Static("ACTIVITY", classes="col-header")
             yield RichLog(id="activity-log", wrap=True, markup=True, auto_scroll=True)
+        with Horizontal(id="expert-row"):
+            yield ExpertCostPanel(id="expert-cost")
+            yield ExpertBanditPanel(id="expert-bandit")
+            yield ExpertDepsPanel(id="expert-deps")
         with Vertical(id="bottom-bar"):
             yield BigStats(id="stats-row")
             with Horizontal(id="spark-row"):
@@ -1274,6 +1417,18 @@ class BernsteinApp(App[None]):
             if saved_cursor.row < table.row_count:
                 table.move_cursor(row=saved_cursor.row, column=saved_cursor.column)
 
+    def _update_expert_panels(self, data: dict[str, Any]) -> None:
+        """Refresh expert mode panels with latest fetched data."""
+        cost_panel = self.query_one("#expert-cost", ExpertCostPanel)
+        cost_panel.costs = data.get("costs") or {}
+
+        bandit_panel = self.query_one("#expert-bandit", ExpertBanditPanel)
+        bandit_panel.bandit = data.get("bandit") or {}
+
+        deps_panel = self.query_one("#expert-deps", ExpertDepsPanel)
+        raw_tasks = data.get("tasks")
+        deps_panel.tasks = list(raw_tasks) if isinstance(raw_tasks, list) else []
+
     def _apply_data(self, data: dict[str, Any]) -> None:
         """Apply fetched data to widgets (main thread, non-blocking)."""
         # Log phase transitions to activity
@@ -1312,6 +1467,8 @@ class BernsteinApp(App[None]):
         costs: dict[str, Any] = data.get("costs") or {}
         self._activity_summaries = data.get("activity_summaries") or {}
         self._update_agents(data.get("agents", []), costs)
+        if self._expert_mode:
+            self._update_expert_panels(data)
         monitoring = {
             "quarantine": data.get("quarantine", {}),
             "guardrails": data.get("guardrails", {}),
@@ -1887,6 +2044,18 @@ class BernsteinApp(App[None]):
         bar = self.query_one("#activity-bar")
         self._activity_visible = not self._activity_visible
         bar.display = self._activity_visible
+
+    def action_toggle_expert(self) -> None:
+        """Toggle expert mode: show cost breakdown, bandit stats, and dependency graph."""
+        self._expert_mode = not self._expert_mode
+        expert_row = self.query_one("#expert-row")
+        expert_row.display = self._expert_mode
+        if self._expert_mode:
+            # Populate panels immediately from the last known poll result
+            self._schedule_poll()
+            self.notify("Expert mode  [e] to toggle off", severity="information", timeout=3)
+        else:
+            self.notify("Novice mode  [e] to toggle on", severity="information", timeout=3)
 
     def action_stop_bernstein(self) -> None:
         """Backward-compatible stop -- delegates to drain."""
