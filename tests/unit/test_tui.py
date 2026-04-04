@@ -128,6 +128,50 @@ class TestTaskRow:
         assert row.title == "Build UI"
 
 
+class TestAgentLogWidgetSessionSeparator:
+    """Tests for the historical/live session separator in AgentLogWidget."""
+
+    def test_initial_state(self) -> None:
+        widget = AgentLogWidget()
+        assert widget._session_start_ts > 0
+        assert widget._separator_written is False
+        assert widget._has_historical is False
+
+    def test_load_historical_lines_sets_flag(self) -> None:
+        widget = AgentLogWidget()
+        widget.load_historical_lines(["line one", "line two"])
+        assert widget._has_historical is True
+        assert widget._separator_written is True
+
+    def test_load_empty_historical_lines(self) -> None:
+        widget = AgentLogWidget()
+        widget.load_historical_lines([])
+        assert widget._has_historical is False
+        # Separator should NOT be written when there is nothing historical.
+        assert widget._separator_written is False
+
+    def test_load_whitespace_only_lines_ignored(self) -> None:
+        widget = AgentLogWidget()
+        widget.load_historical_lines(["   ", "\t", ""])
+        assert widget._has_historical is False
+        assert widget._separator_written is False
+
+    def test_separator_written_once(self) -> None:
+        widget = AgentLogWidget()
+        widget._write_separator()
+        assert widget._separator_written is True
+        # Calling again should be a no-op (no error, flag still True).
+        widget._write_separator()
+        assert widget._separator_written is True
+
+    def test_append_line_triggers_separator(self) -> None:
+        """First append_line call writes the separator when no historical data was loaded."""
+        widget = AgentLogWidget()
+        assert widget._separator_written is False
+        widget.append_line("some event")
+        assert widget._separator_written is True
+
+
 class TestWidgetCreation:
     """Tests that widgets can be instantiated without crashing."""
 
@@ -174,6 +218,53 @@ class TestAppInstantiation:
         monkeypatch.chdir(tmp_path)
         count = BernsteinApp._count_active_agents()
         assert count == 0
+
+
+class TestLoadHistoricalLogs:
+    """Tests for BernsteinApp._load_historical_logs."""
+
+    def test_no_runtime_dir(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """No crash when .sdd/runtime does not exist."""
+        monkeypatch.chdir(tmp_path)
+        app = BernsteinApp()
+        # _load_historical_logs returns early when runtime dir is missing.
+        app._load_historical_logs()
+        assert app._log_offsets == {}
+
+    def test_records_byte_offsets(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Byte offsets are recorded for existing log files."""
+        monkeypatch.chdir(tmp_path)
+        runtime = tmp_path / ".sdd" / "runtime"
+        runtime.mkdir(parents=True)
+        log = runtime / "backend-abc.log"
+        log.write_text("line 1\nline 2\n")
+        app = BernsteinApp()
+
+        # Stub query_one so we don't need a mounted Textual screen.
+        loaded_lines: list[str] = []
+        dummy_widget = AgentLogWidget()
+
+        def capture_load(lines: list[str]) -> None:
+            loaded_lines.extend(lines)
+
+        dummy_widget.load_historical_lines = capture_load  # type: ignore[assignment]
+        monkeypatch.setattr(app, "query_one", lambda *_a, **_k: dummy_widget)
+
+        app._load_historical_logs()
+        assert "backend-abc" in app._log_offsets
+        assert app._log_offsets["backend-abc"] == log.stat().st_size
+        assert len(loaded_lines) == 2
+
+    def test_empty_log_skipped(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Empty log files are skipped — no offset recorded, no widget call."""
+        monkeypatch.chdir(tmp_path)
+        runtime = tmp_path / ".sdd" / "runtime"
+        runtime.mkdir(parents=True)
+        (runtime / "empty.log").write_text("")
+        app = BernsteinApp()
+        # No need to stub query_one: with 0-byte file, query_one is never called.
+        app._load_historical_logs()
+        assert "empty" not in app._log_offsets
 
 
 class TestKillAgent:

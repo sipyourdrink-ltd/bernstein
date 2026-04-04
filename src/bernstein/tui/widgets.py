@@ -388,14 +388,70 @@ class ActionBar(Static):
 
 
 class AgentLogWidget(RichLog):
-    """Scrollable log output for agent activity with timestamps."""
+    """Scrollable log output for agent activity with timestamps.
+
+    Tracks a session start timestamp so that historical log lines loaded
+    at startup can be visually separated from new activity.  Historical
+    entries are rendered dimmed; a horizontal rule marks the boundary.
+    """
+
+    # Width (in characters) of the separator rule.
+    _SEPARATOR_WIDTH: ClassVar[int] = 60
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialise the log widget and record the session start time.
+
+        Args:
+            **kwargs: Forwarded to :class:`~textual.widgets.RichLog`.
+        """
+        super().__init__(**kwargs)
+        self._session_start_ts: float = time.time()
+        self._separator_written: bool = False
+        self._has_historical: bool = False
+
+    def _write_separator(self) -> None:
+        """Insert a visual separator between historical and live log entries."""
+        if self._separator_written:
+            return
+        self._separator_written = True
+        ts_label = datetime.fromtimestamp(self._session_start_ts).strftime("%H:%M:%S")
+        rule_char = "\u2500"
+        label = f" Session started ({ts_label}) "
+        side_len = max(1, (self._SEPARATOR_WIDTH - len(label)) // 2)
+        rule_line = rule_char * side_len + label + rule_char * side_len
+        self.write(Text.from_markup(f"[bold cyan]{rule_line}[/bold cyan]"))
+
+    def load_historical_lines(self, lines: list[str]) -> None:
+        """Load pre-existing log lines rendered in a dim style.
+
+        Call this once at startup before any :meth:`append_line` calls.
+        A session separator is written after the historical entries.
+
+        Args:
+            lines: Raw log lines (already formatted/timestamped by the
+                source file).  Empty or whitespace-only lines are skipped.
+        """
+        for raw_line in lines:
+            stripped = raw_line.rstrip()
+            if not stripped:
+                continue
+            self._has_historical = True
+            self.write(Text.from_markup(f"[dim]{stripped}[/dim]"))
+        if self._has_historical:
+            self._write_separator()
 
     def append_line(self, line: str) -> None:
         """Append a timestamped line to the log.
 
+        If this is the first live line and no historical lines were loaded,
+        the session separator is written first so the user always sees the
+        boundary.
+
         Args:
             line: Text line to append (timestamp is prepended automatically).
         """
+        if not self._separator_written:
+            self._write_separator()
         ts = datetime.now().strftime("%H:%M:%S")
         self.write(Text.from_markup(f"[dim]{ts}[/dim] {line}"))
 
