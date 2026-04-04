@@ -125,6 +125,10 @@ class CacheBreakEvent:
     model_name: str = ""
     provider_name: str = ""
     changed_fields: list[str] = field(default_factory=list[str])
+    # Fingerprint identifying the component class that changed (e.g. hash of
+    # the system-prompt template or tool-definition set).  Shared across all
+    # agents that receive the same change, enabling cross-agent correlation.
+    component_fingerprint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict."""
@@ -138,6 +142,7 @@ class CacheBreakEvent:
             "model_name": self.model_name,
             "provider_name": self.provider_name,
             "changed_fields": self.changed_fields,
+            "component_fingerprint": self.component_fingerprint,
         }
 
     def to_json_line(self) -> str:
@@ -157,6 +162,7 @@ class CacheBreakEvent:
             model_name=data.get("model_name", ""),
             provider_name=data.get("provider_name", ""),
             changed_fields=data.get("changed_fields", []),
+            component_fingerprint=data.get("component_fingerprint", ""),
         )
 
 
@@ -956,3 +962,186 @@ def record_cache_cost_metrics(
             f"({savings_data['savings_percentage']:.1%}) for {tokens} tokens "
             f"({provider}:{model})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Distributed cache break correlation (cross-agent systemic detection)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BreakCorrelation:
+    """Correlation result for a group of cache break events.
+
+    When ``is_systemic`` is True, the same component fingerprint was observed
+    across multiple agents within the correlation window, indicating a shared
+    upstream change (e.g. a template or tool-definition update) rather than
+    per-agent drift.
+
+    Attributes:
+        fingerprint: Component fingerprint shared by all events in this group.
+        agent_ids: Distinct agent session IDs that experienced the break.
+        reasons: Cache break reasons seen in this group.
+        timestamps: Timestamps of all matching events (ascending).
+        is_systemic: True when ``len(agent_ids) >= min_agents_for_systemic``.
+        label: Human-readable label — ``"systemic"`` or ``"local"``.
+        window_start: Earliest timestamp in this correlation window.
+        window_end: Latest timestamp in this correlation window.
+    """
+
+    fingerprint: str
+    agent_ids: list[str]
+    reasons: list[CacheBreakReason]
+    timestamps: list[float]
+    is_systemic: bool
+    label: str
+    window_start: float
+    window_end: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to JSON-compatible dict."""
+        return {
+            "fingerprint": self.fingerprint,
+            "agent_ids": self.agent_ids,
+            "reasons": [r.value for r in self.reasons],
+            "timestamps": self.timestamps,
+            "is_systemic": self.is_systemic,
+            "label": self.label,
+            "window_start": self.window_start,
+            "window_end": self.window_end,
+        }
+
+
+class CacheBreakCorrelator:
+    """Correlates cache break events across concurrent agents.
+
+    Maintains a rolling buffer of recent events grouped by
+    ``component_fingerprint``.  When ``min_agents_for_systemic`` or more
+    distinct agents report a break with the same fingerprint within
+    ``window_seconds``, the group is classified as **systemic** — caused by a
+    shared upstream change such as a template update or global model-config
+    change.  Single-agent breaks are classified as **local** drift.
+
+    Memory is bounded: the buffer evicts the oldest fingerprint group once
+    ``max_fingerprints`` is exceeded (FIFO).
+
+    Args:
+        window_seconds: Maximum age of events to include in a correlation group.
+        min_agents_for_systemic: Minimum number of distinct agents required to
+            classify a fingerprint group as systemic.
+        max_fingerprints: Maximum number of fingerprint groups to track before
+            evicting the oldest.
+    """
+
+    def __init__(
+        self,
+        window_seconds: float = 60.0,
+        min_agents_for_systemic: int = 2,
+        max_fingerprints: int = 100,
+    ) -> None:
+        self._window_seconds = window_seconds
+        self._min_agents = min_agents_for_systemic
+        self._max_fingerprints = max_fingerprints
+        # fingerprint -> list of (timestamp, session_id, reason)
+        self._buffer: OrderedDict[str, list[tuple[float, str, CacheBreakReason]]] = OrderedDict()
+
+    def _evict_old_entries(self, now: float) -> None:
+        """Remove entries older than the window from all fingerprint groups."""
+        cutoff = now - self._window_seconds
+        empty_fps: list[str] = []
+        for fp, entries in self._buffer.items():
+            fresh = [(ts, sid, r) for ts, sid, r in entries if ts >= cutoff]
+            if fresh:
+                self._buffer[fp] = fresh
+            else:
+                empty_fps.append(fp)
+        for fp in empty_fps:
+            del self._buffer[fp]
+
+    def _enforce_capacity(self) -> None:
+        """Evict oldest fingerprint group when capacity is exceeded."""
+        while len(self._buffer) > self._max_fingerprints:
+            self._buffer.popitem(last=False)
+
+    def add_event(self, event: CacheBreakEvent) -> BreakCorrelation:
+        """Add a break event and return its current correlation status.
+
+        Args:
+            event: The cache break event to record.
+
+        Returns:
+            BreakCorrelation reflecting the current state of the event's
+            fingerprint group after adding this event.
+        """
+        fp = event.component_fingerprint or event.new_cache_key[:16]
+        now = event.timestamp
+
+        self._evict_old_entries(now)
+
+        if fp not in self._buffer:
+            if len(self._buffer) >= self._max_fingerprints:
+                self._enforce_capacity()
+            self._buffer[fp] = []
+        else:
+            # Move to end so FIFO eviction keeps newest fingerprints
+            self._buffer.move_to_end(fp)
+
+        self._buffer[fp].append((now, event.session_id, event.reason))
+
+        return self._build_correlation(fp)
+
+    def _build_correlation(self, fingerprint: str) -> BreakCorrelation:
+        """Build a BreakCorrelation for the given fingerprint group."""
+        entries = self._buffer.get(fingerprint, [])
+        agent_ids = list(dict.fromkeys(sid for _, sid, _ in entries))
+        reasons = [r for _, _, r in entries]
+        timestamps = sorted(ts for ts, _, _ in entries)
+        is_systemic = len(agent_ids) >= self._min_agents
+        label = "systemic" if is_systemic else "local"
+        window_start = timestamps[0] if timestamps else 0.0
+        window_end = timestamps[-1] if timestamps else 0.0
+
+        correlation = BreakCorrelation(
+            fingerprint=fingerprint,
+            agent_ids=agent_ids,
+            reasons=reasons,
+            timestamps=timestamps,
+            is_systemic=is_systemic,
+            label=label,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        if is_systemic:
+            logger.warning(
+                "Systemic cache break detected: fingerprint=%s agents=%s reason_classes=%s",
+                fingerprint[:16],
+                agent_ids,
+                list({r.value for r in reasons}),
+            )
+        return correlation
+
+    def correlate_batch(self, events: list[CacheBreakEvent]) -> list[BreakCorrelation]:
+        """Correlate a batch of events and return one result per distinct fingerprint.
+
+        Args:
+            events: List of break events, typically loaded from cache_breaks.jsonl.
+
+        Returns:
+            One BreakCorrelation per distinct fingerprint group.
+        """
+        for event in sorted(events, key=lambda e: e.timestamp):
+            self.add_event(event)
+        now = events[-1].timestamp if events else time.time()
+        self._evict_old_entries(now)
+        return [self._build_correlation(fp) for fp in self._buffer]
+
+    def get_correlations(self) -> list[BreakCorrelation]:
+        """Return current correlation state for all tracked fingerprint groups.
+
+        Returns:
+            One BreakCorrelation per distinct fingerprint group currently in
+            the rolling buffer.
+        """
+        now = time.time()
+        self._evict_old_entries(now)
+        return [self._build_correlation(fp) for fp in self._buffer]

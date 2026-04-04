@@ -63,6 +63,43 @@ from bernstein.core.server_supervisor import supervised_server
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# MCP auto-discovery helpers
+# ---------------------------------------------------------------------------
+
+
+def _register_mcp_discovery(workdir: Path) -> None:
+    """Write Bernstein into .claude/mcp.json so Claude Code auto-discovers it.
+
+    Any Claude Code session opened in ``workdir`` will automatically have
+    access to the Bernstein orchestration tools (bernstein_status, etc.)
+    without manual configuration.
+
+    Args:
+        workdir: Project root directory.
+    """
+    import json as _json
+
+    mcp_path = workdir / ".claude" / "mcp.json"
+    mcp_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing: dict[str, object] = {}
+    if mcp_path.exists():
+        try:
+            existing = _json.loads(mcp_path.read_text())
+        except (ValueError, OSError):
+            existing = {}
+
+    servers = dict(existing.get("mcpServers", {}))  # type: ignore[arg-type]
+    servers["bernstein"] = {
+        "command": sys.executable,
+        "args": ["-m", "bernstein.mcp.server"],
+    }
+    existing["mcpServers"] = servers
+    mcp_path.write_text(_json.dumps(existing, indent=2) + "\n")
+    logger.debug("Registered Bernstein MCP server in %s", mcp_path)
+
 # Install PII redaction on the root logger so all handlers receive sanitised
 # messages — no email, phone, SSN, or credit-card number reaches disk/stdout.
 install_pii_filter()
@@ -280,6 +317,10 @@ def bootstrap_from_seed(
         ).print()
         raise SystemExit(1)
     console.print(f"  [dim]server[/dim]  :{port} [green]ready[/green]")
+
+    # Register Bernstein as a discoverable MCP server for Claude Code sessions
+    with contextlib.suppress(OSError):
+        _register_mcp_discovery(workdir)
 
     # 4. Sync backlog / create manager task
     from bernstein.core.session import check_resume_session
@@ -570,6 +611,10 @@ def bootstrap_from_goal(
             ).print()
             raise SystemExit(1)
     console.print(f"[green]→[/green] Task server ready (PID {server_pid}, {bind_host}:{port})")
+
+    # Register Bernstein as a discoverable MCP server for Claude Code sessions
+    with contextlib.suppress(OSError):
+        _register_mcp_discovery(workdir)
 
     # Sync backlog first; only use manager if backlog is empty and no prior session
     from bernstein.core.session import check_resume_session
