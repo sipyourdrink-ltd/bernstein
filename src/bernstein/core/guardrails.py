@@ -145,6 +145,8 @@ class GuardrailsConfig:
         license_scan: Whether to scan for copyleft license obligations.
         max_deletion_pct: Flag if this fraction of a file's diff lines are removals.
         sandbox_relax: Whether to relax ASK/DENY decisions when sandboxed (T466).
+        readme_reminder: Whether to remind agents to update README when public API
+            changes (new CLI commands or config options) are detected in the diff.
     """
 
     secrets: bool = True
@@ -155,6 +157,7 @@ class GuardrailsConfig:
     permission_overrides: dict[str, AgentPermissions] | None = None
     review_checklist: list[str] = field(default_factory=_default_review_checklist)
     sandbox_relax: bool = True
+    readme_reminder: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +675,9 @@ def run_guardrails(
     if config.review_checklist:
         decisions["review_checklist"] = check_review_checklist(diff, task, config.review_checklist, workdir)
 
+    if config.readme_reminder:
+        decisions["readme_reminder"] = check_readme_reminder(diff)
+
     # Populate graph and build results
     results: list[GuardrailResult] = []
     for check_name, check_decisions in decisions.items():
@@ -794,6 +800,34 @@ def check_review_checklist(
             )
 
     return results
+
+
+def check_readme_reminder(diff: str) -> list[PermissionDecision]:
+    """Flag diffs that add CLI commands or config options without README updates.
+
+    Imports :mod:`bernstein.core.readme_reminder` to detect public API additions
+    and returns an ASK decision when any are found, prompting the agent to
+    document the changes in README.md before the task is considered complete.
+
+    Args:
+        diff: Git diff output string.
+
+    Returns:
+        List with one PermissionDecision: ALLOW (no API changes) or ASK
+        (new commands/options detected, README update required).
+    """
+    from bernstein.core.readme_reminder import detect_api_changes, remind_message
+
+    changes = detect_api_changes(diff)
+    if not changes:
+        return [PermissionDecision(type=DecisionType.ALLOW, reason="No public API additions detected")]
+
+    return [
+        PermissionDecision(
+            type=DecisionType.ASK,
+            reason=remind_message(changes),
+        )
+    ]
 
 
 def _record_result(task_id: str, result: GuardrailResult, workdir: Path) -> None:
