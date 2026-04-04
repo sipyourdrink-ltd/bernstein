@@ -303,7 +303,15 @@ def sync_backlog_to_server(
             normalise_title(t.get("title", "")) for t in _get_tasks_by_status(_client, server_url, "done")
         }
 
-        for md_file in sorted([*backlog_open.glob("*.yaml"), *backlog_open.glob("*.md")]):
+        backlog_claimed = workdir / ".sdd" / "backlog" / "claimed"
+        scan_dirs = [backlog_open]
+        if backlog_claimed.exists():
+            scan_dirs.append(backlog_claimed)
+        all_files = []
+        for d in scan_dirs:
+            all_files.extend(d.glob("*.yaml"))
+            all_files.extend(d.glob("*.md"))
+        for md_file in sorted(all_files):
             task = parse_backlog_file(md_file)
             if task is None:
                 continue
