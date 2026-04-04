@@ -87,6 +87,11 @@ def _fetch_all() -> dict[str, Any]:
     if isinstance(tasks, list):
         task_dicts = cast("list[dict[str, Any]]", tasks)
         pending_approval = sum(1 for td in task_dicts if td.get("status") == "pending_approval")
+    # Verification nudge: read from status response (already included by /status route)
+    verification_nudge: dict[str, Any] = {}
+    if isinstance(status, dict):
+        verification_nudge = status.get("verification_nudge", {}) or {}
+
     return {
         "tasks": tasks,
         "status": status,
@@ -97,6 +102,7 @@ def _fetch_all() -> dict[str, Any]:
         "guardrails": guardrails,
         "cache_stats": cache_stats,
         "pending_approval": pending_approval,
+        "verification_nudge": verification_nudge,
     }
 
 
@@ -569,6 +575,8 @@ class BigStats(Static):
     last_completed_label = reactive("")
     retry_count = reactive(0)
     agent_error_count = reactive(0)
+    unverified_completions = reactive(0)
+    unverified_threshold_exceeded = reactive(False)
 
     def render(self) -> Text:
         pct = int(self.done / self.total * 100) if self.total > 0 else 0
@@ -641,6 +649,7 @@ class BigStats(Static):
             or self.guardrail_violations > 0
             or self.pending_approval > 0
             or self.cache_hit_rate > 0
+            or self.unverified_completions > 0
         )
         runtime_parts: list[tuple[str, str]] = []
         if self.git_branch:
@@ -673,6 +682,15 @@ class BigStats(Static):
                 t.append(
                     f"\u29c2 cache {self.cache_hit_rate * 100:.0f}%",
                     style=f"bold {cache_color}",
+                )
+                t.append("  ", style="")
+            # Unverified completions
+            if self.unverified_completions > 0:
+                uv_color = "bright_red" if self.unverified_threshold_exceeded else "bright_yellow"
+                uv_label = "UNVERIFIED" if self.unverified_threshold_exceeded else "unverified"
+                t.append(
+                    f"\u26a0 {self.unverified_completions} {uv_label}",
+                    style=f"bold {uv_color}",
                 )
                 t.append("  ", style="")
             for label, style in runtime_parts:
@@ -1268,6 +1286,7 @@ class BernsteinApp(App[None]):
             "guardrails": data.get("guardrails", {}),
             "cache_stats": data.get("cache_stats", {}),
             "pending_approval": data.get("pending_approval", 0),
+            "verification_nudge": data.get("verification_nudge", {}),
         }
         self._update_stats(data.get("status"), tasks, data.get("agents", []), costs, monitoring)
         self._update_activity(data.get("agents", []))
@@ -1551,6 +1570,24 @@ class BernsteinApp(App[None]):
 
             cache_stats: dict[str, Any] = monitoring.get("cache_stats", {})
             bar.cache_hit_rate = float(cache_stats.get("hit_rate", 0.0))
+
+            nudge: dict[str, Any] = monitoring.get("verification_nudge", {})
+            _prev_unverified = bar.unverified_completions
+            bar.unverified_completions = int(nudge.get("unverified_count", 0))
+            bar.unverified_threshold_exceeded = bool(nudge.get("threshold_exceeded", False))
+            # Fire toast alert once when threshold is first exceeded
+            if (
+                bar.unverified_threshold_exceeded
+                and not getattr(self, "_nudge_alert_fired", False)
+                and bar.unverified_completions > _prev_unverified
+            ):
+                self._nudge_alert_fired = True  # type: ignore[attr-defined]
+                self.notify(
+                    f"Verification nudge: {bar.unverified_completions} tasks "
+                    f"completed without verification",
+                    severity="warning",
+                    timeout=10,
+                )
 
         bar.retry_count = sum(_task_retry_count(task) for task in (tasks or []) if isinstance(task, dict))
         bar.agent_error_count = _summarize_agent_errors(agents)[0]

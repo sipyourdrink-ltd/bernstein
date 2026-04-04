@@ -266,6 +266,26 @@ def render_status(
         con.print()
         con.print(Text.assemble(("Security: ", "bold"), (dependency_scan_line, "dim")))
 
+    # Verification nudge alert
+    nudge_data = data.get("verification_nudge")
+    if isinstance(nudge_data, dict) and nudge_data.get("unverified_count", 0) > 0:
+        con.print()
+        unverified = int(nudge_data.get("unverified_count", 0))
+        total_comp = int(nudge_data.get("total_completions", 0))
+        ratio_pct = int(float(nudge_data.get("unverified_ratio", 0.0)) * 100)
+        exceeded = bool(nudge_data.get("threshold_exceeded", False))
+        nudge_style = "bold red" if exceeded else "bold yellow"
+        nudge_prefix = "ALERT" if exceeded else "Notice"
+        con.print(
+            Text.assemble(
+                (f"Verification {nudge_prefix}: ", nudge_style),
+                (
+                    f"{unverified}/{total_comp} tasks completed without verification ({ratio_pct}%)",
+                    "yellow" if not exceeded else "red",
+                ),
+            )
+        )
+
     # Clean summary table
     con.print()
     con.print(create_summary_table(stats))
