@@ -709,17 +709,19 @@ def _label_color(name: str) -> str:
 # GitHub Issues -> backlog sync
 # ---------------------------------------------------------------------------
 
-# Label -> priority mapping (mirrors github_app/mapper.py)
+# Label -> priority mapping for GitHub Issues.
+# GH issues get lower priority (higher numbers) than backlog tickets
+# so agents finish backlog work first, then move to GH issues.
 _ISSUE_LABEL_PRIORITY: dict[str, int] = {
-    "bug": 1,
-    "critical": 1,
-    "security": 1,
-    "agent-fix": 1,
-    "enhancement": 2,
-    "feature": 2,
-    "docs": 3,
-    "documentation": 3,
-    "chore": 3,
+    "bug": 3,
+    "critical": 2,
+    "security": 2,
+    "agent-fix": 3,
+    "enhancement": 4,
+    "feature": 4,
+    "docs": 4,
+    "documentation": 4,
+    "chore": 4,
 }
 
 # Label -> role mapping (mirrors github_app/mapper.py)
@@ -747,7 +749,7 @@ def _priority_from_labels(labels: list[str]) -> int:
     for label in labels:
         if label in _ISSUE_LABEL_PRIORITY:
             return _ISSUE_LABEL_PRIORITY[label]
-    return 2
+    return 4  # default: GH issues are lower priority than backlog tickets
 
 
 def _role_from_labels(labels: list[str]) -> str:
