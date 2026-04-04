@@ -197,7 +197,6 @@ jobs:
     name: SonarCloud analysis
     runs-on: ubuntu-latest
     needs: [test]
-    if: always()
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
