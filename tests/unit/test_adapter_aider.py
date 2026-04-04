@@ -138,6 +138,92 @@ class TestAiderAdapterSpawn:
         inner = _inner_cmd(popen.call_args.args[0])
         assert "--yes" in inner
 
+    def test_auto_commits_flag_present(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=510)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                session_id="aider-flags1",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--auto-commits" in inner
+
+    def test_map_tokens_flag_present(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=511)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                session_id="aider-flags2",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--map-tokens" in inner
+        assert inner[inner.index("--map-tokens") + 1] == "2048"
+
+    def test_no_auto_lint_flag_present(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=512)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                session_id="aider-flags3",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--no-auto-lint" in inner
+
+    def test_owned_files_passed_as_file_flags(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=513)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                session_id="aider-files1",
+                owned_files=["src/foo.py", "src/bar.py"],
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        file_idx = [i for i, v in enumerate(inner) if v == "--file"]
+        assert len(file_idx) == 2
+        assert inner[file_idx[0] + 1] == "src/foo.py"
+        assert inner[file_idx[1] + 1] == "src/bar.py"
+
+    def test_owned_files_capped_at_ten(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=514)
+        many_files = [f"src/file{i}.py" for i in range(20)]
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                session_id="aider-files2",
+                owned_files=many_files,
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        file_flags = [v for v in inner if v == "--file"]
+        assert len(file_flags) == 10
+
+    def test_no_owned_files_no_file_flags(self, tmp_path: Path) -> None:
+        adapter = AiderAdapter()
+        proc_mock = _make_popen_mock(pid=515)
+        with patch("bernstein.adapters.aider.subprocess.Popen", return_value=proc_mock) as popen:
+            adapter.spawn(
+                prompt="hello",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                session_id="aider-files3",
+            )
+        inner = _inner_cmd(popen.call_args.args[0])
+        assert "--file" not in inner
+
     def test_creates_log_dir(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
         proc_mock = _make_popen_mock(pid=507)

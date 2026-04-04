@@ -42,6 +42,7 @@ class AiderAdapter(CLIAdapter):
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        owned_files: list[str] | None = None,
     ) -> SpawnResult:
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -55,7 +56,17 @@ class AiderAdapter(CLIAdapter):
             "--message",
             prompt,
             "--yes",  # auto-confirm all prompts
+            "--auto-commits",  # explicit: create a commit per change for clean worktree history
+            "--map-tokens",
+            "2048",  # larger repo map for better codebase navigation
+            "--no-auto-lint",  # lint is orchestrator's job, not each agent's
         ]
+
+        # If the task scopes to specific files, add them to the Aider chat context.
+        # This restricts the repo-map to the relevant subtree, reducing token usage.
+        if owned_files:
+            for f in owned_files[:10]:  # cap to avoid arg-list overflow
+                cmd.extend(["--file", f])
 
         # Wrap with bernstein-worker for process visibility
         pid_dir = workdir / ".sdd" / "runtime" / "pids"
