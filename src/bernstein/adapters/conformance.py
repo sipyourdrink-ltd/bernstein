@@ -153,8 +153,7 @@ class TranscriptResult:
             "adapter_class": self.adapter_class,
             "passed": self.passed,
             "steps": [
-                {"step_index": s.step_index, "passed": s.passed, "message": s.message}
-                for s in self.step_results
+                {"step_index": s.step_index, "passed": s.passed, "message": s.message} for s in self.step_results
             ],
         }
 
