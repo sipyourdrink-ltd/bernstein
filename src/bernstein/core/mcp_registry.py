@@ -36,6 +36,9 @@ class MCPServerEntry:
         env_required: Environment variables that must be set.
         command: Executable to run.
         args: Arguments to pass. Defaults to ["-y", <package>].
+        plugin_name: Plugin that registered this server. When set, the
+            server key in mcpServers is prefixed as ``<plugin_name>__<name>``
+            to prevent naming collisions across plugins.
     """
 
     name: str
@@ -45,6 +48,19 @@ class MCPServerEntry:
     env_required: tuple[str, ...] = ()
     command: str = "npx"
     args: tuple[str, ...] | None = None
+    plugin_name: str = ""
+
+    @property
+    def namespaced_name(self) -> str:
+        """Return the plugin-scoped server name.
+
+        When ``plugin_name`` is set, returns ``<plugin_name>__<name>`` to
+        prevent collisions when multiple plugins provide servers with the
+        same base name.  Otherwise returns the plain ``name``.
+        """
+        if self.plugin_name:
+            return f"{self.plugin_name}__{self.name}"
+        return self.name
 
     def env_available(self) -> bool:
         """Check if all required environment variables are set."""
@@ -222,6 +238,42 @@ class MCPRegistry:
                 )
         return available
 
+    def register_plugin_servers(self, plugin_name: str, servers: list[MCPServerEntry]) -> None:
+        """Register MCP servers contributed by a plugin, namespacing their names.
+
+        Each server is stored with ``plugin_name`` set so that
+        :attr:`MCPServerEntry.namespaced_name` returns ``<plugin_name>__<name>``.
+        This prevents collisions when two plugins provide servers with the same
+        base name.
+
+        Args:
+            plugin_name: Plugin identifier used as the namespace prefix.
+            servers: Server entries to register under this plugin's namespace.
+        """
+        for server in servers:
+            namespaced = MCPServerEntry(
+                name=server.name,
+                package=server.package,
+                capabilities=server.capabilities,
+                keywords=server.keywords,
+                env_required=server.env_required,
+                command=server.command,
+                args=server.args,
+                plugin_name=plugin_name,
+            )
+            self._servers.append(namespaced)
+            for keyword in namespaced.keywords:
+                pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+                self._keyword_patterns.append((pattern, namespaced))
+
+        if servers:
+            logger.debug(
+                "Registered %d MCP servers from plugin %r: %s",
+                len(servers),
+                plugin_name,
+                [s.namespaced_name for s in self._servers[-len(servers) :]],
+            )
+
     def build_mcp_config(self, servers: list[MCPServerEntry]) -> dict[str, Any] | None:
         """Build MCP config dict from a list of server entries.
 
@@ -236,7 +288,7 @@ class MCPRegistry:
 
         mcp_servers: dict[str, Any] = {}
         for server in servers:
-            mcp_servers[server.name] = server.to_mcp_config()
+            mcp_servers[server.namespaced_name] = server.to_mcp_config()
 
         return {"mcpServers": mcp_servers}
 

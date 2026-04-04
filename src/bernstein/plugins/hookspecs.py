@@ -544,6 +544,28 @@ class BernsteinSpec:
         """
 
     @hookspec
+    def provide_mcp_servers(self) -> list[dict[str, Any]] | None:
+        """Provide MCP servers that this plugin contributes.
+
+        Called during plugin loading to collect server definitions that should
+        be injected into agent MCP configs.  Server names are automatically
+        namespaced with the plugin name to prevent collisions (e.g. a server
+        named ``"db"`` from plugin ``"acme"`` becomes ``"acme__db"``).
+
+        Each dict should include:
+        - ``name``: Server identifier (will be namespaced automatically).
+        - ``package``: npm package to install (e.g. ``"@acme/my-mcp"``).
+        - ``command``: (optional) Executable override (default: ``"npx"``).
+        - ``args``: (optional) Argument list override.
+        - ``env_required``: (optional) List of required environment variable names.
+        - ``capabilities``: (optional) Capability tags for task matching.
+        - ``keywords``: (optional) Task description keywords that trigger this server.
+
+        Returns:
+            List of server config dicts, or ``None`` to contribute nothing.
+        """
+
+    @hookspec
     def on_metric_record(
         self,
         metric_type: str,
