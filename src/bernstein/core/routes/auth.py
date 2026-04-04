@@ -10,6 +10,7 @@ Provides endpoints for:
 
 from __future__ import annotations
 
+import html
 import logging
 import secrets
 import time
@@ -205,7 +206,7 @@ async def oidc_callback(request: Request) -> Response:
     error = request.query_params.get("error", "")
 
     if error:
-        error_desc = request.query_params.get("error_description", error)
+        error_desc = html.escape(request.query_params.get("error_description", error))
         return HTMLResponse(
             content=f'<h2>Authentication Failed</h2><p>{error_desc}</p><p><a href="/auth/login">Try again</a></p>',
             status_code=400,

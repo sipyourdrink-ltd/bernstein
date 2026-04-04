@@ -50,7 +50,10 @@ def _set_proctitle(title: str) -> None:
 def _write_pid_file(pid_dir: Path, session: str, info: dict[str, object]) -> Path:
     """Write PID metadata JSON file."""
     pid_dir.mkdir(parents=True, exist_ok=True)
-    pid_file = pid_dir / f"{session}.json"
+    pid_file = (pid_dir / f"{session}.json").resolve()
+    if not pid_file.is_relative_to(pid_dir.resolve()):
+        print(f"bernstein-worker: invalid session id: {session}", file=sys.stderr)
+        sys.exit(1)
     pid_file.write_text(json.dumps(info), encoding="utf-8")
     return pid_file
 

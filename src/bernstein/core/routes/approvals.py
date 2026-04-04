@@ -145,6 +145,9 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
     if not pending_path.exists():
         raise HTTPException(status_code=404, detail=f"No pending approval for task {task_id}")
 
+    if not approved_path.resolve().is_relative_to(approvals_dir.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid task_id")
+
     # Write decision
     approved_path.write_text(json.dumps({"reason": body.reason}, indent=2))
 
@@ -176,6 +179,9 @@ async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, 
 
     if not pending_path.exists():
         raise HTTPException(status_code=404, detail=f"No pending approval for task {task_id}")
+
+    if not rejected_path.resolve().is_relative_to(approvals_dir.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid task_id")
 
     # Write decision
     rejected_path.write_text(json.dumps({"reason": body.reason}, indent=2))
