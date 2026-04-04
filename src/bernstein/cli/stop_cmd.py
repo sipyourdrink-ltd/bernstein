@@ -431,7 +431,9 @@ def _kill_port_holder(port: int, killed: set[int]) -> None:
     try:
         result = subprocess.run(
             ["lsof", "-ti", f":{port}"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for line in result.stdout.strip().splitlines():
             pid = int(line.strip())
