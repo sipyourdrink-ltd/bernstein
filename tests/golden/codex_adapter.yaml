@@ -1,0 +1,8 @@
+name: codex_adapter_spawn
+adapter_class: bernstein.adapters.codex.CodexAdapter
+steps:
+  - prompt: "fix the bug in main.py"
+    model: "o1-mini"
+    expected_pid: 1234
+  - prompt: "write unit tests for utils.py"
+    model: "o4-mini"
