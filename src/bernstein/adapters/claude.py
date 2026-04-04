@@ -157,6 +157,10 @@ class ClaudeCodeAdapter(CLIAdapter):
         self._rate_limit_checked_at = now
         return False
 
+    # Max turns used for batch-mode agents, which must cover research +
+    # decompose + spawn workers + track completion.
+    BATCH_MAX_TURNS: int = 200
+
     def _build_command(
         self,
         model_config: ModelConfig,
@@ -167,6 +171,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         workdir: Path | None = None,
         agents_json: dict[str, Any] | None = None,
         system_addendum: str = "",
+        batch_mode: bool = False,
     ) -> list[str]:
         """Build the claude CLI command with effort mapping.
 
@@ -188,10 +193,18 @@ class ClaudeCodeAdapter(CLIAdapter):
                 ``--append-system-prompt``.  Keeps signal-check instructions,
                 completion protocol, heartbeat commands, etc. out of the user
                 prompt so the agent focuses on the task goal.
+            batch_mode: When True, sets ``--max-turns`` to
+                :attr:`BATCH_MAX_TURNS` (200) so the agent has enough turns
+                to research, decompose, spawn workers, and track their
+                completion via the ``/batch`` skill.
         """
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         effort = getattr(model_config, "effort", "high")
-        max_turns = {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
+        max_turns = (
+            self.BATCH_MAX_TURNS
+            if batch_mode
+            else {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
+        )
         effort_map = {"max": "max", "high": "high", "medium": "medium", "normal": "medium", "low": "low"}
         claude_effort = effort_map.get(effort, "high")
 
@@ -485,6 +498,13 @@ class ClaudeCodeAdapter(CLIAdapter):
         else:
             effective_mcp = {"mcpServers": {"bernstein": bridge_server}}
 
+        # Auto-detect batch mode: prompts starting with "/batch" are delegated
+        # to Claude Code's built-in /batch skill, which requires more turns to
+        # cover the full research → decompose → spawn-workers → track lifecycle.
+        batch_mode = prompt.lstrip().startswith("/batch")
+        if batch_mode:
+            _logger.info("Batch mode detected for session %s — using %d max-turns", session_id, self.BATCH_MAX_TURNS)
+
         agents_json = build_agents_json(role)
         cmd = self._build_command(
             model_config,
@@ -494,6 +514,7 @@ class ClaudeCodeAdapter(CLIAdapter):
             workdir=workdir,
             agents_json=agents_json,
             system_addendum=system_addendum,
+            batch_mode=batch_mode,
         )
 
         # Wrap with bernstein-worker for process visibility
