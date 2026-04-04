@@ -84,18 +84,19 @@ class AdaptiveParallelism:
         return failures / len(self._outcomes)
 
     def _get_cpu_percent(self) -> float:
-        """Get current CPU usage percentage.
+        """Get current CPU usage percentage (multicore-aware).
 
-        Uses os.getloadavg() on Unix (normalized by CPU count) as a
-        lightweight, dependency-free approach.
+        Uses the **5-minute** load average (not 1-minute) to avoid
+        knee-jerk reactions to brief spikes.  Normalized by CPU count
+        so 100% means all cores saturated.
 
         Returns:
             CPU usage percentage (0-100+).
         """
         try:
-            load1, _, _ = os.getloadavg()
+            _, load5, _ = os.getloadavg()
             cpu_count = os.cpu_count() or 1
-            return (load1 / cpu_count) * 100.0
+            return (load5 / cpu_count) * 100.0
         except OSError:
             return 0.0
 
