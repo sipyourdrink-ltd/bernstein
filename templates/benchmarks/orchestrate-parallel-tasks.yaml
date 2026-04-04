@@ -1,0 +1,13 @@
+task_id: orchestrate-parallel-tasks
+description: >
+  Spawn three parallel agents to implement independent REST endpoints
+  (GET /users, POST /users, DELETE /users/{id}) with full test coverage,
+  using Bernstein's multi-agent orchestration to achieve 2-3x speedup
+  over a single sequential agent.
+task_type: refactor
+files:
+  - src/api/users.py
+  - tests/test_users.py
+expected_outcome: >
+  All three endpoints implemented and tested; total wall-clock time
+  at least 1.5x faster than sequential single-agent execution.

@@ -297,6 +297,128 @@ def benchmark_compare(tasks_dir: str, modes: tuple[str, ...]) -> None:
     console.print(Markdown(md))
 
 
+@benchmark_group.command("simulate")
+@click.option(
+    "--tasks-dir",
+    default="templates/benchmarks",
+    show_default=True,
+    help="Directory containing benchmark task YAML files.",
+)
+@click.option(
+    "--seed",
+    type=int,
+    default=42,
+    show_default=True,
+    help="Random seed for reproducible results.",
+)
+@click.option(
+    "--task-id",
+    "task_ids",
+    multiple=True,
+    help="Run only these task IDs (repeatable). Default: all tasks.",
+)
+@click.option(
+    "--baseline",
+    "baseline_path",
+    default=None,
+    type=click.Path(),
+    help="Path to a prior benchmark_runs.jsonl for regression detection.",
+)
+@click.option(
+    "--save/--no-save",
+    default=True,
+    show_default=True,
+    help="Persist results to .sdd/benchmarks/benchmark_runs.jsonl.",
+)
+def benchmark_simulate(
+    tasks_dir: str,
+    seed: int,
+    task_ids: tuple[str, ...],
+    baseline_path: str | None,
+    save: bool,
+) -> None:
+    """Run reproducible benchmark: throughput, cost, quality across standard tasks.
+
+    Uses deterministic simulation (no live LLM calls) so results are
+    comparable across runs with the same seed.
+
+    \b
+      bernstein benchmark simulate                             # all tasks, seed=42
+      bernstein benchmark simulate --seed 1                   # different seed
+      bernstein benchmark simulate --task-id bugfix-1         # single task
+      bernstein benchmark simulate --baseline prior.jsonl     # detect regressions
+    """
+    from pathlib import Path as _Path
+
+    from rich.table import Table
+
+    from bernstein.benchmark.comparative import load_benchmark_tasks
+    from bernstein.benchmark.reproducible import BenchmarkConfig, ReproducibleBenchmark
+
+    tdir = _Path(tasks_dir)
+    if not tdir.is_dir():
+        console.print(f"[red]Tasks directory not found:[/red] {tdir}")
+        raise SystemExit(1)
+
+    tasks = load_benchmark_tasks(tdir)
+    if not tasks:
+        console.print("[yellow]No benchmark tasks found in directory.[/yellow]")
+        raise SystemExit(1)
+
+    sdd_dir = _Path(".sdd") / "benchmarks"
+    bline = _Path(baseline_path) if baseline_path else None
+    output_dir = sdd_dir if save else None
+
+    config = BenchmarkConfig(
+        seed=seed,
+        task_ids=list(task_ids),
+        baseline_path=bline,
+        output_dir=output_dir,
+    )
+    bench = ReproducibleBenchmark(tasks=tasks, config=config)
+    run, report = bench.run_and_compare()
+
+    # --- Summary table ---
+    table = Table(title=f"Benchmark simulation — seed={seed}", header_style="bold cyan", show_lines=False)
+    table.add_column("Metric", min_width=22)
+    table.add_column("Value", justify="right", min_width=18)
+
+    t = run.throughput
+    c = run.cost
+    q = run.quality
+    table.add_row("Tasks run", str(run.task_count))
+    table.add_row("Tasks/hour", f"{t.tasks_per_hour:.1f}")
+    table.add_row("p50 latency", f"{t.p50_latency_s:.1f}s")
+    table.add_row("p95 latency", f"{t.p95_latency_s:.1f}s")
+    table.add_row("Pass rate", f"{q.pass_rate:.1%}")
+    table.add_row("Verification rate", f"{q.verification_rate:.1%}")
+    table.add_row("Cost/task", f"${c.per_task_usd:.5f}")
+    table.add_row("Total cost", f"${c.total_usd:.4f}")
+    table.add_row("Total tokens", f"{c.total_tokens:,}")
+
+    console.print(table)
+    console.print(f"[dim]Run ID: {run.run_id}[/dim]")
+
+    if report is not None:
+        if report.is_regression:
+            console.print("\n[bold red]Regression detected:[/bold red]")
+            for msg in report.regressions:
+                console.print(f"  [red]✗[/red] {msg}")
+            raise SystemExit(1)
+        else:
+            delta_tph = f"{report.throughput_delta_pct:+.1f}%"
+            delta_cost = f"{report.cost_delta_pct:+.1f}%"
+            delta_q = f"{report.quality_delta_pp:+.1f}pp"
+            console.print(
+                f"\n[green]No regression[/green] vs baseline {report.baseline_run_id}  "
+                f"[dim]throughput {delta_tph}  cost {delta_cost}  quality {delta_q}[/dim]"
+            )
+
+    if save:
+        out = sdd_dir / "benchmark_runs.jsonl"
+        console.print(f"[dim]Results saved → {out}[/dim]")
+
+
 # ---------------------------------------------------------------------------
 # eval — multiplicative scoring harness
 # ---------------------------------------------------------------------------

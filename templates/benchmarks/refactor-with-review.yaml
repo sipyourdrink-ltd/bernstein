@@ -1,0 +1,14 @@
+task_id: refactor-with-review
+description: >
+  Refactor a 400-line monolithic data pipeline module into clean
+  architecture layers (repository, service, controller) using a
+  backend agent for implementation and a review agent for validation.
+task_type: refactor
+files:
+  - src/pipeline/etl.py
+  - src/pipeline/repository.py
+  - src/pipeline/service.py
+  - tests/test_pipeline.py
+expected_outcome: >
+  Module split into three layers; all existing tests pass; reviewer
+  agent approves code structure; no regressions in throughput benchmarks.
