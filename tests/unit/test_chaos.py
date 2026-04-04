@@ -292,7 +292,7 @@ def test_classify_abort_reason_oom_sigkill() -> None:
     # Negative exit code convention: -9 means killed by signal 9 (SIGKILL)
     session.exit_code = -9
 
-    reason, detail = classify_agent_abort_reason(session)
+    reason, _detail = classify_agent_abort_reason(session)
     assert reason == AbortReason.OOM
 
 
@@ -457,7 +457,7 @@ def test_retry_io_raises_immediately_on_enospc() -> None:
         with patch("bernstein.core.task_store.asyncio.sleep"):
             try:
                 asyncio.run(_retry_io(_fail))
-                assert False, "Expected OSError to be raised"
+                raise AssertionError("Expected OSError to be raised")
             except OSError as exc:
                 assert exc.errno == errno.ENOSPC
 
@@ -546,3 +546,219 @@ def test_disk_full_merge_cleanup_worktree_survives_oserror(tmp_path: Path) -> No
 
     # Worktree path removed from tracking dict regardless of rmtree failure
     assert session_id not in spawner._worktree_paths
+
+
+# ---------------------------------------------------------------------------
+# Chaos: disk full during merge — _merge_worktree_branch resilience
+# ---------------------------------------------------------------------------
+
+
+def test_merge_worktree_branch_returns_failed_result_on_exception(tmp_path: Path) -> None:
+    """_merge_worktree_branch returns MergeResult(success=False) on any exception.
+
+    Simulates ENOSPC raised during merge_with_conflict_detection to verify
+    the outer exception handler converts it to a clean MergeResult instead
+    of propagating the error up the call stack.
+    """
+    from bernstein.core.spawner import AgentSpawner
+
+    spawner = AgentSpawner.__new__(AgentSpawner)
+    spawner._workdir = tmp_path
+    spawner._worktree_paths = {}
+    spawner._worktree_roots = {}
+    spawner._worktree_managers = {}
+    spawner._worktree_mgr = None
+
+    enospc = OSError(errno.ENOSPC, "No space left on device")
+
+    with patch("bernstein.core.spawner.merge_with_conflict_detection", side_effect=enospc):
+        result = spawner._merge_worktree_branch("disk-sess-4", repo_root=tmp_path)
+
+    assert result.success is False
+    assert "No space left on device" in result.error
+    assert result.conflicting_files == []
+
+
+def test_merge_worktree_branch_no_corruption_after_disk_full(tmp_path: Path) -> None:
+    """No state corruption after disk-full during merge — worktree tracking stays clean.
+
+    After a failed merge due to ENOSPC, the spawner's internal tracking
+    dictionaries must be unmodified so cleanup_worktree can still run.
+    """
+    from bernstein.core.spawner import AgentSpawner
+
+    spawner = AgentSpawner.__new__(AgentSpawner)
+    spawner._workdir = tmp_path
+    spawner._worktree_paths = {}
+    spawner._worktree_roots = {}
+    spawner._worktree_managers = {}
+    spawner._worktree_mgr = None
+
+    session_id = "disk-sess-5"
+    worktree = tmp_path / session_id
+    worktree.mkdir()
+    spawner._worktree_paths[session_id] = worktree
+
+    with patch("bernstein.core.spawner.merge_with_conflict_detection", side_effect=OSError(errno.ENOSPC, "disk full")):
+        result = spawner._merge_worktree_branch(session_id, repo_root=tmp_path)
+
+    # Merge failed but worktree tracking is intact for cleanup
+    assert result.success is False
+    assert session_id in spawner._worktree_paths
+
+    # Cleanup can still run without raising
+    with patch("shutil.rmtree"):
+        spawner.cleanup_worktree(session_id)
+
+    assert session_id not in spawner._worktree_paths
+
+
+def test_merge_queue_processes_next_job_after_failed_merge(tmp_path: Path) -> None:
+    """MergeQueue continues processing after a disk-full failure on one job.
+
+    A failed merge (e.g. ENOSPC) dequeues the current job; the next job in
+    the queue remains reachable and can be processed normally.
+    """
+    from bernstein.core.merge_queue import MergeQueue
+
+    queue = MergeQueue()
+    queue.enqueue("sess-fail", task_id="t-fail", task_title="Will fail (disk full)")
+    queue.enqueue("sess-ok", task_id="t-ok", task_title="Will succeed")
+
+    assert len(queue) == 2
+
+    # Dequeue the first job and simulate disk-full failure (consumer decides, queue is neutral)
+    job1 = queue.dequeue()
+    assert job1 is not None
+    assert job1.session_id == "sess-fail"
+
+    # Queue depth drops to 1 regardless of merge outcome
+    assert len(queue) == 1
+
+    # Second job is still accessible
+    job2 = queue.dequeue()
+    assert job2 is not None
+    assert job2.session_id == "sess-ok"
+
+    assert len(queue) == 0
+
+
+# ---------------------------------------------------------------------------
+# Chaos: kill server mid-task — IN_PROGRESS recovery + CLOSED preservation
+# ---------------------------------------------------------------------------
+
+
+def test_in_progress_task_reset_to_open_after_server_kill(tmp_path: Path) -> None:
+    """IN_PROGRESS tasks are reset to OPEN after server kill, just like CLAIMED.
+
+    When the server is killed, tasks in IN_PROGRESS state have no active agent
+    any more than CLAIMED tasks do.  recover_stale_claimed_tasks must reset
+    both so a fresh agent can pick them up.
+    """
+    from bernstein.core.task_store import TaskStore
+
+    jsonl = tmp_path / "runtime" / "tasks.jsonl"
+    _write_task_jsonl(jsonl, "t-in-prog", title="in-flight-task", status="in_progress")
+
+    store = TaskStore(jsonl)
+    store.replay_jsonl()
+    store.recover_stale_claimed_tasks()
+
+    task = store.get_task("t-in-prog")
+    assert task is not None
+    assert task.status.value == "open", (
+        f"Expected IN_PROGRESS task to be reset to 'open' after recovery, got '{task.status.value}'"
+    )
+
+
+def test_recovery_resets_both_claimed_and_in_progress(tmp_path: Path) -> None:
+    """recover_stale_claimed_tasks resets both CLAIMED and IN_PROGRESS in one pass."""
+    from bernstein.core.task_store import TaskStore
+
+    jsonl = tmp_path / "runtime" / "tasks.jsonl"
+    _write_task_jsonl(jsonl, "t-claimed", title="claimed-task", status="claimed")
+    _write_task_jsonl(jsonl, "t-in-prog", title="in-progress-task", status="in_progress")
+    _write_task_jsonl(jsonl, "t-open", title="already-open-task", status="open")
+
+    store = TaskStore(jsonl)
+    store.replay_jsonl()
+    count = store.recover_stale_claimed_tasks()
+
+    assert count == 2
+    assert store.get_task("t-claimed").status.value == "open"  # type: ignore[union-attr]
+    assert store.get_task("t-in-prog").status.value == "open"  # type: ignore[union-attr]
+    assert store.get_task("t-open").status.value == "open"  # status unchanged
+
+
+def test_recovery_preserves_closed_terminal_state(tmp_path: Path) -> None:
+    """CLOSED tasks (verified+merged) are never touched by recover_stale_claimed_tasks."""
+    from bernstein.core.task_store import TaskStore
+
+    jsonl = tmp_path / "runtime" / "tasks.jsonl"
+    _write_task_jsonl(jsonl, "t-closed", title="closed-task", status="closed")
+    _write_task_jsonl(jsonl, "t-done", title="done-task", status="done")
+    _write_task_jsonl(jsonl, "t-failed", title="failed-task", status="failed")
+
+    store = TaskStore(jsonl)
+    store.replay_jsonl()
+    count = store.recover_stale_claimed_tasks()
+
+    assert count == 0
+    assert store.get_task("t-closed").status.value == "closed"  # type: ignore[union-attr]
+    assert store.get_task("t-done").status.value == "done"  # type: ignore[union-attr]
+    assert store.get_task("t-failed").status.value == "failed"  # type: ignore[union-attr]
+
+
+def test_recovery_is_idempotent_across_multiple_restarts(tmp_path: Path) -> None:
+    """Calling recover_stale_claimed_tasks twice is safe (idempotent).
+
+    A double restart must not cause duplicate resets or spurious resets of
+    tasks that are already open.
+    """
+    from bernstein.core.task_store import TaskStore
+
+    jsonl = tmp_path / "runtime" / "tasks.jsonl"
+    _write_task_jsonl(jsonl, "t-stale", title="stale-claimed", status="claimed")
+
+    store = TaskStore(jsonl)
+    store.replay_jsonl()
+
+    # First restart
+    count1 = store.recover_stale_claimed_tasks()
+    assert count1 == 1
+    assert store.get_task("t-stale").status.value == "open"  # type: ignore[union-attr]
+
+    # Second restart (task is already open — no additional resets)
+    count2 = store.recover_stale_claimed_tasks()
+    assert count2 == 0
+    assert store.get_task("t-stale").status.value == "open"  # type: ignore[union-attr]
+
+
+def test_no_data_loss_after_server_kill_with_mixed_task_states(tmp_path: Path) -> None:
+    """No tasks are lost after server kill with a mix of all non-terminal states.
+
+    Verifies the full JSONL replay + recovery pipeline preserves data
+    integrity: total task count is unchanged and every task is reachable.
+    """
+    from bernstein.core.task_store import TaskStore
+
+    jsonl = tmp_path / "runtime" / "tasks.jsonl"
+    all_ids = ["t-open", "t-claimed", "t-in-prog", "t-done"]
+    _write_task_jsonl(jsonl, "t-open", title="open", status="open")
+    _write_task_jsonl(jsonl, "t-claimed", title="claimed", status="claimed")
+    _write_task_jsonl(jsonl, "t-in-prog", title="in-progress", status="in_progress")
+    _write_task_jsonl(jsonl, "t-done", title="done", status="done")
+
+    store = TaskStore(jsonl)
+    store.replay_jsonl()
+    store.recover_stale_claimed_tasks()
+
+    # All tasks survived replay — no data loss
+    for tid in all_ids:
+        assert store.get_task(tid) is not None, f"Task {tid} was lost after recovery"
+
+    # Terminal task (done) is unchanged; non-terminal non-open are reset to open
+    assert store.get_task("t-done").status.value == "done"  # type: ignore[union-attr]
+    assert store.get_task("t-open").status.value == "open"  # type: ignore[union-attr]
+    assert store.get_task("t-claimed").status.value == "open"  # type: ignore[union-attr]
+    assert store.get_task("t-in-prog").status.value == "open"  # type: ignore[union-attr]
