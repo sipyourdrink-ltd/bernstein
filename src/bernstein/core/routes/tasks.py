@@ -198,11 +198,17 @@ async def next_task(
     role: str,
     request: Request,
     claimed_by_session: str | None = None,
+    parent_session_id: str | None = None,
 ) -> TaskResponse:
     """Claim the next available task for *role*.
 
     Pass ``claimed_by_session`` as a query param to record which parent
     orchestrator session owns the claim.
+
+    Pass ``parent_session_id`` to restrict claiming to tasks that were
+    created under that coordinator session.  Workers belonging to a
+    coordinator should always pass their coordinator's session ID here
+    to avoid stealing tasks from other namespaces.
     """
     if request.app.state.draining:  # type: ignore[attr-defined]
         return JSONResponse(  # type: ignore[return-value]
@@ -214,6 +220,7 @@ async def next_task(
         role,
         tenant_id=_resolve_request_tenant_scope(request),
         claimed_by_session=claimed_by_session,
+        parent_session_id=parent_session_id,
     )
     if task is None:
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
@@ -446,6 +453,7 @@ async def list_tasks(
     cell_id: str | None = None,
     tenant: str | None = None,
     claimed_by_session: str | None = None,
+    parent_session_id: str | None = None,
     limit: int | None = None,
     offset: int | None = None,
 ) -> PaginatedTasksResponse | list[TaskResponse]:
@@ -477,6 +485,7 @@ async def list_tasks(
         cell_id,
         tenant_id=effective_tenant,
         claimed_by_session=claimed_by_session,
+        parent_session_id=parent_session_id,
     )
 
     paginate = limit is not None or offset is not None

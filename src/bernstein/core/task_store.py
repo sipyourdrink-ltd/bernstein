@@ -75,6 +75,7 @@ class TaskRecord(TypedDict):
     slack_context: dict[str, Any] | None
     version: int
     claimed_by_session: str | None
+    parent_session_id: str | None
 
 
 class ArchiveRecord(TypedDict):
@@ -161,6 +162,8 @@ class TaskCreateRequest(Protocol):
 
     @property
     def slack_context(self) -> Mapping[str, Any] | None: ...
+
+    parent_session_id: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +552,7 @@ class TaskStore:
             "slack_context": task.slack_context,
             "version": task.version,
             "claimed_by_session": task.claimed_by_session,
+            "parent_session_id": task.parent_session_id,
         }
 
     # -- public API ---------------------------------------------------------
@@ -663,6 +667,7 @@ class TaskStore:
             risk_level=getattr(req, "risk_level", "low"),
             completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
             slack_context=req.slack_context,
+            parent_session_id=getattr(req, "parent_session_id", None),
         )
         async with self._lock:
             if task.depends_on:
@@ -727,6 +732,7 @@ class TaskStore:
         role: str,
         tenant_id: str | None = None,
         claimed_by_session: str | None = None,
+        parent_session_id: str | None = None,
     ) -> Task | None:
         """Claim the highest-priority open task for *role*.
 
@@ -737,6 +743,10 @@ class TaskStore:
             role: Agent role to match.
             tenant_id: Optional tenant scope filter.
             claimed_by_session: Parent orchestrator session ID to record as claim owner.
+            parent_session_id: If set, only claim tasks whose ``parent_session_id``
+                matches this value. Workers from a coordinator should pass their
+                coordinator's session ID here so they never steal tasks belonging to
+                a different orchestrator namespace.
 
         Returns:
             The claimed Task, or None if nothing is available.
@@ -754,6 +764,9 @@ class TaskStore:
                 if candidate is None or candidate.status != TaskStatus.OPEN:
                     continue
                 if normalized_tenant is not None and candidate.tenant_id != normalized_tenant:
+                    blocked_entries.append((priority, task_id))
+                    continue
+                if parent_session_id is not None and candidate.parent_session_id != parent_session_id:
                     blocked_entries.append((priority, task_id))
                     continue
                 if not self._dependencies_satisfied(candidate):
@@ -1195,6 +1208,7 @@ class TaskStore:
         cell_id: str | None = None,
         tenant_id: str | None = None,
         claimed_by_session: str | None = None,
+        parent_session_id: str | None = None,
     ) -> list[Task]:
         """Return all tasks, optionally filtered by status, cell_id, and/or claim owner.
 
@@ -1207,6 +1221,8 @@ class TaskStore:
             tenant_id: If provided, only tasks in this tenant are returned.
             claimed_by_session: If provided, only tasks claimed by this
                 parent session are returned.
+            parent_session_id: If provided, only tasks whose ``parent_session_id``
+                matches (tasks scoped to this coordinator session) are returned.
 
         Returns:
             List of matching tasks.
@@ -1226,6 +1242,8 @@ class TaskStore:
             tasks = [t for t in tasks if t.tenant_id == normalized_tenant]
         if claimed_by_session is not None:
             tasks = [t for t in tasks if t.claimed_by_session == claimed_by_session]
+        if parent_session_id is not None:
+            tasks = [t for t in tasks if t.parent_session_id == parent_session_id]
         if status == "open":
             tasks = [t for t in tasks if self._dependencies_satisfied(t)]
         return tasks
