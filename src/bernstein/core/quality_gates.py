@@ -200,6 +200,9 @@ class QualityGatesConfig:
         ]
     )
     benchmark: BenchmarkConfig = field(default_factory=BenchmarkConfig)
+    migration_reversibility_check: bool = False
+    large_file_check: bool = False
+    large_file_threshold: int = 500
 
 
 @dataclass
