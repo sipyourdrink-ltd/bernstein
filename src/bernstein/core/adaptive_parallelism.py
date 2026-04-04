@@ -198,9 +198,11 @@ class AdaptiveParallelism:
         # Rule 5: Minimum floor — never go below half the configured max.
         # Prevents the system from crawling at 1-2 agents when 6 slots are
         # available.  The only exception is CPU overload (handled above with
-        # early return).  Error-rate reduction and SLO cap are clamped to
-        # this floor so the orchestrator always makes meaningful progress.
+        # early return) and SLO budget depletion (explicit hard cap).
         min_agents = max(1, self.configured_max // 2)  # e.g. 3 when max=6
+        if self._slo_constrained_max is not None:
+            # SLO cap takes precedence over minimum floor
+            min_agents = min(min_agents, self._slo_constrained_max)
         if self._current_max < min_agents:
             self._current_max = min_agents
 

@@ -190,8 +190,10 @@ class TestAdaptiveParallelismSLOConstraint:
         ap = AdaptiveParallelism(configured_max=6)
         ap._current_max = 2
         ap.set_slo_constraint(5)
-        # SLO cap > current, so min(2, 5) = 2
-        assert ap.effective_max_agents() == 2
+        # SLO cap (5) > current (2), so SLO doesn't reduce further.
+        # But minimum floor (configured_max // 2 = 3) still applies
+        # since SLO cap (5) > floor (3).
+        assert ap.effective_max_agents() == 3
 
 
 # ===================================================================
