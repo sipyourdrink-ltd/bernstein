@@ -1237,28 +1237,53 @@ def claim_and_spawn_batches(
                 session = orch._spawner.spawn_for_tasks(batch)
 
             # --- A/B Testing ---
-            # If A/B test mode is enabled and this is a single-task batch, spawn a second agent
-            # with a different model (usually the next tier down/up).
-            if getattr(orch._config, "ab_test", False) and len(batch) == 1 and alive_count < orch._config.max_agents:
-                ab_task = batch[0]
-                current_model = session.model_config.model
-                # Simple heuristic for A/B model: sonnet vs opus, or gpt-4o vs o1
-                alt_model = "opus" if current_model == "sonnet" else "sonnet"
-                if "gpt" in current_model:
-                    alt_model = "gpt-4o" if "o1" in current_model else "o1-preview"
+            # When A/B test mode is enabled, deterministically route each task to one
+            # of two models using a 50/50 hash split so results can be compared later.
+            # Only single-task batches are eligible (multi-task batches are excluded
+            # because cost and quality attribution is ambiguous across tasks).
+            if getattr(orch._config, "ab_test", False) and len(batch) == 1:
+                from bernstein.core.ab_test_results import model_for_task
 
-                try:
-                    logger.info("A/B TEST: spawning second agent for task %s with model %s", ab_task.id, alt_model)
-                    alt_session = orch._spawner.spawn_for_tasks(batch, model_override=alt_model)
-                    alt_session.timeout_s = batch_timeout_s
-                    orch._agents[alt_session.id] = alt_session
-                    # Note: we don't map task -> session for the alt agent because only one
-                    # can 'own' the task completion logic via server.
-                    # Instead, we just let it run and produce changes in its worktree.
-                    alive_count += 1
-                    result.spawned.append(alt_session.id)
-                except Exception as ab_exc:
-                    logger.warning("A/B TEST: failed to spawn alternative agent: %s", ab_exc)
+                ab_task = batch[0]
+                primary_model = session.model_config.model
+                # Derive the alt model: sonnet ↔ opus; gpt: o1 ↔ gpt-4o
+                if "gpt" in primary_model or "o1" in primary_model:
+                    alt_model = "gpt-4o" if "o1" in primary_model else "o1-preview"
+                else:
+                    alt_model = "opus" if "sonnet" in primary_model.lower() else "sonnet"
+
+                # 50/50 deterministic split: some tasks go to primary, others to alt
+                routed_model = model_for_task(ab_task.id, primary_model, alt_model)
+                if routed_model != primary_model:
+                    # Re-spawn this task with the alt model (the primary session is
+                    # discarded — spawn a new one with the correct model override).
+                    try:
+                        logger.info(
+                            "A/B TEST: routing task %s to model %s (hash split)",
+                            ab_task.id,
+                            routed_model,
+                        )
+                        # Record the A/B assignment so reports can track the split
+                        _ab_split_tracker = getattr(orch, "_ab_split_tracker", None)
+                        if isinstance(_ab_split_tracker, dict):
+                            _ab_split_tracker[ab_task.id] = routed_model
+                        alt_session = orch._spawner.spawn_for_tasks(batch, model_override=routed_model)
+                        alt_session.timeout_s = batch_timeout_s
+                        # Replace the primary session with the routed alt session
+                        del orch._agents[session.id]
+                        session = alt_session
+                    except Exception as ab_exc:
+                        logger.warning("A/B TEST: alt-model spawn failed, keeping primary: %s", ab_exc)
+                else:
+                    # This task is assigned to the primary model — record it
+                    _ab_split_tracker = getattr(orch, "_ab_split_tracker", None)
+                    if isinstance(_ab_split_tracker, dict):
+                        _ab_split_tracker[ab_task.id] = primary_model
+                    logger.info(
+                        "A/B TEST: routing task %s to model %s (hash split)",
+                        ab_task.id,
+                        primary_model,
+                    )
 
             session.timeout_s = batch_timeout_s
             orch._agents[session.id] = session
@@ -1661,6 +1686,28 @@ def process_completed_tasks(
                 if callable(_release_files):
                     _release_files(session.id)
             _cache_verified = janitor_passed and session.exit_code == 0 and _cache_diff_lines > 0
+
+            # A/B test outcome recording: persist quality/cost result for this task
+            if getattr(orch._config, "ab_test", False):
+                _ab_tracker = getattr(orch, "_ab_split_tracker", None)
+                if isinstance(_ab_tracker, dict) and task.id in _ab_tracker:
+                    try:
+                        from bernstein.core.ab_test_results import record_ab_outcome
+
+                        _ab_duration = time.time() - session.spawn_ts
+                        record_ab_outcome(
+                            orch._workdir,
+                            task_id=task.id,
+                            task_title=task.title,
+                            model=_ab_tracker[task.id],
+                            session_id=session.id,
+                            tokens_used=session.tokens_used,
+                            files_changed=session.files_changed,
+                            status="completed" if janitor_passed else "failed",
+                            duration_s=_ab_duration,
+                        )
+                    except Exception as _ab_exc:
+                        logger.debug("A/B test outcome recording failed: %s", _ab_exc)
 
             # Move backlog ticket file from open/ to closed/ if it exists
             if janitor_passed and not _skip_merge:
