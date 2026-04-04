@@ -1,0 +1,119 @@
+# Bernstein Plan Template: CLI Tool
+#
+# A three-stage plan for building a Python CLI tool.
+# Stages run sequentially; steps within a stage run in parallel.
+#
+# Usage:
+#   cp plans/templates/cli-tool.yaml plans/my-cli.yaml
+#   # Edit name, description, and step details
+#   bernstein run plans/my-cli.yaml
+
+name: "CLI Tool"
+description: >
+  Build a Python CLI tool with argument parsing, subcommands,
+  and packaging for distribution via PyPI.
+
+constraints:
+  - "Python 3.12+"
+  - "Click or Typer for argument parsing"
+  - "Type annotations throughout"
+  - "pytest for tests"
+
+stages:
+  - name: parser
+    description: "Set up CLI entry point and argument structure"
+    steps:
+      - title: "Create CLI entry point and argument parser"
+        description: >
+          Set up the top-level CLI command group using Click or Typer.
+          Define global options (--verbose, --config, --output-format).
+          Wire up entry point in pyproject.toml under [project.scripts].
+          Verify `python -m <package>` and the installed script both work.
+        role: backend
+        scope: small
+        complexity: low
+        files:
+          - "src/<package>/cli/__init__.py"
+          - "src/<package>/cli/main.py"
+          - "pyproject.toml"
+
+      - title: "Add configuration file support"
+        description: >
+          Load configuration from ~/.config/<tool>/config.toml (or equivalent).
+          Merge file config with CLI flags — flags take precedence.
+          Add --config PATH override for non-default config locations.
+        role: backend
+        scope: small
+        complexity: low
+        files:
+          - "src/<package>/config.py"
+
+  - name: commands
+    description: "Implement CLI subcommands"
+    depends_on: [parser]
+    steps:
+      - title: "Implement core subcommands"
+        description: >
+          Implement the main subcommands for the tool's primary use case.
+          Each subcommand should be a separate function/file under cli/.
+          Include --help text for every command, flag, and argument.
+          Print human-readable output by default; add --json flag for machine output.
+        role: backend
+        scope: large
+        complexity: medium
+        files:
+          - "src/<package>/cli/"
+
+      - title: "Add progress indicators and rich output"
+        description: >
+          Use Rich (or similar) for progress bars on long-running operations.
+          Color-code success/warning/error output.
+          Ensure output is clean when piped (no ANSI codes when not a TTY).
+        role: backend
+        scope: small
+        complexity: low
+        files:
+          - "src/<package>/cli/output.py"
+
+      - title: "Implement error handling and exit codes"
+        description: >
+          Define exit code conventions: 0=success, 1=user error, 2=system error.
+          Catch exceptions at the CLI boundary and print clean error messages.
+          Never show Python tracebacks to end users unless --debug is set.
+        role: backend
+        scope: small
+        complexity: low
+        files:
+          - "src/<package>/cli/errors.py"
+
+  - name: packaging
+    description: "Package and test for distribution"
+    depends_on: [commands]
+    steps:
+      - title: "Write CLI tests"
+        description: >
+          Use Click's test runner (CliRunner) or subprocess to test each subcommand.
+          Test success paths, error paths, and --help output.
+          Test config file loading and CLI flag precedence.
+        role: qa
+        scope: medium
+        complexity: medium
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/ -x -q"
+
+      - title: "Finalize pyproject.toml and packaging metadata"
+        description: >
+          Fill in project metadata: name, version, description, authors, license.
+          Add classifiers, keywords, and project URLs.
+          Verify `pip install -e .` works and the entry point is available.
+          Run `python -m build` to confirm the sdist and wheel build cleanly.
+        role: devops
+        scope: small
+        complexity: low
+        files:
+          - "pyproject.toml"
+          - "README.md"
+        completion_signals:
+          - type: path_exists
+            path: "dist/"

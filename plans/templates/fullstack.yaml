@@ -1,0 +1,217 @@
+# Bernstein Plan Template: Full-Stack Application
+#
+# A five-stage plan for building a full-stack web application.
+# Stages run sequentially; steps within a stage run in parallel.
+#
+# Usage:
+#   cp plans/templates/fullstack.yaml plans/my-app.yaml
+#   # Edit name, description, and step details
+#   bernstein run plans/my-app.yaml
+
+name: "Full-Stack Application"
+description: >
+  Build a full-stack web application with a database layer, REST API,
+  frontend, authentication, and production deployment configuration.
+
+max_agents: 4
+
+constraints:
+  - "Backend: Python 3.12+ with FastAPI"
+  - "Frontend: React + TypeScript"
+  - "Database: PostgreSQL with SQLAlchemy ORM"
+  - "Auth: JWT tokens (no sessions)"
+  - "Tests: pytest (backend), Vitest (frontend)"
+
+stages:
+  - name: database
+    description: "Database schema and migrations"
+    steps:
+      - title: "Define database schema"
+        description: >
+          Create SQLAlchemy models for all entities.
+          Set up Alembic for migrations. Generate and apply the initial migration.
+          Add indexes for common query patterns.
+          Include created_at/updated_at timestamps on all tables.
+        role: backend
+        scope: medium
+        complexity: medium
+        files:
+          - "backend/models.py"
+          - "backend/database.py"
+          - "alembic/"
+
+      - title: "Seed data and test fixtures"
+        description: >
+          Create a seed script for development data.
+          Add pytest fixtures for test database setup/teardown.
+          Use a separate test database, not the development one.
+        role: backend
+        scope: small
+        complexity: low
+        files:
+          - "backend/seed.py"
+          - "tests/conftest.py"
+
+  - name: api
+    description: "REST API with FastAPI"
+    depends_on: [database]
+    steps:
+      - title: "Implement API routes"
+        description: >
+          Build CRUD endpoints for all resources.
+          Use Pydantic schemas for request/response validation.
+          Return consistent JSON shapes with proper HTTP status codes.
+          Add pagination to list endpoints (cursor-based or page-based).
+        role: backend
+        scope: large
+        complexity: medium
+        files:
+          - "backend/routes/"
+          - "backend/schemas.py"
+
+      - title: "Add CORS and middleware"
+        description: >
+          Configure CORS to allow the frontend origin.
+          Add request logging middleware.
+          Add rate limiting per IP.
+          Configure trusted proxy headers for production deployments.
+        role: backend
+        scope: small
+        complexity: low
+        files:
+          - "backend/middleware.py"
+          - "backend/main.py"
+
+      - title: "Write API tests"
+        description: >
+          Test all endpoints: success paths, error paths, edge cases.
+          Test against a real test database (no mocks).
+          Include performance tests for list endpoints with large datasets.
+        role: qa
+        scope: large
+        complexity: medium
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/api/ -x -q"
+
+  - name: frontend
+    description: "React frontend"
+    depends_on: [api]
+    steps:
+      - title: "Set up React project structure"
+        description: >
+          Initialize a Vite + React + TypeScript project.
+          Set up routing (React Router), state management (Zustand or Context),
+          and API client (TanStack Query + fetch).
+          Configure ESLint and Prettier.
+        role: frontend
+        scope: medium
+        complexity: low
+        files:
+          - "frontend/"
+
+      - title: "Build core UI components"
+        description: >
+          Implement the main pages and components for the application.
+          Use a component library (shadcn/ui, Mantine, or Chakra) for base components.
+          Implement loading states, error states, and empty states for every data-fetching component.
+        role: frontend
+        scope: large
+        complexity: medium
+        files:
+          - "frontend/src/components/"
+          - "frontend/src/pages/"
+
+      - title: "Write frontend tests"
+        description: >
+          Test components with Vitest + React Testing Library.
+          Test user interactions: form submission, button clicks, navigation.
+          Add MSW (Mock Service Worker) to mock API responses in tests.
+        role: qa
+        scope: medium
+        complexity: medium
+        completion_signals:
+          - type: test_passes
+            command: "cd frontend && npm test -- --run"
+
+  - name: auth
+    description: "Authentication across the stack"
+    depends_on: [frontend]
+    steps:
+      - title: "Implement backend authentication"
+        description: >
+          Add JWT issuance (POST /auth/token) and refresh (POST /auth/refresh).
+          Hash passwords with bcrypt. Store tokens client-side (httpOnly cookies
+          for the refresh token, memory for the access token).
+          Protect all non-public API routes with the JWT middleware.
+        role: security
+        scope: medium
+        complexity: high
+        files:
+          - "backend/auth.py"
+          - "backend/routes/auth.py"
+
+      - title: "Implement frontend authentication"
+        description: >
+          Build login/logout/register pages.
+          Implement token storage, refresh logic, and session expiry handling.
+          Add route guards to redirect unauthenticated users to /login.
+          Show user info (name, avatar) in the navigation bar.
+        role: frontend
+        scope: medium
+        complexity: medium
+        files:
+          - "frontend/src/auth/"
+          - "frontend/src/pages/Login.tsx"
+          - "frontend/src/pages/Register.tsx"
+
+  - name: deploy
+    description: "Production deployment configuration"
+    depends_on: [auth]
+    steps:
+      - title: "Dockerize the application"
+        description: >
+          Write Dockerfile for the backend (multi-stage build, non-root user).
+          Write Dockerfile for the frontend (build stage + nginx serve stage).
+          Write docker-compose.yml for local production testing.
+          Add .dockerignore to exclude node_modules, venv, .git.
+        role: devops
+        scope: medium
+        complexity: medium
+        files:
+          - "backend/Dockerfile"
+          - "frontend/Dockerfile"
+          - "docker-compose.yml"
+        completion_signals:
+          - type: path_exists
+            path: "docker-compose.yml"
+
+      - title: "Add CI/CD pipeline"
+        description: >
+          Set up GitHub Actions (or equivalent) with jobs for:
+          - Lint (ruff, eslint)
+          - Type check (pyright, tsc)
+          - Tests (pytest, vitest)
+          - Build Docker images
+          - Deploy on push to main (optional)
+          Fail fast: lint and type check before tests.
+        role: devops
+        scope: medium
+        complexity: medium
+        files:
+          - ".github/workflows/ci.yml"
+        completion_signals:
+          - type: path_exists
+            path: ".github/workflows/ci.yml"
+
+      - title: "Write deployment documentation"
+        description: >
+          Document environment variables required for production.
+          Document the deployment procedure (manual and automated).
+          Add a RUNBOOK.md for common operational tasks (rollback, DB backup, etc.).
+        role: docs
+        scope: small
+        complexity: low
+        files:
+          - "docs/deployment.md"
+          - "RUNBOOK.md"

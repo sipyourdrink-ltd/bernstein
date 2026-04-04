@@ -1,0 +1,145 @@
+# Bernstein Plan Template: REST API
+#
+# A four-stage plan for building a production-ready REST API.
+# Stages run sequentially; steps within a stage run in parallel.
+#
+# Usage:
+#   cp plans/templates/rest-api.yaml plans/my-api.yaml
+#   # Edit name, description, and step details
+#   bernstein run plans/my-api.yaml
+
+name: "REST API"
+description: >
+  Build a production-ready REST API with data models, route handlers,
+  authentication, and a full test suite.
+
+constraints:
+  - "Python 3.12+"
+  - "Use FastAPI or Flask — pick one and stay consistent"
+  - "Type annotations on all public functions"
+  - "pytest for tests, no mocks for database layer"
+
+stages:
+  - name: models
+    description: "Define data models and database schema"
+    steps:
+      - title: "Define data models"
+        description: >
+          Create the core data models (ORM or dataclasses) for the API domain.
+          Include field validation, type annotations, and docstrings.
+          Add database migrations if using SQLAlchemy/Alembic.
+        role: backend
+        scope: medium
+        complexity: medium
+        files:
+          - "src/models.py"
+          - "migrations/"
+
+      - title: "Set up database connection"
+        description: >
+          Configure the database connection, session management, and
+          connection pooling. Add health-check endpoint at /health that
+          verifies DB connectivity.
+        role: backend
+        scope: small
+        complexity: low
+        files:
+          - "src/database.py"
+          - "src/routes/health.py"
+
+  - name: routes
+    description: "Implement API route handlers"
+    depends_on: [models]
+    steps:
+      - title: "Implement CRUD routes"
+        description: >
+          Implement Create, Read, Update, Delete endpoints for each resource.
+          Follow RESTful conventions: GET /items, POST /items, GET /items/{id},
+          PUT /items/{id}, DELETE /items/{id}.
+          Return consistent JSON response shapes with status codes.
+        role: backend
+        scope: large
+        complexity: medium
+        files:
+          - "src/routes/"
+          - "src/schemas.py"
+
+      - title: "Add request validation and error handling"
+        description: >
+          Add Pydantic schemas (or equivalent) for request/response validation.
+          Implement a global error handler that returns structured JSON errors.
+          Handle 400, 401, 403, 404, 422, 500 cases consistently.
+        role: backend
+        scope: medium
+        complexity: medium
+        files:
+          - "src/schemas.py"
+          - "src/errors.py"
+
+  - name: auth
+    description: "Add authentication and authorization"
+    depends_on: [routes]
+    steps:
+      - title: "Implement JWT authentication"
+        description: >
+          Add JWT token issuance (POST /auth/token) and validation middleware.
+          Implement token refresh. Protect routes with auth dependency/decorator.
+          Store user credentials securely (bcrypt hashing).
+        role: security
+        scope: medium
+        complexity: high
+        files:
+          - "src/auth.py"
+          - "src/routes/auth.py"
+          - "src/middleware.py"
+
+      - title: "Add role-based access control"
+        description: >
+          Define user roles (e.g. admin, user, read-only) and permission checks.
+          Protect sensitive endpoints (DELETE, admin routes) to authorized roles.
+          Add role field to user model and JWT claims.
+        role: security
+        scope: medium
+        complexity: medium
+        files:
+          - "src/permissions.py"
+          - "src/models.py"
+
+  - name: tests
+    description: "Write comprehensive test suite"
+    depends_on: [auth]
+    steps:
+      - title: "Write unit tests for models and validation"
+        description: >
+          Test data model validation, edge cases, and constraint violations.
+          Test Pydantic schema coercion and error messages.
+          Aim for 100% coverage of the models module.
+        role: qa
+        scope: medium
+        complexity: low
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/unit/ -x -q"
+
+      - title: "Write integration tests for API endpoints"
+        description: >
+          Test all CRUD endpoints against a real test database.
+          Test authentication flow: token issuance, refresh, protected routes.
+          Test error responses for invalid input and unauthorized access.
+        role: qa
+        scope: large
+        complexity: medium
+        completion_signals:
+          - type: test_passes
+            command: "pytest tests/integration/ -x -q"
+
+      - title: "Add OpenAPI documentation"
+        description: >
+          Ensure all endpoints have docstrings that render in OpenAPI/Swagger.
+          Add example request/response bodies to the schema.
+          Verify /docs endpoint shows complete, accurate documentation.
+        role: docs
+        scope: small
+        complexity: low
+        files:
+          - "src/main.py"

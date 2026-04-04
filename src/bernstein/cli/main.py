@@ -85,6 +85,7 @@ from bernstein.cli.task_cmd import (
     review_cmd,
     sync,
 )
+from bernstein.cli.templates_cmd import templates_group
 from bernstein.cli.undo_cmd import undo_cmd
 from bernstein.cli.verify_cmd import verify_cmd
 from bernstein.cli.voice_cmd import listen_cmd
@@ -175,6 +176,7 @@ __all__ = [
     "sigint_handler",
     "soft_stop",
     "sync",
+    "templates_group",
     "test_adapter",
     "trace_cmd",
     "watch_cmd",
@@ -691,3 +693,4 @@ cli.add_command(merge_cmd, "merge")
 cli.add_command(changelog_cmd, "changelog")
 cli.add_command(dr_group, "dr")
 cli.add_command(incident_cmd, "incident")
+cli.add_command(templates_group, "templates")
