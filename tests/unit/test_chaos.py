@@ -119,6 +119,66 @@ def _write_task_jsonl(jsonl: Path, task_id: str, title: str, status: str, role: 
         fh.write(json.dumps(record) + "\n")
 
 
+def test_claimed_task_reset_to_open_after_server_kill(tmp_path: Path) -> None:
+    """After server is killed mid-task, CLAIMED tasks are reset to open on restart.
+
+    When the server process dies, all in-flight (CLAIMED) tasks have no active
+    agent.  replay_jsonl + recover_stale_claimed_tasks resets them to open so
+    a fresh agent can pick them up on the next tick.
+    """
+    from bernstein.core.task_store import TaskStore
+
+    jsonl = tmp_path / "runtime" / "tasks.jsonl"
+    task_id = "chaos-task-claimed-001"
+
+    # Simulate: task was in CLAIMED state when server died
+    _write_task_jsonl(jsonl, task_id, title="mid-task-on-crash", status="claimed")
+
+    store = TaskStore(jsonl)
+    store.replay_jsonl()
+    store.recover_stale_claimed_tasks()
+
+    recovered = store.get_task(task_id)
+    assert recovered is not None
+    assert recovered.status.value == "open", (
+        f"Expected task to be reset to 'open' after recovery, got '{recovered.status.value}'"
+    )
+
+
+def test_recover_stale_claimed_preserves_done_tasks(tmp_path: Path) -> None:
+    """recover_stale_claimed_tasks must not touch terminal tasks (done, failed)."""
+    from bernstein.core.task_store import TaskStore
+
+    jsonl = tmp_path / "runtime" / "tasks.jsonl"
+    _write_task_jsonl(jsonl, "t-done", title="done-task", status="done")
+    _write_task_jsonl(jsonl, "t-failed", title="failed-task", status="failed")
+
+    store = TaskStore(jsonl)
+    store.replay_jsonl()
+    store.recover_stale_claimed_tasks()
+
+    assert store.get_task("t-done").status.value == "done"  # type: ignore[union-attr]
+    assert store.get_task("t-failed").status.value == "failed"  # type: ignore[union-attr]
+
+
+def test_recover_stale_claimed_multiple_tasks(tmp_path: Path) -> None:
+    """All CLAIMED tasks across different roles are reset to open after restart."""
+    from bernstein.core.task_store import TaskStore
+
+    jsonl = tmp_path / "runtime" / "tasks.jsonl"
+    _write_task_jsonl(jsonl, "t-be", title="backend-task", status="claimed", role="backend")
+    _write_task_jsonl(jsonl, "t-qa", title="qa-task", status="claimed", role="qa")
+    _write_task_jsonl(jsonl, "t-open", title="open-task", status="open", role="backend")
+
+    store = TaskStore(jsonl)
+    store.replay_jsonl()
+    store.recover_stale_claimed_tasks()
+
+    assert store.get_task("t-be").status.value == "open"  # type: ignore[union-attr]
+    assert store.get_task("t-qa").status.value == "open"  # type: ignore[union-attr]
+    assert store.get_task("t-open").status.value == "open"  # type: ignore[union-attr]
+
+
 def test_taskstore_survives_restart(tmp_path: Path) -> None:
     """TaskStore replays an open task after a simulated server restart (JSONL recovery)."""
     from bernstein.core.task_store import TaskStore
