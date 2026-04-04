@@ -558,7 +558,7 @@ def _patch_retry_with_compaction(
         return
 
     # Build patch payload
-    new_meta = list(original_task.meta_messages) + [_COMPACT_RETRY_META]
+    new_meta = [*list(original_task.meta_messages), _COMPACT_RETRY_META]
     patch_body: dict[str, Any] = {
         "description": compacted_description,
         "meta_messages": new_meta,
@@ -829,10 +829,7 @@ def handle_orphaned_task(
                     tasks_snapshot=tasks_snapshot,
                     fallback_model=_fallback_model,
                 )
-                if _compacted:
-                    error_type = "context_overflow_compacted"
-                else:
-                    error_type = "context_overflow_compact_failed"
+                error_type = "context_overflow_compacted" if _compacted else "context_overflow_compact_failed"
                 emit_orphan_metrics(
                     orch._workdir,
                     task_id,

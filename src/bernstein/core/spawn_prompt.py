@@ -216,6 +216,7 @@ def filter_sections(
         logger.info("Conditional context: dropped %d sections (%s)", len(dropped), ", ".join(dropped))
     return kept
 
+
 # ---------------------------------------------------------------------------
 # Lesson extraction cache (per-role, TTL-based)
 # ---------------------------------------------------------------------------

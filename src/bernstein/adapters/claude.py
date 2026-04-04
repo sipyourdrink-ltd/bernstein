@@ -486,8 +486,13 @@ class ClaudeCodeAdapter(CLIAdapter):
 
         agents_json = build_agents_json(role)
         cmd = self._build_command(
-            model_config, effective_mcp, prompt, role=role, workdir=workdir,
-            agents_json=agents_json, system_addendum=system_addendum,
+            model_config,
+            effective_mcp,
+            prompt,
+            role=role,
+            workdir=workdir,
+            agents_json=agents_json,
+            system_addendum=system_addendum,
         )
 
         # Wrap with bernstein-worker for process visibility

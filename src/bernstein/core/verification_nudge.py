@@ -194,8 +194,7 @@ class VerificationNudgeTracker:
             self._append_to_ledger(rec)
         if not verified:
             logger.info(
-                "Unverified completion: task %s (session %s) — no tests, "
-                "quality gates, or completion signals detected",
+                "Unverified completion: task %s (session %s) — no tests, quality gates, or completion signals detected",
                 task_id,
                 session_id,
             )
@@ -213,9 +212,7 @@ class VerificationNudgeTracker:
             unverified = total - verified
 
         ratio = unverified / total if total > 0 else 0.0
-        threshold_exceeded = (
-            total >= MIN_COMPLETIONS_FOR_NUDGE and ratio > self.nudge_threshold
-        )
+        threshold_exceeded = total >= MIN_COMPLETIONS_FOR_NUDGE and ratio > self.nudge_threshold
         # Last 5 unverified task IDs for display
         recent: list[str] = []
         with self._lock:

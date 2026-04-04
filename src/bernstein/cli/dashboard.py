@@ -1583,8 +1583,7 @@ class BernsteinApp(App[None]):
             ):
                 self._nudge_alert_fired = True  # type: ignore[attr-defined]
                 self.notify(
-                    f"Verification nudge: {bar.unverified_completions} tasks "
-                    f"completed without verification",
+                    f"Verification nudge: {bar.unverified_completions} tasks completed without verification",
                     severity="warning",
                     timeout=10,
                 )
