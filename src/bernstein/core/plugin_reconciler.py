@@ -135,9 +135,7 @@ def load_marketplace(marketplace_path: Path) -> list[MarketplaceEntry]:
         elif isinstance(item, dict):
             name = str(item.get("name", "")).strip()
             if name:
-                entries.append(
-                    MarketplaceEntry(name=name, version=str(item.get("version", "")))
-                )
+                entries.append(MarketplaceEntry(name=name, version=str(item.get("version", ""))))
     return entries
 
 
@@ -191,9 +189,7 @@ def reconcile_plugins(
 
     marketplace = load_marketplace(marketplace_path)
     if not marketplace:
-        log.debug(
-            "plugin_reconciler: no marketplace listing found — skipping reconciliation"
-        )
+        log.debug("plugin_reconciler: no marketplace listing found — skipping reconciliation")
         return result
 
     listed_names: frozenset[str] = frozenset(e.name for e in marketplace)
