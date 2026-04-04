@@ -379,6 +379,57 @@ class ClaudeCodeAdapter(CLIAdapter):
 
         return claude_proc, wrapper_proc
 
+    @staticmethod
+    def _inject_hooks_config(
+        workdir: Path,
+        session_id: str,
+        server_url: str = "http://127.0.0.1:8052",
+    ) -> None:
+        """Write Claude Code hooks config to ``.claude/settings.local.json``.
+
+        Injects HTTP hooks for PostToolUse, Stop, PreCompact, SubagentStart,
+        and SubagentStop events.  Each hook POSTs to the Bernstein task server
+        so the orchestrator gets real-time visibility into agent activity.
+
+        If the settings file already exists, the hooks key is merged in
+        (preserving any other settings the user may have configured).
+
+        Args:
+            workdir: Project working directory (worktree root).
+            session_id: Agent session identifier, embedded in the hook URL.
+            server_url: Task server base URL (default localhost:8052).
+        """
+        settings_dir = workdir / ".claude"
+        settings_dir.mkdir(parents=True, exist_ok=True)
+        settings_path = settings_dir / "settings.local.json"
+
+        hook_url = f"{server_url}/hooks/{session_id}"
+        curl_cmd = f"curl -sS -X POST -H 'Content-Type: application/json' -d @- {hook_url}"
+        hook_entry = {"type": "command", "command": curl_cmd}
+
+        hook_events = ["PostToolUse", "Stop", "PreCompact", "SubagentStart", "SubagentStop"]
+        hooks_config: dict[str, list[dict[str, Any]]] = {}
+        for event_name in hook_events:
+            hooks_config[event_name] = [
+                {"matcher": "", "hooks": [hook_entry]},
+            ]
+
+        # Merge with existing settings if present
+        existing: dict[str, Any] = {}
+        if settings_path.exists():
+            try:
+                existing = json.loads(settings_path.read_text(encoding="utf-8"))
+                if not isinstance(existing, dict):
+                    existing = {}
+            except (json.JSONDecodeError, OSError):
+                existing = {}
+
+        existing["hooks"] = hooks_config
+        try:
+            settings_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            _logger.debug("Failed to write hooks config to %s", settings_path)
+
     def spawn(
         self,
         *,
@@ -393,6 +444,10 @@ class ClaudeCodeAdapter(CLIAdapter):
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
         role = session_id.rsplit("-", 1)[0]  # e.g. "qa" from "qa-abc12345"
+
+        # Inject Claude Code hooks for real-time tool-use and lifecycle monitoring.
+        # Must happen before process launch so the agent picks up the config.
+        self._inject_hooks_config(workdir, session_id)
 
         # Inject Bernstein MCP bridge so agents can report progress, check
         # sibling status, and read the bulletin board.  Uses the existing

@@ -77,6 +77,10 @@ _PUBLIC_PATHS = frozenset(
     }
 )
 
+# Path prefixes that are always accessible without auth.
+# Used for routes with path parameters (e.g. /hooks/{session_id}).
+_PUBLIC_PATH_PREFIXES = ("/hooks/",)
+
 
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     """Validate Bearer token on all requests when auth is configured.
@@ -100,7 +104,7 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
             return response
 
         path = request.url.path
-        if path in _PUBLIC_PATHS:
+        if path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PATH_PREFIXES):
             response = await call_next(request)
             return response
 
@@ -1190,6 +1194,11 @@ def create_app(
     from bernstein.core.routes.slo import router as slo_router
 
     application.include_router(slo_router)
+
+    # Claude Code hook receiver — real-time tool-use and lifecycle events
+    from bernstein.core.routes.hooks import router as hooks_router
+
+    application.include_router(hooks_router)
 
     return application
 
