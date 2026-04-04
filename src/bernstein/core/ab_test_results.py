@@ -355,8 +355,7 @@ def generate_ab_report(workdir: Path) -> ABTestReport:
     lines = [
         "## A/B Model Test Report",
         "",
-        f"{'Model':<20} {'Tasks':>6} {'Done':>6} {'Fail':>6} "
-        f"{'Avg Tokens':>12} {'Avg Files':>10} {'Avg Dur(s)':>11}",
+        f"{'Model':<20} {'Tasks':>6} {'Done':>6} {'Fail':>6} {'Avg Tokens':>12} {'Avg Files':>10} {'Avg Dur(s)':>11}",
         "-" * 75,
     ]
     for st in (stats_a, stats_b):
@@ -373,9 +372,7 @@ def generate_ab_report(workdir: Path) -> ABTestReport:
         winner_stats = stats_a if winner == model_a else stats_b
         loser_stats = stats_b if winner == model_a else stats_a
         token_diff_pct = (loser_stats.avg_tokens - winner_stats.avg_tokens) / max(1, loser_stats.avg_tokens) * 100
-        lines.append(
-            f"  {winner} used {token_diff_pct:.0f}% fewer tokens on average vs {loser}"
-        )
+        lines.append(f"  {winner} used {token_diff_pct:.0f}% fewer tokens on average vs {loser}")
     summary = "\n".join(lines)
 
     return ABTestReport(model_a=stats_a, model_b=stats_b, winner=winner, summary=summary)

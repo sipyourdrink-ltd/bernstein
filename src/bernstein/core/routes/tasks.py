@@ -236,9 +236,7 @@ async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskRes
 
         # Auto-transition parent to waiting if not already
         if parent.status.value not in ("waiting_for_subtasks", "done", "failed", "closed"):
-            subtask_count = sum(
-                1 for t in store.list_tasks() if t.parent_task_id == body.parent_task_id
-            )
+            subtask_count = sum(1 for t in store.list_tasks() if t.parent_task_id == body.parent_task_id)
             try:
                 await store.wait_for_subtasks(body.parent_task_id, subtask_count)
                 sse_bus.publish(

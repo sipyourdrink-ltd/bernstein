@@ -25,7 +25,10 @@ import logging
 import pstats
 import time
 from pathlib import Path
-from types import TracebackType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +54,7 @@ class ProfilerSession:
         self._profiler = cProfile.Profile()
         self._start_ts: float = 0.0
 
-    def __enter__(self) -> "ProfilerSession":
+    def __enter__(self) -> ProfilerSession:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._start_ts = time.monotonic()
         self._profiler.enable()
