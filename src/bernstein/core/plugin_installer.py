@@ -206,8 +206,7 @@ def _fetch_github_release_asset_url(repo: str, tag: str, asset: str | None) -> s
                 return str(a["browser_download_url"])
 
     raise RuntimeError(
-        f"No .zip or .tar.gz asset found in release '{tag}' for '{repo}'. "
-        f"Available: {[a.get('name') for a in assets]}"
+        f"No .zip or .tar.gz asset found in release '{tag}' for '{repo}'. Available: {[a.get('name') for a in assets]}"
     )
 
 
