@@ -69,8 +69,7 @@ class PollConfigValidationError(Exception):
     def __init__(self, errors: list[str]) -> None:
         self.errors = errors
         super().__init__(
-            f"PollConfig validation failed ({len(errors)} error(s)):\n"
-            + "\n".join(f"  - {e}" for e in errors),
+            f"PollConfig validation failed ({len(errors)} error(s)):\n" + "\n".join(f"  - {e}" for e in errors),
         )
 
 
@@ -96,13 +95,9 @@ def _validate_interval(value: int | None, field: str) -> list[str]:
         errors.append(f"{field} must be an integer, got {type(value).__name__}")
         return errors
     if value < MIN_INTERVAL_MS:
-        errors.append(
-            f"{field} is {value} ms — below the minimum of {MIN_INTERVAL_MS} ms"
-        )
+        errors.append(f"{field} is {value} ms — below the minimum of {MIN_INTERVAL_MS} ms")
     if value > MAX_INTERVAL_MS:
-        errors.append(
-            f"{field} is {value} ms — above the maximum of {MAX_INTERVAL_MS} ms"
-        )
+        errors.append(f"{field} is {value} ms — above the maximum of {MAX_INTERVAL_MS} ms")
     return errors
 
 
@@ -142,9 +137,7 @@ def validate_poll_config(raw: dict[str, object]) -> PollConfig:
     # --- heartbeat_interval_ms (optional) -----------------------------------
     raw_hb = raw.get("heartbeat_interval_ms")
     if raw_hb is not None and not isinstance(raw_hb, int):
-        errors.append(
-            f"heartbeat_interval_ms must be an integer or null, got {type(raw_hb).__name__}"
-        )
+        errors.append(f"heartbeat_interval_ms must be an integer or null, got {type(raw_hb).__name__}")
         heartbeat_interval_ms: int | None = None
     else:
         heartbeat_interval_ms = raw_hb  # type: ignore[assignment]
@@ -153,9 +146,7 @@ def validate_poll_config(raw: dict[str, object]) -> PollConfig:
     # --- watchdog_interval_ms (optional) ------------------------------------
     raw_wd = raw.get("watchdog_interval_ms")
     if raw_wd is not None and not isinstance(raw_wd, int):
-        errors.append(
-            f"watchdog_interval_ms must be an integer or null, got {type(raw_wd).__name__}"
-        )
+        errors.append(f"watchdog_interval_ms must be an integer or null, got {type(raw_wd).__name__}")
         watchdog_interval_ms: int | None = None
     else:
         watchdog_interval_ms = raw_wd  # type: ignore[assignment]
@@ -164,8 +155,7 @@ def validate_poll_config(raw: dict[str, object]) -> PollConfig:
     # --- Liveness invariant -------------------------------------------------
     if heartbeat_interval_ms is None and watchdog_interval_ms is None:
         errors.append(
-            "at least one liveness mechanism must be enabled: "
-            "set heartbeat_interval_ms or watchdog_interval_ms"
+            "at least one liveness mechanism must be enabled: set heartbeat_interval_ms or watchdog_interval_ms"
         )
 
     if errors:
