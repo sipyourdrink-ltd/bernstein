@@ -21,10 +21,11 @@ dependency) so skills can be rendered without external libraries.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from bernstein.core.models import Task
 
 _logger = logging.getLogger(__name__)
@@ -87,15 +88,15 @@ def render_skill_template(
         cmd = (
             "```bash\n"
             f"curl -s --retry 3 -X POST http://127.0.0.1:8052/tasks/{task.id}/complete \\\n"
-            "  -H \"Content-Type: application/json\" \\\n"
-            f"  -d '{{\"result_summary\": \"Completed: {task.title}\"}}'\n"
+            '  -H "Content-Type: application/json" \\\n'
+            f'  -d \'{{"result_summary": "Completed: {task.title}"}}\'\n'
             "```"
         )
         complete_cmds_parts.append(cmd)
-    complete_cmds = "\n\n".join(complete_cmds_parts) if complete_cmds_parts else (
-        "```bash\n"
-        "# No task IDs available — check with the orchestrator\n"
-        "```"
+    complete_cmds = (
+        "\n\n".join(complete_cmds_parts)
+        if complete_cmds_parts
+        else ("```bash\n# No task IDs available — check with the orchestrator\n```")
     )
 
     task_ids = " ".join(t.id for t in task_list)
