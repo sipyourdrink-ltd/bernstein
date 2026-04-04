@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import signal
+import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -911,6 +912,21 @@ def check_stale_agents(orch: Any) -> None:
 def check_stalled_tasks(orch: Any) -> None:
     """Delegate stall checks to the shared heartbeat module."""
     heartbeat_protocol.check_stalled_tasks(orch)
+
+
+def _has_git_commits_on_branch(worktree_path: Path) -> bool:
+    """Return True if the worktree branch has commits beyond main."""
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", "main..HEAD"],
+            cwd=str(worktree_path),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return len(result.stdout.strip()) > 0
+    except Exception:
+        return False
 
 
 def _is_process_alive(pid: int) -> bool:
