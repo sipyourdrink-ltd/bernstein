@@ -75,13 +75,9 @@ def session_show(session_id: str) -> None:
     console.print(f"[bold]Version:[/bold] {session.bernstein_version or '(not recorded)'}")
     console.print(f"\n[bold]Tasks[/bold] ({len(session.tasks)}):")
     for i, task in enumerate(session.tasks, 1):
-        console.print(
-            f"  {i:2}. [{task.get('role', '?')}] {task.get('title', '(untitled)')[:70]}"
-        )
+        console.print(f"  {i:2}. [{task.get('role', '?')}] {task.get('title', '(untitled)')[:70]}")
     if session.routing_decisions:
-        console.print(
-            f"\n[bold]Routing decisions:[/bold] {json.dumps(session.routing_decisions, indent=2)}"
-        )
+        console.print(f"\n[bold]Routing decisions:[/bold] {json.dumps(session.routing_decisions, indent=2)}")
 
 
 @session_group.command("replay")
