@@ -558,7 +558,7 @@ def _patch_retry_with_compaction(
         return
 
     # Build patch payload
-    new_meta = [*list(original_task.meta_messages), _COMPACT_RETRY_META]
+    new_meta = [*original_task.meta_messages, _COMPACT_RETRY_META]
     patch_body: dict[str, Any] = {
         "description": compacted_description,
         "meta_messages": new_meta,

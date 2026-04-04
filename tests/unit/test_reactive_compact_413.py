@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -22,7 +22,6 @@ from bernstein.core.agent_lifecycle import (
     _try_compact_and_retry,
     handle_orphaned_task,
 )
-from bernstein.core.compaction_pipeline import CompactionResult
 from bernstein.core.models import (
     AgentSession,
     Complexity,
@@ -33,10 +32,9 @@ from bernstein.core.models import (
     TaskType,
 )
 from bernstein.core.rate_limit_tracker import (
-    RateLimitTracker,
     _CONTEXT_OVERFLOW_PATTERNS,
+    RateLimitTracker,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -260,11 +258,11 @@ class TestTryCompactAndRetry:
 
         with (
             patch(
-                "bernstein.core.agent_lifecycle.CompactionPipeline"
-            ) as mock_pipeline_cls,
+                "bernstein.core.compaction_pipeline.CompactionPipeline.execute",
+                side_effect=RuntimeError("pipeline boom"),
+            ),
             patch("bernstein.core.agent_lifecycle.retry_or_fail_task") as mock_retry,
         ):
-            mock_pipeline_cls.return_value.execute.side_effect = RuntimeError("pipeline boom")
             result = _try_compact_and_retry(
                 orch=orch,
                 task=task,
