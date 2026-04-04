@@ -37,8 +37,10 @@ import random
 import subprocess
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,7 @@ def _git_head_sha() -> str:
 def _generate_session_id() -> str:
     """Generate a unique session ID based on timestamp + random hex suffix."""
     ts = time.strftime("%Y%m%d-%H%M%S")
-    suffix = "%06x" % (random.getrandbits(24),)
+    suffix = f"{random.getrandbits(24):06x}"
     return f"{ts}-{suffix}"
 
 
@@ -106,7 +108,7 @@ class RunSession:
     # ------------------------------------------------------------------
 
     @classmethod
-    def create(cls, goal: str, run_seed: int | None = None) -> "RunSession":
+    def create(cls, goal: str, run_seed: int | None = None) -> RunSession:
         """Create a new session with auto-generated ID and metadata.
 
         Args:
@@ -132,7 +134,7 @@ class RunSession:
     # Task recording
     # ------------------------------------------------------------------
 
-    def record_tasks(self, tasks: "list[Any]") -> None:
+    def record_tasks(self, tasks: list[Any]) -> None:
         """Serialize and store the task list for replay.
 
         Accepts either :class:`bernstein.core.models.Task` dataclass instances
@@ -186,7 +188,7 @@ class RunSession:
         random.seed(self.run_seed)
         logger.debug("Applied run seed %d for session %s", self.run_seed, self.session_id)
 
-    def to_tasks(self) -> "list[Any]":
+    def to_tasks(self) -> list[Any]:
         """Deserialise recorded tasks back into :class:`bernstein.core.models.Task` objects.
 
         Returns:
@@ -251,7 +253,7 @@ class RunSession:
         return path
 
     @classmethod
-    def load(cls, sessions_dir: Path, session_id: str) -> "RunSession":
+    def load(cls, sessions_dir: Path, session_id: str) -> RunSession:
         """Load a session from *sessions_dir*/<session_id>.json.
 
         Args:

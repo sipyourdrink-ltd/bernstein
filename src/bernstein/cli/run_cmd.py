@@ -699,7 +699,7 @@ def _wait_for_run_completion(
     return last_status
 
 
-def _make_profile_ctx(profile: bool, workdir: Path) -> "contextlib.AbstractContextManager[None]":
+def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContextManager[None]:
     """Return a ProfilerSession context manager, or a no-op if profiling is disabled.
 
     Args:
@@ -951,8 +951,7 @@ def _configure_quality_gate_bypass(
     is_flag=True,
     default=False,
     help=(
-        "Profile orchestrator execution with cProfile. "
-        "Writes .prof binary and .txt report to .sdd/runtime/profiles/."
+        "Profile orchestrator execution with cProfile. Writes .prof binary and .txt report to .sdd/runtime/profiles/."
     ),
 )
 def run(
@@ -1108,18 +1107,17 @@ def run(
             console.print(f"[dim]Plan name:[/dim] {goal}")
             loaded_goal = goal or str(plan_file)
 
-            with _make_profile_ctx(profile, workdir):
-                with _quiet_bootstrap_console(quiet):
-                    bootstrap_from_goal(
-                        goal=loaded_goal,
-                        workdir=workdir,
-                        port=port,
-                        cells=cells,
-                        cli=cli or "auto",
-                        model=model,
-                        tasks=tasks,
-                        ab_test=ab_test,
-                    )
+            with _make_profile_ctx(profile, workdir), _quiet_bootstrap_console(quiet):
+                bootstrap_from_goal(
+                    goal=loaded_goal,
+                    workdir=workdir,
+                    port=port,
+                    cells=cells,
+                    cli=cli or "auto",
+                    model=model,
+                    tasks=tasks,
+                    ab_test=ab_test,
+                )
 
             _finalize_run_output(quiet=quiet)
             return
@@ -1224,16 +1222,15 @@ def run(
     if goal is not None:
         # Inline goal mode -- no YAML needed
         try:
-            with _make_profile_ctx(profile, workdir):
-                with _quiet_bootstrap_console(quiet):
-                    bootstrap_from_goal(
-                        goal=goal,
-                        workdir=workdir,
-                        port=port,
-                        cells=cells,
-                        cli=cli or "auto",  # Default to "auto" if not specified
-                        model=model,
-                    )
+            with _make_profile_ctx(profile, workdir), _quiet_bootstrap_console(quiet):
+                bootstrap_from_goal(
+                    goal=goal,
+                    workdir=workdir,
+                    port=port,
+                    cells=cells,
+                    cli=cli or "auto",  # Default to "auto" if not specified
+                    model=model,
+                )
         except RuntimeError as exc:
             from bernstein.cli.errors import bootstrap_failed
 
@@ -1260,17 +1257,16 @@ def run(
     try:
         # CLI --cells overrides seed file value when explicitly set (cells > 1)
         cli_cells: int | None = cells if cells > 1 else None
-        with _make_profile_ctx(profile, workdir):
-            with _quiet_bootstrap_console(quiet):
-                bootstrap_from_seed(
-                    seed_path=path,
-                    workdir=workdir,
-                    port=port,
-                    cells=cli_cells,
-                    remote=remote,
-                    cli=cli,
-                    model=model,
-                )
+        with _make_profile_ctx(profile, workdir), _quiet_bootstrap_console(quiet):
+            bootstrap_from_seed(
+                seed_path=path,
+                workdir=workdir,
+                port=port,
+                cells=cli_cells,
+                remote=remote,
+                cli=cli,
+                model=model,
+            )
     except SeedError as exc:
         from bernstein.cli.errors import seed_parse_error
 
