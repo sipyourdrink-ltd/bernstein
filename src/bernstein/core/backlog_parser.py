@@ -124,9 +124,14 @@ def _parse_yaml_frontmatter(filename: str, content: str) -> ParsedBacklogTask | 
         else ()
     )
 
+    # Use only the body after the YAML frontmatter as the description.
+    # The frontmatter metadata is already extracted into typed fields.
+    body = content[end + 4 :].strip()
+    description = body if body else str(raw.get("description", title))
+
     return ParsedBacklogTask(
         title=title,
-        description=content.strip(),
+        description=description,
         role=str(raw.get("role", "backend")).strip() or "backend",
         priority=_parse_priority(raw.get("priority", 2)),
         scope=_parse_scope(str(raw.get("scope", "medium"))),
