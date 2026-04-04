@@ -320,7 +320,13 @@ async def status_dashboard(request: Request) -> JSONResponse:
 
         nudge = load_nudge_summary(sdd_dir / "metrics")
         if nudge.total_completions > 0:
-            payload["verification_nudge"] = nudge.to_dict()
+            nudge_data = nudge.to_dict()
+            if nudge.threshold_exceeded:
+                nudge_data["alert"] = (
+                    f"WARNING: {nudge.unverified_count}/{nudge.total_completions} tasks "
+                    f"completed without verification (threshold: {nudge.nudge_threshold:.0%})"
+                )
+            payload["verification_nudge"] = nudge_data
 
     return JSONResponse(content=payload)
 

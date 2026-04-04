@@ -883,13 +883,17 @@ def process_completed_tasks(
         if not _nudge_tracker.is_task_recorded(task.id):
             _log_summary = completion_data.get("log_summary") if completion_data is not None else None
             _tests_run = getattr(_log_summary, "tests_run", False) if _log_summary is not None else False
-            _nudge_tracker.record(
+            _rec = _nudge_tracker.record(
                 task_id=task.id,
                 session_id=session.id if session is not None else "unknown",
                 tests_run=bool(_tests_run),
                 quality_gates_run=_qg_result is not None,
                 completion_signals_checked=task.id in verify_futures,
             )
+            # Stamp verification count and unverified flag on the task itself.
+            _v_count = sum([bool(_tests_run), _qg_result is not None, task.id in verify_futures])
+            task.verification_count = _v_count
+            task.flagged_unverified = not _rec.verified
 
         # Post bulletin: task completed or failed (with janitor result)
         if janitor_passed:

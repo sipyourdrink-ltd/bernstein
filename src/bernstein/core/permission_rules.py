@@ -40,6 +40,8 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.core.permission_mode import PermissionMode
+
 from bernstein.core.policy_engine import DecisionType, PermissionDecision
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,15 @@ class RuleAction(StrEnum):
     DENY = "deny"
     ASK = "ask"
     ALLOW = "allow"
+
+
+class RuleSeverity(StrEnum):
+    """Rule severity level.  Higher severity is harder to relax."""
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 
 
 _ACTION_TO_DECISION: dict[RuleAction, DecisionType] = {
@@ -82,6 +93,7 @@ class PermissionRule:
     path: str | None = None
     command: str | None = None
     description: str = ""
+    severity: RuleSeverity = RuleSeverity.MEDIUM
 
 
 @dataclass
@@ -115,12 +127,18 @@ class PermissionRuleEngine:
         self,
         tool_name: str,
         tool_input: dict[str, Any],
+        *,
+        mode: PermissionMode | None = None,
     ) -> RuleMatch:
         """Evaluate a tool call against all rules (first match wins).
+
+        When *mode* is provided, the matched rule's action is filtered through
+        the permission mode hierarchy — relaxed severities become ``allow``.
 
         Args:
             tool_name: Name of the tool being invoked (e.g. ``"Bash"``).
             tool_input: Tool invocation arguments dict.
+            mode: Optional permission mode for severity relaxation.
 
         Returns:
             A :class:`RuleMatch` with the outcome.  If no rule matches,
@@ -128,10 +146,15 @@ class PermissionRuleEngine:
         """
         for rule in self.rules:
             if self._matches(rule, tool_name, tool_input):
+                action = rule.action
+                if mode is not None:
+                    from bernstein.core.permission_mode import effective_action
+
+                    action = effective_action(mode, action, rule.severity)
                 return RuleMatch(
                     matched=True,
                     rule_id=rule.id,
-                    action=rule.action,
+                    action=action,
                     reason=(f"Permission rule '{rule.id}' matched: {rule.description or rule.action.value}"),
                 )
         return RuleMatch(matched=False, reason="No permission rule matched")
@@ -140,17 +163,20 @@ class PermissionRuleEngine:
         self,
         tool_name: str,
         tool_input: dict[str, Any],
+        *,
+        mode: PermissionMode | None = None,
     ) -> PermissionDecision | None:
         """Evaluate and return a :class:`PermissionDecision`, or None if no match.
 
         Args:
             tool_name: Name of the tool being invoked.
             tool_input: Tool invocation arguments dict.
+            mode: Optional permission mode for severity relaxation.
 
         Returns:
             A ``PermissionDecision`` when a rule matches, else ``None``.
         """
-        result = self.evaluate(tool_name, tool_input)
+        result = self.evaluate(tool_name, tool_input, mode=mode)
         if not result.matched or result.action is None:
             return None
         return PermissionDecision(
@@ -330,6 +356,17 @@ def _parse_rules(raw_rules: list[object]) -> list[PermissionRule]:
         command_val: str | None = cast("str | None", rule_raw.get("command"))
         description = str(rule_raw.get("description", ""))
 
+        severity_str = str(rule_raw.get("severity", "medium")).strip().lower()
+        try:
+            severity = RuleSeverity(severity_str)
+        except ValueError:
+            logger.warning(
+                "Invalid severity '%s' in rule '%s', defaulting to medium",
+                severity_str,
+                rule_id,
+            )
+            severity = RuleSeverity.MEDIUM
+
         parsed.append(
             PermissionRule(
                 id=rule_id,
@@ -338,6 +375,7 @@ def _parse_rules(raw_rules: list[object]) -> list[PermissionRule]:
                 path=path_val,
                 command=command_val,
                 description=description,
+                severity=severity,
             )
         )
     return parsed

@@ -457,3 +457,70 @@ class TestVerificationEvidence:
             completion_signals_checked=signals_checked,
         )
         assert rec.verified is expected_verified
+
+
+# ---------------------------------------------------------------------------
+# Task-level verification fields
+# ---------------------------------------------------------------------------
+
+
+class TestTaskVerificationFields:
+    """Tests for verification_count and flagged_unverified on the Task model."""
+
+    def test_task_defaults(self) -> None:
+        from bernstein.core.models import Task
+
+        task = Task(id="t1", title="test", description="d", role="backend")
+        assert task.verification_count == 0
+        assert task.flagged_unverified is False
+
+    def test_task_from_dict_defaults(self) -> None:
+        from bernstein.core.models import Task
+
+        task = Task.from_dict({"id": "t1", "title": "t", "description": "d", "role": "r"})
+        assert task.verification_count == 0
+        assert task.flagged_unverified is False
+
+    def test_task_from_dict_with_values(self) -> None:
+        from bernstein.core.models import Task
+
+        task = Task.from_dict({
+            "id": "t1",
+            "title": "t",
+            "description": "d",
+            "role": "r",
+            "verification_count": 2,
+            "flagged_unverified": True,
+        })
+        assert task.verification_count == 2
+        assert task.flagged_unverified is True
+
+    def test_task_fields_mutable(self) -> None:
+        """Task is a mutable dataclass — completion flow stamps these fields."""
+        from bernstein.core.models import Task
+
+        task = Task(id="t1", title="test", description="d", role="backend")
+        task.verification_count = 3
+        task.flagged_unverified = True
+        assert task.verification_count == 3
+        assert task.flagged_unverified is True
+
+
+class TestNudgeSummaryAlert:
+    """Tests for the alert field added to NudgeSummary.to_dict."""
+
+    def test_threshold_exceeded_summary(self, tmp_path: Path) -> None:
+        """When threshold is exceeded, summary should indicate it."""
+        tracker = VerificationNudgeTracker(metrics_dir=tmp_path)
+        for i in range(5):
+            tracker.record(task_id=f"t{i}", session_id=f"s{i}")
+        summary = tracker.summary()
+        assert summary.threshold_exceeded is True
+        assert summary.unverified_count == 5
+
+    def test_threshold_not_exceeded_no_alert(self, tmp_path: Path) -> None:
+        tracker = VerificationNudgeTracker(metrics_dir=tmp_path)
+        for i in range(5):
+            tracker.record(task_id=f"t{i}", session_id=f"s{i}", tests_run=True)
+        summary = tracker.summary()
+        assert summary.threshold_exceeded is False
