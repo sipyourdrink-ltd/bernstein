@@ -789,10 +789,15 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
     try:
         result = subprocess.run(
             [
-                "gh", "issue", "list",
-                "--state", "open",
-                "--json", "number,title,body,labels",
-                "--limit", "100",
+                "gh",
+                "issue",
+                "list",
+                "--state",
+                "open",
+                "--json",
+                "number,title,body,labels",
+                "--limit",
+                "100",
             ],
             capture_output=True,
             text=True,
@@ -843,11 +848,7 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
         title: str = issue.get("title", "Untitled issue")
         body: str = (issue.get("body") or "")[:500]
         labels_raw: list[dict[str, Any]] = issue.get("labels", [])
-        labels: list[str] = [
-            str(lbl.get("name", "")).lower()
-            for lbl in labels_raw
-            if lbl.get("name")
-        ]
+        labels: list[str] = [str(lbl.get("name", "")).lower() for lbl in labels_raw if lbl.get("name")]
 
         priority = _priority_from_labels(labels)
         role = _role_from_labels(labels)
@@ -860,7 +861,7 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
         content = (
             f"---\n"
             f"id: gh-{number}\n"
-            f"title: \"[GH#{number}] {title}\"\n"
+            f'title: "[GH#{number}] {title}"\n'
             f"role: {role}\n"
             f"priority: {priority}\n"
             f"scope: medium\n"
