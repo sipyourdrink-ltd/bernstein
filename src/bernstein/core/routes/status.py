@@ -206,6 +206,12 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
             keys=_STATUS_CONFIG_KEYS,
         ),
     }
+
+    # Expose config watcher file-level source chain if available
+    config_watcher = getattr(request.app.state, "config_watcher", None)
+    if config_watcher is not None:
+        _runtime_cache["config_source_chain"] = config_watcher.source_chain()
+
     _runtime_cache_ts = now
     return _runtime_cache
 
@@ -305,6 +311,20 @@ async def status_dashboard(request: Request) -> JSONResponse:
     store = _get_store(request)
     payload = store.status_summary()
     payload["runtime"] = _runtime_summary(request, store)
+
+    # Recently completed tasks still within grace period (visible in panels)
+    recent = store.recently_completed()
+    if recent:
+        payload["recently_completed"] = [
+            {
+                "task_id": t.id,
+                "title": t.title,
+                "status": t.status.value,
+                "completed_at": t.completed_at,
+                "seconds_ago": round(time.time() - t.completed_at, 1) if t.completed_at else 0,
+            }
+            for t in recent
+        ]
     provider_status = _read_provider_status(request)
     if provider_status is not None:
         payload["provider_status"] = provider_status

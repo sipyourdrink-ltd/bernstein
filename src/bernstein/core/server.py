@@ -1134,6 +1134,11 @@ def create_app(
     application.state.reload_seed_config = _reload_seed_config  # type: ignore[attr-defined]
     application.state.draining = False  # type: ignore[attr-defined]
     application.state.readonly = readonly  # type: ignore[attr-defined]
+
+    # Config drift watcher — snapshot current config file checksums
+    from bernstein.core.config_watcher import ConfigWatcher
+
+    application.state.config_watcher = ConfigWatcher.snapshot(workdir)  # type: ignore[attr-defined]
     application.state.auth_service = auth_service  # type: ignore[attr-defined]
     application.state.legacy_auth_token = legacy_auth_token  # type: ignore[attr-defined]
     application.state.slack_signing_secret = (  # type: ignore[attr-defined]

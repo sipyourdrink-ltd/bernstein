@@ -442,3 +442,45 @@ def test_drift_event_summary_format() -> None:
     assert "project" in s
     assert "modified" in s
     assert "/tmp/bernstein.yaml" in s
+
+
+# ---------------------------------------------------------------------------
+# Source chain covers all cascade layers
+# ---------------------------------------------------------------------------
+
+
+def test_source_chain_covers_all_cascade_labels(tmp_path: Path) -> None:
+    """source_chain() must include labels for every SettingsCascade file layer."""
+    watcher = ConfigWatcher.snapshot(tmp_path)
+    chain = watcher.source_chain()
+    labels = {str(entry["label"]) for entry in chain}
+    required = {"user", "project", "local", "managed", "cli_overrides"}
+    assert required.issubset(labels), f"Missing labels: {required - labels}"
+
+
+def test_source_chain_deterministic_order(tmp_path: Path) -> None:
+    """Two snapshots of the same workdir must produce identical source chains."""
+    seed = tmp_path / "bernstein.yaml"
+    seed.write_text("goal: test\n", encoding="utf-8")
+
+    w1 = ConfigWatcher.snapshot(tmp_path)
+    w2 = ConfigWatcher.snapshot(tmp_path)
+
+    c1 = [(e["label"], e["checksum"], e["exists"]) for e in w1.source_chain()]
+    c2 = [(e["label"], e["checksum"], e["exists"]) for e in w2.source_chain()]
+    assert c1 == c2
+
+
+def test_source_chain_reflects_cascade_file_paths(tmp_path: Path) -> None:
+    """ConfigWatcher must watch the same files that SettingsCascade loads."""
+    from bernstein.core.config_watcher import discover_config_paths
+
+    paths = discover_config_paths(tmp_path)
+    watcher_labels = {label for label, _ in paths}
+
+    # The watcher must cover at least: user, project, local, managed, cli_overrides
+    assert "user" in watcher_labels
+    assert "project" in watcher_labels
+    assert "local" in watcher_labels
+    assert "managed" in watcher_labels
+    assert "cli_overrides" in watcher_labels

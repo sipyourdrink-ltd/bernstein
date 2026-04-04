@@ -259,6 +259,7 @@ class Task:
     max_output_tokens: int | None = None  # Escalated limit for model output
     meta_messages: list[str] = field(default_factory=list[str])  # Operational nudges/hints (T423)
     created_at: float = field(default_factory=time.time)
+    completed_at: float | None = None  # Epoch timestamp when task completed/failed
     deadline: float | None = None  # Epoch timestamp when task must be complete
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
@@ -339,6 +340,7 @@ class Task:
             max_output_tokens=raw.get("max_output_tokens"),
             meta_messages=list(raw.get("meta_messages", [])),
             created_at=raw.get("created_at", time.time()),
+            completed_at=raw.get("completed_at"),
             deadline=raw.get("deadline"),
             progress_log=list(raw.get("progress_log", [])),
             version=raw.get("version", 1),
