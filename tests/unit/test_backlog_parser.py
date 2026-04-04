@@ -37,7 +37,7 @@ janitor_signals:
 
     assert parsed == ParsedBacklogTask(
         title="Coverage Gap Expansion",
-        description=content.strip(),
+        description="# Coverage Gap Expansion",
         role="qa",
         priority=1,
         scope="large",
