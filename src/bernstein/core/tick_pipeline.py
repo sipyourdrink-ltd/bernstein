@@ -169,6 +169,18 @@ def block_task(client: httpx.Client, base_url: str, task_id: str, reason: str) -
     resp.raise_for_status()
 
 
+def close_task(client: httpx.Client, base_url: str, task_id: str) -> None:
+    """POST /tasks/{task_id}/close to mark a verified task as closed.
+
+    Args:
+        client: httpx client.
+        base_url: Server base URL.
+        task_id: ID of the task to close.
+    """
+    resp = client.post(f"{base_url}/tasks/{task_id}/close", json={})
+    resp.raise_for_status()
+
+
 def complete_task(
     client: httpx.Client,
     base_url: str,

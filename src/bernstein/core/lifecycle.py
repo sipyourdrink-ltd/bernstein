@@ -136,13 +136,14 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.CANCELLED): _always,
     # Retry from failed
     (TaskStatus.FAILED, TaskStatus.OPEN): _always,
+    # Verification gate (orchestrator closes after janitor + merge)
+    (TaskStatus.DONE, TaskStatus.CLOSED): _always,
+    (TaskStatus.DONE, TaskStatus.FAILED): _always,
 }
 
 # Precompute terminal statuses (no outbound transitions).
 TERMINAL_TASK_STATUSES: frozenset[TaskStatus] = frozenset(
-    {TaskStatus.DONE, TaskStatus.CANCELLED}
-    - {to for _from, to in TASK_TRANSITIONS if to in {TaskStatus.DONE, TaskStatus.CANCELLED}}
-    | {s for s in TaskStatus if not any(frm == s for frm, _to in TASK_TRANSITIONS)}
+    s for s in TaskStatus if not any(frm == s for frm, _to in TASK_TRANSITIONS)
 )
 
 

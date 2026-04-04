@@ -74,6 +74,8 @@ class TaskRecord(TypedDict):
     risk_level: str
     slack_context: dict[str, Any] | None
     version: int
+    completed_at: float | None
+    closed_at: float | None
     claimed_by_session: str | None
     parent_session_id: str | None
 
@@ -598,6 +600,7 @@ class TaskStore:
             "slack_context": task.slack_context,
             "version": task.version,
             "completed_at": task.completed_at,
+            "closed_at": task.closed_at,
             "claimed_by_session": task.claimed_by_session,
             "parent_session_id": task.parent_session_id,
         }
@@ -958,6 +961,32 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             await self._complete_parent_if_ready(task.parent_task_id)
+            return task
+
+    async def close(self, task_id: str) -> Task:
+        """Mark a verified task as closed (terminal success state).
+
+        Transitions DONE -> CLOSED after janitor verification and merge.
+
+        Args:
+            task_id: Task identifier.
+
+        Returns:
+            The updated Task.
+
+        Raises:
+            KeyError: If task_id does not exist.
+        """
+        async with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                raise KeyError(task_id)
+            self._index_remove(task)
+            transition_task(task, TaskStatus.CLOSED, actor="task_store", reason="verified and closed")
+            task.closed_at = time.time()
+            task.version += 1
+            self._index_add(task)
+            await self._append_jsonl(self._task_to_record(task))
             return task
 
     async def wait_for_subtasks(self, task_id: str, subtask_count: int) -> Task:
