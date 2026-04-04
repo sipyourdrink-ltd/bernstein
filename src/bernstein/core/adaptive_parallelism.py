@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Thresholds
 _ERROR_RATE_HIGH: float = 0.20
 _ERROR_RATE_LOW: float = 0.05
-_LOW_ERROR_SUSTAIN_S: float = 600.0  # 10 minutes
+_LOW_ERROR_SUSTAIN_S: float = 120.0  # 2 minutes (was 10 — too slow for recovery)
 _CPU_PAUSE_THRESHOLD: float = 95.0
 _WINDOW_S: float = 600.0  # sliding window for error rate calculation
 
@@ -130,20 +130,22 @@ class AdaptiveParallelism:
         cpu_pct = self._get_cpu_percent()
         prev = self._current_max
 
-        # Rule 4: CPU overload → degrade to 1 agent (never fully stop)
+        # Rule 4: CPU overload → halve agents (never fully stop, min 1)
         # Grace period: ignore CPU spikes in first 2 minutes (startup indexing/ingestion)
         startup_grace = (now - self._created_at) < 120
         if cpu_pct > _CPU_PAUSE_THRESHOLD and not startup_grace:
-            self._current_max = 1  # keep at least 1 agent alive
+            self._pre_cpu_max = prev  # remember for fast recovery
+            self._current_max = max(1, prev // 2)  # halve, not kill to 1
             self._low_error_since = None
-            if prev != 1:
+            if self._current_max != prev:
                 self._last_adjustment_reason = f"cpu_high ({cpu_pct:.0f}%)"
                 logger.warning(
-                    "Adaptive parallelism: reducing to 1 agent (CPU %.0f%% > %.0f%% threshold)",
+                    "Adaptive parallelism: reducing to %d agents (CPU %.0f%% > %.0f%% threshold)",
+                    self._current_max,
                     cpu_pct,
                     _CPU_PAUSE_THRESHOLD,
                 )
-            return 1
+            return self._current_max
 
         # Rule 2: High error rate → reduce by 1
         if error_rate > _ERROR_RATE_HIGH and self._current_max > 1:
@@ -176,9 +178,11 @@ class AdaptiveParallelism:
             # Error rate between 5% and 20%: reset the low-error timer
             self._low_error_since = None
 
-        # If CPU dropped from overload, restore at least 1
-        if self._current_max == 0 and cpu_pct <= _CPU_PAUSE_THRESHOLD:
-            self._current_max = max(1, prev) if prev > 0 else 1
+        # If CPU dropped from overload, restore to pre-spike level
+        pre_cpu = getattr(self, "_pre_cpu_max", 0)
+        if pre_cpu > self._current_max and cpu_pct <= _CPU_PAUSE_THRESHOLD:
+            self._current_max = min(pre_cpu, self.configured_max)
+            self._pre_cpu_max = 0
             self._last_adjustment_reason = "cpu_recovered"
             logger.info(
                 "Adaptive parallelism: CPU recovered (%.0f%%), restoring to %d agents",
