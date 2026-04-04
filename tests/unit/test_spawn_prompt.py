@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -12,7 +13,9 @@ from unittest.mock import patch
 from bernstein.core.spawn_prompt import (
     _DIR_CACHE,
     _FILE_CACHE,
+    _LESSON_CACHE_TTL,
     _extract_tags_from_tasks,
+    _lesson_cache,
     _list_subdirs_cached,
     _read_cached,
     _render_predecessor_context,
@@ -87,6 +90,7 @@ def test_render_predecessor_context_formats_informs_and_transforms(make_task: An
 
 def test_render_prompt_falls_back_and_includes_context_sections(tmp_path: Path, make_task: Any) -> None:
     """_render_prompt falls back to a default role prompt and includes project, lessons, predecessor, and signal sections."""
+    _lesson_cache.clear()
     task = make_task(id="T-1", role="backend", title="Implement auth parser", description="Build the parser.")
     templates_dir = tmp_path / "templates"
     templates_dir.mkdir()
@@ -126,6 +130,7 @@ def test_render_prompt_falls_back_and_includes_context_sections(tmp_path: Path, 
 
 def test_render_prompt_includes_git_safety_protocol(tmp_path: Path, make_task: Any) -> None:
     """_render_prompt always injects the git safety protocol section."""
+    _lesson_cache.clear()
     task = make_task(id="T-1", role="backend", title="Do something", description="Description.")
     templates_dir = tmp_path / "templates"
     templates_dir.mkdir()
@@ -159,3 +164,140 @@ def test_render_git_safety_protocol_content() -> None:
     assert "secrets" in safety
     assert "git diff" in safety
     assert "agent/" in safety
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL-005: Lesson cache, empty section filtering, prompt logging
+# ---------------------------------------------------------------------------
+
+
+def test_lesson_cache_reuses_result_within_ttl(tmp_path: Path, make_task: Any) -> None:
+    """Second _render_prompt call for the same role reuses cached lessons instead of re-extracting."""
+    _lesson_cache.clear()
+    task = make_task(id="T-1", role="backend", title="Build parser", description="Parse things.")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    call_count = 0
+    original_text = "## Lessons\nCached lesson text."
+
+    def _counting_gather(*args: Any, **kwargs: Any) -> str:
+        nonlocal call_count
+        call_count += 1
+        return original_text
+
+    with (
+        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", side_effect=_counting_gather),
+        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt1 = _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
+        prompt2 = _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
+
+    assert call_count == 1, f"gather_lessons_for_context called {call_count} times, expected 1 (cache miss + hit)"
+    assert "Cached lesson text." in prompt1
+    assert "Cached lesson text." in prompt2
+
+
+def test_lesson_cache_expires_after_ttl(tmp_path: Path, make_task: Any) -> None:
+    """Lesson cache entry is refreshed when TTL expires."""
+    _lesson_cache.clear()
+    task = make_task(id="T-1", role="qa", title="Run tests", description="Test stuff.")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    call_count = 0
+
+    def _counting_gather(*args: Any, **kwargs: Any) -> str:
+        nonlocal call_count
+        call_count += 1
+        return f"## Lessons\nVersion {call_count}."
+
+    with (
+        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a qa specialist."),
+        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", side_effect=_counting_gather),
+        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["qa"]),
+    ):
+        # First call: cache miss
+        _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
+        assert call_count == 1
+
+        # Expire the cache by backdating the timestamp
+        for key in list(_lesson_cache.keys()):
+            ts, text = _lesson_cache[key]
+            _lesson_cache[key] = (ts - _LESSON_CACHE_TTL - 1, text)
+
+        # Second call: cache expired, should re-extract
+        _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
+        assert call_count == 2
+
+
+def test_empty_sections_are_stripped(tmp_path: Path, make_task: Any) -> None:
+    """Sections with empty or whitespace-only content are excluded from the final prompt."""
+    _lesson_cache.clear()
+    task = make_task(id="T-1", role="backend", title="Build it", description="Do it.")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    with (
+        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt(
+            [task],
+            templates_dir=templates_dir,
+            workdir=tmp_path,
+            session_id="A-1",
+            bulletin_summary="",  # empty bulletin
+        )
+
+    # Empty lessons and empty bulletin should NOT appear
+    assert "## Lessons" not in prompt
+    assert "Team awareness" not in prompt
+
+
+def test_whitespace_bulletin_is_skipped(tmp_path: Path, make_task: Any) -> None:
+    """Bulletin with only whitespace is treated as empty and excluded."""
+    _lesson_cache.clear()
+    task = make_task(id="T-1", role="backend", title="Build it", description="Do it.")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    with (
+        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt(
+            [task],
+            templates_dir=templates_dir,
+            workdir=tmp_path,
+            bulletin_summary="   \n  \t  ",  # whitespace-only
+        )
+
+    assert "Team awareness" not in prompt
+
+
+def test_prompt_stats_are_logged(tmp_path: Path, make_task: Any, caplog: Any) -> None:
+    """_render_prompt logs character count and section count."""
+    _lesson_cache.clear()
+    task = make_task(id="T-1", role="backend", title="Build it", description="Do it.")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    with (
+        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+        caplog.at_level(logging.INFO, logger="bernstein.core.spawn_prompt"),
+    ):
+        _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path, session_id="A-1")
+
+    # Check that the prompt stats log line was emitted
+    stats_messages = [r.message for r in caplog.records if "Prompt for" in r.message]
+    assert len(stats_messages) >= 1, f"Expected 'Prompt for' log message, got: {[r.message for r in caplog.records]}"
+    msg = stats_messages[0]
+    assert "backend" in msg
+    assert "chars" in msg
+    assert "sections" in msg

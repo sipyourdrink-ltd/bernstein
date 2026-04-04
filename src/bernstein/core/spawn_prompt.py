@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re as _re
 import subprocess as _subprocess
+import time as _time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +23,12 @@ if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Lesson extraction cache (per-role, TTL-based)
+# ---------------------------------------------------------------------------
+_lesson_cache: dict[str, tuple[float, str]] = {}  # role -> (timestamp, text)
+_LESSON_CACHE_TTL = 300  # 5 minutes
 
 # ---------------------------------------------------------------------------
 # Cache-safe parameters for forked agents
@@ -440,10 +447,19 @@ def _render_prompt(
             logger.debug("Template render failed for role %s, using fallback: %s", role, exc)
             role_prompt = _render_fallback(role, templates_dir, agency_catalog)
 
-    # Inject prior agent lessons based on task tags
+    # Inject prior agent lessons based on task tags (cached per role)
     sdd_dir = workdir / ".sdd"
     lesson_tags = _extract_tags_from_tasks(tasks)
-    lesson_context = gather_lessons_for_context(sdd_dir, lesson_tags)
+    cache_key = f"{role}:{','.join(lesson_tags)}"
+    now = _time.monotonic()
+    cached_lesson = _lesson_cache.get(cache_key)
+    if cached_lesson is not None and (now - cached_lesson[0]) < _LESSON_CACHE_TTL:
+        lesson_context = cached_lesson[1]
+        logger.debug("Lesson cache hit for role=%s (%d chars)", role, len(lesson_context))
+    else:
+        lesson_context = gather_lessons_for_context(sdd_dir, lesson_tags)
+        _lesson_cache[cache_key] = (now, lesson_context)
+        logger.debug("Lesson cache miss for role=%s, extracted %d chars", role, len(lesson_context))
 
     # Enforce lesson budget
     from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS
@@ -470,7 +486,8 @@ def _render_prompt(
     predecessor_ctx = _render_predecessor_context(tasks, task_graph)
     if predecessor_ctx:
         named_sections.append(("predecessor", predecessor_ctx))
-    if bulletin_summary:
+    # Only include bulletin when it has real content beyond whitespace/header
+    if bulletin_summary and bulletin_summary.strip():
         named_sections.append(
             (
                 "team awareness",
@@ -514,6 +531,22 @@ def _render_prompt(
     if meta_messages:
         nudges_block = "\n## Operational nudges\n" + "\n".join(f"- {m}" for m in meta_messages) + "\n"
         named_sections.append(("meta nudges", nudges_block))
+
+    # Strip empty/whitespace-only sections before compression
+    named_sections = [
+        (name, content) for name, content in named_sections if content and content.strip()
+    ]
+
+    # Log prompt stats for observability
+    total_chars = sum(len(content) for _, content in named_sections)
+    section_names = [name for name, _ in named_sections]
+    logger.info(
+        "Prompt for %s: %d chars, %d sections (%s)",
+        role,
+        total_chars,
+        len(named_sections),
+        ", ".join(section_names),
+    )
 
     # Apply staged context collapse (T418): truncate → drop sections → strip metadata
     try:
