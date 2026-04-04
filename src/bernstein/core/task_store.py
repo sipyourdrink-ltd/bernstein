@@ -385,6 +385,27 @@ class TaskStore:
                 self._tasks[task_id] = task
                 self._index_add(task)
 
+    def recover_stale_claimed_tasks(self) -> int:
+        """Reset CLAIMED tasks to OPEN after a server restart.
+
+        When the server process is killed mid-task, all CLAIMED tasks have no
+        active agent.  This method re-queues them as OPEN so a fresh agent can
+        pick them up.  Call this once after ``replay_jsonl()`` during startup.
+
+        Returns:
+            Number of tasks reset to open.
+        """
+        reset_count = 0
+        for task in list(self._by_status.get(TaskStatus.CLAIMED, {}).values()):
+            self._index_remove(task)
+            task.status = TaskStatus.OPEN
+            task.claimed_by_session = None
+            self._index_add(task)
+            reset_count += 1
+        if reset_count:
+            logger.info("recover_stale_claimed_tasks: reset %d claimed task(s) to open after restart", reset_count)
+        return reset_count
+
     _BUFFER_MAX: int = 1
 
     async def _flush_buffer_unlocked(self) -> None:
