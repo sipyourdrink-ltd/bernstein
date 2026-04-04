@@ -93,12 +93,24 @@ class ClaudeCodeAdapter(CLIAdapter):
         mcp_config: dict[str, Any] | None,
         prompt: str,
     ) -> list[str]:
-        """Build the claude CLI command with effort mapping."""
+        """Build the claude CLI command with effort mapping.
+
+        Uses ``--permission-mode bypassPermissions`` instead of the deprecated
+        ``--dangerously-skip-permissions`` flag, and adds ``--fallback-model``
+        for automatic failover when the primary model is overloaded.
+        """
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         effort = getattr(model_config, "effort", "high")
         max_turns = {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
         effort_map = {"max": "max", "high": "high", "medium": "medium", "normal": "medium", "low": "low"}
         claude_effort = effort_map.get(effort, "high")
+
+        # Choose fallback model: opus → sonnet, sonnet → haiku
+        _fallback_map = {
+            "claude-opus-4-6": "claude-sonnet-4-6",
+            "claude-sonnet-4-6": "claude-haiku-4-5-20251001",
+        }
+        fallback_model = _fallback_map.get(model_id)
 
         cmd = [
             "claude",
@@ -106,29 +118,33 @@ class ClaudeCodeAdapter(CLIAdapter):
             model_id,
             "--effort",
             claude_effort,
-            "--dangerously-skip-permissions",
+            "--permission-mode",
+            "bypassPermissions",
             "--max-turns",
             str(max_turns),
             "--output-format",
             "stream-json",
             "--verbose",
         ]
+        if fallback_model:
+            cmd.extend(["--fallback-model", fallback_model])
         if mcp_config:
             cmd.extend(["--mcp-config", json.dumps(mcp_config)])
         cmd.extend(["-p", prompt])
         return cmd
 
     @staticmethod
-    def _wrapper_script(session_id: str = "", tokens_path: str = "") -> str:
+    def _wrapper_script(session_id: str = "", tokens_path: str = "", heartbeat_path: str = "") -> str:
         """Return the stream-json → human-readable log converter script.
 
-        When ``session_id`` and ``tokens_path`` are provided, token usage from
-        ``result`` messages is appended to ``tokens_path`` as JSON-lines so the
-        token growth monitor can read it without re-parsing the full log.
+        Parses Claude Code's NDJSON stream, extracts human-readable text for
+        the log file, writes token usage to a sidecar, and touches a heartbeat
+        file on every event so the orchestrator knows the agent is alive.
 
         Args:
             session_id: Agent session ID, injected for token sidecar writes.
             tokens_path: Absolute path to the ``.tokens`` sidecar file.
+            heartbeat_path: Absolute path to the heartbeat file (touched on each event).
         """
         token_writer = ""
         if tokens_path:
@@ -146,6 +162,18 @@ class ClaudeCodeAdapter(CLIAdapter):
                 f"            except OSError:\n"
                 f"                pass\n"
             )
+        # Heartbeat: touch the heartbeat file on every parsed JSON event.
+        # This gives the orchestrator a reliable, real-time liveness signal
+        # instead of relying on log file mtime which may buffer.
+        heartbeat_touch = ""
+        if heartbeat_path:
+            heartbeat_touch = (
+                "    # Touch heartbeat file on every event\n"
+                "    try:\n"
+                f"        open({heartbeat_path!r}, 'w').write(str(int(__import__('time').time())))\n"
+                "    except OSError:\n"
+                "        pass\n"
+            )
         return (
             "import sys, json\n"
             "seen_text = set()\n"
@@ -156,8 +184,7 @@ class ClaudeCodeAdapter(CLIAdapter):
             "    try:\n"
             "        msg = json.loads(raw)\n"
             "    except json.JSONDecodeError:\n"
-            "        continue\n"
-            "    t = msg.get('type', '')\n"
+            "        continue\n" + heartbeat_touch + "    t = msg.get('type', '')\n"
             "    if t == 'assistant':\n"
             "        for block in msg.get('message', {}).get('content', []):\n"
             "            if block.get('type') == 'text':\n"
@@ -264,7 +291,14 @@ class ClaudeCodeAdapter(CLIAdapter):
         )
 
         tokens_path = workdir / ".sdd" / "runtime" / f"{session_id}.tokens"
-        wrapper = self._wrapper_script(session_id=session_id, tokens_path=str(tokens_path))
+        heartbeat_dir = workdir / ".sdd" / "runtime" / "heartbeats"
+        heartbeat_dir.mkdir(parents=True, exist_ok=True)
+        heartbeat_path = heartbeat_dir / f"{session_id}.json"
+        wrapper = self._wrapper_script(
+            session_id=session_id,
+            tokens_path=str(tokens_path),
+            heartbeat_path=str(heartbeat_path),
+        )
         env = build_filtered_env(["ANTHROPIC_API_KEY"])
         claude_proc, wrapper_proc = self._launch_process(wrapped_cmd, wrapper, workdir, log_path, env=env)
 
