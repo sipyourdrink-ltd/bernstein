@@ -226,12 +226,17 @@ class BernsteinApp(App[None]):
             return
 
         data: dict[str, Any] = raw
+        transition_reasons_raw = data.get("transition_reasons")
+        transition_reasons: dict[str, dict[str, float]] | None = None
+        if isinstance(transition_reasons_raw, dict):
+            transition_reasons = cast("dict[str, dict[str, float]]", transition_reasons_raw)
         self.query_one(StatusBar).set_summary(
             agents_active=int(data.get("active_agents", 0)),
             tasks_done=int(data.get("completed", 0)),
             tasks_total=int(data.get("total", 0)),
             tasks_failed=int(data.get("failed", 0)),
             server_online=True,
+            transition_reasons=transition_reasons,
         )
 
         tasks_data: list[Any] = data.get("per_role", [])

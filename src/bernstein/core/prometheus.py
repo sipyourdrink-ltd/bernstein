@@ -37,6 +37,7 @@ __all__ = [
     "evolution_errors_by_type",
     "evolve_proposals_total",
     "generate_latest",
+    "get_transition_reason_histogram",
     "merge_duration",
     "record_transition_reason",
     "registry",
@@ -193,6 +194,46 @@ def _sanitize_reason(raw: str) -> str:
         return "unknown"
     _seen_reasons.add(value)
     return value if value else "unknown"
+
+
+def get_transition_reason_histogram() -> dict[str, dict[str, float]]:
+    """Return in-process transition reason counts from the Prometheus counters.
+
+    Reads the current sample values directly from the registry so the TUI
+    and status endpoint can display a histogram without scraping ``/metrics``.
+
+    Returns:
+        Dict with ``"agent"`` and ``"task"`` keys.  Each maps a reason label
+        (e.g. ``"completed"``, ``"aborted"``) to its cumulative count.
+        Labels with a count of zero are omitted.
+
+    Example::
+
+        {
+            "agent": {"completed": 12.0, "aborted": 3.0},
+            "task":  {"completed": 12.0, "retry": 1.0},
+        }
+    """
+    result: dict[str, dict[str, float]] = {"agent": {}, "task": {}}
+    try:
+        for metric_family in registry.collect():
+            if metric_family.name == "bernstein_agent_transition_reasons_total":
+                target = result["agent"]
+            elif metric_family.name == "bernstein_task_transition_reasons_total":
+                target = result["task"]
+            else:
+                continue
+            for sample in metric_family.samples:
+                # Skip _created timestamps; only aggregate _total samples
+                if not sample.name.endswith("_total"):
+                    continue
+                if sample.value <= 0:
+                    continue
+                reason = sample.labels.get("reason", "unknown")
+                target[reason] = target.get(reason, 0.0) + sample.value
+    except Exception:
+        logger.debug("get_transition_reason_histogram failed", exc_info=True)
+    return result
 
 
 def record_transition_reason(

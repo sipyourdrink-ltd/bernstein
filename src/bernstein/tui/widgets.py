@@ -498,6 +498,7 @@ class StatusBar(Static):
         cost_history: list[float] | None = None,
         elapsed_seconds: float = 0.0,
         server_online: bool = True,
+        transition_reasons: dict[str, dict[str, float]] | None = None,
     ) -> None:
         """Update the status bar content.
 
@@ -510,6 +511,9 @@ class StatusBar(Static):
             cost_history: List of historical cost values for sparkline.
             elapsed_seconds: Elapsed wall-clock seconds.
             server_online: Whether the task server is reachable.
+            transition_reasons: Transition reason histogram from Prometheus.
+                Shape: ``{"agent": {"completed": 5.0, ...}, "task": {...}}``.
+                When provided, the top agent reasons are shown inline.
         """
         minutes = int(elapsed_seconds) // 60
         seconds = int(elapsed_seconds) % 60
@@ -535,6 +539,15 @@ class StatusBar(Static):
         if tasks_failed:
             left_parts.append(f"[red]{tasks_failed} failed[/red]")
         left_parts.append(f"${cost_usd:.2f}{sparkline}")
+
+        # Compact transition reason histogram: top 3 agent exit reasons
+        if transition_reasons:
+            agent_reasons = transition_reasons.get("agent", {})
+            if agent_reasons:
+                top = sorted(agent_reasons.items(), key=lambda kv: kv[1], reverse=True)[:3]
+                parts = " ".join(f"{r}:{int(c)}" for r, c in top)
+                left_parts.append(f"[dim]exits:[/dim] {parts}")
+
         left_parts.append(elapsed_str)
 
         left = " [dim]\u2500[/dim] ".join(left_parts)
