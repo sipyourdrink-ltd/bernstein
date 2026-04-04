@@ -33,7 +33,7 @@ def _runtime_dir(request: Request) -> Path:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/agents/{session_id}/logs")
+@router.get("/agents/{session_id}/logs", responses={404: {"description": "No log for session"}})
 async def agent_logs(
     request: Request,
     session_id: str,

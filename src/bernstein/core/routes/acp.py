@@ -107,7 +107,7 @@ def _get_acp_handler(request: Request) -> ACPHandler:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/.well-known/acp.json")
+@router.get("/.well-known/acp.json", response_model=ACPDiscoveryResponse)
 async def acp_discovery(request: Request) -> ACPDiscoveryResponse:
     """ACP discovery document — editors poll this to find ACP-compatible agents."""
     handler = _get_acp_handler(request)
@@ -124,7 +124,7 @@ async def acp_discovery(request: Request) -> ACPDiscoveryResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/acp/v0/agents")
+@router.get("/acp/v0/agents", response_model=list[ACPAgentListEntry])
 async def list_acp_agents(request: Request) -> list[ACPAgentListEntry]:
     """List all ACP-advertised agents."""
     handler = _get_acp_handler(request)
@@ -132,7 +132,11 @@ async def list_acp_agents(request: Request) -> list[ACPAgentListEntry]:
     return [ACPAgentListEntry(**a) for a in doc["agents"]]
 
 
-@router.get("/acp/v0/agents/{agent_id}")
+@router.get(
+    "/acp/v0/agents/{agent_id}",
+    response_model=ACPAgentResponse,
+    responses={404: {"description": "ACP agent not found"}},
+)
 async def get_acp_agent(agent_id: str, request: Request) -> ACPAgentResponse:
     """Get detailed metadata for a specific ACP agent."""
     if agent_id != "bernstein":
@@ -161,7 +165,12 @@ async def get_acp_agent(agent_id: str, request: Request) -> ACPAgentResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/acp/v0/runs", status_code=201)
+@router.post(
+    "/acp/v0/runs",
+    response_model=ACPRunResponse,
+    status_code=201,
+    responses={400: {"description": "Unknown ACP agent"}},
+)
 async def create_acp_run(body: ACPRunCreateRequest, request: Request) -> ACPRunResponse:
     """Create an ACP run — creates a Bernstein task and links it.
 
@@ -190,7 +199,9 @@ async def create_acp_run(body: ACPRunCreateRequest, request: Request) -> ACPRunR
     return ACPRunResponse(**run.to_dict())
 
 
-@router.get("/acp/v0/runs/{run_id}")
+@router.get(
+    "/acp/v0/runs/{run_id}", response_model=ACPRunResponse, responses={404: {"description": "ACP run not found"}}
+)
 async def get_acp_run(run_id: str, request: Request) -> ACPRunResponse:
     """Get ACP run status, syncing from the underlying Bernstein task."""
     store = _get_store(request)
@@ -209,7 +220,9 @@ async def get_acp_run(run_id: str, request: Request) -> ACPRunResponse:
     return ACPRunResponse(**run.to_dict())
 
 
-@router.delete("/acp/v0/runs/{run_id}")
+@router.delete(
+    "/acp/v0/runs/{run_id}", response_model=ACPRunResponse, responses={404: {"description": "ACP run not found"}}
+)
 async def cancel_acp_run(run_id: str, request: Request) -> ACPRunResponse:
     """Cancel an ACP run and its underlying Bernstein task."""
     store = _get_store(request)

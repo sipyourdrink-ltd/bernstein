@@ -44,7 +44,9 @@ class PlanDecisionRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("")
+@router.get(
+    "", responses={400: {"description": "Invalid status filter"}, 503: {"description": "Plan store not initialized"}}
+)
 async def list_plans(request: Request, status: str | None = None) -> list[dict[str, Any]]:
     """List all plans, optionally filtered by status.
 
@@ -62,7 +64,9 @@ async def list_plans(request: Request, status: str | None = None) -> list[dict[s
     return [p.to_dict() for p in plans]
 
 
-@router.get("/{plan_id}")
+@router.get(
+    "/{plan_id}", responses={404: {"description": "Plan not found"}, 503: {"description": "Plan store not initialized"}}
+)
 async def get_plan(request: Request, plan_id: str) -> dict[str, Any]:
     """Get a single plan by ID."""
     store = _get_plan_store(request)
@@ -72,7 +76,14 @@ async def get_plan(request: Request, plan_id: str) -> dict[str, Any]:
     return plan.to_dict()
 
 
-@router.post("/{plan_id}/approve")
+@router.post(
+    "/{plan_id}/approve",
+    responses={
+        404: {"description": "Plan not found"},
+        409: {"description": "Plan already decided"},
+        503: {"description": "Plan store not initialized"},
+    },
+)
 async def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:
     """Approve a plan: promotes all its PLANNED tasks to OPEN.
 
@@ -110,7 +121,14 @@ async def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest
     }
 
 
-@router.post("/{plan_id}/reject")
+@router.post(
+    "/{plan_id}/reject",
+    responses={
+        404: {"description": "Plan not found"},
+        409: {"description": "Plan already decided"},
+        503: {"description": "Plan store not initialized"},
+    },
+)
 async def reject_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:
     """Reject a plan: cancels all its PLANNED tasks.
 

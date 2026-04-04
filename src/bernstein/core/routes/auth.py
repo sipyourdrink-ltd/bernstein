@@ -144,7 +144,7 @@ def _get_current_user(request: Request) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/providers")
+@router.get("/providers", response_model=AuthProvidersResponse)
 async def auth_providers(request: Request) -> AuthProvidersResponse:
     """List available authentication providers."""
     svc = getattr(request.app.state, "auth_service", None)
@@ -169,7 +169,13 @@ async def auth_providers(request: Request) -> AuthProvidersResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/login")
+@router.get(
+    "/login",
+    responses={
+        400: {"description": "Authentication provider not enabled"},
+        503: {"description": "SSO authentication not configured"},
+    },
+)
 async def login(request: Request, provider: str = "oidc") -> Response:
     """Initiate SSO login. Redirects to IdP."""
     svc = _get_auth_service(request)
@@ -196,7 +202,13 @@ async def login(request: Request, provider: str = "oidc") -> Response:
     )
 
 
-@router.get("/oidc/callback")
+@router.get(
+    "/oidc/callback",
+    responses={
+        400: {"description": "Missing or invalid authorization code or state"},
+        503: {"description": "SSO authentication not configured"},
+    },
+)
 async def oidc_callback(request: Request) -> Response:
     """OIDC authorization code callback."""
     svc = _get_auth_service(request)
@@ -254,7 +266,10 @@ window.location.href = '/dashboard';
 # ---------------------------------------------------------------------------
 
 
-@router.post("/saml/acs")
+@router.post(
+    "/saml/acs",
+    responses={400: {"description": "Missing SAMLResponse"}, 503: {"description": "SSO authentication not configured"}},
+)
 async def saml_acs(request: Request) -> Response:
     """SAML Assertion Consumer Service (ACS) endpoint.
 
@@ -293,7 +308,7 @@ window.location.href = '/dashboard';
     )
 
 
-@router.get("/saml/metadata")
+@router.get("/saml/metadata", responses={503: {"description": "SSO authentication not configured"}})
 async def saml_metadata(request: Request) -> Response:
     """SAML SP metadata endpoint for IdP configuration."""
     svc = _get_auth_service(request)
@@ -306,7 +321,11 @@ async def saml_metadata(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/cli/device")
+@router.post(
+    "/cli/device",
+    response_model=DeviceCodeResponse,
+    responses={503: {"description": "SSO authentication not configured"}},
+)
 async def device_code_request(request: Request, body: DeviceCodeRequest) -> DeviceCodeResponse:
     """Initiate device authorization flow for CLI login.
 
@@ -327,7 +346,11 @@ async def device_code_request(request: Request, body: DeviceCodeRequest) -> Devi
     )
 
 
-@router.post("/cli/token")
+@router.post(
+    "/cli/token",
+    response_model=DevicePollResponse,
+    responses={503: {"description": "SSO authentication not configured"}},
+)
 async def device_token_poll(request: Request, body: DevicePollRequest) -> DevicePollResponse:
     """Poll for device authorization status.
 
@@ -351,7 +374,14 @@ async def device_token_poll(request: Request, body: DevicePollRequest) -> Device
     )
 
 
-@router.post("/cli/authorize")
+@router.post(
+    "/cli/authorize",
+    responses={
+        400: {"description": "Invalid or expired user code"},
+        401: {"description": "Authentication required"},
+        503: {"description": "SSO authentication not configured"},
+    },
+)
 async def device_authorize(request: Request, body: DeviceAuthorizeRequest) -> JSONResponse:
     """Authorize a device code (called from web dashboard after SSO login).
 
@@ -374,7 +404,7 @@ async def device_authorize(request: Request, body: DeviceAuthorizeRequest) -> JS
 # ---------------------------------------------------------------------------
 
 
-@router.get("/me")
+@router.get("/me", response_model=UserProfileResponse, responses={401: {"description": "Authentication required"}})
 async def get_profile(request: Request) -> UserProfileResponse:
     """Get the current authenticated user's profile."""
     user = _get_current_user(request)
@@ -393,7 +423,7 @@ async def get_profile(request: Request) -> UserProfileResponse:
     )
 
 
-@router.post("/logout")
+@router.post("/logout", responses={503: {"description": "SSO authentication not configured"}})
 async def logout(request: Request) -> JSONResponse:
     """Logout and revoke the current session."""
     claims = getattr(request.state, "auth_claims", {})
@@ -412,7 +442,11 @@ async def logout(request: Request) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/group-mappings")
+@router.get(
+    "/group-mappings",
+    response_model=GroupMappingsResponse,
+    responses={503: {"description": "SSO authentication not configured"}},
+)
 async def get_group_mappings(request: Request) -> GroupMappingsResponse:
     """Get current SSO group → role mappings."""
     svc = _get_auth_service(request)
@@ -420,7 +454,15 @@ async def get_group_mappings(request: Request) -> GroupMappingsResponse:
     return GroupMappingsResponse(mappings=[GroupMappingEntry(group=g, role=r.value) for g, r in mappings.items()])
 
 
-@router.put("/group-mappings")
+@router.put(
+    "/group-mappings",
+    responses={
+        400: {"description": "Invalid role value"},
+        401: {"description": "Authentication required"},
+        403: {"description": "Admin role required"},
+        503: {"description": "SSO authentication not configured"},
+    },
+)
 async def update_group_mappings(request: Request, body: GroupMappingsUpdateRequest) -> JSONResponse:
     """Update SSO group → role mappings (admin only)."""
     user = _get_current_user(request)
@@ -457,7 +499,14 @@ async def update_group_mappings(request: Request, body: GroupMappingsUpdateReque
 # ---------------------------------------------------------------------------
 
 
-@router.get("/users")
+@router.get(
+    "/users",
+    responses={
+        401: {"description": "Authentication required"},
+        403: {"description": "Admin role required"},
+        503: {"description": "SSO authentication not configured"},
+    },
+)
 async def list_users(request: Request) -> JSONResponse:
     """List all users (admin only)."""
     user = _get_current_user(request)

@@ -116,7 +116,7 @@ async def get_policies(request: Request) -> JSONResponse:
     )
 
 
-@router.get("/{session_id}")
+@router.get("/{session_id}", responses={404: {"description": "No graduation record for session"}})
 async def session_graduation(request: Request, session_id: str) -> JSONResponse:
     """Return graduation state for a specific session.
 
@@ -147,7 +147,13 @@ async def session_graduation(request: Request, session_id: str) -> JSONResponse:
     )
 
 
-@router.post("/{session_id}/promote")
+@router.post(
+    "/{session_id}/promote",
+    responses={
+        404: {"description": "No graduation record for session"},
+        409: {"description": "Already at terminal stage"},
+    },
+)
 async def promote_session(
     request: Request,
     session_id: str,
@@ -195,7 +201,7 @@ async def promote_session(
     )
 
 
-@router.post("/{session_id}/record-event")
+@router.post("/{session_id}/record-event", responses={422: {"description": "Invalid graduation stage"}})
 async def record_task_event(
     request: Request,
     session_id: str,

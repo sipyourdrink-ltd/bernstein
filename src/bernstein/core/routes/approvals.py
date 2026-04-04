@@ -123,7 +123,10 @@ async def list_approvals() -> ListApprovalsResponse:
     return ListApprovalsResponse(pending=results)
 
 
-@router.post("/{task_id}/approve")
+@router.post(
+    "/{task_id}/approve",
+    responses={400: {"description": "Invalid task_id format"}, 404: {"description": "No pending approval for task"}},
+)
 async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
     """Approve a pending approval request.
 
@@ -156,7 +159,10 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
     return {"status": "approved", "task_id": task_id}
 
 
-@router.post("/{task_id}/reject")
+@router.post(
+    "/{task_id}/reject",
+    responses={400: {"description": "Invalid task_id format"}, 404: {"description": "No pending approval for task"}},
+)
 async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
     """Reject a pending approval request.
 

@@ -69,7 +69,7 @@ async def list_identities(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/identities/{identity_id}")
+@router.get("/identities/{identity_id}", responses={404: {"description": "Identity not found"}})
 async def get_identity(request: Request, identity_id: str) -> JSONResponse:
     """Get details for a single agent identity."""
     store = _identity_store(request)
@@ -88,7 +88,7 @@ async def get_identity(request: Request, identity_id: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/identities/{identity_id}/revoke")
+@router.post("/identities/{identity_id}/revoke", responses={404: {"description": "Identity not found"}})
 async def revoke_identity(request: Request, identity_id: str) -> JSONResponse:
     """Revoke an agent identity."""
     body: dict[str, Any] = {}

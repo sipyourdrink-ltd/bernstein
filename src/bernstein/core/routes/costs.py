@@ -130,7 +130,9 @@ async def cost_events(request: Request) -> StreamingResponse:
     )
 
 
-@router.get("/costs")
+@router.get(
+    "/costs", responses={403: {"description": "Tenant access denied"}, 404: {"description": "Tenant not found"}}
+)
 async def get_costs(request: Request, tenant: str | None = None) -> JSONResponse:
     """Aggregate cost data across all runs.
 
@@ -207,7 +209,9 @@ async def get_costs(request: Request, tenant: str | None = None) -> JSONResponse
     )
 
 
-@router.get("/costs/live")
+@router.get(
+    "/costs/live", responses={403: {"description": "Tenant access denied"}, 404: {"description": "Tenant not found"}}
+)
 async def get_cost_live(request: Request, tenant: str | None = None) -> JSONResponse:
     """Return live cost breakdown for the most recent run.
 
@@ -322,7 +326,7 @@ async def get_cost_history(request: Request) -> JSONResponse:
     )
 
 
-@router.get("/costs/{run_id}")
+@router.get("/costs/{run_id}", responses={404: {"description": "No cost data for run"}})
 async def get_cost_budget(run_id: str, request: Request) -> JSONResponse:
     """Return budget status for a specific run.
 
