@@ -45,6 +45,8 @@ VALID_GATE_NAMES = frozenset(
         "merge_conflict",
         "benchmark",
         "dep_audit",
+        "migration_reversibility",
+        "large_file",
     }
 )
 VALID_GATE_CONDITIONS = frozenset({"always", "python_changed", "tests_changed", "any_changed", "deps_changed"})
@@ -163,6 +165,27 @@ class GateReport:
     cache_hits: int
 
 
+def _migration_downgrade_is_pass(source: str) -> bool:
+    """Return True when an Alembic downgrade() body contains only ``pass``."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name != "downgrade":
+            continue
+        body = node.body
+        # Strip leading docstring if present.
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+            body = body[1:]
+        if not body:
+            return True
+        return len(body) == 1 and isinstance(body[0], ast.Pass)
+    return False
+
+
 def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]:
     """Build the implicit pipeline used when the seed file omits one."""
     pipeline: list[GatePipelineStep] = []
@@ -194,6 +217,10 @@ def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]
         pipeline.append(GatePipelineStep(name="dep_audit", required=True, condition="deps_changed"))
     if config.benchmark.enabled:
         pipeline.append(GatePipelineStep(name="benchmark", required=True, condition="always"))
+    if config.migration_reversibility_check:
+        pipeline.append(GatePipelineStep(name="migration_reversibility", required=True, condition="any_changed"))
+    if config.large_file_check:
+        pipeline.append(GatePipelineStep(name="large_file", required=False, condition="any_changed"))
     return pipeline
 
 
@@ -455,6 +482,12 @@ class GateRunner:
 
         if step.name == "benchmark":
             return await asyncio.to_thread(self._run_benchmark_gate_sync, step, run_dir)
+
+        if step.name == "migration_reversibility":
+            return await asyncio.to_thread(self._run_migration_reversibility_gate_sync, step, run_dir)
+
+        if step.name == "large_file":
+            return await asyncio.to_thread(self._run_large_file_gate_sync, step, run_dir, changed_files)
 
         plugin = self._plugin_registry().get(step.name)
         if plugin is not None:
@@ -832,6 +865,143 @@ class GateRunner:
                 "regressions": regression_names,
                 "benchmark_count": len(evaluation.current_metrics),
             },
+        )
+
+    def _run_migration_reversibility_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+    ) -> GateResult:
+        """Check that every DB migration has a corresponding down/rollback path.
+
+        Supports Alembic (``downgrade()`` function must be non-trivial) and
+        generic up/down SQL file pairs.  When no migration files are found the
+        gate passes with a skip note so projects without migrations are not
+        affected.
+        """
+        issues: list[str] = []
+        migration_count = 0
+
+        # --- Alembic migrations (versions/*.py) ---
+        alembic_dirs: list[Path] = []
+        for candidate in ("alembic/versions", "migrations/versions", "db/versions"):
+            p = run_dir / candidate
+            if p.is_dir():
+                alembic_dirs.append(p)
+
+        for versions_dir in alembic_dirs:
+            for migration_file in sorted(versions_dir.glob("*.py")):
+                if migration_file.name.startswith("_"):
+                    continue
+                migration_count += 1
+                try:
+                    source = migration_file.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+                # A bare `pass` or empty body after def downgrade means no rollback.
+                if "def downgrade" not in source:
+                    issues.append(f"{migration_file.relative_to(run_dir)}: missing downgrade() function")
+                elif _migration_downgrade_is_pass(source):
+                    issues.append(
+                        f"{migration_file.relative_to(run_dir)}: downgrade() is empty (pass-only) — no rollback defined"
+                    )
+
+        # --- Generic SQL up/down pairs ---
+        sql_migration_dirs: list[Path] = []
+        for candidate in ("migrations", "db/migrations", "sql/migrations", "database/migrations"):
+            p = run_dir / candidate
+            if p.is_dir():
+                sql_migration_dirs.append(p)
+
+        for mig_dir in sql_migration_dirs:
+            up_files = {f.stem for f in mig_dir.glob("*_up.sql")} | {
+                f.stem.replace(".up", "") for f in mig_dir.glob("*.up.sql")
+            }
+            down_files = {f.stem for f in mig_dir.glob("*_down.sql")} | {
+                f.stem.replace(".down", "") for f in mig_dir.glob("*.down.sql")
+            }
+            for stem in sorted(up_files):
+                migration_count += 1
+                down_stem = stem.replace("_up", "_down")
+                if down_stem not in down_files and stem not in down_files:
+                    issues.append(f"{mig_dir.relative_to(run_dir)}/{stem}_up.sql: no matching down migration")
+
+        if migration_count == 0:
+            return self._skipped(step, "No migration files found — skipping reversibility check.")
+
+        if not issues:
+            return GateResult(
+                name=step.name,
+                status="pass",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=f"All {migration_count} migration(s) have rollback paths.",
+                metadata={"migration_count": migration_count},
+            )
+
+        detail = f"{len(issues)} migration(s) missing rollback:\n" + "\n".join(f"  - {i}" for i in issues)
+        return GateResult(
+            name=step.name,
+            status="fail",
+            required=step.required,
+            blocked=step.required,
+            cached=False,
+            duration_ms=0,
+            details=detail,
+            metadata={"migration_count": migration_count, "missing_rollback": len(issues)},
+        )
+
+    def _run_large_file_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Warn when an agent-created or modified file exceeds 500 lines.
+
+        Large files are a heuristic signal that a module should be decomposed.
+        The gate always runs as a warning (never blocks) by default.
+        """
+        threshold = self._config.large_file_threshold
+        oversized: list[tuple[str, int]] = []
+
+        for rel_path in changed_files:
+            file_path = run_dir / rel_path
+            if not file_path.is_file():
+                continue
+            try:
+                line_count = sum(1 for _ in file_path.open(encoding="utf-8", errors="ignore"))
+            except OSError:
+                continue
+            if line_count > threshold:
+                oversized.append((rel_path, line_count))
+
+        if not oversized:
+            return GateResult(
+                name=step.name,
+                status="pass",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=f"No files exceed the {threshold}-line threshold.",
+                metadata={"threshold": threshold},
+            )
+
+        lines = [f"  {path}: {count} lines (>{threshold})" for path, count in sorted(oversized)]
+        detail = f"{len(oversized)} file(s) exceed {threshold} lines and should be decomposed:\n" + "\n".join(lines)
+        # Always warn; never block — this is a heuristic, not a hard requirement.
+        return GateResult(
+            name=step.name,
+            status="warn",
+            required=step.required,
+            blocked=False,
+            cached=False,
+            duration_ms=0,
+            details=detail,
+            metadata={"threshold": threshold, "oversized_files": len(oversized)},
         )
 
     def _run_merge_conflict_gate_sync(
