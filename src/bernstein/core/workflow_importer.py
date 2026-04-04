@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import httpx
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ def parse_markdown_tasks(content: str) -> list[str]:
 
 def import_workflow_tasks(
     workdir: Path,
-    client: "httpx.Client",
+    client: httpx.Client,
     base_url: str,
     *,
     dry_run: bool = False,
