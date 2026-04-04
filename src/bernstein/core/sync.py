@@ -300,14 +300,14 @@ def sync_backlog_to_server(
 
         # --- Step 2: move files for completed tasks ---
         done_slugs: set[str] = {
-            normalise_title(t.get("title", "")) for t in _get_tasks_by_status(_client, server_url, "done")
+            normalise_title(t.get("title", "")) for t in _get_tasks_by_status(_client, server_url, "closed")
         }
 
         backlog_claimed = workdir / ".sdd" / "backlog" / "claimed"
         scan_dirs = [backlog_open]
         if backlog_claimed.exists():
             scan_dirs.append(backlog_claimed)
-        all_files: list[Path] = []
+        all_files = []
         for d in scan_dirs:
             all_files.extend(d.glob("*.yaml"))
             all_files.extend(d.glob("*.md"))

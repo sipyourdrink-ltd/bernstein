@@ -363,6 +363,25 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
     return task_to_response(task)
 
 
+@router.post("/tasks/{task_id}/close", response_model=TaskResponse)
+async def close_task(task_id: str, request: Request) -> TaskResponse:
+    """Mark a verified task as closed (terminal success state)."""
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+    try:
+        existing_task = store.get_task(task_id)
+        if existing_task is None:
+            raise KeyError
+        _require_task_access(existing_task, request)
+        task = await store.close(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
+    except IllegalTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "closed"}))
+    return task_to_response(task)
+
+
 @router.post("/tasks/{task_id}/cancel", response_model=TaskResponse)
 async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -> TaskResponse:
     """Cancel a task that has not yet finished."""

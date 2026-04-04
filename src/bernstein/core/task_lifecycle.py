@@ -45,6 +45,7 @@ from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.tick_pipeline import (
     CompletionData,
+    close_task,
     complete_task,
     fail_task,
 )
@@ -1664,6 +1665,24 @@ def process_completed_tasks(
             # Move backlog ticket file from open/ to closed/ if it exists
             if janitor_passed and not _skip_merge:
                 _move_backlog_ticket(orch._workdir, task)
+
+                # Transition task to CLOSED on the server (terminal success state)
+                try:
+                    close_task(orch._client, orch._config.server_url, task.id)
+                except Exception as _close_exc:
+                    logger.warning("Failed to close task %s: %s", task.id, _close_exc)
+
+                # Close the linked GitHub issue if the task was created from one
+                _issue_number = task.metadata.get("issue_number") if task.metadata else None
+                if _issue_number:
+                    try:
+                        from bernstein.core.github import GitHubClient
+
+                        _gh = GitHubClient()
+                        _gh.close_issue(int(_issue_number), comment=f"Closed by Bernstein task {task.id}")
+                        logger.info("Closed GitHub issue #%s for task %s", _issue_number, task.id)
+                    except Exception as exc:
+                        logger.warning("Failed to close GitHub issue #%s: %s", _issue_number, exc)
 
             # Route merge conflicts to a dedicated resolver agent.
             if (
