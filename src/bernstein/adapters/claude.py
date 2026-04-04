@@ -86,7 +86,7 @@ def _resolve_env_vars(obj: Any) -> Any:
 _logger = logging.getLogger(__name__)
 
 # How long a cached rate-limit probe result stays valid (seconds).
-_RATE_LIMIT_CACHE_TTL: float = 60.0
+_RATE_LIMIT_CACHE_TTL: float = 180.0  # 3 min — probe costs a real API call
 
 # Cooldown applied when rate-limiting is detected (seconds).
 _RATE_LIMIT_COOLDOWN: float = 300.0
@@ -132,21 +132,22 @@ class ClaudeCodeAdapter(CLIAdapter):
         if now - self._rate_limit_checked_at < _RATE_LIMIT_CACHE_TTL:
             return False
 
+        # Probe with a real API call — `claude --version` doesn't hit the API
+        # and can't detect account-level rate limits like "You've hit your limit".
         try:
             result = subprocess.run(
-                ["claude", "--version"],
+                ["claude", "--print", "--max-turns", "1", "--output-format", "text", "-p", "say ok"],
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=15,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
             _logger.debug("Rate-limit probe failed: %s", exc)
-            # On probe failure, be conservative and allow spawning.
             self._rate_limit_checked_at = now
             return False
 
-        stderr_lower = result.stderr.lower()
-        if "hit your limit" in stderr_lower or "rate limit" in stderr_lower:
+        combined = (result.stdout + result.stderr).lower()
+        if "hit your limit" in combined or "rate limit" in combined or "resets" in combined:
             self._rate_limit_until = now + _RATE_LIMIT_COOLDOWN
             _logger.warning(
                 "Claude Code rate-limited; blocking spawns for %.0fs",
@@ -469,11 +470,11 @@ class ClaudeCodeAdapter(CLIAdapter):
         existing: dict[str, Any] = {}
         if settings_path.exists():
             try:
-                existing = json.loads(settings_path.read_text(encoding="utf-8"))
-                if not isinstance(existing, dict):
-                    existing = {}
+                raw = json.loads(settings_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    existing = cast("dict[str, Any]", raw)
             except (json.JSONDecodeError, OSError):
-                existing = {}
+                pass
 
         existing["hooks"] = hooks_config
         try:
