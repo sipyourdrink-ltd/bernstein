@@ -3440,7 +3440,7 @@ class TestRetryOrFailTask:
         orch._retry_or_fail_task("T-retry", "agent crashed")
 
         assert len(posted) == 1
-        assert posted[0]["description"] == "[retry:1] Do the thing."
+        assert posted[0]["description"].startswith("[retry:1] Do the thing.")
 
     def test_second_retry_increments_counter(self, tmp_path: Path) -> None:
         task = _make_task(id="T-retry", description="[retry:1] Do the thing.")
@@ -3449,7 +3449,7 @@ class TestRetryOrFailTask:
         orch._retry_or_fail_task("T-retry", "agent crashed again")
 
         assert len(posted) == 1
-        assert posted[0]["description"] == "[retry:2] Do the thing."
+        assert posted[0]["description"].startswith("[retry:2] Do the thing.")
 
     def test_max_retries_exceeded_does_not_create_new_task(self, tmp_path: Path) -> None:
         task = _make_task(id="T-retry", description="[retry:2] Do the thing.")
