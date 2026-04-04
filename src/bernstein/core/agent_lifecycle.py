@@ -268,6 +268,9 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
             )
             if not _session_preserved:
                 orch._spawner.cleanup_worktree(session.id)
+            # Clean up signal/heartbeat files for naturally-dead agents
+            with contextlib.suppress(OSError):
+                orch._signal_mgr.clear_signals(session.id)
 
     # Purge dead agents to prevent unbounded dict growth (memory leak fix)
     purge_dead_agents(orch)
@@ -1553,6 +1556,7 @@ def _reap_completed_agent(orch: Any, session: AgentSession, completion_file: Pat
         session: The completed agent session.
         completion_file: Path to the completion marker (cleaned up after reap).
     """
+    _save_partial_work(orch._spawner, session)
     with contextlib.suppress(Exception):
         orch._spawner.kill(session)
     _propagate_abort_to_children(orch, session.id)
@@ -1561,6 +1565,8 @@ def _reap_completed_agent(orch: Any, session: AgentSession, completion_file: Pat
         orch._signal_mgr.clear_signals(session.id)
     with contextlib.suppress(OSError):
         completion_file.unlink()
+    with contextlib.suppress(Exception):
+        orch._spawner.cleanup_worktree(session.id)
     get_collector().end_agent(session.id)
 
 
@@ -1599,12 +1605,15 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
             reason,
             int(_IDLE_GRACE_S),
         )
+        _save_partial_work(orch._spawner, session)
         with contextlib.suppress(Exception):
             orch._spawner.kill(session)
         _propagate_abort_to_children(orch, session.id)
         orch._idle_shutdown_ts.pop(session.id, None)
         with contextlib.suppress(OSError):
             orch._signal_mgr.clear_signals(session.id)
+        with contextlib.suppress(Exception):
+            orch._spawner.cleanup_worktree(session.id)
         get_collector().end_agent(session.id)
 
 
