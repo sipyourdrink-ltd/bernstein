@@ -91,6 +91,7 @@ def _make_orch(tmp_path: Path) -> MagicMock:
     )
     orch._agents = {}
     orch._idle_shutdown_ts = {}
+    orch._workdir = tmp_path
 
     signal_mgr = MagicMock()
     signal_mgr.read_heartbeat.return_value = None
