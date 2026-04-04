@@ -69,6 +69,14 @@ def _tick_transport(extra_posts: list[dict] | None = None) -> httpx.MockTranspor
             return httpx.Response(200, json=[])
         if method == "GET" and path.endswith("/tasks") and "status=failed" in query:
             return httpx.Response(200, json=[])
+        if method == "GET" and path.endswith("/tasks") and "status=claimed" in query:
+            return httpx.Response(200, json=[])
+        if method == "GET" and path.endswith("/tasks") and "status=in_progress" in query:
+            return httpx.Response(200, json=[])
+        if method == "GET" and path.endswith("/tasks") and "limit=" in query:
+            return httpx.Response(200, json=[])
+        if method == "GET" and path.endswith("/tasks"):
+            return httpx.Response(200, json=[])
         if method == "POST" and path.endswith("/tasks"):
             body = json.loads(request.content)
             posts.append(body)
@@ -193,8 +201,8 @@ class TestIngestBacklog:
         assert count == 3
         assert len(posts) == 3
 
-    def test_tick_calls_ingest_backlog(self, tmp_path: Path) -> None:
-        """Each tick() invokes ingest_backlog to pull in new work."""
+    def test_ingest_backlog_callable(self, tmp_path: Path) -> None:
+        """ingest_backlog is callable on the orchestrator (invoked from run loop, not tick)."""
         open_dir = tmp_path / ".sdd" / "backlog" / "open"
         open_dir.mkdir(parents=True)
 
@@ -202,9 +210,10 @@ class TestIngestBacklog:
         client = httpx.Client(transport=_tick_transport(posts), base_url="http://testserver")
         orc = _build_orchestrator(tmp_path, client)
 
-        with patch.object(orc, "ingest_backlog", wraps=orc.ingest_backlog) as spy:
-            orc.tick()
-            spy.assert_called_once()
+        # ingest_backlog is called from the run loop, not tick().
+        # Verify it works when called directly.
+        count = orc.ingest_backlog()
+        assert count == 0
 
 
 # --- Spawner proc.terminate tests ---
