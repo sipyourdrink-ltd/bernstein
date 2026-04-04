@@ -263,8 +263,7 @@ class TokenRefreshScheduler:
         with self._lock:
             if self._fail_count >= self._max_failures:  # _is_fatal inline — no re-entrant lock
                 raise TokenRefreshFatalError(
-                    f"JWT refresh fatal: {self._fail_count} consecutive failures "
-                    f"for session {self._session_id!r}"
+                    f"JWT refresh fatal: {self._fail_count} consecutive failures for session {self._session_id!r}"
                 )
 
             # Stale-generation guard: another caller already refreshed.
@@ -288,8 +287,7 @@ class TokenRefreshScheduler:
                 )
                 if self._fail_count >= self._max_failures:
                     raise TokenRefreshFatalError(
-                        f"JWT refresh fatal after {self._fail_count} failures "
-                        f"for session {self._session_id!r}"
+                        f"JWT refresh fatal after {self._fail_count} failures for session {self._session_id!r}"
                     ) from exc
                 return False
 
