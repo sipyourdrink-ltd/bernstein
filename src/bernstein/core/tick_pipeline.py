@@ -264,6 +264,7 @@ def group_by_role(
     alive_per_role: dict[str, int] | None = None,
     priority_overrides: dict[str, int] | None = None,
     task_created_at: dict[str, float] | None = None,
+    agent_affinity: dict[str, str] | None = None,
 ) -> list[list[Task]]:
     """Group open tasks by role into batches of up to max_per_batch.
 
@@ -283,6 +284,10 @@ def group_by_role(
     Fair scheduling: tasks waiting longer than PRIORITY_AGE_THRESHOLD_SECONDS
     get their effective priority boosted to prevent P1 tasks from starving P2/P3.
 
+    Agent affinity: when agent_affinity is provided, tasks that prefer the same
+    agent (downstream of a completed task) are merged into the same affinity
+    group so they are spawned together and share context.
+
     Example: backend(5 tasks) + qa(3 tasks) → [b1,q1, b2,q2, b3,q3, b4, b5]
     The orchestrator iterates this list and stops at max_agents, so qa never
     starves even though backend has more work.
@@ -297,6 +302,9 @@ def group_by_role(
             without mutating persisted task priority.
         task_created_at: Optional map of task_id -> creation timestamp.
             Used for fair scheduling to age-boost older tasks.
+        agent_affinity: Optional map of task_id -> preferred_agent_id. Tasks
+            sharing the same preferred agent are merged into a single affinity
+            group so they are batched together when possible.
 
     Returns:
         List of batches, each a list of same-role tasks, round-robin interleaved.
@@ -356,6 +364,24 @@ def group_by_role(
                     affinity_groups[first_idx].extend(affinity_groups.pop(other_idx))
             else:
                 affinity_groups.append([task])
+
+        # 1.5 Agent affinity pass: merge groups that share a preferred agent.
+        # Tasks downstream of a completed task carry a preferred_agent_id hint;
+        # grouping them together ensures a single new agent handles all of them.
+        if agent_affinity:
+            agent_to_group_indices: dict[str, list[int]] = defaultdict(list)
+            for idx, group in enumerate(affinity_groups):
+                for task in group:
+                    preferred = agent_affinity.get(task.id)
+                    if preferred:
+                        agent_to_group_indices[preferred].append(idx)
+                        break  # one match per group is enough
+            for group_indices in agent_to_group_indices.values():
+                if len(group_indices) > 1:
+                    first_idx = group_indices[0]
+                    for other_idx in sorted(group_indices[1:], reverse=True):
+                        if other_idx < len(affinity_groups):
+                            affinity_groups[first_idx].extend(affinity_groups.pop(other_idx))
 
         # 2. Second pass: pack affinity groups into batches of max_per_batch
         role_batches: list[list[Task]] = []

@@ -1851,6 +1851,24 @@ def process_completed_tasks(
             except Exception as exc:
                 logger.warning("Evolution record_task_completion failed: %s", exc)
 
+        # Agent affinity: register downstream tasks to prefer the same agent.
+        # When task T1 completes, tasks that depend on T1 become ready. By
+        # recording T1's assigned_agent in _agent_affinity we ensure those
+        # downstream tasks are batched together and inherit context continuity.
+        if janitor_passed and task.assigned_agent:
+            _affinity: dict[str, str] | None = getattr(orch, "_agent_affinity", None)
+            if _affinity is not None:
+                _latest: dict[str, Task] = getattr(orch, "_latest_tasks_by_id", {})
+                for _downstream in _latest.values():
+                    if task.id in _downstream.depends_on and _downstream.status.value == "open":
+                        _affinity[_downstream.id] = task.assigned_agent
+                        logger.debug(
+                            "agent_affinity: task %s → agent %s (downstream of %s)",
+                            _downstream.id,
+                            task.assigned_agent,
+                            task.id,
+                        )
+
 
 # ---------------------------------------------------------------------------
 # Dedicated test-agent slot
