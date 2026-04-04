@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from bernstein.adapters.skills_injector import (
     ROLE_SKILL_MAP,
     inject_skills,
     render_skill_template,
 )
-from bernstein.core.models import Task, TaskStatus, TaskType
+from bernstein.core.models import Task
 
 
 def _make_task(id: str = "T-001", title: str = "Test task") -> Task:

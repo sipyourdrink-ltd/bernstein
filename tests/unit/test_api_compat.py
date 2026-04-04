@@ -6,10 +6,6 @@ interfaces, and that the Bernstein task server public API contract is stable.
 
 from __future__ import annotations
 
-import inspect
-from typing import Any
-
-
 # ---------------------------------------------------------------------------
 # Unit tests for compare_signatures helper
 # ---------------------------------------------------------------------------

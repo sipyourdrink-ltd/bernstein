@@ -6,10 +6,8 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
-from bernstein.core.bootstrap import _register_mcp_discovery
 from bernstein.cli.stop_cmd import _unregister_mcp_discovery
+from bernstein.core.bootstrap import _register_mcp_discovery
 
 
 def test_register_creates_mcp_json(tmp_path: Path) -> None:

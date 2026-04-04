@@ -13,7 +13,6 @@ from bernstein.core.sensitive_data import (
     strip_sensitive_fields,
 )
 
-
 # ---------------------------------------------------------------------------
 # SensitiveData — basic wrapper behaviour
 # ---------------------------------------------------------------------------

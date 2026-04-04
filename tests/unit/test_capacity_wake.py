@@ -5,10 +5,7 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
-
 from bernstein.core.capacity_wake import CapacityWake, WakeReason
-
 
 # ---------------------------------------------------------------------------
 # WakeReason.TIMEOUT
@@ -153,7 +150,7 @@ def test_concurrent_signals_safe() -> None:
         for _ in range(50):
             try:
                 wake.signal_capacity()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(exc)
 
     threads = [threading.Thread(target=_spam_capacity) for _ in range(4)]

@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from bernstein.core.prompt_caching import (
-    BreakCorrelation,
     CacheBreakCorrelator,
     CacheBreakEvent,
     CacheBreakReason,

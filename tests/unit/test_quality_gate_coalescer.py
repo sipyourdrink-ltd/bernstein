@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import patch
 
 from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.quality_gate_coalescer import QualityGateCoalescer, _PendingRun
 from bernstein.core.quality_gates import QualityGatesConfig, QualityGatesResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers

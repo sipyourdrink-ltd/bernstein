@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.core.metric_collector import MetricType, MetricsCollector, PrivacyLevel
-
+from bernstein.core.metric_collector import MetricsCollector, PrivacyLevel
 
 # ---------------------------------------------------------------------------
 # PrivacyLevel.apply_privacy_filter

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -13,7 +13,6 @@ from bernstein.core.cascading_token_counter import (
     _count_tokens_via_api,
     count_tokens_cascading,
 )
-
 
 # ---------------------------------------------------------------------------
 # _count_tokens_via_api
