@@ -147,7 +147,7 @@ class AdaptiveParallelism:
                 )
             return self._current_max
 
-        # Rule 2: High error rate → reduce by 1
+        # Rule 2: High error rate → reduce by 1 (floor enforced by Rule 5 below)
         if error_rate > _ERROR_RATE_HIGH and self._current_max > 1:
             self._current_max -= 1
             self._low_error_since = None
@@ -193,6 +193,15 @@ class AdaptiveParallelism:
         # Rule 0: SLO error-budget hard cap takes precedence over all adaptive rules
         if self._slo_constrained_max is not None:
             self._current_max = min(self._current_max, self._slo_constrained_max)
+
+        # Rule 5: Minimum floor — never go below half the configured max.
+        # Prevents the system from crawling at 1-2 agents when 6 slots are
+        # available.  The only exception is CPU overload (handled above with
+        # early return).  Error-rate reduction and SLO cap are clamped to
+        # this floor so the orchestrator always makes meaningful progress.
+        min_agents = max(1, self.configured_max // 2)  # e.g. 3 when max=6
+        if self._current_max < min_agents:
+            self._current_max = min_agents
 
         return self._current_max
 
