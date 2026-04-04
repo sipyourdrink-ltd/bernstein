@@ -258,15 +258,8 @@ class ClaudeCodeAdapter(CLIAdapter):
         if mcp_config:
             cmd.extend(["--mcp-config", json.dumps(mcp_config)])
 
-        # Use --append-system-prompt-file for long addenda to avoid shell
-        # argument length limits and quoting issues.
         if system_addendum:
-            import tempfile
-
-            fd, addendum_path = tempfile.mkstemp(suffix=".md", prefix="bernstein-prompt-")
-            os.write(fd, system_addendum.encode())
-            os.close(fd)
-            cmd.extend(["--append-system-prompt-file", addendum_path])
+            cmd.extend(["--append-system-prompt", system_addendum])
 
         cmd.extend(["-p", prompt])
         return cmd
