@@ -88,7 +88,7 @@ def _count_tokens_via_api(text: str, model: str) -> int | None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=_API_TIMEOUT_S) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=_API_TIMEOUT_S) as resp:
             data: dict[str, Any] = json.loads(resp.read().decode("utf-8"))
             count: int = data["input_tokens"]
             logger.debug("cascading_token_counter: API tier returned %d tokens", count)

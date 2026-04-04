@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -216,13 +216,12 @@ def activate_context_for_task(
 
     activated: list[str] = []
     for rule in rules:
-        if _rule_matches(rule, owned_files):
-            if rule.context:
-                activated.append(rule.context)
-                logger.debug(
-                    "context_activation: activated rule %r for files %s",
-                    rule.description,
-                    owned_files[:3],
-                )
+        if _rule_matches(rule, owned_files) and rule.context:
+            activated.append(rule.context)
+            logger.debug(
+                "context_activation: activated rule %r for files %s",
+                rule.description,
+                owned_files[:3],
+            )
 
     return "\n".join(activated)

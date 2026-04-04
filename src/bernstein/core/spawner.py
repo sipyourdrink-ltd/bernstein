@@ -497,9 +497,7 @@ def _render_prompt(
     if rich_context:
         sections.append(f"\n{rich_context}\n")
     if file_scope_context:
-        sections.append(
-            deduplicate_section(f"\n## File-scope context\n{file_scope_context}\n")
-        )
+        sections.append(deduplicate_section(f"\n## File-scope context\n{file_scope_context}\n"))
     predecessor_ctx = _render_predecessor_context(tasks, task_graph)
     if predecessor_ctx:
         sections.append(predecessor_ctx)
