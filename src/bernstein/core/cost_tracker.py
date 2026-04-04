@@ -411,7 +411,7 @@ class CostTracker:
                 should_stop=False,
             )
 
-        pct = self._spent_usd / self.budget_usd if self.budget_usd > 0 else 0.0
+        pct = self._spent_usd / self.budget_usd
         remaining = max(self.budget_usd - self._spent_usd, 0.0)
         return BudgetStatus(
             run_id=self.run_id,

@@ -448,7 +448,7 @@ class DashboardHeader(Static):
             right.append(self.cost_trend, style=f"bold {PALETTE.glow}")
             right.append("  ", style="")
         if self.budget_usd > 0:
-            ratio = self.spent_usd / self.budget_usd if self.budget_usd > 0 else 0.0
+            ratio = self.spent_usd / self.budget_usd
             right.append(f"${self.spent_usd:.2f}/${self.budget_usd:.2f}", style=f"bold {budget_color(ratio)}")
         else:
             right.append(f"${self.spent_usd:.2f}", style=f"bold {PALETTE.success}")
