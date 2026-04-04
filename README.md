@@ -87,6 +87,9 @@ bernstein init
 
 # 3. Run — pass a goal inline or let bernstein.yaml guide the run
 bernstein -g "Add rate limiting and improve test coverage"
+
+# 4. Stop when done
+bernstein stop
 ```
 
 That's it. Your agents spawn, work in parallel, verify their output, and exit. Watch progress in the terminal dashboard.
@@ -183,6 +186,16 @@ bernstein logs -f       # tail live agent output
 ```
 
 Agents appear in Activity Monitor / `ps` as `bernstein: <role> [<session>]` — no more hunting for mystery Python processes.
+
+### Command aliases
+
+Hidden aliases kept for backward compatibility — not shown in `--help`:
+
+| Alias | Canonical command | Notes |
+|-------|------------------|-------|
+| `overture` | `init` | Init workspace (legacy name) |
+| `downbeat` | `start` | Start server and spawn manager (legacy name) |
+| `score` | `status` | Task summary and agent health (legacy name) |
 
 ## Plan files
 

@@ -41,15 +41,12 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
     {
         # Core workflow
         "run",
-        "init",
         "stop",
-        "start",
         "demo",
         "cook",
         # Monitoring & diagnostics
         "live",
         "dashboard",
-        "status",
         "ps",
         "cost",
         "doctor",
@@ -122,6 +119,10 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "worker",
         "dr",
         "incident",
+        # Hidden aliases (backward compat — documented in README "Command aliases" table)
+        "overture",  # alias for init
+        "downbeat",  # alias for start
+        "score",     # alias for status
     }
 )
 
