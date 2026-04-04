@@ -156,7 +156,8 @@ def _get_active_agent_files(orch: Any) -> set[str]:
         # Try to get real changed files from the worktree git diff
         worktree_path = None
         if spawner is not None:
-            worktree_path = getattr(spawner, "get_worktree_path", lambda _: None)(agent_id)
+            _get_wt = getattr(spawner, "get_worktree_path", None)
+            worktree_path = _get_wt(agent_id) if _get_wt is not None else None
         if worktree_path is not None:
             changed = _get_changed_files_in_worktree(worktree_path)
             active_files.update(changed)
