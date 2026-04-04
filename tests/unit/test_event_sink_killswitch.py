@@ -7,9 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from bernstein.core.metric_collector import EventSink, MetricsCollector, PrivacyLevel
 from bernstein.core import prometheus as prom_module
-
+from bernstein.core.metric_collector import EventSink, MetricsCollector
 
 # ---------------------------------------------------------------------------
 # EventSink enum

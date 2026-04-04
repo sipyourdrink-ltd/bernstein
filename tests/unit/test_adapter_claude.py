@@ -8,7 +8,7 @@ import signal
 import subprocess
 import sys
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,11 +21,6 @@ from bernstein.adapters.claude import (
     load_mcp_config,
 )
 from bernstein.core.models import ModelConfig
-
-from pathlib import Path
-
-if TYPE_CHECKING:
-    pass
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures

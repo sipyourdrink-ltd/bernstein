@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.plugin_reconciler import (
     MarketplaceEntry,
     ReconcileResult,
@@ -13,7 +11,6 @@ from bernstein.core.plugin_reconciler import (
     load_marketplace,
     reconcile_plugins,
 )
-
 
 # ---------------------------------------------------------------------------
 # load_marketplace

@@ -16,13 +16,10 @@ from bernstein.core.plugin_installer import (
     GitHubSource,
     GitSource,
     NpmSource,
-    PluginInstallResult,
     _extract_archive,
-    _fetch_github_release_asset_url,
     install_plugin,
     update_plugin,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

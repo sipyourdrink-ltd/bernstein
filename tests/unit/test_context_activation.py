@@ -11,7 +11,6 @@ from bernstein.core.context_activation import (
     activate_context_for_task,
 )
 
-
 # ---------------------------------------------------------------------------
 # ContextRule dataclass
 # ---------------------------------------------------------------------------

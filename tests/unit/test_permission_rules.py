@@ -8,7 +8,6 @@ from bernstein.core.permission_rules import (
     PermissionRule,
     PermissionRuleEngine,
     RuleAction,
-    RuleMatch,
     _glob_match,
     _glob_to_regex,
     load_permission_rules,
