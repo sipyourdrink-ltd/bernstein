@@ -55,6 +55,10 @@ AUTH_PUBLIC_PATHS = frozenset(
     }
 )
 
+# Path prefixes that are always accessible without authentication.
+# Used for routes with path parameters (e.g. /hooks/{session_id}).
+AUTH_PUBLIC_PATH_PREFIXES = ("/hooks/",)
+
 # Read-only methods that viewers can access
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -132,7 +136,7 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Public paths are always accessible
-        if path in AUTH_PUBLIC_PATHS:
+        if path in AUTH_PUBLIC_PATHS or path.startswith(AUTH_PUBLIC_PATH_PREFIXES):
             response = await call_next(request)
             return response
 
