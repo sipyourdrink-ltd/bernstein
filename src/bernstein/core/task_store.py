@@ -74,6 +74,7 @@ class TaskRecord(TypedDict):
     risk_level: str
     slack_context: dict[str, Any] | None
     version: int
+    claimed_by_session: str | None
 
 
 class ArchiveRecord(TypedDict):
@@ -91,6 +92,7 @@ class ArchiveRecord(TypedDict):
     cost_usd: float | None
     assigned_agent: str | None
     owned_files: list[str]
+    claimed_by_session: str | None
 
 
 class ProgressEntry(TypedDict):
@@ -482,6 +484,7 @@ class TaskStore:
             "assigned_agent": task.assigned_agent,
             "owned_files": list(task.owned_files),
             "tenant_id": normalize_tenant_id(task.tenant_id),
+            "claimed_by_session": task.claimed_by_session,
         }
         line = json.dumps(record, default=str) + "\n"
 
@@ -545,6 +548,7 @@ class TaskStore:
             "risk_level": task.risk_level,
             "slack_context": task.slack_context,
             "version": task.version,
+            "claimed_by_session": task.claimed_by_session,
         }
 
     # -- public API ---------------------------------------------------------
@@ -718,7 +722,12 @@ class TaskStore:
 
         return task
 
-    async def claim_next(self, role: str, tenant_id: str | None = None) -> Task | None:
+    async def claim_next(
+        self,
+        role: str,
+        tenant_id: str | None = None,
+        claimed_by_session: str | None = None,
+    ) -> Task | None:
         """Claim the highest-priority open task for *role*.
 
         Priority is ascending (1 = critical). Among equal priorities,
@@ -726,6 +735,8 @@ class TaskStore:
 
         Args:
             role: Agent role to match.
+            tenant_id: Optional tenant scope filter.
+            claimed_by_session: Parent orchestrator session ID to record as claim owner.
 
         Returns:
             The claimed Task, or None if nothing is available.
@@ -756,6 +767,7 @@ class TaskStore:
                 return None
             self._index_remove(task)
             transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_next")
+            task.claimed_by_session = claimed_by_session
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
@@ -766,6 +778,7 @@ class TaskStore:
         task_id: str,
         expected_version: int | None = None,
         agent_role: str | None = None,
+        claimed_by_session: str | None = None,
     ) -> Task:
         """Claim a specific task by ID with optional optimistic locking and role matching.
 
@@ -781,6 +794,7 @@ class TaskStore:
             task_id: Task identifier.
             expected_version: If set, CAS — reject if task.version != this.
             agent_role: If set, reject if task.role != agent_role.
+            claimed_by_session: Parent orchestrator session ID to record as claim owner.
 
         Returns:
             The claimed Task.
@@ -807,6 +821,7 @@ class TaskStore:
                     raise ValueError(f"task {task_id} has unresolved dependencies")
                 self._index_remove(task)
                 transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_by_id")
+                task.claimed_by_session = claimed_by_session
                 task.version += 1
                 self._index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
@@ -817,6 +832,7 @@ class TaskStore:
         task_ids: list[str],
         agent_id: str,
         agent_role: str | None = None,
+        claimed_by_session: str | None = None,
     ) -> tuple[list[str], list[str]]:
         """Atomically claim multiple tasks by ID with optional role matching.
 
@@ -828,6 +844,7 @@ class TaskStore:
             task_ids: List of task identifiers to claim.
             agent_id: The agent claiming the tasks.
             agent_role: If set, only tasks with matching role can be claimed.
+            claimed_by_session: Parent orchestrator session ID to record as claim owner.
 
         Returns:
             A tuple of (claimed_ids, failed_ids).
@@ -846,6 +863,7 @@ class TaskStore:
                 self._index_remove(task)
                 transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason=f"claim_batch by {agent_id}")
                 task.assigned_agent = agent_id
+                task.claimed_by_session = claimed_by_session
                 task.version += 1
                 self._index_add(task)
                 await self._append_jsonl(self._task_to_record(task))
@@ -1166,6 +1184,7 @@ class TaskStore:
                 transition_task(task, TaskStatus.OPEN, actor="task_store", reason="force_claim")
                 self._index_add(task)
             task.priority = 0
+            task.claimed_by_session = None  # Clear ownership on force-claim
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))
             return task
@@ -1175,8 +1194,9 @@ class TaskStore:
         status: str | None = None,
         cell_id: str | None = None,
         tenant_id: str | None = None,
+        claimed_by_session: str | None = None,
     ) -> list[Task]:
-        """Return all tasks, optionally filtered by status and/or cell_id.
+        """Return all tasks, optionally filtered by status, cell_id, and/or claim owner.
 
         When status='open', tasks whose dependencies are not all done are
         excluded (they are not yet available for agents to pick up).
@@ -1184,6 +1204,9 @@ class TaskStore:
         Args:
             status: If provided, only tasks with this status are returned.
             cell_id: If provided, only tasks in this cell are returned.
+            tenant_id: If provided, only tasks in this tenant are returned.
+            claimed_by_session: If provided, only tasks claimed by this
+                parent session are returned.
 
         Returns:
             List of matching tasks.
@@ -1201,6 +1224,8 @@ class TaskStore:
         if tenant_id is not None:
             normalized_tenant = normalize_tenant_id(tenant_id)
             tasks = [t for t in tasks if t.tenant_id == normalized_tenant]
+        if claimed_by_session is not None:
+            tasks = [t for t in tasks if t.claimed_by_session == claimed_by_session]
         if status == "open":
             tasks = [t for t in tasks if self._dependencies_satisfied(t)]
         return tasks

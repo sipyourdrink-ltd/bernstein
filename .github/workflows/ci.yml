@@ -89,16 +89,26 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
       - run: uv run python scripts/run_tests.py -x
-      - name: Coverage report (3.13 only)
-        if: matrix.python-version == '3.13' && always()
+      - name: Generate coverage report (3.13 only)
+        if: matrix.python-version == '3.13'
         run: |
           uv run pytest tests/unit/ \
             --cov=bernstein --cov-report=xml:coverage.xml \
             -q --tb=no --no-header \
             --timeout=120 || true
-          ls -la coverage.xml 2>/dev/null || echo "WARNING: coverage.xml was not generated"
-      - name: Upload coverage
-        if: matrix.python-version == '3.13' && always()
+          if [ ! -f coverage.xml ]; then
+            echo "::warning::coverage.xml was not generated"
+          fi
+      - name: Upload coverage artifact
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.13'
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
@@ -156,6 +166,26 @@ jobs:
               exit 1
             fi
           done
+
+  sonarcloud:
+    name: SonarCloud analysis
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: always()
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+        continue-on-error: true
+      - name: SonarCloud scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # Auto-fix lint issues and push a fix commit (only on main, only if lint fails)
   autofix:
@@ -249,7 +279,7 @@ jobs:
     name: PR CI summary
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    needs: [repo-hygiene, lint, typecheck, test, spelling, dead-code, actionlint, dist-size]
+    needs: [repo-hygiene, lint, typecheck, test, spelling, dead-code, actionlint, dist-size, sonarcloud]
     permissions:
       pull-requests: write
     steps:
@@ -266,6 +296,7 @@ jobs:
               { name: 'Dead code', result: '${{ needs.dead-code.result }}' },
               { name: 'Workflow lint', result: '${{ needs.actionlint.result }}' },
               { name: 'Dist size', result: '${{ needs.dist-size.result }}' },
+              { name: 'SonarCloud', result: '${{ needs.sonarcloud.result }}' },
             ];
             const icon = (r) => r === 'success' ? '✅' : r === 'failure' ? '❌' : r === 'skipped' ? '⏭️' : '⚠️';
             let body = `${marker}\n### CI Summary\n\n`;

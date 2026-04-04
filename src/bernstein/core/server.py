@@ -338,6 +338,7 @@ class TaskResponse(BaseModel):
     deadline: float | None = None
     progress_log: list[ProgressEntry] = Field(default_factory=lambda: list[ProgressEntry]())
     version: int = 1
+    claimed_by_session: str | None = None
 
 
 class WebhookTaskResponse(BaseModel):
@@ -401,6 +402,7 @@ class BatchClaimRequest(BaseModel):
 
     task_ids: list[str]
     agent_id: str
+    claimed_by_session: str | None = None
 
 
 class BatchClaimResponse(BaseModel):
@@ -804,6 +806,7 @@ def task_to_response(task: Task) -> TaskResponse:
         created_at=task.created_at,
         progress_log=list(cast("list[ProgressEntry]", task.progress_log)),  # type: ignore[reportUnknownMemberType]
         version=task.version,
+        claimed_by_session=task.claimed_by_session,
     )
 
 

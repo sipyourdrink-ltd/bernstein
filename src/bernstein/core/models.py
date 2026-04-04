@@ -261,6 +261,7 @@ class Task:
     deadline: float | None = None  # Epoch timestamp when task must be complete
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
+    claimed_by_session: str | None = None  # Parent orchestrator session that claimed this task
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Task:
@@ -336,6 +337,7 @@ class Task:
             deadline=raw.get("deadline"),
             progress_log=list(raw.get("progress_log", [])),
             version=raw.get("version", 1),
+            claimed_by_session=raw.get("claimed_by_session"),
         )
 
 

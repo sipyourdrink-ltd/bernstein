@@ -23,6 +23,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Prometheus transition-reason recording (best-effort, never raises)
+# ---------------------------------------------------------------------------
+
+
+def _record_prometheus_transition(reason: str, role: str, *, entity_type: str = "agent") -> None:
+    """Forward a transition reason to the Prometheus counter.
+
+    Import is deferred so the lifecycle module stays import-cheap when
+    ``prometheus_client`` is not installed.
+    """
+    try:
+        from bernstein.core.prometheus import record_transition_reason
+
+        record_transition_reason(reason, role, entity_type=entity_type)
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to record Prometheus transition reason", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Audit log integration
 # ---------------------------------------------------------------------------
@@ -234,6 +254,10 @@ def transition_task(
         )
         _emit(event)
 
+    # Record transition reason in Prometheus counters
+    if transition_reason is not None:
+        _record_prometheus_transition(transition_reason.value, task.role, entity_type="task")
+
     if _audit_log is not None:
         input_state = {"task_id": task.id, "status": old_status.value}
         output_state = {"task_id": task.id, "status": new_status.value}
@@ -324,6 +348,10 @@ def transition_agent(
             abort_reason=abort_reason,
         )
         _emit(event)
+
+    # Record transition reason in Prometheus counters
+    if transition_reason is not None:
+        _record_prometheus_transition(transition_reason.value, agent.role, entity_type="agent")
 
     if _audit_log is not None:
         input_state = {"agent_id": agent.id, "status": old_status}

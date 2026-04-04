@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "agent_spawn_duration",
+    "agent_transition_reasons_total",
     "agents_active",
     "cost_usd_by_model_total",
     "cost_usd_total",
@@ -37,10 +38,12 @@ __all__ = [
     "evolve_proposals_total",
     "generate_latest",
     "merge_duration",
+    "record_transition_reason",
     "registry",
     "set_prometheus_enabled",
     "task_duration_seconds",
     "task_queue_depth",
+    "task_transition_reasons_total",
     "tasks_active",
     "tasks_total",
     "update_metrics_from_status",
@@ -134,6 +137,92 @@ evolution_errors_by_type: Counter = Counter(
     labelnames=["error_type"],
     registry=registry,
 )
+
+agent_transition_reasons_total: Counter = Counter(
+    "bernstein_agent_transition_reasons_total",
+    "Agent lifecycle transitions by reason (why agents die or change state).",
+    labelnames=["reason", "role"],
+    registry=registry,
+)
+
+task_transition_reasons_total: Counter = Counter(
+    "bernstein_task_transition_reasons_total",
+    "Task lifecycle transitions by reason.",
+    labelnames=["reason", "role"],
+    registry=registry,
+)
+
+# ---------------------------------------------------------------------------
+# Cardinality guard — only allow known TransitionReason enum values as labels.
+# Unknown values are bucketed under "unknown" to prevent cardinality explosion.
+# ---------------------------------------------------------------------------
+
+_KNOWN_REASONS: frozenset[str] = frozenset(
+    {
+        "completed",
+        "aborted",
+        "retry",
+        "prompt_too_long",
+        "max_output_tokens",
+        "max_turns",
+        "provider_413",
+        "provider_529",
+        "compaction_failed",
+        "stop_hook_blocked",
+        "permission_denied",
+        "sibling_aborted",
+        "orphan_recovered",
+    }
+)
+
+_CARDINALITY_LIMIT: int = 64
+_seen_reasons: set[str] = set()
+
+
+def _sanitize_reason(raw: str) -> str:
+    """Normalise a transition reason label and enforce cardinality limits.
+
+    Returns a known reason string unchanged, or ``"unknown"`` if the value
+    is not in the closed set or the cardinality limit has been reached.
+    """
+    value = raw.strip().lower()
+    if value in _KNOWN_REASONS:
+        return value
+    # Dynamic overflow bucket
+    if len(_seen_reasons) >= _CARDINALITY_LIMIT:
+        return "unknown"
+    _seen_reasons.add(value)
+    return value if value else "unknown"
+
+
+def record_transition_reason(
+    reason: str,
+    role: str = "unknown",
+    *,
+    entity_type: str = "agent",
+) -> None:
+    """Increment the transition-reason counter for a lifecycle event.
+
+    Safe to call from hot paths — respects the kill-switch and silently
+    drops bad input rather than raising.
+
+    Args:
+        reason: The ``TransitionReason`` value (or raw string).
+        role: Agent/task role label (e.g. ``"backend"``, ``"qa"``).
+        entity_type: ``"agent"`` or ``"task"`` — selects which counter family.
+    """
+    if not _prometheus_enabled:
+        return
+    sanitized = _sanitize_reason(reason)
+    role = (role.strip() or "unknown").lower()
+    try:
+        if entity_type == "task":
+            task_transition_reasons_total.labels(reason=sanitized, role=role).inc()
+        else:
+            agent_transition_reasons_total.labels(reason=sanitized, role=role).inc()
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to record transition reason metric", exc_info=True)
+
 
 # ---------------------------------------------------------------------------
 # Kill-switch — lets operators disable the Prometheus sink without restarting

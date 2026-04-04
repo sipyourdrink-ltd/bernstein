@@ -107,6 +107,24 @@ _AUTH_ERROR_PATTERNS: tuple[str, ...] = (
     "PermissionDeniedError",
 )
 
+# Text patterns that indicate a context-overflow / prompt-too-long (413) error.
+_CONTEXT_OVERFLOW_PATTERNS: tuple[str, ...] = (
+    "413",
+    "prompt is too long",
+    "prompt too long",
+    "context window",
+    "context_length_exceeded",
+    "max_tokens",
+    "maximum context length",
+    "token limit exceeded",
+    "request too large",
+    "payload too large",
+    "input is too long",
+    "prompt_too_long",
+    "context length exceeded",
+    "PromptTooLongError",
+)
+
 _BASE_THROTTLE_S: float = 60.0
 _MAX_THROTTLE_S: float = 3600.0
 _LOG_SCAN_TAIL_LINES: int = 500
@@ -385,20 +403,38 @@ class RateLimitTracker:
         """
         return self._scan_log_for_patterns(log_path, _AUTH_ERROR_PATTERNS)
 
-    def detect_failure_type(self, log_path: Path) -> str | None:
-        """Scan an agent log and return the detected failure type.
+    def scan_log_for_context_overflow(self, log_path: Path) -> bool:
+        """Scan the tail of *log_path* for context-overflow / 413 patterns.
 
-        Checks for rate limits first, then timeouts, then auth errors, then general API errors.
+        Detects prompt-too-long errors emitted by providers when the agent's
+        context window is exceeded (HTTP 413 or equivalent error messages).
 
         Args:
             log_path: Path to the agent's subprocess log file.
 
         Returns:
-            One of ``"rate_limit"``, ``"timeout"``, ``"auth_error"``, ``"api_error"``, or ``None``
-            if no failure pattern was detected.
+            True if a context-overflow indicator was found, False otherwise.
+        """
+        return self._scan_log_for_patterns(log_path, _CONTEXT_OVERFLOW_PATTERNS)
+
+    def detect_failure_type(self, log_path: Path) -> str | None:
+        """Scan an agent log and return the detected failure type.
+
+        Checks for rate limits first, then context overflow, then timeouts,
+        then auth errors, then general API errors.
+
+        Args:
+            log_path: Path to the agent's subprocess log file.
+
+        Returns:
+            One of ``"rate_limit"``, ``"context_overflow"``, ``"timeout"``,
+            ``"auth_error"``, ``"api_error"``, or ``None`` if no failure
+            pattern was detected.
         """
         if self.scan_log_for_429(log_path):
             return "rate_limit"
+        if self.scan_log_for_context_overflow(log_path):
+            return "context_overflow"
         if self.scan_log_for_timeout(log_path):
             return "timeout"
         if self.scan_log_for_auth_error(log_path):

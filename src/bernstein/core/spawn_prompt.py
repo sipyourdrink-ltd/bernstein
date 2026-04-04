@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import re as _re
 import subprocess as _subprocess
@@ -23,6 +24,197 @@ if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Conditional context activation (T677)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SectionRule:
+    """Declares when a named prompt section should be activated.
+
+    A section is included when **any** of its activation conditions are met.
+    Sections with no conditions (all fields empty/None) are always included.
+
+    Attributes:
+        roles: Roles for which the section is relevant (empty = all roles).
+        exclude_roles: Roles for which the section is irrelevant.
+        file_patterns: Gitignore-style globs matched against task ``owned_files``.
+            If set, the section activates only when at least one file matches.
+        require_session: When True, section requires a non-empty ``session_id``.
+        min_scope: Minimum task scope ordinal (small=0, medium=1, large=2).
+            None means no scope constraint.
+    """
+
+    roles: frozenset[str] = frozenset()
+    exclude_roles: frozenset[str] = frozenset()
+    file_patterns: tuple[str, ...] = ()
+    require_session: bool = False
+    min_scope: int | None = None
+
+
+def _scope_ordinal(scope_value: str) -> int:
+    """Map a scope enum value to an ordinal for comparison.
+
+    Args:
+        scope_value: Scope string ("small", "medium", "large").
+
+    Returns:
+        Integer ordinal (0, 1, 2).
+    """
+    return {"small": 0, "medium": 1, "large": 2}.get(scope_value, 1)
+
+
+def _files_match_patterns(files: list[str], patterns: tuple[str, ...]) -> bool:
+    """Check if any file in *files* matches any gitignore-style glob in *patterns*.
+
+    Uses ``fnmatch.fnmatch`` for glob matching — supports ``*``, ``**``, ``?``,
+    and ``[seq]`` syntax.
+
+    Args:
+        files: List of file paths from the task.
+        patterns: Gitignore-style globs.
+
+    Returns:
+        True if at least one file matches at least one pattern.
+    """
+    for fp in files:
+        for pat in patterns:
+            if fnmatch.fnmatch(fp, pat):
+                return True
+    return False
+
+
+# Section relevance rules.  Sections not listed here are always included
+# (they are "critical" — role, tasks, instructions, git_safety).
+SECTION_RULES: dict[str, SectionRule] = {
+    "specialists": SectionRule(roles=frozenset({"manager"})),
+    "team awareness": SectionRule(
+        exclude_roles=frozenset({"docs", "analyst", "visionary"}),
+        require_session=True,
+    ),
+    "team coordination": SectionRule(
+        exclude_roles=frozenset({"docs", "analyst", "visionary"}),
+        require_session=True,
+    ),
+    "file ownership": SectionRule(
+        exclude_roles=frozenset({"manager", "docs", "analyst", "visionary"}),
+        require_session=True,
+    ),
+    "heartbeat": SectionRule(require_session=True, min_scope=1),
+    "recommendations": SectionRule(
+        exclude_roles=frozenset({"manager", "visionary"}),
+    ),
+    "lessons": SectionRule(
+        exclude_roles=frozenset({"manager", "visionary"}),
+    ),
+    "predecessor": SectionRule(),  # Always included when present (already gated by data)
+    "project": SectionRule(),  # Always included when present (already gated by data)
+    "meta nudges": SectionRule(),  # Always included when present
+}
+
+
+def section_is_relevant(
+    section_name: str,
+    *,
+    role: str,
+    scope: str,
+    owned_files: list[str],
+    session_id: str,
+    rules: dict[str, SectionRule] | None = None,
+) -> bool:
+    """Decide whether a named section should be included in the prompt.
+
+    Sections not present in the rules table are always included (they are
+    considered critical).  For sections with rules, all applicable conditions
+    must pass:
+
+    - ``roles``: if non-empty, the task role must be in the set.
+    - ``exclude_roles``: if non-empty, the task role must NOT be in the set.
+    - ``file_patterns``: if non-empty, at least one owned file must match.
+    - ``require_session``: if True, session_id must be non-empty.
+    - ``min_scope``: if set, the task scope ordinal must be >= this value.
+
+    Args:
+        section_name: Name of the prompt section.
+        role: Task role (lowercase).
+        scope: Task scope value ("small", "medium", "large").
+        owned_files: File paths owned by the task.
+        session_id: Agent session identifier.
+        rules: Optional override rules (defaults to ``SECTION_RULES``).
+
+    Returns:
+        True if the section should be included.
+    """
+    rule_table = rules if rules is not None else SECTION_RULES
+    rule = rule_table.get(section_name)
+    if rule is None:
+        # No rule means always include (critical section).
+        return True
+
+    role_lower = role.lower()
+
+    # Check role inclusion
+    if rule.roles and role_lower not in rule.roles:
+        return False
+
+    # Check role exclusion
+    if rule.exclude_roles and role_lower in rule.exclude_roles:
+        return False
+
+    # Check file pattern matching
+    if rule.file_patterns and not _files_match_patterns(owned_files, rule.file_patterns):
+        return False
+
+    # Check session requirement
+    if rule.require_session and not session_id:
+        return False
+
+    # Check scope threshold
+    return not (rule.min_scope is not None and _scope_ordinal(scope) < rule.min_scope)
+
+
+def filter_sections(
+    sections: list[tuple[str, str]],
+    *,
+    role: str,
+    scope: str,
+    owned_files: list[str],
+    session_id: str,
+    rules: dict[str, SectionRule] | None = None,
+) -> list[tuple[str, str]]:
+    """Filter a named-sections list, keeping only relevant sections.
+
+    Args:
+        sections: List of ``(section_name, content)`` tuples.
+        role: Task role.
+        scope: Task scope value.
+        owned_files: Files owned by the task.
+        session_id: Agent session identifier.
+        rules: Optional override rules.
+
+    Returns:
+        Filtered list with irrelevant sections removed.
+    """
+    kept: list[tuple[str, str]] = []
+    dropped: list[str] = []
+    for name, content in sections:
+        if section_is_relevant(
+            name,
+            role=role,
+            scope=scope,
+            owned_files=owned_files,
+            session_id=session_id,
+            rules=rules,
+        ):
+            kept.append((name, content))
+        else:
+            dropped.append(name)
+    if dropped:
+        logger.info("Conditional context: dropped %d sections (%s)", len(dropped), ", ".join(dropped))
+    return kept
 
 # ---------------------------------------------------------------------------
 # Lesson extraction cache (per-role, TTL-based)
@@ -579,6 +771,22 @@ def _render_prompt(
 
     # Strip empty/whitespace-only sections before compression
     named_sections = [(name, content) for name, content in named_sections if content and content.strip()]
+
+    # Conditional context activation (T677): skip sections irrelevant to this task
+    all_owned: list[str] = []
+    for t in tasks:
+        all_owned.extend(t.owned_files)
+    # Use the broadest scope across the task batch
+    scope_values = {"small": 0, "medium": 1, "large": 2}
+    max_scope = max((scope_values.get(t.scope.value, 1) for t in tasks), default=1)
+    scope_name = {0: "small", 1: "medium", 2: "large"}.get(max_scope, "medium")
+    named_sections = filter_sections(
+        named_sections,
+        role=role,
+        scope=scope_name,
+        owned_files=all_owned,
+        session_id=session_id,
+    )
 
     # Log prompt stats for observability
     total_chars = sum(len(content) for _, content in named_sections)

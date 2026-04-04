@@ -362,6 +362,222 @@ def _maybe_preserve_worktree(orch: Any, session: AgentSession, task_id: str) -> 
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Reactive 413 compaction handler
+# ---------------------------------------------------------------------------
+
+#: Meta-message injected into tasks retried after context-overflow compaction.
+_COMPACT_RETRY_META = (
+    "CONTEXT COMPACTION: Previous attempt hit a context-window limit (HTTP 413). "
+    "The prompt has been compacted.  Focus on the task goal — do NOT try to "
+    "reconstruct the removed context."
+)
+
+#: Maximum number of times a task may be retried via context compaction.
+#: After this many compaction-retries the task is failed permanently.
+_COMPACT_MAX_RETRIES: int = 1
+
+
+def _try_compact_and_retry(
+    *,
+    orch: Any,
+    task: Task,
+    task_id: str,
+    session: AgentSession,
+    tasks_snapshot: dict[str, list[Task]],
+    fallback_model: str | None,
+) -> bool:
+    """Run the compaction pipeline on the task's prompt and retry once.
+
+    When an agent crashes with a 413 / context-overflow error, this function:
+
+    1. Reads the agent's log to reconstruct what the prompt looked like.
+    2. Runs :class:`~bernstein.core.compaction_pipeline.CompactionPipeline`
+       on the task description (the only mutable part of the prompt).
+    3. Creates a retry task with a ``meta_message`` instructing the agent
+       to work with reduced context.
+    4. Returns ``True`` if the retry was queued, ``False`` if compaction
+       failed or the retry limit was reached.
+
+    Bounded to ``_COMPACT_MAX_RETRIES`` retries to prevent infinite loops.
+
+    Args:
+        orch: Orchestrator instance.
+        task: The failed task.
+        task_id: Task ID.
+        session: Dead agent session.
+        tasks_snapshot: Pre-fetched tasks for dedup checks.
+        fallback_model: Optional cascade fallback model.
+
+    Returns:
+        True if a compacted retry was successfully queued.
+    """
+    from bernstein.core.compaction_pipeline import CompactionPipeline
+
+    # Guard: check if we've already compacted this task too many times.
+    # We detect previous compaction retries via the meta_messages list.
+    prior_compact_retries = sum(1 for m in task.meta_messages if "CONTEXT COMPACTION" in m)
+    if prior_compact_retries >= _COMPACT_MAX_RETRIES:
+        logger.warning(
+            "Task %s already had %d compaction retries — failing permanently",
+            task_id,
+            prior_compact_retries,
+        )
+        retry_or_fail_task(
+            task_id,
+            f"Context overflow: compaction retries exhausted ({prior_compact_retries}/{_COMPACT_MAX_RETRIES})",
+            client=orch._client,
+            server_url=orch._config.server_url,
+            max_task_retries=0,  # force permanent fail
+            retried_task_ids=orch._retried_task_ids,
+            tasks_snapshot=tasks_snapshot,
+        )
+        return False
+
+    # Run the compaction pipeline on the task description.
+    pipeline = CompactionPipeline(plugin_manager=getattr(orch, "_plugin_manager", None))
+    description_text = task.description
+    tokens_before = max(1, len(description_text) // 4)
+
+    try:
+        result = pipeline.execute(
+            session_id=session.id,
+            context_text=description_text,
+            tokens_before=tokens_before,
+            reason="provider_413",
+        )
+    except Exception as exc:
+        logger.error("Compaction pipeline failed for task %s: %s", task_id, exc)
+        retry_or_fail_task(
+            task_id,
+            f"Context overflow compaction failed: {exc}",
+            client=orch._client,
+            server_url=orch._config.server_url,
+            max_task_retries=orch._config.max_task_retries,
+            retried_task_ids=orch._retried_task_ids,
+            tasks_snapshot=tasks_snapshot,
+        )
+        return False
+
+    logger.info(
+        "Compacted task %s description: %d → %d tokens (saved %d, correlation=%s)",
+        task_id,
+        result.tokens_before,
+        result.tokens_after,
+        result.tokens_saved,
+        result.correlation_id,
+    )
+
+    # Retry the task with compacted description and a nudge meta-message.
+    retry_or_fail_task(
+        task_id,
+        f"Context overflow (413): compacted and retrying ({result.correlation_id})",
+        client=orch._client,
+        server_url=orch._config.server_url,
+        max_task_retries=orch._config.max_task_retries,
+        retried_task_ids=orch._retried_task_ids,
+        tasks_snapshot=tasks_snapshot,
+    )
+
+    # Patch the newly created retry task with compacted description and meta-message.
+    # The retry task is the latest open task with the same title prefix.
+    # We inject the compaction meta-message via the task server PATCH endpoint.
+    _patch_retry_with_compaction(
+        client=orch._client,
+        server_url=orch._config.server_url,
+        original_task=task,
+        compacted_description=result.compacted_text,
+        fallback_model=fallback_model,
+    )
+
+    # WAL entry for audit trail
+    _wal: Any = getattr(orch, "_wal_writer", None)
+    if _wal is not None:
+        try:
+            _wal.write_entry(
+                decision_type="context_overflow_compacted",
+                inputs={
+                    "task_id": task_id,
+                    "agent_id": session.id,
+                    "tokens_before": result.tokens_before,
+                    "tokens_after": result.tokens_after,
+                },
+                output={
+                    "correlation_id": result.correlation_id,
+                    "tokens_saved": result.tokens_saved,
+                    "compacted": True,
+                },
+                actor="agent_lifecycle",
+            )
+        except OSError:
+            logger.debug("WAL write failed for context_overflow_compacted %s", task_id)
+
+    return True
+
+
+def _patch_retry_with_compaction(
+    *,
+    client: httpx.Client,
+    server_url: str,
+    original_task: Task,
+    compacted_description: str,
+    fallback_model: str | None,
+) -> None:
+    """Patch the retry task created by ``retry_or_fail_task`` with compacted context.
+
+    Finds the most recent open task whose title starts with ``[RETRY`` and
+    matches the original task's title, then patches its description and
+    meta_messages to include the compacted context and the compaction nudge.
+
+    Args:
+        client: httpx client for task-server calls.
+        server_url: Task server base URL.
+        original_task: The original (failed) task.
+        compacted_description: The compacted description text.
+        fallback_model: Optional model to set on the retry task.
+    """
+    try:
+        resp = client.get(f"{server_url}/tasks", params={"status": "open"})
+        resp.raise_for_status()
+        open_tasks = resp.json()
+    except httpx.HTTPError as exc:
+        logger.warning("Failed to list open tasks for compaction patch: %s", exc)
+        return
+
+    # Find the retry task: title starts with [RETRY and contains original title
+    base_title = original_task.title.removeprefix("[RETRY 1] ").removeprefix("[RETRY 2] ").removeprefix("[RETRY 3] ")
+    retry_task_id: str | None = None
+    for t in open_tasks:
+        title = t.get("title", "")
+        if title.startswith("[RETRY") and base_title in title:
+            retry_task_id = t.get("id")
+            # Take the most recently found (last in list)
+
+    if retry_task_id is None:
+        logger.debug("No retry task found to patch with compaction for %s", original_task.id)
+        return
+
+    # Build patch payload
+    new_meta = list(original_task.meta_messages) + [_COMPACT_RETRY_META]
+    patch_body: dict[str, Any] = {
+        "description": compacted_description,
+        "meta_messages": new_meta,
+    }
+    if fallback_model:
+        patch_body["model"] = fallback_model
+
+    try:
+        client.patch(f"{server_url}/tasks/{retry_task_id}", json=patch_body).raise_for_status()
+        logger.info(
+            "Patched retry task %s with compacted description (%d chars) and %s meta-message",
+            retry_task_id,
+            len(compacted_description),
+            "compaction",
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("Failed to patch retry task %s with compaction: %s", retry_task_id, exc)
+
+
 def _requeue_rate_limited_task(
     *,
     client: httpx.Client,
@@ -601,6 +817,31 @@ def handle_orphaned_task(
                             task_id,
                             exc,
                         )
+                return
+
+            if _failure_type == "context_overflow":
+                # Reactive 413 handler: compact context and retry once.
+                _compacted = _try_compact_and_retry(
+                    orch=orch,
+                    task=task,
+                    task_id=task_id,
+                    session=session,
+                    tasks_snapshot=tasks_snapshot,
+                    fallback_model=_fallback_model,
+                )
+                if _compacted:
+                    error_type = "context_overflow_compacted"
+                else:
+                    error_type = "context_overflow_compact_failed"
+                emit_orphan_metrics(
+                    orch._workdir,
+                    task_id,
+                    session,
+                    start_ts,
+                    success=False,
+                    error_type=error_type,
+                )
+                orch._record_provider_health(session, success=False)
                 return
 
     # Escalate strategy: block task when crash limit exceeded

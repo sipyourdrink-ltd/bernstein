@@ -194,15 +194,27 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
 
 
 @router.get("/tasks/next/{role}", response_model=TaskResponse)
-async def next_task(role: str, request: Request) -> TaskResponse:
-    """Claim the next available task for *role*."""
+async def next_task(
+    role: str,
+    request: Request,
+    claimed_by_session: str | None = None,
+) -> TaskResponse:
+    """Claim the next available task for *role*.
+
+    Pass ``claimed_by_session`` as a query param to record which parent
+    orchestrator session owns the claim.
+    """
     if request.app.state.draining:  # type: ignore[attr-defined]
         return JSONResponse(  # type: ignore[return-value]
             {"error": "Server is draining -- no new claims accepted"},
             status_code=503,
         )
     store = _get_store(request)
-    task = await store.claim_next(role, tenant_id=_resolve_request_tenant_scope(request))
+    task = await store.claim_next(
+        role,
+        tenant_id=_resolve_request_tenant_scope(request),
+        claimed_by_session=claimed_by_session,
+    )
     if task is None:
         raise HTTPException(status_code=404, detail=f"No open tasks for role '{role}'")
     return task_to_response(task)
@@ -227,17 +239,29 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
                 unauthorized_ids.append(task_id)
                 continue
             authorized_ids.append(task_id)
-        claimed, failed = await store.claim_batch(authorized_ids, body.agent_id)
+        claimed, failed = await store.claim_batch(
+            authorized_ids,
+            body.agent_id,
+            claimed_by_session=body.claimed_by_session,
+        )
         failed.extend(unauthorized_ids)
         return BatchClaimResponse(claimed=claimed, failed=failed)
 
 
 @router.post("/tasks/{task_id}/claim", response_model=TaskResponse)
-async def claim_task(task_id: str, request: Request, expected_version: int | None = None) -> TaskResponse:
+async def claim_task(
+    task_id: str,
+    request: Request,
+    expected_version: int | None = None,
+    claimed_by_session: str | None = None,
+) -> TaskResponse:
     """Claim a specific task by ID.
 
     Pass ``expected_version`` as a query param for optimistic locking
     (CAS). If the task's version doesn't match, returns 409 Conflict.
+
+    Pass ``claimed_by_session`` to record which parent orchestrator
+    session owns this claim.
     """
     if request.app.state.draining:  # type: ignore[attr-defined]
         return JSONResponse(  # type: ignore[return-value]
@@ -252,7 +276,11 @@ async def claim_task(task_id: str, request: Request, expected_version: int | Non
             if task is None:
                 raise KeyError
             _require_task_access(task, request)
-            task = await store.claim_by_id(task_id, expected_version=expected_version)
+            task = await store.claim_by_id(
+                task_id,
+                expected_version=expected_version,
+                claimed_by_session=claimed_by_session,
+            )
         except KeyError:
             raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found") from None
         except ValueError as exc:
@@ -417,10 +445,11 @@ async def list_tasks(
     status: str | None = None,
     cell_id: str | None = None,
     tenant: str | None = None,
+    claimed_by_session: str | None = None,
     limit: int | None = None,
     offset: int | None = None,
 ) -> PaginatedTasksResponse | list[TaskResponse]:
-    """List tasks, optionally filtered by status and/or cell_id.
+    """List tasks, optionally filtered by status, cell_id, and/or claim owner.
 
     When ``limit`` or ``offset`` query params are provided the response is a
     paginated envelope (``{tasks, total, limit, offset}``).  Without them,
@@ -431,6 +460,8 @@ async def list_tasks(
         status: If provided, only tasks with this status are returned.
         cell_id: If provided, only tasks in this cell are returned.
         tenant: Tenant scope override.
+        claimed_by_session: If provided, only tasks claimed by this parent
+            orchestrator session are returned.
         limit: Maximum number of tasks to return (max 500).  Triggers
             paginated response when present.
         offset: Number of tasks to skip.  Triggers paginated response
@@ -441,7 +472,12 @@ async def list_tasks(
     """
     store = _get_store(request)
     effective_tenant = _resolve_request_tenant_scope(request, tenant)
-    all_tasks = store.list_tasks(status, cell_id, tenant_id=effective_tenant)
+    all_tasks = store.list_tasks(
+        status,
+        cell_id,
+        tenant_id=effective_tenant,
+        claimed_by_session=claimed_by_session,
+    )
 
     paginate = limit is not None or offset is not None
     if paginate:
