@@ -740,16 +740,19 @@ if __name__ == "__main__":
         workdir = Path.cwd()
         server_url = f"http://127.0.0.1:{args.port}"
 
-        # Load seed to get the model to use
+        # Load seed to get the model and internal LLM provider
         seed_path = workdir / "bernstein.yaml"
         model_name = "nvidia/nemotron-3-super-120b-a12b"
         provider_name = "openrouter_free"
         if seed_path.exists():
             try:
                 seed = parse_seed(seed_path)
+                # Prefer internal_llm_provider/model from seed config
+                provider_name = seed.internal_llm_provider
+                model_name = seed.internal_llm_model
+                # Override with explicit model if set (backward compat)
                 if seed.model:
                     model_name = seed.model
-                    provider_name = "openrouter"  # Assume paid if custom model
             except Exception as exc:
                 logger.warning("Failed to parse seed for model config: %s", exc)
 

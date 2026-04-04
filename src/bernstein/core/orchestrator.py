@@ -1835,6 +1835,7 @@ class Orchestrator:
         """
         from bernstein import get_templates_dir
         from bernstein.core.manager import ManagerAgent
+        from bernstein.core.seed import parse_seed
 
         try:
             budget_pct = 1.0
@@ -1843,10 +1844,23 @@ class Orchestrator:
                 budget_pct = max(0.0, 1.0 - status.percentage_used)
 
             workdir = self._workdir
+            # Read internal LLM provider/model from seed config
+            _mgr_provider = "openrouter_free"
+            _mgr_model = "nvidia/nemotron-3-super-120b-a12b"
+            _seed_path = workdir / "bernstein.yaml"
+            if _seed_path.exists():
+                try:
+                    _seed = parse_seed(_seed_path)
+                    _mgr_provider = _seed.internal_llm_provider
+                    _mgr_model = _seed.internal_llm_model
+                except Exception:
+                    pass
             manager = ManagerAgent(
                 server_url=self._config.server_url,
                 workdir=workdir,
                 templates_dir=get_templates_dir(workdir),
+                model=_mgr_model,
+                provider=_mgr_provider,
             )
 
             result = manager.review_queue_sync(

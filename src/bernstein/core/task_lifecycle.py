@@ -696,7 +696,20 @@ def auto_decompose_task(
         try:
             from bernstein import get_templates_dir
             from bernstein.core.manager import ManagerAgent
+            from bernstein.core.seed import parse_seed
             from bernstein.core.task_splitter import TaskSplitter
+
+            # Read internal LLM provider/model from seed config
+            _provider = "openrouter_free"
+            _model = "nvidia/nemotron-3-super-120b-a12b"
+            _seed_path = workdir / "bernstein.yaml"
+            if _seed_path.exists():
+                try:
+                    _seed = parse_seed(_seed_path)
+                    _provider = _seed.internal_llm_provider
+                    _model = _seed.internal_llm_model
+                except Exception:
+                    pass
 
             created_ids = TaskSplitter(client=client, server_url=base).split(
                 task,
@@ -704,6 +717,8 @@ def auto_decompose_task(
                     server_url=server_url,
                     workdir=workdir,
                     templates_dir=get_templates_dir(workdir),
+                    model=_model,
+                    provider=_provider,
                 ),
             )
             decomposed_task_ids.add(task.id)

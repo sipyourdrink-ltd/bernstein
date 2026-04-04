@@ -318,7 +318,8 @@ class ClaudeCodeAdapter(CLIAdapter):
             heartbeat_touch = (
                 "    # Touch heartbeat file on every event\n"
                 "    try:\n"
-                f"        _hb = {{'timestamp': __import__('time').time(), 'status': 'working'}}\n"
+                "        _hb = {'timestamp': __import__('time').time(), 'phase': 'implementing',"
+                " 'progress_pct': 0, 'current_file': '', 'message': 'working', 'status': 'working'}\n"
                 f"        open({heartbeat_path!r}, 'w').write(__import__('json').dumps(_hb))\n"
                 "    except OSError:\n"
                 "        pass\n"
