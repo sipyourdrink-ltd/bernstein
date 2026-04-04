@@ -803,6 +803,30 @@ def _render_prompt(
         ", ".join(section_names),
     )
 
+    # Prompt token-usage breakdown (system prompt %, context %, user prompt %)
+    if session_id:
+        try:
+            from bernstein.core.prompt_token_analysis import (
+                analyse_prompt_sections,
+                save_prompt_token_report,
+            )
+
+            _pt_report = analyse_prompt_sections(named_sections, session_id=session_id)
+            logger.debug(
+                "Prompt token breakdown for %s: sys=%d%% ctx=%d%% user=%d%% total=%d",
+                session_id,
+                round(_pt_report.system_prompt_pct),
+                round(_pt_report.context_pct),
+                round(_pt_report.user_prompt_pct),
+                _pt_report.total_tokens,
+            )
+            save_prompt_token_report(_pt_report, workdir)
+            if _pt_report.suggestions:
+                for _sug in _pt_report.suggestions:
+                    logger.info("Prompt token suggestion [%s]: %s", session_id, _sug)
+        except Exception as _pt_exc:
+            logger.debug("Prompt token analysis failed: %s", _pt_exc)
+
     # Apply staged context collapse (T418): truncate → drop sections → strip metadata
     try:
         from bernstein.core.context_collapse import staged_context_collapse
