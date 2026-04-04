@@ -827,33 +827,21 @@ class Orchestrator:
             logger.debug("WAL write failed for tick_start %d", self._tick_count)
 
         # 0. Ingest any new backlog files before fetching tasks.
-        #    WIP limit: skip ingestion when open+claimed tasks exceed
-        #    max_agents * 3 to prevent unbounded backlog inflation.
-        _wip_limit = self._config.max_agents * 3
-        _skip_ingest = False
-        if hasattr(self, "_last_open_count") and self._last_open_count >= _wip_limit:
-            _skip_ingest = True
-            if self._tick_count % 10 == 0:  # log every 10 ticks
-                logger.info(
-                    "WIP limit (%d) reached — skipping backlog ingestion (open=%d)",
-                    _wip_limit,
-                    self._last_open_count,
-                )
+        #    Rate-limited to 10 files/tick with title dedup to prevent
+        #    server overload and duplicate task creation.
+        try:
+            from bernstein.core.roadmap_runtime import emit_roadmap_wave
 
-        if not _skip_ingest:
-            try:
-                from bernstein.core.roadmap_runtime import emit_roadmap_wave
+            emitted = emit_roadmap_wave(self._workdir)
+            if emitted:
+                logger.info("Emitted %d roadmap ticket(s) into backlog/open", len(emitted))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("roadmap wave emission failed: %s", exc)
 
-                emitted = emit_roadmap_wave(self._workdir)
-                if emitted:
-                    logger.info("Emitted %d roadmap ticket(s) into backlog/open", len(emitted))
-            except (OSError, json.JSONDecodeError, ValueError) as exc:
-                logger.warning("roadmap wave emission failed: %s", exc)
-
-            try:
-                self.ingest_backlog()
-            except (OSError, json.JSONDecodeError, ValueError) as exc:
-                logger.warning("ingest_backlog failed: %s", exc)
+        try:
+            self.ingest_backlog()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("ingest_backlog failed: %s", exc)
 
         if self._running:
             self._run_scheduled_dependency_scan()
@@ -1253,10 +1241,7 @@ class Orchestrator:
         ):
             self._generate_run_summary(tasks_by_status["done"], tasks_by_status["failed"])
 
-        # 9. Save open count for WIP limit check on next tick
-        self._last_open_count = result.open_tasks
-
-        # 10. Log summary
+        # 9. Log summary
         self._log_summary(result)
 
         # 11. Record replay events for deterministic replay
@@ -2733,21 +2718,54 @@ class Orchestrator:
         # Collect both .md and .yaml files
         backlog_files = sorted([*open_dir.glob("*.md"), *open_dir.glob("*.yaml"), *open_dir.glob("*.yml")])
 
+        # Rate-limit ingestion: max 10 files per tick to prevent server overload.
+        # With 300+ backlog files, posting them all in one tick crashes the server.
+        _MAX_INGEST_PER_TICK = 10
+
+        # Build title dedup set from existing server tasks (if available).
+        # Prevents re-creating tasks that already exist on the server after a
+        # restart or crash that prevented file move to claimed/.
+        existing_titles: set[str] = set()
+        if not hasattr(self, "_ingested_titles"):
+            self._ingested_titles: set[str] = set()
+            # Seed from server on first call
+            try:
+                resp = self._client.get(f"{self._config.server_url}/tasks")
+                resp.raise_for_status()
+                for task in resp.json():
+                    title = task.get("title", "")
+                    if title:
+                        self._ingested_titles.add(title.lower().strip())
+            except Exception:
+                pass  # Server may be starting up; dedup will be best-effort
+        existing_titles = self._ingested_titles
+
+        claimed_dir.mkdir(parents=True, exist_ok=True)
         count = 0
         for backlog_file in backlog_files:
+            if count >= _MAX_INGEST_PER_TICK:
+                break
+
             if (claimed_dir / backlog_file.name).exists():
                 continue
 
             content = backlog_file.read_text(encoding="utf-8")
-            # Use backlog_parser for YAML+MD support (tick_pipeline's
-            # parse_backlog_file only handles markdown).
             from bernstein.core.backlog_parser import parse_backlog_text
 
             parsed_task = parse_backlog_text(backlog_file.name, content)
             if parsed_task is None:
                 logger.warning("ingest_backlog: could not parse %s — skipping", backlog_file.name)
+                # Move unparseable files to claimed/ so we don't retry every tick
+                backlog_file.rename(claimed_dir / backlog_file.name)
                 continue
             payload = parsed_task.to_task_payload()
+
+            # Dedup: skip if title already exists on server
+            title_key = str(payload.get("title", "")).lower().strip()
+            if title_key in existing_titles:
+                # Move to claimed/ without POSTing — task already exists
+                backlog_file.rename(claimed_dir / backlog_file.name)
+                continue
 
             try:
                 resp = self._client.post(f"{self._config.server_url}/tasks", json=payload)
@@ -2756,7 +2774,7 @@ class Orchestrator:
                 logger.warning("ingest_backlog: POST /tasks failed for %s: %s", backlog_file.name, exc)
                 continue
 
-            claimed_dir.mkdir(parents=True, exist_ok=True)
+            existing_titles.add(title_key)
             backlog_file.rename(claimed_dir / backlog_file.name)
             count += 1
             logger.info("Ingested backlog file: %s", backlog_file.name)
