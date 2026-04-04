@@ -56,6 +56,7 @@ from bernstein.core.server import (
     TaskPatchRequest,
     TaskProgressRequest,
     TaskResponse,
+    TaskSelfCreate,
     TaskStealAction,
     TaskStealRequest,
     TaskStealResponse,
@@ -189,6 +190,64 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
             build_log_record(task.id, task, assessment),
         )
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
+        get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
+        return task_to_response(task)
+
+
+@router.post("/tasks/self-create", response_model=TaskResponse, status_code=201)
+async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskResponse:
+    """Create a subtask linked to a parent task.
+
+    Agents call this to decompose work during execution.  The parent
+    task is automatically transitioned to ``WAITING_FOR_SUBTASKS`` on
+    the first subtask creation (if it is not already in that state).
+    """
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+
+    # Validate parent exists
+    parent = store.get_task(body.parent_task_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail=f"Parent task '{body.parent_task_id}' not found")
+
+    # Build a full TaskCreate from the self-create payload
+    full_body = TaskCreate(
+        title=body.title,
+        description=body.description,
+        role=body.role if body.role != "auto" else classify_role(body.description),
+        priority=body.priority,
+        scope=body.scope,
+        complexity=body.complexity,
+        estimated_minutes=body.estimated_minutes,
+        depends_on=body.depends_on,
+        parent_task_id=body.parent_task_id,
+        owned_files=body.owned_files,
+        tenant_id=request_tenant_id(request),
+    )
+
+    # Auto-estimate difficulty if minutes not provided
+    if full_body.estimated_minutes is None:
+        score = estimate_difficulty(full_body.description)
+        full_body.estimated_minutes = minutes_for_level(score.level)
+
+    with start_span("task.self_create", {"parent_task_id": body.parent_task_id}):
+        task = await store.create(full_body)
+        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
+
+        # Auto-transition parent to waiting if not already
+        if parent.status.value not in ("waiting_for_subtasks", "done", "failed", "closed"):
+            subtask_count = sum(
+                1 for t in store.list_tasks() if t.parent_task_id == body.parent_task_id
+            )
+            try:
+                await store.wait_for_subtasks(body.parent_task_id, subtask_count)
+                sse_bus.publish(
+                    "task_update",
+                    json.dumps({"id": parent.id, "status": "waiting_for_subtasks"}),
+                )
+            except Exception:
+                pass  # Parent may already be waiting — that's fine
+
         get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
         return task_to_response(task)
 

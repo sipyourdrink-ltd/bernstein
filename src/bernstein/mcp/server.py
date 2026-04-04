@@ -264,6 +264,66 @@ def create_mcp_server(
         except Exception as exc:
             return _error_response(exc)
 
+    # ------------------------------------------------------------------
+    # bernstein_create_subtask
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def bernstein_create_subtask(  # pyright: ignore[reportUnusedFunction]
+        parent_task_id: str,
+        goal: str,
+        role: str = "auto",
+        priority: int = 2,
+        scope: str = "medium",
+        complexity: str = "medium",
+        estimated_minutes: int | None = None,
+    ) -> str:
+        """Create a subtask linked to a parent task.
+
+        Agents call this to decompose their current work into subtasks
+        during execution.  The parent task is automatically transitioned
+        to WAITING_FOR_SUBTASKS status.
+
+        Args:
+            parent_task_id: ID of the parent task that this subtask belongs to.
+            goal: Description of what the subtask should accomplish.
+            role: Specialist role to assign (backend, frontend, qa, …).
+            priority: 1=critical, 2=normal, 3=nice-to-have.
+            scope: Task scope — small, medium, or large.
+            complexity: Task complexity — low, medium, or high.
+            estimated_minutes: Rough time estimate in minutes.
+
+        Returns:
+            JSON with the created subtask ID, parent_task_id, title, and status.
+        """
+        try:
+            payload: dict[str, Any] = {
+                "parent_task_id": parent_task_id,
+                "title": goal[:120],
+                "description": goal,
+                "role": role,
+                "priority": priority,
+                "scope": scope,
+                "complexity": complexity,
+            }
+            if estimated_minutes is not None:
+                payload["estimated_minutes"] = estimated_minutes
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.post(f"{server_url}/tasks/self-create", json=payload)
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            return json.dumps(
+                {
+                    "task_id": data["id"],
+                    "parent_task_id": data.get("parent_task_id", parent_task_id),
+                    "title": data["title"],
+                    "status": data["status"],
+                },
+                indent=2,
+            )
+        except Exception as exc:
+            return _error_response(exc)
+
     return mcp
 
 

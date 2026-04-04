@@ -117,11 +117,13 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.CLAIMED, TaskStatus.DONE): _always,  # fast completion
     (TaskStatus.CLAIMED, TaskStatus.FAILED): _always,
     (TaskStatus.CLAIMED, TaskStatus.CANCELLED): _always,
+    (TaskStatus.CLAIMED, TaskStatus.WAITING_FOR_SUBTASKS): _always,  # agent splits work
     (TaskStatus.CLAIMED, TaskStatus.BLOCKED): _always,
     # Work progression from IN_PROGRESS
     (TaskStatus.IN_PROGRESS, TaskStatus.DONE): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.FAILED): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.BLOCKED): _always,
+    (TaskStatus.IN_PROGRESS, TaskStatus.WAITING_FOR_SUBTASKS): _always,  # agent splits work
     (TaskStatus.IN_PROGRESS, TaskStatus.OPEN): _always,  # force-claim / requeue
     (TaskStatus.IN_PROGRESS, TaskStatus.CANCELLED): _always,
     (TaskStatus.IN_PROGRESS, TaskStatus.ORPHANED): _always,

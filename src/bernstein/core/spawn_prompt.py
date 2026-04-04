@@ -1132,3 +1132,92 @@ def expand_shell_commands(template: str, *, timeout: int = 5, workdir: Path | No
             return f"<!-- shell command error: {cmd} -->"
 
     return _SHELL_CMD_PATTERN.sub(_run_cmd, template)
+
+
+# ---------------------------------------------------------------------------
+# Fork subagent with byte-identical prefix for prompt cache sharing
+# ---------------------------------------------------------------------------
+
+#: Marker that separates the cacheable prefix from the per-fork directive.
+_FORK_DIRECTIVE_MARKER = "\n## Assigned tasks\n"
+
+
+def fork_from_agent(
+    parent_prompt: str,
+    directive: str,
+    *,
+    session_id: str = "",
+) -> str:
+    """Create a forked agent prompt that shares the parent's cache prefix.
+
+    The parent's system prompt is split at the task assignment boundary.
+    Everything before that boundary is preserved byte-for-byte so the
+    forked agent achieves a prompt-cache hit on the parent's prefix.
+    Only the final directive (task descriptions, instructions) varies.
+
+    Args:
+        parent_prompt: The full rendered prompt of the parent agent.
+        directive: The new directive text to append after the shared prefix.
+            This is typically a review instruction, quality gate check, or
+            a different task assignment.
+        session_id: Optional session ID to inject into signal-check blocks
+            within the directive.
+
+    Returns:
+        A new prompt string where the prefix is byte-identical to the
+        parent's prefix and only the directive section differs.
+    """
+    # Find the task assignment marker — everything before it is the
+    # cacheable prefix shared with the parent.
+    prefix = _extract_cache_prefix(parent_prompt)
+
+    # Build the forked prompt: byte-identical prefix + new directive.
+    forked = f"{prefix}\n\n## Fork directive\n{directive}\n"
+
+    # Inject session-specific signal checks if a session_id is provided.
+    if session_id:
+        forked += _render_signal_check(session_id)
+
+    return forked
+
+
+_FORK_OUTPUT_MARKER = "\n\n## Fork directive\n"
+
+
+def _extract_cache_prefix(prompt: str) -> str:
+    """Extract the cacheable prefix from a prompt.
+
+    Splits at the task assignment marker or fork directive marker,
+    whichever comes first, so both parent and forked prompts yield
+    the same prefix.
+    """
+    # Try both markers and use whichever appears first.
+    positions = []
+    task_pos = prompt.find(_FORK_DIRECTIVE_MARKER)
+    if task_pos >= 0:
+        positions.append(task_pos)
+    fork_pos = prompt.find(_FORK_OUTPUT_MARKER)
+    if fork_pos >= 0:
+        positions.append(fork_pos)
+
+    if positions:
+        return prompt[: min(positions)]
+    return prompt
+
+
+def fork_cache_key(prompt: str) -> str:
+    """Compute the cache key for the cacheable prefix of a prompt.
+
+    Use this to verify that a forked prompt will achieve a cache hit
+    against the parent: both should return the same key.
+
+    Args:
+        prompt: The full rendered prompt (parent or forked).
+
+    Returns:
+        SHA-256 hex digest of the cacheable prefix.
+    """
+    import hashlib
+
+    prefix = _extract_cache_prefix(prompt)
+    return hashlib.sha256(prefix.encode("utf-8")).hexdigest()

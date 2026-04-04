@@ -303,6 +303,26 @@ class TaskCreate(BaseModel):
     parent_session_id: str | None = None  # Coordinator session that owns this task (namespace scope)
 
 
+class TaskSelfCreate(BaseModel):
+    """Body for POST /tasks/self-create — agent-initiated subtask creation.
+
+    Agents use this to decompose work into subtasks during execution.
+    The parent_task_id is required and links the new subtask to the calling
+    agent's current task.
+    """
+
+    parent_task_id: str
+    title: str
+    description: str
+    role: str = "auto"
+    priority: int = 2
+    scope: str = "medium"
+    complexity: str = "medium"
+    estimated_minutes: int | None = None
+    depends_on: list[str] = Field(default_factory=list)
+    owned_files: list[str] = Field(default_factory=list)
+
+
 class WebhookTaskCreate(TaskCreate):
     """Body for POST /webhook."""
 
