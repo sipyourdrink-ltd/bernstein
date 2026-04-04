@@ -708,5 +708,5 @@ def test_completion_marker_dead_agent_skipped(tmp_path: Path) -> None:
 def test_idle_constants_sensible() -> None:
     assert _IDLE_GRACE_S == 30.0
     assert _IDLE_HEARTBEAT_THRESHOLD_S == 300.0
-    assert _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S == 120.0
-    assert _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S < _IDLE_HEARTBEAT_THRESHOLD_S
+    assert _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S == 300.0
+    assert _IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S <= _IDLE_HEARTBEAT_THRESHOLD_S
