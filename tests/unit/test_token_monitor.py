@@ -200,6 +200,7 @@ class TestCheckTokenGrowth:
         s.spawn_ts = time.time()
         s.provider = provider
         s.tokens_used = 0
+        s.token_budget = 0  # unlimited — no nudge interference
         s.context_window_tokens = 0
         s.context_utilization_pct = 0.0
         s.context_utilization_alert = False

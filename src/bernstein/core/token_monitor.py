@@ -100,6 +100,8 @@ class AgentTokenHistory:
         samples: Chronological list of token samples (newest last).
         last_file_offset: Byte offset of the last read position in the sidecar.
         warned_quadratic: Whether a quadratic-growth warning has been emitted.
+        warned_context_window: Whether a high context-window warning was emitted.
+        warned_budget: Whether a token-budget continuation nudge was sent.
         killed: Whether the auto-kill has already fired for this session.
     """
 
@@ -108,6 +110,7 @@ class AgentTokenHistory:
     last_file_offset: int = 0
     warned_quadratic: bool = False
     warned_context_window: bool = False
+    warned_budget: bool = False
     killed: bool = False
 
 
@@ -252,6 +255,15 @@ class TokenGrowthMonitor:
             quadratic-growth warning.  Defaults to ``_QUADRATIC_RATIO``.
     """
 
+    #: Default fraction of token budget used before firing the nudge (80 %).
+    _DEFAULT_NUDGE_THRESHOLD_PCT: float = 0.80
+
+    #: Default nudge text injected via the WAKEUP signal.
+    _DEFAULT_NUDGE_TEXT: str = (
+        "You are approaching your token budget. "
+        "Wrap up the current task, commit any changes, and exit cleanly."
+    )
+
     def __init__(
         self,
         kill_threshold: int = _KILL_THRESHOLD,
@@ -259,12 +271,20 @@ class TokenGrowthMonitor:
         compact_threshold: float = _COMPACT_THRESHOLD,
         compact_max_failures: int = _COMPACT_MAX_FAILURES,
         compact_cooldown_s: float = _COMPACT_COOLDOWN_S,
+        nudge_threshold_pct: float | None = None,
+        nudge_text: str | None = None,
     ) -> None:
         self._kill_threshold = kill_threshold
         self._quadratic_ratio = quadratic_ratio
         self._compact_threshold = compact_threshold
         self._compact_max_failures = compact_max_failures
         self._compact_cooldown_s = compact_cooldown_s
+        self._nudge_threshold_pct: float = (
+            nudge_threshold_pct
+            if nudge_threshold_pct is not None
+            else self._DEFAULT_NUDGE_THRESHOLD_PCT
+        )
+        self._nudge_text: str = nudge_text if nudge_text is not None else self._DEFAULT_NUDGE_TEXT
         self._history: dict[str, AgentTokenHistory] = {}
         self._compaction_breakers: dict[str, AutoCompactCircuitBreaker] = {}
 
@@ -427,6 +447,54 @@ class TokenGrowthMonitor:
             session_id: Agent session identifier.
         """
         return self._get_or_create(session_id).warned_context_window
+
+    def mark_budget_warned(self, session_id: str) -> None:
+        """Record that a token-budget continuation nudge was sent.
+
+        Args:
+            session_id: Agent session identifier.
+        """
+        self._get_or_create(session_id).warned_budget = True
+
+    def was_budget_warned(self, session_id: str) -> bool:
+        """Return True if a token-budget continuation nudge was already sent.
+
+        Args:
+            session_id: Agent session identifier.
+
+        Returns:
+            True when the nudge has already fired for this session.
+        """
+        return self._get_or_create(session_id).warned_budget
+
+    def should_nudge_budget(self, session_id: str, tokens_used: int, token_budget: int) -> bool:
+        """Return True if the token-budget continuation nudge should fire.
+
+        The nudge fires at most once per session when ``tokens_used`` reaches
+        ``_nudge_threshold_pct`` of the configured ``token_budget``.
+
+        Args:
+            session_id: Agent session identifier.
+            tokens_used: Current cumulative token consumption for this session.
+            token_budget: Maximum tokens allowed for this session (0 = unlimited).
+
+        Returns:
+            True when the nudge should be sent now.
+        """
+        if token_budget <= 0:
+            return False
+        if self.was_budget_warned(session_id):
+            return False
+        return tokens_used >= self._nudge_threshold_pct * token_budget
+
+    @property
+    def nudge_text(self) -> str:
+        """Return the nudge text injected via the WAKEUP signal.
+
+        Returns:
+            The configured nudge message string.
+        """
+        return self._nudge_text
 
     def purge(self, session_id: str) -> None:
         """Remove history for a dead session.
@@ -607,6 +675,9 @@ def check_token_growth(orch: Any) -> None:
     5. If quadratic growth is detected → log a warning (once per session).
     6. If context utilization exceeds the compact threshold → send compaction
        WAKEUP signal, guarded by the circuit breaker.
+    7. If tokens used exceed the configured nudge threshold fraction of the
+       session's token budget → send a continuation WAKEUP nudge (once per
+       session).
 
     Args:
         orch: The ``Orchestrator`` instance.
@@ -690,6 +761,26 @@ def check_token_growth(orch: Any) -> None:
             elif session.context_utilization_pct < _COMPACT_THRESHOLD:
                 # Utilization dropped below threshold — reset breaker state.
                 monitor.record_compaction_success(session.id)
+
+        # 7. Token-budget continuation nudge (once per session)
+        if session.token_budget > 0 and monitor.should_nudge_budget(
+            session.id, session.tokens_used, session.token_budget
+        ):
+            logger.info(
+                "Token budget nudge fired for agent %s (%d/%d tokens, %.0f%%)",
+                session.id,
+                session.tokens_used,
+                session.token_budget,
+                100.0 * session.tokens_used / session.token_budget,
+            )
+            with contextlib.suppress(Exception):
+                orch._signal_mgr.write_wakeup(
+                    session.id,
+                    task_title=", ".join(session.task_ids) or "unknown",
+                    elapsed_s=time.time() - session.spawn_ts,
+                    last_activity_ago_s=0,
+                )
+            monitor.mark_budget_warned(session.id)
 
 
 def _get_files_changed(orch: Any, session: Any, base: str) -> int:
