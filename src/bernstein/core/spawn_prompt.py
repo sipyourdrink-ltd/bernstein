@@ -461,6 +461,14 @@ def _render_prompt(
         _lesson_cache[cache_key] = (now, lesson_context)
         logger.debug("Lesson cache miss for role=%s, extracted %d chars", role, len(lesson_context))
 
+    # Evict expired lesson cache entries when size exceeds 50
+    if len(_lesson_cache) > 50:
+        expired_keys = [k for k, (ts, _) in _lesson_cache.items() if now - ts > _LESSON_CACHE_TTL]
+        for k in expired_keys:
+            del _lesson_cache[k]
+        if expired_keys:
+            logger.debug("Lesson cache cleaned %d expired entries", len(expired_keys))
+
     # Enforce lesson budget
     from bernstein.core.context_compression import DEFAULT_CATEGORY_BUDGETS
 

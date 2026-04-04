@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 # When exceeded, the oldest entry is evicted FIFO to keep memory bounded.
 MAX_AGENT_CACHE_ENTRIES: int = 10
 
+# Hard cap on prompt-prefix manifest entries.  When exceeded, the oldest
+# 10% (by created_at) are evicted to keep memory bounded.
+_MAX_MANIFEST_ENTRIES: int = 100
+
 
 class CacheBreakReason(Enum):
     """Classification of why a prompt cache break occurred."""
@@ -449,6 +453,23 @@ class PromptCachingManager:
             if entry.prefix_tokens == 0 and entry.system_prefix:
                 entry.prefix_tokens = _estimate_tokens(entry.system_prefix)
 
+    def _evict_manifest_if_needed(self) -> None:
+        """Evict oldest 10% of manifest entries when the cap is exceeded."""
+        if len(self._manifest.entries) <= _MAX_MANIFEST_ENTRIES:
+            return
+        sorted_keys = sorted(
+            self._manifest.entries.keys(),
+            key=lambda k: self._manifest.entries[k].first_seen_at,
+        )
+        evict_count = max(1, len(sorted_keys) // 10)
+        for k in sorted_keys[:evict_count]:
+            del self._manifest.entries[k]
+        logger.debug(
+            "Prompt cache manifest evicted %d oldest entries (cap=%d)",
+            evict_count,
+            _MAX_MANIFEST_ENTRIES,
+        )
+
     def process_prompt(
         self,
         prompt: str,
@@ -485,6 +506,7 @@ class PromptCachingManager:
                 first_seen_at=now,
             )
             self._manifest.entries[cache_key] = entry
+            self._evict_manifest_if_needed()
             # Cache break: the new prefix replaces whatever was last used
             prev_key = self._last_active_key if self._last_active_key != cache_key else None
         else:
