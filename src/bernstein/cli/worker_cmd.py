@@ -23,6 +23,8 @@ import click
 import httpx
 
 from bernstein.cli.helpers import console
+from bernstein.core.capacity_wake import CapacityWake, WakeReason
+from bernstein.core.poll_config import PollConfig, validate_poll_config
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,7 @@ class WorkerLoop:
         auth_token: str | None = None,
         adapter: str | None = None,
         poll_interval: int = 10,
+        poll_config: PollConfig | None = None,
         workdir: Path | None = None,
     ) -> None:
         self._server_url = server_url.rstrip("/")
@@ -77,10 +80,20 @@ class WorkerLoop:
         self._labels = labels or {}
         self._auth_token = auth_token
         self._adapter_name = adapter or _detect_worker_adapter()
-        self._poll_interval = poll_interval
+        # Prefer explicit PollConfig; fall back to legacy poll_interval (seconds).
+        if poll_config is not None:
+            self._poll_config = poll_config
+        else:
+            self._poll_config = validate_poll_config(
+                {
+                    "poll_interval_ms": poll_interval * 1_000,
+                    "heartbeat_interval_ms": 15_000,
+                }
+            )
         self._workdir = workdir or Path.cwd()
         self._running = False
         self._active_tasks: dict[str, int] = {}  # task_id -> pid
+        self._wake = CapacityWake()
 
     def _headers(self) -> dict[str, str]:
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -90,12 +103,16 @@ class WorkerLoop:
 
     @property
     def available_slots(self) -> int:
-        # Reap completed tasks
+        # Reap completed tasks; capacity wake fires if any slot freed.
         self._reap_finished()
         return max(0, self._max_agents - len(self._active_tasks))
 
-    def _reap_finished(self) -> None:
-        """Remove tasks whose agent process has exited."""
+    def _reap_finished(self) -> bool:
+        """Remove tasks whose agent process has exited.
+
+        Returns:
+            ``True`` if at least one task was reaped (a slot became available).
+        """
         finished: list[str] = []
         for task_id, pid in self._active_tasks.items():
             try:
@@ -110,6 +127,9 @@ class WorkerLoop:
                 finished.append(task_id)
         for task_id in finished:
             del self._active_tasks[task_id]
+        if finished:
+            self._wake.signal_capacity()
+        return bool(finished)
 
     def _register(self, client: httpx.Client) -> str | None:
         """Register with the central server. Returns node ID or None."""
@@ -244,46 +264,54 @@ class WorkerLoop:
         def _handle_signal(signum: int, _frame: object) -> None:
             console.print(f"\n[yellow]Received signal {signum}, shutting down worker...[/yellow]")
             self._running = False
+            self._wake.signal_abort()
 
         signal.signal(signal.SIGINT, _handle_signal)
         signal.signal(signal.SIGTERM, _handle_signal)
+
+        poll_s = self._poll_config.poll_interval_ms / 1_000.0
+        heartbeat_s = (self._poll_config.heartbeat_interval_ms or 15_000) / 1_000.0
 
         console.print(f"[bold cyan]Bernstein Worker[/bold cyan] — {self._name}")
         console.print(f"  Server: {self._server_url}")
         console.print(f"  Max agents: {self._max_agents}")
         console.print(f"  Roles: {', '.join(self._roles)}")
         console.print(f"  Adapter: {self._adapter_name}")
+        console.print(f"  Poll interval: {poll_s:.1f}s | Heartbeat: {heartbeat_s:.1f}s")
         console.print()
 
         with httpx.Client() as client:
-            # Register
+            # Register (wake early if abort fires during retry sleep)
             node_id = None
             while self._running and node_id is None:
                 node_id = self._register(client)
                 if node_id is None:
                     console.print("[yellow]Registration failed, retrying in 5s...[/yellow]")
-                    time.sleep(5)
+                    reason = self._wake.wait(timeout_s=5.0)
+                    if reason == WakeReason.ABORT:
+                        return
 
             if not self._running:
                 return
 
             console.print(f"[green]Registered[/green] as node [bold]{node_id}[/bold]")
 
-            last_heartbeat = time.time()
-            heartbeat_interval = 15
+            last_heartbeat = time.monotonic()
 
             while self._running:
                 # Heartbeat
-                now = time.time()
-                if now - last_heartbeat >= heartbeat_interval:
+                now = time.monotonic()
+                if now - last_heartbeat >= heartbeat_s:
                     ok = self._heartbeat(client, node_id)  # type: ignore[arg-type]
                     if not ok:
                         # Re-register
                         node_id = self._register(client)
                         if node_id is None:
-                            time.sleep(5)
+                            reason = self._wake.wait(timeout_s=5.0)
+                            if reason == WakeReason.ABORT:
+                                break
                             continue
-                    last_heartbeat = now
+                    last_heartbeat = time.monotonic()
 
                 # Claim tasks if we have capacity
                 if self.available_slots > 0:
@@ -300,7 +328,10 @@ class WorkerLoop:
                                     f"  [green]Claimed[/green] {task_id}: {task.get('title', '')[:50]} (pid={pid})"
                                 )
 
-                time.sleep(self._poll_interval)
+                # Sleep until next poll, but wake early on capacity or abort.
+                wake_reason = self._wake.wait(timeout_s=poll_s)
+                if wake_reason == WakeReason.ABORT:
+                    break
 
             # Graceful shutdown: unregister
             if node_id is not None:
@@ -363,7 +394,19 @@ class WorkerLoop:
     "--poll-interval",
     default=10,
     show_default=True,
-    help="Seconds between task polling cycles.",
+    help="Seconds between task polling cycles (ignored if --poll-interval-ms is set).",
+)
+@click.option(
+    "--poll-interval-ms",
+    default=None,
+    type=int,
+    help="Milliseconds between task polling cycles (overrides --poll-interval).",
+)
+@click.option(
+    "--heartbeat-interval-ms",
+    default=15_000,
+    show_default=True,
+    help="Milliseconds between heartbeats to the central server.",
 )
 def worker(
     server: str,
@@ -374,6 +417,8 @@ def worker(
     token: str | None,
     adapter: str | None,
     poll_interval: int,
+    poll_interval_ms: int | None,
+    heartbeat_interval_ms: int,
 ) -> None:
     """Join a Bernstein cluster as a worker node.
 
@@ -387,8 +432,11 @@ def worker(
       bernstein worker --server http://central:8052
       bernstein worker --server http://central:8052 --name gpu-box --slots 8
       bernstein worker --server http://central:8052 --label gpu=true
+      bernstein worker --server http://central:8052 --poll-interval-ms 2000
       BERNSTEIN_SERVER_URL=http://central:8052 bernstein worker
     """
+    from bernstein.core.poll_config import PollConfigValidationError, validate_poll_config
+
     # Parse labels
     label_dict: dict[str, str] = {}
     for lbl in labels:
@@ -401,6 +449,19 @@ def worker(
 
     role_list = [r.strip() for r in roles.split(",") if r.strip()]
 
+    # Build PollConfig, resolving ms vs seconds precedence.
+    effective_poll_ms = poll_interval_ms if poll_interval_ms is not None else poll_interval * 1_000
+    try:
+        cfg = validate_poll_config(
+            {
+                "poll_interval_ms": effective_poll_ms,
+                "heartbeat_interval_ms": heartbeat_interval_ms,
+            }
+        )
+    except PollConfigValidationError as exc:
+        console.print(f"[red]Invalid poll configuration:[/red] {exc}")
+        raise SystemExit(1) from exc
+
     loop = WorkerLoop(
         server_url=server,
         name=name,
@@ -410,5 +471,6 @@ def worker(
         auth_token=token,
         adapter=adapter if adapter != "auto" else None,
         poll_interval=poll_interval,
+        poll_config=cfg,
     )
     loop.run()
