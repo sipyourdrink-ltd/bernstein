@@ -534,8 +534,8 @@ def _render_prompt(
                     "```bash\n"
                     "curl -s -X POST http://127.0.0.1:8052/bulletin "
                     '-H "Content-Type: application/json" \\\n'
-                    "  -d '{\"agent_id\": \"" + agent_id + "\", \"type\": \"finding\", "
-                    "\"content\": \"<describe what you created or discovered>\"}'\n"
+                    '  -d \'{"agent_id": "' + agent_id + '", "type": "finding", '
+                    '"content": "<describe what you created or discovered>"}\'\n'
                     "```\n"
                     "Examples of what to post:\n"
                     "- Created a new module: `Created src/foo/bar.py with FooClass`\n"

@@ -143,11 +143,7 @@ class EffectivenessScorer:
         model_results: dict[str, list[bool]] = defaultdict(list)
         for record in recent:
             model_results[record.model].append(record.total >= 80)
-        return {
-            model: sum(results) / len(results)
-            for model, results in model_results.items()
-            if len(results) >= 3
-        }
+        return {model: sum(results) / len(results) for model, results in model_results.items() if len(results) >= 3}
 
     def average_for_model(self, model: str) -> float:
         """Return average effectiveness for a model across all roles."""
