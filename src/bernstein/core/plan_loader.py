@@ -190,6 +190,10 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
             effort_raw = step.get("effort")
             estimated_minutes_raw = step.get("estimated_minutes")
 
+            # Execution mode: "batch" delegates to Claude Code /batch skill
+            mode_raw = step.get("mode")
+            execution_mode: str | None = str(mode_raw) if mode_raw else None
+
             task = Task(
                 id=f"plan-{i}-{j}",
                 title=title,
@@ -206,6 +210,7 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
                 completion_signals=signals,
                 model=str(model_raw) if model_raw else None,
                 effort=str(effort_raw) if effort_raw else None,
+                execution_mode=execution_mode,
             )
             tasks.append(task)
             stage_tasks[str(stage_name)].append(title)

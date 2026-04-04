@@ -249,6 +249,38 @@ def _render_predecessor_context(tasks: list[Task], task_graph: TaskGraph | None)
     )
 
 
+def _render_batch_prompt(task: Task) -> str:
+    """Build a /batch prompt for homogeneous large-scale refactors.
+
+    When a task declares ``execution_mode: batch``, Bernstein spawns a single
+    Claude Code agent with this prompt.  Claude Code's built-in ``/batch``
+    skill handles decomposition into 5-30 independent units, spawns worktree
+    subagents in parallel, runs tests and opens a PR per unit, and tracks
+    progress internally.  This is far more efficient than Bernstein spawning
+    N separate agents for mechanical changes (renames, migrations, API updates).
+
+    The outer agent needs ``--max-turns 200`` (set by the caller) to cover the
+    full research → decompose → spawn → track lifecycle.
+
+    Args:
+        task: The batch-mode task to delegate.
+
+    Returns:
+        Prompt string starting with ``/batch`` that triggers the batch skill.
+    """
+    lines: list[str] = [f"/batch {task.description}"]
+    if task.owned_files:
+        lines.append(f"\nAffected paths: {', '.join(task.owned_files)}")
+    lines.append(f"\nTask ID for completion reporting: {task.id}")
+    lines.append(
+        "\nAfter all batch units are complete, run:\n"
+        f"curl -sS -X POST http://127.0.0.1:8052/tasks/{task.id}/complete "
+        f'-H "Content-Type: application/json" '
+        f'-d \'{{"result_summary": "Batch complete: {task.title}"}}\''
+    )
+    return "\n".join(lines)
+
+
 def _render_prompt(
     tasks: list[Task],
     templates_dir: Path,
@@ -889,22 +921,37 @@ class AgentSpawner:
         max_scope = max((t.scope.value for t in tasks), key=lambda s: _scope_order.get(s, 1))
         task_token_budget = self._max_tokens_per_task.get(max_scope, 0)
 
+        # Batch execution mode: single task delegates to Claude Code /batch skill.
+        # The outer agent handles decomposition, parallel subagent spawning, and
+        # PR-per-unit creation internally, so Bernstein only needs one process.
+        is_batch_mode = any(t.execution_mode == "batch" for t in tasks)
+
         # Render prompt (catalog system_prompt replaces role template when matched)
         bulletin_summary = self._bulletin.summary() if self._bulletin is not None else ""
         meta_messages = list(tasks[0].meta_messages)
-        prompt = _render_prompt(
-            tasks,
-            self._templates_dir,
-            self._workdir,
-            self._agency_catalog,
-            spawner_config=getattr(self, "_config", None),
-            catalog_system_prompt=catalog_system_prompt,
-            context_builder=self._context_builder,
-            session_id=session_id,
-            bulletin_summary=bulletin_summary,
-            token_budget=task_token_budget,
-            meta_messages=meta_messages,
-        )
+        if is_batch_mode:
+            # Use the first batch task as the primary task for the /batch prompt.
+            # Multi-task batches with mode=batch are unusual but we handle them by
+            # using the first task's goal as the primary directive.
+            prompt = _render_batch_prompt(tasks[0])
+            logger.info(
+                "Batch execution mode: spawning single agent with /batch prompt for task %s",
+                tasks[0].id,
+            )
+        else:
+            prompt = _render_prompt(
+                tasks,
+                self._templates_dir,
+                self._workdir,
+                self._agency_catalog,
+                spawner_config=getattr(self, "_config", None),
+                catalog_system_prompt=catalog_system_prompt,
+                context_builder=self._context_builder,
+                session_id=session_id,
+                bulletin_summary=bulletin_summary,
+                token_budget=task_token_budget,
+                meta_messages=meta_messages,
+            )
 
         agent_source = catalog_agent.source if catalog_agent else "built-in"
         if catalog_agent:

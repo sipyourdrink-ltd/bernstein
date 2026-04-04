@@ -262,6 +262,7 @@ class Task:
     progress_log: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])  # [{timestamp, message, percent}]
     version: int = 1  # Optimistic locking: incremented on every status change
     claimed_by_session: str | None = None  # Parent orchestrator session that claimed this task
+    execution_mode: str | None = None  # "batch" → delegate to Claude Code /batch skill
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Task:
@@ -338,6 +339,7 @@ class Task:
             progress_log=list(raw.get("progress_log", [])),
             version=raw.get("version", 1),
             claimed_by_session=raw.get("claimed_by_session"),
+            execution_mode=raw.get("execution_mode"),
         )
 
 
