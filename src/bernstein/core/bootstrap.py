@@ -424,6 +424,19 @@ def bootstrap_from_seed(
     sync_result = sync_backlog_to_server(workdir, server_url=server_url)
     backlog_count = len(sync_result.created) + len(sync_result.skipped)
 
+    # Import unchecked items from TODO.md / TASKS.md / .plan if present.
+    # Non-fatal: workflow import failure must never block the run.
+    try:
+        from bernstein.core.workflow_importer import import_workflow_tasks
+
+        with httpx.Client(timeout=10.0) as _wf_client:
+            _wf_imported = import_workflow_tasks(workdir, _wf_client, server_url)
+        if _wf_imported:
+            console.print(f"  [dim]workflow[/dim] {_wf_imported} task(s) from workflow file(s)")
+            backlog_count += _wf_imported
+    except Exception as _wf_exc:
+        logger.debug("Workflow import skipped: %s", _wf_exc)
+
     manager_task_id = ""
     if prior_session is not None:
         console.print(f"  [dim]resume[/dim]  {len(prior_session.completed_task_ids)} done previously")
