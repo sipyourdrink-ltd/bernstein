@@ -154,9 +154,14 @@ def _launch_server(state: _SupervisorState) -> int:
         "--port",
         str(port),
     ]
-    if state.evolve_mode:
-        src_dir = str(workdir / "src" / "bernstein")
+    # Always enable reload so the server picks up code changes on restart.
+    # --reload-dir watches the actual source tree (editable install uses src/).
+    src_dir = str(workdir / "src" / "bernstein")
+    if Path(src_dir).is_dir():
         server_cmd.extend(["--reload", "--reload-dir", src_dir])
+    elif state.evolve_mode:
+        # Fallback: reload without --reload-dir (watches cwd)
+        server_cmd.append("--reload")
 
     log_path = workdir / ".sdd" / "runtime" / "server.log"
     rotate_log_file(log_path)

@@ -40,8 +40,13 @@ role_model_policy:
 
 budget: "$0"
 
-# Disable features that use OpenRouter LLM calls — key is exhausted,
-# and these features inflate the backlog with junk tasks.
+# Internal LLM provider for manager reviews, decomposition, and planning.
+# Use "claude" to route through the Anthropic API (same key as Claude Code).
+# Set to "openrouter_free" only if you have an OpenRouter key configured.
+internal_llm_provider: "claude"
+internal_llm_model: "claude-sonnet-4-6"
+
+# Disable features that use internal LLM calls — saves tokens.
 evolution_enabled: false   # no upgrade/self-improve tasks
 auto_decompose: false      # no LLM-based task splitting
 

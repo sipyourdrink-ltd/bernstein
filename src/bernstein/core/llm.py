@@ -122,6 +122,38 @@ async def call_llm(
     Raises:
         RuntimeError: If the API call fails.
     """
+    # Claude Code CLI path — uses OAuth auth, no API key needed.
+    # Runs `claude --print -p "prompt" --model model --output-format text`
+    if provider == "claude":
+        logger.debug("Calling Claude Code CLI: model=%s", model)
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                [
+                    "claude",
+                    "--print",
+                    "--model", model,
+                    "--output-format", "text",
+                    "--max-turns", "1",
+                    "-p", prompt,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"claude CLI exited {result.returncode}: {result.stderr[:200]}")
+            return result.stdout.strip()
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Claude CLI timed out after 120s") from exc
+        except FileNotFoundError as exc:
+            raise RuntimeError("claude CLI not found — install Claude Code") from exc
+        except Exception as exc:
+            logger.error("Claude CLI call failed: %s", exc)
+            raise RuntimeError(f"Claude CLI call failed: {exc}") from exc
+
+    # OpenAI-compatible providers (OpenRouter, Together, G4F, etc.)
     client = get_client(provider)
     logger.debug("Calling LLM API using provider=%s, model=%s", provider, model)
 
