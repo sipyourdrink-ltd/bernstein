@@ -140,6 +140,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bernstein.core.container import ContainerConfig
+    from bernstein.core.permission_mode import PermissionMode
     from bernstein.core.quality_gates import QualityGatesConfig
     from bernstein.core.spawner import AgentSpawner
     from bernstein.evolution.loop import EvolutionLoop
@@ -260,6 +261,12 @@ class Orchestrator:
         self._config = config
         self._spawner = spawner
         self._workdir = workdir
+
+        # Resolve the effective permission mode once at startup so every
+        # tick and spawn uses the same mode consistently.
+        from bernstein.core.permission_mode import resolve_mode
+
+        self._permission_mode = resolve_mode(config.permission_mode)
         self._bulletin: BulletinBoard | None = bulletin
         self._notifier: NotificationManager | None = notifier
         self._cluster_config = cluster_config
@@ -699,6 +706,11 @@ class Orchestrator:
     def active_agents(self) -> dict[str, AgentSession]:
         """Currently tracked agent sessions, keyed by session id."""
         return dict(self._agents)
+
+    @property
+    def permission_mode(self) -> PermissionMode:
+        """The resolved permission mode for this orchestrator session."""
+        return self._permission_mode
 
     @property
     def bulletin(self) -> BulletinBoard | None:

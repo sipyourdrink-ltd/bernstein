@@ -1023,6 +1023,7 @@ class OrchestratorConfig:
     max_cost_per_agent: float = 0.0  # Hard per-agent spend cap (0 = unlimited)
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
     convergence: ConvergenceGuardConfig = field(default_factory=ConvergenceGuardConfig)
+    permission_mode: str | None = None  # "bypass" | "plan" | "auto" | "default" — see permission_mode.py
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""

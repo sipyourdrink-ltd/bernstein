@@ -1,7 +1,8 @@
 """Tests for permission mode hierarchy (permission_mode.py).
 
 Table-driven tests covering each mode against representative tool calls,
-severity relaxation, legacy flag migration, and compatibility matrix.
+severity relaxation, legacy flag migration, compatibility matrix,
+orchestrator config wiring, and hook-mode interaction.
 """
 
 from __future__ import annotations
@@ -10,6 +11,10 @@ from pathlib import Path
 
 import pytest
 
+from bernstein.core.permission_matrix import (
+    PermissionResolutionMatrix,
+    ResolutionOutcome,
+)
 from bernstein.core.permission_mode import (
     LEGACY_FLAG_TO_MODE,
     MODE_ENFORCES,
@@ -358,3 +363,114 @@ permission_rules:
         engine = load_permission_rules(tmp_path)
         assert len(engine.rules) == 1
         assert engine.rules[0].severity == RuleSeverity.MEDIUM
+
+
+# ---------------------------------------------------------------------------
+# OrchestratorConfig.permission_mode field
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratorConfigPermissionMode:
+    """Verify that OrchestratorConfig carries a permission_mode field
+    and that resolve_mode maps it to the canonical enum."""
+
+    def test_default_is_none(self) -> None:
+        from bernstein.core.models import OrchestratorConfig
+
+        cfg = OrchestratorConfig()
+        assert cfg.permission_mode is None
+
+    def test_set_bypass(self) -> None:
+        from bernstein.core.models import OrchestratorConfig
+
+        cfg = OrchestratorConfig(permission_mode="bypass")
+        assert resolve_mode(cfg.permission_mode) == PermissionMode.BYPASS
+
+    def test_set_auto(self) -> None:
+        from bernstein.core.models import OrchestratorConfig
+
+        cfg = OrchestratorConfig(permission_mode="auto")
+        assert resolve_mode(cfg.permission_mode) == PermissionMode.AUTO
+
+    def test_legacy_flag_through_config(self) -> None:
+        from bernstein.core.models import OrchestratorConfig
+
+        cfg = OrchestratorConfig(permission_mode="dangerously-skip-permissions")
+        assert resolve_mode(cfg.permission_mode) == PermissionMode.BYPASS
+
+    def test_none_resolves_to_default(self) -> None:
+        from bernstein.core.models import OrchestratorConfig
+
+        cfg = OrchestratorConfig()
+        assert resolve_mode(cfg.permission_mode) == PermissionMode.DEFAULT
+
+
+# ---------------------------------------------------------------------------
+# Hook × Mode compatibility matrix
+# ---------------------------------------------------------------------------
+
+
+class TestHookModeCompatibility:
+    """Integration test: mode-filtered rule outcome + hook resolution.
+
+    This validates the full chain:
+      raw rule → mode relaxation → hook resolution → final outcome.
+    """
+
+    _MATRIX = PermissionResolutionMatrix()
+
+    @pytest.mark.parametrize(
+        ("mode", "rule_action", "severity", "hook_outcome", "expected"),
+        [
+            # DEFAULT mode: all severities enforced, rule deny wins over hook allow
+            (PermissionMode.DEFAULT, RuleAction.DENY, RuleSeverity.HIGH, "allow", ResolutionOutcome.DENY),
+            # DEFAULT mode: rule ask wins over hook allow
+            (PermissionMode.DEFAULT, RuleAction.ASK, RuleSeverity.MEDIUM, "allow", ResolutionOutcome.ASK),
+            # DEFAULT mode: rule allow + hook deny → deny
+            (PermissionMode.DEFAULT, RuleAction.ALLOW, RuleSeverity.LOW, "deny", ResolutionOutcome.DENY),
+            # DEFAULT mode: rule allow + hook allow → allow
+            (PermissionMode.DEFAULT, RuleAction.ALLOW, RuleSeverity.LOW, "allow", ResolutionOutcome.ALLOW),
+            # BYPASS mode: high-severity deny is relaxed to allow → hook deny wins
+            (PermissionMode.BYPASS, RuleAction.DENY, RuleSeverity.HIGH, "deny", ResolutionOutcome.DENY),
+            # BYPASS mode: high-severity deny relaxed to allow, hook allow → allow
+            (PermissionMode.BYPASS, RuleAction.DENY, RuleSeverity.HIGH, "allow", ResolutionOutcome.ALLOW),
+            # BYPASS mode: critical deny NOT relaxed → deny regardless of hook
+            (PermissionMode.BYPASS, RuleAction.DENY, RuleSeverity.CRITICAL, "allow", ResolutionOutcome.DENY),
+            # PLAN mode: medium ask relaxed to allow, hook neutral → allow
+            (PermissionMode.PLAN, RuleAction.ASK, RuleSeverity.MEDIUM, "neutral", ResolutionOutcome.ALLOW),
+            # PLAN mode: high ask enforced → ask regardless of hook
+            (PermissionMode.PLAN, RuleAction.ASK, RuleSeverity.HIGH, "allow", ResolutionOutcome.ASK),
+            # AUTO mode: low ask relaxed to allow → allow
+            (PermissionMode.AUTO, RuleAction.ASK, RuleSeverity.LOW, "neutral", ResolutionOutcome.ALLOW),
+            # AUTO mode: medium deny enforced → deny
+            (PermissionMode.AUTO, RuleAction.DENY, RuleSeverity.MEDIUM, "allow", ResolutionOutcome.DENY),
+        ],
+        ids=[
+            "default-deny-high-hook-allow",
+            "default-ask-medium-hook-allow",
+            "default-allow-low-hook-deny",
+            "default-allow-low-hook-allow",
+            "bypass-deny-high-hook-deny",
+            "bypass-deny-high-hook-allow",
+            "bypass-deny-critical-hook-allow",
+            "plan-ask-medium-hook-neutral",
+            "plan-ask-high-hook-allow",
+            "auto-ask-low-hook-neutral",
+            "auto-deny-medium-hook-allow",
+        ],
+    )
+    def test_mode_hook_matrix(
+        self,
+        mode: PermissionMode,
+        rule_action: RuleAction,
+        severity: RuleSeverity,
+        hook_outcome: str,
+        expected: ResolutionOutcome,
+    ) -> None:
+        # Step 1: Apply mode relaxation to get effective rule action
+        eff = effective_action(mode, rule_action, severity)
+        # Step 2: Map effective action to rule outcome for hook resolution
+        rule_outcome = eff.value  # "deny" | "ask" | "allow"
+        # Step 3: Resolve through the hook matrix
+        result = self._MATRIX.resolve_simple(rule_outcome, hook_outcome)  # type: ignore[arg-type]
+        assert result == expected
