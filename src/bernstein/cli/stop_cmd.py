@@ -426,6 +426,21 @@ def _collect_repo_processes(killed: set[int]) -> None:
             _kill_named_pid(snapshot.pid, "Task server", killed)
 
 
+def _kill_port_holder(port: int, killed: set[int]) -> None:
+    """Kill whatever process is holding a port (last resort)."""
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.strip().splitlines():
+            pid = int(line.strip())
+            if pid not in killed:
+                _kill_named_pid(pid, f"Port {port} holder", killed)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+
+
 def _cleanup_runtime_artifacts() -> None:
     """Remove stale PID files and agents.json so the next stop is clean."""
     for path in (
@@ -433,6 +448,7 @@ def _cleanup_runtime_artifacts() -> None:
         Path(".sdd/runtime/draining"),
         Path(".sdd/runtime/supervisor_state.json"),
         Path(".sdd/runtime/watchdog_state.json"),
+        Path(".sdd/runtime/bernstein.pid"),
         Path(SDD_PID_SERVER),
         Path(SDD_PID_SPAWNER),
         Path(SDD_PID_WATCHDOG),
@@ -462,6 +478,7 @@ def hard_stop() -> None:
     _kill_pid_file(SDD_PID_SPAWNER, "Spawner", killed_pids)
     _kill_pid_file(SDD_PID_SERVER, "Task server", killed_pids)
     _collect_pids_from_supervisor_state(killed_pids)
+    _kill_port_holder(8052, killed_pids)  # last resort: kill whatever holds the port
 
     # 3. Kill all spawned agents and repo-owned leftovers
     _collect_pids_from_agents_json(killed_pids)
