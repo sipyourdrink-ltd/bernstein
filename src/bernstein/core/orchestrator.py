@@ -1110,9 +1110,7 @@ class Orchestrator:
         # 4x-ii. Periodic worktree garbage collection: every 10 ticks
         if self._tick_count % 10 == 0:
             try:
-                active_ids = {
-                    s.id for s in self._agents.values() if s.status != "dead"
-                }
+                active_ids = {s.id for s in self._agents.values() if s.status != "dead"}
                 cleaned = self._spawner.prune_orphan_worktrees(active_ids)
                 if cleaned:
                     logger.info("Periodic worktree GC: cleaned %d orphan worktree(s)", cleaned)
