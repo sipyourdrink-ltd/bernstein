@@ -4851,9 +4851,9 @@ class TestMetricsWiring:
     """
 
     def _reset_collector(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import bernstein.core.metrics as _metrics
+        import bernstein.core.metric_collector as _mc
 
-        monkeypatch.setattr(_metrics, "_default_collector", None)
+        monkeypatch.setattr(_mc, "_default_collector", None)
 
     def test_spawn_records_start_task_for_each_task(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """start_task() is called for every task in the spawned batch."""
@@ -4982,7 +4982,7 @@ class TestMetricsWiring:
             pid=88,
             task_ids=["T-wct"],
             spawn_ts=time.time() - 200,  # 200s > 60s limit → wall-clock reap
-            heartbeat_ts=time.time(),  # fresh heartbeat, so only wall-clock fires
+            heartbeat_ts=time.time() - 130,  # >120s ago so extension logic doesn't kick in, <900s so no heartbeat reap
             status="working",
         )
         orch._agents["sess-wct"] = timeout_session

@@ -51,7 +51,7 @@ jobs:
         if: steps.check.outputs.skip == 'false'
         id: review
         run: |
-          git fetch origin ${{ github.base_ref }} --depth=1
+          git fetch origin ${{ github.base_ref }}
           git diff --unified=3 origin/${{ github.base_ref }}...HEAD > pr.diff
 
           RESPONSE=$(gemini \

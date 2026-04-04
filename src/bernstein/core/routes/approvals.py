@@ -74,6 +74,17 @@ def _approvals_dir() -> Path:
     return _APPROVALS_DIR
 
 
+def _safe_child(base: Path, filename: str) -> Path:
+    """Resolve *filename* under *base* and verify it stays within *base*.
+
+    Raises HTTPException(400) if the resolved path escapes the directory.
+    """
+    resolved = (base / filename).resolve()
+    if not resolved.is_relative_to(base.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid task_id")
+    return resolved
+
+
 def _load_pending(filepath: Path) -> PendingApproval | None:
     """Parse a pending approval JSON file.
 
@@ -128,8 +139,8 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
     """
     _validate_task_id(task_id)
     approvals_dir = _approvals_dir()
-    pending_path = _pending_dir() / f"{task_id}.json"
-    approved_path = approvals_dir / f"{task_id}.approved"
+    pending_path = _safe_child(_pending_dir(), f"{task_id}.json")
+    approved_path = _safe_child(approvals_dir, f"{task_id}.approved")
 
     if not pending_path.exists():
         raise HTTPException(status_code=404, detail=f"No pending approval for task {task_id}")
@@ -140,7 +151,7 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
     # Remove pending file
     pending_path.unlink(missing_ok=True)
 
-    logger.info("Approval routes: task %s approved via TUI/API", task_id)
+    logger.info("Approval routes: task %r approved via TUI/API", task_id)
     return {"status": "approved", "task_id": task_id}
 
 
@@ -160,8 +171,8 @@ async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, 
     """
     _validate_task_id(task_id)
     approvals_dir = _approvals_dir()
-    pending_path = _pending_dir() / f"{task_id}.json"
-    rejected_path = approvals_dir / f"{task_id}.rejected"
+    pending_path = _safe_child(_pending_dir(), f"{task_id}.json")
+    rejected_path = _safe_child(approvals_dir, f"{task_id}.rejected")
 
     if not pending_path.exists():
         raise HTTPException(status_code=404, detail=f"No pending approval for task {task_id}")
@@ -172,5 +183,5 @@ async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, 
     # Remove pending file
     pending_path.unlink(missing_ok=True)
 
-    logger.info("Approval routes: task %s rejected via TUI/API", task_id)
+    logger.info("Approval routes: task %r rejected via TUI/API", task_id)
     return {"status": "rejected", "task_id": task_id}

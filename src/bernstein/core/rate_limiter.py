@@ -73,10 +73,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Check rate limit
         if not self._check_rate_limit(client_id, endpoint, config):
-            safe_id = client_id[:12] + "..." if len(client_id) > 12 else client_id
             logger.warning(
-                "Rate limit exceeded for client %s on endpoint %s",
-                safe_id,
+                "Rate limit exceeded on endpoint %s",
                 endpoint,
             )
             return JSONResponse(
