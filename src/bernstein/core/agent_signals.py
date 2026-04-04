@@ -140,7 +140,17 @@ class AgentSignalManager:
         if not hb_file.exists():
             return None
         try:
-            raw = json.loads(hb_file.read_text(encoding="utf-8"))
+            text = hb_file.read_text(encoding="utf-8").strip()
+            if not text:
+                return None
+            # Handle both JSON {"timestamp": ...} and plain unix timestamp
+            try:
+                raw = json.loads(text)
+            except json.JSONDecodeError:
+                # Plain number (from older wrapper script)
+                return AgentHeartbeat(timestamp=float(text), status="working")
+            if isinstance(raw, (int, float)):
+                return AgentHeartbeat(timestamp=float(raw), status="working")
             return AgentHeartbeat(
                 timestamp=float(raw["timestamp"]),
                 files_changed=int(raw.get("files_changed", 0)),
@@ -151,7 +161,7 @@ class AgentSignalManager:
                 message=str(raw.get("message", "")),
             )
         except Exception as exc:
-            logger.warning("Failed to parse heartbeat for %s: %s", session_id, exc)
+            logger.debug("Failed to parse heartbeat for %s: %s", session_id, exc)
             return None
 
     def is_stale(self, session_id: str, stale_after_s: float) -> bool:

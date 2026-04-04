@@ -1030,7 +1030,7 @@ def claim_and_spawn_batches(
                     entry.fail_count if entry else 0,
                     action,
                 )
-                if action == "decompose" and len(batch) == 1:
+                if action == "decompose" and len(batch) == 1 and getattr(orch._config, "auto_decompose", False):
                     auto_decompose_task(
                         task,
                         client=orch._client,
