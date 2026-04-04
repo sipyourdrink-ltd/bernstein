@@ -112,7 +112,8 @@ class TestSpawnCommandArgs:
 
     def test_fixed_flags_always_present(self, tmp_path: Path) -> None:
         cmd, _, __ = self._spawn(tmp_path)
-        assert "--dangerously-skip-permissions" in cmd
+        assert "--permission-mode" in cmd
+        assert cmd[cmd.index("--permission-mode") + 1] == "bypassPermissions"
         assert "--output-format" in cmd
         assert cmd[cmd.index("--output-format") + 1] == "stream-json"
         assert "--verbose" in cmd
