@@ -20,7 +20,6 @@ import httpx
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.context import append_decision
-from bernstein.core.team_state import TeamStateStore
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.cross_model_verifier import (
     CrossModelVerifierConfig,
@@ -43,6 +42,7 @@ from bernstein.core.models import (
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
+from bernstein.core.team_state import TeamStateStore
 from bernstein.core.tick_pipeline import (
     CompletionData,
     complete_task,
