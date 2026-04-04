@@ -86,10 +86,10 @@
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><a href="getting-started.html">Getting Started</a></td><td>Install, quick start, configuration, CLI reference, task API</td></tr>
-        <tr><td><a href="the-bernstein-way.md">The Bernstein Way</a></td><td>Architecture tenets and default workflow philosophy</td></tr>
-        <tr><td><a href="install-linux.md">Linux Install Guide</a></td><td>Platform-specific installation notes for Linux</td></tr>
-        <tr><td><a href="github-app-setup.md">GitHub App Setup</a></td><td>Step-by-step GitHub App installation and webhook configuration</td></tr>
-        <tr><td><a href="github-action.md">GitHub Action</a></td><td>CI-triggered orchestration via GitHub Actions</td></tr>
+        <tr><td><a href="doc.html?path=the-bernstein-way.md">The Bernstein Way</a></td><td>Architecture tenets and default workflow philosophy</td></tr>
+        <tr><td><a href="doc.html?path=install-linux.md">Linux Install Guide</a></td><td>Platform-specific installation notes for Linux</td></tr>
+        <tr><td><a href="doc.html?path=github-app-setup.md">GitHub App Setup</a></td><td>Step-by-step GitHub App installation and webhook configuration</td></tr>
+        <tr><td><a href="doc.html?path=github-action.md">GitHub Action</a></td><td>CI-triggered orchestration via GitHub Actions</td></tr>
       </tbody>
     </table>
 
@@ -98,9 +98,9 @@
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><a href="concepts.html">Concepts</a></td><td>Task server, spawner, janitor, agent lifecycle, model routing</td></tr>
-        <tr><td><a href="DESIGN.md">Design Document</a></td><td>Full system architecture, component interactions, data flow</td></tr>
-        <tr><td><a href="DEPENDENCY_RESOLVER.md">Dependency Resolver</a></td><td>How task dependency graphs are resolved and scheduled</td></tr>
-        <tr><td><a href="rag-challenge-swarm-architecture.md">RAG Challenge Swarm</a></td><td>Origin story: 12 agents, 47 hours, 737 tickets, architectural lessons</td></tr>
+        <tr><td><a href="doc.html?path=DESIGN.md">Design Document</a></td><td>Full system architecture, component interactions, data flow</td></tr>
+        <tr><td><a href="doc.html?path=DEPENDENCY_RESOLVER.md">Dependency Resolver</a></td><td>How task dependency graphs are resolved and scheduled</td></tr>
+        <tr><td><a href="doc.html?path=rag-challenge-swarm-architecture.md">RAG Challenge Swarm</a></td><td>Origin story: 12 agents, 47 hours, 737 tickets, architectural lessons</td></tr>
       </tbody>
     </table>
 
@@ -108,9 +108,9 @@
     <table>
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><a href="DEPLOYMENT.md">Deployment Guide</a></td><td>Production deployment patterns, storage backends, environment config</td></tr>
-        <tr><td><a href="CLUSTER.md">Cluster Mode</a></td><td>Distributed multi-node orchestration with worker daemons</td></tr>
-        <tr><td><a href="HELM_DEPLOYMENT.md">Helm Deployment</a></td><td>Kubernetes deployment via Helm charts</td></tr>
+        <tr><td><a href="doc.html?path=DEPLOYMENT.md">Deployment Guide</a></td><td>Production deployment patterns, storage backends, environment config</td></tr>
+        <tr><td><a href="doc.html?path=CLUSTER.md">Cluster Mode</a></td><td>Distributed multi-node orchestration with worker daemons</td></tr>
+        <tr><td><a href="doc.html?path=HELM_DEPLOYMENT.md">Helm Deployment</a></td><td>Kubernetes deployment via Helm charts</td></tr>
       </tbody>
     </table>
 
@@ -118,8 +118,8 @@
     <table>
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><a href="compatibility.md">Protocol Compatibility Matrix</a></td><td>MCP 1.0/1.1, A2A 0.2/0.3, ACP — test results and version support</td></tr>
-        <tr><td><a href="zero-lock-in.md">Zero Lock-In</a></td><td>How Bernstein avoids provider and protocol lock-in</td></tr>
+        <tr><td><a href="doc.html?path=compatibility.md">Protocol Compatibility Matrix</a></td><td>MCP 1.0/1.1, A2A 0.2/0.3, ACP — test results and version support</td></tr>
+        <tr><td><a href="doc.html?path=zero-lock-in.md">Zero Lock-In</a></td><td>How Bernstein avoids provider and protocol lock-in</td></tr>
       </tbody>
     </table>
 
@@ -127,8 +127,8 @@
     <table>
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><a href="MODEL_POLICY.md">Model Routing Policy</a></td><td>Provider allow/deny lists, model selection rules, cost controls</td></tr>
-        <tr><td><a href="KNOWN_LIMITATIONS.md">Known Limitations</a></td><td>Current constraints, workarounds, and planned fixes</td></tr>
+        <tr><td><a href="doc.html?path=MODEL_POLICY.md">Model Routing Policy</a></td><td>Provider allow/deny lists, model selection rules, cost controls</td></tr>
+        <tr><td><a href="doc.html?path=KNOWN_LIMITATIONS.md">Known Limitations</a></td><td>Current constraints, workarounds, and planned fixes</td></tr>
       </tbody>
     </table>
 
@@ -137,7 +137,7 @@
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><a href="adapters.html">Adapters</a></td><td>Agent adapter reference: all supported CLIs, feature matrix, custom adapters</td></tr>
-        <tr><td><a href="plugin-sdk.md">Plugin SDK</a></td><td>Pluggy-based plugin system: hooks, lifecycle events, packaging</td></tr>
+        <tr><td><a href="doc.html?path=plugin-sdk.md">Plugin SDK</a></td><td>Pluggy-based plugin system: hooks, lifecycle events, packaging</td></tr>
         <tr><td><a href="api.html">API Reference</a></td><td>Task server HTTP API: endpoints, schemas, config</td></tr>
       </tbody>
     </table>
@@ -147,15 +147,16 @@
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><a href="leaderboard.html">Benchmarks</a></td><td>Public benchmark status, methodology, and verified SWE-Bench publication policy</td></tr>
-        <tr><td><a href="compare/README.md">Comparison Index</a></td><td>Overview of all comparison pages with selection guidance</td></tr>
-        <tr><td><a href="compare/bernstein-vs-conductor.md">vs. Conductor</a></td><td>Workflow engine comparison</td></tr>
-        <tr><td><a href="compare/bernstein-vs-crystal.md">vs. Crystal</a></td><td>Multi-agent framework comparison</td></tr>
-        <tr><td><a href="compare/bernstein-vs-dorothy.md">vs. Dorothy</a></td><td>Orchestration system comparison</td></tr>
-        <tr><td><a href="compare/bernstein-vs-github-agent-hq.md">vs. GitHub Agent HQ</a></td><td>GitHub's multi-agent system comparison</td></tr>
-        <tr><td><a href="compare/bernstein-vs-parallel-code.md">vs. Parallel Code</a></td><td>Parallel coding tool comparison</td></tr>
-        <tr><td><a href="compare/bernstein-vs-single-agent.md">vs. Single Agent</a></td><td>Multi-agent orchestration vs. single-agent baseline</td></tr>
-        <tr><td><a href="compare/bernstein-vs-stoneforge.md">vs. Stoneforge</a></td><td>Agent platform comparison</td></tr>
-        <tr><td><a href="competitive-matrix.md">Competitive Matrix</a></td><td>Feature-by-feature comparison table across tools</td></tr>
+        <tr><td><a href="doc.html?path=compare/README.md">Comparison Index</a></td><td>Overview of all comparison pages with selection guidance</td></tr>
+        <tr><td><a href="doc.html?path=compare/bernstein-vs-conductor.md">vs. Conductor</a></td><td>Workflow engine comparison</td></tr>
+        <tr><td><a href="doc.html?path=compare/bernstein-vs-crystal.md">vs. Crystal</a></td><td>Multi-agent framework comparison</td></tr>
+        <tr><td><a href="doc.html?path=compare/bernstein-vs-dorothy.md">vs. Dorothy</a></td><td>Orchestration system comparison</td></tr>
+        <tr><td><a href="doc.html?path=compare/bernstein-vs-github-agent-hq.md">vs. GitHub Agent HQ</a></td><td>GitHub's multi-agent system comparison</td></tr>
+        <tr><td><a href="doc.html?path=compare/bernstein-vs-paperclip.md">vs. Paperclip</a></td><td>AI company management platform comparison (47k stars)</td></tr>
+        <tr><td><a href="doc.html?path=compare/bernstein-vs-parallel-code.md">vs. Parallel Code</a></td><td>Parallel coding tool comparison</td></tr>
+        <tr><td><a href="doc.html?path=compare/bernstein-vs-single-agent.md">vs. Single Agent</a></td><td>Multi-agent orchestration vs. single-agent baseline</td></tr>
+        <tr><td><a href="doc.html?path=compare/bernstein-vs-stoneforge.md">vs. Stoneforge</a></td><td>Agent platform comparison</td></tr>
+        <tr><td><a href="doc.html?path=competitive-matrix.md">Competitive Matrix</a></td><td>Feature-by-feature comparison table across tools</td></tr>
       </tbody>
     </table>
 
@@ -163,8 +164,8 @@
     <table>
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><a href="FEATURE_MATRIX.md">Feature Matrix</a></td><td>Documentation coverage status for every shipped capability</td></tr>
-        <tr><td><a href="CHANGELOG.md">Changelog</a></td><td>Release notes and version history</td></tr>
+        <tr><td><a href="doc.html?path=FEATURE_MATRIX.md">Feature Matrix</a></td><td>Documentation coverage status for every shipped capability</td></tr>
+        <tr><td><a href="doc.html?path=CHANGELOG.md">Changelog</a></td><td>Release notes and version history</td></tr>
       </tbody>
     </table>
 
@@ -172,9 +173,9 @@
     <table>
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><a href="decisions/001-agent-lifecycle.md">001 — Agent Lifecycle</a></td><td>Why short-lived agents over long-running processes</td></tr>
-        <tr><td><a href="decisions/002-ux-and-distribution.md">002 — UX and Distribution</a></td><td>CLI-first design, distribution strategy</td></tr>
-        <tr><td><a href="decisions/003-self-evolution.md">003 — Self-Evolution</a></td><td>Risk-gated self-improvement architecture</td></tr>
+        <tr><td><a href="doc.html?path=decisions/001-agent-lifecycle.md">001 — Agent Lifecycle</a></td><td>Why short-lived agents over long-running processes</td></tr>
+        <tr><td><a href="doc.html?path=decisions/002-ux-and-distribution.md">002 — UX and Distribution</a></td><td>CLI-first design, distribution strategy</td></tr>
+        <tr><td><a href="doc.html?path=decisions/003-self-evolution.md">003 — Self-Evolution</a></td><td>Risk-gated self-improvement architecture</td></tr>
       </tbody>
     </table>
 
@@ -182,10 +183,10 @@
     <table>
       <thead><tr><th>Document</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><a href="blog/zero-llm-coordination.md">Zero-LLM Coordination</a></td><td>How Bernstein achieves multi-agent orchestration without LLM scheduling</td></tr>
-        <tr><td><a href="blog/multi-agent-benchmark.md">Multi-Agent Benchmark</a></td><td>Benchmark results: orchestrated vs. single-agent performance</td></tr>
-        <tr><td><a href="blog/self-evolution-30-days.md">Self-Evolution: 30 Days</a></td><td>Results from 30 days of continuous self-improvement</td></tr>
-        <tr><td><a href="blog/swe-bench-orchestration-thesis.md">SWE-Bench Orchestration</a></td><td>Applying orchestration patterns to SWE-bench tasks</td></tr>
+        <tr><td><a href="doc.html?path=blog/zero-llm-coordination.md">Zero-LLM Coordination</a></td><td>How Bernstein achieves multi-agent orchestration without LLM scheduling</td></tr>
+        <tr><td><a href="doc.html?path=blog/multi-agent-benchmark.md">Multi-Agent Benchmark</a></td><td>Benchmark results: orchestrated vs. single-agent performance</td></tr>
+        <tr><td><a href="doc.html?path=blog/self-evolution-30-days.md">Self-Evolution: 30 Days</a></td><td>Results from 30 days of continuous self-improvement</td></tr>
+        <tr><td><a href="doc.html?path=blog/swe-bench-orchestration-thesis.md">SWE-Bench Orchestration</a></td><td>Applying orchestration patterns to SWE-bench tasks</td></tr>
       </tbody>
     </table>
 

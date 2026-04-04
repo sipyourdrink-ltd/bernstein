@@ -255,26 +255,20 @@ The spawner matches the best agent for each role using keyword-based role infere
 
 ## How it compares
 
-|  | Bernstein | CrewAI | AutoGen | LangGraph | Ruflo |
+|  | Bernstein | Paperclip | CrewAI | AutoGen | LangGraph |
 |---|---|---|---|---|---|
-| Orchestrator type | Deterministic code | LLM-driven | LLM-driven | Graph + LLM | LLM-driven |
-| Agent model | Any CLI agent | Python classes | Python agents | Nodes + edges | Claude only |
-| Parallel execution | Native | Sequential | Async | Graph-based | Sequential |
-| Git isolation | Worktrees | None | None | None | Branches |
-| Verification | Janitor + quality gates | None built-in | None built-in | Conditional edges | Self-check |
-| Cost tracking | Built-in | Manual | Manual | Manual | Built-in |
-| State persistence | File-based (.sdd/) | In-memory | In-memory | Checkpointer | Cloud |
-| Self-evolution | Built-in | No | No | No | Yes |
-| Plan files | YAML stages + steps | Python code | Python code | Python code | No |
-| Agent catalogs | Yes (Agency + custom) | No | No | No | No |
+| Orchestrator type | Deterministic code | LLM-driven | LLM-driven | LLM-driven | Graph + LLM |
+| Agent model | Any CLI agent | OpenClaw, Claude, Codex | Python classes | Python agents | Nodes + edges |
+| Parallel execution | Native | Task-based | Sequential | Async | Graph-based |
+| Git isolation | Worktrees | None | None | None | None |
+| Verification | Janitor + quality gates | None built-in | None built-in | None built-in | Conditional edges |
+| Cost tracking | Built-in | Built-in | Manual | Manual | Manual |
+| State persistence | File-based (.sdd/) | Database | In-memory | In-memory | Checkpointer |
+| Self-evolution | Built-in | No | No | No | No |
+| Plan files | YAML stages + steps | No | Python code | Python code | Python code |
+| Org/business modeling | No | Yes (org charts, goals) | No | No | No |
 
-**[Full comparison pages](docs/compare/README.md)** -- detailed feature matrices, benchmark data, and "when to use X instead" guides for Conductor, Crystal, Stoneforge, [GitHub Agent HQ](docs/compare/bernstein-vs-github-agent-hq.md), and single-agent workflows.
-
-## Comparisons
-
-- [Bernstein vs. GitHub Agent HQ](docs/compare/bernstein-vs-github-agent-hq.md) -- open-source alternative to GitHub's multi-agent system
-- [Full comparison index](docs/compare/README.md) -- Conductor, Crystal, Stoneforge, single-agent baseline, and more
-- [Benchmark data](docs/BENCHMARKS.md) -- 1.78x faster, 23% lower cost vs. single-agent baseline
+**[Full comparison pages](docs/compare/README.md)** — detailed feature matrices, benchmark data, and "when to use X instead" guides for [Paperclip](docs/compare/bernstein-vs-paperclip.md), [GitHub Agent HQ](docs/compare/bernstein-vs-github-agent-hq.md), Conductor, Crystal, Stoneforge, and single-agent workflows.
 
 ## Origin
 

@@ -1009,6 +1009,43 @@ code:not([class]) {
 }
 
 /* ================================================================
+   Trust / Enterprise cards
+   ================================================================ */
+.trust-grid {
+  margin-top: var(--space-8);
+}
+.trust-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.trust-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  color: var(--accent);
+  margin-bottom: var(--space-4);
+}
+.trust-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 1.75;
+}
+.trust-card h3 {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.trust-card p {
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  line-height: 1.55;
+}
+
+/* ================================================================
    Quiet cards (no hover effects, calmer)
    ================================================================ */
 .card-quiet {

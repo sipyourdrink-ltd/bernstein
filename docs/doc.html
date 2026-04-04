@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Documentation — Bernstein</title>
+  <link rel="stylesheet" href="style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="script.js"></script>
+  <style>
+    .doc-content h1 { font-size: 2rem; margin-bottom: 1rem; }
+    .doc-content h2 { margin-top: 2.5rem; }
+    .doc-content h3 { margin-top: 2rem; }
+    .doc-content img { max-width: 100%; height: auto; border-radius: 8px; margin: 1rem 0; }
+    .doc-content blockquote {
+      border-left: 3px solid var(--border);
+      padding: 0.5rem 1rem;
+      margin: 1rem 0;
+      color: var(--text-secondary, #666);
+    }
+    .doc-content table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    .doc-content th, .doc-content td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
+    .doc-content th { background: var(--surface-alt, #f6f6f6); }
+    .doc-content pre { border-radius: 8px; overflow-x: auto; }
+    .doc-content ul, .doc-content ol { padding-left: 1.5rem; }
+    .doc-content li { margin-bottom: 0.25rem; }
+    #loading-msg { text-align: center; padding: 4rem 1rem; color: var(--text-secondary, #888); }
+  </style>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+      <a href="limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://alexchernysh.com/bernstein" class="btn-secondary" target="_blank" rel="noopener">
+        Homepage
+      </a>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</nav>
+
+<!-- Page hero -->
+<div class="page-hero">
+  <div class="container">
+    <h1 id="page-title">Documentation</h1>
+    <p id="page-breadcrumb"></p>
+  </div>
+</div>
+
+<!-- Doc layout -->
+<div class="doc-layout">
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul id="toc-list"></ul>
+  </aside>
+
+  <main class="doc-content" id="doc-content">
+    <div id="loading-msg">Loading document...</div>
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; <a href="https://alexchernysh.com/bernstein" target="_blank" rel="noopener">Homepage</a> &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var params = new URLSearchParams(window.location.search);
+  var path = params.get('path');
+
+  if (!path) {
+    document.getElementById('doc-content').innerHTML =
+      '<p>No document specified. Return to the <a href="docs-index.html">documentation index</a>.</p>';
+    return;
+  }
+
+  // Breadcrumb
+  var breadcrumb = document.getElementById('page-breadcrumb');
+  breadcrumb.innerHTML = '<a href="docs-index.html">All Docs</a> / ' + path.replace(/</g, '&lt;');
+
+  fetch(path)
+    .then(function (res) {
+      if (!res.ok) throw new Error('Failed to load ' + path + ' (' + res.status + ')');
+      return res.text();
+    })
+    .then(function (md) {
+      // Configure marked
+      marked.setOptions({
+        highlight: function (code, lang) {
+          if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
+            return hljs.highlight(code, { language: lang }).value;
+          }
+          if (typeof hljs !== 'undefined') {
+            return hljs.highlightAuto(code).value;
+          }
+          return code;
+        },
+        gfm: true,
+        breaks: false
+      });
+
+      // Render
+      var html = marked.parse(md);
+      document.getElementById('doc-content').innerHTML = html;
+
+      // Rewrite .md links inside rendered content to go through doc.html
+      document.getElementById('doc-content').querySelectorAll('a[href]').forEach(function (a) {
+        var href = a.getAttribute('href');
+        if (href && href.endsWith('.md') && !href.startsWith('http')) {
+          // Resolve relative to current doc's directory
+          var base = path.replace(/[^/]*$/, '');
+          var resolved = base ? base + href : href;
+          a.setAttribute('href', 'doc.html?path=' + encodeURIComponent(resolved));
+        }
+      });
+
+      // Extract title from first h1
+      var firstH1 = document.getElementById('doc-content').querySelector('h1');
+      if (firstH1) {
+        document.title = firstH1.textContent + ' — Bernstein';
+        document.getElementById('page-title').textContent = firstH1.textContent;
+        firstH1.remove();
+      } else {
+        var name = path.split('/').pop().replace(/\.md$/, '').replace(/[-_]/g, ' ');
+        document.title = name + ' — Bernstein';
+        document.getElementById('page-title').textContent = name;
+      }
+
+      // Build TOC from h2 headings
+      var tocList = document.getElementById('toc-list');
+      document.getElementById('doc-content').querySelectorAll('h2').forEach(function (h2) {
+        if (!h2.id) {
+          h2.id = h2.textContent.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        }
+        var li = document.createElement('li');
+        var a = document.createElement('a');
+        a.href = '#' + h2.id;
+        a.textContent = h2.textContent;
+        li.appendChild(a);
+        tocList.appendChild(li);
+      });
+
+      // Re-run highlight.js on any code blocks marked missed
+      if (typeof hljs !== 'undefined') {
+        document.querySelectorAll('#doc-content pre code:not(.hljs)').forEach(function (block) {
+          hljs.highlightElement(block);
+        });
+      }
+
+      // Re-init Lucide icons if any were in the markdown
+      if (typeof lucide !== 'undefined') {
+        lucide.createIcons();
+      }
+    })
+    .catch(function (err) {
+      document.getElementById('doc-content').innerHTML =
+        '<p style="color:red;">Error loading document: ' + err.message + '</p>' +
+        '<p>Return to the <a href="docs-index.html">documentation index</a>.</p>';
+    });
+})();
+</script>
+</body>
+</html>

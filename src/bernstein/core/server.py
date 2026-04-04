@@ -984,10 +984,10 @@ def create_app(
     from bernstein.core.routes.auth import router as auth_router
     from bernstein.core.routes.costs import router as costs_router
     from bernstein.core.routes.dashboard import router as dashboard_router
+    from bernstein.core.routes.discord import router as discord_router
     from bernstein.core.routes.graph import router as graph_router
     from bernstein.core.routes.observability import router as observability_router
     from bernstein.core.routes.quality import router as quality_router
-    from bernstein.core.routes.discord import router as discord_router
     from bernstein.core.routes.slack import router as slack_router
     from bernstein.core.routes.status import router as status_router
     from bernstein.core.routes.tasks import router as tasks_router

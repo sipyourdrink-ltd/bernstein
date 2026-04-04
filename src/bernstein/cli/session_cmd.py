@@ -62,10 +62,10 @@ def session_show(session_id: str) -> None:
         session = RunSession.load(sdir, session_id)
     except FileNotFoundError:
         console.print(f"[red]Session not found:[/red] {session_id}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
     except ValueError as exc:
         console.print(f"[red]Failed to load session:[/red] {exc}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     console.print(f"[bold]Session:[/bold] {session.session_id}")
     console.print(f"[bold]Goal:[/bold]    {session.goal}")
@@ -135,10 +135,10 @@ def session_replay(
         session = RunSession.load(sdir, session_id)
     except FileNotFoundError:
         console.print(f"[red]Session not found:[/red] {session_id}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
     except ValueError as exc:
         console.print(f"[red]Failed to load session:[/red] {exc}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     console.print(f"[green]Replaying session:[/green] {session.session_id}")
     console.print(f"[dim]Goal:[/dim]  {session.goal}")
