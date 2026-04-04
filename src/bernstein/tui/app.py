@@ -170,7 +170,51 @@ class BernsteinApp(App[None]):
         self.query_one("#approval-panel", ApprovalPanel).display = False
         self.query_one("#tool-observer", ToolObserverWidget).display = False
 
+        self._load_historical_logs()
         self.set_interval(self._poll_interval, self.action_refresh)
+
+    # -- historical log loading -----------------------------------------------
+
+    _MAX_HISTORICAL_LINES: ClassVar[int] = 200
+
+    def _load_historical_logs(self) -> None:
+        """Read existing agent log files and display them dimmed in the log widget.
+
+        Scans ``.sdd/runtime/*.log`` for any pre-existing log content, loads
+        the tail of each file (capped at :attr:`_MAX_HISTORICAL_LINES` total),
+        and records byte offsets so that future reads only fetch new data.
+        """
+        runtime_dir = Path(".sdd/runtime")
+        if not runtime_dir.is_dir():
+            return
+
+        log_files = sorted(runtime_dir.glob("*.log"), key=lambda p: p.stat().st_mtime)
+        all_lines: list[str] = []
+
+        for log_path in log_files:
+            try:
+                size = log_path.stat().st_size
+            except OSError:
+                continue
+            if size == 0:
+                continue
+
+            # Record current end-of-file so polling only reads new bytes.
+            session_id = log_path.stem
+            self._log_offsets[session_id] = size
+
+            try:
+                content = log_path.read_text(errors="replace")
+            except OSError:
+                continue
+
+            lines = [ln for ln in content.splitlines() if ln.strip()]
+            all_lines.extend(lines)
+
+        # Keep only the most recent lines to avoid flooding the widget.
+        if all_lines:
+            tail = all_lines[-self._MAX_HISTORICAL_LINES :]
+            self.query_one("#agent-log", AgentLogWidget).load_historical_lines(tail)
 
     # -- actions --------------------------------------------------------------
 
