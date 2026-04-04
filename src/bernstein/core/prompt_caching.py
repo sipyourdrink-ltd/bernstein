@@ -1059,8 +1059,8 @@ class CacheBreakCorrelator:
             del self._buffer[fp]
 
     def _enforce_capacity(self) -> None:
-        """Evict oldest fingerprint group when capacity is exceeded."""
-        while len(self._buffer) > self._max_fingerprints:
+        """Evict oldest fingerprint group to make room for a new entry."""
+        while len(self._buffer) >= self._max_fingerprints:
             self._buffer.popitem(last=False)
 
     def add_event(self, event: CacheBreakEvent) -> BreakCorrelation:
