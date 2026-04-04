@@ -38,6 +38,9 @@ _INTENT_MAX_TOKENS = 256
 _INTENT_DEFAULT_MODEL = "google/gemini-flash-1.5"
 _INTENT_PROVIDER = "openrouter"
 
+#: Maximum characters from the parent agent's context to prepend when forking.
+_FORK_CONTEXT_MAX_CHARS = 4_000
+
 _INTENT_PROMPT_TEMPLATE = """\
 You are an intent verifier. A task was given to an AI agent. Compare the \
 original task description with what the agent actually produced.
@@ -89,6 +92,12 @@ class IntentVerificationConfig:
         max_tokens: Token cap for the LLM response.
         block_on_no: Block merge when verdict is "no" (default True).
         block_on_partial: Block merge when verdict is "partially" (default False).
+        fork_from_context: Optional context prefix from the completed agent's
+            session. When set, the gate is "forked" from the parent agent's
+            context: the prefix is prepended to the verification prompt so that
+            both share the same prompt prefix and benefit from KV-cache reuse.
+            Typical value is the agent's final system-prompt or conversation
+            summary. Limited to ``_FORK_CONTEXT_MAX_CHARS`` characters.
     """
 
     enabled: bool = False
@@ -98,6 +107,7 @@ class IntentVerificationConfig:
     max_tokens: int = _INTENT_MAX_TOKENS
     block_on_no: bool = True
     block_on_partial: bool = False
+    fork_from_context: str | None = None
 
 
 @dataclass(frozen=True)
@@ -336,18 +346,28 @@ async def _verify_intent_async(task: Task, worktree_path: Path, config: IntentVe
 
     result_summary = task.result_summary or "(no result summary provided)"
 
-    prompt = _INTENT_PROMPT_TEMPLATE.format(
+    body = _INTENT_PROMPT_TEMPLATE.format(
         title=task.title,
         description=task.description[:2000],
         diff=diff,
         result_summary=result_summary[:500],
     )
 
+    if config.fork_from_context:
+        # Forked-gate pattern: prepend the parent agent's context so both the
+        # agent's original session and this verification gate share the same
+        # prompt prefix, enabling KV-cache reuse on providers that support it.
+        ctx = config.fork_from_context[:_FORK_CONTEXT_MAX_CHARS]
+        prompt = f"## Agent Session Context\n{ctx}\n\n---\n\n{body}"
+    else:
+        prompt = body
+
     logger.info(
-        "intent_verification: task=%s model=%s diff_chars=%d",
+        "intent_verification: task=%s model=%s diff_chars=%d fork=%s",
         task.id,
         config.model,
         len(diff),
+        config.fork_from_context is not None,
     )
 
     try:
