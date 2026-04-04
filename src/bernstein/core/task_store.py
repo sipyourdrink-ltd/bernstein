@@ -225,6 +225,10 @@ async def _retry_io(fn: Any, *args: Any) -> Any:
 
 DEFAULT_ARCHIVE_PATH = Path(".sdd/archive/tasks.jsonl")
 
+# Grace period: completed tasks remain visible in status for 30 seconds
+# before any cleanup pass may evict them from the active task set.
+PANEL_GRACE_MS: int = 30_000
+
 
 class TaskStore:
     """Thread-safe in-memory task store with JSONL persistence.
@@ -322,6 +326,27 @@ class TaskStore:
             except OSError as exc:
                 logger.warning("Cannot read bandit state at %s: %s", bandit_state_path, exc)
         return summary
+
+    def recently_completed(self, grace_ms: int = PANEL_GRACE_MS) -> list[Task]:
+        """Return tasks completed within the grace period.
+
+        These tasks should remain visible in status panels before eviction.
+
+        Args:
+            grace_ms: Grace window in milliseconds (default: PANEL_GRACE_MS).
+
+        Returns:
+            List of tasks that completed within the grace window, newest first.
+        """
+        cutoff = time.time() - grace_ms / 1000.0
+        terminal = {TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED}
+        result: list[Task] = []
+        for status in terminal:
+            for task in self._by_status.get(status, {}).values():
+                if task.completed_at is not None and task.completed_at >= cutoff:
+                    result.append(task)
+        result.sort(key=lambda t: t.completed_at or 0.0, reverse=True)
+        return result
 
     # -- index helpers -------------------------------------------------------
 
@@ -572,6 +597,7 @@ class TaskStore:
             "risk_level": task.risk_level,
             "slack_context": task.slack_context,
             "version": task.version,
+            "completed_at": task.completed_at,
             "claimed_by_session": task.claimed_by_session,
             "parent_session_id": task.parent_session_id,
         }
@@ -925,9 +951,10 @@ class TaskStore:
             self._index_remove(task)
             transition_task(task, TaskStatus.DONE, actor="task_store", reason="complete")
             task.result_summary = result_summary
+            task.completed_at = time.time()
             task.version += 1
             self._index_add(task)
-            completed_at = time.time()
+            completed_at = task.completed_at
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             await self._complete_parent_if_ready(task.parent_task_id)
@@ -972,9 +999,10 @@ class TaskStore:
             self._index_remove(task)
             transition_task(task, TaskStatus.FAILED, actor="task_store", reason=reason)
             task.result_summary = reason
+            task.completed_at = time.time()
             task.version += 1
             self._index_add(task)
-            completed_at = time.time()
+            completed_at = task.completed_at
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             return task
@@ -1022,9 +1050,10 @@ class TaskStore:
             reason="all subtasks completed",
         )
         parent.result_summary = f"Completed via {len(subtasks)} subtasks"
+        parent.completed_at = time.time()
         parent.version += 1
         self._index_add(parent)
-        completed_at = time.time()
+        completed_at = parent.completed_at
         await self._append_jsonl(self._task_to_record(parent))
         await self._append_archive(parent, completed_at)
 
@@ -1116,9 +1145,10 @@ class TaskStore:
             self._index_remove(task)
             transition_task(task, TaskStatus.CANCELLED, actor="task_store", reason=reason)
             task.result_summary = reason
+            task.completed_at = time.time()
             task.version += 1
             self._index_add(task)
-            completed_at = time.time()
+            completed_at = task.completed_at
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             return task
