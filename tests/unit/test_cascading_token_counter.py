@@ -100,7 +100,7 @@ class TestCountTokensBytesEstimate:
 
 class TestCountTokensCascading:
     def test_returns_zero_for_empty_text(self) -> None:
-        result = asyncio.get_event_loop().run_until_complete(count_tokens_cascading(""))
+        result = asyncio.run(count_tokens_cascading(""))
         assert result == 0
 
     def test_api_tier_used_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -114,18 +114,14 @@ class TestCountTokensCascading:
         mock_resp.__exit__ = MagicMock(return_value=False)
 
         with patch("urllib.request.urlopen", return_value=mock_resp):
-            result = asyncio.get_event_loop().run_until_complete(
-                count_tokens_cascading("some text")
-            )
+            result = asyncio.run(count_tokens_cascading("some text"))
 
         assert result == 99
 
     def test_falls_back_to_bytes_when_api_fails(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cascade reaches bytes/4 when API and cheap model both fail."""
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        result = asyncio.get_event_loop().run_until_complete(
-            count_tokens_cascading("hello world", skip_cheap_model=True)
-        )
+        result = asyncio.run(count_tokens_cascading("hello world", skip_cheap_model=True))
         assert result > 0
 
     def test_skip_api_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,9 +131,7 @@ class TestCountTokensCascading:
         with patch(
             "bernstein.core.cascading_token_counter._count_tokens_via_api"
         ) as mock_api:
-            result = asyncio.get_event_loop().run_until_complete(
-                count_tokens_cascading("text", skip_api=True, skip_cheap_model=True)
-            )
+            result = asyncio.run(count_tokens_cascading("text", skip_api=True, skip_cheap_model=True))
         mock_api.assert_not_called()
         assert result > 0
 
@@ -148,9 +142,7 @@ class TestCountTokensCascading:
         with patch(
             "bernstein.core.cascading_token_counter._count_tokens_via_cheap_model"
         ) as mock_cheap:
-            result = asyncio.get_event_loop().run_until_complete(
-                count_tokens_cascading("text", skip_cheap_model=True)
-            )
+            result = asyncio.run(count_tokens_cascading("text", skip_cheap_model=True))
         mock_cheap.assert_not_called()
         assert result > 0
 
@@ -167,9 +159,7 @@ class TestCountTokensCascading:
             "bernstein.core.cascading_token_counter._count_tokens_via_cheap_model",
             side_effect=fake_cheap,
         ):
-            result = asyncio.get_event_loop().run_until_complete(
-                count_tokens_cascading("hello")
-            )
+            result = asyncio.run(count_tokens_cascading("hello"))
         assert result == 77
 
     def test_bytes_fallback_when_all_tiers_fail(
@@ -185,9 +175,7 @@ class TestCountTokensCascading:
             "bernstein.core.cascading_token_counter._count_tokens_via_cheap_model",
             side_effect=fake_cheap_fail,
         ):
-            result = asyncio.get_event_loop().run_until_complete(
-                count_tokens_cascading("a" * 400)
-            )
+            result = asyncio.run(count_tokens_cascading("a" * 400))
         assert result == 100  # 400 bytes / 4 = 100 tokens
 
     def test_cascade_ordering_api_before_cheap_model(
@@ -215,9 +203,7 @@ class TestCountTokensCascading:
                 side_effect=fake_cheap,
             ),
         ):
-            result = asyncio.get_event_loop().run_until_complete(
-                count_tokens_cascading("hello world")
-            )
+            result = asyncio.run(count_tokens_cascading("hello world"))
 
         # API tier was used, cheap model was never called
         assert result == 55
