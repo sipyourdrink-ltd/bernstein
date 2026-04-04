@@ -265,6 +265,7 @@ class Task:
     claimed_by_session: str | None = None  # Parent orchestrator session that claimed this task
     parent_session_id: str | None = None  # Coordinator session that created/owns this task (namespace scope)
     execution_mode: str | None = None  # "batch" → delegate to Claude Code /batch skill
+    completed_at: float | None = None  # Epoch timestamp when task reached terminal state
     verification_count: int = 0  # Number of verification steps run at completion
     flagged_unverified: bool = False  # True when task completed without any verification
 
@@ -345,6 +346,7 @@ class Task:
             claimed_by_session=raw.get("claimed_by_session"),
             parent_session_id=raw.get("parent_session_id"),
             execution_mode=raw.get("execution_mode"),
+            completed_at=raw.get("completed_at"),
             verification_count=raw.get("verification_count", 0),
             flagged_unverified=bool(raw.get("flagged_unverified", False)),
         )

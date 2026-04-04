@@ -223,6 +223,10 @@ async def _retry_io(fn: Any, *args: Any) -> Any:
 # TaskStore
 # ---------------------------------------------------------------------------
 
+# Grace period (ms) before completed/failed tasks are evicted from the
+# in-memory store.  Keeps them visible in status panels after completion.
+PANEL_GRACE_MS: int = 30_000
+
 DEFAULT_ARCHIVE_PATH = Path(".sdd/archive/tasks.jsonl")
 
 
@@ -925,9 +929,10 @@ class TaskStore:
             self._index_remove(task)
             transition_task(task, TaskStatus.DONE, actor="task_store", reason="complete")
             task.result_summary = result_summary
+            completed_at = time.time()
+            task.completed_at = completed_at
             task.version += 1
             self._index_add(task)
-            completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             await self._complete_parent_if_ready(task.parent_task_id)
@@ -972,9 +977,10 @@ class TaskStore:
             self._index_remove(task)
             transition_task(task, TaskStatus.FAILED, actor="task_store", reason=reason)
             task.result_summary = reason
+            completed_at = time.time()
+            task.completed_at = completed_at
             task.version += 1
             self._index_add(task)
-            completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             return task
@@ -1022,9 +1028,10 @@ class TaskStore:
             reason="all subtasks completed",
         )
         parent.result_summary = f"Completed via {len(subtasks)} subtasks"
+        completed_at = time.time()
+        parent.completed_at = completed_at
         parent.version += 1
         self._index_add(parent)
-        completed_at = time.time()
         await self._append_jsonl(self._task_to_record(parent))
         await self._append_archive(parent, completed_at)
 
@@ -1116,9 +1123,10 @@ class TaskStore:
             self._index_remove(task)
             transition_task(task, TaskStatus.CANCELLED, actor="task_store", reason=reason)
             task.result_summary = reason
+            completed_at = time.time()
+            task.completed_at = completed_at
             task.version += 1
             self._index_add(task)
-            completed_at = time.time()
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             return task
@@ -1297,6 +1305,43 @@ class TaskStore:
         counts = {ts.value: len(bucket) for ts, bucket in self._by_status.items()}
         counts["total"] = len(self._tasks)
         return counts
+
+    def evict_expired_terminal_tasks(
+        self,
+        *,
+        grace_ms: int = PANEL_GRACE_MS,
+        now: float | None = None,
+    ) -> list[str]:
+        """Remove terminal tasks whose grace period has expired.
+
+        Tasks in DONE or FAILED state are kept in-memory for *grace_ms*
+        milliseconds after ``completed_at`` so they remain visible in status
+        panels.  After the grace period they are evicted (already archived).
+
+        Args:
+            grace_ms: Grace period in milliseconds.  Defaults to
+                :data:`PANEL_GRACE_MS` (30 000 ms).
+            now: Current time (epoch seconds).  Defaults to ``time.time()``.
+
+        Returns:
+            List of evicted task IDs.
+        """
+        if now is None:
+            now = time.time()
+        grace_s = grace_ms / 1000.0
+        evicted: list[str] = []
+        terminal_statuses = (TaskStatus.DONE, TaskStatus.FAILED)
+        for status in terminal_statuses:
+            for task_id, task in list(self._by_status[status].items()):
+                if task.completed_at is None:
+                    continue
+                if now - task.completed_at >= grace_s:
+                    self._index_remove(task)
+                    del self._tasks[task_id]
+                    evicted.append(task_id)
+        if evicted:
+            logger.debug("Evicted %d expired terminal tasks: %s", len(evicted), evicted)
+        return evicted
 
     def get_task(self, task_id: str) -> Task | None:
         """Look up a single task by id."""
