@@ -39,7 +39,7 @@ def _record_prometheus_transition(reason: str, role: str, *, entity_type: str = 
         from bernstein.core.prometheus import record_transition_reason
 
         record_transition_reason(reason, role, entity_type=entity_type)
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.debug("Failed to record Prometheus transition reason", exc_info=True)
 
 
