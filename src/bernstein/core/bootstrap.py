@@ -100,6 +100,7 @@ def _register_mcp_discovery(workdir: Path) -> None:
     mcp_path.write_text(_json.dumps(existing, indent=2) + "\n")
     logger.debug("Registered Bernstein MCP server in %s", mcp_path)
 
+
 # Install PII redaction on the root logger so all handlers receive sanitised
 # messages — no email, phone, SSN, or credit-card number reaches disk/stdout.
 install_pii_filter()

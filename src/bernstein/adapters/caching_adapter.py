@@ -93,9 +93,7 @@ class CachingAdapter(CLIAdapter):
             # same template update) will produce identical fingerprints, enabling
             # cross-agent systemic-break correlation.
             _reason = CacheBreakReason.SYSTEM
-            _fingerprint = _hashlib.sha256(
-                f"{_reason.value}:{cache_res.cache_key}".encode()
-            ).hexdigest()[:16]
+            _fingerprint = _hashlib.sha256(f"{_reason.value}:{cache_res.cache_key}".encode()).hexdigest()[:16]
 
             event = CacheBreakEvent(
                 timestamp=time.time(),
