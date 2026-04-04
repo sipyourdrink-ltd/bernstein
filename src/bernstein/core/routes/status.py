@@ -18,7 +18,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from starlette.responses import StreamingResponse
 
 from bernstein.core.home import BernsteinHome, resolve_config_bundle
-from bernstein.core.prometheus import generate_latest, registry, update_metrics_from_status
+from bernstein.core.prometheus import (
+    generate_latest,
+    get_transition_reason_histogram,
+    registry,
+    update_metrics_from_status,
+)
 from bernstein.core.runtime_state import (
     current_git_branch,
     directory_size_bytes,
@@ -347,6 +352,12 @@ async def status_dashboard(request: Request) -> JSONResponse:
                     f"completed without verification (threshold: {nudge.nudge_threshold:.0%})"
                 )
             payload["verification_nudge"] = nudge_data
+
+    # Transition reason histogram from Prometheus in-process counters.
+    # Gives operators an at-a-glance view of why agent/task ticks end.
+    transition_reasons = get_transition_reason_histogram()
+    if transition_reasons["agent"] or transition_reasons["task"]:
+        payload["transition_reasons"] = transition_reasons
 
     return JSONResponse(content=payload)
 
