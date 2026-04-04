@@ -23,6 +23,7 @@ Last updated: 2026-04-04
 | Context collapse with drain retry | `WORKFLOW-context-collapse-drain-retry.md` | Draft | T493 — bounded drain retry loop for spawn prompt context overflow |
 | Permission mode hierarchy | `WORKFLOW-permission-mode-hierarchy.md` | Shipped | bypass→plan→auto→default mode hierarchy with severity relaxation + hook resolution |
 | Verification nudge | `WORKFLOW-verification-nudge.md` | Shipped | Tracks unverified task completions and alerts when threshold exceeded |
+| Event-sourced task transitions (CQRS) | `WORKFLOW-event-sourced-task-transitions.md` | Draft | Append-only event log per task; state derived by replaying events, not mutable status field |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
@@ -61,6 +62,10 @@ Trigger config path: `.sdd/config/triggers.yaml`
 
 - `src/bernstein/core/task_lifecycle.py`
 - `src/bernstein/core/task_completion.py`
+- `src/bernstein/core/lifecycle.py` — deterministic FSM, transition validation, event emission
+- `src/bernstein/core/task_store.py` — in-memory task store, JSONL persistence, status indices
+- `src/bernstein/core/models.py` — `TaskStatus` enum, `Task` dataclass, `LifecycleEvent`
+- `src/bernstein/core/audit.py` — HMAC-chained audit log (overlaps with CQRS event store)
 - `src/bernstein/core/rate_limit_tracker.py`
 - `src/bernstein/core/router.py`
 - `src/bernstein/core/cascade_router.py`
