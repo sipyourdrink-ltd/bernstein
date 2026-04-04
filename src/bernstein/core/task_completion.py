@@ -42,6 +42,7 @@ from bernstein.core.tick_pipeline import (
     fail_task,
 )
 from bernstein.core.traces import record_turn_budget
+from bernstein.core.verification_nudge import VerificationNudgeTracker
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -50,6 +51,25 @@ if TYPE_CHECKING:
     from bernstein.core.git_ops import MergeResult
 
 logger = logging.getLogger(__name__)
+
+# Module-level tracker cache keyed by metrics directory path.
+_nudge_trackers: dict[str, VerificationNudgeTracker] = {}
+
+
+def _get_nudge_tracker(workdir: Path) -> VerificationNudgeTracker:
+    """Get or create the VerificationNudgeTracker for a workdir.
+
+    Args:
+        workdir: Project root directory.
+
+    Returns:
+        Shared VerificationNudgeTracker instance for this workdir.
+    """
+    metrics_dir = workdir / ".sdd" / "metrics"
+    key = str(metrics_dir)
+    if key not in _nudge_trackers:
+        _nudge_trackers[key] = VerificationNudgeTracker(metrics_dir=metrics_dir)
+    return _nudge_trackers[key]
 
 
 # ---------------------------------------------------------------------------
@@ -857,6 +877,19 @@ def process_completed_tasks(
                     )
                 except Exception as exc:
                     logger.warning("Evolution record_agent_lifetime failed: %s", exc)
+
+        # Record verification nudge: track whether agent ran any verification.
+        _nudge_tracker = _get_nudge_tracker(orch._workdir)
+        if not _nudge_tracker.is_task_recorded(task.id):
+            _log_summary = completion_data.get("log_summary") if completion_data is not None else None
+            _tests_run = getattr(_log_summary, "tests_run", False) if _log_summary is not None else False
+            _nudge_tracker.record(
+                task_id=task.id,
+                session_id=session.id if session is not None else "unknown",
+                tests_run=bool(_tests_run),
+                quality_gates_run=_qg_result is not None,
+                completion_signals_checked=task.id in verify_futures,
+            )
 
         # Post bulletin: task completed or failed (with janitor result)
         if janitor_passed:
