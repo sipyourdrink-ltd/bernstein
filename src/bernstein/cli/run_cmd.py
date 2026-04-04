@@ -699,6 +699,25 @@ def _wait_for_run_completion(
     return last_status
 
 
+def _make_profile_ctx(profile: bool, workdir: Path) -> "contextlib.AbstractContextManager[None]":
+    """Return a ProfilerSession context manager, or a no-op if profiling is disabled.
+
+    Args:
+        profile: Whether profiling is enabled.
+        workdir: Project root directory used to resolve output path.
+
+    Returns:
+        A context manager that profiles the wrapped block (or does nothing).
+    """
+    import contextlib
+
+    if profile:
+        from bernstein.core.profiler import ProfilerSession, resolve_profile_output_dir
+
+        return ProfilerSession(resolve_profile_output_dir(workdir))
+    return contextlib.nullcontext()
+
+
 def _finalize_run_output(*, quiet: bool) -> None:
     """Render either the interactive dashboard or the final summary.
 
@@ -927,6 +946,15 @@ def _configure_quality_gate_bypass(
     default=False,
     help="Show scheduling plan without executing: which agent/model/tier each task would be assigned to.",
 )
+@click.option(
+    "--profile",
+    is_flag=True,
+    default=False,
+    help=(
+        "Profile orchestrator execution with cProfile. "
+        "Writes .prof binary and .txt report to .sdd/runtime/profiles/."
+    ),
+)
 def run(
     plan_file: Path | None,
     goal: str | None,
@@ -952,6 +980,7 @@ def run(
     sandbox: str | None = None,
     ab_test: bool = False,
     dry_run: bool = False,
+    profile: bool = False,
 ) -> None:
     """Parse seed, init workspace, start server, launch agents.
 
@@ -990,6 +1019,10 @@ def run(
         bootstrap_from_seed,
     )
     from bernstein.core.seed import SeedError
+
+    # Propagate profiler flag via env var so the orchestrator subprocess picks it up
+    if profile:
+        os.environ["BERNSTEIN_PROFILE"] = "1"
 
     # Propagate workflow mode to orchestrator subprocess via env var
     if workflow:
@@ -1075,17 +1108,18 @@ def run(
             console.print(f"[dim]Plan name:[/dim] {goal}")
             loaded_goal = goal or str(plan_file)
 
-            with _quiet_bootstrap_console(quiet):
-                bootstrap_from_goal(
-                    goal=loaded_goal,
-                    workdir=workdir,
-                    port=port,
-                    cells=cells,
-                    cli=cli or "auto",
-                    model=model,
-                    tasks=tasks,
-                    ab_test=ab_test,
-                )
+            with _make_profile_ctx(profile, workdir):
+                with _quiet_bootstrap_console(quiet):
+                    bootstrap_from_goal(
+                        goal=loaded_goal,
+                        workdir=workdir,
+                        port=port,
+                        cells=cells,
+                        cli=cli or "auto",
+                        model=model,
+                        tasks=tasks,
+                        ab_test=ab_test,
+                    )
 
             _finalize_run_output(quiet=quiet)
             return
@@ -1190,15 +1224,16 @@ def run(
     if goal is not None:
         # Inline goal mode -- no YAML needed
         try:
-            with _quiet_bootstrap_console(quiet):
-                bootstrap_from_goal(
-                    goal=goal,
-                    workdir=workdir,
-                    port=port,
-                    cells=cells,
-                    cli=cli or "auto",  # Default to "auto" if not specified
-                    model=model,
-                )
+            with _make_profile_ctx(profile, workdir):
+                with _quiet_bootstrap_console(quiet):
+                    bootstrap_from_goal(
+                        goal=goal,
+                        workdir=workdir,
+                        port=port,
+                        cells=cells,
+                        cli=cli or "auto",  # Default to "auto" if not specified
+                        model=model,
+                    )
         except RuntimeError as exc:
             from bernstein.cli.errors import bootstrap_failed
 
@@ -1225,16 +1260,17 @@ def run(
     try:
         # CLI --cells overrides seed file value when explicitly set (cells > 1)
         cli_cells: int | None = cells if cells > 1 else None
-        with _quiet_bootstrap_console(quiet):
-            bootstrap_from_seed(
-                seed_path=path,
-                workdir=workdir,
-                port=port,
-                cells=cli_cells,
-                remote=remote,
-                cli=cli,
-                model=model,
-            )
+        with _make_profile_ctx(profile, workdir):
+            with _quiet_bootstrap_console(quiet):
+                bootstrap_from_seed(
+                    seed_path=path,
+                    workdir=workdir,
+                    port=port,
+                    cells=cli_cells,
+                    remote=remote,
+                    cli=cli,
+                    model=model,
+                )
     except SeedError as exc:
         from bernstein.cli.errors import seed_parse_error
 
