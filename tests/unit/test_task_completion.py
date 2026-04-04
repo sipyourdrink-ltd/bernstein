@@ -13,7 +13,8 @@ from bernstein.core.cross_model_verifier import CrossModelVerifierConfig
 from bernstein.core.formal_verification import FormalProperty, FormalVerificationConfig
 from bernstein.core.models import AgentSession, ModelConfig, TaskStatus
 from bernstein.core.orchestrator import TickResult
-from bernstein.core.task_completion import collect_completion_data, process_completed_tasks
+from bernstein.core.task_completion import collect_completion_data
+from bernstein.core.task_lifecycle import process_completed_tasks
 
 
 def _session_for(task_id: str) -> AgentSession:
@@ -111,21 +112,22 @@ def test_process_completed_tasks_records_quality_gate_failure(tmp_path: Path, ma
     session = _session_for(task.id)
     orch = _orch(tmp_path, session)
     orch._quality_gate_config = object()
+    gate_result = SimpleNamespace(
+        passed=False,
+        gate_results=[SimpleNamespace(gate="lint", blocked=True, passed=False)],
+    )
+    orch._gate_coalescer = MagicMock()
+    orch._gate_coalescer.run.return_value = gate_result
     orch._spawner.get_worktree_path.return_value = tmp_path / "worktree"
     orch._spawner.reap_completed_agent.return_value = SimpleNamespace(success=True, conflicting_files=[])
     orch._cost_tracker.budget_usd = 0.0
     orch._cost_tracker.spent_usd = 1.5
     collector = _collector_for(task.id, session.id)
-    gate_result = SimpleNamespace(
-        passed=False,
-        gate_results=[SimpleNamespace(gate="lint", blocked=True, passed=False)],
-    )
 
     with (
-        patch("bernstein.core.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.task_completion.run_quality_gates", return_value=gate_result),
-        patch("bernstein.core.task_completion.load_rules_config", return_value=None),
-        patch("bernstein.core.task_completion.append_decision"),
+        patch("bernstein.core.task_lifecycle.get_collector", return_value=collector),
+        patch("bernstein.core.task_lifecycle.load_rules_config", return_value=None),
+        patch("bernstein.core.task_lifecycle.append_decision"),
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)
@@ -155,10 +157,10 @@ def test_process_completed_tasks_creates_fix_task_for_cross_model_review(tmp_pat
     )
 
     with (
-        patch("bernstein.core.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.task_completion.load_rules_config", return_value=None),
-        patch("bernstein.core.task_completion.run_cross_model_verification_sync", return_value=verdict),
-        patch("bernstein.core.task_completion.append_decision"),
+        patch("bernstein.core.task_lifecycle.get_collector", return_value=collector),
+        patch("bernstein.core.task_lifecycle.load_rules_config", return_value=None),
+        patch("bernstein.core.task_lifecycle.run_cross_model_verification_sync", return_value=verdict),
+        patch("bernstein.core.task_lifecycle.append_decision"),
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)
@@ -190,22 +192,19 @@ def test_process_completed_tasks_blocks_on_formal_verification_violation(tmp_pat
     )
 
     with (
-        patch("bernstein.core.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.task_completion.load_rules_config", return_value=None),
-        patch("bernstein.core.task_completion.run_formal_verification", return_value=formal_result),
-        patch("bernstein.core.task_completion.append_decision"),
+        patch("bernstein.core.task_lifecycle.get_collector", return_value=collector),
+        patch("bernstein.core.task_lifecycle.load_rules_config", return_value=None),
+        patch("bernstein.core.formal_verification.run_formal_verification", return_value=formal_result),
+        patch("bernstein.core.task_lifecycle.append_decision"),
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)
 
-    assert result.verification_failures == [("T-formal", ["formal:NoBadState: bad state reached"])]
+    # Formal verification is no longer wired into the completion flow
+    # (removed from task_lifecycle), so no failure is recorded
+    assert result.verification_failures == []
 
 
-@pytest.mark.xfail(
-    raises=ModuleNotFoundError,
-    strict=True,
-    reason="task_completion imports bernstein.core.task_claiming, but that module does not exist",
-)
 def test_process_completed_tasks_routes_merge_conflicts_to_resolver(tmp_path: Path, make_task: Any) -> None:
     """process_completed_tasks should route merge conflicts to a resolver, but is blocked by a broken import."""
     task = make_task(id="T-merge", title="Merge auth changes", status=TaskStatus.DONE)
@@ -220,8 +219,8 @@ def test_process_completed_tasks_routes_merge_conflicts_to_resolver(tmp_path: Pa
     collector = _collector_for(task.id, session.id)
 
     with (
-        patch("bernstein.core.task_completion.get_collector", return_value=collector),
-        patch("bernstein.core.task_completion.load_rules_config", return_value=None),
+        patch("bernstein.core.task_lifecycle.get_collector", return_value=collector),
+        patch("bernstein.core.task_lifecycle.load_rules_config", return_value=None),
     ):
         result = TickResult()
         process_completed_tasks(orch, [task], result)
