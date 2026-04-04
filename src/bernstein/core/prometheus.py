@@ -38,6 +38,7 @@ __all__ = [
     "generate_latest",
     "merge_duration",
     "registry",
+    "set_prometheus_enabled",
     "task_duration_seconds",
     "task_queue_depth",
     "tasks_active",
@@ -135,6 +136,27 @@ evolution_errors_by_type: Counter = Counter(
 )
 
 # ---------------------------------------------------------------------------
+# Kill-switch — lets operators disable the Prometheus sink without restarting
+# ---------------------------------------------------------------------------
+
+_prometheus_enabled: bool = True
+
+
+def set_prometheus_enabled(enabled: bool) -> None:
+    """Enable or disable the Prometheus event sink (kill-switch).
+
+    When disabled, :func:`update_metrics_from_status` is a no-op.  This lets
+    operators silence Prometheus metric emission without restarting the server
+    (e.g. when scraping is not configured and metric churn is unwanted).
+
+    Args:
+        enabled: ``True`` to enable (default); ``False`` to kill the sink.
+    """
+    global _prometheus_enabled
+    _prometheus_enabled = enabled
+
+
+# ---------------------------------------------------------------------------
 # Internal state for delta-tracking on counters
 # ---------------------------------------------------------------------------
 
@@ -150,12 +172,18 @@ def update_metrics_from_status(status_data: dict[str, Any]) -> None:
     between the last observed value and the current one so that repeated
     calls never decrement a counter.
 
+    If the Prometheus sink has been disabled via :func:`set_prometheus_enabled`,
+    this function is a no-op.
+
     Args:
         status_data: The parsed JSON body returned by ``GET /status``.
             Expected keys: ``open``, ``claimed``, ``done``, ``failed``,
             ``total_cost_usd``, and optionally ``per_role`` (list of dicts
             with ``role``, ``open``, ``claimed``, ``done``, ``failed`` keys).
     """
+    if not _prometheus_enabled:
+        return
+
     global _prev_cost, _prev_cost_by_model
 
     # -- Task counters and gauges --------------------------------------------
