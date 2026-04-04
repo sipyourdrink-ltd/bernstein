@@ -2718,6 +2718,9 @@ class Orchestrator:
     def ingest_backlog(self) -> int:
         """Scan .sdd/backlog/open/ and POST any new files to the task server.
 
+        Supports both ``.md`` (markdown) and ``.yaml`` (YAML frontmatter)
+        backlog file formats.
+
         Returns:
             Number of files ingested this call.
         """
@@ -2727,25 +2730,36 @@ class Orchestrator:
 
         claimed_dir = self._workdir / ".sdd" / "backlog" / "claimed"
 
+        # Collect both .md and .yaml files
+        backlog_files = sorted([*open_dir.glob("*.md"), *open_dir.glob("*.yaml"), *open_dir.glob("*.yml")])
+
         count = 0
-        for md_file in sorted(open_dir.glob("*.md")):
-            if (claimed_dir / md_file.name).exists():
+        for backlog_file in backlog_files:
+            if (claimed_dir / backlog_file.name).exists():
                 continue
 
-            content = md_file.read_text(encoding="utf-8")
-            payload = parse_backlog_file(md_file.name, content)
+            content = backlog_file.read_text(encoding="utf-8")
+            # Use backlog_parser for YAML+MD support (tick_pipeline's
+            # parse_backlog_file only handles markdown).
+            from bernstein.core.backlog_parser import parse_backlog_text
+
+            parsed_task = parse_backlog_text(backlog_file.name, content)
+            if parsed_task is None:
+                logger.warning("ingest_backlog: could not parse %s — skipping", backlog_file.name)
+                continue
+            payload = parsed_task.to_task_payload()
 
             try:
                 resp = self._client.post(f"{self._config.server_url}/tasks", json=payload)
                 resp.raise_for_status()
             except httpx.HTTPError as exc:
-                logger.warning("ingest_backlog: POST /tasks failed for %s: %s", md_file.name, exc)
+                logger.warning("ingest_backlog: POST /tasks failed for %s: %s", backlog_file.name, exc)
                 continue
 
             claimed_dir.mkdir(parents=True, exist_ok=True)
-            md_file.rename(claimed_dir / md_file.name)
+            backlog_file.rename(claimed_dir / backlog_file.name)
             count += 1
-            logger.info("Ingested backlog file: %s", md_file.name)
+            logger.info("Ingested backlog file: %s", backlog_file.name)
 
         return count
 
