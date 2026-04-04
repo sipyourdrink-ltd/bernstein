@@ -727,6 +727,14 @@ def handle_orphaned_task(
             task_id,
             status.value,
         )
+        # Record as SUCCESS — agent completed work before dying.
+        # Previously this was not recorded at all, causing the SLO tracker
+        # to count it as a failure (the death event was recorded elsewhere
+        # without checking task status), creating a death spiral.
+        emit_orphan_metrics(
+            orch._workdir, task_id, session, start_ts,
+            success=True, error_type="already_resolved",
+        )
         return
 
     # Failure detection: scan the agent's log for rate-limit, timeout, or API error

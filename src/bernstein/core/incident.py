@@ -164,11 +164,29 @@ class IncidentManager:
     incidents: list[Incident] = field(default_factory=list)
     auto_pause: bool = True
     _pause_requested: bool = False
+    _pause_started_at: float = 0.0
+    _auto_recovery_s: float = 120.0  # auto-resume after 2 min cooldown
 
     @property
     def should_pause(self) -> bool:
-        """Whether orchestration should be paused due to incidents."""
-        return self._pause_requested
+        """Whether orchestration should be paused due to incidents.
+
+        Auto-recovers after ``_auto_recovery_s`` seconds to prevent
+        permanent stalls from transient failures during long runs.
+        """
+        if not self._pause_requested:
+            return False
+        if self._pause_started_at > 0:
+            elapsed = time.time() - self._pause_started_at
+            if elapsed >= self._auto_recovery_s:
+                logger.info(
+                    "Incident auto-recovery: %.0fs cooldown elapsed, resuming orchestration",
+                    elapsed,
+                )
+                self._pause_requested = False
+                self._pause_started_at = 0.0
+                return False
+        return True
 
     @property
     def open_incidents(self) -> list[Incident]:
@@ -196,6 +214,7 @@ class IncidentManager:
 
         if self.auto_pause and severity in (IncidentSeverity.SEV1, IncidentSeverity.SEV2):
             self._pause_requested = True
+            self._pause_started_at = time.time()
             logger.critical(
                 "INCIDENT %s [%s]: %s — orchestration pause requested",
                 incident_id,
