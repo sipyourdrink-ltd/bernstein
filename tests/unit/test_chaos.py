@@ -99,6 +99,35 @@ def test_chaos_disk_full_creates_sentinel(tmp_path: Path) -> None:
         assert data["expires_at"] > data["started_at"]
 
 
+def test_chaos_agent_oom_records_event(tmp_path: Path) -> None:
+    """agent-oom command records a chaos event in the log."""
+    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
+        runner = CliRunner()
+        result = runner.invoke(chaos_group, ["agent-oom", "--agent-id", "test-agent"])
+        assert result.exit_code == 0
+        assert "Simulating OOM" in result.output
+
+        log_path = tmp_path / "chaos_log.jsonl"
+        assert log_path.exists()
+        events = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        assert len(events) == 1
+        assert events[0]["scenario"] == "agent-oom"
+        assert events[0]["target"] == "test-agent"
+        assert events[0]["success"] is True
+
+
+def test_chaos_agent_oom_default_target(tmp_path: Path) -> None:
+    """agent-oom without --agent-id uses 'random-active' as target."""
+    with patch("bernstein.cli.chaos_cmd.CHAOS_DIR", tmp_path):
+        runner = CliRunner()
+        result = runner.invoke(chaos_group, ["agent-oom"])
+        assert result.exit_code == 0
+
+        log_path = tmp_path / "chaos_log.jsonl"
+        events = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
+        assert events[0]["target"] == "random-active"
+
+
 # ---------------------------------------------------------------------------
 # Server kill recovery: TaskStore JSONL persistence
 # ---------------------------------------------------------------------------
