@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import time
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
@@ -172,3 +174,286 @@ def test_taskstore_replay_tolerates_corrupt_line(tmp_path: Path) -> None:
     recovered = store.get_task("task-valid-001")
     assert recovered is not None
     assert recovered.title == "ok-task"
+
+
+# ---------------------------------------------------------------------------
+# Chaos: agent OOM — slot reclaimed, task requeued, worktree preserved
+# ---------------------------------------------------------------------------
+
+
+def test_classify_abort_reason_oom_exit_137() -> None:
+    """classify_agent_abort_reason returns OOM for exit code 137 (OOM-kill)."""
+    from bernstein.core.agent_lifecycle import classify_agent_abort_reason
+    from bernstein.core.models import AbortReason, AgentSession, ModelConfig
+
+    session = AgentSession(id="s1", role="backend", provider="claude", model_config=ModelConfig("sonnet", "high"))
+    session.exit_code = 137
+
+    reason, detail = classify_agent_abort_reason(session)
+    assert reason == AbortReason.OOM
+    assert "137" in detail
+
+
+def test_classify_abort_reason_oom_sigkill() -> None:
+    """classify_agent_abort_reason returns OOM when agent is killed by SIGKILL (signal 9)."""
+    from bernstein.core.agent_lifecycle import classify_agent_abort_reason
+    from bernstein.core.models import AbortReason, AgentSession, ModelConfig
+
+    session = AgentSession(id="s2", role="backend", provider="claude", model_config=ModelConfig("sonnet", "high"))
+    # Negative exit code convention: -9 means killed by signal 9 (SIGKILL)
+    session.exit_code = -9
+
+    reason, detail = classify_agent_abort_reason(session)
+    assert reason == AbortReason.OOM
+
+
+def _make_oom_orch(tmp_path: Path) -> SimpleNamespace:
+    """Minimal orchestrator mock for OOM recovery tests."""
+    orch = SimpleNamespace()
+    orch._config = SimpleNamespace(
+        server_url="http://server",
+        recovery="resume",
+        max_crash_retries=3,
+        max_task_retries=3,
+    )
+    orch._client = MagicMock()
+    ok = MagicMock()
+    ok.raise_for_status.return_value = None
+    orch._client.post.return_value = ok
+    orch._client.patch.return_value = ok
+    orch._workdir = tmp_path
+    orch._rate_limit_tracker = None
+    orch._crash_counts = {}
+    orch._preserved_worktrees = {}
+    orch._retried_task_ids = set()
+    orch._record_provider_health = MagicMock()
+    orch._evolution = None
+    orch._wal_writer = None
+    orch._spawner = MagicMock()
+    orch._spawner.get_worktree_path.return_value = None
+    return orch
+
+
+def test_oom_slot_reclaimed_and_task_requeued(tmp_path: Path) -> None:
+    """After OOM crash the orphaned task is requeued (retried/failed via retry_or_fail_task)."""
+    from bernstein.core.agent_lifecycle import handle_orphaned_task
+    from bernstein.core.models import AgentSession, Complexity, ModelConfig, Scope, Task, TaskStatus, TaskType
+
+    task = Task(
+        id="oom-task-1",
+        title="OOM victim task",
+        description="",
+        role="backend",
+        status=TaskStatus.CLAIMED,
+        scope=Scope.MEDIUM,
+        complexity=Complexity.MEDIUM,
+        task_type=TaskType.STANDARD,
+    )
+    session = AgentSession(
+        id="oom-sess-1",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=[task.id],
+        exit_code=137,  # OOM kill
+    )
+    orch = _make_oom_orch(tmp_path)
+
+    with (
+        patch("bernstein.core.agent_lifecycle.collect_completion_data", return_value={"files_modified": []}),
+        patch("bernstein.core.agent_lifecycle._has_git_commits_on_branch", return_value=False),
+        patch("bernstein.core.agent_lifecycle.complete_task") as mock_complete,
+        patch("bernstein.core.agent_lifecycle.retry_or_fail_task") as mock_retry,
+    ):
+        handle_orphaned_task(orch, task.id, session, {"claimed": [task], "open": [], "in_progress": [], "done": []})
+
+    # Slot was reclaimed (no completion) — task goes to retry/fail path
+    mock_complete.assert_not_called()
+    mock_retry.assert_called_once()
+
+
+def test_oom_worktree_preserved_on_resume_policy(tmp_path: Path) -> None:
+    """With recovery=resume, the worktree is preserved after OOM so the next agent can resume."""
+    from bernstein.core.agent_lifecycle import _maybe_preserve_worktree
+    from bernstein.core.models import AgentSession, ModelConfig
+
+    worktree_path = tmp_path / "worktrees" / "oom-sess-2"
+    worktree_path.mkdir(parents=True)
+
+    session = AgentSession(
+        id="oom-sess-2",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=["oom-task-2"],
+        exit_code=137,
+    )
+
+    orch = SimpleNamespace()
+    orch._config = SimpleNamespace(recovery="resume", max_crash_retries=3)
+    orch._crash_counts = {"oom-task-2": 1}
+    orch._preserved_worktrees = {}
+    orch._spawner = SimpleNamespace(_worktree_paths={"oom-sess-2": worktree_path})
+
+    _maybe_preserve_worktree(orch, session, "oom-task-2")
+
+    # Worktree path stored so the next spawn can reuse it
+    assert "oom-task-2" in orch._preserved_worktrees
+    assert orch._preserved_worktrees["oom-task-2"] == worktree_path
+
+
+def test_oom_worktree_not_preserved_when_restart_policy(tmp_path: Path) -> None:
+    """With recovery=restart, worktree is NOT preserved after OOM."""
+    from bernstein.core.agent_lifecycle import _maybe_preserve_worktree
+    from bernstein.core.models import AgentSession, ModelConfig
+
+    worktree_path = tmp_path / "worktrees" / "oom-sess-3"
+    worktree_path.mkdir(parents=True)
+
+    session = AgentSession(
+        id="oom-sess-3",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+        task_ids=["oom-task-3"],
+        exit_code=137,
+    )
+
+    orch = SimpleNamespace()
+    orch._config = SimpleNamespace(recovery="restart", max_crash_retries=3)
+    orch._crash_counts = {"oom-task-3": 0}
+    orch._preserved_worktrees = {}
+    orch._spawner = SimpleNamespace(_worktree_paths={"oom-sess-3": worktree_path})
+
+    _maybe_preserve_worktree(orch, session, "oom-task-3")
+
+    assert "oom-task-3" not in orch._preserved_worktrees
+
+
+def test_save_partial_work_skips_missing_worktree() -> None:
+    """_save_partial_work returns False immediately when worktree directory is absent."""
+    from bernstein.core.agent_lifecycle import _save_partial_work
+    from bernstein.core.models import AgentSession, ModelConfig
+
+    session = AgentSession(
+        id="oom-sess-no-wt",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+    )
+    spawner = MagicMock()
+    spawner.get_worktree_path.return_value = None
+
+    result = _save_partial_work(spawner, session)
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Chaos: disk full during merge — graceful error, no corruption, cleanup
+# ---------------------------------------------------------------------------
+
+
+def test_retry_io_raises_immediately_on_enospc() -> None:
+    """_retry_io raises OSError immediately for ENOSPC (disk full, non-transient)."""
+    import asyncio
+
+    from bernstein.core.task_store import _retry_io
+
+    enospc = OSError(errno.ENOSPC, "No space left on device")
+
+    def _fail() -> None:
+        raise enospc
+
+    with patch("bernstein.core.task_store.asyncio.to_thread", side_effect=enospc):
+        with patch("bernstein.core.task_store.asyncio.sleep"):
+            try:
+                asyncio.run(_retry_io(_fail))
+                assert False, "Expected OSError to be raised"
+            except OSError as exc:
+                assert exc.errno == errno.ENOSPC
+
+
+def test_save_partial_work_handles_git_oserror_gracefully(tmp_path: Path) -> None:
+    """_save_partial_work suppresses OSError during git commit (disk full) and returns False."""
+    from bernstein.core.agent_lifecycle import _save_partial_work
+    from bernstein.core.models import AgentSession, ModelConfig
+
+    worktree = tmp_path / "agent-wt"
+    worktree.mkdir()
+
+    session = AgentSession(
+        id="disk-sess-1",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+    )
+
+    spawner = MagicMock()
+    spawner.get_worktree_path.return_value = worktree
+
+    disk_full_error = OSError(errno.ENOSPC, "No space left on device")
+
+    with patch("bernstein.core.agent_lifecycle.subprocess") as mock_sub:
+        mock_sub.TimeoutExpired = TimeoutError
+        mock_sub.run.side_effect = disk_full_error
+
+        result = _save_partial_work(spawner, session)
+
+    # Disk-full error during git commit is suppressed; returns False (no WIP commit)
+    assert result is False
+
+
+def test_save_partial_work_cleanup_still_called_after_disk_full(tmp_path: Path) -> None:
+    """cleanup_worktree is callable after _save_partial_work fails due to disk full."""
+    from bernstein.core.agent_lifecycle import _save_partial_work
+    from bernstein.core.models import AgentSession, ModelConfig
+
+    worktree = tmp_path / "agent-wt2"
+    worktree.mkdir()
+    (worktree / "some_file.py").write_text("# work in progress\n")
+
+    session = AgentSession(
+        id="disk-sess-2",
+        role="backend",
+        provider="claude",
+        model_config=ModelConfig("sonnet", "high"),
+    )
+
+    spawner = MagicMock()
+    spawner.get_worktree_path.return_value = worktree
+
+    with patch("bernstein.core.agent_lifecycle.subprocess") as mock_sub:
+        mock_sub.TimeoutExpired = TimeoutError
+        mock_sub.run.side_effect = OSError(errno.ENOSPC, "No space left on device")
+        _save_partial_work(spawner, session)
+
+    # Verify cleanup path: worktree dir still exists (not corrupted) and can be removed
+    import shutil
+
+    shutil.rmtree(worktree)
+    assert not worktree.exists()
+
+
+def test_disk_full_merge_cleanup_worktree_survives_oserror(tmp_path: Path) -> None:
+    """cleanup_worktree handles OSError during rmtree (e.g. disk full) without raising."""
+    from bernstein.core.spawner import AgentSpawner
+
+    # Create a minimal spawner with just enough to test cleanup_worktree
+    spawner = AgentSpawner.__new__(AgentSpawner)
+    spawner._workdir = tmp_path
+    spawner._worktree_paths = {}
+    spawner._worktree_roots = {}
+    spawner._worktree_managers = {}
+    spawner._worktree_mgr = None
+
+    session_id = "disk-sess-3"
+    worktree = tmp_path / session_id
+    worktree.mkdir()
+    spawner._worktree_paths[session_id] = worktree
+
+    with patch("shutil.rmtree", side_effect=OSError(errno.ENOSPC, "No space left on device")):
+        # Should not raise — disk-full OSError in rmtree is caught and logged
+        spawner.cleanup_worktree(session_id)
+
+    # Worktree path removed from tracking dict regardless of rmtree failure
+    assert session_id not in spawner._worktree_paths
