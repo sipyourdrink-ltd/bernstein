@@ -299,6 +299,7 @@ class TaskCreate(BaseModel):
     completion_signals: list[CompletionSignalSchema] = Field(default_factory=lambda: list[CompletionSignalSchema]())
     slack_context: dict[str, Any] | None = None  # Slack slash command metadata
     deadline: float | None = None  # Epoch timestamp when task must be complete
+    parent_session_id: str | None = None  # Coordinator session that owns this task (namespace scope)
 
 
 class WebhookTaskCreate(TaskCreate):
@@ -342,6 +343,7 @@ class TaskResponse(BaseModel):
     deadline: float | None = None
     progress_log: list[ProgressEntry] = Field(default_factory=lambda: list[ProgressEntry]())
     version: int = 1
+    parent_session_id: str | None = None  # Coordinator session that owns this task
 
 
 class WebhookTaskResponse(BaseModel):
@@ -405,6 +407,7 @@ class BatchClaimRequest(BaseModel):
 
     task_ids: list[str]
     agent_id: str
+    claimed_by_session: str | None = None
 
 
 class BatchClaimResponse(BaseModel):
@@ -808,6 +811,7 @@ def task_to_response(task: Task) -> TaskResponse:
         created_at=task.created_at,
         progress_log=list(cast("list[ProgressEntry]", task.progress_log)),  # type: ignore[reportUnknownMemberType]
         version=task.version,
+        parent_session_id=task.parent_session_id,
     )
 
 
