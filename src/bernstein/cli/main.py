@@ -600,6 +600,7 @@ def cli(
         audit=False,
         ab_test=False,
         dry_run=False,
+        profile=False,
     )
 
 
