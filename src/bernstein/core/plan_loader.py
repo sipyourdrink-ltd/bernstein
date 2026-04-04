@@ -21,6 +21,26 @@ class PlanLoadError(Exception):
 
 
 @dataclass
+class RepoRef:
+    """A repository reference declared in a multi-repo plan.
+
+    Attributes:
+        path: Relative or absolute path to the repository root.
+        branch: Branch to check out in that repo (default: "main").
+        name: Optional logical name for referencing in stage ``repo:`` fields.
+            Falls back to the last component of ``path`` when omitted.
+    """
+
+    path: str
+    branch: str = "main"
+    name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            self.name = self.path.rstrip("/").rsplit("/", 1)[-1]
+
+
+@dataclass
 class PlanConfig:
     """Top-level metadata and orchestration settings extracted from a plan file.
 
@@ -32,6 +52,9 @@ class PlanConfig:
         cli: CLI agent override (e.g. "claude", "codex", "auto").
         budget: Spending cap string (e.g. "$10", "5.00").
         max_agents: Max concurrent agent processes.
+        repos: Repositories involved in a multi-repo plan.  When present,
+            stages can declare a ``repo`` field to route their tasks to a
+            specific repository.
     """
 
     name: str = ""
@@ -41,6 +64,7 @@ class PlanConfig:
     cli: str | None = None
     budget: str | None = None
     max_agents: int | None = None
+    repos: list[RepoRef] = field(default_factory=list)
 
 
 def _parse_completion_signals(raw_signals: list[object]) -> list[CompletionSignal]:
@@ -133,6 +157,25 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
     # Extract plan-level config
     budget_raw = data.get("budget")
     max_agents_raw = data.get("max_agents")
+
+    # Parse optional repos list for multi-repo plans
+    repos: list[RepoRef] = []
+    for raw_repo in data.get("repos") or []:
+        if not isinstance(raw_repo, dict):
+            logger.warning("repos entry is not a mapping — skipping")
+            continue
+        repo_path = raw_repo.get("path")
+        if not repo_path:
+            logger.warning("repos entry missing 'path' — skipping")
+            continue
+        repos.append(
+            RepoRef(
+                path=str(repo_path),
+                branch=str(raw_repo.get("branch", "main")),
+                name=str(raw_repo.get("name", "")),
+            )
+        )
+
     config = PlanConfig(
         name=str(data.get("name", "")),
         description=str(data.get("description", "")),
@@ -141,6 +184,7 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
         cli=str(data["cli"]) if data.get("cli") else None,
         budget=str(budget_raw) if budget_raw is not None else None,
         max_agents=int(max_agents_raw) if max_agents_raw is not None else None,
+        repos=repos,
     )
 
     tasks: list[Task] = []
@@ -163,6 +207,9 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
 
         stage_tasks[str(stage_name)] = []
         stage_deps: list[str] = [str(d) for d in (stage.get("depends_on") or [])]
+
+        # Stage-level repo routing: steps inherit the stage repo unless overridden
+        stage_repo: str | None = str(stage["repo"]) if stage.get("repo") else None
 
         for j, step in enumerate(steps):
             if not isinstance(step, dict):
@@ -194,6 +241,14 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
             mode_raw = step.get("mode")
             execution_mode: str | None = str(mode_raw) if mode_raw else None
 
+            # Repo routing: step-level overrides stage-level
+            step_repo_raw = step.get("repo")
+            task_repo: str | None = str(step_repo_raw) if step_repo_raw else stage_repo
+
+            # Cross-repo dependency: which repo must complete first
+            depends_on_repo_raw = step.get("depends_on_repo")
+            task_depends_on_repo: str | None = str(depends_on_repo_raw) if depends_on_repo_raw else None
+
             task = Task(
                 id=f"plan-{i}-{j}",
                 title=title,
@@ -211,6 +266,8 @@ def load_plan(path: Path) -> tuple[PlanConfig, list[Task]]:
                 model=str(model_raw) if model_raw else None,
                 effort=str(effort_raw) if effort_raw else None,
                 execution_mode=execution_mode,
+                repo=task_repo,
+                depends_on_repo=task_depends_on_repo,
             )
             tasks.append(task)
             stage_tasks[str(stage_name)].append(title)

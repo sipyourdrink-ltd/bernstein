@@ -53,7 +53,25 @@ bernstein = "bernstein.cli.main:cli"
 bernstein-worker = "bernstein.core.worker:main"
 
 [project.entry-points."bernstein.plugins"]
-# Example: my_plugin = "my_package:MyPlugin"
+# Lifecycle/event plugins (hookimpl classes). Example:
+# my_plugin = "my_package:MyPlugin"
+
+[project.entry-points."bernstein.adapters"]
+# Third-party CLI agent adapters (CLIAdapter subclasses). Example:
+# myagent = "my_package.adapter:MyAgentAdapter"
+# Then use: bernstein run --cli myagent plan.yaml
+
+[project.entry-points."bernstein.gates"]
+# Custom quality gates (GatePlugin subclasses). Example:
+# my_gate = "my_package.gates:MyGate"
+
+[project.entry-points."bernstein.triggers"]
+# Custom trigger sources (normalize external events into tasks). Example:
+# jira = "my_package.triggers:JiraTriggerSource"
+
+[project.entry-points."bernstein.reporters"]
+# Custom reporters (hookimpl classes that emit run summaries). Example:
+# slack = "my_package.reporters:SlackReporter"
 
 [tool.hatch.build]
 exclude = [
