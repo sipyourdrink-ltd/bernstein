@@ -439,6 +439,18 @@ def _try_compact_and_retry(
     description_text = task.description
     tokens_before = max(1, len(description_text) // 4)
 
+    # Persist pre-compaction usage in the budget manager (if available) so that
+    # the effective remaining budget shown to the retry agent is accurate.
+    _budget_mgr: Any = getattr(orch, "_budget_manager", None)
+    effective_remaining: int | None = None
+    if _budget_mgr is not None:
+        try:
+            _task_budget = _budget_mgr.get_budget(task_id, complexity=task.scope.value)
+            _task_budget.record_pre_compaction(tokens_before)
+            effective_remaining = _task_budget.effective_remaining()
+        except Exception as _be:
+            logger.debug("Budget pre-compaction snapshot failed for %s: %s", task_id, _be)
+
     try:
         result = pipeline.execute(
             session_id=session.id,
@@ -458,6 +470,15 @@ def _try_compact_and_retry(
             tasks_snapshot=tasks_snapshot,
         )
         return False
+
+    # Reconcile post-compaction budget now that we know how many tokens were saved.
+    if _budget_mgr is not None:
+        try:
+            _task_budget = _budget_mgr.get_budget(task_id, complexity=task.scope.value)
+            _task_budget.reconcile_post_compaction()
+            effective_remaining = _task_budget.effective_remaining()
+        except Exception as _be:
+            logger.debug("Budget post-compaction reconcile failed for %s: %s", task_id, _be)
 
     logger.info(
         "Compacted task %s description: %d → %d tokens (saved %d, correlation=%s)",
@@ -488,6 +509,7 @@ def _try_compact_and_retry(
         original_task=task,
         compacted_description=result.compacted_text,
         fallback_model=fallback_model,
+        effective_remaining=effective_remaining,
     )
 
     # WAL entry for audit trail
@@ -522,6 +544,7 @@ def _patch_retry_with_compaction(
     original_task: Task,
     compacted_description: str,
     fallback_model: str | None,
+    effective_remaining: int | None = None,
 ) -> None:
     """Patch the retry task created by ``retry_or_fail_task`` with compacted context.
 
@@ -529,12 +552,19 @@ def _patch_retry_with_compaction(
     matches the original task's title, then patches its description and
     meta_messages to include the compacted context and the compaction nudge.
 
+    When *effective_remaining* is provided it is injected as an additional
+    operational nudge so the retry agent knows the true remaining token budget
+    (``budget_tokens - pre_compact_used``), preventing it from treating the
+    full budget as available when significant context was already consumed.
+
     Args:
         client: httpx client for task-server calls.
         server_url: Task server base URL.
         original_task: The original (failed) task.
         compacted_description: The compacted description text.
         fallback_model: Optional model to set on the retry task.
+        effective_remaining: Effective remaining token budget after accounting
+            for pre-compaction spend.  ``None`` means unknown / skip injection.
     """
     try:
         resp = client.get(f"{server_url}/tasks", params={"status": "open"})
@@ -557,8 +587,19 @@ def _patch_retry_with_compaction(
         logger.debug("No retry task found to patch with compaction for %s", original_task.id)
         return
 
-    # Build patch payload
+    # Build patch payload — include compaction nudge and optional budget hint.
     new_meta = [*original_task.meta_messages, _COMPACT_RETRY_META]
+    if effective_remaining is not None:
+        if effective_remaining >= 1_000_000:
+            budget_hint = f"~{effective_remaining // 1_000_000}M"
+        elif effective_remaining >= 1_000:
+            budget_hint = f"~{effective_remaining // 1_000}K"
+        else:
+            budget_hint = str(effective_remaining)
+        new_meta.append(
+            f"BUDGET EFFECTIVE REMAINING: {budget_hint} tokens remaining after "
+            "accounting for context consumed before compaction.  Plan work to fit."
+        )
     patch_body: dict[str, Any] = {
         "description": compacted_description,
         "meta_messages": new_meta,

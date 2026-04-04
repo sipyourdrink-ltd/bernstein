@@ -29,12 +29,21 @@ MAX_GROWTH_MULTIPLIER = 5.0  # 5x budget triggers hard stop
 class TokenBudget:
     """Token budget for a single task.
 
+    Tracks token consumption across compaction events so callers see a single
+    logical spend for the full task lifetime, not just the current compaction
+    window.
+
     Attributes:
         task_id: Task identifier.
         budget_tokens: Maximum tokens allowed for context.
-        used_tokens: Tokens used so far.
-        remaining_tokens: Tokens remaining.
+        used_tokens: Tokens used in the *current* compaction window.
+        remaining_tokens: Tokens remaining in the current window.
         complexity: Task complexity level.
+        pre_compact_used: Cumulative tokens consumed across all *previous*
+            compaction windows.  Persisted before each compaction event so the
+            total logical spend (``pre_compact_used + used_tokens``) stays
+            accurate even after context is compressed.
+        compaction_count: Number of compaction events recorded for this task.
     """
 
     task_id: str
@@ -42,6 +51,8 @@ class TokenBudget:
     used_tokens: int = 0
     remaining_tokens: int = 0
     complexity: str = "medium"
+    pre_compact_used: int = 0
+    compaction_count: int = 0
 
     def __post_init__(self) -> None:
         self.remaining_tokens = self.budget_tokens - self.used_tokens
@@ -68,11 +79,71 @@ class TokenBudget:
         self.remaining_tokens = self.budget_tokens - self.used_tokens
         return True
 
+    def record_pre_compaction(self, tokens_used: int) -> None:
+        """Snapshot current usage before a compaction event.
+
+        Called immediately before context is compressed.  Accumulates the
+        pre-compaction token count into ``pre_compact_used`` so that subsequent
+        calls to :meth:`total_logical_spend` and :meth:`effective_remaining`
+        account for all historical spending.
+
+        After compaction the current session restarts with a lower context
+        size, so ``used_tokens`` resets externally.  ``pre_compact_used``
+        retains the history.
+
+        Args:
+            tokens_used: Estimated token count of the task prompt before
+                compaction (typically ``len(description) // 4``).
+        """
+        self.pre_compact_used += tokens_used
+        self.compaction_count += 1
+        logger.debug(
+            "Task %s: pre-compaction snapshot %d tokens (cumulative=%d, event=%d)",
+            self.task_id,
+            tokens_used,
+            self.pre_compact_used,
+            self.compaction_count,
+        )
+
+    def reconcile_post_compaction(self) -> None:
+        """Recompute remaining budget after compaction reduces context size.
+
+        Effective remaining = ``budget_tokens`` minus the *total* logical spend
+        (pre-compaction history + current window).  This keeps cost accounting
+        aligned with actual model usage even when context has been summarized.
+        """
+        self.remaining_tokens = max(0, self.budget_tokens - self.total_logical_spend())
+        logger.debug(
+            "Task %s: post-compaction reconcile — effective_remaining=%d "
+            "(budget=%d, pre_compact=%d, current=%d)",
+            self.task_id,
+            self.remaining_tokens,
+            self.budget_tokens,
+            self.pre_compact_used,
+            self.used_tokens,
+        )
+
+    def total_logical_spend(self) -> int:
+        """Total tokens consumed across all compaction windows.
+
+        Returns:
+            Sum of pre-compaction historical spend and current window usage.
+        """
+        return self.pre_compact_used + self.used_tokens
+
+    def effective_remaining(self) -> int:
+        """Budget remaining after accounting for all historical spend.
+
+        Returns:
+            Remaining tokens clamped to zero.
+        """
+        return max(0, self.budget_tokens - self.total_logical_spend())
+
     def utilization_pct(self) -> float:
-        """Return budget utilization percentage."""
+        """Return budget utilization percentage based on total logical spend."""
         if self.budget_tokens == 0:
             return 0.0
-        return (self.used_tokens / self.budget_tokens) * 100
+        return (self.total_logical_spend() / self.budget_tokens) * 100
 
 
 @dataclass
