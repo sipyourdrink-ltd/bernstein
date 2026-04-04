@@ -138,15 +138,13 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
         Success message.
     """
     _validate_task_id(task_id)
+    safe_id = Path(task_id).name  # Strip any directory components
     approvals_dir = _approvals_dir()
-    pending_path = _safe_child(_pending_dir(), f"{task_id}.json")
-    approved_path = _safe_child(approvals_dir, f"{task_id}.approved")
+    pending_path = _safe_child(_pending_dir(), f"{safe_id}.json")
+    approved_path = _safe_child(approvals_dir, f"{safe_id}.approved")
 
     if not pending_path.exists():
         raise HTTPException(status_code=404, detail=f"No pending approval for task {task_id}")
-
-    if not approved_path.resolve().is_relative_to(approvals_dir.resolve()):
-        raise HTTPException(status_code=400, detail="Invalid task_id")
 
     # Write decision
     approved_path.write_text(json.dumps({"reason": body.reason}, indent=2))
@@ -173,15 +171,13 @@ async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, 
         Success message.
     """
     _validate_task_id(task_id)
+    safe_id = Path(task_id).name  # Strip any directory components
     approvals_dir = _approvals_dir()
-    pending_path = _safe_child(_pending_dir(), f"{task_id}.json")
-    rejected_path = _safe_child(approvals_dir, f"{task_id}.rejected")
+    pending_path = _safe_child(_pending_dir(), f"{safe_id}.json")
+    rejected_path = _safe_child(approvals_dir, f"{safe_id}.rejected")
 
     if not pending_path.exists():
         raise HTTPException(status_code=404, detail=f"No pending approval for task {task_id}")
-
-    if not rejected_path.resolve().is_relative_to(approvals_dir.resolve()):
-        raise HTTPException(status_code=400, detail="Invalid task_id")
 
     # Write decision
     rejected_path.write_text(json.dumps({"reason": body.reason}, indent=2))

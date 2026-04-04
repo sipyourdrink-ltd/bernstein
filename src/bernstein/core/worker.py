@@ -30,6 +30,9 @@ logger = logging.getLogger("bernstein-worker")
 
 _BASH_ERROR_RE = re.compile(r"\[(Bash|shell)\]\s+.*exited\s+with\s+code\s+([1-9]\d*)")
 
+# Session IDs must be safe for use as filenames (no path separators or traversal).
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_.-]+$")
+
 # Valid tool-abort policy values (used by --tool-abort-policy CLI arg).
 # contain  → write TOOL_ABORT signal only; agent session continues.
 # sibling  → write TOOL_ABORT + send SHUTDOWN to sibling agents.
@@ -202,6 +205,11 @@ def main() -> None:
 
     if not cmd:
         print("bernstein-worker: no command specified", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate session ID to prevent path traversal (session is used in filenames)
+    if not _SESSION_ID_RE.fullmatch(args.session):
+        print(f"bernstein-worker: invalid session id: {args.session}", file=sys.stderr)
         sys.exit(1)
 
     # 1. Set process title

@@ -59,6 +59,8 @@ _RATE_LIMIT_PATTERNS: tuple[str, ...] = (
     "RateLimitError",
     "overloaded_error",
     "overloaded",
+    "hit your limit",
+    "usage cap",
 )
 
 # Text patterns that indicate a timeout in agent logs.
