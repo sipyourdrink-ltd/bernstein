@@ -260,8 +260,7 @@ class TokenGrowthMonitor:
 
     #: Default nudge text injected via the WAKEUP signal.
     _DEFAULT_NUDGE_TEXT: str = (
-        "You are approaching your token budget. "
-        "Wrap up the current task, commit any changes, and exit cleanly."
+        "You are approaching your token budget. Wrap up the current task, commit any changes, and exit cleanly."
     )
 
     def __init__(
@@ -280,9 +279,7 @@ class TokenGrowthMonitor:
         self._compact_max_failures = compact_max_failures
         self._compact_cooldown_s = compact_cooldown_s
         self._nudge_threshold_pct: float = (
-            nudge_threshold_pct
-            if nudge_threshold_pct is not None
-            else self._DEFAULT_NUDGE_THRESHOLD_PCT
+            nudge_threshold_pct if nudge_threshold_pct is not None else self._DEFAULT_NUDGE_THRESHOLD_PCT
         )
         self._nudge_text: str = nudge_text if nudge_text is not None else self._DEFAULT_NUDGE_TEXT
         self._history: dict[str, AgentTokenHistory] = {}
