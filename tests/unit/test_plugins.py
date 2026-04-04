@@ -431,6 +431,115 @@ class TestWorkspaceTrustGating:
 
 
 # ---------------------------------------------------------------------------
+# Plugin subsystem isolation
+# ---------------------------------------------------------------------------
+
+
+def test_command_hooks_failure_doesnt_break_config_plugins(tmp_path: Path) -> None:
+    """Command hooks subsystem failure does not prevent config plugins from loading."""
+    yaml_content = "plugins:\n  - bernstein.plugins.manager:PluginManager\n"
+    (tmp_path / "bernstein.yaml").write_text(yaml_content)
+
+    from bernstein.plugins.manager import CommandHook
+
+    with patch("bernstein.plugins.manager.CommandHook", side_effect=RuntimeError("hooks exploded")):
+        with patch("bernstein.plugins.manager.entry_points", return_value=[]):
+            # Create a hooks dir so _load_command_hooks_subsystem tries to load
+            hooks_dir = tmp_path / ".bernstein" / "hooks"
+            hooks_dir.mkdir(parents=True)
+            local_pm = PluginManager()
+            local_pm.load_from_workdir(tmp_path)
+
+    # Config plugin must still be registered despite CommandHook failure
+    assert "bernstein.plugins.manager:PluginManager" in local_pm.registered_names
+    _ = CommandHook  # silence unused import warning
+
+
+def test_config_plugins_failure_doesnt_break_entry_points(tmp_path: Path) -> None:
+    """Config plugins subsystem failure does not prevent entry-point plugins from loading."""
+    fake_ep = _make_fake_entry_point(name="test_ep", plugin=_CollectorPlugin())
+
+    with patch("bernstein.plugins.manager.entry_points", return_value=[fake_ep]):
+        local_pm = PluginManager()
+        # Simulate yaml loading failure for config plugins subsystem
+        local_pm._load_config_plugins_subsystem = lambda _root: (_ for _ in ()).throw(RuntimeError("yaml broken"))  # type: ignore[assignment]
+        local_pm.load_from_workdir(tmp_path)
+
+    # Entry-point plugin must still be registered
+    assert "test_ep" in local_pm.registered_names
+
+
+# ---------------------------------------------------------------------------
+# Plugin-provided MCP servers (collect_plugin_mcp_servers)
+# ---------------------------------------------------------------------------
+
+
+class _MCPServerPlugin:
+    """Test plugin that provides MCP servers via provide_mcp_servers."""
+
+    def __init__(self, servers: list[dict[str, Any]]) -> None:
+        self._servers = servers
+
+    @hookimpl
+    def provide_mcp_servers(self) -> list[dict[str, Any]]:
+        return self._servers
+
+
+def test_collect_plugin_mcp_servers_namespaces(pm: PluginManager) -> None:
+    """Servers from provide_mcp_servers are namespaced with the plugin name."""
+    from bernstein.core.mcp_registry import MCPRegistry
+
+    plugin = _MCPServerPlugin([{"name": "db", "package": "my-db-pkg"}])
+    pm.register(plugin, name="acme")
+
+    registry = MCPRegistry(config_path=None)
+    pm.collect_plugin_mcp_servers(registry)
+
+    config = registry.build_mcp_config(registry.servers)
+    assert config is not None
+    assert "acme__db" in config["mcpServers"]
+    assert "db" not in config["mcpServers"]
+
+
+def test_collect_plugin_mcp_servers_two_plugins_no_collision(pm: PluginManager) -> None:
+    """Two plugins providing the same server name don't collide after namespacing."""
+    from bernstein.core.mcp_registry import MCPRegistry
+
+    pm.register(_MCPServerPlugin([{"name": "db", "package": "pkg-a"}]), name="plugin_a")
+    pm.register(_MCPServerPlugin([{"name": "db", "package": "pkg-b"}]), name="plugin_b")
+
+    registry = MCPRegistry(config_path=None)
+    pm.collect_plugin_mcp_servers(registry)
+
+    config = registry.build_mcp_config(registry.servers)
+    assert config is not None
+    assert "plugin_a__db" in config["mcpServers"]
+    assert "plugin_b__db" in config["mcpServers"]
+    assert config["mcpServers"]["plugin_a__db"]["args"] == ["-y", "pkg-a"]
+    assert config["mcpServers"]["plugin_b__db"]["args"] == ["-y", "pkg-b"]
+
+
+def test_collect_plugin_mcp_servers_broken_plugin_does_not_crash(pm: PluginManager) -> None:
+    """A plugin whose provide_mcp_servers raises does not break collection."""
+    from bernstein.core.mcp_registry import MCPRegistry
+
+    class _BrokenMCPPlugin:
+        @hookimpl
+        def provide_mcp_servers(self) -> list[dict[str, Any]]:
+            raise RuntimeError("oops")
+
+    pm.register(_BrokenMCPPlugin(), name="broken_mcp")
+    pm.register(_MCPServerPlugin([{"name": "ok-server", "package": "ok-pkg"}]), name="ok_plugin")
+
+    registry = MCPRegistry(config_path=None)
+    pm.collect_plugin_mcp_servers(registry)  # must not raise
+
+    config = registry.build_mcp_config(registry.servers)
+    assert config is not None
+    assert "ok_plugin__ok-server" in config["mcpServers"]
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

@@ -240,6 +240,56 @@ class TestMCPRegistryFiltering:
         assert len(result) == 1
 
 
+class TestMCPServerEntryNamespacing:
+    """Tests for plugin-scoped server name namespacing."""
+
+    def test_namespaced_name_with_plugin(self) -> None:
+        entry = MCPServerEntry(name="my-db", package="my-db-pkg", plugin_name="acme")
+        assert entry.namespaced_name == "acme__my-db"
+
+    def test_namespaced_name_without_plugin(self) -> None:
+        entry = MCPServerEntry(name="tavily", package="pkg")
+        assert entry.namespaced_name == "tavily"
+
+    def test_namespaced_name_empty_plugin_name(self) -> None:
+        entry = MCPServerEntry(name="tavily", package="pkg", plugin_name="")
+        assert entry.namespaced_name == "tavily"
+
+
+class TestMCPRegistryPluginServers:
+    """Tests for register_plugin_servers and collision prevention."""
+
+    def test_register_plugin_servers_namespaces_names(self) -> None:
+        """Servers registered via register_plugin_servers use namespaced keys."""
+        registry = MCPRegistry(config_path=None)
+        servers = [MCPServerEntry(name="db", package="my-db-pkg")]
+        registry.register_plugin_servers("acme", servers)
+
+        config = registry.build_mcp_config(registry.servers)
+        assert config is not None
+        assert "acme__db" in config["mcpServers"]
+        assert "db" not in config["mcpServers"]
+
+    def test_two_plugins_same_server_name_no_conflict(self) -> None:
+        """Two plugins with the same server name produce distinct keys."""
+        registry = MCPRegistry(config_path=None)
+        registry.register_plugin_servers("plugin_a", [MCPServerEntry(name="db", package="pkg-a")])
+        registry.register_plugin_servers("plugin_b", [MCPServerEntry(name="db", package="pkg-b")])
+
+        config = registry.build_mcp_config(registry.servers)
+        assert config is not None
+        assert "plugin_a__db" in config["mcpServers"]
+        assert "plugin_b__db" in config["mcpServers"]
+        # Verify they point to different packages
+        assert config["mcpServers"]["plugin_a__db"]["args"] == ["-y", "pkg-a"]
+        assert config["mcpServers"]["plugin_b__db"]["args"] == ["-y", "pkg-b"]
+
+    def test_register_plugin_servers_empty_list_is_noop(self) -> None:
+        registry = MCPRegistry(config_path=None)
+        registry.register_plugin_servers("acme", [])
+        assert registry.servers == []
+
+
 class TestMCPRegistryConfigBuilding:
     """Tests for MCP config dict construction."""
 
@@ -251,6 +301,15 @@ class TestMCPRegistryConfigBuilding:
         assert "mcpServers" in config
         assert "tavily" in config["mcpServers"]
         assert config["mcpServers"]["tavily"]["args"] == ["-y", "@anthropic/tavily-mcp"]
+
+    def test_build_mcp_config_uses_namespaced_name(self) -> None:
+        """build_mcp_config keys use namespaced_name, not plain name."""
+        entry = MCPServerEntry(name="db", package="my-db", plugin_name="myplugin")
+        registry = MCPRegistry(config_path=None)
+        config = registry.build_mcp_config([entry])
+        assert config is not None
+        assert "myplugin__db" in config["mcpServers"]
+        assert "db" not in config["mcpServers"]
 
     def test_build_mcp_config_empty_returns_none(self) -> None:
         registry = MCPRegistry(config_path=None)

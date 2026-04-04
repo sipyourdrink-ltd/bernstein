@@ -906,6 +906,52 @@ class PluginManager:
             log.warning("on_agent_hook %r failed: %s, defaulting to deny", hook_name, exc)
             return {"decision": "deny", "reason": "hook_timed_out_or_error"}
 
+    def collect_plugin_mcp_servers(self, registry: object) -> None:
+        """Collect MCP servers from all registered plugins and namespace them.
+
+        Iterates over registered plugins and calls ``provide_mcp_servers()``
+        on each that implements it.  Results are registered in *registry* with
+        the plugin name as a namespace prefix, preventing collisions between
+        plugins that use the same server name.
+
+        Args:
+            registry: An :class:`~bernstein.core.mcp_registry.MCPRegistry`
+                instance.  Typed as ``object`` to avoid a circular import;
+                the method accesses ``register_plugin_servers`` via duck-typing.
+        """
+        from bernstein.core.mcp_registry import MCPServerEntry
+
+        for plugin_name in list(self._registered_names):
+            plugin = self._pm.get_plugin(plugin_name)
+            if plugin is None:
+                continue
+            if not hasattr(plugin, "provide_mcp_servers"):
+                continue
+            try:
+                raw_servers: object = plugin.provide_mcp_servers()
+                if not raw_servers or not isinstance(raw_servers, list):
+                    continue
+                entries: list[MCPServerEntry] = []
+                for raw in raw_servers:
+                    if isinstance(raw, MCPServerEntry):
+                        entries.append(raw)
+                    elif isinstance(raw, dict):
+                        entries.append(
+                            MCPServerEntry(
+                                name=str(raw["name"]),
+                                package=str(raw.get("package", "")),
+                                capabilities=tuple(str(c) for c in raw.get("capabilities", [])),
+                                keywords=tuple(str(k) for k in raw.get("keywords", [])),
+                                env_required=tuple(str(e) for e in raw.get("env_required", [])),
+                                command=str(raw.get("command", "npx")),
+                                args=tuple(str(a) for a in raw["args"]) if "args" in raw else None,
+                            )
+                        )
+                if entries:
+                    registry.register_plugin_servers(plugin_name, entries)  # type: ignore[union-attr]
+            except Exception as exc:
+                log.warning("Plugin %r provide_mcp_servers failed: %s", plugin_name, exc)
+
     def discover_entry_points(self) -> None:
         """Load all plugins registered via the ``bernstein.plugins`` entry-point group."""
         eps = entry_points(group="bernstein.plugins")
@@ -964,6 +1010,45 @@ class PluginManager:
                     stacklevel=1,
                 )
 
+    def _load_command_hooks_subsystem(self, root: Path) -> None:
+        """Load shell command hooks from ``.bernstein/hooks/`` in isolation.
+
+        Failures here do not affect other subsystems.
+
+        Args:
+            root: Project root directory.
+        """
+        try:
+            hooks_dir = root / ".bernstein" / "hooks"
+            if hooks_dir.is_dir():
+                self.register(CommandHook(hooks_dir, seen=self._hook_seen), name="command_hooks")
+        except Exception as exc:
+            log.warning("Command hooks subsystem failed to load: %s", exc)
+
+    def _load_config_plugins_subsystem(self, root: Path) -> None:
+        """Load Python plugins listed in ``bernstein.yaml`` in isolation.
+
+        Failures here do not affect other subsystems.
+
+        Args:
+            root: Project root directory.
+        """
+        try:
+            config_path = root / "bernstein.yaml"
+            if not config_path.exists():
+                return
+            import yaml  # type: ignore[import-untyped]
+
+            loaded: object = yaml.safe_load(config_path.read_text())
+            if not isinstance(loaded, dict):
+                return
+            raw_plugins: object = loaded.get("plugins")  # type: ignore[union-attr]
+            if isinstance(raw_plugins, list):
+                plugin_strs: list[str] = [str(item) for item in raw_plugins]  # type: ignore[var-annotated]
+                self.discover_config_plugins(plugin_strs)
+        except Exception as exc:
+            log.warning("Config plugins subsystem failed to load: %s", exc)
+
     def load_from_workdir(self, workdir: Path | None = None) -> None:
         """Convenience: discover entry points then load any config-listed plugins.
 
@@ -971,6 +1056,10 @@ class PluginManager:
         directory if *workdir* is ``None``).
 
         Also discovers command hooks in ``.bernstein/hooks/``.
+
+        Each subsystem (entry points, command hooks, config plugins) loads
+        independently — a failure in one does not prevent the others from
+        loading.
 
         Args:
             workdir: Project root directory.  Defaults to ``Path.cwd()``.
@@ -987,28 +1076,10 @@ class PluginManager:
                 len(self._policy.managed),
             )
 
+        # Each subsystem is isolated: a failure in one does not cascade.
         self.discover_entry_points()
-
-        # Load command hooks from .bernstein/hooks
-        hooks_dir = root / ".bernstein" / "hooks"
-        if hooks_dir.is_dir():
-            self.register(CommandHook(hooks_dir), name="command_hooks")
-
-        config_path = root / "bernstein.yaml"
-        if config_path.exists():
-            try:
-                import yaml  # type: ignore[import-untyped]
-
-                # yaml.safe_load is untyped; work around via explicit annotation.
-                loaded: object = yaml.safe_load(config_path.read_text())
-                if not isinstance(loaded, dict):
-                    return
-                raw_plugins: object = loaded.get("plugins")  # type: ignore[union-attr]
-                if isinstance(raw_plugins, list):
-                    plugin_strs: list[str] = [str(item) for item in raw_plugins]  # type: ignore[var-annotated]
-                    self.discover_config_plugins(plugin_strs)
-            except Exception as exc:
-                log.warning("Could not read plugins from bernstein.yaml: %s", exc)
+        self._load_command_hooks_subsystem(root)
+        self._load_config_plugins_subsystem(root)
 
     def register(self, plugin: object, name: str, *, enforce_policy: bool = False) -> None:
         """Register a plugin instance directly (useful in tests and scripts).
