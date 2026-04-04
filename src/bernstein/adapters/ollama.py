@@ -89,11 +89,14 @@ class OllamaAdapter(CLIAdapter):
         # Smaller repo map keeps local model context usage manageable.
         cmd = [
             "aider",
-            "--model", f"ollama/{ollama_model}",
-            "--message", prompt,
+            "--model",
+            f"ollama/{ollama_model}",
+            "--message",
+            prompt,
             "--yes",
             "--auto-commits",
-            "--map-tokens", "1024",
+            "--map-tokens",
+            "1024",
             "--no-auto-lint",
         ]
 

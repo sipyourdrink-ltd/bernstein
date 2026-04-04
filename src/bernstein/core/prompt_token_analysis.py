@@ -43,9 +43,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 #: Sections that belong to the "system_prompt" category.
-_SYSTEM_PROMPT_SECTIONS: frozenset[str] = frozenset(
-    ["role", "specialists"]
-)
+_SYSTEM_PROMPT_SECTIONS: frozenset[str] = frozenset(["role", "specialists"])
 
 #: Sections that belong to the "context" category.
 _CONTEXT_SECTIONS: frozenset[str] = frozenset(
@@ -158,9 +156,7 @@ class PromptTokenReport:
             "Top sections by token count:",
         ]
         for sec in self.sections[:10]:
-            lines.append(
-                f"  {sec.name:<36} {sec.tokens:>8,} ({sec.pct_of_total:>4.1f}%)"
-            )
+            lines.append(f"  {sec.name:<36} {sec.tokens:>8,} ({sec.pct_of_total:>4.1f}%)")
         if self.suggestions:
             lines += ["", "Suggestions:"]
             for s in self.suggestions:
