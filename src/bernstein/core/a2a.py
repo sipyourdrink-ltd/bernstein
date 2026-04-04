@@ -5,6 +5,41 @@ Implements Google's A2A protocol for agent interoperability. Provides:
 - A2A task lifecycle mapping to Bernstein tasks
 - Artifact exchange between agents
 - External agent federation
+
+# -----------------------------------------------------------------------
+# Practical assessment (2026-04-03)
+# -----------------------------------------------------------------------
+#
+# 1. Is A2A currently used by any agent or external system?
+#    No. The A2A routes are registered on the task server, and there are
+#    unit/integration tests, but no Bernstein adapter, CLI command, spawner
+#    path, or external system ever calls the /a2a/* endpoints in production.
+#    The only callers are tests (test_a2a.py, test_a2a_messages.py) and the
+#    protocol compatibility matrix. No agent system prompt mentions A2A.
+#
+# 2. What would a practical A2A use case look like?
+#    Federation: an external Bernstein instance (or a third-party A2A-
+#    compatible orchestrator) sends tasks into this instance via
+#    POST /a2a/tasks/send. This lets two orchestrators delegate work to
+#    each other — e.g. a "backend" Bernstein farms out a design task to
+#    a "frontend" Bernstein running elsewhere.
+#    Another use case: a VS Code extension or external dashboard that
+#    speaks A2A instead of the native Bernstein API.
+#
+# 3. Is the HTTP overhead justified vs file-based coordination?
+#    For cross-machine federation, yes — HTTP is the only option. For
+#    same-machine agents, no — Bernstein already coordinates through the
+#    task server API + .sdd/ files, and A2A adds a redundant translation
+#    layer. The in-memory A2AHandler is also not persisted, so A2A tasks
+#    are lost on server restart.
+#
+# 4. Recommendation: KEEP but mark as experimental / opt-in.
+#    The code is clean, well-tested, and low-maintenance. Removing it
+#    saves nothing. But it should not be on the critical path — the
+#    routes should stay registered (free discovery via /.well-known/
+#    agent.json) but documented as experimental until there is a real
+#    external consumer. No further investment until federation is needed.
+# -----------------------------------------------------------------------
 """
 
 from __future__ import annotations

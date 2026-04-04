@@ -15,11 +15,13 @@ Tools:
     bernstein_cost    — get cost summary across all roles
     bernstein_stop    — graceful shutdown (writes SHUTDOWN signal)
     bernstein_approve — approve a pending/blocked task
+    bernstein_health  — liveness check (always succeeds)
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,22 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 _DEFAULT_SERVER_URL = "http://127.0.0.1:8052"
+
+# Timeout for all httpx calls to the task server (seconds).
+_HTTP_TIMEOUT = 5.0
+
+logger = logging.getLogger(__name__)
+
+
+def _error_response(exc: Exception, *, hint: str = "Task server may be restarting") -> str:
+    """Return a JSON error string instead of letting the exception propagate.
+
+    This keeps the MCP server alive — a crashed tool handler on stdio
+    transport means all Bernstein tools are lost for the rest of the
+    agent session (no reconnect).
+    """
+    logger.warning("MCP tool error: %s", exc)
+    return json.dumps({"error": str(exc), "hint": hint})
 
 
 def create_mcp_server(
@@ -43,6 +61,22 @@ def create_mcp_server(
         Configured FastMCP instance with all Bernstein tools registered.
     """
     mcp: FastMCP[None] = FastMCP(name)
+
+    # ------------------------------------------------------------------
+    # bernstein_health
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def bernstein_health(  # pyright: ignore[reportUnusedFunction]
+    ) -> str:
+        """Liveness check — always succeeds if the MCP server is running.
+
+        Use this to verify the Bernstein MCP connection is still alive.
+
+        Returns:
+            JSON with status "ok".
+        """
+        return json.dumps({"status": "ok"})
 
     # ------------------------------------------------------------------
     # bernstein_run
@@ -70,23 +104,26 @@ def create_mcp_server(
         Returns:
             JSON with the created task ID, title, and status.
         """
-        payload: dict[str, Any] = {
-            "title": goal[:120],
-            "description": goal,
-            "role": role,
-            "priority": priority,
-            "scope": scope,
-            "complexity": complexity,
-            "estimated_minutes": estimated_minutes,
-        }
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{server_url}/tasks", json=payload)
-            resp.raise_for_status()
-            data: dict[str, Any] = resp.json()
-        return json.dumps(
-            {"task_id": data["id"], "title": data["title"], "status": data["status"]},
-            indent=2,
-        )
+        try:
+            payload: dict[str, Any] = {
+                "title": goal[:120],
+                "description": goal,
+                "role": role,
+                "priority": priority,
+                "scope": scope,
+                "complexity": complexity,
+                "estimated_minutes": estimated_minutes,
+            }
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.post(f"{server_url}/tasks", json=payload)
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            return json.dumps(
+                {"task_id": data["id"], "title": data["title"], "status": data["status"]},
+                indent=2,
+            )
+        except Exception as exc:
+            return _error_response(exc)
 
     # ------------------------------------------------------------------
     # bernstein_status
@@ -101,11 +138,14 @@ def create_mcp_server(
             JSON with total, open, claimed, done, failed counts plus
             a per-role breakdown.
         """
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{server_url}/status")
-            resp.raise_for_status()
-            data: dict[str, Any] = resp.json()
-        return json.dumps(data, indent=2)
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.get(f"{server_url}/status")
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            return json.dumps(data, indent=2)
+        except Exception as exc:
+            return _error_response(exc)
 
     # ------------------------------------------------------------------
     # bernstein_tasks
@@ -124,14 +164,17 @@ def create_mcp_server(
         Returns:
             JSON array of task objects.
         """
-        params: dict[str, str] = {}
-        if status:
-            params["status"] = status
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{server_url}/tasks", params=params)
-            resp.raise_for_status()
-            data: list[dict[str, Any]] = resp.json()
-        return json.dumps(data, indent=2)
+        try:
+            params: dict[str, str] = {}
+            if status:
+                params["status"] = status
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.get(f"{server_url}/tasks", params=params)
+                resp.raise_for_status()
+                data: list[dict[str, Any]] = resp.json()
+            return json.dumps(data, indent=2)
+        except Exception as exc:
+            return _error_response(exc)
 
     # ------------------------------------------------------------------
     # bernstein_cost
@@ -145,16 +188,19 @@ def create_mcp_server(
         Returns:
             JSON with total_cost_usd and per-role cost breakdown.
         """
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{server_url}/status")
-            resp.raise_for_status()
-            data: dict[str, Any] = resp.json()
-        per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
-        cost_summary: dict[str, Any] = {
-            "total_cost_usd": data.get("total_cost_usd", 0.0),
-            "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
-        }
-        return json.dumps(cost_summary, indent=2)
+        try:
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.get(f"{server_url}/status")
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            per_role_raw: list[dict[str, Any]] = data.get("per_role", [])
+            cost_summary: dict[str, Any] = {
+                "total_cost_usd": data.get("total_cost_usd", 0.0),
+                "per_role": [{"role": r["role"], "cost_usd": r.get("cost_usd", 0.0)} for r in per_role_raw],
+            }
+            return json.dumps(cost_summary, indent=2)
+        except Exception as exc:
+            return _error_response(exc)
 
     # ------------------------------------------------------------------
     # bernstein_stop
@@ -175,11 +221,14 @@ def create_mcp_server(
         Returns:
             Confirmation message.
         """
-        signals_dir = Path(workdir) / ".sdd" / "runtime" / "signals"
-        signals_dir.mkdir(parents=True, exist_ok=True)
-        shutdown_file = signals_dir / "SHUTDOWN"
-        shutdown_file.write_text("mcp-stop\n", encoding="utf-8")
-        return json.dumps({"status": "shutdown signal sent", "path": str(shutdown_file)})
+        try:
+            signals_dir = Path(workdir) / ".sdd" / "runtime" / "signals"
+            signals_dir.mkdir(parents=True, exist_ok=True)
+            shutdown_file = signals_dir / "SHUTDOWN"
+            shutdown_file.write_text("mcp-stop\n", encoding="utf-8")
+            return json.dumps({"status": "shutdown signal sent", "path": str(shutdown_file)})
+        except Exception as exc:
+            return _error_response(exc, hint="Could not write shutdown signal")
 
     # ------------------------------------------------------------------
     # bernstein_approve
@@ -202,15 +251,18 @@ def create_mcp_server(
         Returns:
             JSON with the updated task status.
         """
-        payload: dict[str, Any] = {"result_summary": note}
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{server_url}/tasks/{task_id}/complete", json=payload)
-            resp.raise_for_status()
-            data: dict[str, Any] = resp.json()
-        return json.dumps(
-            {"task_id": data["id"], "status": data["status"], "result_summary": data.get("result_summary")},
-            indent=2,
-        )
+        try:
+            payload: dict[str, Any] = {"result_summary": note}
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+                resp = await client.post(f"{server_url}/tasks/{task_id}/complete", json=payload)
+                resp.raise_for_status()
+                data: dict[str, Any] = resp.json()
+            return json.dumps(
+                {"task_id": data["id"], "status": data["status"], "result_summary": data.get("result_summary")},
+                indent=2,
+            )
+        except Exception as exc:
+            return _error_response(exc)
 
     return mcp
 
