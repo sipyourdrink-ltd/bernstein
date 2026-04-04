@@ -1107,6 +1107,18 @@ class Orchestrator:
             except Exception:
                 pass
 
+        # 4x-ii. Periodic worktree garbage collection: every 10 ticks
+        if self._tick_count % 10 == 0:
+            try:
+                active_ids = {
+                    s.id for s in self._agents.values() if s.status != "dead"
+                }
+                cleaned = self._spawner.prune_orphan_worktrees(active_ids)
+                if cleaned:
+                    logger.info("Periodic worktree GC: cleaned %d orphan worktree(s)", cleaned)
+            except Exception as exc:
+                logger.debug("Periodic worktree GC failed: %s", exc)
+
         # 4a-wf. Governed workflow: try to advance phase after processing completions
         if self._workflow_executor is not None and not self._workflow_executor.is_completed:
             all_tasks = [t for status_tasks in tasks_by_status.values() for t in status_tasks]

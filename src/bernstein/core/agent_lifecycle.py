@@ -205,6 +205,14 @@ def refresh_agent_states(orch: Any, tasks_snapshot: dict[str, list[Task]]) -> No
                 orch._crash_counts[task_id] = orch._crash_counts.get(task_id, 0) + 1
                 _maybe_preserve_worktree(orch, session, task_id)
                 handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+            # Clean up worktree unless preserved for crash-resume
+            _preserved = getattr(orch, "_preserved_worktrees", {})
+            _session_preserved = any(
+                orch._spawner.get_worktree_path(session.id) == _preserved.get(tid)
+                for tid in session.task_ids
+            )
+            if not _session_preserved:
+                orch._spawner.cleanup_worktree(session.id)
 
     # Purge dead agents to prevent unbounded dict growth (memory leak fix)
     purge_dead_agents(orch)
@@ -992,6 +1000,14 @@ def reap_dead_agents(
                 orch._signal_mgr.clear_signals(session.id)
             for task_id in session.task_ids:
                 handle_orphaned_task(orch, task_id, session, tasks_snapshot)
+            # Clean up worktree unless preserved for crash-resume
+            _preserved = getattr(orch, "_preserved_worktrees", {})
+            _session_preserved = any(
+                orch._spawner.get_worktree_path(session.id) == _preserved.get(tid)
+                for tid in session.task_ids
+            )
+            if not _session_preserved:
+                orch._spawner.cleanup_worktree(session.id)
             continue
 
         # Heartbeat proxy: refresh heartbeat_ts using multiple signals.
