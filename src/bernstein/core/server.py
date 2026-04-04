@@ -1191,6 +1191,11 @@ def create_app(
 
     application.include_router(slo_router)
 
+    # Team state — read-only roster for CLI/TUI consumers
+    from bernstein.core.routes.team import router as team_router
+
+    application.include_router(team_router)
+
     return application
 
 
