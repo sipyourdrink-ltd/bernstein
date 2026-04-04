@@ -317,7 +317,7 @@ class WorktreeManager:
         # 1. Remove the worktree (--force handles dirty state)
         try:
             result = worktree_remove(self.repo_root, worktree_path)
-            if not result.ok:
+            if not result.ok and "not a working tree" not in result.stderr:
                 logger.warning(
                     "git worktree remove failed for %s: %s",
                     session_id,
