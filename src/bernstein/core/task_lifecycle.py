@@ -410,15 +410,14 @@ def retry_or_fail_task(
         "504",
         "too many requests",
     )
+    # Only treat agent-process-level fatal errors as truly fatal (0 retries).
+    # Python exception type names (TypeError, ValueError, etc.) appear routinely
+    # in tool output and log snippets — they do NOT indicate an unrecoverable
+    # agent failure, so they should not suppress retries.
     fatal_markers = (
         "syntaxerror",
         "syntax error",
         "fatal",
-        "bug",
-        "typeerror",
-        "valueerror",
-        "nameerror",
-        "attributeerror",
     )
     if any(k in reason_lower for k in transient_markers):
         max_retries = 3
