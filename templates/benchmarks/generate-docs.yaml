@@ -1,0 +1,12 @@
+task_id: generate-docs
+description: >
+  Use Bernstein's docs role agent to generate API documentation for
+  all public functions in a module, including usage examples and type
+  annotations, outputting a Markdown file.
+task_type: docs
+files:
+  - src/core/task_store.py
+  - docs/api/task_store.md
+expected_outcome: >
+  Markdown documentation generated covering all public methods;
+  examples are syntactically correct Python; docstring coverage 100%.

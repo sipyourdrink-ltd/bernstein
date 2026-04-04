@@ -1,0 +1,15 @@
+task_id: plan-and-execute
+description: >
+  Use Bernstein's planner to decompose a feature request into subtasks,
+  then dispatch agents to execute each subtask. The feature is: add
+  JWT authentication to an existing Flask app including login endpoint,
+  token validation middleware, and protected routes.
+task_type: bugfix
+files:
+  - src/auth/jwt.py
+  - src/middleware/auth.py
+  - src/routes/protected.py
+  - tests/test_auth.py
+expected_outcome: >
+  Planner produces a valid multi-step plan; agents execute all subtasks;
+  JWT login and protected route tests pass; total cost under $0.15.

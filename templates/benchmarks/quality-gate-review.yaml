@@ -1,0 +1,12 @@
+task_id: quality-gate-review
+description: >
+  Run Bernstein's QA agent on a newly written module to verify it meets
+  quality gates: lint passes, all tests green, coverage >= 80%, and no
+  security issues flagged by the security role agent.
+task_type: test
+files:
+  - src/payments/processor.py
+  - tests/test_payments.py
+expected_outcome: >
+  QA agent reports all quality gates passed; lint and test results
+  attached to task completion record; coverage report shows >= 80%.
