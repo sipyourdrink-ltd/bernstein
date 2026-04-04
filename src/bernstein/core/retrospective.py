@@ -55,7 +55,7 @@ def generate_retrospective(
     # get_total_cost() sums agent_metrics; when only task_metrics are populated
     # (e.g. bernstein retro reading from archive) fall back to summing task costs.
     total_cost = collector.get_total_cost()
-    if total_cost == 0.0 and task_metrics:
+    if abs(total_cost) < 1e-9 and task_metrics:
         total_cost = sum(tm.cost_usd for tm in task_metrics.values())
 
     lines: list[str] = []

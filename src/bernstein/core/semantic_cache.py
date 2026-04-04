@@ -677,6 +677,6 @@ def _cosine(v1: dict[str, float], v2: dict[str, float]) -> float:
     dot = sum(v1[k] * v2[k] for k in shared)
     mag1 = math.sqrt(sum(v * v for v in v1.values()))
     mag2 = math.sqrt(sum(v * v for v in v2.values()))
-    if mag1 == 0.0 or mag2 == 0.0:
+    if abs(mag1) < 1e-9 or abs(mag2) < 1e-9:
         return 0.0
     return dot / (mag1 * mag2)

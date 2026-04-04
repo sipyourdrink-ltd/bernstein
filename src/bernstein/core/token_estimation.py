@@ -263,7 +263,7 @@ def estimate_tokens_for_file_size(file_path: str | Path, size_bytes: int) -> int
         return 0
 
     bpt = bytes_per_token_for_file_type(file_path)
-    if bpt is None or bpt == 0.0:
+    if bpt is None or abs(bpt) < 1e-9:
         return 0
     return int(size_bytes / bpt)
 
@@ -284,7 +284,7 @@ def estimate_tokens_for_text(text: str, assumed_type: str = "code") -> int:
         Estimated token count (integer, floor division).
     """
     bpt = _CATEGORY_BPT.get(assumed_type, DEFAULT_BYTES_PER_TOKEN)
-    if bpt == 0.0:
+    if abs(bpt) < 1e-9:
         return 0
     byte_len = len(text.encode("utf-8"))
     return int(byte_len / bpt)
@@ -305,7 +305,7 @@ def estimate_tokens_for_file(file_path: str | Path, content: bytes | str) -> int
         Estimated token count (integer, floor division).
     """
     bpt = bytes_per_token_for_file_type(file_path)
-    if bpt is None or bpt == 0.0:
+    if bpt is None or abs(bpt) < 1e-9:
         return 0
     size_bytes = len(content) if isinstance(content, bytes) else len(content.encode("utf-8"))
     return int(size_bytes / bpt)

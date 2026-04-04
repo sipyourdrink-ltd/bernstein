@@ -447,7 +447,7 @@ class BulletinBoard:
         Returns:
             The stored message (with timestamp filled in).
         """
-        if msg.timestamp == 0.0:
+        if msg.timestamp == 0:
             msg = BulletinMessage(
                 agent_id=msg.agent_id,
                 type=msg.type,

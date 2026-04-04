@@ -219,7 +219,7 @@ class DeviceAuthRequest:
     poll_interval_s: int = 5
 
     def __post_init__(self) -> None:
-        if self.expires_at == 0.0:
+        if self.expires_at == 0:
             self.expires_at = self.created_at + 600  # 10 minute expiry
 
 

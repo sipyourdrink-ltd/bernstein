@@ -51,7 +51,7 @@ class CompetitorProfile:
 
     def scheduling_overhead_label(self) -> str:
         """Human-readable scheduling overhead label."""
-        if self.scheduling_overhead_pct == 0.0:
+        if self.scheduling_overhead_pct == 0:
             return "none (deterministic code)"
         return "present (LLM-based routing)"
 

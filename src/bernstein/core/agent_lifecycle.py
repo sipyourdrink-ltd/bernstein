@@ -1579,7 +1579,7 @@ def _recycle_or_kill(orch: Any, session: AgentSession, now: float, reason: str) 
     """
     shutdown_sent_ts: float = orch._idle_shutdown_ts.get(session.id, 0.0)
 
-    if shutdown_sent_ts == 0.0:
+    if shutdown_sent_ts == 0:
         # First detection — send SHUTDOWN and record timestamp
         task_title = ", ".join(session.task_ids) if session.task_ids else "unknown task"
         with contextlib.suppress(OSError):

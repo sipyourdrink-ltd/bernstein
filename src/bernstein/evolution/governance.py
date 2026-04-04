@@ -49,7 +49,7 @@ class EvolutionWeights:
             + self.security
             + self.maintainability
         )
-        if total == 0.0:
+        if abs(total) < 1e-9:
             # Degenerate — return uniform distribution
             sixth = 1.0 / 6.0
             return EvolutionWeights(

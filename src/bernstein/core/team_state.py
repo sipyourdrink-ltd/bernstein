@@ -184,7 +184,7 @@ class TeamStateStore:
             return None
         member.status = status
         member.is_active = status != "dead"
-        if status == "dead" and member.finished_at == 0.0:
+        if status == "dead" and member.finished_at == 0:
             member.finished_at = time.time()
         self._write_all(members)
         return member
