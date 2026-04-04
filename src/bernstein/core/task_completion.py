@@ -662,11 +662,18 @@ def process_completed_tasks(
                             risk_level=risk,
                         )
 
+                # Wire permission mode into approval bypass: BYPASS mode
+                # auto-approves so headless/CI runs are not blocked.
+                from bernstein.core.permission_mode import PermissionMode
+
+                _bypass = orch.permission_mode == PermissionMode.BYPASS
+
                 _approval_result = _approval_gate.evaluate(
                     task,
                     session_id=session.id,
                     override_mode=_override_mode,
                     timeout_s=_timeout_s,
+                    bypass_enabled=_bypass,
                 )
                 if _approval_result.rejected:
                     _skip_merge = True

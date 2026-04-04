@@ -126,6 +126,7 @@ async def run_janitor(
     *,
     server_url: str | None = None,
     guardrails_config: GuardrailsConfig | None = None,
+    permission_mode: str | None = None,
 ) -> list[JanitorResult]:
     """Evaluate tasks and return structured results.
 
@@ -143,11 +144,14 @@ async def run_janitor(
         server_url: Optional task server URL for auto-creating fix tasks.
         guardrails_config: Guardrail configuration. Defaults to GuardrailsConfig()
             (all checks enabled). Pass None to disable all guardrails.
+        permission_mode: Permission mode string (bypass/plan/auto/default).
+            When ``"bypass"``, non-immune guardrail checks are relaxed.
 
     Returns:
         List of JanitorResult for each evaluated task.
     """
     _guardrails = guardrails_config if guardrails_config is not None else GuardrailsConfig()
+    _bypass_guardrails = permission_mode == "bypass"
     results: list[JanitorResult] = []
     for task in tasks:
         if not task.completion_signals:
@@ -193,7 +197,9 @@ async def run_janitor(
 
         # Run pre-merge guardrails on the agent's diff
         diff = _get_git_diff(task, workdir)
-        guardrail_results: list[GuardrailResult] = run_guardrails(diff, task, _guardrails, workdir)
+        guardrail_results: list[GuardrailResult] = run_guardrails(
+            diff, task, _guardrails, workdir, bypass_enabled=_bypass_guardrails,
+        )
 
         # Hard-blocked guardrails (e.g. secrets detected) prevent merge
         blocked_guards = [r for r in guardrail_results if r.blocked and not r.passed]
