@@ -130,20 +130,20 @@ class AdaptiveParallelism:
         cpu_pct = self._get_cpu_percent()
         prev = self._current_max
 
-        # Rule 4: CPU overload → pause spawning entirely
+        # Rule 4: CPU overload → degrade to 1 agent (never fully stop)
         # Grace period: ignore CPU spikes in first 2 minutes (startup indexing/ingestion)
         startup_grace = (now - self._created_at) < 120
         if cpu_pct > _CPU_PAUSE_THRESHOLD and not startup_grace:
-            self._current_max = 0
+            self._current_max = 1  # keep at least 1 agent alive
             self._low_error_since = None
-            if prev != 0:
+            if prev != 1:
                 self._last_adjustment_reason = f"cpu_high ({cpu_pct:.0f}%)"
                 logger.warning(
-                    "Adaptive parallelism: pausing spawns (CPU %.0f%% > %.0f%% threshold)",
+                    "Adaptive parallelism: reducing to 1 agent (CPU %.0f%% > %.0f%% threshold)",
                     cpu_pct,
                     _CPU_PAUSE_THRESHOLD,
                 )
-            return 0
+            return 1
 
         # Rule 2: High error rate → reduce by 1
         if error_rate > _ERROR_RATE_HIGH and self._current_max > 1:
