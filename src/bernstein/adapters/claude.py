@@ -224,7 +224,6 @@ class ClaudeCodeAdapter(CLIAdapter):
             claude_effort,
             "--permission-mode",
             "bypassPermissions",
-            "--bare",  # Skip hooks, LSP, plugins, prefetches — 100-200ms faster startup
             "--max-turns",
             str(max_turns),
             "--output-format",
