@@ -1338,6 +1338,10 @@ class Orchestrator:
             logger.info("Cluster heartbeat client started")
         self._post_bulletin("status", "run started")
         self._notify("run.started", "Bernstein run started", "Agents are being spawned.")
+        # Reconcile tasks left in "claimed" from a previous run whose agents no
+        # longer exist.  Must happen after the server is confirmed reachable but
+        # before the first tick.
+        self._reconcile_claimed_tasks()
         _run_started_extra: dict[str, object] = {}
         if self._workflow_executor is not None:
             _run_started_extra["workflow_name"] = self._workflow_executor.definition.name
@@ -1747,6 +1751,48 @@ class Orchestrator:
         """Remove reverse-index entries for the given task IDs."""
         for tid in task_ids:
             self._task_to_session.pop(tid, None)
+
+    def _reconcile_claimed_tasks(self) -> int:
+        """Unclaim orphaned tasks from previous orchestrator runs.
+
+        On startup the ``_task_to_session`` map is empty, so any task that
+        the server still considers "claimed" is orphaned.  For each such
+        task we POST ``/tasks/{id}/force-claim`` which transitions it back
+        to *open* so it can be picked up again.
+
+        Returns:
+            Number of tasks that were unclaimed.
+        """
+        try:
+            resp = self._client.get(f"{self._config.server_url}/tasks?status=claimed")
+            resp.raise_for_status()
+            claimed = resp.json()
+        except Exception:
+            return 0
+
+        unclaimed = 0
+        for task in claimed if isinstance(claimed, list) else claimed.get("tasks", []):
+            task_id = task.get("id", "")
+            if task_id not in self._task_to_session:
+                try:
+                    self._client.post(
+                        f"{self._config.server_url}/tasks/{task_id}/force-claim",
+                    )
+                    unclaimed += 1
+                    logger.info(
+                        "Unclaimed orphan task %s (%s)",
+                        task_id,
+                        task.get("title", ""),
+                    )
+                except Exception:
+                    pass
+
+        if unclaimed:
+            logger.warning(
+                "Reconciled %d orphaned claimed tasks from previous run",
+                unclaimed,
+            )
+        return unclaimed
 
     def _collect_completion_data(self, session: AgentSession) -> CompletionData:
         """Delegate to task_lifecycle.collect_completion_data."""
