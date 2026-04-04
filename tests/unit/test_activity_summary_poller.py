@@ -135,3 +135,58 @@ class TestPollerThread:
             assert 3 <= len(words) <= 5
         finally:
             poller.stop()
+
+
+class TestWriteToDisk:
+    def test_poll_once_writes_json_file_when_sdd_dir_set(
+        self, tmp_path: Path, session: ActivitySession, board: BulletinBoard
+    ) -> None:
+        sdd_dir = tmp_path / ".sdd"
+        poller = ActivitySummaryPoller(agent_id="disk-1", session=session, board=board, sdd_dir=sdd_dir)
+        poller.poll_once()
+        out = sdd_dir / "runtime" / "activity_summaries" / "disk-1.json"
+        assert out.exists()
+        import json
+
+        data = json.loads(out.read_text())
+        assert data["agent_id"] == "disk-1"
+        assert data["summary"] == "idle no recent activity"
+        assert "timestamp" in data
+
+    def test_poll_once_no_disk_write_without_sdd_dir(
+        self, tmp_path: Path, session: ActivitySession, board: BulletinBoard
+    ) -> None:
+        poller = ActivitySummaryPoller(agent_id="nodisk-1", session=session, board=board)
+        poller.poll_once()
+        # No file should exist anywhere for nodisk-1
+        candidates = list(tmp_path.rglob("nodisk-1.json"))
+        assert not candidates
+
+    def test_disk_file_reflects_active_session(
+        self, tmp_path: Path, activity_dir: Path, board: BulletinBoard
+    ) -> None:
+        session = ActivitySession(activity_dir)
+        session.start_activity("coding", "Write feature")
+        sdd_dir = tmp_path / ".sdd"
+        poller = ActivitySummaryPoller(agent_id="disk-2", session=session, board=board, sdd_dir=sdd_dir)
+        poller.poll_once()
+        import json
+
+        out = sdd_dir / "runtime" / "activity_summaries" / "disk-2.json"
+        data = json.loads(out.read_text())
+        assert data["summary"] == "coding in progress"
+
+    def test_disk_file_overwritten_on_next_poll(
+        self, tmp_path: Path, activity_dir: Path, board: BulletinBoard
+    ) -> None:
+        session = ActivitySession(activity_dir)
+        sdd_dir = tmp_path / ".sdd"
+        poller = ActivitySummaryPoller(agent_id="disk-3", session=session, board=board, sdd_dir=sdd_dir)
+        poller.poll_once()  # idle
+        session.start_activity("testing", "Run tests")
+        poller.poll_once()  # testing in progress
+        import json
+
+        out = sdd_dir / "runtime" / "activity_summaries" / "disk-3.json"
+        data = json.loads(out.read_text())
+        assert data["summary"] == "testing in progress"

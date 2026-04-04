@@ -76,6 +76,7 @@ def _fetch_all() -> dict[str, Any]:
     quarantine = _load_quarantine()
     guardrails = _load_guardrail_violations()
     cache_stats = _load_cache_stats()
+    activity_summaries = _load_activity_summaries()
 
     # Slow path: HTTP to task server (may take 1-3s with many tasks)
     status = _get("/status")
@@ -103,6 +104,7 @@ def _fetch_all() -> dict[str, Any]:
         "cache_stats": cache_stats,
         "pending_approval": pending_approval,
         "verification_nudge": verification_nudge,
+        "activity_summaries": activity_summaries,
     }
 
 
@@ -156,6 +158,28 @@ def _load_guardrail_violations() -> dict[str, Any]:
     except Exception as exc:
         logger.warning("Failed to load guardrails.jsonl: %s", exc)
         return {"count": 0, "last": None}
+
+
+def _load_activity_summaries() -> dict[str, str]:
+    """Load per-agent activity summaries from the .sdd/runtime/activity_summaries/ directory.
+
+    Returns:
+        Mapping of agent_id -> 3-5 word summary string.
+    """
+    summaries_dir = Path(".sdd/runtime/activity_summaries")
+    if not summaries_dir.exists():
+        return {}
+    result: dict[str, str] = {}
+    for p in summaries_dir.glob("*.json"):
+        try:
+            data: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
+            agent_id = str(data.get("agent_id") or p.stem)
+            summary = str(data.get("summary", ""))
+            if agent_id and summary:
+                result[agent_id] = summary
+        except Exception as exc:
+            logger.warning("Failed to load activity summary %s: %s", p, exc)
+    return result
 
 
 def _load_cache_stats() -> dict[str, Any]:
@@ -470,6 +494,7 @@ class AgentWidget(Static):
         agent: dict[str, Any],
         tasks: dict[str, str],
         task_progress: dict[str, int] | None = None,
+        activity_summary: str = "",
         **kw: Any,
     ) -> None:
         super().__init__(**kw)
@@ -477,6 +502,7 @@ class AgentWidget(Static):
         self.task_titles = tasks
         self.task_progress: dict[str, int] = task_progress or {}
         self.agent_cost: float = 0.0
+        self.activity_summary: str = activity_summary
 
     def render(self) -> Text:
         a = self.agent_data
@@ -539,6 +565,9 @@ class AgentWidget(Static):
                     t.append("\u2588" if i < filled else "\u2591", style=bar_color if i < filled else "dim")
                 t.append("\u258c", style="dim")
                 t.append(f" {progress}%", style=f"bold {bar_color}")
+
+        if self.activity_summary:
+            t.append(f"\n   \u25b8 {self.activity_summary}", style="italic bright_cyan")
 
         lines = _tail_log(aid, 5, log_path=a.get("log_path", ""))
         for line in lines:
@@ -1087,6 +1116,7 @@ class BernsteinApp(App[None]):
         self._activity_visible = True
         self._task_titles: dict[str, str] = {}
         self._task_progress: dict[str, int] = {}
+        self._activity_summaries: dict[str, str] = {}
         self._last_activity: list[str] = []
         self._compare_mark: str | None = None  # first task ID for compare
 
@@ -1280,6 +1310,7 @@ class BernsteinApp(App[None]):
         self._update_tasks(data.get("tasks"))
         tasks = data.get("tasks") or []
         costs: dict[str, Any] = data.get("costs") or {}
+        self._activity_summaries = data.get("activity_summaries") or {}
         self._update_agents(data.get("agents", []), costs)
         monitoring = {
             "quarantine": data.get("quarantine", {}),
@@ -1318,6 +1349,7 @@ class BernsteinApp(App[None]):
                         child.task_titles = self._task_titles
                         child.task_progress = self._task_progress
                     child.agent_cost = per_agent.get(aid, 0.0)
+                    child.activity_summary = self._activity_summaries.get(aid, "")
                     child.refresh()
                     continue
             child.remove()
@@ -1339,8 +1371,14 @@ class BernsteinApp(App[None]):
                 w.remove()
             for a in alive:
                 if a.get("id", "") not in existing_ids:
-                    widget = AgentWidget(a, self._task_titles, self._task_progress)
-                    widget.agent_cost = per_agent.get(a.get("id", ""), 0.0)
+                    aid = a.get("id", "")
+                    widget = AgentWidget(
+                        a,
+                        self._task_titles,
+                        self._task_progress,
+                        activity_summary=self._activity_summaries.get(aid, ""),
+                    )
+                    widget.agent_cost = per_agent.get(aid, 0.0)
                     col.mount(widget)
 
         error_count, error_lines = _summarize_agent_errors(agents)
