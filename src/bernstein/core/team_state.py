@@ -36,7 +36,10 @@ class TeamMember:
     Attributes:
         agent_id: Unique session identifier (e.g. ``backend-abc12345``).
         role: Agent role (backend, qa, security, etc.).
+        name: Human-readable display name (defaults to agent_id if not set).
         model: Model string chosen for this agent (e.g. ``sonnet``, ``opus``).
+        color: Display color hint for TUI/CLI rendering (e.g. ``cyan``, ``green``).
+        mode: Permission/operation mode (e.g. ``default``, ``auto``, ``trusted``).
         status: Lifecycle status mirroring AgentSession
             (``starting``, ``working``, ``idle``, ``dead``).
         is_active: Convenience flag — True when status is not ``dead``.
@@ -48,7 +51,10 @@ class TeamMember:
 
     agent_id: str
     role: str
+    name: str = ""
     model: str = ""
+    color: str = ""
+    mode: str = ""
     status: str = "starting"
     is_active: bool = True
     task_ids: list[str] = field(default_factory=list[str])
@@ -66,7 +72,10 @@ class TeamMember:
         return cls(
             agent_id=str(d.get("agent_id", "")),
             role=str(d.get("role", "")),
+            name=str(d.get("name", "")),
             model=str(d.get("model", "")),
+            color=str(d.get("color", "")),
+            mode=str(d.get("mode", "")),
             status=str(d.get("status", "starting")),
             is_active=bool(d.get("is_active", True)),
             task_ids=list(d.get("task_ids", [])),
@@ -135,7 +144,10 @@ class TeamStateStore:
         agent_id: str,
         role: str,
         *,
+        name: str = "",
         model: str = "",
+        color: str = "",
+        mode: str = "",
         task_ids: list[str] | None = None,
         provider: str = "",
     ) -> TeamMember:
@@ -144,7 +156,10 @@ class TeamStateStore:
         Args:
             agent_id: Unique agent session ID.
             role: Agent role.
+            name: Human-readable display name.
             model: Model string (e.g. ``sonnet``).
+            color: Display color hint for TUI/CLI.
+            mode: Permission/operation mode.
             task_ids: Initial task IDs assigned to this agent.
             provider: Adapter/provider name.
 
@@ -155,7 +170,10 @@ class TeamStateStore:
         member = TeamMember(
             agent_id=agent_id,
             role=role,
+            name=name or agent_id,
             model=model,
+            color=color,
+            mode=mode,
             status="starting",
             is_active=True,
             task_ids=list(task_ids or []),

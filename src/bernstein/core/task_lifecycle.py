@@ -20,6 +20,7 @@ import httpx
 from bernstein.core.agent_log_aggregator import AgentLogAggregator
 from bernstein.core.completion_budget import CompletionBudget
 from bernstein.core.context import append_decision
+from bernstein.core.team_state import TeamStateStore
 from bernstein.core.context_recommendations import RecommendationEngine
 from bernstein.core.cross_model_verifier import (
     CrossModelVerifierConfig,
@@ -1288,6 +1289,17 @@ def claim_and_spawn_batches(
                 rec_engine.record_hits(session.role, recommendations)
             except Exception as exc:
                 logger.debug("Recommendation hit tracking failed: %s", exc)
+            try:
+                TeamStateStore(orch._workdir / ".sdd").on_spawn(
+                    session.id,
+                    session.role,
+                    model=session.model_config.model,
+                    task_ids=[t.id for t in batch],
+                    provider=session.provider or "",
+                )
+            except Exception as _ts_exc:
+                logger.debug("Team state on_spawn failed: %s", _ts_exc)
+
             collector = get_collector(orch._workdir / ".sdd" / "metrics")
             collector.start_agent(
                 agent_id=session.id,
@@ -1629,6 +1641,10 @@ def process_completed_tasks(
             if session.status != "dead":
                 transition_agent(session, "dead", actor="task_lifecycle", reason="task completed, process reaped")
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)
+            try:
+                TeamStateStore(orch._workdir / ".sdd").on_complete(session.id)
+            except Exception as _ts_exc:
+                logger.debug("Team state on_complete failed: %s", _ts_exc)
             _batch_sessions = getattr(orch, "_batch_sessions", None)
             if isinstance(_batch_sessions, dict) and session.id in _batch_sessions:
                 cast("dict[str, AgentSession]", _batch_sessions).pop(session.id, None)
