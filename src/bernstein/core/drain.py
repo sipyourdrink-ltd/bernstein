@@ -404,6 +404,46 @@ class DrainCoordinator:
             except (json.JSONDecodeError, OSError):
                 pass
 
+        # Source 4: scan running processes for orphan agents working in this repo.
+        # This catches agents that lost their PID file or were spawned externally.
+        my_pid = os.getpid()
+        workdir_str = str(self._workdir)
+        known_pids = {a.pid for a in self._agents}
+        try:
+            ps_result = subprocess.run(
+                ["ps", "-ax", "-o", "pid=,command="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if ps_result.returncode == 0:
+                for line in ps_result.stdout.splitlines():
+                    parts = line.strip().split(maxsplit=1)
+                    if len(parts) != 2:
+                        continue
+                    try:
+                        pid = int(parts[0])
+                    except ValueError:
+                        continue
+                    if pid == my_pid or pid in known_pids:
+                        continue
+                    cmd = parts[1]
+                    # Match agents working in this repo's worktrees
+                    if workdir_str in cmd and (
+                        ".sdd/worktrees" in cmd or ".claude/worktrees" in cmd or ".sdd/runtime/heartbeats" in cmd
+                    ):
+                        self._agents.append(
+                            AgentDrainStatus(
+                                session_id=f"orphan-{pid}",
+                                role="unknown",
+                                pid=pid,
+                                status="running",
+                                worktree_path="",
+                            )
+                        )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
         # Write SHUTDOWN signals for discovered agents.
         for agent in self._agents:
             signal_dir = self._workdir / ".sdd" / "runtime" / "signals" / agent.session_id
@@ -604,10 +644,15 @@ class DrainCoordinator:
         # respawn the server/spawner while we are tearing runtime state down.
         await self._stop_infrastructure()
 
-        # Remove ALL agent worktrees from .sdd/worktrees/ — not just
-        # those in self._agents (which may be empty after a restart).
-        wt_dir = self._workdir / ".sdd" / "worktrees"
-        if wt_dir.is_dir():
+        # Remove ALL agent worktrees from .sdd/worktrees/ and .claude/worktrees/
+        # — not just those in self._agents (which may be empty after a restart).
+        wt_dirs = [
+            self._workdir / ".sdd" / "worktrees",
+            self._workdir / ".claude" / "worktrees",
+        ]
+        for wt_dir in wt_dirs:
+            if not wt_dir.is_dir():
+                continue
             for entry in sorted(wt_dir.iterdir()):
                 if not entry.is_dir():
                     continue
