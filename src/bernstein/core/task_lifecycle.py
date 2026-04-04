@@ -1068,11 +1068,15 @@ def claim_and_spawn_batches(
         # distributed nodes from claiming the same task simultaneously.
         # Abort on server errors (5xx), CAS conflicts (409), or transport failures.
         claim_failed = False
+        _orch_session_id: str | None = getattr(orch, "session_id", None)
         for task in batch:
             try:
+                _claim_params: dict[str, Any] = {"expected_version": task.version}
+                if _orch_session_id is not None:
+                    _claim_params["claimed_by_session"] = _orch_session_id
                 resp = orch._client.post(
                     f"{base}/tasks/{task.id}/claim",
-                    params={"expected_version": task.version},
+                    params=_claim_params,
                 )
                 if resp.status_code == 409:
                     logger.info(

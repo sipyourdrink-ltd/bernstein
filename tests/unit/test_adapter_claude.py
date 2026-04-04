@@ -689,3 +689,131 @@ class TestIsRateLimited:
         with patch("bernstein.adapters.claude.subprocess.run", return_value=result):
             adapter.is_rate_limited()
         assert adapter._rate_limit_until >= before + _RATE_LIMIT_COOLDOWN - 1
+
+
+# ---------------------------------------------------------------------------
+# _build_command() — --append-system-prompt support
+# ---------------------------------------------------------------------------
+
+
+class TestBuildCommandSystemAddendum:
+    """_build_command() correctly handles the system_addendum parameter."""
+
+    def _build(
+        self,
+        *,
+        system_addendum: str = "",
+        prompt: str = "do the task",
+        model: str = "sonnet",
+        effort: str = "high",
+    ) -> list[str]:
+        adapter = ClaudeCodeAdapter()
+        return adapter._build_command(
+            ModelConfig(model=model, effort=effort),
+            None,
+            prompt,
+            system_addendum=system_addendum,
+        )
+
+    def test_append_system_prompt_present_when_addendum_provided(self) -> None:
+        cmd = self._build(system_addendum="Check signals every 60s")
+        assert "--append-system-prompt" in cmd
+        idx = cmd.index("--append-system-prompt")
+        assert cmd[idx + 1] == "Check signals every 60s"
+
+    def test_append_system_prompt_absent_when_addendum_empty(self) -> None:
+        cmd = self._build(system_addendum="")
+        assert "--append-system-prompt" not in cmd
+
+    def test_append_system_prompt_absent_by_default(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        cmd = adapter._build_command(
+            ModelConfig(model="sonnet", effort="high"),
+            None,
+            "some prompt",
+        )
+        assert "--append-system-prompt" not in cmd
+
+    def test_append_system_prompt_before_user_prompt(self) -> None:
+        """--append-system-prompt must appear before -p in the command."""
+        cmd = self._build(system_addendum="orchestration context", prompt="task goal")
+        asp_idx = cmd.index("--append-system-prompt")
+        p_idx = cmd.index("-p")
+        assert asp_idx < p_idx, "--append-system-prompt should precede -p"
+
+    def test_user_prompt_unchanged_when_addendum_provided(self) -> None:
+        """The -p prompt must not be contaminated by the system addendum."""
+        cmd = self._build(system_addendum="signals and heartbeat", prompt="fix the bug")
+        p_idx = cmd.index("-p")
+        assert cmd[p_idx + 1] == "fix the bug"
+
+    def test_multiline_addendum_preserved(self) -> None:
+        """Multi-line orchestration instructions should be passed verbatim."""
+        addendum = (
+            "## Signal files\nCheck every 60s.\n"
+            "## Completion protocol\ncurl -X POST ...\n"
+        )
+        cmd = self._build(system_addendum=addendum)
+        idx = cmd.index("--append-system-prompt")
+        assert cmd[idx + 1] == addendum
+
+
+# ---------------------------------------------------------------------------
+# spawn() — system_addendum forwarded to CLI command
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnSystemAddendum:
+    """spawn() forwards system_addendum through to the CLI command."""
+
+    def test_system_addendum_in_cli_command(self, tmp_path: Path) -> None:
+        adapter = ClaudeCodeAdapter()
+        claude_mock = _make_popen_mock(pid=1100)
+        wrapper_mock = _make_popen_mock(pid=1101)
+
+        with patch("bernstein.adapters.claude.subprocess.Popen", side_effect=[claude_mock, wrapper_mock]) as popen:
+            adapter.spawn(
+                prompt="fix the bug",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="backend-abc123",
+                system_addendum="## Signals\nCheck .sdd/runtime/signals/ every 60s",
+            )
+            cmd: list[str] = popen.call_args_list[0].args[0]
+
+        assert "--append-system-prompt" in cmd
+        idx = cmd.index("--append-system-prompt")
+        assert cmd[idx + 1] == "## Signals\nCheck .sdd/runtime/signals/ every 60s"
+
+    def test_no_system_addendum_by_default(self, tmp_path: Path) -> None:
+        adapter = ClaudeCodeAdapter()
+        claude_mock = _make_popen_mock(pid=1200)
+        wrapper_mock = _make_popen_mock(pid=1201)
+
+        with patch("bernstein.adapters.claude.subprocess.Popen", side_effect=[claude_mock, wrapper_mock]) as popen:
+            adapter.spawn(
+                prompt="do something",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-noaddendum",
+            )
+            cmd: list[str] = popen.call_args_list[0].args[0]
+
+        assert "--append-system-prompt" not in cmd
+
+    def test_empty_system_addendum_omitted(self, tmp_path: Path) -> None:
+        adapter = ClaudeCodeAdapter()
+        claude_mock = _make_popen_mock(pid=1300)
+        wrapper_mock = _make_popen_mock(pid=1301)
+
+        with patch("bernstein.adapters.claude.subprocess.Popen", side_effect=[claude_mock, wrapper_mock]) as popen:
+            adapter.spawn(
+                prompt="do something",
+                workdir=tmp_path,
+                model_config=ModelConfig(model="sonnet", effort="high"),
+                session_id="sess-empty",
+                system_addendum="",
+            )
+            cmd: list[str] = popen.call_args_list[0].args[0]
+
+        assert "--append-system-prompt" not in cmd

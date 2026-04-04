@@ -281,6 +281,9 @@ class Orchestrator:
 
         self._loop_detector = LoopDetector()
         self._loop_mtime_cache: dict[str, float] = {}  # file_path -> last observed mtime
+        import uuid as _uuid
+
+        self.session_id: str = _uuid.uuid4().hex[:16]  # Unique ID for this orchestrator session
         self._task_to_session: dict[str, str] = {}  # task_id -> agent_id (reverse index)
         self._batch_sessions: dict[str, AgentSession] = {}
         self._processed_done_tasks: set[str] = set()  # avoid re-processing done tasks
