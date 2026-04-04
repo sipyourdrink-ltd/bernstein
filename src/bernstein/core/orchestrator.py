@@ -300,6 +300,9 @@ class Orchestrator:
         # Crash recovery: per-task crash count and preserved worktrees for resume
         self._crash_counts: dict[str, int] = {}  # task_id -> crash count
         self._preserved_worktrees: dict[str, Path] = {}  # task_id -> worktree to reuse
+        # Agent affinity: task_id -> preferred_agent_id for downstream tasks
+        # Populated when a task completes; used by group_by_role to batch related work.
+        self._agent_affinity: dict[str, str] = {}
         self._running = False
         self._tick_count = 0
         self._consecutive_server_failures: int = 0
@@ -1125,6 +1128,7 @@ class Orchestrator:
             alive_per_role=_alive_per_role,
             priority_overrides=priority_overrides,
             task_created_at=task_created_at,
+            agent_affinity=self._agent_affinity if self._agent_affinity else None,
         )
         batches = compact_small_tasks(batches, self._config.max_tasks_per_agent)
 
