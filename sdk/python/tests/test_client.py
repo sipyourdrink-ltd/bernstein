@@ -127,6 +127,95 @@ class TestBernsteinClientSync:
                 client.create_task(title="Bad task")
 
 
+class TestETagSync:
+    """ETag-based conditional request tests for BernsteinClient."""
+
+    @respx.mock
+    def test_etag_stored_on_first_request(self) -> None:
+        respx.get(f"{BASE}/tasks/abc123456789").mock(
+            return_value=httpx.Response(
+                200, json=TASK_PAYLOAD, headers={"ETag": '"v1"'}
+            )
+        )
+        with BernsteinClient(BASE) as client:
+            client.get_task("abc123456789")
+            assert client._etag_cache.get("/tasks/abc123456789") is not None
+            etag, _ = client._etag_cache["/tasks/abc123456789"]
+            assert etag == '"v1"'
+
+    @respx.mock
+    def test_if_none_match_sent_on_second_request(self) -> None:
+        route = respx.get(f"{BASE}/tasks/abc123456789")
+        route.side_effect = [
+            httpx.Response(200, json=TASK_PAYLOAD, headers={"ETag": '"v1"'}),
+            httpx.Response(304),
+        ]
+        with BernsteinClient(BASE) as client:
+            client.get_task("abc123456789")
+            client.get_task("abc123456789")
+
+        # Second request must have carried the If-None-Match header
+        second_req = route.calls[1].request
+        assert second_req.headers.get("if-none-match") == '"v1"'
+
+    @respx.mock
+    def test_304_returns_cached_data_without_transfer(self) -> None:
+        route = respx.get(f"{BASE}/tasks/abc123456789")
+        route.side_effect = [
+            httpx.Response(200, json=TASK_PAYLOAD, headers={"ETag": '"v1"'}),
+            httpx.Response(304),
+        ]
+        with BernsteinClient(BASE) as client:
+            task_first = client.get_task("abc123456789")
+            task_second = client.get_task("abc123456789")
+
+        assert task_first.id == task_second.id == "abc123456789"
+        assert route.call_count == 2  # two HTTP calls, one transfer
+
+    @respx.mock
+    def test_etag_updated_on_new_response(self) -> None:
+        route = respx.get(f"{BASE}/tasks/abc123456789")
+        updated_payload = {**TASK_PAYLOAD, "title": "Updated title"}
+        route.side_effect = [
+            httpx.Response(200, json=TASK_PAYLOAD, headers={"ETag": '"v1"'}),
+            httpx.Response(200, json=updated_payload, headers={"ETag": '"v2"'}),
+        ]
+        with BernsteinClient(BASE) as client:
+            client.get_task("abc123456789")
+            task = client.get_task("abc123456789")
+            etag, _ = client._etag_cache["/tasks/abc123456789"]
+
+        assert etag == '"v2"'
+        assert task.title == "Updated title"
+
+    @respx.mock
+    def test_list_tasks_304_returns_cached(self) -> None:
+        route = respx.get(f"{BASE}/tasks")
+        route.side_effect = [
+            httpx.Response(200, json=[TASK_PAYLOAD], headers={"ETag": '"list-v1"'}),
+            httpx.Response(304),
+        ]
+        with BernsteinClient(BASE) as client:
+            tasks_first = client.list_tasks()
+            tasks_second = client.list_tasks()
+
+        assert len(tasks_first) == len(tasks_second) == 1
+        assert route.call_count == 2
+
+    @respx.mock
+    def test_clear_etag_cache(self) -> None:
+        respx.get(f"{BASE}/tasks/abc123456789").mock(
+            return_value=httpx.Response(
+                200, json=TASK_PAYLOAD, headers={"ETag": '"v1"'}
+            )
+        )
+        with BernsteinClient(BASE) as client:
+            client.get_task("abc123456789")
+            assert client._etag_cache
+            client.clear_etag_cache()
+            assert not client._etag_cache
+
+
 class TestBernsteinClientAsync:
     @pytest.mark.asyncio
     @respx.mock
@@ -147,3 +236,20 @@ class TestBernsteinClientAsync:
         respx.get(f"{BASE}/health").mock(return_value=httpx.Response(200))
         async with AsyncBernsteinClient(BASE) as client:
             assert await client.health() is True
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_etag_304_async(self) -> None:
+        route = respx.get(f"{BASE}/tasks/abc123456789")
+        route.side_effect = [
+            httpx.Response(200, json=TASK_PAYLOAD, headers={"ETag": '"v1"'}),
+            httpx.Response(304),
+        ]
+        async with AsyncBernsteinClient(BASE) as client:
+            task_first = await client.get_task("abc123456789")
+            task_second = await client.get_task("abc123456789")
+
+        assert task_first.id == task_second.id == "abc123456789"
+        second_req = route.calls[1].request
+        assert second_req.headers.get("if-none-match") == '"v1"'
+        assert route.call_count == 2
