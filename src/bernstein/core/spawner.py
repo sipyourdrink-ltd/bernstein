@@ -36,6 +36,7 @@ from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
+from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
 from bernstein.plugins.manager import get_plugin_manager
@@ -1787,6 +1788,10 @@ class AgentSpawner:
                     abort_detail="remote runtime cancellation requested by orchestrator",
                     finish_reason="kill_requested",
                 )
+            try:
+                TeamStateStore(self._workdir / ".sdd").on_kill(session.id)
+            except Exception as _ts_exc:
+                logger.debug("Team state on_kill failed: %s", _ts_exc)
             return
 
         # Container-based agents: stop and destroy the container
@@ -1815,6 +1820,10 @@ class AgentSpawner:
                 abort_detail="local process kill requested by orchestrator",
                 finish_reason="kill_requested",
             )
+        try:
+            TeamStateStore(self._workdir / ".sdd").on_kill(session.id)
+        except Exception as _ts_exc:
+            logger.debug("Team state on_kill failed: %s", _ts_exc)
 
     def reap_completed_agent(
         self,

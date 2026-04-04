@@ -17,7 +17,10 @@ class TestTeamMember:
         m = TeamMember(agent_id="a1", role="backend")
         assert m.agent_id == "a1"
         assert m.role == "backend"
+        assert m.name == ""
         assert m.model == ""
+        assert m.color == ""
+        assert m.mode == ""
         assert m.status == "starting"
         assert m.is_active is True
         assert m.task_ids == []
@@ -29,7 +32,10 @@ class TestTeamMember:
         m = TeamMember(
             agent_id="b2",
             role="qa",
+            name="QA Agent",
             model="opus",
+            color="green",
+            mode="default",
             status="working",
             is_active=True,
             task_ids=["T1", "T2"],
@@ -38,13 +44,19 @@ class TestTeamMember:
         )
         d = m.to_dict()
         assert d["agent_id"] == "b2"
+        assert d["name"] == "QA Agent"
         assert d["model"] == "opus"
+        assert d["color"] == "green"
+        assert d["mode"] == "default"
         assert d["task_ids"] == ["T1", "T2"]
 
         restored = TeamMember.from_dict(d)
         assert restored.agent_id == m.agent_id
         assert restored.role == m.role
+        assert restored.name == m.name
         assert restored.model == m.model
+        assert restored.color == m.color
+        assert restored.mode == m.mode
         assert restored.status == m.status
         assert restored.is_active == m.is_active
         assert restored.task_ids == m.task_ids
@@ -55,6 +67,9 @@ class TestTeamMember:
         m = TeamMember.from_dict({})
         assert m.agent_id == ""
         assert m.role == ""
+        assert m.name == ""
+        assert m.color == ""
+        assert m.mode == ""
         assert m.status == "starting"
         assert m.is_active is True
 
@@ -76,11 +91,32 @@ class TestTeamStateStore:
 
         assert member.agent_id == "agent-1"
         assert member.role == "backend"
+        assert member.name == "agent-1"  # defaults to agent_id
         assert member.model == "sonnet"
         assert member.status == "starting"
         assert member.is_active is True
         assert member.task_ids == ["T1"]
         assert member.spawned_at > 0
+
+    def test_on_spawn_with_name_color_mode(self, tmp_path: Path) -> None:
+        store = TeamStateStore(tmp_path)
+        member = store.on_spawn(
+            "agent-2",
+            "qa",
+            name="QA Bot",
+            color="green",
+            mode="trusted",
+        )
+        assert member.name == "QA Bot"
+        assert member.color == "green"
+        assert member.mode == "trusted"
+
+        # Verify persistence
+        restored = store.get_member("agent-2")
+        assert restored is not None
+        assert restored.name == "QA Bot"
+        assert restored.color == "green"
+        assert restored.mode == "trusted"
 
     def test_on_spawn_persists_to_disk(self, tmp_path: Path) -> None:
         store = TeamStateStore(tmp_path)
