@@ -746,6 +746,127 @@ class TestWorktreeIntegration:
             mock_merge.assert_not_called()
 
 
+# --- cleanup_worktree ---
+
+
+class TestCleanupWorktree:
+    def test_cleanup_worktree_delegates_to_manager(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=True)
+
+        worktree_path = tmp_path / ".sdd" / "worktrees" / "dead-sess"
+        worktree_path.mkdir(parents=True)
+        spawner._worktree_paths["dead-sess"] = worktree_path
+        spawner._worktree_roots["dead-sess"] = tmp_path.resolve()
+
+        with patch.object(spawner._worktree_mgr, "cleanup") as mock_cleanup:
+            spawner.cleanup_worktree("dead-sess")
+
+            mock_cleanup.assert_called_once_with("dead-sess")
+
+        # Internal dicts should be cleared
+        assert "dead-sess" not in spawner._worktree_paths
+        assert "dead-sess" not in spawner._worktree_roots
+
+    def test_cleanup_worktree_idempotent_when_not_tracked(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=True)
+
+        with patch.object(spawner._worktree_mgr, "cleanup") as mock_cleanup:
+            # Should not raise even when session was never tracked
+            spawner.cleanup_worktree("nonexistent-sess")
+            mock_cleanup.assert_called_once_with("nonexistent-sess")
+
+    def test_cleanup_worktree_without_manager_removes_dir(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=False)
+
+        worktree_path = tmp_path / ".sdd" / "worktrees" / "orphan-sess"
+        worktree_path.mkdir(parents=True)
+        spawner._worktree_paths["orphan-sess"] = worktree_path
+
+        spawner.cleanup_worktree("orphan-sess")
+
+        assert not worktree_path.exists()
+        assert "orphan-sess" not in spawner._worktree_paths
+
+
+class TestPruneOrphanWorktrees:
+    def test_prune_removes_orphan_directories(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=True)
+
+        # Create orphan worktree dirs
+        orphan1 = tmp_path / ".sdd" / "worktrees" / "dead-1"
+        orphan2 = tmp_path / ".sdd" / "worktrees" / "dead-2"
+        active = tmp_path / ".sdd" / "worktrees" / "alive-1"
+        for d in (orphan1, orphan2, active):
+            d.mkdir(parents=True)
+
+        with (
+            patch.object(spawner._worktree_mgr, "cleanup") as mock_cleanup,
+            patch("subprocess.run"),
+        ):
+            cleaned = spawner.prune_orphan_worktrees({"alive-1"})
+
+        assert cleaned == 2
+        # cleanup should have been called for the two orphans but not the active one
+        cleanup_args = [call.args[0] for call in mock_cleanup.call_args_list]
+        assert "dead-1" in cleanup_args
+        assert "dead-2" in cleanup_args
+        assert "alive-1" not in cleanup_args
+
+    def test_prune_returns_zero_when_no_orphans(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=True)
+
+        active = tmp_path / ".sdd" / "worktrees" / "alive-1"
+        active.mkdir(parents=True)
+
+        with (
+            patch.object(spawner._worktree_mgr, "cleanup") as mock_cleanup,
+            patch("subprocess.run"),
+        ):
+            cleaned = spawner.prune_orphan_worktrees({"alive-1"})
+
+        assert cleaned == 0
+        mock_cleanup.assert_not_called()
+
+    def test_prune_skips_locks_directory(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=True)
+
+        locks_dir = tmp_path / ".sdd" / "worktrees" / ".locks"
+        locks_dir.mkdir(parents=True)
+
+        with (
+            patch.object(spawner._worktree_mgr, "cleanup") as mock_cleanup,
+            patch("subprocess.run"),
+        ):
+            cleaned = spawner.prune_orphan_worktrees(set())
+
+        assert cleaned == 0
+        mock_cleanup.assert_not_called()
+
+    def test_prune_pops_spawner_dicts(self, tmp_path: Path, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory()
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=True)
+
+        orphan = tmp_path / ".sdd" / "worktrees" / "dead-x"
+        orphan.mkdir(parents=True)
+        spawner._worktree_paths["dead-x"] = orphan
+        spawner._worktree_roots["dead-x"] = tmp_path.resolve()
+
+        with (
+            patch.object(spawner._worktree_mgr, "cleanup"),
+            patch("subprocess.run"),
+        ):
+            spawner.prune_orphan_worktrees(set())
+
+        assert "dead-x" not in spawner._worktree_paths
+        assert "dead-x" not in spawner._worktree_roots
+
+
 # --- _render_prompt with catalog_system_prompt ---
 
 

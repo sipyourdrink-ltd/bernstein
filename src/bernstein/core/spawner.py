@@ -1900,6 +1900,76 @@ class AgentSpawner:
         """
         return self._worktree_paths.get(session_id)
 
+    def cleanup_worktree(self, session_id: str) -> None:
+        """Remove the worktree and branch for a dead agent session.
+
+        Best-effort: removes the worktree directory, deletes the local branch,
+        runs ``git worktree prune``, and pops session from internal dicts.
+        Safe to call even if the worktree was never created or already cleaned.
+
+        Args:
+            session_id: The session whose worktree should be cleaned up.
+        """
+        worktree_root = self._worktree_roots.get(session_id, self._workdir.resolve())
+        worktree_mgr = self._worktree_managers.get(worktree_root) or self._worktree_mgr
+        if worktree_mgr is not None:
+            worktree_mgr.cleanup(session_id)
+        else:
+            # No manager available — try manual removal of the directory
+            worktree_path = self._worktree_paths.get(session_id)
+            if worktree_path is not None and worktree_path.exists():
+                import shutil
+
+                try:
+                    shutil.rmtree(worktree_path)
+                except OSError as exc:
+                    logger.warning("Manual worktree removal failed for %s: %s", session_id, exc)
+        self._worktree_paths.pop(session_id, None)
+        self._worktree_roots.pop(session_id, None)
+        logger.info("Cleaned up worktree for dead agent %s", session_id)
+
+    def prune_orphan_worktrees(self, active_session_ids: set[str]) -> int:
+        """Remove orphan worktree directories that don't correspond to active sessions.
+
+        Runs ``git worktree prune`` then scans ``.sdd/worktrees/`` for
+        directories whose name is not in *active_session_ids* and removes
+        them via :class:`WorktreeManager`.
+
+        Args:
+            active_session_ids: Session IDs that are currently alive/working.
+
+        Returns:
+            Number of orphan worktrees cleaned up.
+        """
+        cleaned = 0
+        for mgr in self._worktree_managers.values():
+            # Prune git's internal worktree bookkeeping first
+            import subprocess
+
+            try:
+                subprocess.run(
+                    ["git", "worktree", "prune"],
+                    cwd=mgr.repo_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except Exception as exc:
+                logger.debug("git worktree prune failed: %s", exc)
+
+            base_dir = mgr.repo_root / ".sdd" / "worktrees"
+            if not base_dir.exists():
+                continue
+            for entry in base_dir.iterdir():
+                if entry.is_dir() and entry.name != ".locks" and entry.name not in active_session_ids:
+                    logger.info("Removing orphan worktree: %s", entry.name)
+                    mgr.cleanup(entry.name)
+                    # Also pop from spawner dicts in case they were tracked
+                    self._worktree_paths.pop(entry.name, None)
+                    self._worktree_roots.pop(entry.name, None)
+                    cleaned += 1
+        return cleaned
+
     def update_trace_outcome(self, session_id: str, outcome: str) -> None:
         """Update the stored trace outcome for a session.
 
