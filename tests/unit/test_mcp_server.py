@@ -1,7 +1,8 @@
-"""Tests for Bernstein MCP server tools."""
+"""Tests for Bernstein MCP server tools and crash protection."""
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -63,11 +64,12 @@ def _make_task_payload(
 
 
 def test_mcp_server_registers_all_tools() -> None:
-    """All 6 Bernstein tools must be registered on the FastMCP instance."""
+    """All 7 Bernstein tools must be registered on the FastMCP instance."""
     from bernstein.mcp.server import create_mcp_server
 
     mcp = create_mcp_server(server_url="http://localhost:8052")
     tool_names = {t.name for t in mcp._tool_manager.list_tools()}
+    assert "bernstein_health" in tool_names
     assert "bernstein_run" in tool_names
     assert "bernstein_status" in tool_names
     assert "bernstein_tasks" in tool_names
@@ -308,3 +310,183 @@ async def test_bernstein_approve_completes_task() -> None:
     call_url = mock_client.post.call_args[0][0]
     assert "task-ap-01" in call_url
     assert "complete" in call_url
+
+
+# ---------------------------------------------------------------------------
+# bernstein_health — liveness check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bernstein_health_always_succeeds() -> None:
+    """bernstein_health always returns {"status": "ok"} without contacting server."""
+    from bernstein.mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+    result = await mcp.call_tool("bernstein_health", {})
+    text = result[0][0].text  # type: ignore[index]
+    parsed = json.loads(text)
+    assert parsed == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Crash protection — error_response helper
+# ---------------------------------------------------------------------------
+
+
+def test_error_response_returns_json() -> None:
+    """_error_response returns valid JSON with error and hint fields."""
+    from bernstein.mcp.server import _error_response
+
+    result = _error_response(RuntimeError("boom"))
+    parsed = json.loads(result)
+    assert parsed["error"] == "boom"
+    assert parsed["hint"] == "Task server may be restarting"
+
+
+def test_error_response_custom_hint() -> None:
+    """_error_response respects custom hint."""
+    from bernstein.mcp.server import _error_response
+
+    result = _error_response(ValueError("bad"), hint="custom hint")
+    parsed = json.loads(result)
+    assert parsed["hint"] == "custom hint"
+
+
+# ---------------------------------------------------------------------------
+# Crash protection — tools return error JSON instead of crashing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_crash_protection_bernstein_run() -> None:
+    """bernstein_run returns error JSON on httpx failure, not an exception."""
+    from bernstein.mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(side_effect=ConnectionError("refused"))
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp.call_tool("bernstein_run", {"goal": "test"})
+
+    text = result[0][0].text  # type: ignore[index]
+    parsed = json.loads(text)
+    assert "error" in parsed
+    assert "hint" in parsed
+
+
+@pytest.mark.asyncio
+async def test_crash_protection_bernstein_status() -> None:
+    """bernstein_status returns error JSON on httpx failure."""
+    from bernstein.mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(side_effect=ConnectionError("refused"))
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp.call_tool("bernstein_status", {})
+
+    text = result[0][0].text  # type: ignore[index]
+    parsed = json.loads(text)
+    assert "error" in parsed
+
+
+@pytest.mark.asyncio
+async def test_crash_protection_bernstein_tasks() -> None:
+    """bernstein_tasks returns error JSON on httpx failure."""
+    from bernstein.mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(side_effect=ConnectionError("refused"))
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp.call_tool("bernstein_tasks", {})
+
+    text = result[0][0].text  # type: ignore[index]
+    parsed = json.loads(text)
+    assert "error" in parsed
+
+
+@pytest.mark.asyncio
+async def test_crash_protection_bernstein_cost() -> None:
+    """bernstein_cost returns error JSON on httpx failure."""
+    from bernstein.mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(side_effect=ConnectionError("refused"))
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp.call_tool("bernstein_cost", {})
+
+    text = result[0][0].text  # type: ignore[index]
+    parsed = json.loads(text)
+    assert "error" in parsed
+
+
+@pytest.mark.asyncio
+async def test_crash_protection_bernstein_approve() -> None:
+    """bernstein_approve returns error JSON on httpx failure."""
+    from bernstein.mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(side_effect=ConnectionError("refused"))
+
+    with patch("bernstein.mcp.server.httpx.AsyncClient", return_value=mock_client):
+        result = await mcp.call_tool("bernstein_approve", {"task_id": "fake"})
+
+    text = result[0][0].text  # type: ignore[index]
+    parsed = json.loads(text)
+    assert "error" in parsed
+
+
+@pytest.mark.asyncio
+async def test_crash_protection_bernstein_stop() -> None:
+    """bernstein_stop returns error JSON on filesystem failure."""
+    from bernstein.mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(server_url="http://localhost:8052")
+
+    with patch("bernstein.mcp.server.Path") as mock_path_cls:
+        mock_path = MagicMock()
+        mock_path_cls.return_value = mock_path
+        mock_path.__truediv__ = MagicMock(return_value=mock_path)
+        mock_path.mkdir = MagicMock(side_effect=PermissionError("not allowed"))
+
+        result = await mcp.call_tool("bernstein_stop", {})
+
+    text = result[0][0].text  # type: ignore[index]
+    parsed = json.loads(text)
+    assert "error" in parsed
+    assert parsed["hint"] == "Could not write shutdown signal"
+
+
+# ---------------------------------------------------------------------------
+# Timeout configuration
+# ---------------------------------------------------------------------------
+
+
+def test_http_timeout_constant() -> None:
+    """Verify the timeout constant is set to a reasonable value."""
+    from bernstein.mcp.server import _HTTP_TIMEOUT
+
+    assert _HTTP_TIMEOUT == 5.0
