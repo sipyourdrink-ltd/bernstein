@@ -1,6 +1,8 @@
 name: Publish VS Code Extension
 
 on:
+  release:
+    types: [published]
   push:
     tags:
       - 'ext-v*'   # trigger: git tag ext-v0.1.0 && git push --tags
@@ -62,6 +64,10 @@ jobs:
         working-directory: packages/vscode
         run: npx vsce package --no-dependencies
 
+      - name: Find VSIX file
+        id: vsix
+        run: echo "path=$(ls packages/vscode/*.vsix)" >> "$GITHUB_OUTPUT"
+
       # Publish to VS Code Marketplace (requires VS_MARKETPLACE_TOKEN secret)
       - name: Publish to VS Code Marketplace
         if: env.VS_MARKETPLACE_TOKEN != ''
@@ -69,6 +75,7 @@ jobs:
         with:
           pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
           registryUrl: https://marketplace.visualstudio.com
+          extensionFile: ${{ steps.vsix.outputs.path }}
 
       # Publish to Open VSX — used by Cursor, VSCodium, Gitpod (requires OPEN_VSX_TOKEN secret)
       - name: Publish to Open VSX
@@ -77,9 +84,19 @@ jobs:
         with:
           pat: ${{ secrets.OPEN_VSX_TOKEN }}
           registryUrl: https://open-vsx.org
+          extensionFile: ${{ steps.vsix.outputs.path }}
 
-      # Upload VSIX as GitHub Release asset for direct installation fallback
+      # Upload VSIX as GitHub Release asset for direct installation fallback.
+      # When triggered by a release event, attach to the existing release.
+      # When triggered by a tag push, create a new release.
+      - name: Upload VSIX to existing release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" packages/vscode/*.vsix --clobber
+
       - name: Create GitHub Release with VSIX
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           files: packages/vscode/*.vsix
@@ -94,6 +111,6 @@ jobs:
                ```
                code --install-extension bernstein-*.vsix
                ```
-               or: Extensions panel → ⋯ → Install from VSIX…
+               or: Extensions panel → ... → Install from VSIX...
           draft: false
           prerelease: false

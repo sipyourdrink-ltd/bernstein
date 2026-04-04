@@ -5,6 +5,40 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bernstein — Declarative Agent Orchestration</title>
   <meta name="description" content="Declarative agent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep." />
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Bernstein — Declarative Agent Orchestration" />
+  <meta property="og:description" content="Declarative agent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Bernstein — Declarative Agent Orchestration" />
+  <meta name="twitter:description" content="Declarative agent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep." />
+  <meta name="twitter:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Bernstein",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, macOS, Windows",
+    "description": "Declarative agent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep.",
+    "url": "https://chernistry.github.io/bernstein/",
+    "downloadUrl": "https://pypi.org/project/bernstein/",
+    "codeRepository": "https://github.com/chernistry/bernstein",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "author": {
+      "@type": "Person",
+      "name": "Alex Chernysh",
+      "url": "https://alexchernysh.com"
+    },
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
+  }
+  </script>
   <link rel="stylesheet" href="style.css" />
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -54,6 +88,14 @@
           <strong>Think of it as what Kubernetes did for containers, but for AI coding agents.</strong>
           You declare a goal. The control plane decomposes it into tasks. Short-lived agents execute them in isolated worktrees &mdash; like pods. A janitor verifies the output before anything lands.
         </p>
+        <div class="hero-install" style="margin-bottom:1.5rem;">
+          <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;background:var(--term-bg,#0a0a0b);color:var(--term-text,#d4d4d8);padding:0.65rem 1.25rem;border-radius:8px;font-family:var(--font-mono,'Menlo',monospace);font-size:0.9rem;max-width:24rem;margin:0 auto;border:1px solid var(--border,rgba(255,255,255,0.07));">
+            <span style="color:#a0a0a8;user-select:none;">$</span>
+            <code id="install-cmd" style="flex:1;background:none;color:inherit;padding:0;font-size:inherit;">pipx install bernstein</code>
+            <button onclick="navigator.clipboard.writeText('pipx install bernstein');this.textContent='copied';setTimeout(()=>this.textContent='copy',1500)" style="background:none;border:1px solid var(--border,rgba(255,255,255,0.12));color:var(--text-4,#a0a0a8);font-size:0.7rem;padding:2px 8px;border-radius:4px;cursor:pointer;font-family:var(--font-sans,sans-serif);transition:color 150ms;">copy</button>
+          </div>
+          <p style="margin-top:0.5rem;font-size:0.75rem;color:var(--text-4,#a0a0a8);text-align:center;">or: <code style="font-size:0.75rem;">uv tool install bernstein</code> &middot; <code style="font-size:0.75rem;">brew install bernstein</code></p>
+        </div>
         <div class="hero-actions">
           <a href="getting-started.html" class="btn-primary">Get started &#8594;</a>
           <a href="https://github.com/chernistry/bernstein" class="btn-secondary" target="_blank" rel="noopener">View source</a>
@@ -434,6 +476,27 @@ bernstein run --evolve --max-cycles 10</code></pre>
       <p class="quick-start-note">
         Requires a CLI agent installed (<a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a>, <a href="https://github.com/openai/codex">Codex</a>, <a href="https://github.com/google-gemini/gemini-cli">Gemini CLI</a>, or <a href="https://github.com/QwenLM/Qwen-Agent">Qwen</a>). Bernstein auto-detects what's available.
       </p>
+    </div>
+  </div>
+</section>
+
+<!-- ── Editor extensions ── -->
+<section>
+  <div class="container">
+    <div class="section-label">Editor extensions</div>
+    <h2 class="section-title">VS Code &amp; Cursor</h2>
+    <p class="section-sub">Task tree, agent status, cost tracking, and chat participant &mdash; all inside your editor.</p>
+    <div class="card-grid card-grid-2" style="max-width:36rem;margin:0 auto;">
+      <div class="card card-quiet" style="text-align:center;">
+        <h3 style="font-size:var(--text-base);">VS Code Marketplace</h3>
+        <p style="margin-bottom:0.75rem;"><code style="font-size:var(--text-sm);">code --install-extension alex-chernysh.bernstein</code></p>
+        <a href="https://marketplace.visualstudio.com/items?itemName=alex-chernysh.bernstein" class="btn-secondary" target="_blank" rel="noopener" style="font-size:var(--text-sm);">Install &#8599;</a>
+      </div>
+      <div class="card card-quiet" style="text-align:center;">
+        <h3 style="font-size:var(--text-base);">Open VSX (Cursor)</h3>
+        <p style="margin-bottom:0.75rem;">Search <strong>"Bernstein"</strong> in Extensions</p>
+        <a href="https://open-vsx.org/extension/alex-chernysh/bernstein" class="btn-secondary" target="_blank" rel="noopener" style="font-size:var(--text-sm);">Open VSX &#8599;</a>
+      </div>
     </div>
   </div>
 </section>
