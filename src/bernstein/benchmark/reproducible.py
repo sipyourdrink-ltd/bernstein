@@ -23,13 +23,13 @@ import hashlib
 import json
 import random
 import statistics
-import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from bernstein.benchmark.comparative import BenchmarkTask
 
 # ---------------------------------------------------------------------------
@@ -518,7 +518,7 @@ class ReproducibleBenchmark:
         tasks = self._select_tasks()
 
         run_id = _derive_run_id(self._config.seed, [t.task_id for t in tasks])
-        timestamp = datetime.now(tz=timezone.utc).isoformat()
+        timestamp = datetime.now(tz=UTC).isoformat()
 
         records: list[TaskRunRecord] = []
         for task in tasks:
@@ -571,10 +571,7 @@ class ReproducibleBenchmark:
         # Throughput: positive delta = faster (good)
         base_tph = baseline.throughput.tasks_per_hour
         curr_tph = current.throughput.tasks_per_hour
-        if base_tph > 0:
-            throughput_delta_pct = (curr_tph - base_tph) / base_tph * 100.0
-        else:
-            throughput_delta_pct = 0.0
+        throughput_delta_pct = (curr_tph - base_tph) / base_tph * 100.0 if base_tph > 0 else 0.0
 
         if base_tph > 0 and (base_tph - curr_tph) / base_tph > THROUGHPUT_REGRESSION_THRESHOLD:
             regressions.append(
@@ -585,15 +582,11 @@ class ReproducibleBenchmark:
         # Cost: positive delta = more expensive (bad)
         base_cost = baseline.cost.per_task_usd
         curr_cost = current.cost.per_task_usd
-        if base_cost > 0:
-            cost_delta_pct = (curr_cost - base_cost) / base_cost * 100.0
-        else:
-            cost_delta_pct = 0.0
+        cost_delta_pct = (curr_cost - base_cost) / base_cost * 100.0 if base_cost > 0 else 0.0
 
         if base_cost > 0 and (curr_cost - base_cost) / base_cost > COST_REGRESSION_THRESHOLD:
             regressions.append(
-                f"Cost regression: ${curr_cost:.5f}/task vs baseline ${base_cost:.5f} "
-                f"({cost_delta_pct:+.1f}%)"
+                f"Cost regression: ${curr_cost:.5f}/task vs baseline ${base_cost:.5f} ({cost_delta_pct:+.1f}%)"
             )
 
         # Quality: positive delta = better (good)
