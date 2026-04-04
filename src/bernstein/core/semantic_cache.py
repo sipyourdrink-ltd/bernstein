@@ -230,8 +230,10 @@ class SemanticCacheManager:
                 best_score,
                 model,
             )
+            self._cleanup_expired_if_needed()
             return best_entry.response, best_score
 
+        self._cleanup_expired_if_needed()
         return None, 0.0
 
     def store(self, key_text: str, response: str, model: str, *, verified: bool = False) -> None:
@@ -332,6 +334,18 @@ class SemanticCacheManager:
         for key in sorted_keys[:evict_count]:
             del self._manifest.entries[key]
         logger.debug("Semantic cache evicted %d LRU entries", evict_count)
+
+    def _cleanup_expired_if_needed(self) -> None:
+        """Remove expired entries when more than 10% of the cache is stale."""
+        total = len(self._manifest.entries)
+        if total <= 50:
+            return
+        expired_count = sum(1 for e in self._manifest.entries.values() if self._expired(e))
+        if expired_count > total * 0.1:
+            expired_keys = [k for k, e in self._manifest.entries.items() if self._expired(e)]
+            for k in expired_keys:
+                del self._manifest.entries[k]
+            logger.debug("Semantic cache cleaned %d expired entries", len(expired_keys))
 
 
 # ---------------------------------------------------------------------------
@@ -449,8 +463,10 @@ class ResponseCacheManager:
                 "Response cache fuzzy-hit (similarity=%.3f) for task",
                 best_score,
             )
+            self._cleanup_expired_if_needed()
             return best_entry, best_score
 
+        self._cleanup_expired_if_needed()
         return None, 0.0
 
     def store(
@@ -602,6 +618,18 @@ class ResponseCacheManager:
         for key in sorted_keys[:evict_count]:
             del self._manifest.entries[key]
         logger.debug("Response cache evicted %d LRU entries", evict_count)
+
+    def _cleanup_expired_if_needed(self) -> None:
+        """Remove expired entries when more than 10% of the cache is stale."""
+        total = len(self._manifest.entries)
+        if total <= 50:
+            return
+        expired_count = sum(1 for e in self._manifest.entries.values() if self._expired(e))
+        if expired_count > total * 0.1:
+            expired_keys = [k for k, e in self._manifest.entries.items() if self._expired(e)]
+            for k in expired_keys:
+                del self._manifest.entries[k]
+            logger.debug("Response cache cleaned %d expired entries", len(expired_keys))
 
 
 # ---------------------------------------------------------------------------
