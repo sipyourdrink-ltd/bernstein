@@ -7,12 +7,19 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bernstein.adapters.claude import ClaudeCodeAdapter, _resolve_env_vars, load_mcp_config
+from bernstein.adapters.claude import (
+    _RATE_LIMIT_CACHE_TTL,
+    _RATE_LIMIT_COOLDOWN,
+    ClaudeCodeAdapter,
+    _resolve_env_vars,
+    load_mcp_config,
+)
 from bernstein.core.models import ModelConfig
 
 if TYPE_CHECKING:
@@ -522,3 +529,118 @@ class TestSpawnMissingBinary:
                 model_config=ModelConfig(model="sonnet", effort="high"),
                 session_id="claude-perm",
             )
+
+
+# ---------------------------------------------------------------------------
+# is_rate_limited() — pre-spawn rate limit detection (CRITICAL-003)
+# ---------------------------------------------------------------------------
+
+
+class TestIsRateLimited:
+    """ClaudeCodeAdapter.is_rate_limited() probes for provider throttling."""
+
+    def _make_run_result(
+        self, *, stderr: str = "", returncode: int = 0
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=["claude", "--version"],
+            returncode=returncode,
+            stdout="",
+            stderr=stderr,
+        )
+
+    def test_not_rate_limited_when_probe_returns_clean(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        with patch(
+            "bernstein.adapters.claude.subprocess.run",
+            return_value=self._make_run_result(),
+        ):
+            assert adapter.is_rate_limited() is False
+
+    def test_rate_limited_when_stderr_contains_hit_your_limit(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        result = self._make_run_result(
+            stderr="Error: You've hit your limit for today", returncode=1
+        )
+        with patch("bernstein.adapters.claude.subprocess.run", return_value=result):
+            assert adapter.is_rate_limited() is True
+
+    def test_rate_limited_when_stderr_contains_rate_limit(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        result = self._make_run_result(
+            stderr="rate limit exceeded, try again later", returncode=1
+        )
+        with patch("bernstein.adapters.claude.subprocess.run", return_value=result):
+            assert adapter.is_rate_limited() is True
+
+    def test_cooldown_persists_without_re_probing(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        result = self._make_run_result(stderr="You've hit your limit")
+        with patch(
+            "bernstein.adapters.claude.subprocess.run", return_value=result
+        ) as mock_run:
+            assert adapter.is_rate_limited() is True
+            # Second call should NOT invoke subprocess again — cached cooldown
+            assert adapter.is_rate_limited() is True
+            assert mock_run.call_count == 1
+
+    def test_cooldown_expires_after_duration(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        result_limited = self._make_run_result(stderr="hit your limit")
+        result_ok = self._make_run_result()
+        with patch(
+            "bernstein.adapters.claude.subprocess.run",
+            side_effect=[result_limited, result_ok],
+        ):
+            assert adapter.is_rate_limited() is True
+            # Simulate cooldown expiry
+            adapter._rate_limit_until = time.time() - 1
+            adapter._rate_limit_checked_at = 0.0
+            assert adapter.is_rate_limited() is False
+
+    def test_cached_negative_result_avoids_repeated_probes(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        result_ok = self._make_run_result()
+        with patch(
+            "bernstein.adapters.claude.subprocess.run", return_value=result_ok
+        ) as mock_run:
+            assert adapter.is_rate_limited() is False
+            # Immediate second call should use cache
+            assert adapter.is_rate_limited() is False
+            assert mock_run.call_count == 1
+
+    def test_cache_expires_after_ttl(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        result_ok = self._make_run_result()
+        with patch(
+            "bernstein.adapters.claude.subprocess.run", return_value=result_ok
+        ) as mock_run:
+            assert adapter.is_rate_limited() is False
+            # Expire the cache
+            adapter._rate_limit_checked_at = time.time() - _RATE_LIMIT_CACHE_TTL - 1
+            assert adapter.is_rate_limited() is False
+            assert mock_run.call_count == 2
+
+    def test_probe_timeout_allows_spawning(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        with patch(
+            "bernstein.adapters.claude.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=5),
+        ):
+            assert adapter.is_rate_limited() is False
+
+    def test_probe_file_not_found_allows_spawning(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        with patch(
+            "bernstein.adapters.claude.subprocess.run",
+            side_effect=FileNotFoundError("claude not found"),
+        ):
+            assert adapter.is_rate_limited() is False
+
+    def test_cooldown_duration_matches_constant(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        result = self._make_run_result(stderr="hit your limit")
+        before = time.time()
+        with patch("bernstein.adapters.claude.subprocess.run", return_value=result):
+            adapter.is_rate_limited()
+        assert adapter._rate_limit_until >= before + _RATE_LIMIT_COOLDOWN - 1

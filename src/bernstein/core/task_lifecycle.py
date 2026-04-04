@@ -724,6 +724,13 @@ def claim_and_spawn_batches(
         logger.debug("Skipping claim/spawn: orchestrator is shutting down")
         return
 
+    # Pre-spawn rate-limit check: avoid wasting worktree/process resources
+    # when the provider is known to be throttling requests (CRITICAL-003).
+    _adapter = getattr(getattr(orch, "_spawner", None), "_adapter", None)
+    if _adapter is not None and _adapter.is_rate_limited():
+        logger.warning("Provider rate-limited — skipping all spawns this tick")
+        return
+
     # Convergence guard: block entire spawn wave if system is overloaded.
     _cg = getattr(orch, "_convergence_guard", None)
     if _cg is not None:

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -80,6 +82,15 @@ def _resolve_env_vars(obj: Any) -> Any:
     return obj
 
 
+_logger = logging.getLogger(__name__)
+
+# How long a cached rate-limit probe result stays valid (seconds).
+_RATE_LIMIT_CACHE_TTL: float = 60.0
+
+# Cooldown applied when rate-limiting is detected (seconds).
+_RATE_LIMIT_COOLDOWN: float = 300.0
+
+
 class ClaudeCodeAdapter(CLIAdapter):
     """Spawn and monitor Claude Code CLI sessions."""
 
@@ -96,6 +107,54 @@ class ClaudeCodeAdapter(CLIAdapter):
         "docs": "Read Write Edit Grep Glob",
         "security": "Bash Read Grep Glob",
     }
+
+    def __init__(self) -> None:
+        # Timestamp until which the provider is assumed rate-limited.
+        self._rate_limit_until: float = 0.0
+        # Timestamp of last successful (non-rate-limited) probe, for caching.
+        self._rate_limit_checked_at: float = 0.0
+
+    def is_rate_limited(self) -> bool:
+        """Probe ``claude --version`` to detect provider-side rate limiting.
+
+        Returns a cached result for ``_RATE_LIMIT_CACHE_TTL`` seconds to avoid
+        spamming the CLI.  When rate limiting is detected, sets a cooldown of
+        ``_RATE_LIMIT_COOLDOWN`` seconds during which all spawns are skipped.
+        """
+        now = time.time()
+
+        # Active cooldown — provider is known rate-limited.
+        if now < self._rate_limit_until:
+            return True
+
+        # Cached negative result — recently checked and was fine.
+        if now - self._rate_limit_checked_at < _RATE_LIMIT_CACHE_TTL:
+            return False
+
+        try:
+            result = subprocess.run(
+                ["claude", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+            _logger.debug("Rate-limit probe failed: %s", exc)
+            # On probe failure, be conservative and allow spawning.
+            self._rate_limit_checked_at = now
+            return False
+
+        stderr_lower = result.stderr.lower()
+        if "hit your limit" in stderr_lower or "rate limit" in stderr_lower:
+            self._rate_limit_until = now + _RATE_LIMIT_COOLDOWN
+            _logger.warning(
+                "Claude Code rate-limited; blocking spawns for %.0fs",
+                _RATE_LIMIT_COOLDOWN,
+            )
+            return True
+
+        self._rate_limit_checked_at = now
+        return False
 
     def _build_command(
         self,

@@ -297,6 +297,17 @@ class CLIAdapter(ABC):
         """
         return False
 
+    def is_rate_limited(self) -> bool:
+        """Check if the provider is currently rate-limited.
+
+        Subclasses should override this to probe the CLI for rate-limit
+        signals before spawning.  Default returns False (no check).
+
+        Returns:
+            True if the provider is known to be rate-limited right now.
+        """
+        return False
+
     def cancel_tool_batch(self, session_id: str, batch_id: str) -> None:
         """Abort all pending tool calls in a batch.
 
