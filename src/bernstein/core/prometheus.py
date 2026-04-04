@@ -220,7 +220,7 @@ def record_transition_reason(
             task_transition_reasons_total.labels(reason=sanitized, role=role).inc()
         else:
             agent_transition_reasons_total.labels(reason=sanitized, role=role).inc()
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.debug("Failed to record transition reason metric", exc_info=True)
 
 

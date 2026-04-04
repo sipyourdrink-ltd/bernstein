@@ -46,6 +46,8 @@ docs/plans/
 
 # Coverage reports
 .coverage
+coverage.xml
+htmlcov/
 
 # Documentation and content
 docs/social/
