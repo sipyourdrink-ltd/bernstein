@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from typing_extensions import TypedDict
 
@@ -120,12 +120,13 @@ def fetch_all_tasks(
 
         # Support both paginated (dict with "tasks") and legacy (bare list) responses
         if isinstance(body, dict):
-            tasks_raw: list[dict[str, Any]] = body.get("tasks", [])
-            total: int = body.get("total", 0)
+            paginated = cast("dict[str, Any]", body)
+            tasks_raw: list[dict[str, Any]] = paginated.get("tasks", [])
+            total: int = paginated.get("total", 0)
         else:
             # Legacy: server returned a plain list (pre-pagination)
-            tasks_raw = body
-            total = len(body)
+            tasks_raw = cast("list[dict[str, Any]]", body)
+            total = len(tasks_raw)
 
         for raw in tasks_raw:
             task = Task.from_dict(raw)

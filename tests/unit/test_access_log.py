@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
@@ -80,3 +81,14 @@ async def test_access_log_preserves_request_id_and_actor(client: AsyncClient, tm
     assert entry["request_id"] == "req-abc"
     assert entry["actor"] == "authenticated"
     assert entry["tenant_id"] == "default"
+
+
+@pytest.mark.anyio
+async def test_access_log_rotation_called(client: AsyncClient, tmp_path: Path) -> None:
+    """Middleware should call rotate_log_file before each append."""
+    with patch("bernstein.core.access_log.rotate_log_file") as mock_rotate:
+        await client.get("/health")
+        mock_rotate.assert_called_once()
+        # The argument should be the access.jsonl path
+        call_path = mock_rotate.call_args[0][0]
+        assert str(call_path).endswith("access.jsonl")

@@ -290,6 +290,9 @@ class IncidentManager:
             except OSError as exc:
                 logger.warning("Failed to save incident report %s: %s", incident.id, exc)
 
+        # Clean up old incident files to prevent unbounded growth
+        cleanup_old_incidents(incidents_dir)
+
     def get_summary(self) -> dict[str, Any]:
         """Return incident summary for dashboard display."""
         by_severity: dict[str, int] = {}
@@ -304,3 +307,38 @@ class IncidentManager:
             "by_status": by_status,
             "pause_active": self._pause_requested,
         }
+
+
+_INCIDENT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60  # 7 days
+
+
+def cleanup_old_incidents(
+    incidents_dir: Path,
+    *,
+    max_age_seconds: float = _INCIDENT_MAX_AGE_SECONDS,
+) -> int:
+    """Delete incident files older than *max_age_seconds*.
+
+    Args:
+        incidents_dir: Directory containing incident ``.json`` and ``.md`` files.
+        max_age_seconds: Age threshold in seconds (default 7 days).
+
+    Returns:
+        Number of files deleted.
+    """
+    if not incidents_dir.is_dir():
+        return 0
+    cutoff = time.time() - max_age_seconds
+    deleted = 0
+    for path in list(incidents_dir.iterdir()):
+        if path.suffix not in (".json", ".md"):
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                deleted += 1
+        except OSError as exc:
+            logger.debug("Failed to remove old incident %s: %s", path.name, exc)
+    if deleted:
+        logger.info("Cleaned up %d incident files older than %d days", deleted, int(max_age_seconds / 86400))
+    return deleted

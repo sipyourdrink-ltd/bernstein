@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from bernstein.core.runtime_state import rotate_log_file
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -122,6 +124,7 @@ class StructuredAccessLogMiddleware(BaseHTTPMiddleware):
             user_agent=request.headers.get("user-agent", ""),
         )
         try:
+            rotate_log_file(self._log_path)
             with self._log_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry.to_dict(), sort_keys=True) + "\n")
         except OSError as exc:

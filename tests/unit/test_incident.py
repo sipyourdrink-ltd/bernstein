@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from typing import TYPE_CHECKING
 
 from bernstein.core.incident import (
@@ -11,6 +13,7 @@ from bernstein.core.incident import (
     IncidentSeverity,
     IncidentStatus,
     StateSnapshot,
+    cleanup_old_incidents,
 )
 
 if TYPE_CHECKING:
@@ -255,3 +258,74 @@ class TestIncidentManager:
         assert summary["by_severity"]["sev1"] == 1
         assert summary["by_status"]["open"] == 2
         assert summary["by_status"]["resolved"] == 1
+
+
+# ---------------------------------------------------------------------------
+# cleanup_old_incidents
+# ---------------------------------------------------------------------------
+
+
+class TestCleanupOldIncidents:
+    def test_deletes_old_files(self, tmp_path: Path) -> None:
+        incidents_dir = tmp_path / "incidents"
+        incidents_dir.mkdir()
+        old_json = incidents_dir / "INC-old.json"
+        old_md = incidents_dir / "INC-old.md"
+        old_json.write_text("{}")
+        old_md.write_text("# old")
+        # Set mtime to 10 days ago
+        old_ts = time.time() - 10 * 86400
+        os.utime(old_json, (old_ts, old_ts))
+        os.utime(old_md, (old_ts, old_ts))
+
+        deleted = cleanup_old_incidents(incidents_dir, max_age_seconds=7 * 86400)
+        assert deleted == 2
+        assert not old_json.exists()
+        assert not old_md.exists()
+
+    def test_keeps_recent_files(self, tmp_path: Path) -> None:
+        incidents_dir = tmp_path / "incidents"
+        incidents_dir.mkdir()
+        recent = incidents_dir / "INC-recent.json"
+        recent.write_text("{}")
+
+        deleted = cleanup_old_incidents(incidents_dir, max_age_seconds=7 * 86400)
+        assert deleted == 0
+        assert recent.exists()
+
+    def test_ignores_non_incident_files(self, tmp_path: Path) -> None:
+        incidents_dir = tmp_path / "incidents"
+        incidents_dir.mkdir()
+        other = incidents_dir / "readme.txt"
+        other.write_text("keep me")
+        old_ts = time.time() - 10 * 86400
+        os.utime(other, (old_ts, old_ts))
+
+        deleted = cleanup_old_incidents(incidents_dir, max_age_seconds=7 * 86400)
+        assert deleted == 0
+        assert other.exists()
+
+    def test_returns_zero_for_missing_dir(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nope"
+        assert cleanup_old_incidents(missing) == 0
+
+    def test_save_triggers_cleanup(self, tmp_path: Path) -> None:
+        """IncidentManager.save() should clean up old incident files."""
+        runtime_dir = tmp_path / "runtime"
+        incidents_dir = runtime_dir / "incidents"
+        incidents_dir.mkdir(parents=True)
+
+        # Pre-create an old incident file
+        old_file = incidents_dir / "INC-ancient.json"
+        old_file.write_text("{}")
+        old_ts = time.time() - 10 * 86400
+        os.utime(old_file, (old_ts, old_ts))
+
+        mgr = IncidentManager()
+        mgr.create_incident(IncidentSeverity.SEV3, "New", "new incident")
+        mgr.save(runtime_dir)
+
+        # Old file should have been cleaned up
+        assert not old_file.exists()
+        # New files should exist
+        assert len(list(incidents_dir.glob("*.json"))) == 1
