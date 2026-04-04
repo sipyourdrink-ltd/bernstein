@@ -2,7 +2,7 @@
 
 This registry maps workflow specs in `docs/workflows/` to current implementation status in the codebase.
 
-Last updated: 2026-04-03
+Last updated: 2026-04-04
 
 ---
 
@@ -22,6 +22,7 @@ Last updated: 2026-04-03
 | Release breaking-change detection | `WORKFLOW-release-breaking-change-detection.md` | Partial | CI/release process workflow |
 | Context collapse with drain retry | `WORKFLOW-context-collapse-drain-retry.md` | Draft | T493 — bounded drain retry loop for spawn prompt context overflow |
 | Permission mode hierarchy | `WORKFLOW-permission-mode-hierarchy.md` | Shipped | bypass→plan→auto→default mode hierarchy with severity relaxation + hook resolution |
+| Verification nudge | `WORKFLOW-verification-nudge.md` | Shipped | Tracks unverified task completions and alerts when threshold exceeded |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
