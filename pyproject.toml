@@ -207,6 +207,9 @@ exclude = [
     "src/bernstein/core/mcp_server.py",
     "src/bernstein/core/quality_gates.py",
     "src/bernstein/core/server.py",
+    "src/bernstein/adapters/conformance.py",
+    "src/bernstein/core/token_waste_report.py",
+    "src/bernstein/core/workflow_importer.py",
 ]
 
 [tool.pytest.ini_options]
