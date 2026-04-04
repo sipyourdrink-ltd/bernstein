@@ -58,7 +58,7 @@ class AgentLogAggregator:
         ("test_failure", re.compile(r"(?i)(FAILED|ERROR|assert.*error|test.*fail)")),
         ("tool_failure", re.compile(r"(?i)(tool.?(call|use|execution).?fail|command.?not.?found|permission.?denied)")),
         ("git_error", re.compile(r"(?i)(merge.?conflict|rebase.?fail|cannot.?lock|worktree)")),
-        ("timeout", re.compile(r"(?i)(timeout|timed?.?out|deadline.?exceeded)")),
+        ("timeout", re.compile(r"(?i)(timed?.?out|deadline.?exceeded)")),
         ("file_modified", re.compile(r"^(?:Modified|Created|Wrote|Updated):\s+\S+")),
     ]
 
@@ -68,7 +68,7 @@ class AgentLogAggregator:
     _WARNING_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"(?i)\b(warn|warning|deprecated|retrying)\b")
     _TEST_SUMMARY_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"(?i)\b\d+\s+(?:passed|failed|skipped|error)")
     _MEANINGFUL_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
-        r"(?i)(^(?:Modified|Created|Wrote|Updated):\s+\S+|pytest|uv run pytest|coverage|ruff|pyright)"
+        r"(?i)((?:^(?:Modified|Created|Wrote|Updated):\s+\S+)|pytest|uv run pytest|coverage|ruff|pyright)"
     )
 
     def __init__(self, workdir: Path) -> None:

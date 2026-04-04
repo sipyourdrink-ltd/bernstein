@@ -115,7 +115,7 @@ async def cost_events(request: Request) -> StreamingResponse:
                 if "event: heartbeat" in message:
                     yield message
         except asyncio.CancelledError:
-            return
+            raise
         finally:
             sse_bus.unsubscribe(queue)
 

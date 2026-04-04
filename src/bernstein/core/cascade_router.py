@@ -476,10 +476,7 @@ class CascadeRouter:
 
         # Savings vs. routing directly to Opus for the same tokens
         opus_direct_cost = (_AVG_TASK_TOKENS / 1_000) * _OPUS_COST_PER_1K
-        if final_model == "opus" or not succeeded:
-            saved = max(0.0, opus_direct_cost - total_cost)
-        else:
-            saved = max(0.0, opus_direct_cost - total_cost)
+        saved = max(0.0, opus_direct_cost - total_cost)
 
         return CascadeChainReport(
             chain_id=chain_id,

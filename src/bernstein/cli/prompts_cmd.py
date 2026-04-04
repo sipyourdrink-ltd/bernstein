@@ -29,7 +29,7 @@ def _sdd_dir() -> Path:
 def _templates_dir() -> Path:
     from bernstein import get_templates_dir
 
-    return get_templates_dir()
+    return get_templates_dir(Path.cwd())
 
 
 @click.group("prompts")

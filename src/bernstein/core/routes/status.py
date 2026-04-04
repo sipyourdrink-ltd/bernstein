@@ -1153,7 +1153,7 @@ async def sse_events(request: Request) -> StreamingResponse:
                 message = await queue.get()
                 yield message
         except asyncio.CancelledError:
-            return
+            raise
         finally:
             sse_bus.unsubscribe(queue)
 
