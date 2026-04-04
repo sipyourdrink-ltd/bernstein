@@ -551,55 +551,37 @@ def should_auto_decompose(
 ) -> bool:
     """Return True if a large task should be decomposed into subtasks.
 
-    Decomposition is triggered for scope=LARGE tasks that haven't been
-    queued for decomposition yet in this orchestrator session.
+    **Disabled by default.** Modern LLMs (Claude Opus/Sonnet with 1M context)
+    can handle any task scope without decomposition.  Decomposition was
+    designed for 8K-32K context models where large tasks would overflow.
+    With 1M context, even a "large" task uses <2% of the window.
 
-    Before decomposing, a :class:`~bernstein.core.complexity_advisor.ComplexityAdvisor`
-    check is performed.  If the advisor recommends single-agent mode (few,
-    tightly-coupled files), decomposition is skipped — a single agent is
-    faster and avoids coordination overhead.  Pass ``force_parallel=True``
-    (or set ``OrchestratorConfig.force_parallel``) to bypass this gate.
+    Decomposition creates more problems than it solves:
+    - Manager agent burns tokens just to plan subtasks
+    - Subtasks create coordination overhead (dependencies, merging)
+    - 5 subtasks x retry = 15 potential failures vs 1 direct attempt
+
+    Returns False unconditionally unless ``force_parallel=True``.
 
     Args:
         task: The task to check.
         decomposed_task_ids: Set of already-decomposed task IDs.
         workdir: Repository root for coupling analysis (None = skip analysis).
-        force_parallel: If True, bypass the complexity advisor.
+        force_parallel: If True, force decomposition (legacy behavior).
 
     Returns:
-        True if the task should be auto-decomposed.
+        True only when force_parallel is explicitly set.
     """
-    from bernstein.core.models import Scope
 
     # Already queued for decomposition in this session
+    # Modern LLMs handle any task scope without decomposition.
+    # Only decompose when explicitly forced via force_parallel=True.
+    if not force_parallel:
+        return False
+
     if task.id in decomposed_task_ids:
         return False
-    # Manager-created decompose tasks should never be re-decomposed
-    if task.title.startswith("[DECOMPOSE]"):
-        return False
-    # Tasks that have failed 2+ times COULD be decomposed, but only when
-    # auto_decompose is enabled in config.  This check is intentionally
-    # left here (returns False) so the caller's config gate controls it.
-    # Previously this returned True unconditionally, bypassing the config.
-    # Fresh tasks: only decompose scope=LARGE
-    if task.scope != Scope.LARGE:
-        return False
-    # Complexity advisor gate: skip decomposition if single-agent is recommended.
-    if workdir is not None and not force_parallel:
-        try:
-            from bernstein.core.complexity_advisor import ComplexityAdvisor, ComplexityMode
-
-            advice = ComplexityAdvisor().advise(task, workdir=workdir, force_parallel=False)
-            if advice.mode == ComplexityMode.SINGLE_AGENT:
-                logger.info(
-                    "Complexity advisor: single-agent mode for task %s (%s) — skipping decomposition",
-                    task.id,
-                    advice.reason,
-                )
-                return False
-        except Exception as exc:
-            logger.debug("Complexity advisor failed, proceeding with decomposition: %s", exc)
-    return True
+    return not task.title.startswith("[DECOMPOSE]")
 
 
 def create_conflict_resolution_task(
