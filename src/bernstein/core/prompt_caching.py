@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -18,6 +19,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Hard cap on the number of agent session entries tracked simultaneously.
+# When exceeded, the oldest entry is evicted FIFO to keep memory bounded.
+MAX_AGENT_CACHE_ENTRIES: int = 10
 
 
 class CacheBreakReason(Enum):
@@ -293,6 +298,93 @@ def extract_system_prefix(prompt: str) -> tuple[str, str]:
     return prefix, suffix
 
 
+@dataclass
+class AgentCacheTracker:
+    """Per-agent cache prefix state tracker with FIFO eviction.
+
+    Tracks which cache key (system prefix hash) each active agent session
+    is currently using. A hard cap of *max_entries* is enforced; when the
+    cap is exceeded the oldest entry (first inserted, first out) is evicted
+    so memory stays bounded during long-running multi-agent runs.
+
+    Eviction policy: **FIFO** — the first session registered is the first to
+    be evicted when the cap is reached.  Updating an existing session's cache
+    key does **not** change its eviction priority (it keeps its original
+    insertion position).
+
+    Attributes:
+        max_entries: Maximum number of tracked agent entries (default
+            ``MAX_AGENT_CACHE_ENTRIES`` = 10).
+    """
+
+    max_entries: int = MAX_AGENT_CACHE_ENTRIES
+    # OrderedDict preserves insertion order and supports popitem(last=False)
+    # for deterministic FIFO eviction.
+    _entries: OrderedDict[str, str] = field(
+        default_factory=OrderedDict,
+        repr=False,
+    )
+
+    def record(self, session_id: str, cache_key: str) -> str | None:
+        """Record the active cache key for a session.
+
+        If *session_id* is already tracked, its cache key is updated in-place
+        (no eviction, position unchanged).  If it is new and the tracker is at
+        capacity, the oldest session is evicted before the new one is inserted.
+
+        Args:
+            session_id: Stable agent session identifier (used elsewhere in
+                Bernstein as the worktree/agent name, e.g. ``backend-b0fde029``).
+            cache_key: SHA-256 cache key for the agent's current system prefix.
+
+        Returns:
+            The evicted *session_id* if eviction occurred, otherwise ``None``.
+        """
+        if session_id in self._entries:
+            # Update in-place — insertion order (FIFO priority) unchanged.
+            self._entries[session_id] = cache_key
+            return None
+
+        evicted: str | None = None
+        if len(self._entries) >= self.max_entries:
+            evicted, _ = self._entries.popitem(last=False)  # oldest = FIFO
+            logger.debug(
+                "AgentCacheTracker: evicted session %s (cap=%d reached)",
+                evicted,
+                self.max_entries,
+            )
+
+        self._entries[session_id] = cache_key
+        return evicted
+
+    def get(self, session_id: str) -> str | None:
+        """Return the cache key currently tracked for *session_id*, or ``None``.
+
+        Args:
+            session_id: Stable agent session identifier.
+
+        Returns:
+            Cache key string if the session is tracked, otherwise ``None``.
+        """
+        return self._entries.get(session_id)
+
+    def remove(self, session_id: str) -> None:
+        """Remove *session_id* from the tracker (e.g. when the agent exits).
+
+        A no-op if the session is not currently tracked.
+
+        Args:
+            session_id: Stable agent session identifier.
+        """
+        self._entries.pop(session_id, None)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def __contains__(self, session_id: object) -> bool:
+        return session_id in self._entries
+
+
 class PromptCachingManager:
     """Manages prompt caching: prefix extraction, deduplication, manifest persistence.
 
@@ -306,6 +398,7 @@ class PromptCachingManager:
         self._manifest_path = workdir / ".sdd" / "caching" / "manifest.jsonl"
         self._last_active_key: str | None = None
         self._expected_drops: set[str] = set()
+        self._agent_tracker: AgentCacheTracker = AgentCacheTracker()
         self._load_manifest()
 
     def mark_expected_drop(self, reason: str) -> None:
@@ -356,11 +449,22 @@ class PromptCachingManager:
             if entry.prefix_tokens == 0 and entry.system_prefix:
                 entry.prefix_tokens = _estimate_tokens(entry.system_prefix)
 
-    def process_prompt(self, prompt: str) -> PromptProcessResult:
+    def process_prompt(
+        self,
+        prompt: str,
+        session_id: str | None = None,
+    ) -> PromptProcessResult:
         """Process a prompt: extract prefix, check cache, update manifest.
+
+        When *session_id* is provided the per-agent cache tracker is updated so
+        that each active agent's current system-prefix state is recorded with
+        FIFO eviction once the cap (``MAX_AGENT_CACHE_ENTRIES``) is reached.
 
         Args:
             prompt: Full prompt string.
+            session_id: Optional stable agent session identifier.  When
+                supplied the tracker is updated; the oldest session is evicted
+                if the cap is exceeded.
 
         Returns:
             PromptProcessResult with cache key, prefix, suffix, and hit metadata.
@@ -393,6 +497,11 @@ class PromptCachingManager:
             prev_key = None
 
         self._last_active_key = cache_key
+
+        # Update per-agent tracker (FIFO eviction when cap is exceeded)
+        if session_id is not None:
+            self._agent_tracker.record(session_id, cache_key)
+
         was_expected = self._expected_drops.pop() if self._expected_drops else None
 
         return PromptProcessResult(
@@ -419,7 +528,8 @@ class PromptCachingManager:
 
         Returns:
             Dict with cache_entries, total_cached_requests, total_cached_tokens,
-            estimated_savings_usd, and manifest_path.
+            estimated_savings_usd, manifest_path, tracked_agents, and
+            max_tracked_agents.
         """
         return {
             "cache_entries": len(self._manifest.entries),
@@ -427,6 +537,8 @@ class PromptCachingManager:
             "total_cached_tokens": self._manifest.total_cached_tokens,
             "estimated_savings_usd": round(self._manifest.total_cached_tokens * CACHED_SAVINGS_PER_TOKEN, 6),
             "manifest_path": str(self._manifest_path),
+            "tracked_agents": len(self._agent_tracker),
+            "max_tracked_agents": self._agent_tracker.max_entries,
         }
 
 

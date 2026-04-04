@@ -81,8 +81,8 @@ class CachingAdapter(CLIAdapter):
         Returns:
             SpawnResult (pid=0 if cache hit, otherwise from the inner adapter).
         """
-        # 1. Prompt prefix caching (Anthropic-style)
-        cache_res = self._caching_mgr.process_prompt(prompt)
+        # 1. Prompt prefix caching (Anthropic-style) — pass session_id for per-agent tracking
+        cache_res = self._caching_mgr.process_prompt(prompt, session_id=session_id)
 
         # 2. Emit cache break event when prefix is new
         if cache_res.is_new_prefix and not cache_res.expected_drop_reason:

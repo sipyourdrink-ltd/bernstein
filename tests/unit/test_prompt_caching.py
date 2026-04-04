@@ -14,6 +14,8 @@ from bernstein.adapters.base import CLIAdapter, SpawnResult
 from bernstein.adapters.caching_adapter import CachingAdapter
 from bernstein.core.models import ModelConfig
 from bernstein.core.prompt_caching import (
+    MAX_AGENT_CACHE_ENTRIES,
+    AgentCacheTracker,
     CacheBreakEvent,
     CacheBreakReason,
     CacheEntry,
@@ -892,3 +894,172 @@ class TestBuildCacheSafeForkParams:
         )
         assert result.inherited_cache_key == expected_key
         assert result.system_prefix == system_prefix
+
+
+# ---------------------------------------------------------------------------
+# AgentCacheTracker — per-agent FIFO eviction
+# ---------------------------------------------------------------------------
+
+
+class TestAgentCacheTracker:
+    """Tests for AgentCacheTracker with FIFO eviction."""
+
+    def test_record_and_get_single_entry(self) -> None:
+        """record() stores a session; get() retrieves it."""
+        tracker = AgentCacheTracker()
+        evicted = tracker.record("agent-001", "key-abc")
+        assert evicted is None
+        assert tracker.get("agent-001") == "key-abc"
+
+    def test_len_and_contains(self) -> None:
+        """__len__ and __contains__ reflect tracker state."""
+        tracker = AgentCacheTracker()
+        assert len(tracker) == 0
+        assert "agent-001" not in tracker
+        tracker.record("agent-001", "key-abc")
+        assert len(tracker) == 1
+        assert "agent-001" in tracker
+
+    def test_update_existing_entry_no_eviction(self) -> None:
+        """Updating an existing session does not evict any entry."""
+        tracker = AgentCacheTracker(max_entries=2)
+        tracker.record("a", "key-1")
+        tracker.record("b", "key-2")
+        # Update "a" — should not evict anything
+        evicted = tracker.record("a", "key-1-updated")
+        assert evicted is None
+        assert len(tracker) == 2
+        assert tracker.get("a") == "key-1-updated"
+
+    def test_fifo_eviction_at_cap(self) -> None:
+        """When cap is exceeded, the first-inserted session is evicted."""
+        tracker = AgentCacheTracker(max_entries=3)
+        tracker.record("first", "k1")
+        tracker.record("second", "k2")
+        tracker.record("third", "k3")
+        # Adding a 4th evicts "first"
+        evicted = tracker.record("fourth", "k4")
+        assert evicted == "first"
+        assert tracker.get("first") is None
+        assert tracker.get("fourth") == "k4"
+        assert len(tracker) == 3
+
+    def test_insert_11_agents_first_is_evicted(self) -> None:
+        """Inserting 11 agents with default cap evicts the first one."""
+        tracker = AgentCacheTracker()  # default max_entries=10
+        assert tracker.max_entries == MAX_AGENT_CACHE_ENTRIES == 10
+
+        for i in range(10):
+            evicted = tracker.record(f"agent-{i:02d}", f"key-{i}")
+            assert evicted is None  # no eviction until cap is hit
+
+        assert len(tracker) == 10
+
+        # 11th agent triggers eviction of agent-00 (first inserted)
+        evicted = tracker.record("agent-10", "key-10")
+        assert evicted == "agent-00"
+        assert tracker.get("agent-00") is None
+        assert tracker.get("agent-10") == "key-10"
+        assert len(tracker) == 10
+
+    def test_fifo_order_is_deterministic(self) -> None:
+        """FIFO eviction is strictly ordered by insertion time, not update time."""
+        tracker = AgentCacheTracker(max_entries=3)
+        tracker.record("alpha", "k-a")
+        tracker.record("beta", "k-b")
+        tracker.record("gamma", "k-c")
+        # Update "alpha" — does NOT change its eviction priority
+        tracker.record("alpha", "k-a-new")
+        # Adding "delta" should evict "alpha" (still oldest by insertion)
+        evicted = tracker.record("delta", "k-d")
+        assert evicted == "alpha"
+        assert len(tracker) == 3
+
+    def test_remove_session(self) -> None:
+        """remove() drops the session; subsequent get() returns None."""
+        tracker = AgentCacheTracker()
+        tracker.record("agent-x", "key-x")
+        assert "agent-x" in tracker
+        tracker.remove("agent-x")
+        assert tracker.get("agent-x") is None
+        assert "agent-x" not in tracker
+
+    def test_remove_nonexistent_is_noop(self) -> None:
+        """remove() on an untracked session does not raise."""
+        tracker = AgentCacheTracker()
+        tracker.remove("nonexistent")  # must not raise
+
+    def test_sequential_evictions_preserve_fifo(self) -> None:
+        """Multiple insertions beyond cap evict in strictly FIFO order."""
+        tracker = AgentCacheTracker(max_entries=3)
+        for i in range(3):
+            tracker.record(f"s{i}", f"k{i}")
+
+        evicted_order = []
+        for i in range(3, 6):
+            evicted = tracker.record(f"s{i}", f"k{i}")
+            assert evicted is not None
+            evicted_order.append(evicted)
+
+        assert evicted_order == ["s0", "s1", "s2"]
+
+    def test_no_unbounded_growth_stress(self) -> None:
+        """Stress test: tracker never exceeds max_entries regardless of insertion count."""
+        tracker = AgentCacheTracker(max_entries=10)
+        for i in range(1000):
+            tracker.record(f"agent-{i}", f"key-{i}")
+            assert len(tracker) <= 10
+
+    def test_get_returns_none_for_unknown_session(self) -> None:
+        """get() returns None for sessions that were never recorded."""
+        tracker = AgentCacheTracker()
+        assert tracker.get("unknown") is None
+
+
+# ---------------------------------------------------------------------------
+# PromptCachingManager — per-agent tracker integration
+# ---------------------------------------------------------------------------
+
+
+class TestPromptCachingManagerAgentTracking:
+    """Tests for PromptCachingManager.process_prompt with session_id."""
+
+    def test_process_prompt_with_session_id_updates_tracker(self, tmp_path: Path) -> None:
+        """process_prompt with session_id records the agent's cache key."""
+        mgr = PromptCachingManager(tmp_path)
+        prompt = "You are a backend engineer.\n\n## Assigned tasks\nT1"
+        result = mgr.process_prompt(prompt, session_id="backend-abc")
+        assert mgr._agent_tracker.get("backend-abc") == result.cache_key
+
+    def test_process_prompt_without_session_id_skips_tracker(self, tmp_path: Path) -> None:
+        """process_prompt without session_id leaves tracker empty."""
+        mgr = PromptCachingManager(tmp_path)
+        mgr.process_prompt("prompt\n\n## Assigned tasks\nT1")
+        assert len(mgr._agent_tracker) == 0
+
+    def test_tracker_evicts_oldest_after_11_spawns(self, tmp_path: Path) -> None:
+        """Spawning 11 distinct sessions evicts the first one from the tracker."""
+        mgr = PromptCachingManager(tmp_path)
+        base_prompt = "## Assigned tasks\nT"
+        # Use distinct system prefixes per agent to give each a unique cache key
+        for i in range(10):
+            mgr.process_prompt(
+                f"Role {i}\n\n{base_prompt}{i}",
+                session_id=f"agent-{i:02d}",
+            )
+        assert len(mgr._agent_tracker) == 10
+
+        mgr.process_prompt("Role 10\n\n## Assigned tasks\nT10", session_id="agent-10")
+        assert len(mgr._agent_tracker) == 10
+        assert mgr._agent_tracker.get("agent-00") is None
+        assert mgr._agent_tracker.get("agent-10") is not None
+
+    def test_statistics_include_tracker_fields(self, tmp_path: Path) -> None:
+        """get_statistics() includes tracked_agents and max_tracked_agents."""
+        mgr = PromptCachingManager(tmp_path)
+        mgr.process_prompt("prompt\n\n## Assigned tasks\nT1", session_id="s1")
+        stats = mgr.get_statistics()
+        assert "tracked_agents" in stats
+        assert "max_tracked_agents" in stats
+        assert stats["tracked_agents"] == 1
+        assert stats["max_tracked_agents"] == MAX_AGENT_CACHE_ENTRIES
