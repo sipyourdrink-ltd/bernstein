@@ -64,6 +64,18 @@ class PrivacyLevel(Enum):
     MINIMAL = "minimal"
 
 
+class EventSink(Enum):
+    """Named event sinks that can be individually disabled via kill-switch config.
+
+    Attributes:
+        FILE: JSONL metric files written to ``.sdd/metrics/``.
+        PLUGIN: Plugin hook ``on_metric_record`` called on every metric point.
+    """
+
+    FILE = "file"
+    PLUGIN = "plugin"
+
+
 _STANDARD_STRIP: frozenset[str] = frozenset({"task_id", "agent_id", "session_id"})
 _MINIMAL_STRIP: frozenset[str] = frozenset({"task_id", "agent_id", "session_id", "cost_usd", "tokens_used"})
 
@@ -237,10 +249,12 @@ class MetricsCollector:
         metrics_dir: Path | None = None,
         *,
         privacy_level: PrivacyLevel = PrivacyLevel.FULL,
+        disabled_sinks: frozenset[EventSink] | None = None,
     ) -> None:
         self._metrics_dir = metrics_dir or Path.cwd() / ".sdd" / "metrics"
         self._metrics_dir.mkdir(parents=True, exist_ok=True)
         self._privacy_level = privacy_level
+        self._disabled_sinks: frozenset[EventSink] = disabled_sinks or frozenset()
 
         # In-memory tracking
         self._task_metrics: dict[str, TaskMetrics] = {}
@@ -265,6 +279,22 @@ class MetricsCollector:
     def privacy_level(self) -> PrivacyLevel:
         """Return the active analytics privacy preset."""
         return self._privacy_level
+
+    @property
+    def disabled_sinks(self) -> frozenset[EventSink]:
+        """Return the set of event sinks currently disabled via kill-switch."""
+        return self._disabled_sinks
+
+    def is_sink_enabled(self, sink: EventSink) -> bool:
+        """Return whether a specific event sink is currently enabled.
+
+        Args:
+            sink: The sink to check.
+
+        Returns:
+            True if the sink is active, False if it has been killed.
+        """
+        return sink not in self._disabled_sinks
 
     def apply_privacy_filter(self, labels: dict[str, str]) -> dict[str, str]:
         """Strip label keys that are disallowed under the active privacy preset.
@@ -851,20 +881,24 @@ class MetricsCollector:
             "labels": self.apply_privacy_filter(labels),
         }
 
-        with self._lock:
-            self._buffer.append((filepath, json.dumps(point)))
-            tenant_id = normalize_tenant_id(labels.get("tenant_id"))
-            if tenant_id != "default":
-                tenant_dir = tenant_metrics_dir(self._metrics_dir, tenant_id)
-                tenant_dir.mkdir(parents=True, exist_ok=True)
-                self._buffer.append((tenant_dir / filename, json.dumps(point)))
-            should_flush = (
-                len(self._buffer) >= self._buffer_limit or (time.time() - self._last_flush) >= self._flush_interval
-            )
+        file_disabled = EventSink.FILE in self._disabled_sinks
+        if not file_disabled:
+            with self._lock:
+                self._buffer.append((filepath, json.dumps(point)))
+                tenant_id = normalize_tenant_id(labels.get("tenant_id"))
+                if tenant_id != "default":
+                    tenant_dir = tenant_metrics_dir(self._metrics_dir, tenant_id)
+                    tenant_dir.mkdir(parents=True, exist_ok=True)
+                    self._buffer.append((tenant_dir / filename, json.dumps(point)))
+                should_flush = (
+                    len(self._buffer) >= self._buffer_limit
+                    or (time.time() - self._last_flush) >= self._flush_interval
+                )
+            if should_flush:
+                self._flush_buffer()
         # Fire plugin hook so plugins can observe/forward metrics in real time
-        self._emit_metric_hook(metric_type.value, value, labels)
-        if should_flush:
-            self._flush_buffer()
+        if EventSink.PLUGIN not in self._disabled_sinks:
+            self._emit_metric_hook(metric_type.value, value, labels)
 
     def _flush_buffer(self) -> None:
         """Batch-write all buffered metric points, grouped by file path."""
