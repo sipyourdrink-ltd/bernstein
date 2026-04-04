@@ -221,6 +221,16 @@ def main() -> None:
         },
     )
 
+    # 2b. Touch heartbeat file so the agent starts with a fresh timestamp.
+    # Without this, idle recycling can kill agents before their first
+    # stream-json event arrives (e.g. Claude Code thinking for 2+ minutes).
+    try:
+        hb_dir = Path(args.workdir) / ".sdd" / "runtime" / "heartbeats"
+        hb_dir.mkdir(parents=True, exist_ok=True)
+        (hb_dir / args.session).touch()
+    except OSError:
+        pass
+
     # 3. Spawn child process (inherits our stdout/stderr/stdin)
     try:
         child = subprocess.Popen(cmd)

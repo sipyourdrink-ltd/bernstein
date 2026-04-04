@@ -1477,8 +1477,15 @@ _IDLE_GRACE_S: float = 30.0
 #: producing heartbeats — 90s was too aggressive and caused a death spiral.
 _IDLE_HEARTBEAT_THRESHOLD_S: float = 300.0
 
-#: Aggressive idle threshold used when evolve mode is active.
-_IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S: float = 120.0
+#: Idle threshold used when evolve mode is active.
+#: Was 120s which was too aggressive — agents killed before their first
+#: stream-json event, causing a WIP-commit / resume / kill death spiral.
+_IDLE_HEARTBEAT_THRESHOLD_EVOLVE_S: float = 300.0
+
+#: Extended idle tolerance when the process is confirmed alive (PID running).
+#: Gives slow-starting models (e.g. Claude Code thinking 2-5 min before first
+#: event) extra runway before being recycled.
+_IDLE_LIVENESS_EXTENSION_S: float = 600.0
 
 
 def recycle_idle_agents(
@@ -1558,11 +1565,19 @@ def recycle_idle_agents(
         if session.task_ids and all(tid in resolved_ids for tid in session.task_ids):
             idle_reason = "task_already_resolved"
 
-        # Case 2: no heartbeat update for idle threshold
+        # Case 2: no heartbeat update for idle threshold.
+        # If the process is still alive but heartbeat is stale, use a longer
+        # threshold (600s) to tolerate slow model startup (e.g. Claude Code
+        # thinking for several minutes before emitting its first event).
         elif orch._signal_mgr.read_heartbeat(session.id) is not None:
             hb = orch._signal_mgr.read_heartbeat(session.id)
             if hb is not None and (now - hb.timestamp) >= hb_idle_s:
-                idle_reason = f"no_heartbeat_{int(hb_idle_s)}s"
+                # Process still alive → extend tolerance before recycling
+                pid = session.pid
+                if pid is not None and _is_process_alive(pid) and (now - hb.timestamp) < _IDLE_LIVENESS_EXTENSION_S:
+                    pass  # still alive, within extended window — skip
+                else:
+                    idle_reason = f"no_heartbeat_{int(hb_idle_s)}s"
 
         # Case 3: agent has no assigned tasks and the role queue is empty.
         # Handles edge cases where an agent slipped through without tasks, or

@@ -1306,6 +1306,18 @@ class AgentSpawner:
             session.finish_reason = result.finish_reason
             if result.log_path:
                 session.log_path = str(result.log_path)
+
+            # Touch heartbeat file immediately so the agent starts with a
+            # fresh timestamp — prevents idle recycling from killing agents
+            # that take a long time before emitting their first stream-json
+            # event (e.g. Claude Code thinking for 2+ minutes).
+            try:
+                hb_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
+                hb_dir.mkdir(parents=True, exist_ok=True)
+                (hb_dir / session_id).touch()
+            except OSError:
+                pass
+
         if session.status != "working":
             transition_agent(
                 session,
@@ -1433,6 +1445,15 @@ class AgentSpawner:
         session.abort_reason = result.abort_reason
         session.abort_detail = result.abort_detail
         session.finish_reason = result.finish_reason
+
+        # Touch heartbeat on resume spawn (same rationale as main spawn path)
+        try:
+            hb_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
+            hb_dir.mkdir(parents=True, exist_ok=True)
+            (hb_dir / session_id).touch()
+        except OSError:
+            pass
+
         transition_agent(session, "working", actor="spawner", reason="agent process started in worktree")
         if result.log_path:
             session.log_path = str(result.log_path)
