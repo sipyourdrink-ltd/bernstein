@@ -5692,6 +5692,9 @@ class TestRunManagerQueueReview:
 
         transport = httpx.MockTransport(handler)
         orch = self._make_orch(tmp_path, transport)
+        # Create role template so validation accepts 'frontend'
+        (tmp_path / "templates" / "roles" / "frontend").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "templates" / "roles" / "frontend" / "system_prompt.md").write_text("# Frontend\n")
 
         result = self._make_correction_result(
             [{"action": "reassign", "task_id": "t1", "new_role": "frontend", "reason": "CSS work"}]

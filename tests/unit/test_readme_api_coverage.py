@@ -101,6 +101,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "quarantine",
         "workflow",
         "gateway",
+        "templates",
         # Utilities
         "completions",
         "ideate",
