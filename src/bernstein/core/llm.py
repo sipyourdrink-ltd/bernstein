@@ -123,6 +123,16 @@ async def call_llm(
     Raises:
         RuntimeError: If the API call fails.
     """
+    # Deterministic replay: return cached response when a store is active.
+    from bernstein.core.deterministic import get_active_store
+
+    _store = get_active_store()
+    if _store is not None:
+        _replay = _store.get_replay(prompt, model)
+        if _replay is not None:
+            logger.debug("DeterministicStore: replaying cached response for model=%s", model)
+            return _replay
+
     # Claude Code CLI path — uses OAuth auth, no API key needed.
     # Runs `claude --print -p "prompt" --model model --output-format text`
     if provider == "claude":
@@ -147,7 +157,10 @@ async def call_llm(
             )
             if result.returncode != 0:
                 raise RuntimeError(f"claude CLI exited {result.returncode}: {result.stderr[:200]}")
-            return result.stdout.strip()
+            _text = result.stdout.strip()
+            if _store is not None:
+                _store.record(prompt, model, _text)
+            return _text
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError("Claude CLI timed out after 120s") from exc
         except FileNotFoundError as exc:
@@ -173,7 +186,10 @@ async def call_llm(
 
         choice = response.choices[0]
         content = choice.message.content
-        return content if content is not None else ""
+        _result = content if content is not None else ""
+        if _store is not None:
+            _store.record(prompt, model, _result)
+        return _result
 
     except Exception as exc:
         logger.error("Native LLM call failed provider=%s, error=%s", provider, exc)

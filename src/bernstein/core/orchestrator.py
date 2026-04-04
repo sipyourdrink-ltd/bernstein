@@ -3490,6 +3490,41 @@ if __name__ == "__main__":
             ],
         )
 
+    # Apply deterministic random seed if requested via env var.
+    _deterministic_seed_env = os.environ.get("BERNSTEIN_DETERMINISTIC_SEED", "").strip()
+    if _deterministic_seed_env:
+        import random
+
+        try:
+            _seed_int = int(_deterministic_seed_env)
+            random.seed(_seed_int)
+            logger.info("Deterministic mode: random.seed(%d)", _seed_int)
+        except ValueError:
+            logger.warning("Invalid BERNSTEIN_DETERMINISTIC_SEED=%r, ignoring", _deterministic_seed_env)
+
+    # Set up deterministic LLM response store (recording or replay mode).
+    _replay_run_id = os.environ.get("BERNSTEIN_REPLAY_RUN_ID", "").strip()
+    _sdd_dir = workdir / ".sdd"
+    if _replay_run_id:
+        from bernstein.core.deterministic import DeterministicStore, set_active_store
+
+        _det_store = DeterministicStore(
+            _sdd_dir / "runs" / _replay_run_id,
+            replay=True,
+        )
+        set_active_store(_det_store)
+        logger.info(
+            "Deterministic replay mode: loaded %d cached LLM responses from run %s",
+            _det_store.cached_count,
+            _replay_run_id,
+        )
+    elif _deterministic_seed_env:
+        # Recording mode: capture LLM responses so this run can be replayed later.
+        # The run_id is not known yet here; we set it once Orchestrator.__init__ runs.
+        # We create a placeholder store using a temp dir keyed by the seed value;
+        # the real store is set after the orchestrator assigns its run_id below.
+        pass  # store will be set after orchestrator is instantiated
+
     try:
         # Try to load adapter from seed if available
         adapter_name = args.adapter
@@ -3826,8 +3861,31 @@ if __name__ == "__main__":
 
             signal.signal(signal.SIGINT, _signal_handler)
             signal.signal(signal.SIGTERM, _signal_handler)
+
+            # Activate recording store once we know the orchestrator's run_id.
+            if _deterministic_seed_env and not _replay_run_id:
+                from bernstein.core.deterministic import DeterministicStore, set_active_store
+
+                _rec_store = DeterministicStore(
+                    _sdd_dir / "runs" / orchestrator._run_id,
+                    replay=False,
+                )
+                set_active_store(_rec_store)
+                logger.info(
+                    "Deterministic recording mode: LLM calls will be saved to %s",
+                    _rec_store.calls_path,
+                )
+
+            _profile_enabled = os.environ.get("BERNSTEIN_PROFILE", "").strip() in ("1", "true")
             try:
-                orchestrator.run()
+                if _profile_enabled:
+                    from bernstein.core.profiler import ProfilerSession, resolve_profile_output_dir
+
+                    _prof_dir = resolve_profile_output_dir(workdir)
+                    with ProfilerSession(_prof_dir):
+                        orchestrator.run()
+                else:
+                    orchestrator.run()
             finally:
                 if mcp_manager is not None:
                     mcp_manager.stop_all()
