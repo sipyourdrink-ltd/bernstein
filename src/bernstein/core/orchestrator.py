@@ -78,6 +78,7 @@ from bernstein.core.models import (
     TestAgentConfig,
 )
 from bernstein.core.notifications import NotificationManager, NotificationPayload, NotificationTarget
+from bernstein.core.quality_gate_coalescer import QualityGateCoalescer
 from bernstein.core.quarantine import QuarantineStore
 from bernstein.core.quota_poller import QuotaPoller
 from bernstein.core.rate_limit_tracker import RateLimitTracker
@@ -262,6 +263,7 @@ class Orchestrator:
         self._notifier: NotificationManager | None = notifier
         self._cluster_config = cluster_config
         self._quality_gate_config: QualityGatesConfig | None = quality_gate_config
+        self._gate_coalescer: QualityGateCoalescer = QualityGateCoalescer()
         self._formal_verification_config: Any | None = formal_verification_config
         _headers: dict[str, str] = {}
         if config.auth_token:

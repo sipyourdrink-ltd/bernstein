@@ -39,7 +39,6 @@ from bernstein.core.models import (
     AgentSession,
     Task,
 )
-from bernstein.core.quality_gates import run_quality_gates
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
@@ -1436,7 +1435,7 @@ def process_completed_tasks(
             if janitor_passed and _qg_config is not None:
                 _worktree_for_gates = orch._spawner.get_worktree_path(session.id)
                 _gate_run_dir = _worktree_for_gates if _worktree_for_gates is not None else orch._workdir
-                _qg_result = run_quality_gates(task, _gate_run_dir, orch._workdir, _qg_config)
+                _qg_result = orch._gate_coalescer.run(task, _gate_run_dir, orch._workdir, _qg_config)
                 if not _qg_result.passed:
                     janitor_passed = False
                     _qg_failed = [
