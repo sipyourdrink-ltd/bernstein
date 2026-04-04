@@ -198,7 +198,11 @@ async def run_janitor(
         # Run pre-merge guardrails on the agent's diff
         diff = _get_git_diff(task, workdir)
         guardrail_results: list[GuardrailResult] = run_guardrails(
-            diff, task, _guardrails, workdir, bypass_enabled=_bypass_guardrails,
+            diff,
+            task,
+            _guardrails,
+            workdir,
+            bypass_enabled=_bypass_guardrails,
         )
 
         # Hard-blocked guardrails (e.g. secrets detected) prevent merge

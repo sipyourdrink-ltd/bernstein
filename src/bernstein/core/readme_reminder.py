@@ -159,9 +159,7 @@ def _extract_option_name(line: str) -> str:
 # Reminder message
 # ---------------------------------------------------------------------------
 
-_REMINDER_HEADER: Final = (
-    "README update required — the following public API additions were detected:"
-)
+_REMINDER_HEADER: Final = "README update required — the following public API additions were detected:"
 
 
 def remind_message(changes: list[APIChange]) -> str:
