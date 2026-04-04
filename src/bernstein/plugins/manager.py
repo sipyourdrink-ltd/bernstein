@@ -1079,9 +1079,20 @@ class PluginManager:
             )
 
         # Each subsystem is isolated: a failure in one does not cascade.
-        self.discover_entry_points()
-        self._load_command_hooks_subsystem(root)
-        self._load_config_plugins_subsystem(root)
+        try:
+            self.discover_entry_points()
+        except Exception as exc:
+            log.warning("Entry-point plugin discovery failed: %s", exc)
+
+        try:
+            self._load_command_hooks_subsystem(root)
+        except Exception as exc:
+            log.warning("Command hooks subsystem failed: %s", exc)
+
+        try:
+            self._load_config_plugins_subsystem(root)
+        except Exception as exc:
+            log.warning("Config plugins subsystem failed: %s", exc)
 
     def register(self, plugin: object, name: str, *, enforce_policy: bool = False) -> None:
         """Register a plugin instance directly (useful in tests and scripts).
