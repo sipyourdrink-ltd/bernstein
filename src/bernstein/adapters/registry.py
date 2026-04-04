@@ -11,6 +11,8 @@ from bernstein.adapters.amp import AmpAdapter
 from bernstein.adapters.base import CLIAdapter
 from bernstein.adapters.claude import ClaudeCodeAdapter
 from bernstein.adapters.codex import CodexAdapter
+from bernstein.adapters.cody import CodyAdapter
+from bernstein.adapters.continue_dev import ContinueDevAdapter
 from bernstein.adapters.cursor import CursorAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
@@ -22,6 +24,7 @@ from bernstein.adapters.ollama import OllamaAdapter
 from bernstein.adapters.opencode import OpenCodeAdapter
 from bernstein.adapters.qwen import QwenAdapter
 from bernstein.adapters.roo_code import RooCodeAdapter
+from bernstein.adapters.tabby import TabbyAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +32,9 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "amp": AmpAdapter,
     "aider": AiderAdapter,
     "claude": ClaudeCodeAdapter,
+    "cody": CodyAdapter,
     "codex": CodexAdapter,
+    "continue": ContinueDevAdapter,
     "cursor": CursorAdapter,
     "gemini": GeminiAdapter,
     "goose": GooseAdapter,
@@ -40,6 +45,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "opencode": OpenCodeAdapter,
     "qwen": QwenAdapter,
     "roo-code": RooCodeAdapter,
+    "tabby": TabbyAdapter,
 }
 
 _entrypoints_loaded = False
@@ -71,7 +77,7 @@ def _load_entrypoint_adapters() -> None:
 
 
 def get_adapter(cli_name: str) -> CLIAdapter:
-    """Get adapter by name: 'aider', 'claude', 'codex', 'gemini', 'kilo', 'qwen', or 'generic'.
+    """Get adapter by name, e.g. 'aider', 'claude', 'cody', 'codex', 'continue', 'gemini', 'tabby', or 'generic'.
 
     For 'generic', returns a GenericAdapter with default settings.
     For known adapters, instantiates the corresponding class.
