@@ -18,6 +18,12 @@ from typing import Any, ClassVar, cast
 
 import pluggy
 
+from bernstein.core.plugin_policy import (
+    PluginPolicy,
+    PluginPolicyViolation,
+    check_plugin_allowed,
+    load_plugin_policy,
+)
 from bernstein.core.workspace import is_workspace_trusted
 from bernstein.plugins import hookimpl
 from bernstein.plugins.hookspecs import (
@@ -33,6 +39,7 @@ __all__ = [
     "SLOW_HOOK_THRESHOLD",
     "HookBlockingError",
     "PluginManager",
+    "PluginPolicyViolation",
     "get_plugin_manager",
 ]
 
@@ -531,6 +538,9 @@ class PluginManager:
         self._pm.add_hookspecs(BernsteinSpec)
         self._registered_names: list[str] = []
         self._workdir = workdir
+        # Enterprise plugin policy (allowlist/blocklist). Loaded from
+        # .bernstein/plugins-policy.yaml in load_from_workdir().
+        self._policy: PluginPolicy = PluginPolicy()
         # Use a small pool for background hooks.
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="BernsteinPluginHook")
         # Shared dedup registry for hook scripts across all CommandHook instances (T455).
@@ -901,6 +911,7 @@ class PluginManager:
         eps = entry_points(group="bernstein.plugins")
         for ep in eps:
             try:
+                check_plugin_allowed(ep.name, self._policy)
                 plugin = ep.load()
                 # Entry points may point to a class or an instance; instantiate if needed.
                 if isinstance(plugin, type):
@@ -909,6 +920,8 @@ class PluginManager:
                 self._pm.register(plugin, name=name)
                 self._registered_names.append(name)
                 log.debug("Loaded entry-point plugin %r from %s", name, ep.value)
+            except PluginPolicyViolation as exc:
+                log.warning("Plugin %r blocked by enterprise policy: %s", ep.name, exc.reason)
             except Exception as exc:
                 warnings.warn(
                     f"Failed to load bernstein plugin {ep.name!r} ({ep.value}): {exc}",
@@ -926,7 +939,10 @@ class PluginManager:
             config_plugins: List of import-path strings from the config file.
         """
         for spec in config_plugins:
+            # Use the short name (after the last dot/colon) for policy checks.
+            policy_name = spec.rsplit(":", 1)[-1].rsplit(".", 1)[-1] if (":" in spec or "." in spec) else spec
             try:
+                check_plugin_allowed(policy_name, self._policy)
                 if ":" in spec:
                     module_path, attr = spec.rsplit(":", 1)
                     mod = importlib.import_module(module_path)
@@ -940,6 +956,8 @@ class PluginManager:
                 self._pm.register(plugin, name=name)
                 self._registered_names.append(name)
                 log.debug("Loaded config plugin %r", name)
+            except PluginPolicyViolation as exc:
+                log.warning("Plugin %r blocked by enterprise policy: %s", spec, exc.reason)
             except Exception as exc:
                 warnings.warn(
                     f"Failed to load bernstein config plugin {spec!r}: {exc}",
@@ -957,9 +975,19 @@ class PluginManager:
         Args:
             workdir: Project root directory.  Defaults to ``Path.cwd()``.
         """
-        self.discover_entry_points()
-
         root = workdir or Path.cwd()
+
+        # Load enterprise plugin policy before any plugin registration.
+        self._policy = load_plugin_policy(root)
+        if not self._policy.is_empty:
+            log.debug(
+                "Enterprise plugin policy active: %d allowed, %d blocked, %d managed",
+                len(self._policy.allowlist),
+                len(self._policy.blocklist),
+                len(self._policy.managed),
+            )
+
+        self.discover_entry_points()
 
         # Load command hooks from .bernstein/hooks
         hooks_dir = root / ".bernstein" / "hooks"
@@ -982,13 +1010,22 @@ class PluginManager:
             except Exception as exc:
                 log.warning("Could not read plugins from bernstein.yaml: %s", exc)
 
-    def register(self, plugin: object, name: str) -> None:
+    def register(self, plugin: object, name: str, *, enforce_policy: bool = False) -> None:
         """Register a plugin instance directly (useful in tests and scripts).
 
         Args:
             plugin: Any object with ``@hookimpl``-decorated methods.
             name: Unique name for this plugin instance.
+            enforce_policy: If True, the enterprise allowlist/blocklist is
+                checked before registration (default: False, so internal
+                registrations and test helpers are not gated).
+
+        Raises:
+            PluginPolicyViolation: When *enforce_policy* is True and the
+                plugin name is rejected by the active policy.
         """
+        if enforce_policy:
+            check_plugin_allowed(name, self._policy)
         self._pm.register(plugin, name=name)
         self._registered_names.append(name)
 
