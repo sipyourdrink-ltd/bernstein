@@ -109,7 +109,7 @@ class TestTruncateSections:
         result, steps = _truncate_sections(sections, budget=100)
         assert len(steps) >= 1
         _, content = result[0]
-        assert "truncated" in content.lower() or "truncat" in content.lower()
+        assert "truncated" in content.lower() or "truncate" in content.lower()
 
 
 # ---------------------------------------------------------------------------
