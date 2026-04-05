@@ -11,10 +11,12 @@ server.
 
 from __future__ import annotations
 
+import json
 import logging
 import socket
 import threading
 import time
+from pathlib import Path  # noqa: TC003 — used at runtime in _load_persisted/_save
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -33,20 +35,72 @@ logger = logging.getLogger(__name__)
 
 
 class NodeRegistry:
-    """In-memory registry of cluster nodes.
+    """Registry of cluster nodes with optional disk persistence.
 
     Thread-safe via the caller holding the FastAPI request lifecycle
-    (single async event loop). For multi-process deployments, this
-    would need to be backed by a shared store.
+    (single async event loop). When ``persist_path`` is provided, the
+    registry survives server restarts (nodes are loaded as OFFLINE and
+    transition to ONLINE on first heartbeat).
     """
 
-    def __init__(self, config: ClusterConfig) -> None:
+    def __init__(self, config: ClusterConfig, persist_path: Path | None = None) -> None:
         self._nodes: dict[str, NodeInfo] = {}
         self._config = config
+        self._persist_path = persist_path
+        if persist_path is not None:
+            self._load_persisted()
 
     @property
     def config(self) -> ClusterConfig:
         return self._config
+
+    def _load_persisted(self) -> None:
+        """Load nodes from disk, marking all as OFFLINE until heartbeat."""
+        if self._persist_path is None or not self._persist_path.exists():
+            return
+        try:
+            data = json.loads(self._persist_path.read_text())
+            for entry in data:
+                node = NodeInfo(
+                    id=entry["id"],
+                    name=entry.get("name", ""),
+                    url=entry.get("url", ""),
+                    capacity=NodeCapacity(
+                        max_agents=entry.get("max_agents", 6),
+                        supported_models=entry.get("supported_models", ["sonnet", "opus", "haiku"]),
+                    ),
+                    status=NodeStatus.OFFLINE,  # Always start offline
+                    last_heartbeat=0.0,
+                    registered_at=entry.get("registered_at", 0.0),
+                    labels=entry.get("labels", {}),
+                    cell_ids=entry.get("cell_ids", []),
+                )
+                self._nodes[node.id] = node
+            logger.info("Loaded %d persisted nodes (all marked OFFLINE)", len(self._nodes))
+        except Exception as exc:
+            logger.warning("Failed to load persisted nodes: %s", exc)
+
+    def _save(self) -> None:
+        """Persist current node registry to disk."""
+        if self._persist_path is None:
+            return
+        try:
+            data = []
+            for node in self._nodes.values():
+                data.append({
+                    "id": node.id,
+                    "name": node.name,
+                    "url": node.url,
+                    "max_agents": node.capacity.max_agents,
+                    "supported_models": node.capacity.supported_models,
+                    "registered_at": node.registered_at,
+                    "labels": node.labels,
+                    "cell_ids": node.cell_ids,
+                })
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            self._persist_path.write_text(json.dumps(data, indent=2))
+        except Exception as exc:
+            logger.warning("Failed to persist node registry: %s", exc)
 
     def register(self, node: NodeInfo) -> NodeInfo:
         """Register or re-register a node.
@@ -64,6 +118,7 @@ class NodeRegistry:
             existing.labels = node.labels or existing.labels
             existing.cell_ids = node.cell_ids or existing.cell_ids
             logger.info("Re-registered node %s (%s)", node.id, node.name)
+            self._save()
             return existing
 
         node.registered_at = time.time()
@@ -71,6 +126,7 @@ class NodeRegistry:
         node.status = NodeStatus.ONLINE
         self._nodes[node.id] = node
         logger.info("Registered new node %s (%s) at %s", node.id, node.name, node.url)
+        self._save()
         return node
 
     def heartbeat(self, node_id: str, capacity: NodeCapacity | None = None) -> NodeInfo | None:
@@ -79,14 +135,51 @@ class NodeRegistry:
         if node is None:
             return None
         node.last_heartbeat = time.time()
-        node.status = NodeStatus.ONLINE
+        # Don't override CORDONED/DRAINING status
+        if node.status == NodeStatus.OFFLINE:
+            node.status = NodeStatus.ONLINE
+            self._save()
         if capacity is not None:
             node.capacity = capacity
         return node
 
     def unregister(self, node_id: str) -> bool:
         """Remove a node from the registry."""
-        return self._nodes.pop(node_id, None) is not None
+        removed = self._nodes.pop(node_id, None) is not None
+        if removed:
+            self._save()
+        return removed
+
+    def cordon(self, node_id: str) -> NodeInfo | None:
+        """Cordon a node -- exclude from scheduling but keep accepting heartbeats."""
+        node = self._nodes.get(node_id)
+        if node is None:
+            return None
+        node.status = NodeStatus.CORDONED
+        logger.info("Cordoned node %s (%s)", node.id, node.name)
+        self._save()
+        return node
+
+    def uncordon(self, node_id: str) -> NodeInfo | None:
+        """Uncordon a node -- resume accepting tasks."""
+        node = self._nodes.get(node_id)
+        if node is None:
+            return None
+        if node.status in (NodeStatus.CORDONED, NodeStatus.DRAINING):
+            node.status = NodeStatus.ONLINE
+            logger.info("Uncordoned node %s (%s)", node.id, node.name)
+            self._save()
+        return node
+
+    def start_drain(self, node_id: str) -> NodeInfo | None:
+        """Start draining a node -- cordon + mark as draining."""
+        node = self._nodes.get(node_id)
+        if node is None:
+            return None
+        node.status = NodeStatus.DRAINING
+        logger.info("Started draining node %s (%s)", node.id, node.name)
+        self._save()
+        return node
 
     def get(self, node_id: str) -> NodeInfo | None:
         """Look up a node by ID."""

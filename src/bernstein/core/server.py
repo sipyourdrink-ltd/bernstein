@@ -999,7 +999,12 @@ def create_app(
 
     # Cluster setup
     effective_cluster = cluster_config or ClusterConfig()
-    node_registry = NodeRegistry(effective_cluster)
+    # Persist node registry alongside the task store when inside .sdd/
+    _runtime_dir = jsonl_path.parent
+    _nodes_persist: Path | None = None
+    if _runtime_dir.name == "runtime" and _runtime_dir.parent.name == ".sdd":
+        _nodes_persist = _runtime_dir / "nodes.json"
+    node_registry = NodeRegistry(effective_cluster, persist_path=_nodes_persist)
 
     store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
     sse_bus = SSEBus()

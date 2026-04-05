@@ -367,6 +367,7 @@ class TestRetryEscalation:
             model="sonnet",
             effort="max",
         )
+        task.retry_count = 1
         retried: set[str] = set()
         client = MagicMock(spec=httpx.Client)
         resp = MagicMock()
@@ -394,6 +395,8 @@ class TestRetryEscalation:
             title="[RETRY 2] Fix bug",
             status="failed",
         )
+        task.retry_count = 2
+        task.max_retries = 2
         retried: set[str] = set()
         quarantine = MagicMock()
 

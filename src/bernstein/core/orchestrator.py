@@ -982,7 +982,13 @@ class Orchestrator:
         # dependency filter here for "open" tasks.
         done_tasks = tasks_by_status["done"]
         done_ids = {t.id for t in done_tasks}
-        open_tasks = [t for t in tasks_by_status["open"] if all(dep in done_ids for dep in t.depends_on)]
+        now = time.time()
+        open_tasks = [
+            t for t in tasks_by_status["open"]
+            if all(dep in done_ids for dep in t.depends_on)
+            # Skip tasks with future created_at (retry backoff)
+            and t.created_at <= now
+        ]
         result.open_tasks = len(open_tasks)
 
         # 1b. Hold back tasks blocked by unresolved high-severity pivots

@@ -258,13 +258,10 @@ def maybe_retry_task(
     if task.id in retried_task_ids:
         return False
 
-    # Determine current retry count from title prefix [RETRY N]
-    retry_count = 0
-    m = re.match(r"^\[RETRY (\d+)\] ", task.title)
-    if m:
-        retry_count = int(m.group(1))
+    # Use first-class retry_count field (source of truth)
+    retry_count = task.retry_count
 
-    if retry_count >= max_task_retries:
+    if retry_count >= task.max_retries:
         base_title = re.sub(r"^\[RETRY \d+\] ", "", task.title)
         quarantine.record_failure(base_title, "Max retries exhausted")
         logger.warning(
@@ -276,6 +273,10 @@ def maybe_retry_task(
 
     next_retry = retry_count + 1
 
+    # Exponential backoff: base_delay * 2^retry_count, capped at 5 minutes
+    base_delay = task.retry_delay_s if task.retry_delay_s > 0 else 30.0
+    backoff_delay = min(base_delay * (2 ** retry_count), 300.0)
+
     current_model = task.model or "sonnet"
     current_effort = task.effort or "high"
 
@@ -284,9 +285,31 @@ def maybe_retry_task(
 
     from bernstein.core.models import Scope as _Scope
 
+    # Terminal-reason-aware retry strategy
+    terminal_reason = task.terminal_reason
+    if terminal_reason == "error_max_turns":
+        # Agent ran out of turns -- increase turns, keep model
+        new_model = current_model
+        new_effort = current_effort
+        # Signal to adapter: next attempt needs more turns
+        # (handled via meta_messages or effort escalation)
+        if current_effort != "max":
+            idx = effort_ladder.index(current_effort) if current_effort in effort_ladder else 2
+            new_effort = effort_ladder[min(idx + 1, len(effort_ladder) - 1)]
+    elif terminal_reason == "error_max_budget_usd":
+        # Agent exhausted dollar budget -- increase budget, keep model
+        new_model = current_model
+        new_effort = "max"  # Max effort gets highest budget
+    elif terminal_reason == "model_error":
+        # Transient API error -- retry same config
+        new_model = current_model
+        new_effort = current_effort
+    elif terminal_reason == "blocking_limit":
+        # Context window exhausted -- need a model with larger context
+        new_model = "opus"
+        new_effort = "max"
     # High-stakes roles/scopes always get opus/max on any retry
-    _high_stakes_roles = ("architect", "security")
-    if task.scope == _Scope.LARGE or task.role in _high_stakes_roles:
+    elif task.scope == _Scope.LARGE or task.role in ("architect", "security"):
         new_model = "opus"
         new_effort = "max"
     elif task.deadline is not None and time.time() > task.deadline:
@@ -309,6 +332,7 @@ def maybe_retry_task(
         new_model = model_ladder[min(model_idx + 1, len(model_ladder) - 1)]
         new_effort = "high"
 
+    # Strip any legacy [RETRY N] prefix from title
     base_title = re.sub(r"^\[RETRY \d+\] ", "", task.title)
     new_title = f"[RETRY {next_retry}] {base_title}"
     failure_context = ""
@@ -349,6 +373,11 @@ def maybe_retry_task(
         "model": new_model,
         "effort": new_effort,
         "deadline": task.deadline,
+        "retry_count": next_retry,
+        "max_retries": task.max_retries,
+        "created_at": time.time() + backoff_delay,
+        "retry_delay_s": base_delay,
+        "terminal_reason": None,
     }
 
     try:

@@ -7,11 +7,27 @@ Usage:
     >>> cfg = validate_poll_config({"poll_interval_ms": 5000, "heartbeat_interval_ms": 30000})
     >>> cfg.poll_interval_ms
     5000
+
+Sleep detection
+---------------
+:class:`SleepDetector` tracks the wall-clock gap between consecutive poll ticks.
+When the measured gap exceeds ``2 x poll_interval_ms`` the system was likely
+suspended (laptop lid closed, VM paused, etc.).  Call :meth:`SleepDetector.tick`
+on each poll iteration; it returns ``True`` on the tick that follows a sleep.
+
+    >>> detector = SleepDetector(poll_interval_ms=5_000)
+    >>> detector.tick(now_ms=0)       # first tick — no prior reference
+    False
+    >>> detector.tick(now_ms=5_100)   # normal gap — no sleep
+    False
+    >>> detector.tick(now_ms=25_000)  # gap > 2 x 5000 ms — sleep detected
+    True
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 # ---------------------------------------------------------------------------
 # Safety bounds
@@ -163,3 +179,72 @@ def validate_poll_config(raw: dict[str, object]) -> PollConfig:
         heartbeat_interval_ms=heartbeat_interval_ms,
         watchdog_interval_ms=watchdog_interval_ms,
     )
+
+
+# ---------------------------------------------------------------------------
+# Sleep detection
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SleepDetector:
+    """Detect host sleep/wake by comparing elapsed wall-clock time to the poll interval.
+
+    The detector is initialised with the configured ``poll_interval_ms``.  On
+    each poll iteration call :meth:`tick` (optionally passing the current
+    monotonic time in milliseconds).  If the gap since the previous tick is
+    greater than ``2 x poll_interval_ms`` the host was likely suspended and
+    ``tick`` returns ``True``.
+
+    The factor of **2** gives a comfortable margin for jitter and scheduler
+    delays without triggering spurious detections under normal load.
+
+    Attributes:
+        poll_interval_ms: Expected interval between ticks (ms). Must be ≥ 1.
+        _last_tick_ms: Internal wall-clock timestamp of the previous tick (ms),
+            or ``None`` when no tick has been recorded yet.
+
+    Example::
+
+        detector = SleepDetector(poll_interval_ms=5_000)
+        while True:
+            if detector.tick():
+                handle_wake_after_sleep()
+            await asyncio.sleep(5)
+    """
+
+    poll_interval_ms: int
+    _last_tick_ms: float | None = field(default=None, repr=False)
+
+    def tick(self, now_ms: float | None = None) -> bool:
+        """Record a poll tick and detect sleep.
+
+        Args:
+            now_ms: Current time in milliseconds.  Defaults to
+                ``time.monotonic() * 1000`` when ``None``.  Passing an explicit
+                value is useful in tests to simulate arbitrary time jumps.
+
+        Returns:
+            ``True`` if the elapsed time since the previous tick exceeds
+            ``2 x poll_interval_ms`` (sleep detected), ``False`` otherwise.
+            Always returns ``False`` on the very first call (no prior reference).
+        """
+        if now_ms is None:
+            now_ms = time.monotonic() * 1000.0
+
+        prev = self._last_tick_ms
+        self._last_tick_ms = now_ms
+
+        if prev is None:
+            return False  # first tick — no reference point yet
+
+        elapsed_ms = now_ms - prev
+        return elapsed_ms > 2 * self.poll_interval_ms
+
+    def reset(self) -> None:
+        """Clear the internal reference timestamp.
+
+        After a reset the next :meth:`tick` call is treated as the first tick
+        (no sleep detection until a second tick follows).
+        """
+        self._last_tick_ms = None

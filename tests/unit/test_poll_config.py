@@ -133,3 +133,86 @@ def test_error_message_mentions_field_names() -> None:
     with pytest.raises(PollConfigValidationError) as exc_info:
         validate_poll_config({"poll_interval_ms": 99, "heartbeat_interval_ms": 5_000})
     assert "poll_interval_ms" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# SleepDetector tests
+# ---------------------------------------------------------------------------
+
+from bernstein.core.poll_config import SleepDetector
+
+
+class TestSleepDetector:
+    def test_first_tick_never_detects_sleep(self) -> None:
+        """First tick has no previous reference — cannot detect sleep."""
+        detector = SleepDetector(poll_interval_ms=5_000)
+        assert detector.tick(now_ms=0) is False
+
+    def test_normal_interval_no_sleep(self) -> None:
+        """A gap equal to poll_interval_ms is normal — no sleep detected."""
+        detector = SleepDetector(poll_interval_ms=5_000)
+        detector.tick(now_ms=0)
+        assert detector.tick(now_ms=5_000) is False
+
+    def test_slightly_over_interval_no_sleep(self) -> None:
+        """A gap of 1.9x is still below the 2x threshold."""
+        detector = SleepDetector(poll_interval_ms=5_000)
+        detector.tick(now_ms=0)
+        assert detector.tick(now_ms=9_500) is False  # 1.9 × 5 000 ms
+
+    def test_exactly_2x_threshold_not_sleep(self) -> None:
+        """A gap of exactly 2x is at the boundary — not detected as sleep."""
+        detector = SleepDetector(poll_interval_ms=5_000)
+        detector.tick(now_ms=0)
+        assert detector.tick(now_ms=10_000) is False  # == 2 × 5 000 ms, not >
+
+    def test_gap_just_above_2x_detects_sleep(self) -> None:
+        """A gap of 2x + 1 ms crosses the threshold — sleep detected."""
+        detector = SleepDetector(poll_interval_ms=5_000)
+        detector.tick(now_ms=0)
+        assert detector.tick(now_ms=10_001) is True  # > 2 × 5 000 ms
+
+    def test_large_gap_simulates_sleep(self) -> None:
+        """A gap of minutes is clearly a sleep/wake cycle."""
+        detector = SleepDetector(poll_interval_ms=5_000)
+        detector.tick(now_ms=0)
+        # Simulate 30-second sleep (30_000 ms >> 2 × 5_000 ms)
+        assert detector.tick(now_ms=30_000) is True
+
+    def test_sleep_detection_resets_after_tick(self) -> None:
+        """After a sleep-detected tick, the next normal tick is not a sleep."""
+        detector = SleepDetector(poll_interval_ms=5_000)
+        detector.tick(now_ms=0)
+        detector.tick(now_ms=30_000)  # sleep detected here
+        # Normal interval after wake
+        assert detector.tick(now_ms=35_000) is False
+
+    def test_multiple_normal_ticks_no_sleep(self) -> None:
+        """A sequence of normal-interval ticks never triggers sleep detection."""
+        detector = SleepDetector(poll_interval_ms=1_000)
+        now = 0.0
+        for _ in range(10):
+            result = detector.tick(now_ms=now)
+            now += 1_000.0
+        assert result is False
+
+    def test_reset_clears_reference(self) -> None:
+        """After reset(), the next tick is treated as the first (no detection)."""
+        detector = SleepDetector(poll_interval_ms=5_000)
+        detector.tick(now_ms=0)
+        detector.reset()
+        # This would have been a sleep if reset hadn't cleared state.
+        assert detector.tick(now_ms=30_000) is False
+
+    def test_default_now_uses_monotonic(self) -> None:
+        """tick() without explicit now_ms uses time.monotonic() — should not raise."""
+        detector = SleepDetector(poll_interval_ms=5_000)
+        result = detector.tick()
+        assert isinstance(result, bool)
+
+    def test_short_poll_interval(self) -> None:
+        """Detector works with very short poll intervals (edge case)."""
+        detector = SleepDetector(poll_interval_ms=100)
+        detector.tick(now_ms=0)
+        assert detector.tick(now_ms=150) is False   # 1.5 × 100 — normal
+        assert detector.tick(now_ms=550) is True    # > 2 × 100 from 150 — sleep

@@ -1136,6 +1136,37 @@ async def unregister_node(node_id: str, request: Request) -> Response:
     return Response(status_code=204)
 
 
+@router.post("/cluster/nodes/{node_id}/cordon")
+async def cordon_node(node_id: str, request: Request) -> dict[str, str]:
+    """Cordon a node -- exclude from scheduling."""
+    registry = _get_node_registry(request)
+    node = registry.cordon(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+    return {"status": "cordoned", "node_id": node_id}
+
+
+@router.post("/cluster/nodes/{node_id}/uncordon")
+async def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
+    """Uncordon a node -- resume accepting tasks."""
+    registry = _get_node_registry(request)
+    node = registry.uncordon(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+    return {"status": "uncordoned", "node_id": node_id}
+
+
+@router.post("/cluster/nodes/{node_id}/drain")
+async def drain_node(node_id: str, request: Request) -> dict[str, str]:
+    """Start draining a node -- cordon + signal agents to finish."""
+    registry = _get_node_registry(request)
+    node = registry.start_drain(node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+    return {"status": "draining", "node_id": node_id}
+
+
+
 @router.get("/cluster/nodes", responses={400: {"description": "Invalid node status"}})
 async def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse]:
     """List all cluster nodes, optionally filtered by status."""

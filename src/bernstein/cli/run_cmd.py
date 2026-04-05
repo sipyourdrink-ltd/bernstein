@@ -126,7 +126,9 @@ def _show_dry_run_plan(
 ) -> None:
     """Show scheduling plan without executing.
 
-    Fetches open tasks and shows which agent/model/tier each would be assigned to.
+    When a plan file is provided, loads tasks directly from it so no running
+    server is required.  Otherwise falls back to fetching open tasks from a
+    running task server.
 
     Args:
         workdir: Project root directory.
@@ -139,57 +141,77 @@ def _show_dry_run_plan(
     from rich.table import Table
 
     from bernstein.core.models import Task
-    from bernstein.core.router import route_task
 
-    # Fetch open tasks from server
-    try:
-        resp = httpx.get("http://127.0.0.1:8052/tasks?status=open", timeout=5.0)
-        resp.raise_for_status()
-        tasks_data = resp.json()
-    except httpx.ConnectError as err:
-        console.print("[red]Task server not running. Start with `bernstein conduct` first.[/red]")
-        raise SystemExit(1) from err
-    except Exception as exc:
-        console.print(f"[red]Failed to fetch tasks:[/red] {exc}")
-        raise SystemExit(1) from exc
+    console.print("\n[bold]Dry-run mode — no agents will be spawned.[/bold]\n")
 
-    if not tasks_data:
-        console.print("[yellow]No open tasks to schedule.[/yellow]")
+    tasks: list[Task] = []
+
+    # If a plan file is given, load tasks directly (no server needed)
+    if plan_file is not None:
+        try:
+            _plan_config, tasks = load_plan(plan_file)
+        except PlanLoadError as exc:
+            console.print(f"[red]Plan load error:[/red] {exc}")
+            raise SystemExit(1) from exc
+    else:
+        # Fall back to fetching from running server
+
+        try:
+            resp = httpx.get("http://127.0.0.1:8052/tasks?status=open", timeout=5.0)
+            resp.raise_for_status()
+            tasks_data = resp.json()
+        except httpx.ConnectError as err:
+            console.print("[red]Task server not running. Start with `bernstein conduct` first,[/red]")
+            console.print("[red]or pass a plan file: `bernstein run --dry-run plan.yaml`[/red]")
+            raise SystemExit(1) from err
+        except Exception as exc:
+            console.print(f"[red]Failed to fetch tasks:[/red] {exc}")
+            raise SystemExit(1) from exc
+
+        tasks = [Task.from_dict(td) for td in tasks_data]
+
+    if not tasks:
+        console.print("[yellow]No tasks to schedule.[/yellow]")
         return
 
-    # Build dry-run schedule table
+    # Build dry-run task table
     table = Table(title="Dry-Run Scheduling Plan", show_header=True, header_style="bold cyan")
-    table.add_column("Task ID")
+    table.add_column("#", justify="right")
+    table.add_column("Role", style="cyan")
     table.add_column("Title")
-    table.add_column("Role")
-    table.add_column("Model")
+    table.add_column("Model", style="green")
     table.add_column("Effort")
-    table.add_column("Estimated Min")
+    table.add_column("Priority", justify="center")
 
-    for task_dict in tasks_data:
-        task = Task.from_dict(task_dict)
-
-        # Route task (dry-run - doesn't actually spawn)
-        try:
-            config = route_task(task)
-            model = config.model
-            effort = config.effort
-        except Exception as exc:
-            model = f"error: {exc}"
-            effort = "—"
-
+    for i, task in enumerate(tasks, 1):
         table.add_row(
-            task.id,
-            task.title[:50] + "..." if len(task.title) > 50 else task.title,
+            str(i),
             task.role,
-            model,
-            effort,
-            str(task.estimated_minutes),
+            task.title[:60] + "..." if len(task.title) > 60 else task.title,
+            task.model or "auto",
+            task.effort or "auto",
+            str(task.priority),
         )
 
     console.print(table)
-    console.print(f"\n[dim]Total open tasks: {len(tasks_data)}[/dim]")
-    console.print("[dim]No agents spawned (dry-run mode)[/dim]")
+
+    # Dependency graph (show tasks that have depends_on)
+    deps_found = False
+    for task in tasks:
+        if task.depends_on:
+            if not deps_found:
+                console.print("\n[bold]Dependency graph:[/bold]")
+                deps_found = True
+            dep_str = ", ".join(task.depends_on)
+            console.print(f"  {task.title} -> [{dep_str}]")
+
+    # Cost estimate
+    est_model = model_override or "sonnet"
+    low_usd, high_usd = estimate_run_cost(len(tasks), est_model)
+    console.print(f"\n  Total tasks: {len(tasks)}")
+    console.print(f"  Estimated cost: ${(low_usd + high_usd) / 2:.2f} (${low_usd:.2f}-${high_usd:.2f})")
+
+    console.print("\n[green]Dry run complete. No agents were spawned.[/green]")
 
 
 @dataclass(frozen=True)

@@ -271,6 +271,10 @@ class Task:
     execution_mode: str | None = None  # "batch" → delegate to Claude Code /batch skill
     verification_count: int = 0  # Number of verification steps run at completion
     flagged_unverified: bool = False  # True when task completed without any verification
+    retry_count: int = 0  # Current retry number (0 = first attempt)
+    max_retries: int = 3  # Maximum retries before permanent failure
+    retry_delay_s: float = 0.0  # Delay between retries (exponential backoff base)
+    terminal_reason: str | None = None  # Why the previous attempt ended (from Claude Code)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Task:
@@ -353,6 +357,10 @@ class Task:
             execution_mode=raw.get("execution_mode"),
             verification_count=raw.get("verification_count", 0),
             flagged_unverified=bool(raw.get("flagged_unverified", False)),
+            retry_count=raw.get("retry_count", 0),
+            max_retries=raw.get("max_retries", 3),
+            retry_delay_s=raw.get("retry_delay_s", 0.0),
+            terminal_reason=raw.get("terminal_reason"),
         )
 
 
@@ -1177,7 +1185,10 @@ class NodeStatus(Enum):
     """Status of a cluster node."""
 
     ONLINE = "online"
+    READY = "ready"  # Registered but not yet accepting tasks
     DEGRADED = "degraded"  # Responding but over capacity / errors
+    CORDONED = "cordoned"  # Excluded from scheduling, still accepts heartbeats
+    DRAINING = "draining"  # Cordoned + actively draining existing agents
     OFFLINE = "offline"
 
 

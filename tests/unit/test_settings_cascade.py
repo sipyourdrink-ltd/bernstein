@@ -430,3 +430,144 @@ class TestCascadeEdgeCases:
             # No layers loaded (no files) but no exception
         finally:
             sc_mod.Path.home = original_home  # type: ignore[reportAttributeAccessIssue]
+
+
+# --- MDM / managed-settings tests ---
+
+
+class TestMdmSystemPaths:
+    """Tests for _mdm_system_paths() path discovery."""
+
+    def test_env_var_path_is_first(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        custom = tmp_path / "custom-managed.json"
+        monkeypatch.setenv("BERNSTEIN_MANAGED_SETTINGS_PATH", str(custom))
+        paths = SettingsCascade._mdm_system_paths(tmp_path)
+        assert paths[0] == custom
+
+    def test_etc_path_always_present(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BERNSTEIN_MANAGED_SETTINGS_PATH", raising=False)
+        paths = SettingsCascade._mdm_system_paths(tmp_path)
+        assert any(p == Path("/etc/bernstein/managed-settings.json") for p in paths)
+
+    def test_workdir_fallback_is_last(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BERNSTEIN_MANAGED_SETTINGS_PATH", raising=False)
+        paths = SettingsCascade._mdm_system_paths(tmp_path)
+        expected_fallback = tmp_path / ".sdd" / "config" / "managed_settings.json"
+        assert paths[-1] == expected_fallback
+
+    def test_env_path_prepended_before_system_paths(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        custom = tmp_path / "mdm.json"
+        monkeypatch.setenv("BERNSTEIN_MANAGED_SETTINGS_PATH", str(custom))
+        paths = SettingsCascade._mdm_system_paths(tmp_path)
+        etc_idx = next(i for i, p in enumerate(paths) if p == Path("/etc/bernstein/managed-settings.json"))
+        assert paths.index(custom) < etc_idx
+
+
+class TestMdmManagedSettingsLoading:
+    """Tests that MDM-managed settings load into MANAGED layer at highest priority."""
+
+    def _make_workdir(self, tmp_path: Path) -> Path:
+        wd = tmp_path / "project"
+        wd.mkdir()
+        return wd
+
+    def test_env_var_managed_settings_loaded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """$BERNSTEIN_MANAGED_SETTINGS_PATH is read and loaded as MANAGED layer."""
+        wd = self._make_workdir(tmp_path)
+        managed_file = tmp_path / "mdm.json"
+        managed_file.write_text('{"max_agents": 2, "timeout": 300}')
+        monkeypatch.setenv("BERNSTEIN_MANAGED_SETTINGS_PATH", str(managed_file))
+
+        import bernstein.core.settings_cascade as sc_mod
+
+        orig_home = sc_mod.Path.home  # type: ignore[reportAttributeAccessIssue]
+        sc_mod.Path.home = lambda: tmp_path  # type: ignore[reportAttributeAccessIssue]
+        try:
+            c = SettingsCascade()
+            c.load_from_workdir(wd)
+            assert SettingsSource.MANAGED in c.layers
+            assert c.layers[SettingsSource.MANAGED]["max_agents"] == 2
+            assert c.layers[SettingsSource.MANAGED]["timeout"] == 300
+        finally:
+            sc_mod.Path.home = orig_home  # type: ignore[reportAttributeAccessIssue]
+
+    def test_managed_overrides_user_setting(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """MANAGED layer setting overrides USER layer setting (highest priority)."""
+        wd = self._make_workdir(tmp_path)
+        managed_file = tmp_path / "mdm.json"
+        managed_file.write_text('{"max_agents": 1}')
+        monkeypatch.setenv("BERNSTEIN_MANAGED_SETTINGS_PATH", str(managed_file))
+
+        import bernstein.core.settings_cascade as sc_mod
+
+        orig_home = sc_mod.Path.home  # type: ignore[reportAttributeAccessIssue]
+        sc_mod.Path.home = lambda: tmp_path  # type: ignore[reportAttributeAccessIssue]
+
+        # Write a user config with a different max_agents value.
+        user_cfg = tmp_path / ".bernstein" / "config.yaml"
+        user_cfg.parent.mkdir(exist_ok=True)
+        user_cfg.write_text("max_agents: 8\n")
+
+        try:
+            c = SettingsCascade()
+            c.load_from_workdir(wd)
+            pv = c.get("max_agents")
+            assert pv.value == 1
+            assert pv.source is SettingsSource.MANAGED
+        finally:
+            sc_mod.Path.home = orig_home  # type: ignore[reportAttributeAccessIssue]
+
+    def test_workdir_fallback_managed_settings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Workdir .sdd/config/managed_settings.json is used as fallback."""
+        monkeypatch.delenv("BERNSTEIN_MANAGED_SETTINGS_PATH", raising=False)
+        wd = self._make_workdir(tmp_path)
+        sdd_config = wd / ".sdd" / "config"
+        sdd_config.mkdir(parents=True)
+        (sdd_config / "managed_settings.json").write_text('{"timeout": 60}')
+
+        import bernstein.core.settings_cascade as sc_mod
+
+        orig_home = sc_mod.Path.home  # type: ignore[reportAttributeAccessIssue]
+        # Point home to a dir with no .bernstein/config.yaml so /etc path also missing.
+        sc_mod.Path.home = lambda: tmp_path  # type: ignore[reportAttributeAccessIssue]
+        try:
+            c = SettingsCascade()
+            c.load_from_workdir(wd)
+            assert SettingsSource.MANAGED in c.layers
+            assert c.layers[SettingsSource.MANAGED]["timeout"] == 60
+        finally:
+            sc_mod.Path.home = orig_home  # type: ignore[reportAttributeAccessIssue]
+
+    def test_first_existing_managed_path_wins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When env path exists it takes precedence over workdir fallback."""
+        wd = self._make_workdir(tmp_path)
+        # Write both env path and workdir fallback with different values.
+        env_managed = tmp_path / "env_mdm.json"
+        env_managed.write_text('{"max_agents": 3}')
+        monkeypatch.setenv("BERNSTEIN_MANAGED_SETTINGS_PATH", str(env_managed))
+
+        sdd_config = wd / ".sdd" / "config"
+        sdd_config.mkdir(parents=True)
+        (sdd_config / "managed_settings.json").write_text('{"max_agents": 99}')
+
+        import bernstein.core.settings_cascade as sc_mod
+
+        orig_home = sc_mod.Path.home  # type: ignore[reportAttributeAccessIssue]
+        sc_mod.Path.home = lambda: tmp_path  # type: ignore[reportAttributeAccessIssue]
+        try:
+            c = SettingsCascade()
+            c.load_from_workdir(wd)
+            # env path should win (first in list)
+            assert c.layers[SettingsSource.MANAGED]["max_agents"] == 3
+        finally:
+            sc_mod.Path.home = orig_home  # type: ignore[reportAttributeAccessIssue]

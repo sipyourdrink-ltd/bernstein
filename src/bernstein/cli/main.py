@@ -70,6 +70,7 @@ from bernstein.cli.man_page import man_pages_cmd
 from bernstein.cli.manifest_cmd import manifest_group
 from bernstein.cli.memory_cmd import memory_group
 from bernstein.cli.merge_cmd import merge_cmd
+from bernstein.cli.plan_validate_cmd import validate_plan
 from bernstein.cli.policy_cmd import policy_group
 from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
@@ -700,3 +701,4 @@ cli.add_command(dr_group, "dr")
 cli.add_command(incident_cmd, "incident")
 cli.add_command(profile_cmd, "profile")
 cli.add_command(templates_group, "templates")
+cli.add_command(validate_plan, "validate")

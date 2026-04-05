@@ -5,9 +5,15 @@ Settings are layered by precedence (lowest to highest):
     PROJECT   — bernstein.yaml / bernstein.yml in workdir
     LOCAL     — <workdir>/.bernstein/config.yaml (local overrides)
     CLI       — command-line / caller-provided overrides
-    MANAGED   — server-managed / runtime settings (policy-enforced)
+    MANAGED   — MDM/server-managed settings (highest priority, policy-enforced)
 
 Higher-precedence layers win when the same key is present in multiple layers.
+
+MDM system paths (checked in order, first found wins):
+    - $BERNSTEIN_MANAGED_SETTINGS_PATH   (env override)
+    - /etc/bernstein/managed-settings.json          (Linux / all platforms)
+    - /Library/Managed Preferences/com.bernstein.settings.json  (macOS MDM)
+    - <workdir>/.sdd/config/managed_settings.json   (project-level fallback)
 """
 
 from __future__ import annotations
@@ -15,6 +21,9 @@ from __future__ import annotations
 import enum
 import json
 import logging
+import os
+import platform
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -299,6 +308,41 @@ class SettingsCascade:
             logger.warning("Failed to read settings file %s: %s", path, exc)
             return {}
 
+    @staticmethod
+    def _mdm_system_paths(workdir: Path) -> list[Path]:
+        """Return candidate MDM/managed-settings paths in priority order.
+
+        Checks, in order:
+        1. ``$BERNSTEIN_MANAGED_SETTINGS_PATH`` environment variable (highest)
+        2. ``/etc/bernstein/managed-settings.json`` (Linux / system-wide)
+        3. ``/Library/Managed Preferences/com.bernstein.settings.json`` (macOS MDM)
+        4. ``<workdir>/.sdd/config/managed_settings.json`` (project-level fallback)
+
+        Args:
+            workdir: Project root directory (used for project-level fallback).
+
+        Returns:
+            Ordered list of candidate :class:`~pathlib.Path` objects. The caller
+            should read the *first* existing path.
+        """
+        paths: list[Path] = []
+
+        env_path = os.environ.get("BERNSTEIN_MANAGED_SETTINGS_PATH")
+        if env_path:
+            paths.append(Path(env_path))
+
+        # System-level paths (platform-aware but we always include Linux path
+        # since it works cross-platform and is the most common case).
+        paths.append(Path("/etc/bernstein/managed-settings.json"))
+
+        if sys.platform == "darwin" or platform.system() == "Darwin":
+            paths.append(Path("/Library/Managed Preferences/com.bernstein.settings.json"))
+
+        # Project-level fallback (lowest priority among managed sources).
+        paths.append(workdir / ".sdd" / "config" / "managed_settings.json")
+
+        return paths
+
     def load_from_workdir(self, workdir: str | Path) -> None:
         """Discover and load all 5 cascade layers from a working directory.
 
@@ -307,7 +351,7 @@ class SettingsCascade:
         - PROJECT: <workdir>/bernstein.yaml or bernstein.yml
         - LOCAL:   <workdir>/.bernstein/config.yaml
         - CLI:     <workdir>/.sdd/config/cli_overrides.json
-        - MANAGED: <workdir>/.sdd/config/managed_settings.json
+        - MANAGED: first of MDM system paths that exists (see :meth:`_mdm_system_paths`)
 
         Missing files are silently skipped (the layer is simply not loaded).
 
@@ -346,12 +390,18 @@ class SettingsCascade:
             self.load_layer(SettingsSource.CLI, cli_data)
             logger.debug("Loaded CLI settings from %s", cli_path)
 
-        # MANAGED
-        managed_path = workdir / ".sdd" / "config" / "managed_settings.json"
-        managed_data = self._read_json_file(managed_path)
+        # MANAGED — try MDM system paths in order, use first that has data.
+        managed_data: dict[str, Any] = {}
+        managed_source_path: Path | None = None
+        for candidate in self._mdm_system_paths(workdir):
+            data = self._read_json_file(candidate)
+            if data:
+                managed_data = data
+                managed_source_path = candidate
+                break
         if managed_data:
             self.load_layer(SettingsSource.MANAGED, managed_data)
-            logger.debug("Loaded MANAGED settings from %s", managed_path)
+            logger.debug("Loaded MANAGED settings from %s", managed_source_path)
 
     @staticmethod
     def _read_json_file(path: Path) -> dict[str, Any]:

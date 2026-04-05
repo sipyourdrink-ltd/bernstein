@@ -3560,6 +3560,7 @@ class TestMaybeRetryTask:
             status=TaskStatus.FAILED,
             model="sonnet",
             effort="medium",
+            retry_count=1,
         )
         orch, posted = self._build(tmp_path)
 
@@ -3577,6 +3578,8 @@ class TestMaybeRetryTask:
             description="[RETRY 2] Do the thing.",
             role="backend",
             status=TaskStatus.FAILED,
+            retry_count=2,
+            max_retries=2,
         )
         orch, posted = self._build(tmp_path, max_retries=2)
 
@@ -3640,6 +3643,7 @@ class TestMaybeRetryTask:
             status=TaskStatus.FAILED,
             model="haiku",
             effort="medium",
+            retry_count=1,
         )
         orch, posted = self._build(tmp_path)
 
@@ -3654,6 +3658,7 @@ class TestMaybeRetryTask:
             description="Do the thing.",
             role="backend",
             status=TaskStatus.FAILED,
+            max_retries=0,
         )
         orch, posted = self._build(tmp_path, max_retries=0)
 
