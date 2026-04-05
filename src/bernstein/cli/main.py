@@ -55,6 +55,8 @@ from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.cost import cost_cmd, estimate_cmd
+from bernstein.cli.man_page import man_pages_cmd
+from bernstein.cli.report_cmd import report_cmd
 from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.disaster_recovery_cmd import dr_group
 from bernstein.cli.eval_benchmark_cmd import (
@@ -681,6 +683,8 @@ cli.add_command(memory_group, "memory")
 cli.add_command(prompts_group, "prompts")
 cli.add_command(ci_group, "ci")
 cli.add_command(gateway_group, "gateway")
+cli.add_command(report_cmd, "report")
+cli.add_command(man_pages_cmd, "man-pages")
 cli.add_command(workflow_group, "workflow")
 cli.add_command(quickstart_cmd, "quickstart")
 cli.add_command(watch_cmd, "watch")
