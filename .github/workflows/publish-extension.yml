@@ -86,31 +86,5 @@ jobs:
           registryUrl: https://open-vsx.org
           extensionFile: ${{ steps.vsix.outputs.path }}
 
-      # Upload VSIX as GitHub Release asset for direct installation fallback.
-      # When triggered by a release event, attach to the existing release.
-      # When triggered by a tag push, create a new release.
-      - name: Upload VSIX to existing release
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.event.release.tag_name }}" packages/vscode/*.vsix --clobber
-
-      - name: Create GitHub Release with VSIX
-        if: github.event_name == 'push'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: packages/vscode/*.vsix
-          body: |
-            ## Bernstein VS Code Extension ${{ github.ref_name }}
-
-            ### Install options
-
-            1. **VS Code Marketplace** — search "bernstein" in VS Code extensions
-            2. **Cursor / Open VSX** — search "bernstein" in Cursor extensions
-            3. **Manual install from VSIX**:
-               ```
-               code --install-extension bernstein-*.vsix
-               ```
-               or: Extensions panel → ... → Install from VSIX...
-          draft: false
-          prerelease: false
+      # VSIX is published to VS Code Marketplace and Open VSX above.
+      # No GitHub Release — avoids cluttering the main release list.
