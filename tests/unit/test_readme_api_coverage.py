@@ -99,6 +99,7 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "github",
         "plugins",
         "quarantine",
+        "validate",
         "workflow",
         "gateway",
         "templates",
