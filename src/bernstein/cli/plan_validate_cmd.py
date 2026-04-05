@@ -11,18 +11,20 @@ from bernstein.cli.helpers import console
 from bernstein.core.plan_loader import PlanLoadError, load_plan
 
 # Known roles from templates/roles/
-_KNOWN_ROLES: frozenset[str] = frozenset({
-    "manager",
-    "backend",
-    "frontend",
-    "qa",
-    "security",
-    "docs",
-    "devops",
-    "architect",
-    "reviewer",
-    "data",
-})
+_KNOWN_ROLES: frozenset[str] = frozenset(
+    {
+        "manager",
+        "backend",
+        "frontend",
+        "qa",
+        "security",
+        "docs",
+        "devops",
+        "architect",
+        "reviewer",
+        "data",
+    }
+)
 
 
 @click.command("validate")

@@ -275,7 +275,7 @@ def maybe_retry_task(
 
     # Exponential backoff: base_delay * 2^retry_count, capped at 5 minutes
     base_delay = task.retry_delay_s if task.retry_delay_s > 0 else 30.0
-    backoff_delay = min(base_delay * (2 ** retry_count), 300.0)
+    backoff_delay = min(base_delay * (2**retry_count), 300.0)
 
     current_model = task.model or "sonnet"
     current_effort = task.effort or "high"

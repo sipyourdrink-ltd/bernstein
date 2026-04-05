@@ -984,7 +984,8 @@ class Orchestrator:
         done_ids = {t.id for t in done_tasks}
         now = time.time()
         open_tasks = [
-            t for t in tasks_by_status["open"]
+            t
+            for t in tasks_by_status["open"]
             if all(dep in done_ids for dep in t.depends_on)
             # Skip tasks with future created_at (retry backoff)
             and t.created_at <= now

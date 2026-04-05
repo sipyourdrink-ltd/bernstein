@@ -1166,7 +1166,6 @@ async def drain_node(node_id: str, request: Request) -> dict[str, str]:
     return {"status": "draining", "node_id": node_id}
 
 
-
 @router.get("/cluster/nodes", responses={400: {"description": "Invalid node status"}})
 async def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse]:
     """List all cluster nodes, optionally filtered by status."""
