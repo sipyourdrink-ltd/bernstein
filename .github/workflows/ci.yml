@@ -209,7 +209,7 @@ jobs:
           name: coverage-report
         continue-on-error: true
       - name: SonarCloud scan
-        uses: SonarSource/sonarqube-scan-action@v6
+        uses: SonarSource/sonarqube-scan-action@v7
         continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
