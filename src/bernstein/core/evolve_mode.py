@@ -17,12 +17,13 @@ import json
 import logging
 import os
 import re
-import signal
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import httpx
+
+from bernstein.core.platform_compat import kill_process_group
 
 if TYPE_CHECKING:
     from bernstein.core.tick_pipeline import RuffViolation, TestResults
@@ -251,7 +252,7 @@ class EvolveMixin:
         try:
             stdout, _ = proc.communicate(timeout=60)
         except subprocess.TimeoutExpired:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            kill_process_group(proc.pid, sig=9)
             proc.wait()
             return []
         return json.loads(stdout) if stdout.strip() else []
@@ -315,9 +316,7 @@ class EvolveMixin:
         try:
             stdout, stderr = proc.communicate(timeout=120)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except OSError:
+            if not kill_process_group(proc.pid, sig=9):
                 proc.kill()
             proc.wait()
             info["summary"] = "pytest timed out after 120s"

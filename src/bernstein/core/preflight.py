@@ -293,6 +293,8 @@ def _check_port_free(port: int) -> None:
         port_in_use(port).print()
         raise SystemExit(1)
 
+    from bernstein.core.platform_compat import kill_process
+
     # Only kill processes that look like Bernstein (uvicorn server).
     killed = False
     for pid in pids:
@@ -305,7 +307,7 @@ def _check_port_free(port: int) -> None:
             )
             cmd = proc_result.stdout.strip()
             if "bernstein" in cmd or "uvicorn" in cmd:
-                os.kill(pid, 9)
+                kill_process(pid, sig=9)
                 killed = True
                 logger.info("Killed stale Bernstein process %d on port %d", pid, port)
         except (ProcessLookupError, PermissionError, OSError):

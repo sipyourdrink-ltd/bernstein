@@ -1283,15 +1283,9 @@ def _has_git_commits_on_branch(worktree_path: Path) -> bool:
 
 def _is_process_alive(pid: int) -> bool:
     """Check if a process with the given PID is still running."""
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    from bernstein.core.platform_compat import process_alive
+
+    return process_alive(pid)
 
 
 # ---------------------------------------------------------------------------

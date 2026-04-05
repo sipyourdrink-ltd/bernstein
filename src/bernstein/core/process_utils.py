@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
+from bernstein.core.platform_compat import IS_WINDOWS
+from bernstein.core.platform_compat import process_alive as _platform_process_alive
+
 
 def process_state(pid: int) -> str | None:
-    """Return the OS process state string for *pid* when available."""
+    """Return the OS process state string for *pid* when available.
+
+    Uses ``ps`` on Unix.  On Windows ``ps`` is not available, so this
+    always returns ``None``.
+    """
     if pid <= 0:
+        return None
+    if IS_WINDOWS:
         return None
     try:
         result = subprocess.run(
@@ -28,12 +36,13 @@ def process_state(pid: int) -> str | None:
 
 
 def is_process_alive(pid: int) -> bool:
-    """Return True when *pid* exists and is not a zombie."""
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
+    """Return True when *pid* exists and is not a zombie.
+
+    Delegates the basic existence check to :func:`platform_compat.process_alive`
+    which works on both Unix and Windows.  On Unix, an additional ``ps`` probe
+    filters out zombie processes.
+    """
+    if not _platform_process_alive(pid):
         return False
     state = process_state(pid)
     return not (state is not None and state.startswith("Z"))

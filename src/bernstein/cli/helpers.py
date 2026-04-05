@@ -12,6 +12,7 @@ import click
 import httpx
 from rich.console import Console
 
+from bernstein.core.platform_compat import kill_process, kill_process_group
 from bernstein.core.process_utils import is_process_alive as _shared_is_process_alive
 
 # ---------------------------------------------------------------------------
@@ -121,18 +122,14 @@ def kill_pid(path: str, label: str) -> None:
         console.print(f"[dim]No PID file found for {label}.[/dim]")
         return
     if is_alive(pid):
-        try:
-            # Kill the entire process group so child processes (pytest, uv,
-            # agent subprocesses) don't survive and leak memory.
-            try:
-                pgid = os.getpgid(pid)
-                os.killpg(pgid, signal.SIGTERM)
-                console.print(f"[green]Sent SIGTERM to {label} process group (PID {pid}, PGID {pgid}).[/green]")
-            except (OSError, ProcessLookupError):
-                os.kill(pid, signal.SIGTERM)
-                console.print(f"[green]Sent SIGTERM to {label} (PID {pid}).[/green]")
-        except OSError as exc:
-            console.print(f"[yellow]Could not terminate {label} (PID {pid}): {exc}[/yellow]")
+        # Kill the entire process group so child processes (pytest, uv,
+        # agent subprocesses) don't survive and leak memory.
+        if kill_process_group(pid, sig=signal.SIGTERM):
+            console.print(f"[green]Sent SIGTERM to {label} process group (PID {pid}).[/green]")
+        elif kill_process(pid, signal.SIGTERM):
+            console.print(f"[green]Sent SIGTERM to {label} (PID {pid}).[/green]")
+        else:
+            console.print(f"[yellow]Could not terminate {label} (PID {pid}).[/yellow]")
     else:
         console.print(f"[dim]{label} (PID {pid}) was not running.[/dim]")
     Path(path).unlink(missing_ok=True)
@@ -158,14 +155,8 @@ def sigkill_pid(pid: int) -> bool:
     """
     if not is_alive(pid):
         return True
-    try:
-        try:
-            pgid = os.getpgid(pid)
-            os.killpg(pgid, signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            os.kill(pid, signal.SIGKILL)
-    except OSError:
-        return not is_alive(pid)
+    if not kill_process_group(pid, sig=9):
+        kill_process(pid, sig=9)
     return wait_for_death(pid)
 
 
