@@ -1,5 +1,5 @@
 {
-  "name": "bernstein",
+  "name": "bernstein-orchestrator",
   "displayName": "Bernstein — Multi-Agent Orchestration",
   "description": "Orchestrate parallel AI coding agents from your editor. Monitor tasks, agents, costs in real-time.",
   "version": "0.2.0",
