@@ -225,6 +225,12 @@ bernstein run plan.yaml
 
 The plan skips manager decomposition and goes straight to execution. See [`templates/plan.yaml`](templates/plan.yaml) for the format and [`examples/plans/flask-api.yaml`](examples/plans/flask-api.yaml) for a working example.
 
+Validate a plan file before running it:
+
+```bash
+bernstein validate plan.yaml
+```
+
 ## Observability
 
 Prometheus metrics at `/metrics` — wire up Grafana, set alerts, monitor cost. OTLP telemetry initialization supports distributed tracing.
