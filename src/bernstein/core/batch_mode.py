@@ -10,8 +10,10 @@ logic and prompt construction for that workflow.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from bernstein.core.models import Task
+if TYPE_CHECKING:
+    from bernstein.core.models import Task
 
 
 @dataclass
@@ -83,10 +85,7 @@ def should_use_batch(tasks: list[Task]) -> bool:
     all_files: set[str] = set()
     for t in tasks:
         all_files.update(t.owned_files)
-    if len(all_files) >= 5:
-        return True
-
-    return False
+    return len(all_files) >= 5
 
 
 # ---------------------------------------------------------------------------
