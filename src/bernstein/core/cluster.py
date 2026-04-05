@@ -85,7 +85,7 @@ class NodeRegistry:
         if self._persist_path is None:
             return
         try:
-            data = []
+            data: list[dict[str, Any]] = []
             for node in self._nodes.values():
                 data.append(
                     {

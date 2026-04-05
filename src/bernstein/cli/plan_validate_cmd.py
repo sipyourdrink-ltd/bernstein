@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import click
 import yaml
@@ -90,15 +91,13 @@ def validate_plan(plan_file: Path) -> None:
     stage_count = 0
     max_parallel = 0
     try:
-        raw_data = yaml.safe_load(plan_file.read_text())
-        if isinstance(raw_data, dict):
-            raw_stages = raw_data.get("stages", [])
-            if isinstance(raw_stages, list):
-                stage_count = len(raw_stages)
-                max_parallel = max(
-                    (len(s.get("steps", [])) for s in raw_stages if isinstance(s, dict)),
-                    default=0,
-                )
+        raw_data: dict[str, Any] = yaml.safe_load(plan_file.read_text()) or {}
+        raw_stages: list[dict[str, Any]] = raw_data.get("stages", [])
+        stage_count = len(raw_stages)
+        max_parallel = max(
+            (len(cast("list[Any]", s.get("steps", []))) for s in raw_stages),
+            default=0,
+        )
     except Exception:
         pass
 
