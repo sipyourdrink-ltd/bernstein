@@ -72,6 +72,7 @@ from bernstein.cli.manifest_cmd import manifest_group
 from bernstein.cli.memory_cmd import memory_group
 from bernstein.cli.merge_cmd import merge_cmd
 from bernstein.cli.policy_cmd import policy_group
+from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
 from bernstein.cli.self_update_cmd import self_update_cmd
@@ -697,4 +698,5 @@ cli.add_command(merge_cmd, "merge")
 cli.add_command(changelog_cmd, "changelog")
 cli.add_command(dr_group, "dr")
 cli.add_command(incident_cmd, "incident")
+cli.add_command(profile_cmd, "profile")
 cli.add_command(templates_group, "templates")
