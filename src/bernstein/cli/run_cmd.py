@@ -1552,12 +1552,9 @@ def _stop_demo_processes(project_dir: Path) -> None:
         except (ValueError, OSError):
             continue
         if is_alive(pid):
-            try:
-                import signal as _signal
+            from bernstein.core.platform_compat import kill_process
 
-                os.kill(pid, _signal.SIGTERM)
-            except OSError:
-                pass
+            kill_process(pid, sig=15)
         pid_file.unlink(missing_ok=True)
 
 

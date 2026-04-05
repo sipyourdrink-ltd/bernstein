@@ -560,8 +560,10 @@ async def shutdown_server(request: Request) -> JSONResponse:
 
     # Schedule SIGTERM to self after a short delay so the HTTP response
     # is delivered before the process starts tearing down.
+    from bernstein.core.platform_compat import kill_process
+
     loop = asyncio.get_running_loop()
-    loop.call_later(0.5, os.kill, os.getpid(), signal.SIGTERM)
+    loop.call_later(0.5, kill_process, os.getpid(), signal.SIGTERM)
 
     return JSONResponse(
         content={"status": "shutting_down", "message": "Shutdown signal received"},

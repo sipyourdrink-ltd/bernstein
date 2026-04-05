@@ -360,9 +360,9 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         if pid_path.exists():
             try:
                 pid_val = int(pid_path.read_text().strip())
-                try:
-                    os.kill(pid_val, 0)
-                except OSError:
+                from bernstein.core.platform_compat import process_alive
+
+                if not process_alive(pid_val):
                     stale_pids.append(pid_name)
                     stale_pid_paths.append(pid_path)
             except ValueError:
