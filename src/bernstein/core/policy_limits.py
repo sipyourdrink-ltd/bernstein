@@ -180,20 +180,21 @@ async def _fetch_limits_from_api(
         headers["If-None-Match"] = etag
 
     try:
-        async with aiohttp.ClientSession() as session, session.get(
-            api_url,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=timeout),
-        ) as resp:
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
+                api_url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp,
+        ):
             if resp.status == 304:
                 # Not Modified — reuse existing snapshot
                 logger.debug("Policy limits not modified (ETag match)")
                 return None, etag
 
             if resp.status != 200:
-                logger.warning(
-                    "Policy limits API returned %d; will fail-open", resp.status
-                )
+                logger.warning("Policy limits API returned %d; will fail-open", resp.status)
                 return None, etag
 
             new_etag: str | None = resp.headers.get("ETag")
@@ -312,9 +313,7 @@ class PolicyLimitsClient:
         if entry is None:
             # Never fetched or feature absent from policy
             if feature in self._deny_on_miss:
-                logger.debug(
-                    "Policy limit missing for %r (deny-on-miss); denying", feature
-                )
+                logger.debug("Policy limit missing for %r (deny-on-miss); denying", feature)
                 return False
             # Fail-open
             return True
@@ -339,12 +338,8 @@ class PolicyLimitsClient:
             logger.debug("No running event loop; cannot start background polling")
             return
 
-        self._poll_task = loop.create_task(
-            self._poll_loop(), name="policy-limits-poller"
-        )
-        logger.debug(
-            "Started policy limits background polling (interval=%ss)", self._poll_interval
-        )
+        self._poll_task = loop.create_task(self._poll_loop(), name="policy-limits-poller")
+        logger.debug("Started policy limits background polling (interval=%ss)", self._poll_interval)
 
     def stop_background_polling(self) -> None:
         """Cancel the background polling task if running."""

@@ -87,8 +87,7 @@ BUILTIN_PRESETS: dict[str, ExporterPreset] = {
         endpoint="http://localhost:4317",
         protocol="grpc",
         insecure=True,
-        description="Datadog Agent OTLP receiver (gRPC on port 4317). "
-        "Set DD_API_KEY in the environment.",
+        description="Datadog Agent OTLP receiver (gRPC on port 4317). Set DD_API_KEY in the environment.",
     ),
     "zipkin": ExporterPreset(
         name="zipkin",
