@@ -9,6 +9,8 @@
 <br>
 
 ### Declarative agent orchestration for engineering teams.
+
+[![SafeSkill 81/100](https://img.shields.io/badge/SafeSkill-81%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/chernistry-bernstein)
 ### One YAML. Multiple coding agents. Ship while you sleep.
 
 <picture>
