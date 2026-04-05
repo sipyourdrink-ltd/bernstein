@@ -144,7 +144,7 @@ def _get_current_user(request: Request) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/providers", response_model=AuthProvidersResponse)
+@router.get("/providers")
 async def auth_providers(request: Request) -> AuthProvidersResponse:
     """List available authentication providers."""
     svc = getattr(request.app.state, "auth_service", None)
@@ -323,7 +323,6 @@ async def saml_metadata(request: Request) -> Response:
 
 @router.post(
     "/cli/device",
-    response_model=DeviceCodeResponse,
     responses={503: {"description": "SSO authentication not configured"}},
 )
 async def device_code_request(request: Request, body: DeviceCodeRequest) -> DeviceCodeResponse:
@@ -348,7 +347,6 @@ async def device_code_request(request: Request, body: DeviceCodeRequest) -> Devi
 
 @router.post(
     "/cli/token",
-    response_model=DevicePollResponse,
     responses={503: {"description": "SSO authentication not configured"}},
 )
 async def device_token_poll(request: Request, body: DevicePollRequest) -> DevicePollResponse:
@@ -404,7 +402,7 @@ async def device_authorize(request: Request, body: DeviceAuthorizeRequest) -> JS
 # ---------------------------------------------------------------------------
 
 
-@router.get("/me", response_model=UserProfileResponse, responses={401: {"description": "Authentication required"}})
+@router.get("/me", responses={401: {"description": "Authentication required"}})
 async def get_profile(request: Request) -> UserProfileResponse:
     """Get the current authenticated user's profile."""
     user = _get_current_user(request)
@@ -444,7 +442,6 @@ async def logout(request: Request) -> JSONResponse:
 
 @router.get(
     "/group-mappings",
-    response_model=GroupMappingsResponse,
     responses={503: {"description": "SSO authentication not configured"}},
 )
 async def get_group_mappings(request: Request) -> GroupMappingsResponse:

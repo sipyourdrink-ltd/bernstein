@@ -141,6 +141,8 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
         Success message.
     """
     _validate_task_id(task_id)
+    if ".." in task_id or "/" in task_id or "\\" in task_id:
+        raise HTTPException(status_code=400, detail="Invalid task_id format")
     safe_id = Path(task_id).name  # Strip any directory components
     approvals_dir = _approvals_dir()
     pending_path = _safe_child(_pending_dir(), f"{safe_id}.json")
@@ -177,6 +179,8 @@ async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, 
         Success message.
     """
     _validate_task_id(task_id)
+    if ".." in task_id or "/" in task_id or "\\" in task_id:
+        raise HTTPException(status_code=400, detail="Invalid task_id format")
     safe_id = Path(task_id).name  # Strip any directory components
     approvals_dir = _approvals_dir()
     pending_path = _safe_child(_pending_dir(), f"{safe_id}.json")

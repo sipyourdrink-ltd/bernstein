@@ -21,9 +21,11 @@ jobs:
 
       - name: Get version and SHA
         id: meta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
           else
             VERSION="${GITHUB_REF_NAME#v}"
           fi
@@ -43,6 +45,9 @@ jobs:
           done
 
       - name: Generate formula
+        env:
+          META_VERSION: ${{ steps.meta.outputs.version }}
+          META_SHA256: ${{ steps.meta.outputs.sha256 }}
         run: |
           cat > /tmp/bernstein.rb << 'FORMULA'
           class Bernstein < Formula
@@ -67,13 +72,14 @@ jobs:
           end
           FORMULA
 
-          sed -i "s/VERSION/${{ steps.meta.outputs.version }}/g" /tmp/bernstein.rb
-          sed -i "s/SHA256/${{ steps.meta.outputs.sha256 }}/g" /tmp/bernstein.rb
+          sed -i "s/VERSION/${META_VERSION}/g" /tmp/bernstein.rb
+          sed -i "s/SHA256/${META_SHA256}/g" /tmp/bernstein.rb
           cat /tmp/bernstein.rb
 
       - name: Push to homebrew-tap repo
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          META_VERSION: ${{ steps.meta.outputs.version }}
         run: |
           # Clone or create tap repo
           if gh repo view chernistry/homebrew-tap > /dev/null 2>&1; then
@@ -91,5 +97,5 @@ jobs:
           git config user.email "bernstein-bot@users.noreply.github.com"
           git add Formula/bernstein.rb
           git diff --cached --quiet && echo "No changes" && exit 0
-          git commit -m "bernstein ${{ steps.meta.outputs.version }}"
+          git commit -m "bernstein ${META_VERSION}"
           git push

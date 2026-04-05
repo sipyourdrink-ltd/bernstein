@@ -40,7 +40,7 @@ x-bernstein-common: &bernstein-common
     OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     TAVILY_API_KEY: ${TAVILY_API_KEY:-}
     # Future: database / cache URLs
-    BERNSTEIN_DATABASE_URL: postgresql://bernstein:bernstein@postgres:5432/bernstein
+    BERNSTEIN_DATABASE_URL: postgresql://bernstein:bernstein@postgres:5432/bernstein  # NOSONAR — development-only default, not used in production
     BERNSTEIN_REDIS_URL: redis://redis:6379/0
   volumes:
     - sdd-data:/workspace/.sdd
@@ -70,7 +70,7 @@ services:
       BERNSTEIN_BIND_HOST: "0.0.0.0"
       BERNSTEIN_CLUSTER_ENABLED: "true"
       BERNSTEIN_AUTH_TOKEN: ${BERNSTEIN_AUTH_TOKEN:-changeme}
-      BERNSTEIN_DATABASE_URL: postgresql://bernstein:bernstein@postgres:5432/bernstein
+      BERNSTEIN_DATABASE_URL: postgresql://bernstein:bernstein@postgres:5432/bernstein  # NOSONAR — development-only default, not used in production
       BERNSTEIN_REDIS_URL: redis://redis:6379/0
     ports:
       - "8052:8052"
@@ -152,7 +152,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: bernstein
-      POSTGRES_PASSWORD: bernstein
+      POSTGRES_PASSWORD: bernstein  # NOSONAR — development-only default, not used in production
       POSTGRES_DB: bernstein
     volumes:
       - postgres-data:/var/lib/postgresql/data

@@ -51,7 +51,7 @@ def _load_workspace_from_request(request: Request) -> Workspace | None:
     return seed.workspace
 
 
-@router.get("/workspace", response_model=WorkspaceResponse, responses={400: {"description": "Invalid seed file"}})
+@router.get("/workspace", responses={400: {"description": "Invalid seed file"}})
 def workspace_status(request: Request) -> WorkspaceResponse:
     """Return repository status for the configured workspace."""
     workspace = _load_workspace_from_request(request)
@@ -75,7 +75,6 @@ def workspace_status(request: Request) -> WorkspaceResponse:
 
 @router.post(
     "/workspace/merge-order",
-    response_model=MergeOrderResponse,
     responses={400: {"description": "Invalid seed file"}, 404: {"description": "No workspace configured"}},
 )
 def workspace_merge_order(request: Request) -> MergeOrderResponse:

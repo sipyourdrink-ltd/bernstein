@@ -124,33 +124,43 @@ jobs:
         if: inputs.dry_run == false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.bump.outputs.new }}
+          OLD_VERSION: ${{ steps.bump.outputs.old }}
+          CHANGELOG: ${{ inputs.changelog }}
+          COMMITS: ${{ steps.changelog.outputs.commits }}
         run: |
-          gh release create "v${{ steps.bump.outputs.new }}" dist/* \
-            --title "v${{ steps.bump.outputs.new }}" \
-            --notes "$(cat <<'NOTES'
-          ## Bernstein v${{ steps.bump.outputs.new }}
+          gh release create "v${RELEASE_VERSION}" dist/* \
+            --title "v${RELEASE_VERSION}" \
+            --notes "$(cat <<NOTES
+          ## Bernstein v${RELEASE_VERSION}
 
-          ${{ inputs.changelog }}
+          ${CHANGELOG}
 
-          ### Changes since v${{ steps.bump.outputs.old }}
+          ### Changes since v${OLD_VERSION}
 
-          ${{ steps.changelog.outputs.commits }}
+          ${COMMITS}
 
           ---
-          Full changelog: https://github.com/${{ github.repository }}/compare/v${{ steps.bump.outputs.old }}...v${{ steps.bump.outputs.new }}
+          Full changelog: https://github.com/${{ github.repository }}/compare/v${OLD_VERSION}...v${RELEASE_VERSION}
           NOTES
           )"
 
       - name: Dry run summary
         if: inputs.dry_run == true
+        env:
+          BUMP_TYPE: ${{ inputs.bump }}
+          OLD_VERSION: ${{ steps.bump.outputs.old }}
+          NEW_VERSION: ${{ steps.bump.outputs.new }}
+          CHANGELOG: ${{ inputs.changelog }}
+          COMMITS: ${{ steps.changelog.outputs.commits }}
         run: |
           {
             echo "## Dry Run Summary"
-            echo "- **Bump**: ${{ inputs.bump }}"
-            echo "- **Version**: ${{ steps.bump.outputs.old }} → ${{ steps.bump.outputs.new }}"
-            echo "- **Changelog**: ${{ inputs.changelog }}"
+            echo "- **Bump**: $BUMP_TYPE"
+            echo "- **Version**: $OLD_VERSION → $NEW_VERSION"
+            echo "- **Changelog**: $CHANGELOG"
             echo "- **Commits since last tag**:"
             echo '```'
-            echo "${{ steps.changelog.outputs.commits }}"
+            echo "$COMMITS"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

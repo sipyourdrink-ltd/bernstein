@@ -64,7 +64,7 @@ class TestRolePermissions:
 
 class TestJWT:
     def test_create_and_verify(self) -> None:
-        secret = "test-secret-key-for-jwt-testing"
+        secret = "test-secret-key-for-jwt-testing"  # NOSONAR — test fixture
         claims = {"sub": "user123", "email": "test@example.com", "role": "admin"}
         token = create_jwt(claims, secret, expiry_seconds=3600)
 
@@ -78,16 +78,16 @@ class TestJWT:
         assert "jti" in result
 
     def test_expired_token_rejected(self) -> None:
-        secret = "test-secret"
+        secret = "test-secret"  # NOSONAR — test fixture
         token = create_jwt({"sub": "user1"}, secret, expiry_seconds=-1)
         assert verify_jwt(token, secret) is None
 
     def test_wrong_secret_rejected(self) -> None:
-        token = create_jwt({"sub": "user1"}, "secret-a")
-        assert verify_jwt(token, "secret-b") is None
+        token = create_jwt({"sub": "user1"}, "secret-a")  # NOSONAR — test fixture
+        assert verify_jwt(token, "secret-b") is None  # NOSONAR — test fixture
 
     def test_tampered_payload_rejected(self) -> None:
-        secret = "test-secret"
+        secret = "test-secret"  # NOSONAR — test fixture
         token = create_jwt({"sub": "user1"}, secret)
         # Tamper with the payload
         parts = token.split(".")
@@ -96,28 +96,28 @@ class TestJWT:
         assert verify_jwt(tampered, secret) is None
 
     def test_malformed_token_rejected(self) -> None:
-        assert verify_jwt("not-a-jwt", "secret") is None
-        assert verify_jwt("a.b", "secret") is None
-        assert verify_jwt("", "secret") is None
+        assert verify_jwt("not-a-jwt", "secret") is None  # NOSONAR — test fixture
+        assert verify_jwt("a.b", "secret") is None  # NOSONAR — test fixture
+        assert verify_jwt("", "secret") is None  # NOSONAR — test fixture
 
     def test_hs384_algorithm(self) -> None:
-        secret = "test-secret"
+        secret = "test-secret"  # NOSONAR — test fixture
         token = create_jwt({"sub": "user1"}, secret, algorithm="HS384")
         result = verify_jwt(token, secret, algorithm="HS384")
         assert result is not None
         assert result["sub"] == "user1"
 
     def test_wrong_algorithm_rejected(self) -> None:
-        secret = "test-secret"
+        secret = "test-secret"  # NOSONAR — test fixture
         token = create_jwt({"sub": "user1"}, secret, algorithm="HS256")
         assert verify_jwt(token, secret, algorithm="HS384") is None
 
     def test_unsupported_algorithm_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported algorithm"):
-            create_jwt({"sub": "user1"}, "secret", algorithm="RS256")
+            create_jwt({"sub": "user1"}, "secret", algorithm="RS256")  # NOSONAR — test fixture
 
     def test_extract_jwt_expiry(self) -> None:
-        token = create_jwt({"sub": "user1"}, "secret", expiry_seconds=120)
+        token = create_jwt({"sub": "user1"}, "secret", expiry_seconds=120)  # NOSONAR — test fixture
         expiry = extract_jwt_expiry(token)
         assert expiry is not None
         assert expiry > time.time()
@@ -349,7 +349,7 @@ class TestAuthService:
     def svc(self, tmp_path: Path) -> AuthService:
         config = SSOConfig(
             enabled=True,
-            jwt_secret="test-jwt-secret-for-unit-tests",
+            jwt_secret="test-jwt-secret-for-unit-tests",  # NOSONAR — test fixture
             jwt_expiry_seconds=3600,
             session_expiry_seconds=3600,
             default_role="viewer",
@@ -411,9 +411,9 @@ class TestAuthService:
         assert svc.validate_token(token) is None
 
     def test_legacy_token_validation(self, svc: AuthService) -> None:
-        svc.config.legacy_token = "my-legacy-token"
-        assert svc.validate_legacy_token("my-legacy-token")
-        assert not svc.validate_legacy_token("wrong-token")
+        svc.config.legacy_token = "my-legacy-token"  # NOSONAR — test fixture
+        assert svc.validate_legacy_token("my-legacy-token")  # NOSONAR — test fixture
+        assert not svc.validate_legacy_token("wrong-token")  # NOSONAR — test fixture
         svc.config.legacy_token = ""
         assert not svc.validate_legacy_token("my-legacy-token")
 

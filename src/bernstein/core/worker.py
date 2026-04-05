@@ -252,7 +252,13 @@ def main() -> None:
         sys.exit(126)
 
     # Update PID file with child PID
+    # Validate pid_file stays within pid_dir to prevent path traversal (S2083)
     try:
+        resolved_pid = pid_file.resolve()
+        resolved_dir = Path(args.pid_dir).resolve()
+        if not resolved_pid.is_relative_to(resolved_dir):
+            print("bernstein-worker: pid file escaped pid-dir", file=sys.stderr)
+            sys.exit(1)
         info = json.loads(pid_file.read_text(encoding="utf-8"))
         info["child_pid"] = child.pid
         pid_file.write_text(json.dumps(info), encoding="utf-8")

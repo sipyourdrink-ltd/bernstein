@@ -26,6 +26,19 @@ _MODEL_MAP: dict[str, str] = {
     "haiku": "claude-haiku-4-5-20251001",
 }
 
+# JSON schema for structured agent output — enforced via --json-schema so
+# the result is always machine-parseable by the orchestrator.
+_RESULT_SCHEMA = json.dumps({
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["done", "failed", "partial"]},
+        "summary": {"type": "string"},
+        "files_changed": {"type": "array", "items": {"type": "string"}},
+        "exit_reason": {"type": "string"},
+    },
+    "required": ["status", "summary"],
+})
+
 
 def load_mcp_config(
     project_servers: dict[str, Any] | None = None,
@@ -230,6 +243,9 @@ class ClaudeCodeAdapter(CLIAdapter):
             "--output-format",
             "stream-json",
             "--verbose",
+            "--bare",
+            "--include-hook-events",
+            "--no-session-persistence",
         ]
         if fallback_model:
             cmd.extend(["--fallback-model", fallback_model])
@@ -255,6 +271,9 @@ class ClaudeCodeAdapter(CLIAdapter):
 
         # Per-task budget cap — prevents runaway token spend
         cmd.extend(["--max-budget-usd", "5.00"])
+
+        # Enforce structured output so the orchestrator can always parse results
+        cmd.extend(["--json-schema", _RESULT_SCHEMA])
 
         if mcp_config:
             cmd.extend(["--mcp-config", json.dumps(mcp_config)])
@@ -326,7 +345,10 @@ class ClaudeCodeAdapter(CLIAdapter):
         if completion_path:
             completion_write = (
                 "        try:\n"
-                f"            open({completion_path!r}, 'w').write(txt or 'done')\n"
+                "            import json as _json\n"
+                "            _marker = _json.dumps({'result': txt or '', 'subtype': _subtype,"
+                " 'cost_usd': _cost, 'turns': _turns, 'duration_ms': _dur})\n"
+                f"            open({completion_path!r}, 'w').write(_marker)\n"
                 "        except OSError:\n"
                 "            pass\n"
             )

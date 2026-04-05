@@ -102,6 +102,10 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "workflow",
         "gateway",
         "templates",
+        # Reports & profiling
+        "man-pages",
+        "profile",
+        "report",
         # Utilities
         "completions",
         "ideate",

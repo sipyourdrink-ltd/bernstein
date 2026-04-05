@@ -31,7 +31,7 @@ def app(jsonl_path: Path):
 @pytest.fixture()
 def app_with_secret(jsonl_path: Path):
     """App with a signing secret — all requests must have valid signatures."""
-    return create_app(jsonl_path=jsonl_path, slack_signing_secret="test_secret_key")
+    return create_app(jsonl_path=jsonl_path, slack_signing_secret="test_secret_key")  # NOSONAR — test fixture
 
 
 @pytest.fixture()
@@ -175,7 +175,7 @@ async def test_slash_command_missing_signature_headers_returns_401(client_with_s
 async def test_slash_command_valid_signature_accepted(client_with_secret: AsyncClient) -> None:
     """POST /webhooks/slack/commands with valid signature returns 200."""
     form_body = b"command=%2Fbernstein&text=deploy+staging&user_id=U1&channel_id=C1"
-    sig_headers = _slack_sig_headers(form_body, "test_secret_key")
+    sig_headers = _slack_sig_headers(form_body, "test_secret_key")  # NOSONAR — test fixture
     resp = await client_with_secret.post(
         "/webhooks/slack/commands",
         content=form_body,

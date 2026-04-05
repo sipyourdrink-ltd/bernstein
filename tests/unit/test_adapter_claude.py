@@ -551,7 +551,7 @@ class TestWrapperScriptCompletionMarker:
         assert "completed" not in script.lower() or "completion" not in script.lower()
 
     def test_completion_marker_written_on_result_event(self, tmp_path: Path) -> None:
-        """End-to-end: wrapper script writes the completion marker when result JSON is piped in."""
+        """End-to-end: wrapper script writes structured JSON marker when result JSON is piped in."""
         marker_path = tmp_path / "completed" / "test-session"
         marker_path.parent.mkdir(parents=True)
 
@@ -560,7 +560,14 @@ class TestWrapperScriptCompletionMarker:
             completion_path=str(marker_path),
         )
 
-        result_json = json.dumps({"type": "result", "result": "All tasks done"})
+        result_json = json.dumps({
+            "type": "result",
+            "result": "All tasks done",
+            "subtype": "success",
+            "total_cost_usd": 0.12,
+            "num_turns": 5,
+            "duration_ms": 3200,
+        })
         proc = subprocess.run(
             [sys.executable, "-c", script],
             input=result_json + "\n",
@@ -570,7 +577,12 @@ class TestWrapperScriptCompletionMarker:
         )
         assert proc.returncode == 0
         assert marker_path.exists()
-        assert marker_path.read_text() == "All tasks done"
+        marker = json.loads(marker_path.read_text())
+        assert marker["result"] == "All tasks done"
+        assert marker["subtype"] == "success"
+        assert marker["cost_usd"] == 0.12
+        assert marker["turns"] == 5
+        assert marker["duration_ms"] == 3200
 
     def test_completion_marker_not_written_on_assistant_event(self, tmp_path: Path) -> None:
         """Wrapper does NOT write completion marker for assistant events."""
