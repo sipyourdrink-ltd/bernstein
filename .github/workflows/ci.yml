@@ -197,7 +197,7 @@ jobs:
     name: SonarCloud analysis
     runs-on: ubuntu-latest
     needs: [test]
-    if: ${{ secrets.SONAR_TOKEN != '' }}
+    if: github.repository_owner == 'chernistry'
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
