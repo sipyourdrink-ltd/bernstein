@@ -295,6 +295,54 @@ _prev_cost: float = 0.0
 _prev_cost_by_model: dict[str, float] = {}
 
 
+def _inc_counter_delta(prev_store: dict[str, float], key: str, current: float, counter: Any, **labels: str) -> None:
+    """Increment *counter* by the positive delta since the last observation."""
+    prev = prev_store.get(key, 0.0)
+    delta = current - prev
+    if delta > 0:
+        counter.labels(**labels).inc(delta)
+    prev_store[key] = current
+
+
+def _sync_per_role_metrics(per_role: list[dict[str, Any]]) -> None:
+    """Update per-role task counters and active gauges."""
+    for role_entry in per_role:
+        role = str(role_entry.get("role", "unknown"))
+        for status_key in ("done", "failed"):
+            current = float(role_entry.get(status_key, 0))
+            _inc_counter_delta(_prev_tasks, f"{role}:{status_key}", current, tasks_total, status=status_key, role=role)
+        claimed = float(role_entry.get("claimed", 0))
+        tasks_active.labels(role=role).set(claimed)
+        agents_active.labels(role=role).set(claimed)
+
+
+def _sync_global_task_counters(status_data: dict[str, Any]) -> None:
+    """Update global (role=all) task counters."""
+    for status_key in ("done", "failed"):
+        current = float(status_data.get(status_key, 0))
+        _inc_counter_delta(_prev_tasks, f"total:{status_key}", current, tasks_total, status=status_key, role="all")
+
+
+def _sync_cost_by_model(status_data: dict[str, Any]) -> None:
+    """Update per-model cost counters."""
+    global _prev_cost_by_model
+    per_model_raw: Any = status_data.get("cost_by_model_usd", {})
+    if not isinstance(per_model_raw, dict):
+        return
+    raw_map = cast("dict[str, Any]", per_model_raw)
+    for model, raw_cost in raw_map.items():
+        model_name = str(model).strip() or "unknown"
+        current_model_cost = float(raw_cost or 0.0)
+        _inc_counter_delta(
+            _prev_cost_by_model,
+            model_name,
+            current_model_cost,
+            cost_usd_by_model_total,
+            model=model_name,
+            adapter="unknown",
+        )
+
+
 def update_metrics_from_status(status_data: dict[str, Any]) -> None:
     """Sync Prometheus gauges/counters from a ``/status`` response dict.
 
@@ -314,61 +362,17 @@ def update_metrics_from_status(status_data: dict[str, Any]) -> None:
     if not _prometheus_enabled:
         return
 
-    global _prev_cost, _prev_cost_by_model
+    global _prev_cost
 
-    # -- Task counters and gauges --------------------------------------------
-    per_role: list[dict[str, Any]] = status_data.get("per_role", [])
+    _sync_per_role_metrics(status_data.get("per_role", []))
+    _sync_global_task_counters(status_data)
 
-    for role_entry in per_role:
-        role = str(role_entry.get("role", "unknown"))
+    task_queue_depth.set(float(status_data.get("open", 0)))
 
-        # Terminal status counters (cumulative)
-        for status_key in ("done", "failed"):
-            current = float(role_entry.get(status_key, 0))
-            prev_key = f"{role}:{status_key}"
-            prev = _prev_tasks.get(prev_key, 0.0)
-            delta = current - prev
-            if delta > 0:
-                tasks_total.labels(status=status_key, role=role).inc(delta)
-            _prev_tasks[prev_key] = current
-
-        # Active status gauges (current state)
-        claimed = float(role_entry.get("claimed", 0))
-        tasks_active.labels(role=role).set(claimed)
-        agents_active.labels(role=role).set(claimed)
-
-    # Global counters (backward compat or for total overview)
-    for status_key in ("done", "failed"):
-        current = float(status_data.get(status_key, 0))
-        prev = _prev_tasks.get(f"total:{status_key}", 0.0)
-        delta = current - prev
-        if delta > 0:
-            tasks_total.labels(status=status_key, role="all").inc(delta)
-        _prev_tasks[f"total:{status_key}"] = current
-
-    # -- Queue depth gauge (for HPA) -----------------------------------------
-    queue_depth: float = float(status_data.get("open", 0))
-    task_queue_depth.set(queue_depth)
-
-    # -- Cost counter --------------------------------------------------------
-    current_cost: float = float(status_data.get("total_cost_usd", 0.0))
+    current_cost = float(status_data.get("total_cost_usd", 0.0))
     cost_delta = current_cost - _prev_cost
     if cost_delta > 0:
         cost_usd_total.labels(adapter="total").inc(cost_delta)
     _prev_cost = current_cost
 
-    # -- Cost by model counter ----------------------------------------------
-    per_model_raw: Any = status_data.get("cost_by_model_usd", {})
-    per_model: dict[str, float] = {}
-    if isinstance(per_model_raw, dict):
-        raw_map = cast("dict[str, Any]", per_model_raw)
-        for model in raw_map:
-            raw_cost = raw_map[model]
-            per_model[str(model)] = float(raw_cost or 0.0)
-    for model_name, current_model_cost in per_model.items():
-        model_name = model_name.strip() or "unknown"
-        previous_model_cost = _prev_cost_by_model.get(model_name, 0.0)
-        delta_model_cost = current_model_cost - previous_model_cost
-        if delta_model_cost > 0:
-            cost_usd_by_model_total.labels(model=model_name, adapter="unknown").inc(delta_model_cost)
-        _prev_cost_by_model[model_name] = current_model_cost
+    _sync_cost_by_model(status_data)

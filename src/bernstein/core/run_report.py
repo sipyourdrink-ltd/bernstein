@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -157,7 +158,7 @@ class RunReportGenerator:
         agents_spawned = len(agent_metrics)
 
         # If summary had no cost but cost_data does, prefer cost_data.
-        if total_cost_usd == 0.0 and cost_data:
+        if math.isclose(total_cost_usd, 0.0) and cost_data:
             total_cost_usd = float(cost_data.get("total_spent_usd", 0.0))
 
         # Build task rows and timeline

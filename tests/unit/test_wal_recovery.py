@@ -39,7 +39,7 @@ def _mock_adapter() -> CLIAdapter:
             return False
 
         def kill(self, pid: int) -> None:
-            pass
+            """Intentionally empty -- stub adapter for testing."""
 
     return _Adapter()
 

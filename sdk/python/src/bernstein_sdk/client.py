@@ -41,6 +41,9 @@ log = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
+#: Base path for task-related API endpoints.
+_TASKS_PATH = "/tasks"
+
 
 class BernsteinClient:
     """Synchronous HTTP client for the Bernstein task server.
@@ -187,7 +190,7 @@ class BernsteinClient:
             external_ref=external_ref,
             metadata=metadata or {},
         ).to_api_payload()
-        resp = self._client.post("/tasks", json=body)
+        resp = self._client.post(_TASKS_PATH, json=body)
         resp.raise_for_status()
         return TaskResponse.from_api_response(resp.json())
 
@@ -199,7 +202,7 @@ class BernsteinClient:
         Raises:
             httpx.HTTPStatusError: 404 if the task does not exist.
         """
-        data = self._get_conditional(f"/tasks/{task_id}")
+        data = self._get_conditional(f"{_TASKS_PATH}/{task_id}")
         return TaskResponse.from_api_response(data)
 
     def list_tasks(self, status: TaskStatus | str | None = None) -> list[TaskResponse]:
@@ -215,7 +218,7 @@ class BernsteinClient:
             params["status"] = (
                 status.value if isinstance(status, TaskStatus) else status
             )
-        data = self._get_conditional("/tasks", params or None)
+        data = self._get_conditional(_TASKS_PATH, params or None)
         tasks_raw: list[dict[str, Any]] = (
             data if isinstance(data, list) else data.get("tasks", [])
         )
@@ -229,7 +232,7 @@ class BernsteinClient:
             result_summary: Brief description of what was accomplished.
         """
         resp = self._client.post(
-            f"/tasks/{task_id}/complete",
+            f"{_TASKS_PATH}/{task_id}/complete",
             json={"result_summary": result_summary},
         )
         resp.raise_for_status()
@@ -242,7 +245,7 @@ class BernsteinClient:
             error: Error message or failure reason.
         """
         resp = self._client.post(
-            f"/tasks/{task_id}/fail",
+            f"{_TASKS_PATH}/{task_id}/fail",
             json={"error": error},
         )
         resp.raise_for_status()
@@ -370,7 +373,7 @@ class AsyncBernsteinClient:
             external_ref=external_ref,
             metadata=metadata or {},
         ).to_api_payload()
-        resp = await self._client.post("/tasks", json=body)
+        resp = await self._client.post(_TASKS_PATH, json=body)
         resp.raise_for_status()
         return TaskResponse.from_api_response(resp.json())
 
@@ -379,7 +382,7 @@ class AsyncBernsteinClient:
 
         Uses ETag-based conditional requests; returns cached data on 304.
         """
-        data = await self._get_conditional(f"/tasks/{task_id}")
+        data = await self._get_conditional(f"{_TASKS_PATH}/{task_id}")
         return TaskResponse.from_api_response(data)
 
     async def list_tasks(
@@ -394,7 +397,7 @@ class AsyncBernsteinClient:
             params["status"] = (
                 status.value if isinstance(status, TaskStatus) else status
             )
-        data = await self._get_conditional("/tasks", params or None)
+        data = await self._get_conditional(_TASKS_PATH, params or None)
         tasks_raw: list[dict[str, Any]] = (
             data if isinstance(data, list) else data.get("tasks", [])
         )
@@ -402,14 +405,14 @@ class AsyncBernsteinClient:
 
     async def complete_task(self, task_id: str, result_summary: str = "") -> None:
         resp = await self._client.post(
-            f"/tasks/{task_id}/complete",
+            f"{_TASKS_PATH}/{task_id}/complete",
             json={"result_summary": result_summary},
         )
         resp.raise_for_status()
 
     async def fail_task(self, task_id: str, error: str = "") -> None:
         resp = await self._client.post(
-            f"/tasks/{task_id}/fail",
+            f"{_TASKS_PATH}/{task_id}/fail",
             json={"error": error},
         )
         resp.raise_for_status()

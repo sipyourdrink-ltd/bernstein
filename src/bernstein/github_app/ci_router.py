@@ -253,7 +253,7 @@ def build_ci_routing_payload(
         ## Instructions
         1. Review the triggering commit diff above.
         2. Run the suggested fix commands locally.
-        3. Verify with: uv run ruff check src/ && uv run pytest tests/ -x -q
+        3. Verify with: uv run ruff check src/ && uv run python scripts/run_tests.py -x
         4. Commit and push the fix.
     """)
 

@@ -59,6 +59,50 @@ def _topological_sort(
     return order
 
 
+def _build_adjacency(
+    tasks: list[dict[str, Any]],
+    by_id: dict[str, dict[str, Any]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Build forward (parent->children) and reverse (child->parents) adjacency."""
+    forward: dict[str, list[str]] = defaultdict(list)
+    reverse: dict[str, list[str]] = defaultdict(list)
+    for task in tasks:
+        raw_deps: list[str] = task.get("depends_on") or []
+        task_id: str = task["id"]
+        for dep_id in raw_deps:
+            if dep_id in by_id:
+                forward[dep_id].append(task_id)
+                reverse[task_id].append(dep_id)
+    return forward, reverse
+
+
+def _render_task_line(task: dict[str, Any]) -> str:
+    """Format a standalone task as '[STATUS] title'."""
+    return f"{_status_tag(task['status'])} {task['title']}"
+
+
+def _render_convergence_group(
+    parent_entries: list[tuple[str, str, str]],
+    child_tag: str,
+    child_title: str,
+) -> list[str]:
+    """Render a group of parents converging into a single child."""
+    if len(parent_entries) == 1:
+        ptag, ptitle, _ = parent_entries[0]
+        return [f"{ptag} {ptitle} --> {child_tag} {child_title}"]
+
+    # Multiple dependencies converging
+    formatted = [f"{ptag} {ptitle}" for ptag, ptitle, _ in parent_entries]
+    max_width = max(len(f) for f in formatted)
+    lines: list[str] = []
+    for fmt in formatted:
+        padding = " " * (max_width - len(fmt))
+        lines.append(f"{fmt}{padding} --+")
+    indent = " " * max_width
+    lines.append(f"{indent}   +-- {child_tag} {child_title}")
+    return lines
+
+
 def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
     """Render an ASCII dependency graph for a list of tasks.
 
@@ -73,29 +117,13 @@ def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
     if not tasks:
         return "(no tasks)"
 
-    # Index tasks
     by_id: dict[str, dict[str, Any]] = {t["id"]: t for t in tasks}
+    forward, reverse = _build_adjacency(tasks, by_id)
 
-    # Build adjacency: forward = dependency -> dependents
-    forward: dict[str, list[str]] = defaultdict(list)
-    reverse: dict[str, list[str]] = defaultdict(list)
-    for task in tasks:
-        raw_deps: list[str] = task.get("depends_on") or []
-        task_id: str = task["id"]
-        for dep_id in raw_deps:
-            if dep_id in by_id:
-                forward[dep_id].append(task_id)
-                reverse[task_id].append(dep_id)
-
-    # Topological sort
     all_ids = list(by_id.keys())
     topo_order = _topological_sort(all_ids, forward, reverse)
 
-    # Group tasks by their dependents (which task they feed into)
-    # Find tasks that are "targets" (have dependencies feeding into them)
     lines: list[str] = []
-
-    # Track which tasks have been rendered
     rendered: set[str] = set()
 
     for tid in topo_order:
@@ -104,15 +132,10 @@ def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
 
         children = forward.get(tid, [])
         if not children:
-            # Leaf or standalone task -- render solo
-            task = by_id[tid]
-            tag = _status_tag(task["status"])
-            title = task["title"]
-            lines.append(f"{tag} {title}")
+            lines.append(_render_task_line(by_id[tid]))
             rendered.add(tid)
             continue
 
-        # For each child, collect all parents that feed into it
         for child_id in children:
             if child_id in rendered:
                 continue
@@ -120,55 +143,26 @@ def render_dependency_graph(tasks: list[dict[str, Any]]) -> str:
             if not parents:
                 continue
 
-            # Only render this group if we haven't rendered the child yet
             child_task = by_id[child_id]
             child_tag = _status_tag(child_task["status"])
-            child_title = child_task["title"]
 
-            # Render parent lines with connectors
             parent_entries: list[tuple[str, str, str]] = []
             for pid in parents:
                 ptask = by_id[pid]
-                ptag = _status_tag(str(ptask["status"]))
-                ptitle = str(ptask["title"])
-                parent_entries.append((ptag, ptitle, pid))
+                parent_entries.append((_status_tag(str(ptask["status"])), str(ptask["title"]), pid))
                 rendered.add(pid)
 
-            if len(parent_entries) == 1:
-                # Single dependency: simple arrow
-                ptag, ptitle, _ = parent_entries[0]
-                lines.append(f"{ptag} {ptitle} --> {child_tag} {child_title}")
-            else:
-                # Multiple dependencies converging
-                # Find max width for alignment
-                formatted = [f"{ptag} {ptitle}" for ptag, ptitle, _ in parent_entries]
-                max_width = max(len(f) for f in formatted)
-
-                for fmt in formatted:
-                    padding = " " * (max_width - len(fmt))
-                    lines.append(f"{fmt}{padding} --+")
-
-                # Add the connector line pointing to child
-                indent = " " * max_width
-                lines.append(f"{indent}   +-- {child_tag} {child_title}")
-
+            lines.extend(_render_convergence_group(parent_entries, child_tag, child_task["title"]))
             rendered.add(child_id)
 
-        # Render the current task if not yet rendered (standalone)
         if tid not in rendered:
-            task = by_id[tid]
-            tag = _status_tag(task["status"])
-            title = task["title"]
-            lines.append(f"{tag} {title}")
+            lines.append(_render_task_line(by_id[tid]))
             rendered.add(tid)
 
     # Render any remaining unrendered tasks
     for tid in topo_order:
         if tid not in rendered:
-            task = by_id[tid]
-            tag = _status_tag(task["status"])
-            title = task["title"]
-            lines.append(f"{tag} {title}")
+            lines.append(_render_task_line(by_id[tid]))
             rendered.add(tid)
 
     return "\n".join(lines)

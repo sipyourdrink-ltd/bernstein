@@ -215,6 +215,178 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# doctor — self-diagnostic helpers
+# ---------------------------------------------------------------------------
+
+_CheckFn = Any  # Callable[[str, bool, str, str, str], None]
+
+
+def _doctor_check_storage(_check: _CheckFn) -> None:
+    """Check storage backend connectivity (memory/postgres/redis)."""
+    storage_backend = os.environ.get("BERNSTEIN_STORAGE_BACKEND", "memory")
+    if storage_backend == "memory":
+        _check("Storage backend", True, "memory (default, no external dependencies)", "")
+        return
+    if storage_backend == "postgres":
+        _doctor_check_postgres(_check)
+        return
+    if storage_backend == "redis":
+        _doctor_check_redis(_check)
+        return
+    _check(
+        "Storage backend",
+        False,
+        f"unknown backend: {storage_backend}",
+        "Set BERNSTEIN_STORAGE_BACKEND to memory, postgres, or redis",
+    )
+
+
+def _doctor_check_postgres(_check: _CheckFn) -> None:
+    """Check postgres backend connectivity."""
+    db_url = os.environ.get("BERNSTEIN_DATABASE_URL")
+    if not db_url:
+        _check(
+            "Storage backend",
+            False,
+            "postgres — BERNSTEIN_DATABASE_URL not set",
+            "export BERNSTEIN_DATABASE_URL=postgresql://user:pass@localhost/bernstein",
+        )
+        return
+    try:
+        import asyncpg  # type: ignore[import-untyped]
+
+        async def _check_pg() -> bool:
+            conn = await asyncpg.connect(db_url)  # type: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            await conn.close()  # type: ignore[reportUnknownMemberType]
+            return True
+
+        import asyncio
+
+        asyncio.run(_check_pg())
+        _check("Storage backend", True, f"postgres — connected ({db_url[:40]}...)", "")
+    except ImportError:
+        _check(
+            "Storage backend",
+            False,
+            "postgres — asyncpg not installed",
+            "pip install bernstein[postgres]",
+        )
+    except Exception as exc:
+        _check(
+            "Storage backend",
+            False,
+            f"postgres — connection failed: {exc}",
+            "Check BERNSTEIN_DATABASE_URL and ensure PostgreSQL is running",
+        )
+
+
+def _doctor_check_redis(_check: _CheckFn) -> None:
+    """Check redis backend connectivity."""
+    db_url = os.environ.get("BERNSTEIN_DATABASE_URL")
+    redis_url = os.environ.get("BERNSTEIN_REDIS_URL")
+    storage_ok = True
+    if not db_url:
+        _check(
+            "Storage backend (postgres)",
+            False,
+            "redis mode — BERNSTEIN_DATABASE_URL not set",
+            "export BERNSTEIN_DATABASE_URL=postgresql://user:pass@localhost/bernstein",
+        )
+        storage_ok = False
+    if not redis_url:
+        _check(
+            "Storage backend (redis)",
+            False,
+            "redis mode — BERNSTEIN_REDIS_URL not set",
+            "export BERNSTEIN_REDIS_URL=redis://localhost:6379",
+        )
+        storage_ok = False
+    if storage_ok:
+        _check("Storage backend", True, "redis mode (pg + redis locking)", "")
+
+
+def _doctor_check_secrets(workdir: Path, _check: _CheckFn) -> None:
+    """Check secrets manager configuration and connectivity."""
+    from bernstein.core.secrets import SecretsConfig, check_provider_connectivity
+
+    secrets_cfg: SecretsConfig | None = None
+    for config_path in (workdir / ".sdd" / "config.yaml", workdir / "bernstein.yaml"):
+        if secrets_cfg is not None:
+            break
+        if not config_path.exists():
+            continue
+        try:
+            import yaml as _yaml
+
+            raw_data = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            if isinstance(raw_data, dict) and "secrets" in raw_data:
+                s = raw_data["secrets"]
+                if isinstance(s, dict) and "provider" in s and "path" in s:
+                    secrets_cfg = SecretsConfig(
+                        provider=s["provider"],
+                        path=s["path"],
+                        ttl=s.get("ttl", 300),
+                        field_map=s.get("field_map", {}),
+                    )
+        except Exception:
+            pass
+
+    if secrets_cfg is not None:
+        sm_ok, sm_detail = check_provider_connectivity(secrets_cfg)
+        _check(
+            f"Secrets: {secrets_cfg.provider}",
+            sm_ok,
+            sm_detail,
+            f"Check {secrets_cfg.provider} connectivity and credentials" if not sm_ok else "",
+        )
+    else:
+        _check("Secrets manager", True, "not configured (using env vars)", "")
+
+
+def _doctor_auto_fix(
+    checks: list[dict[str, Any]],
+    stale_pid_paths: list[Path],
+    workdir: Path,
+    fixed: list[str],
+    manual_needed: list[str],
+) -> None:
+    """Attempt to auto-fix issues detected by doctor checks."""
+    failed = [c for c in checks if not c["ok"] and c.get("fix_id")]
+    for c in failed:
+        fix_id = c["fix_id"]
+        if fix_id == "port_in_use":
+            try:
+                from bernstein.cli.stop_cmd import soft_stop
+
+                soft_stop(timeout=10)
+                fixed.append("Killed stale server on port 8052")
+            except Exception:
+                manual_needed.append("Run 'bernstein stop' to free port 8052")
+        elif fix_id == "sdd_missing":
+            try:
+                from bernstein.core.server_launch import ensure_sdd
+
+                ensure_sdd(workdir)
+                fixed.append("Created .sdd workspace")
+            except Exception:
+                manual_needed.append("Run 'bernstein init' to create .sdd workspace")
+        elif fix_id == "stale_pids":
+            count = 0
+            for pid_file in stale_pid_paths:
+                try:
+                    pid_file.unlink(missing_ok=True)
+                    count += 1
+                except OSError:
+                    pass
+            if count > 0:
+                fixed.append(f"Cleaned {count} stale PID file(s)")
+        elif fix_id == "codex_login":
+            manual_needed.append("Run 'codex login' to authenticate Codex CLI")
+        elif fix_id == "gemini_auth":
+            manual_needed.append("Run 'gemini' to authenticate Gemini CLI (prompts on first run)")
+
+
+# ---------------------------------------------------------------------------
 # doctor — self-diagnostic
 # ---------------------------------------------------------------------------
 
@@ -402,125 +574,10 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
         )
 
     # 9. Storage backend connectivity
-    storage_backend = os.environ.get("BERNSTEIN_STORAGE_BACKEND", "memory")
-    if storage_backend == "memory":
-        _check("Storage backend", True, "memory (default, no external dependencies)", "")
-    elif storage_backend == "postgres":
-        db_url = os.environ.get("BERNSTEIN_DATABASE_URL")
-        if db_url:
-            try:
-                import asyncpg  # type: ignore[import-untyped]
-
-                async def _check_pg() -> bool:
-                    conn = await asyncpg.connect(db_url)  # type: ignore[reportUnknownVariableType,reportUnknownMemberType]
-                    await conn.close()  # type: ignore[reportUnknownMemberType]
-                    return True
-
-                import asyncio
-
-                asyncio.run(_check_pg())
-                _check("Storage backend", True, f"postgres — connected ({db_url[:40]}...)", "")
-            except ImportError:
-                _check(
-                    "Storage backend",
-                    False,
-                    "postgres — asyncpg not installed",
-                    "pip install bernstein[postgres]",
-                )
-            except Exception as exc:
-                _check(
-                    "Storage backend",
-                    False,
-                    f"postgres — connection failed: {exc}",
-                    "Check BERNSTEIN_DATABASE_URL and ensure PostgreSQL is running",
-                )
-        else:
-            _check(
-                "Storage backend",
-                False,
-                "postgres — BERNSTEIN_DATABASE_URL not set",
-                "export BERNSTEIN_DATABASE_URL=postgresql://user:pass@localhost/bernstein",
-            )
-    elif storage_backend == "redis":
-        db_url = os.environ.get("BERNSTEIN_DATABASE_URL")
-        redis_url = os.environ.get("BERNSTEIN_REDIS_URL")
-        storage_ok = True
-        if not db_url:
-            _check(
-                "Storage backend (postgres)",
-                False,
-                "redis mode — BERNSTEIN_DATABASE_URL not set",
-                "export BERNSTEIN_DATABASE_URL=postgresql://user:pass@localhost/bernstein",
-            )
-            storage_ok = False
-        if not redis_url:
-            _check(
-                "Storage backend (redis)",
-                False,
-                "redis mode — BERNSTEIN_REDIS_URL not set",
-                "export BERNSTEIN_REDIS_URL=redis://localhost:6379",
-            )
-            storage_ok = False
-        if storage_ok:
-            _check("Storage backend", True, "redis mode (pg + redis locking)", "")
-    else:
-        _check(
-            "Storage backend",
-            False,
-            f"unknown backend: {storage_backend}",
-            "Set BERNSTEIN_STORAGE_BACKEND to memory, postgres, or redis",
-        )
+    _doctor_check_storage(_check)
 
     # 10. Secrets manager connectivity
-    from bernstein.core.secrets import SecretsConfig, check_provider_connectivity
-
-    secrets_cfg: SecretsConfig | None = None
-    # Check project config for secrets configuration
-    sdd_config_path = workdir / ".sdd" / "config.yaml"
-    if sdd_config_path.exists():
-        try:
-            import yaml as _yaml
-
-            sdd_data = _yaml.safe_load(sdd_config_path.read_text(encoding="utf-8"))
-            if isinstance(sdd_data, dict) and "secrets" in sdd_data:
-                s = sdd_data["secrets"]
-                if isinstance(s, dict) and "provider" in s and "path" in s:
-                    secrets_cfg = SecretsConfig(
-                        provider=s["provider"],
-                        path=s["path"],
-                        ttl=s.get("ttl", 300),
-                        field_map=s.get("field_map", {}),
-                    )
-        except Exception:
-            pass
-    # Also check bernstein.yaml
-    bernstein_yaml = workdir / "bernstein.yaml"
-    if secrets_cfg is None and bernstein_yaml.exists():
-        try:
-            import yaml as _yaml
-
-            by_data = _yaml.safe_load(bernstein_yaml.read_text(encoding="utf-8"))
-            if isinstance(by_data, dict) and "secrets" in by_data:
-                s = by_data["secrets"]
-                if isinstance(s, dict) and "provider" in s and "path" in s:
-                    secrets_cfg = SecretsConfig(
-                        provider=s["provider"],
-                        path=s["path"],
-                        ttl=s.get("ttl", 300),
-                        field_map=s.get("field_map", {}),
-                    )
-        except Exception:
-            pass
-    if secrets_cfg is not None:
-        sm_ok, sm_detail = check_provider_connectivity(secrets_cfg)
-        _check(
-            f"Secrets: {secrets_cfg.provider}",
-            sm_ok,
-            sm_detail,
-            f"Check {secrets_cfg.provider} connectivity and credentials" if not sm_ok else "",
-        )
-    else:
-        _check("Secrets manager", True, "not configured (using env vars)", "")
+    _doctor_check_secrets(workdir, _check)
 
     # 11. Overall readiness
     any_adapter_key = any_adapter and any_key
@@ -651,39 +708,7 @@ def doctor(as_json: bool, auto_fix: bool) -> None:
 
     # --fix: attempt to auto-fix issues
     if auto_fix:
-        failed = [c for c in checks if not c["ok"] and c.get("fix_id")]
-        for c in failed:
-            fix_id = c["fix_id"]
-            if fix_id == "port_in_use":
-                try:
-                    from bernstein.cli.stop_cmd import soft_stop
-
-                    soft_stop(timeout=10)
-                    fixed.append("Killed stale server on port 8052")
-                except Exception:
-                    manual_needed.append("Run 'bernstein stop' to free port 8052")
-            elif fix_id == "sdd_missing":
-                try:
-                    from bernstein.core.server_launch import ensure_sdd
-
-                    ensure_sdd(workdir)
-                    fixed.append("Created .sdd workspace")
-                except Exception:
-                    manual_needed.append("Run 'bernstein init' to create .sdd workspace")
-            elif fix_id == "stale_pids":
-                count = 0
-                for pid_file in stale_pid_paths:
-                    try:
-                        pid_file.unlink(missing_ok=True)
-                        count += 1
-                    except OSError:
-                        pass
-                if count > 0:
-                    fixed.append(f"Cleaned {count} stale PID file(s)")
-            elif fix_id == "codex_login":
-                manual_needed.append("Run 'codex login' to authenticate Codex CLI")
-            elif fix_id == "gemini_auth":
-                manual_needed.append("Run 'gemini' to authenticate Gemini CLI (prompts on first run)")
+        _doctor_auto_fix(checks, stale_pid_paths, workdir, fixed, manual_needed)
 
     # 10. Secrets provider connectivity
     try:

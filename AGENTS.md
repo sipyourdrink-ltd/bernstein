@@ -293,6 +293,20 @@ All three must pass before committing. No exceptions, no "fix later."
 | `qwen.py`            | Qwen CLI adapter for OpenAI compatible models |
 | `registry.py`        | Adapter registry — look up CLI adapters by name |
 | `roo_code.py`        | Roo Code CLI adapter |
+| `cody.py`            | Sourcegraph Cody CLI adapter |
+| `continue_dev.py`    | Continue.dev CLI adapter |
+| `cursor.py`          | Cursor CLI adapter |
+| `goose.py`           | Goose CLI adapter |
+| `kilo.py`            | Kilo Code CLI adapter |
+| `kiro.py`            | Kiro CLI adapter |
+| `ollama.py`          | Ollama local model CLI adapter |
+| `opencode.py`        | OpenCode CLI adapter |
+| `tabby.py`           | Tabby CLI adapter |
+| `claude_agents.py`   | Claude Agents SDK adapter |
+| `iac.py`             | Infrastructure-as-Code adapter |
+| `mock.py`            | Mock adapter for testing |
+| `skills_injector.py` | Skills injection middleware for adapters |
+| `conformance.py`     | Adapter conformance test suite |
 | `ci/`                | CI system adapters for log parsing and failure extraction (github_actions.py) |
 
 ### `src/bernstein/agents/` — agent catalog & discovery

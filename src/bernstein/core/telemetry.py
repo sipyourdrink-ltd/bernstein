@@ -41,6 +41,15 @@ _enabled = False
 
 Protocol = Literal["grpc", "http/protobuf", "console"]
 
+#: Default OTLP gRPC endpoint used by local observability backends.
+DEFAULT_OTLP_GRPC_ENDPOINT = "http://localhost:4317"
+
+#: Default transport protocol for OTLP export.
+DEFAULT_PROTOCOL: Protocol = "grpc"
+
+#: Default service name used for OpenTelemetry resource attributes, tracers, and meters.
+SERVICE_NAME = "bernstein"
+
 
 @dataclass(frozen=True)
 class ExporterPreset:
@@ -58,10 +67,10 @@ class ExporterPreset:
 
     name: str
     endpoint: str
-    protocol: Protocol = "grpc"
+    protocol: Protocol = DEFAULT_PROTOCOL
     headers: dict[str, str] = field(default_factory=dict[str, str])
     insecure: bool = True
-    service_name: str = "bernstein"
+    service_name: str = SERVICE_NAME
     description: str = ""
 
 
@@ -70,22 +79,22 @@ class ExporterPreset:
 BUILTIN_PRESETS: dict[str, ExporterPreset] = {
     "jaeger": ExporterPreset(
         name="jaeger",
-        endpoint="http://localhost:4317",
-        protocol="grpc",
+        endpoint=DEFAULT_OTLP_GRPC_ENDPOINT,
+        protocol=DEFAULT_PROTOCOL,
         insecure=True,
         description="Jaeger all-in-one running locally (gRPC OTLP on port 4317)",
     ),
     "grafana": ExporterPreset(
         name="grafana",
-        endpoint="http://localhost:4317",
-        protocol="grpc",
+        endpoint=DEFAULT_OTLP_GRPC_ENDPOINT,
+        protocol=DEFAULT_PROTOCOL,
         insecure=True,
         description="Grafana Tempo OTLP receiver (gRPC on port 4317)",
     ),
     "datadog": ExporterPreset(
         name="datadog",
-        endpoint="http://localhost:4317",
-        protocol="grpc",
+        endpoint=DEFAULT_OTLP_GRPC_ENDPOINT,
+        protocol=DEFAULT_PROTOCOL,
         insecure=True,
         description="Datadog Agent OTLP receiver (gRPC on port 4317). Set DD_API_KEY in the environment.",
     ),
@@ -169,7 +178,7 @@ def init_telemetry(otlp_endpoint: str | None = None, *, insecure: bool = True) -
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        resource = Resource.create({"service.name": "bernstein"})
+        resource = Resource.create({"service.name": SERVICE_NAME})
 
         # 1. Traces
         trace_provider = TracerProvider(resource=resource)
@@ -177,14 +186,14 @@ def init_telemetry(otlp_endpoint: str | None = None, *, insecure: bool = True) -
         trace_processor = BatchSpanProcessor(trace_exporter)
         trace_provider.add_span_processor(trace_processor)
         trace.set_tracer_provider(trace_provider)
-        _tracer = trace.get_tracer("bernstein")
+        _tracer = trace.get_tracer(SERVICE_NAME)
 
         # 2. Metrics
         metric_exporter = OTLPMetricExporter(endpoint=otlp_endpoint, insecure=insecure)
         reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=30000)
         metric_provider = MeterProvider(resource=resource, metric_readers=[reader])
         metrics.set_meter_provider(metric_provider)
-        _meter = metrics.get_meter("bernstein")
+        _meter = metrics.get_meter(SERVICE_NAME)
 
         _enabled = True
         logger.info("OpenTelemetry telemetry enabled (endpoint=%s)", otlp_endpoint)
@@ -196,7 +205,7 @@ def init_telemetry(otlp_endpoint: str | None = None, *, insecure: bool = True) -
         _enabled = False
 
 
-def _init_console_telemetry(service_name: str = "bernstein") -> None:
+def _init_console_telemetry(service_name: str = SERVICE_NAME) -> None:
     """Initialise OpenTelemetry with console (stdout) exporters for local debugging.
 
     Args:

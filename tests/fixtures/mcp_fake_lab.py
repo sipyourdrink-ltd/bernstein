@@ -116,52 +116,54 @@ class _BernsteinFakeTransport(httpx.AsyncBaseTransport):
         self._tasks = tasks
         self._status_data = status_data
 
+    def _handle_get_tasks(self, request: httpx.Request) -> httpx.Response:
+        status_filter = request.url.params.get("status")
+        tasks = list(self._tasks.values())
+        if status_filter:
+            tasks = [t for t in tasks if t["status"] == status_filter]
+        return httpx.Response(200, json=tasks)
+
+    def _handle_post_tasks(self, request: httpx.Request) -> httpx.Response:
+        body: dict[str, Any] = json.loads(request.content) if request.content else {}
+        task_id = f"fake-{len(self._tasks) + 1:04d}"
+        task = _make_task_dict(task_id=task_id, **body)
+        self._tasks[task_id] = task
+        return httpx.Response(201, json=task)
+
+    def _handle_task_transition(
+        self,
+        request: httpx.Request,
+        task_id: str,
+        new_status: str,
+    ) -> httpx.Response:
+        if task_id not in self._tasks:
+            return httpx.Response(404, json={"error": f"task {task_id!r} not found"})
+        body: dict[str, Any] = json.loads(request.content) if request.content else {}
+        self._tasks[task_id]["status"] = new_status
+        self._tasks[task_id]["result_summary"] = body.get("result_summary")
+        return httpx.Response(200, json=self._tasks[task_id])
+
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         self._requests.append(request)
         method = request.method
         path = request.url.path
 
-        # GET /status
         if method == "GET" and path == "/status":
             return httpx.Response(200, json=self._status_data)
 
-        # GET /tasks[?status=...]
         if method == "GET" and path == "/tasks":
-            status_filter = request.url.params.get("status")
-            tasks = list(self._tasks.values())
-            if status_filter:
-                tasks = [t for t in tasks if t["status"] == status_filter]
-            return httpx.Response(200, json=tasks)
+            return self._handle_get_tasks(request)
 
-        # POST /tasks — create new task
         if method == "POST" and path == "/tasks":
-            body: dict[str, Any] = json.loads(request.content) if request.content else {}
-            task_id = f"fake-{len(self._tasks) + 1:04d}"
-            task = _make_task_dict(task_id=task_id, **body)
-            self._tasks[task_id] = task
-            return httpx.Response(201, json=task)
+            return self._handle_post_tasks(request)
 
-        # POST /tasks/{id}/complete
         m_complete = _COMPLETE_RE.match(path)
         if method == "POST" and m_complete:
-            task_id = m_complete.group(1)
-            if task_id not in self._tasks:
-                return httpx.Response(404, json={"error": f"task {task_id!r} not found"})
-            body = json.loads(request.content) if request.content else {}
-            self._tasks[task_id]["status"] = "done"
-            self._tasks[task_id]["result_summary"] = body.get("result_summary")
-            return httpx.Response(200, json=self._tasks[task_id])
+            return self._handle_task_transition(request, m_complete.group(1), "done")
 
-        # POST /tasks/{id}/fail
         m_fail = _FAIL_RE.match(path)
         if method == "POST" and m_fail:
-            task_id = m_fail.group(1)
-            if task_id not in self._tasks:
-                return httpx.Response(404, json={"error": f"task {task_id!r} not found"})
-            body = json.loads(request.content) if request.content else {}
-            self._tasks[task_id]["status"] = "failed"
-            self._tasks[task_id]["result_summary"] = body.get("result_summary")
-            return httpx.Response(200, json=self._tasks[task_id])
+            return self._handle_task_transition(request, m_fail.group(1), "failed")
 
         return httpx.Response(404, json={"error": f"fake lab: unhandled {method} {path}"})
 

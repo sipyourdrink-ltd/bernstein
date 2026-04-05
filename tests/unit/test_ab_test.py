@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.ab_test import (
     ABTestConfig,
     ABTestReport,
@@ -312,7 +314,7 @@ class TestABTestResult:
             duration_seconds=10.0,
         )
 
-        assert r.cost_usd == 0.0
+        assert r.cost_usd == pytest.approx(0.0)
         assert r.input_tokens == 0
         assert r.output_tokens == 0
         assert r.passed is False

@@ -465,69 +465,46 @@ class CatalogRegistry:
 
     # -- Agent matching -------------------------------------------------------
 
-    def match(self, role: str, task_description: str) -> CatalogAgent | None:
-        """Find the best catalog agent for a role and task description.
+    def _match_exact_role(
+        self,
+        exact: list[CatalogAgent],
+        keywords: set[str],
+        desc_lower: str,
+        role: str,
+    ) -> CatalogAgent:
+        """Pick the best agent from an exact-role match list."""
+        if keywords:
+            scored_exact = [(_capability_score(a, desc_lower, keywords), a) for a in exact]
+            if all(score == 0 for score, _ in scored_exact):
+                scored_exact = [
+                    (len(keywords & {w for w in a.description.lower().split() if len(w) > 3}), a) for a in exact
+                ]
+            scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
+            winner = scored_exact[0][1]
+            best_score = scored_exact[0][0]
+            logger.debug(
+                "Catalog exact match: '%s' (score=%d) for '%s'",
+                winner.name,
+                best_score,
+                role,
+            )
+            return winner
 
-        Three-stage matching strategy:
+        exact.sort(key=lambda a: a.priority)
+        winner = exact[0]
+        logger.debug("Catalog exact match by role only: '%s' for '%s'", winner.name, role)
+        return winner
 
-        1. **Exact role** — agents whose ``role`` field matches *role*.
-           Ranked by capability overlap with *task_description*, then
-           ``priority``.
-        2. **Affine role** — agents whose role is related to *role* (e.g.
-           ``backend`` is affine to ``architect``).  A role-affinity bonus
-           replaces the old unrestricted fuzzy search so that agents from
-           unrelated domains (marketing, brand, etc.) are never selected.
-        3. **Keyword fallback** — only among affine candidates, score by
-           capability and description keyword overlap.  Requires a minimum
-           composite score of ``_MIN_FUZZY_SCORE`` to prevent weak matches.
-
-        Args:
-            role: Bernstein role name to match (e.g. ``"security"``).
-            task_description: Task description used for capability and keyword
-                matching.
-
-        Returns:
-            Best-matching ``CatalogAgent``, or ``None`` if no candidates.
-        """
-        if not self.loaded_agents:
-            return None
-
-        desc_lower = task_description.lower()
-        keywords = {w for w in desc_lower.split() if len(w) > 3}
-
-        # 1. Exact role match — rank by capability overlap then priority.
-        exact: list[CatalogAgent] = [a for a in self.loaded_agents if a.role == role]
-        if exact:
-            if keywords:
-                scored_exact = [(_capability_score(a, desc_lower, keywords), a) for a in exact]
-                if all(score == 0 for score, _ in scored_exact):
-                    scored_exact = [
-                        (len(keywords & {w for w in a.description.lower().split() if len(w) > 3}), a) for a in exact
-                    ]
-                scored_exact.sort(key=lambda t: (-t[0], t[1].priority))
-                winner = scored_exact[0][1]
-                best_score = scored_exact[0][0] if scored_exact else 0
-                logger.debug(
-                    "Catalog exact match: '%s' (score=%d) for '%s'",
-                    winner.name,
-                    best_score,
-                    role,
-                )
-                return winner
-            else:
-                exact.sort(key=lambda a: a.priority)
-                winner = exact[0]
-                logger.debug("Catalog exact match by role only: '%s' for '%s'", winner.name, role)
-                return winner
-
-        if not keywords:
-            return None
-
-        # 2. Affinity-gated fuzzy match — only consider agents from related roles.
+    def _match_affine_role(
+        self,
+        role: str,
+        keywords: set[str],
+        desc_lower: str,
+    ) -> CatalogAgent | None:
+        """Pick the best agent from affinity-gated fuzzy matching."""
         affine_roles = _ROLE_AFFINITY.get(role, frozenset())
         scored: list[tuple[float, CatalogAgent]] = []
         for agent in self.loaded_agents:
-            # Gate: skip agents with no role relationship
             if agent.role != role and agent.role not in affine_roles:
                 continue
 
@@ -553,6 +530,45 @@ class CatalogRegistry:
             role,
         )
         return winner
+
+    def match(self, role: str, task_description: str) -> CatalogAgent | None:
+        """Find the best catalog agent for a role and task description.
+
+        Three-stage matching strategy:
+
+        1. **Exact role** -- agents whose ``role`` field matches *role*.
+           Ranked by capability overlap with *task_description*, then
+           ``priority``.
+        2. **Affine role** -- agents whose role is related to *role* (e.g.
+           ``backend`` is affine to ``architect``).  A role-affinity bonus
+           replaces the old unrestricted fuzzy search so that agents from
+           unrelated domains (marketing, brand, etc.) are never selected.
+        3. **Keyword fallback** -- only among affine candidates, score by
+           capability and description keyword overlap.  Requires a minimum
+           composite score of ``_MIN_FUZZY_SCORE`` to prevent weak matches.
+
+        Args:
+            role: Bernstein role name to match (e.g. ``"security"``).
+            task_description: Task description used for capability and keyword
+                matching.
+
+        Returns:
+            Best-matching ``CatalogAgent``, or ``None`` if no candidates.
+        """
+        if not self.loaded_agents:
+            return None
+
+        desc_lower = task_description.lower()
+        keywords = {w for w in desc_lower.split() if len(w) > 3}
+
+        exact: list[CatalogAgent] = [a for a in self.loaded_agents if a.role == role]
+        if exact:
+            return self._match_exact_role(exact, keywords, desc_lower, role)
+
+        if not keywords:
+            return None
+
+        return self._match_affine_role(role, keywords, desc_lower)
 
 
 # ---------------------------------------------------------------------------

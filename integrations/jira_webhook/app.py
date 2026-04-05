@@ -56,7 +56,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
@@ -199,8 +199,8 @@ async def health() -> dict[str, str]:
 @app.post("/jira/webhook")
 async def receive_jira_webhook(
     request: Request,
-    secret: str = Query(default="", description="Shared secret (URL param)"),
-    authorization: str = Header(default=""),
+    secret: Annotated[str, Query(description="Shared secret (URL param)")] = "",
+    authorization: Annotated[str, Header()] = "",
 ) -> JSONResponse:
     """Receive Jira issue events and create Bernstein tasks.
 

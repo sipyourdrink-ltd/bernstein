@@ -55,13 +55,13 @@ class SandboxValidator:
 
     Args:
         repo_root: Path to the repository root.
-        test_command: Command to run tests (default: "uv run pytest tests/ -x -q").
+        test_command: Command to run tests (default: "uv run python scripts/run_tests.py -x").
     """
 
     def __init__(
         self,
         repo_root: Path,
-        test_command: str = "uv run pytest tests/ -x -q",
+        test_command: str = "uv run python scripts/run_tests.py -x",
     ) -> None:
         self.repo_root = repo_root
         self.test_command = test_command
@@ -256,7 +256,7 @@ class SandboxValidator:
                 self._apply_diff(sandbox_dir, proposal.diff)
 
             # Step 3 — run tests
-            test_cmd = self.test_command if full_tests else "uv run pytest tests/unit/ -x -q --tb=no"
+            test_cmd = self.test_command if full_tests else "uv run python scripts/run_tests.py -x"
             passed_count, failed_count, total, output = self._run_tests(sandbox_dir, cmd=test_cmd)
 
             # Write log

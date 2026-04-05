@@ -260,7 +260,12 @@ class TokenGrowthMonitor:
 
     #: Default nudge text injected via the WAKEUP signal.
     _DEFAULT_NUDGE_TEXT: str = (
-        "You are approaching your token budget. Wrap up the current task, commit any changes, and exit cleanly."
+        "You are approaching your token budget (>80% consumed). Take these steps:\n"
+        "1. Finish the current file edit — do not leave partial changes\n"
+        "2. Run tests on files you changed: `uv run pytest tests/unit/test_<relevant>.py -x -q`\n"
+        '3. Commit your work: `git add <changed_files> && git commit -m "[WIP] <task_title>"`\n'
+        "4. Mark your task as complete (or failed if unfinished) via the task server\n"
+        "5. Exit cleanly"
     )
 
     def __init__(
@@ -659,6 +664,94 @@ def estimate_context_tokens(workdir: Path, file_paths: list[str]) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _send_wakeup(orch: Any, session: Any) -> None:
+    """Best-effort WAKEUP signal to an agent session."""
+    with contextlib.suppress(Exception):
+        orch._signal_mgr.write_wakeup(
+            session.id,
+            task_title=", ".join(session.task_ids) or "unknown",
+            elapsed_s=time.time() - session.spawn_ts,
+            last_activity_ago_s=0,
+        )
+
+
+def _handle_auto_kill(orch: Any, session: Any, monitor: Any, total: int) -> bool:
+    """Kill *session* if runaway detected. Returns True if killed."""
+    files_changed = _get_files_changed(orch, session, orch._config.server_url)
+    if not monitor.should_kill(session.id, files_changed):
+        return False
+
+    logger.warning(
+        "Token runaway: agent %s consumed %d tokens with 0 file changes — killing",
+        session.id,
+        total,
+    )
+    with contextlib.suppress(Exception):
+        orch._spawner.kill(session)
+    monitor.mark_killed(session.id)
+    if session.status != "dead":
+        transition_agent(session, "dead", actor="token_monitor", reason="token budget exceeded")
+    return True
+
+
+def _handle_quadratic_warning(orch: Any, session: Any, monitor: Any, total: int) -> None:
+    """Warn once if quadratic token growth is detected."""
+    if monitor.was_warned(session.id) or not monitor.is_quadratic_growth(session.id):
+        return
+    logger.warning(
+        "Quadratic token growth detected for agent %s: %d tokens and rising super-linearly",
+        session.id,
+        total,
+    )
+    _send_wakeup(orch, session)
+    monitor.mark_warned(session.id)
+
+
+def _handle_context_utilization(orch: Any, session: Any, monitor: Any) -> None:
+    """Log context utilization warning and trigger auto-compact if needed."""
+    if not session.context_utilization_alert:
+        return
+
+    if not monitor.was_context_warned(session.id):
+        logger.warning(
+            "Context window utilization high for agent %s: %.2f%% of %d tokens used",
+            session.id,
+            session.context_utilization_pct,
+            session.context_window_tokens,
+        )
+        monitor.mark_context_warned(session.id)
+
+    now = time.time()
+    if monitor.should_compact(session.id, session.context_utilization_pct, now=now):
+        breaker = monitor.get_compaction_breaker(session.id)
+        logger.info(
+            "Auto-compaction triggered for agent %s (utilization=%.1f%%, breaker=%s)",
+            session.id,
+            session.context_utilization_pct,
+            breaker.state.name,
+        )
+        _send_wakeup(orch, session)
+    elif session.context_utilization_pct < _COMPACT_THRESHOLD:
+        monitor.record_compaction_success(session.id)
+
+
+def _handle_budget_nudge(orch: Any, session: Any, monitor: Any) -> None:
+    """Fire a one-time continuation nudge when token budget threshold is hit."""
+    if session.token_budget <= 0:
+        return
+    if not monitor.should_nudge_budget(session.id, session.tokens_used, session.token_budget):
+        return
+    logger.info(
+        "Token budget nudge fired for agent %s (%d/%d tokens, %.0f%%)",
+        session.id,
+        session.tokens_used,
+        session.token_budget,
+        100.0 * session.tokens_used / session.token_budget,
+    )
+    _send_wakeup(orch, session)
+    monitor.mark_budget_warned(session.id)
+
+
 def check_token_growth(orch: Any) -> None:
     """Inspect active agents for token runaway; kill or warn as needed.
 
@@ -681,7 +774,6 @@ def check_token_growth(orch: Any) -> None:
     """
     monitor = get_monitor()
     workdir: Path = orch._workdir
-    base: str = orch._config.server_url
 
     for session in list(orch._agents.values()):
         if session.status == "dead":
@@ -689,95 +781,16 @@ def check_token_growth(orch: Any) -> None:
             monitor.purge_compaction(session.id)
             continue
 
-        # 1. Read tokens from sidecar
         total = monitor.read_tokens(session.id, workdir)
         session.tokens_used = total
         _update_context_window_utilization(orch, session)
 
-        # 2. Get files_changed for all tasks owned by this agent
-        files_changed = _get_files_changed(orch, session, base)
-
-        # 3. Auto-kill check
-        if monitor.should_kill(session.id, files_changed):
-            logger.warning(
-                "Token runaway: agent %s consumed %d tokens with 0 file changes — killing",
-                session.id,
-                total,
-            )
-            with contextlib.suppress(Exception):
-                orch._spawner.kill(session)
-            monitor.mark_killed(session.id)
-            if session.status != "dead":
-                transition_agent(session, "dead", actor="token_monitor", reason="token budget exceeded")
+        if _handle_auto_kill(orch, session, monitor, total):
             continue
 
-        # 4. Quadratic growth warning (once per session)
-        if not monitor.was_warned(session.id) and monitor.is_quadratic_growth(session.id):
-            logger.warning(
-                "Quadratic token growth detected for agent %s: %d tokens and rising super-linearly",
-                session.id,
-                total,
-            )
-            with contextlib.suppress(Exception):
-                orch._signal_mgr.write_wakeup(
-                    session.id,
-                    task_title=", ".join(session.task_ids) or "unknown",
-                    elapsed_s=time.time() - session.spawn_ts,
-                    last_activity_ago_s=0,
-                )
-            monitor.mark_warned(session.id)
-
-        # 5. Context utilization warning (once per session)
-        if session.context_utilization_alert and not monitor.was_context_warned(session.id):
-            logger.warning(
-                "Context window utilization high for agent %s: %.2f%% of %d tokens used",
-                session.id,
-                session.context_utilization_pct,
-                session.context_window_tokens,
-            )
-            monitor.mark_context_warned(session.id)
-
-        # 6. Auto-compact trigger with circuit breaker
-        if session.context_utilization_alert:
-            now = time.time()
-            if monitor.should_compact(session.id, session.context_utilization_pct, now=now):
-                breaker = monitor.get_compaction_breaker(session.id)
-                logger.info(
-                    "Auto-compaction triggered for agent %s (utilization=%.1f%%, breaker=%s)",
-                    session.id,
-                    session.context_utilization_pct,
-                    breaker.state.name,
-                )
-                with contextlib.suppress(Exception):
-                    orch._signal_mgr.write_wakeup(
-                        session.id,
-                        task_title=", ".join(session.task_ids) or "unknown",
-                        elapsed_s=time.time() - session.spawn_ts,
-                        last_activity_ago_s=0,
-                    )
-            elif session.context_utilization_pct < _COMPACT_THRESHOLD:
-                # Utilization dropped below threshold — reset breaker state.
-                monitor.record_compaction_success(session.id)
-
-        # 7. Token-budget continuation nudge (once per session)
-        if session.token_budget > 0 and monitor.should_nudge_budget(
-            session.id, session.tokens_used, session.token_budget
-        ):
-            logger.info(
-                "Token budget nudge fired for agent %s (%d/%d tokens, %.0f%%)",
-                session.id,
-                session.tokens_used,
-                session.token_budget,
-                100.0 * session.tokens_used / session.token_budget,
-            )
-            with contextlib.suppress(Exception):
-                orch._signal_mgr.write_wakeup(
-                    session.id,
-                    task_title=", ".join(session.task_ids) or "unknown",
-                    elapsed_s=time.time() - session.spawn_ts,
-                    last_activity_ago_s=0,
-                )
-            monitor.mark_budget_warned(session.id)
+        _handle_quadratic_warning(orch, session, monitor, total)
+        _handle_context_utilization(orch, session, monitor)
+        _handle_budget_nudge(orch, session, monitor)
 
 
 def _get_files_changed(orch: Any, session: Any, base: str) -> int:

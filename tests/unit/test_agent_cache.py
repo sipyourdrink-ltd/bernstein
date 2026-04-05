@@ -32,7 +32,7 @@ class TestCacheEntry:
         entry = CacheEntry(key="a", value="b", created_at=1.0, size_bytes=1)
         assert entry.key == "a"
         assert entry.value == "b"
-        assert entry.created_at == 1.0
+        assert entry.created_at == pytest.approx(1.0)
         assert entry.size_bytes == 1
 
 
@@ -227,7 +227,7 @@ class TestStats:
         s = cache.stats()
         assert s["hit_count"] == 0
         assert s["miss_count"] == 0
-        assert s["hit_rate"] == 0.0
+        assert s["hit_rate"] == pytest.approx(0.0)
         assert s["total_size_bytes"] == 0
         assert s["entry_count"] == 0
 

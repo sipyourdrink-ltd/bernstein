@@ -324,6 +324,77 @@ class NotificationManager:
             if event in target.events:
                 self._send(target, payload)
 
+    def _send_slack(self, target: NotificationTarget, payload: NotificationPayload) -> None:
+        body = format_slack(payload)
+        httpx.post(target.url, json=body, timeout=10.0)
+        logger.info("Slack notification sent: event=%s", payload.event)
+
+    def _send_discord(self, target: NotificationTarget, payload: NotificationPayload) -> None:
+        body = format_discord(payload)
+        httpx.post(target.url, json=body, timeout=10.0)
+        logger.info("Discord notification sent: event=%s", payload.event)
+
+    def _send_telegram(self, target: NotificationTarget, payload: NotificationPayload) -> None:
+        text = format_telegram(payload)
+        api_url = f"{target.url.rstrip('/')}/bot{target.token}/sendMessage"
+        httpx.post(
+            api_url,
+            json={"chat_id": target.chat_id, "text": text, "parse_mode": "Markdown"},
+            timeout=10.0,
+        )
+        logger.info("Telegram notification sent: event=%s", payload.event)
+
+    def _send_email(self, target: NotificationTarget, payload: NotificationPayload) -> None:
+        if not self._smtp_config or not self._smtp_config.to_addresses:
+            return
+
+        msg = MIMEMultipart()
+        msg["From"] = self._smtp_config.from_address
+        msg["To"] = ", ".join(self._smtp_config.to_addresses)
+        msg["Subject"] = payload.title
+
+        body = f"Event: {payload.event}\n\n{payload.body}\n"
+        for k, v in payload.metadata.items():
+            body += f"\n{k}: {v}"
+
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP(self._smtp_config.host, self._smtp_config.port) as server:
+            with suppress(smtplib.SMTPNotSupportedError):
+                server.starttls()
+            if self._smtp_config.username and self._smtp_config.password:
+                server.login(self._smtp_config.username, self._smtp_config.password)
+            server.send_message(msg)
+            logger.info("Email notification sent: event=%s", payload.event)
+
+    def _send_pagerduty(self, target: NotificationTarget, payload: NotificationPayload) -> None:
+        if not target.routing_key:
+            logger.warning(
+                "PagerDuty notification skipped: no routing_key configured for event=%s",
+                payload.event,
+            )
+            return
+        body = format_pagerduty(payload, target.routing_key)
+        resp = httpx.post(
+            "https://events.pagerduty.com/v2/enqueue",
+            json=body,
+            timeout=10.0,
+        )
+        if resp.status_code < 300:
+            logger.info("PagerDuty incident created: event=%s", payload.event)
+        else:
+            logger.warning(
+                "PagerDuty returned %d: event=%s body=%s",
+                resp.status_code,
+                payload.event,
+                resp.text[:200],
+            )
+
+    def _send_webhook(self, target: NotificationTarget, payload: NotificationPayload) -> None:
+        body = format_webhook(payload)
+        httpx.post(target.url, json=body, timeout=10.0)
+        logger.info("Webhook notification sent: event=%s url=%s", payload.event, target.url)
+
     def _send(self, target: NotificationTarget, payload: NotificationPayload) -> None:
         """Dispatch to the right formatter and POST to the endpoint.
 
@@ -331,85 +402,20 @@ class NotificationManager:
             target: Destination configuration.
             payload: Notification data.
         """
+        _dispatch: dict[str, Any] = {
+            "slack": self._send_slack,
+            "discord": self._send_discord,
+            "telegram": self._send_telegram,
+            "email": self._send_email,
+            "pagerduty": self._send_pagerduty,
+        }
         try:
-            if target.type == "slack":
-                body = format_slack(payload)
-                httpx.post(target.url, json=body, timeout=10.0)
-                logger.info("Slack notification sent: event=%s", payload.event)
-
-            elif target.type == "discord":
-                body = format_discord(payload)
-                httpx.post(target.url, json=body, timeout=10.0)
-                logger.info("Discord notification sent: event=%s", payload.event)
-
-            elif target.type == "telegram":
-                text = format_telegram(payload)
-                api_url = f"{target.url.rstrip('/')}/bot{target.token}/sendMessage"
-                httpx.post(
-                    api_url,
-                    json={
-                        "chat_id": target.chat_id,
-                        "text": text,
-                        "parse_mode": "Markdown",
-                    },
-                    timeout=10.0,
-                )
-                logger.info("Telegram notification sent: event=%s", payload.event)
-
-            elif target.type == "email" and self._smtp_config:
-                if not self._smtp_config.to_addresses:
-                    return
-
-                msg = MIMEMultipart()
-                msg["From"] = self._smtp_config.from_address
-                msg["To"] = ", ".join(self._smtp_config.to_addresses)
-                msg["Subject"] = payload.title
-
-                body = f"Event: {payload.event}\n\n{payload.body}\n"
-                for k, v in payload.metadata.items():
-                    body += f"\n{k}: {v}"
-
-                msg.attach(MIMEText(body, "plain"))
-
-                with smtplib.SMTP(self._smtp_config.host, self._smtp_config.port) as server:
-                    with suppress(smtplib.SMTPNotSupportedError):
-                        server.starttls()
-                    if self._smtp_config.username and self._smtp_config.password:
-                        server.login(self._smtp_config.username, self._smtp_config.password)
-                    server.send_message(msg)
-                    logger.info("Email notification sent: event=%s", payload.event)
-
-            elif target.type == "desktop":
+            if target.type == "desktop":
                 self._send_desktop_notification(payload)
-
-            elif target.type == "pagerduty":
-                if not target.routing_key:
-                    logger.warning(
-                        "PagerDuty notification skipped: no routing_key configured for event=%s",
-                        payload.event,
-                    )
-                    return
-                body = format_pagerduty(payload, target.routing_key)
-                resp = httpx.post(
-                    "https://events.pagerduty.com/v2/enqueue",
-                    json=body,
-                    timeout=10.0,
-                )
-                if resp.status_code < 300:
-                    logger.info("PagerDuty incident created: event=%s", payload.event)
-                else:
-                    logger.warning(
-                        "PagerDuty returned %d: event=%s body=%s",
-                        resp.status_code,
-                        payload.event,
-                        resp.text[:200],
-                    )
-
-            else:  # generic webhook
-                body = format_webhook(payload)
-                httpx.post(target.url, json=body, timeout=10.0)
-                logger.info("Webhook notification sent: event=%s url=%s", payload.event, target.url)
-
+            elif target.type in _dispatch:
+                _dispatch[target.type](target, payload)
+            else:
+                self._send_webhook(target, payload)
         except Exception:
             logger.exception(
                 "Notification failed (swallowed): type=%s event=%s url=%s",

@@ -61,6 +61,73 @@ def _write_pid_file(pid_dir: Path, session: str, info: dict[str, object]) -> Pat
     return pid_file
 
 
+def _wait_for_log(log_path: Path) -> bool:
+    """Wait up to 5s for the log file to appear. Returns True if found."""
+    if log_path.exists():
+        return True
+    for _ in range(50):
+        if log_path.exists():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _build_abort_policy(tool_abort_policy: str) -> Any:
+    """Build an AbortPolicy from the requested level string."""
+    from bernstein.core.abort_chain import AbortPolicy
+
+    if tool_abort_policy == "sibling":
+        return AbortPolicy(tool_to_sibling=True, sibling_to_session=False)
+    # "session" and "contain" both use no sibling cascading
+    return AbortPolicy(tool_to_sibling=False, sibling_to_session=False)
+
+
+def _handle_tool_error(
+    line_match: re.Match[str],
+    *,
+    session_id: str,
+    child: subprocess.Popen[bytes],
+    tool_abort_policy: str,
+    pm: Any,
+    abort_chain: Any,
+    policy: Any,
+) -> bool:
+    """Process a single tool error match. Returns True if session was killed."""
+    from bernstein.core.abort_chain import AbortScope
+
+    tool = line_match.group(1)
+    exit_code_str = line_match.group(2)
+    error_msg = f"Tool {tool} failed with exit code {exit_code_str}"
+    logger.warning("Tool error detected (policy=%s): %s", tool_abort_policy, error_msg)
+
+    pm.fire_tool_error(session_id, tool, error_msg)
+
+    cascaded = abort_chain.abort_tool(
+        session_id,
+        tool,
+        error_msg,
+        policy=policy if tool_abort_policy == "sibling" else None,
+    )
+    if cascaded:
+        logger.info(
+            "Sibling abort: sent SHUTDOWN to %d sibling(s): %s",
+            len(cascaded),
+            ", ".join(cascaded),
+        )
+
+    if tool_abort_policy == "session":
+        logger.error(
+            "Session abort: killing agent %s due to tool error (scope=%s)",
+            session_id,
+            AbortScope.SESSION,
+        )
+        child.kill()
+        return True
+
+    logger.info("Tool abort contained at scope=%s for session %s", tool_abort_policy, session_id)
+    return False
+
+
 def _monitor_logs(
     log_path: Path,
     session_id: str,
@@ -73,12 +140,12 @@ def _monitor_logs(
 
     Three policy levels control what happens when a tool failure is detected:
 
-    * ``"contain"`` — Write a ``TOOL_ABORT`` signal and let the agent decide
+    * ``"contain"`` -- Write a ``TOOL_ABORT`` signal and let the agent decide
       whether to retry or skip; the session process is *not* killed.
-    * ``"sibling"`` — Write a ``TOOL_ABORT`` signal *and* send ``SHUTDOWN`` to
+    * ``"sibling"`` -- Write a ``TOOL_ABORT`` signal *and* send ``SHUTDOWN`` to
       sibling agents (agents that share the same parent in the abort chain)
       without killing this session.
-    * ``"session"`` — Write a ``TOOL_ABORT`` signal *and* kill this agent
+    * ``"session"`` -- Write a ``TOOL_ABORT`` signal *and* kill this agent
       session immediately (legacy behaviour, the default).
 
     Args:
@@ -88,30 +155,16 @@ def _monitor_logs(
         workdir: Project root for plugin manager initialisation.
         tool_abort_policy: One of ``"contain"``, ``"sibling"``, or ``"session"``.
     """
-    if not log_path.exists():
-        # Wait up to 5s for log to appear
-        for _ in range(50):
-            if log_path.exists():
-                break
-            time.sleep(0.1)
-        else:
-            return
+    if not _wait_for_log(log_path):
+        return
 
-    from bernstein.core.abort_chain import AbortChain, AbortPolicy, AbortScope
+    from bernstein.core.abort_chain import AbortChain
     from bernstein.plugins.manager import get_plugin_manager
 
     pm = get_plugin_manager(workdir)
     signals_dir = workdir / ".sdd" / "runtime" / "signals"
     abort_chain = AbortChain(signals_dir=signals_dir)
-
-    # Build policy from the requested level.
-    if tool_abort_policy == "sibling":
-        policy = AbortPolicy(tool_to_sibling=True, sibling_to_session=False)
-    elif tool_abort_policy == "session":
-        # tool_to_sibling=False; session kill is handled explicitly below.
-        policy = AbortPolicy(tool_to_sibling=False, sibling_to_session=False)
-    else:  # "contain"
-        policy = AbortPolicy(tool_to_sibling=False, sibling_to_session=False)
+    policy = _build_abort_policy(tool_abort_policy)
 
     last_size = 0
 
@@ -121,52 +174,18 @@ def _monitor_logs(
             if current_size > last_size:
                 with log_path.open("r", encoding="utf-8", errors="replace") as f:
                     f.seek(last_size)
-                    new_lines = f.readlines()
-                    for line in new_lines:
-                        match = _BASH_ERROR_RE.search(line)
-                        if match:
-                            tool = match.group(1)
-                            exit_code_str = match.group(2)
-                            error_msg = f"Tool {tool} failed with exit code {exit_code_str}"
-                            logger.warning(
-                                "Tool error detected (policy=%s): %s",
-                                tool_abort_policy,
-                                error_msg,
-                            )
-
-                            # Fire plugin hook regardless of scope.
-                            pm.fire_tool_error(session_id, tool, error_msg)
-
-                            # Write TOOL_ABORT signal (always) and cascade per policy.
-                            cascaded = abort_chain.abort_tool(
-                                session_id,
-                                tool,
-                                error_msg,
-                                policy=policy if tool_abort_policy == "sibling" else None,
-                            )
-                            if cascaded:
-                                logger.info(
-                                    "Sibling abort: sent SHUTDOWN to %d sibling(s): %s",
-                                    len(cascaded),
-                                    ", ".join(cascaded),
-                                )
-
-                            if tool_abort_policy == "session":
-                                # Escalate to session level — kill the child.
-                                logger.error(
-                                    "Session abort: killing agent %s due to tool error (scope=%s)",
-                                    session_id,
-                                    AbortScope.SESSION,
-                                )
-                                child.kill()
-                                return
-
-                            # contain / sibling: leave session running.
-                            logger.info(
-                                "Tool abort contained at scope=%s for session %s",
-                                tool_abort_policy,
-                                session_id,
-                            )
+                    for line in f.readlines():
+                        m = _BASH_ERROR_RE.search(line)
+                        if m and _handle_tool_error(
+                            m,
+                            session_id=session_id,
+                            child=child,
+                            tool_abort_policy=tool_abort_policy,
+                            pm=pm,
+                            abort_chain=abort_chain,
+                            policy=policy,
+                        ):
+                            return
                 last_size = current_size
         except Exception as exc:
             logger.debug("Log monitor error: %s", exc)

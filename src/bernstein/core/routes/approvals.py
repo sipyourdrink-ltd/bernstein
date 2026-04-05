@@ -56,11 +56,14 @@ _APPROVALS_DIR = Path(".sdd/runtime/approvals")
 
 _TASK_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+#: Error detail returned when a task_id fails validation.
+_INVALID_TASK_ID_MSG = "Invalid task_id format"
+
 
 def _validate_task_id(task_id: str) -> None:
     """Raise 400 if task_id contains unexpected characters."""
     if not _TASK_ID_RE.fullmatch(task_id):
-        raise HTTPException(status_code=400, detail="Invalid task_id format")
+        raise HTTPException(status_code=400, detail=_INVALID_TASK_ID_MSG)
 
 
 def _pending_dir() -> Path:
@@ -125,7 +128,7 @@ async def list_approvals() -> ListApprovalsResponse:
 
 @router.post(
     "/{task_id}/approve",
-    responses={400: {"description": "Invalid task_id format"}, 404: {"description": "No pending approval for task"}},
+    responses={400: {"description": _INVALID_TASK_ID_MSG}, 404: {"description": "No pending approval for task"}},
 )
 async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
     """Approve a pending approval request.
@@ -142,7 +145,7 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
     """
     _validate_task_id(task_id)
     if ".." in task_id or "/" in task_id or "\\" in task_id:
-        raise HTTPException(status_code=400, detail="Invalid task_id format")
+        raise HTTPException(status_code=400, detail=_INVALID_TASK_ID_MSG)
     safe_id = Path(task_id).name  # Strip any directory components
     approvals_dir = _approvals_dir()
     pending_path = _safe_child(_pending_dir(), f"{safe_id}.json")
@@ -163,7 +166,7 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
 
 @router.post(
     "/{task_id}/reject",
-    responses={400: {"description": "Invalid task_id format"}, 404: {"description": "No pending approval for task"}},
+    responses={400: {"description": _INVALID_TASK_ID_MSG}, 404: {"description": "No pending approval for task"}},
 )
 async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
     """Reject a pending approval request.
@@ -180,7 +183,7 @@ async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, 
     """
     _validate_task_id(task_id)
     if ".." in task_id or "/" in task_id or "\\" in task_id:
-        raise HTTPException(status_code=400, detail="Invalid task_id format")
+        raise HTTPException(status_code=400, detail=_INVALID_TASK_ID_MSG)
     safe_id = Path(task_id).name  # Strip any directory components
     approvals_dir = _approvals_dir()
     pending_path = _safe_child(_pending_dir(), f"{safe_id}.json")

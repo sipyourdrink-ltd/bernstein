@@ -30,6 +30,63 @@ def _format_option_name(name: str) -> str:
     return f"\\fB{_escape_troff(name)}\\fR"
 
 
+def _build_synopsis(
+    cmd_name: str,
+    options: list[tuple[str, str]],
+    subcommands: list[tuple[str, str]] | None,
+) -> list[str]:
+    """Build the SYNOPSIS section lines."""
+    synopsis_cmd = f"bernstein {cmd_name}" if cmd_name != "bernstein" else "bernstein"
+    escaped_synopsis = _escape_troff(synopsis_cmd)
+    lines: list[str] = [".SH SYNOPSIS", f".B {escaped_synopsis}"]
+    if subcommands:
+        lines.append("[\\fICOMMAND\\fR] [\\fIOPTIONS\\fR]")
+    elif options:
+        lines.append("[\\fIOPTIONS\\fR]")
+    return lines
+
+
+def _build_description(cmd_help: str) -> list[str]:
+    """Build the DESCRIPTION section lines."""
+    if not cmd_help:
+        return []
+    lines: list[str] = [".SH DESCRIPTION"]
+    for paragraph in cmd_help.strip().split("\n\n"):
+        cleaned = " ".join(paragraph.split())
+        lines.append(_escape_troff(cleaned))
+        lines.append(".PP")
+    # Remove trailing .PP
+    if lines[-1] == ".PP":
+        lines.pop()
+    return lines
+
+
+def _build_options_section(options: list[tuple[str, str]]) -> list[str]:
+    """Build the OPTIONS section lines."""
+    if not options:
+        return []
+    lines: list[str] = [".SH OPTIONS"]
+    for opt_decl, opt_help in options:
+        lines.append(".TP")
+        lines.append(_format_option_name(opt_decl))
+        lines.append(_escape_troff(opt_help) if opt_help else "")
+    return lines
+
+
+def _build_subcommands_section(
+    subcommands: list[tuple[str, str]] | None,
+) -> list[str]:
+    """Build the SUBCOMMANDS section lines."""
+    if not subcommands:
+        return []
+    lines: list[str] = [".SH SUBCOMMANDS"]
+    for sub_name, sub_help in subcommands:
+        lines.append(".TP")
+        lines.append(f"\\fB{_escape_troff(sub_name)}\\fR")
+        lines.append(_escape_troff(sub_help) if sub_help else "")
+    return lines
+
+
 def generate_man_page(
     cmd_name: str,
     cmd_help: str,
@@ -47,66 +104,24 @@ def generate_man_page(
     Returns:
         Complete troff man page as a string.
     """
-    # Build the page title: "bernstein-run" or "bernstein-agents-list"
     page_title = f"bernstein-{cmd_name}".replace(" ", "-")
     upper_title = page_title.upper()
     date_str = datetime.date.today().strftime("%B %Y")
 
-    lines: list[str] = []
-
-    # Header
-    lines.append(f'.TH {upper_title} 1 "{date_str}" "Bernstein" "Bernstein Manual"')
-
-    # NAME section
     escaped_name = _escape_troff(page_title)
     first_line = cmd_help.split("\n")[0].strip() if cmd_help else "Bernstein CLI command"
     escaped_first = _escape_troff(first_line.rstrip("."))
-    lines.append(".SH NAME")
-    lines.append(f"{escaped_name} \\- {escaped_first}")
 
-    # SYNOPSIS section
-    synopsis_cmd = f"bernstein {cmd_name}" if cmd_name != "bernstein" else "bernstein"
-    escaped_synopsis = _escape_troff(synopsis_cmd)
-    lines.append(".SH SYNOPSIS")
-    if subcommands:
-        lines.append(f".B {escaped_synopsis}")
-        lines.append("[\\fICOMMAND\\fR] [\\fIOPTIONS\\fR]")
-    elif options:
-        lines.append(f".B {escaped_synopsis}")
-        lines.append("[\\fIOPTIONS\\fR]")
-    else:
-        lines.append(f".B {escaped_synopsis}")
-
-    # DESCRIPTION section
-    if cmd_help:
-        lines.append(".SH DESCRIPTION")
-        for paragraph in cmd_help.strip().split("\n\n"):
-            cleaned = " ".join(paragraph.split())
-            lines.append(_escape_troff(cleaned))
-            lines.append(".PP")
-        # Remove trailing .PP
-        if lines[-1] == ".PP":
-            lines.pop()
-
-    # OPTIONS section
-    if options:
-        lines.append(".SH OPTIONS")
-        for opt_decl, opt_help in options:
-            lines.append(".TP")
-            lines.append(_format_option_name(opt_decl))
-            lines.append(_escape_troff(opt_help) if opt_help else "")
-
-    # SUBCOMMANDS section
-    if subcommands:
-        lines.append(".SH SUBCOMMANDS")
-        for sub_name, sub_help in subcommands:
-            lines.append(".TP")
-            lines.append(f"\\fB{_escape_troff(sub_name)}\\fR")
-            lines.append(_escape_troff(sub_help) if sub_help else "")
-
-    # SEE ALSO section
-    lines.append(".SH SEE ALSO")
-    lines.append("\\fBbernstein\\fR(1)")
+    lines: list[str] = [
+        f'.TH {upper_title} 1 "{date_str}" "Bernstein" "Bernstein Manual"',
+        ".SH NAME",
+        f"{escaped_name} \\- {escaped_first}",
+    ]
+    lines.extend(_build_synopsis(cmd_name, options, subcommands))
+    lines.extend(_build_description(cmd_help))
+    lines.extend(_build_options_section(options))
+    lines.extend(_build_subcommands_section(subcommands))
+    lines.extend([".SH SEE ALSO", "\\fBbernstein\\fR(1)"])
 
     return "\n".join(lines) + "\n"
 

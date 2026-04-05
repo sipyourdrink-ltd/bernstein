@@ -294,6 +294,100 @@ def _compare_params(
 # ---------------------------------------------------------------------------
 
 
+def _diff_functions(
+    old_funcs: dict[str, Any],
+    new_funcs: dict[str, Any],
+    filename: str,
+) -> tuple[list[BreakingChange], list[Addition]]:
+    """Compare top-level functions between old and new trees."""
+    breaking: list[BreakingChange] = []
+    additions: list[Addition] = []
+
+    for name, old_func in old_funcs.items():
+        if name not in new_funcs:
+            breaking.append(
+                BreakingChange(
+                    file=filename,
+                    name=name,
+                    change_type=ChangeType.REMOVED_FUNCTION,
+                    description=f"Public function '{name}' was removed",
+                    line=old_func.line,
+                )
+            )
+        else:
+            breaking.extend(_compare_params(old_func, new_funcs[name], filename))
+
+    for name in new_funcs:
+        if name not in old_funcs:
+            additions.append(Addition(file=filename, name=name, kind="function"))
+
+    return breaking, additions
+
+
+def _diff_class_methods(
+    cls_name: str,
+    old_cls: Any,
+    new_cls: Any,
+    filename: str,
+) -> tuple[list[BreakingChange], list[Addition]]:
+    """Compare methods between old and new versions of a single class."""
+    breaking: list[BreakingChange] = []
+    additions: list[Addition] = []
+
+    for method_name, old_method in old_cls.methods.items():
+        if method_name not in new_cls.methods:
+            breaking.append(
+                BreakingChange(
+                    file=filename,
+                    name=f"{cls_name}.{method_name}",
+                    change_type=ChangeType.REMOVED_METHOD,
+                    description=f"Public method '{cls_name}.{method_name}' was removed",
+                    line=old_method.line,
+                )
+            )
+        else:
+            breaking.extend(_compare_params(old_method, new_cls.methods[method_name], filename))
+
+    for method_name in new_cls.methods:
+        if method_name not in old_cls.methods:
+            additions.append(Addition(file=filename, name=f"{cls_name}.{method_name}", kind="method"))
+
+    return breaking, additions
+
+
+def _diff_classes(
+    old_classes: dict[str, Any],
+    new_classes: dict[str, Any],
+    filename: str,
+) -> tuple[list[BreakingChange], list[Addition]]:
+    """Compare classes (and their methods) between old and new trees."""
+    breaking: list[BreakingChange] = []
+    additions: list[Addition] = []
+
+    for cls_name, old_cls in old_classes.items():
+        if cls_name not in new_classes:
+            breaking.append(
+                BreakingChange(
+                    file=filename,
+                    name=cls_name,
+                    change_type=ChangeType.REMOVED_CLASS,
+                    description=f"Public class '{cls_name}' was removed",
+                    line=old_cls.line,
+                )
+            )
+            continue
+
+        b, a = _diff_class_methods(cls_name, old_cls, new_classes[cls_name], filename)
+        breaking.extend(b)
+        additions.extend(a)
+
+    for cls_name in new_classes:
+        if cls_name not in old_classes:
+            additions.append(Addition(file=filename, name=cls_name, kind="class"))
+
+    return breaking, additions
+
+
 def check_compatibility(old_source: str, new_source: str, filename: str) -> CompatReport:
     """Compare two Python source strings and return an API compatibility report.
 
@@ -320,71 +414,62 @@ def check_compatibility(old_source: str, new_source: str, filename: str) -> Comp
     breaking: list[BreakingChange] = []
     additions: list[Addition] = []
 
-    # --- Compare top-level functions ---
-    old_funcs = _extract_functions(old_tree)
-    new_funcs = _extract_functions(new_tree)
+    b, a = _diff_functions(_extract_functions(old_tree), _extract_functions(new_tree), filename)
+    breaking.extend(b)
+    additions.extend(a)
 
-    for name, old_func in old_funcs.items():
-        if name not in new_funcs:
-            breaking.append(
-                BreakingChange(
-                    file=filename,
-                    name=name,
-                    change_type=ChangeType.REMOVED_FUNCTION,
-                    description=f"Public function '{name}' was removed",
-                    line=old_func.line,
-                )
-            )
-        else:
-            breaking.extend(_compare_params(old_func, new_funcs[name], filename))
-
-    for name in new_funcs:
-        if name not in old_funcs:
-            additions.append(Addition(file=filename, name=name, kind="function"))
-
-    # --- Compare classes ---
-    old_classes = _extract_classes(old_tree)
-    new_classes = _extract_classes(new_tree)
-
-    for cls_name, old_cls in old_classes.items():
-        if cls_name not in new_classes:
-            breaking.append(
-                BreakingChange(
-                    file=filename,
-                    name=cls_name,
-                    change_type=ChangeType.REMOVED_CLASS,
-                    description=f"Public class '{cls_name}' was removed",
-                    line=old_cls.line,
-                )
-            )
-            continue
-
-        new_cls = new_classes[cls_name]
-
-        # Compare methods
-        for method_name, old_method in old_cls.methods.items():
-            if method_name not in new_cls.methods:
-                breaking.append(
-                    BreakingChange(
-                        file=filename,
-                        name=f"{cls_name}.{method_name}",
-                        change_type=ChangeType.REMOVED_METHOD,
-                        description=f"Public method '{cls_name}.{method_name}' was removed",
-                        line=old_method.line,
-                    )
-                )
-            else:
-                breaking.extend(_compare_params(old_method, new_cls.methods[method_name], filename))
-
-        for method_name in new_cls.methods:
-            if method_name not in old_cls.methods:
-                additions.append(Addition(file=filename, name=f"{cls_name}.{method_name}", kind="method"))
-
-    for cls_name in new_classes:
-        if cls_name not in old_classes:
-            additions.append(Addition(file=filename, name=cls_name, kind="class"))
+    b, a = _diff_classes(_extract_classes(old_tree), _extract_classes(new_tree), filename)
+    breaking.extend(b)
+    additions.extend(a)
 
     return CompatReport(breaking_changes=breaking, additions=additions)
+
+
+def _git_diff_files(workdir: Path, base_ref: str, diff_filter: str) -> list[str]:
+    """Return list of changed ``.py`` files for the given ``--diff-filter``."""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"--diff-filter={diff_filter}", base_ref, "--", "*.py"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return [f.strip() for f in result.stdout.splitlines() if f.strip().endswith(".py")]
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("api_compat: git diff (filter=%s) failed: %s", diff_filter, exc)
+        return []
+
+
+def _breaking_from_deleted_file(rel_path: str, old_source: str) -> list[BreakingChange]:
+    """Produce breaking-change entries for every public symbol in a deleted file."""
+    try:
+        old_tree = ast.parse(old_source)
+    except SyntaxError:
+        return []
+
+    breaks: list[BreakingChange] = []
+    for func_info in _extract_functions(old_tree).values():
+        breaks.append(
+            BreakingChange(
+                file=rel_path,
+                name=func_info.name,
+                change_type=ChangeType.REMOVED_FUNCTION,
+                description=f"Public function '{func_info.name}' removed (file deleted)",
+                line=func_info.line,
+            )
+        )
+    for cls_info in _extract_classes(old_tree).values():
+        breaks.append(
+            BreakingChange(
+                file=rel_path,
+                name=cls_info.name,
+                change_type=ChangeType.REMOVED_CLASS,
+                description=f"Public class '{cls_info.name}' removed (file deleted)",
+                line=cls_info.line,
+            )
+        )
+    return breaks
 
 
 def check_git_diff(workdir: Path, base_ref: str = "HEAD~1") -> CompatReport:
@@ -400,32 +485,8 @@ def check_git_diff(workdir: Path, base_ref: str = "HEAD~1") -> CompatReport:
     Returns:
         Merged CompatReport across all changed files.
     """
-    # Get list of changed .py files
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=ACMR", base_ref, "--", "*.py"],
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        changed_files = [f.strip() for f in result.stdout.splitlines() if f.strip().endswith(".py")]
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("api_compat: git diff failed: %s", exc)
-        return CompatReport()
-
-    # Also get deleted files
-    try:
-        del_result = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=D", base_ref, "--", "*.py"],
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        deleted_files = [f.strip() for f in del_result.stdout.splitlines() if f.strip().endswith(".py")]
-    except (subprocess.TimeoutExpired, OSError):
-        deleted_files = []
+    changed_files = _git_diff_files(workdir, base_ref, "ACMR")
+    deleted_files = _git_diff_files(workdir, base_ref, "D")
 
     all_breaking: list[BreakingChange] = []
     all_additions: list[Addition] = []
@@ -444,36 +505,10 @@ def check_git_diff(workdir: Path, base_ref: str = "HEAD~1") -> CompatReport:
         all_breaking.extend(report.breaking_changes)
         all_additions.extend(report.additions)
 
-    # Deleted files: every public symbol is a breaking change
     for rel_path in deleted_files:
         old_source = _git_show(workdir, base_ref, rel_path)
-        if not old_source:
-            continue
-        try:
-            old_tree = ast.parse(old_source)
-        except SyntaxError:
-            continue
-
-        for func_info in _extract_functions(old_tree).values():
-            all_breaking.append(
-                BreakingChange(
-                    file=rel_path,
-                    name=func_info.name,
-                    change_type=ChangeType.REMOVED_FUNCTION,
-                    description=f"Public function '{func_info.name}' removed (file deleted)",
-                    line=func_info.line,
-                )
-            )
-        for cls_info in _extract_classes(old_tree).values():
-            all_breaking.append(
-                BreakingChange(
-                    file=rel_path,
-                    name=cls_info.name,
-                    change_type=ChangeType.REMOVED_CLASS,
-                    description=f"Public class '{cls_info.name}' removed (file deleted)",
-                    line=cls_info.line,
-                )
-            )
+        if old_source:
+            all_breaking.extend(_breaking_from_deleted_file(rel_path, old_source))
 
     return CompatReport(breaking_changes=all_breaking, additions=all_additions)
 

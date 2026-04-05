@@ -226,6 +226,92 @@ def _batch_timeout_seconds(batch: list[Task]) -> int:
 # ---------------------------------------------------------------------------
 
 
+_EFFORT_LADDER = ["low", "medium", "high", "max"]
+_MODEL_LADDER = ["haiku", "sonnet", "opus"]
+
+
+def _bump_effort(current_effort: str) -> str:
+    """Return the next effort level, capped at 'max'."""
+    idx = _EFFORT_LADDER.index(current_effort) if current_effort in _EFFORT_LADDER else 2
+    return _EFFORT_LADDER[min(idx + 1, len(_EFFORT_LADDER) - 1)]
+
+
+def _escalate_model(current_model: str) -> str:
+    """Return the next model in the escalation ladder, capped at 'opus'."""
+    model_lower = current_model.lower()
+    model_idx = 1  # default to sonnet position
+    for i, name in enumerate(_MODEL_LADDER):
+        if name in model_lower:
+            model_idx = i
+            break
+    return _MODEL_LADDER[min(model_idx + 1, len(_MODEL_LADDER) - 1)]
+
+
+def _choose_retry_escalation(
+    task: Task,
+    next_retry: int,
+    current_model: str,
+    current_effort: str,
+) -> tuple[str, str]:
+    """Decide model and effort for the retry based on terminal reason and context.
+
+    Returns (new_model, new_effort).
+    """
+    from bernstein.core.models import Scope as _Scope
+
+    terminal_reason = task.terminal_reason
+
+    if terminal_reason == "error_max_turns":
+        new_effort = _bump_effort(current_effort) if current_effort != "max" else current_effort
+        return current_model, new_effort
+
+    if terminal_reason == "error_max_budget_usd":
+        return current_model, "max"
+
+    if terminal_reason == "model_error":
+        return current_model, current_effort
+
+    if terminal_reason == "blocking_limit":
+        return "opus", "max"
+
+    if task.scope == _Scope.LARGE or task.role in ("architect", "security"):
+        return "opus", "max"
+
+    if task.deadline is not None and time.time() > task.deadline:
+        return "opus", "max"
+
+    if next_retry == 1:
+        return current_model, _bump_effort(current_effort)
+
+    # Second+ retry: escalate model, reset effort to high
+    return _escalate_model(current_model), "high"
+
+
+def _extract_failure_context(
+    task: Task,
+    workdir: Path | None,
+    session_id: str | None,
+) -> str:
+    """Extract failure context from the agent log for retry descriptions."""
+    if workdir is None or not session_id:
+        return ""
+
+    aggregator = AgentLogAggregator(workdir)
+    failure_context = aggregator.failure_context_for_retry(session_id)
+    summary = aggregator.parse_log(session_id)
+    if summary.dominant_failure_category:
+        try:
+            get_collector(workdir / ".sdd" / "metrics").record_error(
+                summary.dominant_failure_category,
+                "retry",
+                role=task.role,
+            )
+        except Exception as exc:
+            logger.debug("Failed to record retry failure category metric: %s", exc)
+
+    return failure_context
+
+
 def maybe_retry_task(
     task: Task,
     *,
@@ -258,7 +344,6 @@ def maybe_retry_task(
     if task.id in retried_task_ids:
         return False
 
-    # Use first-class retry_count field (source of truth)
     retry_count = task.retry_count
 
     if retry_count >= task.max_retries:
@@ -272,83 +357,18 @@ def maybe_retry_task(
         return False
 
     next_retry = retry_count + 1
-
-    # Exponential backoff: base_delay * 2^retry_count, capped at 5 minutes
     base_delay = task.retry_delay_s if task.retry_delay_s > 0 else 30.0
     backoff_delay = min(base_delay * (2**retry_count), 300.0)
 
     current_model = task.model or "sonnet"
     current_effort = task.effort or "high"
 
-    effort_ladder = ["low", "medium", "high", "max"]
-    model_ladder = ["haiku", "sonnet", "opus"]
+    new_model, new_effort = _choose_retry_escalation(task, next_retry, current_model, current_effort)
 
-    from bernstein.core.models import Scope as _Scope
-
-    # Terminal-reason-aware retry strategy
-    terminal_reason = task.terminal_reason
-    if terminal_reason == "error_max_turns":
-        # Agent ran out of turns -- increase turns, keep model
-        new_model = current_model
-        new_effort = current_effort
-        # Signal to adapter: next attempt needs more turns
-        # (handled via meta_messages or effort escalation)
-        if current_effort != "max":
-            idx = effort_ladder.index(current_effort) if current_effort in effort_ladder else 2
-            new_effort = effort_ladder[min(idx + 1, len(effort_ladder) - 1)]
-    elif terminal_reason == "error_max_budget_usd":
-        # Agent exhausted dollar budget -- increase budget, keep model
-        new_model = current_model
-        new_effort = "max"  # Max effort gets highest budget
-    elif terminal_reason == "model_error":
-        # Transient API error -- retry same config
-        new_model = current_model
-        new_effort = current_effort
-    elif terminal_reason == "blocking_limit":
-        # Context window exhausted -- need a model with larger context
-        new_model = "opus"
-        new_effort = "max"
-    # High-stakes roles/scopes always get opus/max on any retry
-    elif task.scope == _Scope.LARGE or task.role in ("architect", "security"):
-        new_model = "opus"
-        new_effort = "max"
-    elif task.deadline is not None and time.time() > task.deadline:
-        # Deadline exceeded: escalate to highest effort model immediately
-        new_model = "opus"
-        new_effort = "max"
-    elif next_retry == 1:
-        # First retry: bump effort one level, keep model
-        idx = effort_ladder.index(current_effort) if current_effort in effort_ladder else 2
-        new_effort = effort_ladder[min(idx + 1, len(effort_ladder) - 1)]
-        new_model = current_model
-    else:
-        # Second+ retry: escalate model, reset effort to high
-        model_lower = current_model.lower()
-        model_idx = 1  # default to sonnet position
-        for i, name in enumerate(model_ladder):
-            if name in model_lower:
-                model_idx = i
-                break
-        new_model = model_ladder[min(model_idx + 1, len(model_ladder) - 1)]
-        new_effort = "high"
-
-    # Strip any legacy [RETRY N] prefix from title
     base_title = re.sub(r"^\[RETRY \d+\] ", "", task.title)
     new_title = f"[RETRY {next_retry}] {base_title}"
-    failure_context = ""
-    if workdir is not None and session_id:
-        aggregator = AgentLogAggregator(workdir)
-        failure_context = aggregator.failure_context_for_retry(session_id)
-        summary = aggregator.parse_log(session_id)
-        if summary.dominant_failure_category:
-            try:
-                get_collector(workdir / ".sdd" / "metrics").record_error(
-                    summary.dominant_failure_category,
-                    "retry",
-                    role=task.role,
-                )
-            except Exception as exc:
-                logger.debug("Failed to record retry failure category metric: %s", exc)
+
+    failure_context = _extract_failure_context(task, workdir, session_id)
 
     new_description = f"[RETRY {next_retry}] {task.description}"
     if failure_context:
@@ -359,7 +379,6 @@ def maybe_retry_task(
             "Avoid the same mistakes. If you hit the same error, try a different approach."
         )
 
-    # Progressive timeout: each retry multiplies estimated_minutes by (retry_count + 2)
     progressive_minutes = task.estimated_minutes * (retry_count + 2)
 
     payload: dict[str, Any] = {

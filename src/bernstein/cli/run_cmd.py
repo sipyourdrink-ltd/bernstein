@@ -116,6 +116,43 @@ def _save_plan_markdown(md: str, workdir: Path) -> Path:
     return plan_file
 
 
+def _load_dry_run_tasks(plan_file: Path | None) -> list[Any]:
+    """Load tasks for a dry run from a plan file or running server.
+
+    Args:
+        plan_file: Optional plan file path.
+
+    Returns:
+        List of Task objects.
+
+    Raises:
+        SystemExit: On plan load error or server connectivity failure.
+    """
+    from bernstein.core.models import Task
+
+    if plan_file is not None:
+        try:
+            _plan_config, tasks = load_plan(plan_file)
+            return tasks
+        except PlanLoadError as exc:
+            console.print(f"[red]Plan load error:[/red] {exc}")
+            raise SystemExit(1) from exc
+
+    try:
+        resp = httpx.get("http://127.0.0.1:8052/tasks?status=open", timeout=5.0)
+        resp.raise_for_status()
+        tasks_data = resp.json()
+    except httpx.ConnectError as err:
+        console.print("[red]Task server not running. Start with `bernstein conduct` first,[/red]")
+        console.print("[red]or pass a plan file: `bernstein run --dry-run plan.yaml`[/red]")
+        raise SystemExit(1) from err
+    except Exception as exc:
+        console.print(f"[red]Failed to fetch tasks:[/red] {exc}")
+        raise SystemExit(1) from exc
+
+    return [Task.from_dict(td) for td in tasks_data]
+
+
 def _show_dry_run_plan(
     workdir: Path,
     plan_file: Path | None,
@@ -140,41 +177,14 @@ def _show_dry_run_plan(
     """
     from rich.table import Table
 
-    from bernstein.core.models import Task
-
     console.print("\n[bold]Dry-run mode — no agents will be spawned.[/bold]\n")
 
-    tasks: list[Task] = []
-
-    # If a plan file is given, load tasks directly (no server needed)
-    if plan_file is not None:
-        try:
-            _plan_config, tasks = load_plan(plan_file)
-        except PlanLoadError as exc:
-            console.print(f"[red]Plan load error:[/red] {exc}")
-            raise SystemExit(1) from exc
-    else:
-        # Fall back to fetching from running server
-
-        try:
-            resp = httpx.get("http://127.0.0.1:8052/tasks?status=open", timeout=5.0)
-            resp.raise_for_status()
-            tasks_data = resp.json()
-        except httpx.ConnectError as err:
-            console.print("[red]Task server not running. Start with `bernstein conduct` first,[/red]")
-            console.print("[red]or pass a plan file: `bernstein run --dry-run plan.yaml`[/red]")
-            raise SystemExit(1) from err
-        except Exception as exc:
-            console.print(f"[red]Failed to fetch tasks:[/red] {exc}")
-            raise SystemExit(1) from exc
-
-        tasks = [Task.from_dict(td) for td in tasks_data]
+    tasks = _load_dry_run_tasks(plan_file)
 
     if not tasks:
         console.print("[yellow]No tasks to schedule.[/yellow]")
         return
 
-    # Build dry-run task table
     table = Table(title="Dry-Run Scheduling Plan", show_header=True, header_style="bold cyan")
     table.add_column("#", justify="right")
     table.add_column("Role", style="cyan")
@@ -195,7 +205,6 @@ def _show_dry_run_plan(
 
     console.print(table)
 
-    # Dependency graph (show tasks that have depends_on)
     deps_found = False
     for task in tasks:
         if task.depends_on:
@@ -205,7 +214,6 @@ def _show_dry_run_plan(
             dep_str = ", ".join(task.depends_on)
             console.print(f"  {task.title} -> [{dep_str}]")
 
-    # Cost estimate
     est_model = model_override or "sonnet"
     low_usd, high_usd = estimate_run_cost(len(tasks), est_model)
     console.print(f"\n  Total tasks: {len(tasks)}")

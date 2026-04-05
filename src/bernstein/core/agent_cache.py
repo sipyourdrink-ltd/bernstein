@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: File extension for serialised cache entries.
+_JSON_EXT = ".json"
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -123,7 +125,7 @@ class AgentCache:
             size_bytes=len(value.encode("utf-8")),
         )
 
-        dest = session_dir / f"{_key_hash(key)}.json"
+        dest = session_dir / f"{_key_hash(key)}{_JSON_EXT}"
         dest.write_text(json.dumps(asdict(entry)), encoding="utf-8")
 
         # Enforce global size cap (best-effort)
@@ -148,7 +150,7 @@ class AgentCache:
 
         h = _key_hash(key)
         for sess in search_sessions:
-            path = self._cache_dir / sess / f"{h}.json"
+            path = self._cache_dir / sess / f"{h}{_JSON_EXT}"
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 self._hits += 1
@@ -180,8 +182,8 @@ class AgentCache:
         shared = 0
         for key in keys:
             h = _key_hash(key)
-            src = self._cache_dir / source_session / f"{h}.json"
-            dst = child_dir / f"{h}.json"
+            src = self._cache_dir / source_session / f"{h}{_JSON_EXT}"
+            dst = child_dir / f"{h}{_JSON_EXT}"
             if not src.exists():
                 continue
             if dst.exists() or dst.is_symlink():
@@ -216,7 +218,7 @@ class AgentCache:
             if not session_dir.is_dir():
                 continue
             for entry_file in list(session_dir.iterdir()):
-                if not entry_file.name.endswith(".json"):
+                if not entry_file.name.endswith(_JSON_EXT):
                     continue
                 try:
                     data = json.loads(entry_file.read_text(encoding="utf-8"))
@@ -254,7 +256,7 @@ class AgentCache:
                 if not session_dir.is_dir():
                     continue
                 for entry_file in session_dir.iterdir():
-                    if entry_file.name.endswith(".json") and not entry_file.is_symlink():
+                    if entry_file.name.endswith(_JSON_EXT) and not entry_file.is_symlink():
                         try:
                             total_size += entry_file.stat().st_size
                             entry_count += 1
@@ -286,7 +288,7 @@ class AgentCache:
             if not session_dir.is_dir():
                 continue
             for entry_file in session_dir.iterdir():
-                if not entry_file.name.endswith(".json"):
+                if not entry_file.name.endswith(_JSON_EXT):
                     continue
                 if entry_file.is_symlink():
                     continue
@@ -328,7 +330,7 @@ class AgentCache:
         if not session_dir.exists():
             return keys
         for entry_file in session_dir.iterdir():
-            if not entry_file.name.endswith(".json"):
+            if not entry_file.name.endswith(_JSON_EXT):
                 continue
             try:
                 data = json.loads(entry_file.read_text(encoding="utf-8"))

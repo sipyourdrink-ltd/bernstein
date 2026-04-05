@@ -913,9 +913,11 @@ def _provider_kind(provider_name: str, model: str) -> str | None:
 def _system_prompt() -> str:
     """Return the system instruction for diff-only batch jobs."""
     return (
-        "You are a coding agent operating in provider batch mode. "
+        "You are a coding agent operating in provider batch mode on a Python 3.12+ project (Bernstein). "
         "Return ONLY a unified git diff that can be applied with `git apply`. "
-        "Do not include markdown fences, explanations, or any prose."
+        "Do not include markdown fences, explanations, or any prose.\n\n"
+        "Project conventions: strict typing (Pyright strict, no Any), dataclasses/TypedDict over raw dicts, "
+        "ruff for lint/format, async for IO-bound operations. Follow existing code patterns."
     )
 
 

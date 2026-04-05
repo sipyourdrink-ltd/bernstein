@@ -148,11 +148,8 @@ class TestShellQuote:
     def test_simple_string_no_change(self) -> None:
         """A simple alphanumeric string on Unix should get single-quoted."""
         quoted = shell_quote("hello")
-        if not IS_WINDOWS:
-            # shlex.quote wraps in single quotes
-            assert quoted == "hello"
-        else:
-            assert quoted == "hello"
+        # Both platforms leave simple alphanumeric strings unchanged
+        assert quoted == "hello"
 
     def test_string_with_spaces(self) -> None:
         """Strings with spaces must be quoted."""
