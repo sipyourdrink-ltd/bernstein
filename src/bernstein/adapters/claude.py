@@ -28,16 +28,18 @@ _MODEL_MAP: dict[str, str] = {
 
 # JSON schema for structured agent output — enforced via --json-schema so
 # the result is always machine-parseable by the orchestrator.
-_RESULT_SCHEMA = json.dumps({
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["done", "failed", "partial"]},
-        "summary": {"type": "string"},
-        "files_changed": {"type": "array", "items": {"type": "string"}},
-        "exit_reason": {"type": "string"},
-    },
-    "required": ["status", "summary"],
-})
+_RESULT_SCHEMA = json.dumps(
+    {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "enum": ["done", "failed", "partial"]},
+            "summary": {"type": "string"},
+            "files_changed": {"type": "array", "items": {"type": "string"}},
+            "exit_reason": {"type": "string"},
+        },
+        "required": ["status", "summary"],
+    }
+)
 
 
 def load_mcp_config(

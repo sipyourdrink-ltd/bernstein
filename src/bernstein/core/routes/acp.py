@@ -197,9 +197,7 @@ async def create_acp_run(body: ACPRunCreateRequest, request: Request) -> ACPRunR
     return ACPRunResponse(**run.to_dict())
 
 
-@router.get(
-    "/acp/v0/runs/{run_id}", responses={404: {"description": "ACP run not found"}}
-)
+@router.get("/acp/v0/runs/{run_id}", responses={404: {"description": "ACP run not found"}})
 async def get_acp_run(run_id: str, request: Request) -> ACPRunResponse:
     """Get ACP run status, syncing from the underlying Bernstein task."""
     store = _get_store(request)
@@ -218,9 +216,7 @@ async def get_acp_run(run_id: str, request: Request) -> ACPRunResponse:
     return ACPRunResponse(**run.to_dict())
 
 
-@router.delete(
-    "/acp/v0/runs/{run_id}", responses={404: {"description": "ACP run not found"}}
-)
+@router.delete("/acp/v0/runs/{run_id}", responses={404: {"description": "ACP run not found"}})
 async def cancel_acp_run(run_id: str, request: Request) -> ACPRunResponse:
     """Cancel an ACP run and its underlying Bernstein task."""
     store = _get_store(request)
