@@ -20,7 +20,7 @@ import logging
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
