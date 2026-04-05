@@ -582,7 +582,7 @@ class TestWrapperScriptCompletionMarker:
         marker = json.loads(marker_path.read_text())
         assert marker["result"] == "All tasks done"
         assert marker["subtype"] == "success"
-        assert marker["cost_usd"] == 0.12
+        assert marker["cost_usd"] == pytest.approx(0.12)
         assert marker["turns"] == 5
         assert marker["duration_ms"] == 3200
 

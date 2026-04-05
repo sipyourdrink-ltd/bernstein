@@ -129,6 +129,55 @@ def load_style(path: Path) -> OutputStyle | None:
     )
 
 
+def _collect_styles(styles_dir: Path) -> list[OutputStyle]:
+    """Load styles from default files first, then any extras, deduped by name."""
+    seen: set[str] = set()
+    result: list[OutputStyle] = []
+
+    for default_name in _DEFAULT_FILES:
+        path = styles_dir / default_name
+        if path.is_file():
+            style = load_style(path)
+            if style is not None:
+                result.append(style)
+                seen.add(style.name.lower())
+
+    for path in sorted(styles_dir.glob("*.md")):
+        style = load_style(path)
+        if style is not None and style.name.lower() not in seen:
+            result.append(style)
+            seen.add(style.name.lower())
+
+    return result
+
+
+def _resolve_active_style(
+    project_dir: Path,
+    available: list[OutputStyle],
+) -> OutputStyle | None:
+    """Determine the active style: explicit bernstein.yaml pref, or first available."""
+    if not available:
+        return None
+
+    active = available[0]
+
+    yaml_path = project_dir / "bernstein.yaml"
+    if yaml_path.exists() and yaml is not None:
+        try:
+            raw_yaml = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+            data: dict[str, Any] = cast("dict[str, Any]", raw_yaml) if isinstance(raw_yaml, dict) else {}
+            if "output_style" in data:
+                preferred: str = str(data["output_style"]).lower()
+                for s in available:
+                    if s.name.lower() == preferred:
+                        active = s
+                        break
+        except Exception:
+            pass
+
+    return active
+
+
 def load_output_styles(project_dir: Path) -> StyleConfig:
     """Load all output styles from .bernstein/output-styles/.
 
@@ -144,39 +193,7 @@ def load_output_styles(project_dir: Path) -> StyleConfig:
     if not styles_dir.is_dir():
         return config
 
-    # Load style files (default files first, then any extras)
-    seen: set[str] = set()
-    for default_name in _DEFAULT_FILES:
-        path = styles_dir / default_name
-        if path.is_file():
-            style = load_style(path)
-            if style is not None:
-                config.available.append(style)
-                seen.add(style.name.lower())
-
-    for path in sorted(styles_dir.glob("*.md")):
-        style = load_style(path)
-        if style is not None and style.name.lower() not in seen:
-            config.available.append(style)
-            seen.add(style.name.lower())
-
-    # Active style: first available one, or look for bernstein.yaml reference
-    if config.available:
-        config.active_style = config.available[0]
-
-    # Check bernstein.yaml for an explicit "output_style" key
-    yaml_path = project_dir / "bernstein.yaml"
-    if yaml_path.exists() and yaml is not None:
-        try:
-            raw_yaml = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-            data: dict[str, Any] = cast("dict[str, Any]", raw_yaml) if isinstance(raw_yaml, dict) else {}
-            if "output_style" in data:
-                preferred: str = str(data["output_style"]).lower()
-                for s in config.available:
-                    if s.name.lower() == preferred:
-                        config.active_style = s
-                        break
-        except Exception:
-            pass
+    config.available = _collect_styles(styles_dir)
+    config.active_style = _resolve_active_style(project_dir, config.available)
 
     return config

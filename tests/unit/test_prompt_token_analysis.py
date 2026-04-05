@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.prompt_token_analysis import (
     PromptTokenReport,
     SectionTokens,
@@ -119,9 +121,9 @@ class TestAnalysePromptSections:
     def test_empty_sections_returns_zero_totals(self) -> None:
         report = analyse_prompt_sections([])
         assert report.total_tokens == 0
-        assert report.system_prompt_pct == 0.0
-        assert report.context_pct == 0.0
-        assert report.user_prompt_pct == 0.0
+        assert report.system_prompt_pct == pytest.approx(0.0)
+        assert report.context_pct == pytest.approx(0.0)
+        assert report.user_prompt_pct == pytest.approx(0.0)
 
     def test_suggestion_generated_when_category_exceeds_budget(self) -> None:
         # Make context dominate > 50% recommended limit

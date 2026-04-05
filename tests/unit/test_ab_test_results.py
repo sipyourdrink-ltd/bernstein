@@ -86,7 +86,7 @@ class TestABTestRecord:
             "duration_s": 60.0,
         }
         rec = ABTestRecord.from_dict(d)
-        assert rec.recorded_at == 0.0
+        assert rec.recorded_at == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

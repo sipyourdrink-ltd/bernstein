@@ -206,6 +206,44 @@ def _is_lock_stale(lock_path: Path, ttl_seconds: int) -> bool:
     return False
 
 
+def _try_create_lock(lock_path: Path) -> LockInfo | None:
+    """Attempt atomic lock file creation. Returns LockInfo on success, None on race loss."""
+    import time
+
+    now = time.time()
+    pid = os.getpid()
+    lock_data = {"pid": pid, "acquired_at": now}
+    try:
+        fd = os.open(
+            str(lock_path),
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            0o600,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(lock_data, f)
+                f.flush()
+            return LockInfo(pid=pid, acquired_at=now, lock_file_path=lock_path)
+        except BaseException:
+            _safe_unlink(lock_path)
+            raise
+    except FileExistsError:
+        return None
+
+
+def _lock_held_error(lock_path: Path) -> TimeoutError:
+    """Build a descriptive TimeoutError for a lock held by a live process."""
+    import time
+
+    try:
+        holder_pid = json.loads(lock_path.read_text()).get("pid")
+        age = time.time() - lock_path.stat().st_mtime
+    except (OSError, json.JSONDecodeError, ValueError):
+        holder_pid = "unknown"
+        age = 0.0
+    return TimeoutError(f"Lock {lock_path} is held by another live process (PID {holder_pid}, age={age:.0f}s)")
+
+
 def _acquire_lock(lock_path: Path, ttl_seconds: int) -> LockInfo:
     """Acquire a PID/mtime-based lock, reclaiming stale locks.
 
@@ -224,50 +262,23 @@ def _acquire_lock(lock_path: Path, ttl_seconds: int) -> LockInfo:
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
     for attempt in range(_LOCK_ACQUIRE_RETRIES):
-        stale = _is_lock_stale(lock_path, ttl_seconds)
+        can_acquire = not lock_path.exists() or _is_lock_stale(lock_path, ttl_seconds)
 
-        if not lock_path.exists() or stale:
-            # Reclaim: remove stale lock if present, then create ours
+        if can_acquire:
             if lock_path.exists():
                 _safe_unlink(lock_path)
+            info = _try_create_lock(lock_path)
+            if info is not None:
+                return info
+            # Lost the race — fall through to retry
 
-            now = time.time()
-            pid = os.getpid()
-            lock_data = {"pid": pid, "acquired_at": now}
-            try:
-                # Use os.O_CREAT | os.O_EXCL for atomic creation
-                fd = os.open(
-                    str(lock_path),
-                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-                    0o600,
-                )
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        json.dump(lock_data, f)
-                        f.flush()
-                    return LockInfo(pid=pid, acquired_at=now, lock_file_path=lock_path)
-                except BaseException:
-                    # Clean up on failure
-                    _safe_unlink(lock_path)
-                    raise
-            except FileExistsError:
-                # Lost the race to another process — retry
-                if attempt < _LOCK_ACQUIRE_RETRIES - 1:
-                    time.sleep(_LOCK_RETRY_DELAY_MS / 1000)
-                    continue
-                raise TimeoutError(
-                    f"Could not acquire lock {lock_path} after {_LOCK_ACQUIRE_RETRIES} attempts"
-                ) from None
-        else:
-            # Lock held by live process — wait and retry
-            if attempt < _LOCK_ACQUIRE_RETRIES - 1:
-                time.sleep(_LOCK_RETRY_DELAY_MS / 1000)
-                continue
-            raise TimeoutError(
-                f"Lock {lock_path} is held by another live process "
-                f"(PID {json.loads(lock_path.read_text()).get('pid')}, "
-                f"age={time.time() - lock_path.stat().st_mtime:.0f}s)"
-            )
+        is_last_attempt = attempt >= _LOCK_ACQUIRE_RETRIES - 1
+        if is_last_attempt:
+            if can_acquire:
+                raise TimeoutError(f"Could not acquire lock {lock_path} after {_LOCK_ACQUIRE_RETRIES} attempts")
+            raise _lock_held_error(lock_path)
+
+        time.sleep(_LOCK_RETRY_DELAY_MS / 1000)
 
     raise TimeoutError(f"Could not acquire lock {lock_path} after {_LOCK_ACQUIRE_RETRIES} attempts")
 

@@ -32,8 +32,7 @@ node_modules/
 # Bernstein workspace state — .sdd must NEVER be committed to git (CI enforced)
 .sdd/
 
-# Proprietary: agent role prompts, design specs, development plans
-templates/roles/
+# Design specs and development plans (private)
 docs/specs/
 docs/plans/
 

@@ -140,6 +140,56 @@ class ABTestReport:
 # ---------------------------------------------------------------------------
 
 
+def _compare_quality(
+    result_a: ABTestResult,
+    result_b: ABTestResult,
+) -> tuple[Literal["a", "b", "tie"], str] | None:
+    """Return a winner based on quality gates, or None if quality is equal."""
+    if result_a.passed and not result_b.passed:
+        return "a", f"{result_a.model} passed while {result_b.model} failed"
+    if result_b.passed and not result_a.passed:
+        return "b", f"{result_b.model} passed while {result_a.model} failed"
+    if not result_a.passed and not result_b.passed:
+        return "tie", "both models failed"
+
+    if result_a.quality_passed and not result_b.quality_passed:
+        return "a", f"{result_a.model} passed quality gates; {result_b.model} did not"
+    if result_b.quality_passed and not result_a.quality_passed:
+        return "b", f"{result_b.model} passed quality gates; {result_a.model} did not"
+    return None
+
+
+def _compare_cost(
+    result_a: ABTestResult,
+    result_b: ABTestResult,
+) -> tuple[Literal["a", "b", "tie"], str] | None:
+    """Return a winner based on cost (5% tolerance), or None if within band."""
+    if result_a.cost_usd <= 0 or result_b.cost_usd <= 0:
+        return None
+    cost_ratio = result_a.cost_usd / result_b.cost_usd if result_b.cost_usd else 1.0
+    if cost_ratio < 0.95:
+        return "a", f"{result_a.model} was cheaper (${result_a.cost_usd:.4f} vs ${result_b.cost_usd:.4f})"
+    if cost_ratio > 1.05:
+        return "b", f"{result_b.model} was cheaper (${result_b.cost_usd:.4f} vs ${result_a.cost_usd:.4f})"
+    return None
+
+
+def _compare_speed(
+    result_a: ABTestResult,
+    result_b: ABTestResult,
+) -> tuple[Literal["a", "b", "tie"], str] | None:
+    """Return a winner based on speed (5% tolerance), or None if within band."""
+    if result_a.duration_seconds < result_b.duration_seconds * 0.95:
+        return "a", (
+            f"{result_a.model} was faster ({result_a.duration_seconds:.1f}s vs {result_b.duration_seconds:.1f}s)"
+        )
+    if result_b.duration_seconds < result_a.duration_seconds * 0.95:
+        return "b", (
+            f"{result_b.model} was faster ({result_b.duration_seconds:.1f}s vs {result_a.duration_seconds:.1f}s)"
+        )
+    return None
+
+
 def determine_winner(
     result_a: ABTestResult,
     result_b: ABTestResult,
@@ -158,37 +208,10 @@ def determine_winner(
     Returns:
         Tuple of (winner literal, human-readable reason).
     """
-    # 1. Quality gate
-    if result_a.passed and not result_b.passed:
-        return "a", f"{result_a.model} passed while {result_b.model} failed"
-    if result_b.passed and not result_a.passed:
-        return "b", f"{result_b.model} passed while {result_a.model} failed"
-    if not result_a.passed and not result_b.passed:
-        return "tie", "both models failed"
-
-    # Quality sub-check
-    if result_a.quality_passed and not result_b.quality_passed:
-        return "a", f"{result_a.model} passed quality gates; {result_b.model} did not"
-    if result_b.quality_passed and not result_a.quality_passed:
-        return "b", f"{result_b.model} passed quality gates; {result_a.model} did not"
-
-    # 2. Cost (5% tolerance band)
-    if result_a.cost_usd > 0 and result_b.cost_usd > 0:
-        cost_ratio = result_a.cost_usd / result_b.cost_usd if result_b.cost_usd else 1.0
-        if cost_ratio < 0.95:
-            return "a", f"{result_a.model} was cheaper (${result_a.cost_usd:.4f} vs ${result_b.cost_usd:.4f})"
-        if cost_ratio > 1.05:
-            return "b", f"{result_b.model} was cheaper (${result_b.cost_usd:.4f} vs ${result_a.cost_usd:.4f})"
-
-    # 3. Speed
-    if result_a.duration_seconds < result_b.duration_seconds * 0.95:
-        return "a", (
-            f"{result_a.model} was faster ({result_a.duration_seconds:.1f}s vs {result_b.duration_seconds:.1f}s)"
-        )
-    if result_b.duration_seconds < result_a.duration_seconds * 0.95:
-        return "b", (
-            f"{result_b.model} was faster ({result_b.duration_seconds:.1f}s vs {result_a.duration_seconds:.1f}s)"
-        )
+    for comparator in (_compare_quality, _compare_cost, _compare_speed):
+        result = comparator(result_a, result_b)
+        if result is not None:
+            return result
 
     return "tie", "results are within tolerance on cost and speed"
 

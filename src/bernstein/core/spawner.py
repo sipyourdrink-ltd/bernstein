@@ -1809,6 +1809,53 @@ class AgentSpawner:
         """Return the container manager responsible for a session."""
         return self._sandbox_managers.get(session_id, self._container_mgr)
 
+    def _check_alive_openclaw(self, session: AgentSession) -> bool:
+        """Check liveness for an OpenClaw remote-bridge session."""
+        try:
+            bridge_status = self._bridge_status(session)
+        except BridgeError as exc:
+            logger.warning("OpenClaw status check failed for %s, treating as still alive: %s", session.id, exc)
+            return True
+        session.exit_code = bridge_status.exit_code
+        session.bridge_session_key = bridge_status.metadata.get("session_key") or session.bridge_session_key
+        session.bridge_run_id = bridge_status.metadata.get("run_id") or session.bridge_run_id
+        return bridge_status.state in {AgentState.PENDING, AgentState.RUNNING}
+
+    def _check_alive_container(self, session: AgentSession) -> bool | None:
+        """Check liveness via container manager. Returns None if not container-based."""
+        container_mgr = self._container_manager_for_session(session.id)
+        if not (session.container_id and container_mgr is not None):
+            return None
+        handle = container_mgr.get_handle(session.id)
+        if handle is None:
+            return False
+        alive = container_mgr.is_alive(handle)
+        if not alive:
+            session.exit_code = container_mgr.get_exit_code(handle)
+        return alive
+
+    def _check_alive_process(self, session: AgentSession) -> bool | None:
+        """Check liveness via stored subprocess. Returns None if no proc stored."""
+        proc = self._procs.get(session.id)
+        if proc is None:
+            return None
+        exit_code = proc.poll()
+        if exit_code is not None:
+            session.exit_code = exit_code
+            return False
+        return True
+
+    def _check_alive_in_process(self, session: AgentSession) -> bool | None:
+        """Check liveness via InProcessAgent. Returns None if not applicable."""
+        if self._in_process is None:
+            return None
+        alive = self._in_process.is_alive(session.id)
+        if not alive:
+            exit_code_val = self._in_process.wait(session.id, timeout=0.1)
+            if exit_code_val is not None:
+                session.exit_code = exit_code_val
+        return alive
+
     def check_alive(self, session: AgentSession) -> bool:
         """Check if the agent process is still running.
 
@@ -1819,43 +1866,12 @@ class AgentSpawner:
             True if the process is alive, False otherwise.
         """
         if session.runtime_backend == "openclaw":
-            try:
-                bridge_status = self._bridge_status(session)
-            except BridgeError as exc:
-                logger.warning("OpenClaw status check failed for %s, treating as still alive: %s", session.id, exc)
-                return True
-            session.exit_code = bridge_status.exit_code
-            session.bridge_session_key = bridge_status.metadata.get("session_key") or session.bridge_session_key
-            session.bridge_run_id = bridge_status.metadata.get("run_id") or session.bridge_run_id
-            return bridge_status.state in {AgentState.PENDING, AgentState.RUNNING}
+            return self._check_alive_openclaw(session)
 
-        # Container-based agents: check container status
-        container_mgr = self._container_manager_for_session(session.id)
-        if session.container_id and container_mgr is not None:
-            handle = container_mgr.get_handle(session.id)
-            if handle is not None:
-                alive = container_mgr.is_alive(handle)
-                if not alive:
-                    session.exit_code = container_mgr.get_exit_code(handle)
-                return alive
-            return False
-
-        proc = self._procs.get(session.id)
-        if proc is not None:
-            exit_code = proc.poll()
-            if exit_code is not None:
-                session.exit_code = exit_code
-                return False
-            return True
-
-        # In-process backend: check via InProcessAgent
-        if self._in_process is not None:
-            alive = self._in_process.is_alive(session.id)
-            if not alive:
-                exit_code_val = self._in_process.wait(session.id, timeout=0.1)
-                if exit_code_val is not None:
-                    session.exit_code = exit_code_val
-            return alive
+        for checker in (self._check_alive_container, self._check_alive_process, self._check_alive_in_process):
+            result = checker(session)
+            if result is not None:
+                return result
 
         if session.pid is None:
             return False
@@ -1920,6 +1936,96 @@ class AgentSpawner:
         except Exception as _ts_exc:
             logger.debug("Team state on_kill failed: %s", _ts_exc)
 
+    def _reap_openclaw(self, session: AgentSession) -> None:
+        """Sync logs from the remote bridge for an OpenClaw session."""
+        if self._runtime_bridge is not None:
+            try:
+                self._run_bridge_call(self._runtime_bridge.logs(session.id))
+            except BridgeError as exc:
+                logger.warning("OpenClaw log sync failed for %s: %s", session.id, exc)
+        logger.info("Agent %s remote bridge run finalized", session.id)
+
+    def _reap_container(self, session: AgentSession) -> None:
+        """Destroy the container for a containerized agent session."""
+        container_mgr = self._container_manager_for_session(session.id)
+        if session.container_id and container_mgr is not None:
+            handle = container_mgr.get_handle(session.id)
+            if handle is not None:
+                container_mgr.destroy(handle)
+            self._sandbox_managers.pop(session.id, None)
+            logger.info("Agent %s container destroyed", session.id)
+
+    def _reap_in_process(self, session: AgentSession) -> bool:
+        """Wait on and clean up an in-process agent. Returns True if reaped."""
+        if self._in_process is None or self._backend != AgentBackend.IN_PROCESS:
+            return False
+        exit_code_val = self._in_process.wait(session.id, timeout=5.0)
+        if exit_code_val is not None:
+            session.exit_code = exit_code_val
+        self._in_process.cleanup(session.id)
+        logger.info("Agent %s in-process agent cleaned up", session.id)
+        return True
+
+    def _reap_subprocess(self, session: AgentSession) -> None:
+        """Terminate and wait on the OS subprocess."""
+        proc = self._procs.pop(session.id, None)
+        if proc is not None:
+            try:
+                proc.terminate()
+            except Exception as exc:
+                logger.warning("reap_completed_agent: terminate failed for %s: %s", session.id, exc)
+            try:
+                session.exit_code = proc.wait(timeout=5)
+            except Exception as exc:
+                logger.warning("reap_completed_agent: wait failed for %s: %s", session.id, exc)
+        logger.info("Agent %s process reaped", session.id)
+
+    def _merge_and_cleanup_worktree(
+        self,
+        session: AgentSession,
+        skip_merge: bool,
+    ) -> MergeResult | None:
+        """Merge worktree branch back and clean up. Returns MergeResult if applicable."""
+        worktree_path = self._worktree_paths.pop(session.id, None)
+        worktree_root = self._worktree_roots.pop(session.id, self._workdir.resolve())
+        worktree_mgr = self._worktree_managers.get(worktree_root)
+        merge_result: MergeResult | None = None
+
+        if worktree_path is not None and worktree_mgr is not None:
+            if not skip_merge:
+                merge_start = time.perf_counter()
+                merge_result = self._merge_worktree_branch(session.id, repo_root=worktree_root)
+                merge_duration.observe(time.perf_counter() - merge_start)
+
+                from bernstein.core.metric_collector import get_collector
+
+                merge_ok = merge_result is not None and merge_result.success
+                for task_id in session.task_ids:
+                    get_collector().record_merge_result(task_id, success=merge_ok)
+
+                if merge_result and merge_result.success:
+                    from bernstein.core.git_ops import safe_push
+
+                    push_result = safe_push(worktree_root, "main")
+                    if push_result.ok:
+                        logger.info("Pushed merged work from %s to origin/main", session.id)
+                    else:
+                        logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
+            worktree_mgr.cleanup(session.id)
+
+        return merge_result
+
+    def _finalize_trace(self, session: AgentSession) -> None:
+        """Write the finalized trace for a reaped session."""
+        trace = self._traces.pop(session.id, None)
+        if trace is not None:
+            outcome = "success" if session.status != "dead" else "unknown"
+            finalize_trace(trace, outcome)
+            try:
+                self._trace_store.write(trace)
+            except Exception as exc:
+                logger.warning("Failed to write finalized trace for %s: %s", session.id, exc)
+
     def reap_completed_agent(
         self,
         session: AgentSession,
@@ -1952,121 +2058,24 @@ class AgentSpawner:
         from bernstein.core.agent_ipc import unregister_stdin_pipe
 
         unregister_stdin_pipe(session.id)
+
         if session.runtime_backend == "openclaw":
-            if self._runtime_bridge is not None:
-                try:
-                    self._run_bridge_call(self._runtime_bridge.logs(session.id))
-                except BridgeError as exc:
-                    logger.warning("OpenClaw log sync failed for %s: %s", session.id, exc)
-            logger.info("Agent %s remote bridge run finalized", session.id)
+            self._reap_openclaw(session)
         else:
-            # Clean up container if this was a containerized agent
-            container_mgr = self._container_manager_for_session(session.id)
-            if session.container_id and container_mgr is not None:
-                handle = container_mgr.get_handle(session.id)
-                if handle is not None:
-                    container_mgr.destroy(handle)
-                self._sandbox_managers.pop(session.id, None)
-                logger.info("Agent %s container destroyed", session.id)
+            self._reap_container(session)
 
-            # Clean up in-process agent
-            in_process_reaped = False
-            if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
-                exit_code_val = self._in_process.wait(session.id, timeout=5.0)
-                if exit_code_val is not None:
-                    session.exit_code = exit_code_val
-                self._in_process.cleanup(session.id)
-                in_process_reaped = True
-                logger.info("Agent %s in-process agent cleaned up", session.id)
-
-            if in_process_reaped:
-                # In-process agents: pop worktree dicts (no merge to do) and
-                # skip to trace finalization.
+            if self._reap_in_process(session):
                 self._worktree_paths.pop(session.id, None)
                 self._worktree_roots.pop(session.id, None)
             else:
-                proc = self._procs.pop(session.id, None)
-                if proc is not None:
-                    try:
-                        proc.terminate()
-                    except Exception as exc:
-                        logger.warning("reap_completed_agent: terminate failed for %s: %s", session.id, exc)
-                    try:
-                        session.exit_code = proc.wait(timeout=5)
-                    except Exception as exc:
-                        logger.warning("reap_completed_agent: wait failed for %s: %s", session.id, exc)
-                logger.info("Agent %s process reaped", session.id)
-
-                # Merge worktree branch back and clean up
-                worktree_path = self._worktree_paths.pop(session.id, None)
-                worktree_root = self._worktree_roots.pop(session.id, self._workdir.resolve())
-                worktree_mgr = self._worktree_managers.get(worktree_root)
-                merge_result: MergeResult | None = None
-                if worktree_path is not None and worktree_mgr is not None:
-                    if not skip_merge:
-                        merge_start = time.perf_counter()
-                        merge_result = self._merge_worktree_branch(session.id, repo_root=worktree_root)
-                        merge_duration.observe(time.perf_counter() - merge_start)
-
-                        from bernstein.core.metric_collector import get_collector
-
-                        merge_ok = merge_result is not None and merge_result.success
-                        for task_id in session.task_ids:
-                            get_collector().record_merge_result(task_id, success=merge_ok)
-
-                        # Push merged work to remote so nothing is lost
-                        if merge_result and merge_result.success:
-                            from bernstein.core.git_ops import safe_push
-
-                            push_result = safe_push(worktree_root, "main")
-                            if push_result.ok:
-                                logger.info("Pushed merged work from %s to origin/main", session.id)
-                            else:
-                                logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
-                    worktree_mgr.cleanup(session.id)
-
+                self._reap_subprocess(session)
+                merge_result = self._merge_and_cleanup_worktree(session, skip_merge)
                 outcome = "completed" if session.status != "dead" else "timed_out"
                 get_plugin_manager().fire_agent_reaped(session_id=session.id, role=session.role, outcome=outcome)
                 return merge_result
 
-        # Finalize trace with outcome and parsed log steps
-        trace = self._traces.pop(session.id, None)
-        if trace is not None:
-            outcome = "success" if session.status != "dead" else "unknown"
-            finalize_trace(trace, outcome)
-            try:
-                self._trace_store.write(trace)
-            except Exception as exc:
-                logger.warning("Failed to write finalized trace for %s: %s", session.id, exc)
-
-        # Merge worktree branch back and clean up
-        worktree_path = self._worktree_paths.pop(session.id, None)
-        worktree_root = self._worktree_roots.pop(session.id, self._workdir.resolve())
-        worktree_mgr = self._worktree_managers.get(worktree_root)
-        merge_result: MergeResult | None = None
-        if worktree_path is not None and worktree_mgr is not None:
-            if not skip_merge:
-                merge_start = time.perf_counter()
-                merge_result = self._merge_worktree_branch(session.id, repo_root=worktree_root)
-                merge_duration.observe(time.perf_counter() - merge_start)
-
-                from bernstein.core.metric_collector import get_collector
-
-                merge_ok = merge_result is not None and merge_result.success
-                for task_id in session.task_ids:
-                    get_collector().record_merge_result(task_id, success=merge_ok)
-
-                # Push merged work to remote so nothing is lost
-                if merge_result and merge_result.success:
-                    from bernstein.core.git_ops import safe_push
-
-                    push_result = safe_push(worktree_root, "main")
-                    if push_result.ok:
-                        logger.info("Pushed merged work from %s to origin/main", session.id)
-                    else:
-                        logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
-            worktree_mgr.cleanup(session.id)
-
+        self._finalize_trace(session)
+        merge_result = self._merge_and_cleanup_worktree(session, skip_merge)
         outcome = "completed" if session.status != "dead" else "timed_out"
         get_plugin_manager().fire_agent_reaped(session_id=session.id, role=session.role, outcome=outcome)
         return merge_result

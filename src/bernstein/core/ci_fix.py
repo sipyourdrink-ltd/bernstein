@@ -139,7 +139,7 @@ def parse_failures(log: str, job: str = "ci") -> list[CIFailure]:
                 job=job,
                 summary="pytest failures",
                 details=snippet,
-                fix_hint="uv run pytest tests/ -x -q --tb=short",
+                fix_hint="uv run python scripts/run_tests.py -x",
                 affected_files=list(dict.fromkeys(files)),
             )
         )
@@ -199,7 +199,7 @@ def build_task_payload(failures: list[CIFailure], run_url: str = "") -> dict[str
 
         ## Instructions
         1. Run the suggested fix commands locally.
-        2. Verify with: uv run ruff check src/ && uv run pytest tests/ -x -q
+        2. Verify with: uv run ruff check src/ && uv run python scripts/run_tests.py -x
         3. Commit and push.
     """)
 
@@ -286,8 +286,8 @@ uv run ruff format --check src/ || { echo "[bernstein] FAIL: format issues. Run:
 
 # 3. Tests (unit only — fast)
 echo "[bernstein] pytest unit tests..."
-uv run pytest tests/unit/ -x -q --tb=short || {
-    echo "[bernstein] FAIL: tests failed. Run: uv run pytest tests/unit/ -x -q --tb=short"
+uv run python scripts/run_tests.py -x || {
+    echo "[bernstein] FAIL: tests failed. Run: uv run python scripts/run_tests.py -x"
     exit 1
 }
 

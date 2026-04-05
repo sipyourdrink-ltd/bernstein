@@ -18,6 +18,9 @@ from textual.widgets import DataTable, Label, RichLog, Static
 # Sparkline characters for cost trend visualization
 SPARKLINE_CHARS = "▁▂▃▄▅▆▇█"
 
+#: CSS selector for the approval details label inside ApprovalPanel.
+_APPROVAL_DETAILS_SELECTOR = "#approval-details"
+
 
 def generate_sparkline(values: list[float], width: int = 10) -> str:
     """Generate a sparkline from a list of values.
@@ -1102,8 +1105,8 @@ class ApprovalPanel(Static):
                 key=entry.task_id,
             )
         if not entries:
-            self.query_one("#approval-details", Label).update("No pending approvals.")
-            self.query_one("#approval-details", Label).add_class("approval-empty")
+            self.query_one(_APPROVAL_DETAILS_SELECTOR, Label).update("No pending approvals.")
+            self.query_one(_APPROVAL_DETAILS_SELECTOR, Label).add_class("approval-empty")
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Handle row selection to show details."""
@@ -1113,7 +1116,7 @@ class ApprovalPanel(Static):
                 idx = next(i for i, e in enumerate(self._pending) if e.task_id == key)
                 self._selected_index = idx
                 entry = self._pending[idx]
-                details_label = self.query_one("#approval-details", Label)
+                details_label = self.query_one(_APPROVAL_DETAILS_SELECTOR, Label)
                 details = (
                     f"\n[b]Task:[/b] {entry.task_id}\n"
                     f"[b]Title:[/b] {entry.task_title}\n"
@@ -1194,6 +1197,46 @@ def _waterfall_type_color(step_type: str) -> str:
     return _WATERFALL_TYPE_COLORS.get(step_type, "white")
 
 
+def _unique_step_types(batch: Any) -> list[str]:
+    """Return deduplicated step types in order of first appearance."""
+    seen: list[str] = []
+    for step in batch.steps:
+        if step.type not in seen:
+            seen.append(step.type)
+    return seen
+
+
+def _waterfall_batch_label(batch: Any) -> tuple[str, str]:
+    """Build the label column text and style for a batch row."""
+    is_abort = bool(batch.abort_reason)
+    label = f"B{batch.batch_id:<2}"
+    label += " \u21c9" if batch.is_concurrent else "  "
+    return f"{label:<6}", ("bold" if is_abort else "dim")
+
+
+def _waterfall_timing_bar(
+    batch: Any,
+    total_start: float,
+    duration: float,
+    bar_width: int,
+    seen_types: list[str],
+    row_color: str | None,
+) -> tuple[str, str, str, str]:
+    """Compute leading spaces, bar chars, bar style, and duration text."""
+    start_off = int(((batch.start_ts - total_start) / duration) * bar_width)
+    bar_len = max(1, int(((batch.end_ts - batch.start_ts) / duration) * bar_width))
+    start_off = max(0, min(start_off, bar_width - 1))
+    bar_len = min(bar_len, bar_width - start_off)
+
+    bar_char = "\u2593" if batch.is_concurrent else "\u2588"
+    bar_style = row_color or _waterfall_type_color(seen_types[0] if seen_types else "plan")
+
+    batch_dur_ms = int((batch.end_ts - batch.start_ts) * 1000)
+    dur_str = f" {batch_dur_ms / 1000:.1f}s" if batch_dur_ms >= 1000 else f" {batch_dur_ms}ms"
+
+    return " " * start_off, bar_char * bar_len, bar_style, dur_str
+
+
 def render_waterfall_batches(
     batches: list[Any],
     *,
@@ -1229,45 +1272,26 @@ def render_waterfall_batches(
         is_abort = bool(batch.abort_reason)
         row_color = "red" if is_abort else None
 
-        # --- Label column ---
-        batch_label = f"B{batch.batch_id:<2}"
-        if batch.is_concurrent:
-            batch_label += " \u21c9"  # concurrent indicator ⇉
-        else:
-            batch_label += "  "
+        label_text, label_style = _waterfall_batch_label(batch)
+        text.append(label_text, style=label_style)
 
-        text.append(f"{batch_label:<6}", style="bold" if is_abort else "dim")
+        seen_types = _unique_step_types(batch)
+        type_str = f"[{','.join(_waterfall_type_label(t) for t in seen_types)}]"
+        text.append(f"{type_str:<{label_width}}", style=row_color or "cyan")
 
-        # Type tags
-        seen_types: list[str] = []
-        for step in batch.steps:
-            t = step.type
-            if t not in seen_types:
-                seen_types.append(t)
-        type_str = ",".join(_waterfall_type_label(t) for t in seen_types)
-        type_str = f"[{type_str}]"
-        padded = f"{type_str:<{label_width}}"
-        text.append(padded, style=row_color or "cyan")
-
-        # --- Timing bar ---
-        start_off = int(((batch.start_ts - total_start) / duration) * bar_width)
-        bar_len = max(1, int(((batch.end_ts - batch.start_ts) / duration) * bar_width))
-        start_off = max(0, min(start_off, bar_width - 1))
-        bar_len = min(bar_len, bar_width - start_off)
-
-        text.append(" " * start_off)
-        bar_char = "\u2593" if batch.is_concurrent else "\u2588"  # ▓ or █
-        bar_style = row_color or _waterfall_type_color(seen_types[0] if seen_types else "plan")
-        text.append(bar_char * bar_len, style=bar_style)
-
-        # Duration annotation
-        batch_dur_ms = int((batch.end_ts - batch.start_ts) * 1000)
-        dur_str = f" {batch_dur_ms / 1000:.1f}s" if batch_dur_ms >= 1000 else f" {batch_dur_ms}ms"
+        leading, bar_chars, bar_style, dur_str = _waterfall_timing_bar(
+            batch,
+            total_start,
+            duration,
+            bar_width,
+            seen_types,
+            row_color,
+        )
+        text.append(leading)
+        text.append(bar_chars, style=bar_style)
         text.append(dur_str, style="dim")
-
         text.append("\n")
 
-        # --- Abort annotation row ---
         if is_abort:
             indent = " " * 8
             reason_short = batch.abort_reason[:60] + ("\u2026" if len(batch.abort_reason) > 60 else "")

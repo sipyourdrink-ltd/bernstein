@@ -63,7 +63,9 @@ Focus on:
 insecure defaults, missing auth checks)?
 3. Bugs — off-by-one errors, missing error handling for likely failures.
 4. Style — obvious violations only: unused imports, dead code, inconsistent \
-naming, gratuitous complexity. Skip minor formatting.
+naming, gratuitous complexity. Skip minor formatting. \
+Project conventions: Python 3.12+, strict typing (no Any, no untyped dicts), \
+dataclasses/TypedDict instead of raw dicts, ruff for lint/format.
 5. Scope — did the diff change files or behaviour clearly outside the task's \
 stated scope? Flag only clear overreach, not incidental changes.
 

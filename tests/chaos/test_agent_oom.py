@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -71,7 +71,7 @@ async def test_oom_agent_slot_reclaimed(
         assert session_id is not None, "Agent session for OOM task not found"
 
         # Wait for the script to exit with code 137
-        time.sleep(2)
+        await asyncio.sleep(2)
 
         # Tick 1: Detect the dead agent, reclaim the slot
         orch.tick()
@@ -119,7 +119,7 @@ async def test_oom_agent_task_requeued(
         orch.tick()
 
         # Wait for the OOM-exit script to finish
-        time.sleep(2)
+        await asyncio.sleep(2)
 
         # Tick 1: Detect agent death and handle orphaned task
         orch.tick()
@@ -192,7 +192,7 @@ async def test_oom_agent_worktree_preserved(
         worktree_path = orch._spawner.get_worktree_path(session_id)
 
         # Wait for OOM exit
-        time.sleep(2)
+        await asyncio.sleep(2)
 
         # Tick 1: Detect death
         orch.tick()
@@ -243,7 +243,7 @@ async def test_oom_agent_metrics_recorded(
         assert session_id is not None
 
         # Wait for OOM exit
-        time.sleep(2)
+        await asyncio.sleep(2)
 
         # Tick 1: Detect death and record metrics
         orch.tick()

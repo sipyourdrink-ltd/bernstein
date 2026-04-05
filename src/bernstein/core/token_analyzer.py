@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -139,57 +140,32 @@ class TokenUsageAnalyzer:
     def __init__(self, workdir: Path) -> None:
         self._metrics_dir = workdir / ".sdd" / "metrics"
 
-    def analyze(self, records: list[dict[str, Any]] | None = None) -> TokenAnalysis:
-        """Run the full analysis.
+    @staticmethod
+    def _build_task_stat(tid: str, rec: dict[str, Any]) -> TaskTokenStats:
+        """Build a single TaskTokenStats from a raw record."""
+        tprompt = int(rec.get("tokens_prompt", 0) or 0)
+        tcompletion = int(rec.get("tokens_completion", 0) or 0)
+        model = str(rec.get("model", "unknown") or "unknown")
+        cost = float(rec.get("cost_usd", 0.0) or 0.0)
+        if math.isclose(cost, 0.0) and (tprompt > 0 or tcompletion > 0):
+            cost = _cost_for_model(model, tprompt, tcompletion)
+        title = str(rec.get("title", tid) or tid)
+        return TaskTokenStats(
+            task_id=tid,
+            title=title,
+            model=model,
+            tokens_prompt=tprompt,
+            tokens_completion=tcompletion,
+            cost_usd=cost,
+            io_ratio=_io_ratio(tprompt, tcompletion),
+        )
 
-        Args:
-            records: Optional pre-loaded task records. When *None*, records
-                are loaded from ``tasks.jsonl`` on disk.
-
-        Returns:
-            A populated ``TokenAnalysis`` dataclass.
-        """
-        if records is None:
-            records = _load_tasks_jsonl(self._metrics_dir)
-
-        # De-duplicate by task_id, keeping last record per task.
-        seen: dict[str, dict[str, Any]] = {}
-        for rec in records:
-            tid = rec.get("task_id", "")
-            if tid:
-                seen[tid] = rec
-
-        # Build per-task stats.
-        task_stats: list[TaskTokenStats] = []
-        title_counts: dict[str, list[str]] = {}
-        for tid, rec in seen.items():
-            tprompt = int(rec.get("tokens_prompt", 0) or 0)
-            tcompletion = int(rec.get("tokens_completion", 0) or 0)
-            model = str(rec.get("model", "unknown") or "unknown")
-            cost = float(rec.get("cost_usd", 0.0) or 0.0)
-            if cost == 0.0 and (tprompt > 0 or tcompletion > 0):
-                cost = _cost_for_model(model, tprompt, tcompletion)
-            title = str(rec.get("title", tid) or tid)
-            ratio = _io_ratio(tprompt, tcompletion)
-
-            task_stats.append(
-                TaskTokenStats(
-                    task_id=tid,
-                    title=title,
-                    model=model,
-                    tokens_prompt=tprompt,
-                    tokens_completion=tcompletion,
-                    cost_usd=cost,
-                    io_ratio=ratio,
-                )
-            )
-
-            # Track titles for duplicate detection.
-            norm_title = title.strip().lower()
-            if norm_title:
-                title_counts.setdefault(norm_title, []).append(tid)
-
-        # Waste patterns.
+    @staticmethod
+    def _detect_waste(
+        task_stats: list[TaskTokenStats],
+        title_counts: dict[str, list[str]],
+    ) -> list[WastePattern]:
+        """Identify waste patterns across all task stats."""
         waste: list[WastePattern] = []
         for ts in task_stats:
             if ts.io_ratio >= HIGH_RATIO_THRESHOLD:
@@ -218,7 +194,6 @@ class TokenUsageAnalyzer:
                     )
                 )
 
-        # Repeated task retries (same title, multiple IDs).
         for norm_title, tids in title_counts.items():
             if len(tids) > 1:
                 waste.append(
@@ -229,8 +204,11 @@ class TokenUsageAnalyzer:
                         detail=f"{len(tids)} attempts with same title — wasted tokens on retries",
                     )
                 )
+        return waste
 
-        # Model spend aggregation.
+    @staticmethod
+    def _aggregate_model_spend(task_stats: list[TaskTokenStats]) -> list[ModelSpend]:
+        """Aggregate token usage per model, sorted by cost descending."""
         model_agg: dict[str, ModelSpend] = {}
         for ts in task_stats:
             ms = model_agg.get(ts.model)
@@ -247,16 +225,44 @@ class TokenUsageAnalyzer:
             ms.total_tokens_completion += ts.tokens_completion
             ms.total_cost_usd += ts.cost_usd
             ms.task_count += 1
+        return sorted(model_agg.values(), key=lambda m: -m.total_cost_usd)
 
-        model_spend = sorted(model_agg.values(), key=lambda m: -m.total_cost_usd)
+    def analyze(self, records: list[dict[str, Any]] | None = None) -> TokenAnalysis:
+        """Run the full analysis.
 
-        # Totals.
+        Args:
+            records: Optional pre-loaded task records. When *None*, records
+                are loaded from ``tasks.jsonl`` on disk.
+
+        Returns:
+            A populated ``TokenAnalysis`` dataclass.
+        """
+        if records is None:
+            records = _load_tasks_jsonl(self._metrics_dir)
+
+        # De-duplicate by task_id, keeping last record per task.
+        seen: dict[str, dict[str, Any]] = {}
+        for rec in records:
+            tid = rec.get("task_id", "")
+            if tid:
+                seen[tid] = rec
+
+        # Build per-task stats and title index for duplicate detection.
+        task_stats: list[TaskTokenStats] = []
+        title_counts: dict[str, list[str]] = {}
+        for tid, rec in seen.items():
+            ts = self._build_task_stat(tid, rec)
+            task_stats.append(ts)
+            norm_title = ts.title.strip().lower()
+            if norm_title:
+                title_counts.setdefault(norm_title, []).append(tid)
+
+        waste = self._detect_waste(task_stats, title_counts)
+        model_spend = self._aggregate_model_spend(task_stats)
+
         total_prompt = sum(ts.tokens_prompt for ts in task_stats)
         total_completion = sum(ts.tokens_completion for ts in task_stats)
-        total_cost = sum(ts.cost_usd for ts in task_stats)
-        overall_ratio = _io_ratio(total_prompt, total_completion)
 
-        # Top 5 most token-hungry tasks (by total tokens).
         top5 = sorted(
             task_stats,
             key=lambda t: t.tokens_prompt + t.tokens_completion,
@@ -269,8 +275,8 @@ class TokenUsageAnalyzer:
             model_spend=model_spend,
             total_tokens_prompt=total_prompt,
             total_tokens_completion=total_completion,
-            total_cost_usd=total_cost,
-            overall_io_ratio=overall_ratio,
+            total_cost_usd=sum(ts.cost_usd for ts in task_stats),
+            overall_io_ratio=_io_ratio(total_prompt, total_completion),
             top_5_hungry=top5,
         )
 

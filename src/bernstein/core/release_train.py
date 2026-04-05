@@ -185,6 +185,39 @@ def _gh_check_runs(repo: str, branch: str, timeout: int = 30) -> list[dict[str, 
         return []
 
 
+def _index_runs_by_name(runs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Index check runs by name, keeping the latest (first-seen) per name."""
+    by_name: dict[str, dict[str, Any]] = {}
+    for run in runs:
+        name = str(run.get("name", ""))
+        if name and name not in by_name:
+            by_name[name] = run
+    return by_name
+
+
+def _classify_check(check_name: str, run: dict[str, Any] | None) -> tuple[bool, str]:
+    """Classify a single check run as passing or failing.
+
+    Returns:
+        Tuple of (is_passing, label). When failing, *label* includes the
+        reason in parentheses.
+    """
+    if run is None:
+        return False, f"{check_name} (missing)"
+
+    conclusion = str(run.get("conclusion") or "")
+    status = str(run.get("status") or "")
+
+    if conclusion == "success":
+        return True, check_name
+    if conclusion in ("failure", "timed_out", "cancelled", "action_required"):
+        return False, f"{check_name} ({conclusion})"
+    if status in ("in_progress", "queued", "waiting"):
+        return False, f"{check_name} (pending: {status})"
+    # neutral / skipped / stale — treat as passing to avoid false blocks
+    return True, check_name
+
+
 def _evaluate_repo(repo: str, train: ReleaseTrain) -> RepoCheckResult:
     """Determine the CI status for a single repo.
 
@@ -203,37 +236,15 @@ def _evaluate_repo(repo: str, train: ReleaseTrain) -> RepoCheckResult:
             detail="Unable to retrieve CI check runs (gh CLI unavailable or repo inaccessible)",
         )
 
-    # Index runs by name — keep the latest if duplicate names exist (gh already
-    # returns them ordered newest-first, so first-seen wins).
-    by_name: dict[str, dict[str, Any]] = {}
-    for run in runs:
-        name = str(run.get("name", ""))
-        if name and name not in by_name:
-            by_name[name] = run
-
+    by_name = _index_runs_by_name(runs)
     required = set(train.required_checks) if train.required_checks else set(by_name)
 
     passing: list[str] = []
     failing: list[str] = []
 
     for check_name in required:
-        run = by_name.get(check_name)
-        if run is None:
-            failing.append(f"{check_name} (missing)")
-            continue
-
-        conclusion = str(run.get("conclusion") or "")
-        status = str(run.get("status") or "")
-
-        if conclusion == "success":
-            passing.append(check_name)
-        elif conclusion in ("failure", "timed_out", "cancelled", "action_required"):
-            failing.append(f"{check_name} ({conclusion})")
-        elif status in ("in_progress", "queued", "waiting"):
-            failing.append(f"{check_name} (pending: {status})")
-        else:
-            # neutral / skipped / stale — treat as passing to avoid false blocks
-            passing.append(check_name)
+        is_ok, label = _classify_check(check_name, by_name.get(check_name))
+        (passing if is_ok else failing).append(label)
 
     if failing:
         detail = "Failing checks: " + ", ".join(failing)

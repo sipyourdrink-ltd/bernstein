@@ -34,21 +34,14 @@ def chaos_group() -> None:
     """Chaos engineering: inject failures to test agent resilience."""
 
 
-@chaos_group.command("agent-kill")
-@click.option("--agent-id", default=None, help="Specific agent to kill (default: random).")
-def agent_kill(agent_id: str | None) -> None:
-    """Kill a random active agent mid-task to test crash recovery."""
-    import signal as _signal
-
+def _find_active_agents() -> list[tuple[str, int]]:
+    """Scan .sdd/runtime/agents/ for agents with live PIDs."""
     from bernstein.cli.helpers import is_process_alive
 
-    runtime_dir = Path(".sdd/runtime")
-    agents_dir = runtime_dir / "agents"
+    agents_dir = Path(".sdd/runtime/agents")
     if not agents_dir.is_dir():
-        console.print("[yellow]No active agents found.[/yellow]")
-        return
+        return []
 
-    # Find active agents
     active: list[tuple[str, int]] = []
     for agent_dir in agents_dir.iterdir():
         if not agent_dir.is_dir():
@@ -61,20 +54,38 @@ def agent_kill(agent_id: str | None) -> None:
                     active.append((agent_dir.name, pid))
             except (ValueError, OSError):
                 continue
+    return active
 
-    if not active:
-        console.print("[yellow]No active agents to kill.[/yellow]")
-        return
 
-    # Pick target
+def _select_target(
+    active: list[tuple[str, int]],
+    agent_id: str | None,
+) -> tuple[str, int] | None:
+    """Pick the target agent to kill; returns None on mismatch."""
     if agent_id:
         targets = [(name, pid) for name, pid in active if name == agent_id]
         if not targets:
             console.print(f"[red]Agent '{agent_id}' not found or not active.[/red]")
-            return
-        target_name, target_pid = targets[0]
-    else:
-        target_name, target_pid = random.choice(active)
+            return None
+        return targets[0]
+    return random.choice(active)
+
+
+@chaos_group.command("agent-kill")
+@click.option("--agent-id", default=None, help="Specific agent to kill (default: random).")
+def agent_kill(agent_id: str | None) -> None:
+    """Kill a random active agent mid-task to test crash recovery."""
+    import signal as _signal
+
+    active = _find_active_agents()
+    if not active:
+        console.print("[yellow]No active agents to kill.[/yellow]")
+        return
+
+    target = _select_target(active, agent_id)
+    if target is None:
+        return
+    target_name, target_pid = target
 
     console.print(f"[bold red]CHAOS:[/bold red] Killing agent {target_name} (PID {target_pid})")
 

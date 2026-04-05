@@ -462,6 +462,26 @@ def _parse_lesson(data: Any) -> Lesson | None:
 # ---------------------------------------------------------------------------
 
 
+def _is_duplicate_lesson(
+    lesson: Any,
+    new_tags_set: set[str],
+    content_lower: str,
+    memory_type: Any,
+) -> bool:
+    """Check if an existing lesson is a near-duplicate based on tags and content."""
+    if lesson.memory_type != memory_type:
+        return False
+
+    existing_tags = set(lesson.tags)
+    if not (new_tags_set | existing_tags):
+        return False
+
+    union = len(new_tags_set | existing_tags)
+    jaccard = len(new_tags_set & existing_tags) / union if union > 0 else 0.0
+
+    return jaccard >= _DEDUP_THRESHOLD and _content_similarity(content_lower, lesson.content.lower()) > 0.8
+
+
 def _find_similar_lesson_in_content(
     content: str | None,
     tags: list[str],
@@ -498,22 +518,7 @@ def _find_similar_lesson_in_content(
             lesson = _parse_lesson(data)
             if lesson is None:
                 continue
-
-            # Dedup requires matching memory_type (T651)
-            if lesson.memory_type != memory_type:
-                continue
-
-            # Jaccard similarity on tags
-            existing_tags = set(lesson.tags)
-            if not (new_tags_set | existing_tags):
-                continue
-
-            intersection = len(new_tags_set & existing_tags)
-            union = len(new_tags_set | existing_tags)
-            jaccard = intersection / union if union > 0 else 0.0
-
-            # If Jaccard is high AND content is similar, it's a duplicate
-            if jaccard >= _DEDUP_THRESHOLD and _content_similarity(content_lower, lesson.content.lower()) > 0.8:
+            if _is_duplicate_lesson(lesson, new_tags_set, content_lower, memory_type):
                 return lesson.lesson_id
         except (json.JSONDecodeError, TypeError, KeyError):
             continue

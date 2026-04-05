@@ -150,7 +150,7 @@ class TestBuildStartupGateCheckpoints:
         by_name = {cp.gate_name: cp for cp in checkpoints}
         assert by_name["tests"].status == "cached"
         assert by_name["tests"].cached is True
-        assert by_name["tests"].cache_age_seconds == 120.0
+        assert by_name["tests"].cache_age_seconds == pytest.approx(120.0)
         # lint not cached
         assert by_name["lint"].status == "enabled"
         assert by_name["lint"].cached is False
@@ -224,7 +224,7 @@ class TestSaveLoadStartupGateCheckpoints:
         assert len(loaded) == 2
         assert loaded[0].gate_name == "lint"
         assert loaded[1].gate_name == "tests"
-        assert loaded[1].cache_age_seconds == 300.0
+        assert loaded[1].cache_age_seconds == pytest.approx(300.0)
 
     def test_load_missing_file_returns_empty(self, tmp_path: Path) -> None:
         result = load_startup_gate_checkpoints(tmp_path)

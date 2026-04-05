@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.benchmark.comparative import BenchmarkTask
 from bernstein.benchmark.reproducible import (
     COST_REGRESSION_THRESHOLD,
@@ -199,9 +201,9 @@ def test_simulate_task_verified_only_when_passed() -> None:
 def test_build_throughput_empty_records() -> None:
     m = _build_throughput([])
     assert m.tasks_completed == 0
-    assert m.tasks_per_hour == 0.0
-    assert m.p50_latency_s == 0.0
-    assert m.p95_latency_s == 0.0
+    assert m.tasks_per_hour == pytest.approx(0.0)
+    assert m.p50_latency_s == pytest.approx(0.0)
+    assert m.p95_latency_s == pytest.approx(0.0)
 
 
 def test_build_throughput_single_record() -> None:
@@ -215,13 +217,13 @@ def test_build_throughput_computes_p95() -> None:
     records = [_make_record(elapsed_s=float(i)) for i in range(1, 21)]
     m = _build_throughput(records)
     # p95 of 20 records: idx = min(int(20*0.95), 19) = min(19, 19) = 19 → latencies[19] = 20
-    assert m.p95_latency_s == 20.0
+    assert m.p95_latency_s == pytest.approx(20.0)
 
 
 def test_build_throughput_p50_is_median() -> None:
     records = [_make_record(elapsed_s=float(i)) for i in [10, 20, 30]]
     m = _build_throughput(records)
-    assert m.p50_latency_s == 20.0
+    assert m.p50_latency_s == pytest.approx(20.0)
 
 
 def test_build_throughput_serializes_to_dict() -> None:
@@ -246,8 +248,8 @@ def test_build_throughput_roundtrip() -> None:
 
 def test_build_cost_empty_records() -> None:
     m = _build_cost([])
-    assert m.total_usd == 0.0
-    assert m.per_task_usd == 0.0
+    assert m.total_usd == pytest.approx(0.0)
+    assert m.per_task_usd == pytest.approx(0.0)
     assert m.total_tokens == 0
 
 
@@ -277,22 +279,22 @@ def test_build_cost_roundtrip() -> None:
 
 def test_build_quality_empty_records() -> None:
     m = _build_quality([])
-    assert m.pass_rate == 0.0
+    assert m.pass_rate == pytest.approx(0.0)
     assert m.total_tasks == 0
 
 
 def test_build_quality_all_pass() -> None:
     records = [_make_record(passed=True, verified=True) for _ in range(5)]
     m = _build_quality(records)
-    assert m.pass_rate == 1.0
-    assert m.verification_rate == 1.0
+    assert m.pass_rate == pytest.approx(1.0)
+    assert m.verification_rate == pytest.approx(1.0)
     assert m.passed == 5
 
 
 def test_build_quality_none_pass() -> None:
     records = [_make_record(passed=False, verified=False) for _ in range(4)]
     m = _build_quality(records)
-    assert m.pass_rate == 0.0
+    assert m.pass_rate == pytest.approx(0.0)
     assert m.passed == 0
 
 
@@ -361,9 +363,9 @@ def test_run_empty_tasks_produces_zero_metrics() -> None:
     bench = ReproducibleBenchmark(tasks=[], config=BenchmarkConfig(seed=42))
     run = bench.run()
     assert run.task_count == 0
-    assert run.throughput.tasks_per_hour == 0.0
-    assert run.quality.pass_rate == 0.0
-    assert run.cost.total_usd == 0.0
+    assert run.throughput.tasks_per_hour == pytest.approx(0.0)
+    assert run.quality.pass_rate == pytest.approx(0.0)
+    assert run.cost.total_usd == pytest.approx(0.0)
 
 
 def test_run_has_timestamp() -> None:

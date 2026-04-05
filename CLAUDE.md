@@ -12,10 +12,10 @@ You are working on Bernstein, a multi-agent orchestration system for CLI coding 
 
 ## Architecture
 - `src/bernstein/` — Python package (3.12+, hatchling build)
-- `src/bernstein/core/` — task server, spawner, orchestrator, janitor, evolution, routes/, agent_discovery, quality_gates, token_monitor, plan_loader, planner
-- `src/bernstein/adapters/` — CLI agent adapters (claude, codex, gemini, qwen, aider, amp, roo_code, generic)
+- `src/bernstein/core/` — task server, spawner, orchestrator, janitor, evolution, routes/, agent_discovery, quality_gates, token_monitor, plan_loader, planner, cross_model_verifier, cost_anomaly, semantic_cache, knowledge_base, bulletin, merge_queue, spawn_prompt
+- `src/bernstein/adapters/` — CLI agent adapters (claude, codex, gemini, qwen, aider, amp, roo_code, cursor, cody, continue_dev, goose, kilo, kiro, ollama, opencode, tabby, generic)
 - `src/bernstein/cli/` — CLI entry points (run_cmd, stop_cmd, status_cmd, agents_cmd, evolve_cmd, advanced_cmd, workspace_cmd, etc.)
-- `templates/roles/` — role system prompts (manager, backend, qa, security, etc.)
+- `templates/roles/` — role system prompts (manager, vp, backend, frontend, qa, security, devops, architect, docs, reviewer, ml-engineer, prompt-engineer, retrieval, visionary, analyst, resolver, ci-fixer)
 - `templates/prompts/` — prompt templates for planning and review
 - `templates/plan.yaml` — project plan template
 - `.sdd/` — file-based state (backlog, runtime, metrics, config)
@@ -32,6 +32,9 @@ You are working on Bernstein, a multi-agent orchestration system for CLI coding 
 - GET /tasks?status=open — list tasks by status
 - POST /tasks/{id}/complete — mark task done
 - POST /tasks/{id}/fail — mark task failed
+- POST /tasks/{id}/progress — report progress (files_changed, tests_passing, errors)
+- POST /bulletin — post cross-agent finding/blocker
+- GET /bulletin?since={ts} — read recent bulletins
 - GET /status — dashboard summary
 
 ## Self-evolving

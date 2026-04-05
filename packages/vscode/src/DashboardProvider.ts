@@ -148,20 +148,15 @@ export interface BuildHtmlOptions {
   isRefreshing: boolean;
 }
 
-export function buildHtml(options: BuildHtmlOptions): string {
-  const { data, costHistory, baseUrl, nowTs, isRefreshing } = options;
-  const nonce = getNonce();
-  const csp = `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';`;
-
-  const stats = data?.stats;
-  const total = stats ? stats.total : 0;
-  const successRate = total > 0 ? Math.round((stats!.done / total) * 100) : 0;
-  const sparkline = buildSparkline(costHistory);
-
-  const refreshDotHtml = `<div class="refresh-dot${isRefreshing ? ' refreshing' : ''}" title="${isRefreshing ? 'Refreshing...' : 'Connected'}"></div>`;
-
-  const statsHtml = stats
-    ? `
+/** Build the stat cards grid HTML (or null when no stats). */
+function buildStatsGrid(
+  stats: DashboardData['stats'] | undefined,
+  total: number,
+  successRate: number,
+  sparkline: string,
+): string | null {
+  if (!stats) return null;
+  return `
       <div class="stat-card">
         <div class="stat-value">${stats.agents}</div>
         <div class="stat-label">Agents</div>
@@ -178,11 +173,52 @@ export function buildHtml(options: BuildHtmlOptions): string {
       <div class="stat-card cost-card">
         <div class="stat-value">$${stats.cost_usd.toFixed(2)}</div>
         <div class="stat-label">Cost${sparkline ? ` <span class="sparkline-wrap">${sparkline}</span>` : ''}</div>
-      </div>`
-    : null;
+      </div>`;
+}
 
+/** Build the body content based on connection state. */
+function buildBodyContent(options: {
+  data: DashboardData | null;
+  baseUrl: string;
+  nowTs: number;
+  refreshDotHtml: string;
+  statsHtml: string | null;
+  agentCardsHtml: string;
+  alertsHtml: string;
+  total: number;
+}): string {
+  const { data, baseUrl, nowTs, refreshDotHtml, statsHtml, agentCardsHtml, alertsHtml, total } = options;
+  const stats = data?.stats;
+
+  if (!data) {
+    return `${buildSkeletonGrid()}${buildOfflineState(baseUrl)}`;
+  }
+  if (stats && stats.agents === 0 && total === 0) {
+    return `<div class="header-bar"><h2>Overview</h2>${refreshDotHtml}</div>
+<div class="stats-grid">${statsHtml}</div>
+${buildIdleState()}
+${data.ts ? buildLastUpdated(data.ts, nowTs) : ''}`;
+  }
+  return `<div class="header-bar"><h2>Overview</h2>${refreshDotHtml}</div>
+<div class="stats-grid">${statsHtml}</div>
+${agentCardsHtml}
+${alertsHtml ? `<h2>Alerts</h2><div class="alerts">${alertsHtml}</div>` : ''}
+${data.ts ? buildLastUpdated(data.ts, nowTs) : ''}`;
+}
+
+export function buildHtml(options: BuildHtmlOptions): string {
+  const { data, costHistory, baseUrl, nowTs, isRefreshing } = options;
+  const nonce = getNonce();
+  const csp = `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';`;
+
+  const stats = data?.stats;
+  const total = stats ? stats.total : 0;
+  const successRate = total > 0 ? Math.round((stats!.done / total) * 100) : 0;
+  const sparkline = buildSparkline(costHistory);
+
+  const refreshDotHtml = `<div class="refresh-dot${isRefreshing ? ' refreshing' : ''}" title="${isRefreshing ? 'Refreshing...' : 'Connected'}"></div>`;
+  const statsHtml = buildStatsGrid(stats, total, successRate, sparkline);
   const agentCardsHtml = data ? buildAgentCards(data.agents) : '';
-
   const alertsHtml = (data?.alerts ?? [])
     .map(
       (a) =>
@@ -190,25 +226,9 @@ export function buildHtml(options: BuildHtmlOptions): string {
     )
     .join('');
 
-  // Determine body content based on state
-  let bodyContent: string;
-  if (!data) {
-    // Not connected
-    bodyContent = `${buildSkeletonGrid()}${buildOfflineState(baseUrl)}`;
-  } else if (stats && stats.agents === 0 && total === 0) {
-    // Connected but idle
-    bodyContent = `<div class="header-bar"><h2>Overview</h2>${refreshDotHtml}</div>
-<div class="stats-grid">${statsHtml}</div>
-${buildIdleState()}
-${data.ts ? buildLastUpdated(data.ts, nowTs) : ''}`;
-  } else {
-    // Active state
-    bodyContent = `<div class="header-bar"><h2>Overview</h2>${refreshDotHtml}</div>
-<div class="stats-grid">${statsHtml}</div>
-${agentCardsHtml}
-${alertsHtml ? `<h2>Alerts</h2><div class="alerts">${alertsHtml}</div>` : ''}
-${data.ts ? buildLastUpdated(data.ts, nowTs) : ''}`;
-  }
+  const bodyContent = buildBodyContent({
+    data, baseUrl, nowTs, refreshDotHtml, statsHtml, agentCardsHtml, alertsHtml, total,
+  });
 
   const script = `<script nonce="${nonce}">
 (function() {

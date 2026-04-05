@@ -38,6 +38,11 @@ from bernstein.tui.widgets import (
 SERVER_URL = os.environ.get("BERNSTEIN_SERVER_URL", "http://localhost:8052")
 _POLL_INTERVAL: float = 2.0
 
+#: CSS selector for the waterfall trace view widget.
+_WATERFALL_VIEW_SELECTOR = "#waterfall-view"
+#: CSS selector for the approval panel widget.
+_APPROVAL_PANEL_SELECTOR = "#approval-panel"
+
 
 def _auth_headers() -> dict[str, str]:
     """Return Authorization header dict if BERNSTEIN_AUTH_TOKEN is set.
@@ -163,10 +168,10 @@ class BernsteinApp(App[None]):
         # Hide action bar, timeline, scratchpad, waterfall, and others initially.
         self.query_one("#action-bar", ActionBar).display = False
         self.query_one("#task-timeline", TaskTimeline).display = False
-        self.query_one("#waterfall-view", WaterfallWidget).display = False
+        self.query_one(_WATERFALL_VIEW_SELECTOR, WaterfallWidget).display = False
         self.query_one("#scratchpad-viewer", ScratchpadViewer).display = False
         self.query_one("#coordinator-dashboard", CoordinatorDashboard).display = False
-        self.query_one("#approval-panel", ApprovalPanel).display = False
+        self.query_one(_APPROVAL_PANEL_SELECTOR, ApprovalPanel).display = False
         self.query_one("#tool-observer", ToolObserverWidget).display = False
 
         self._load_historical_logs()
@@ -274,7 +279,7 @@ class BernsteinApp(App[None]):
 
     def action_toggle_waterfall(self) -> None:
         """Show/hide the waterfall trace view."""
-        waterfall = self.query_one("#waterfall-view", WaterfallWidget)
+        waterfall = self.query_one(_WATERFALL_VIEW_SELECTOR, WaterfallWidget)
         waterfall.display = not waterfall.display
         if waterfall.display:
             self.run_worker(self._refresh_waterfall())
@@ -291,7 +296,7 @@ class BernsteinApp(App[None]):
             return
         latest = traces[0]
         batches = group_trace_steps_into_batches(latest.steps)
-        self.query_one("#waterfall-view", WaterfallWidget).update_batches(batches)
+        self.query_one(_WATERFALL_VIEW_SELECTOR, WaterfallWidget).update_batches(batches)
 
     def action_toggle_scratchpad(self) -> None:
         """Show/hide the scratchpad viewer."""
@@ -354,7 +359,7 @@ class BernsteinApp(App[None]):
 
     def action_toggle_approvals(self) -> None:
         """Show/hide the interactive approval panel."""
-        panel = self.query_one("#approval-panel", ApprovalPanel)
+        panel = self.query_one(_APPROVAL_PANEL_SELECTOR, ApprovalPanel)
         panel.display = not panel.display
         if panel.display:
             self.run_worker(self._refresh_approvals())
@@ -375,7 +380,7 @@ class BernsteinApp(App[None]):
                 for item in data.get("pending", [])
                 if isinstance(item, dict) and "task_id" in item
             ]
-            self.query_one("#approval-panel", ApprovalPanel).refresh_entries(entries)
+            self.query_one(_APPROVAL_PANEL_SELECTOR, ApprovalPanel).refresh_entries(entries)
 
     def _refresh_coordinator_dashboard(self) -> None:
         """Populate coordinator dashboard from current task data."""

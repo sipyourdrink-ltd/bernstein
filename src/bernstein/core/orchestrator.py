@@ -2861,7 +2861,7 @@ class Orchestrator:
             "4. Code quality and test gaps (P2)\n"
             "5. Documentation (P3 -- only if truly missing)\n\n"
             "## Process\n"
-            "1. Run `uv run pytest tests/ -q` to see current test state\n"
+            "1. Run `uv run python scripts/run_tests.py -x` to see current test state\n"
             "2. Read key files to understand architecture\n"
             "3. Identify 3-5 high-impact improvements\n"
             "4. Create tasks via HTTP. YOU decide model and effort per task:\n"

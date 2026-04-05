@@ -36,4 +36,12 @@ Rules:
 - `confidence`: float from 0.0 to 1.0 reflecting certainty in your verdict.
 - `feedback`: Specific actionable explanation. If "retry", describe exactly what needs fixing.
 
+## Examples
+
+**Accept example** — task asked to add retry logic, diff shows retry with backoff:
+{"verdict": "accept", "confidence": 0.92, "feedback": "Retry logic implemented with exponential backoff. Tests cover happy path and max-retries edge case."}
+
+**Retry example** — task asked to add auth middleware, diff only adds logging:
+{"verdict": "retry", "confidence": 0.85, "feedback": "Diff adds request logging but does not implement auth middleware. Missing: token validation, role checks, 401/403 responses."}
+
 Output ONLY the JSON object.

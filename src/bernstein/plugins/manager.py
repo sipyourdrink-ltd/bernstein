@@ -237,17 +237,66 @@ class CommandHook:
 
         return _re.sub(r"\$\{(\w+)\}", _replacer, text)
 
+    def _prepare_hook_env(self, **kwargs: Any) -> tuple[dict[str, str], dict[str, str]]:
+        """Resolve template vars, apply substitution, and build env dict.
+
+        Returns (sub_kwargs, env) where sub_kwargs has substituted values
+        and env is os.environ augmented with BERNSTEIN_HOOK_* vars.
+        """
+        tpl_vars = self._resolve_template_vars(self._hooks_dir)
+        sub_kwargs: dict[str, str] = {}
+        for key, value in kwargs.items():
+            sub_kwargs[key] = self._substitute_template(str(value), tpl_vars)
+
+        env = os.environ.copy()
+        for key, value in sub_kwargs.items():
+            env[f"BERNSTEIN_HOOK_{key.upper()}"] = value
+        return sub_kwargs, env
+
+    @staticmethod
+    def _handle_success(script: Path, proc: subprocess.CompletedProcess[str]) -> None:
+        """Process stdout from a hook that exited with code 0."""
+        if not proc.stdout.strip():
+            return
+        try:
+            response = cast("dict[str, Any]", json.loads(proc.stdout))
+            status = str(response.get("status", ""))
+            message = str(response.get("message", ""))
+            if status == "error":
+                log.warning(
+                    "Hook script %s reported error: %s",
+                    script.name,
+                    message or "no message",
+                )
+        except (json.JSONDecodeError, TypeError):
+            log.warning(
+                "Hook script %s returned malformed JSON: %s",
+                script.name,
+                proc.stdout[:100],
+            )
+
+    @staticmethod
+    def _handle_blocking(hook_name: str, proc: subprocess.CompletedProcess[str]) -> None:
+        """Handle exit code 2 (blocking error) by raising HookBlockingError."""
+        error_detail: str = proc.stderr.strip() or proc.stdout.strip()
+        if proc.stdout.strip():
+            try:
+                response = cast("dict[str, Any]", json.loads(proc.stdout))
+                if response.get("message"):
+                    error_detail = str(response["message"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        raise HookBlockingError(hook_name, error_detail)
+
     def _run_command(self, hook_name: str, **kwargs: Any) -> None:
         hook_path = self._hooks_dir / hook_name
         if not hook_path.is_dir():
             return
 
-        # Find all executable files in the directory
         for script in sorted(hook_path.iterdir()):
             if not os.access(script, os.X_OK) or script.is_dir():
                 continue
 
-            # Deduplicate: skip scripts already registered (T455)
             if self._is_duplicate(hook_name, script):
                 log.debug(
                     "Skipping duplicate hook %s/%s (already registered via %s)",
@@ -259,20 +308,7 @@ class CommandHook:
 
             log.debug("Executing hook script: %s", script)
             try:
-                # Resolve template variables for substitution (T451)
-                tpl_vars = self._resolve_template_vars(self._hooks_dir)
-
-                # Apply template substitution to all kwargs
-                sub_kwargs: dict[str, str] = {}
-                for key, value in kwargs.items():
-                    sub_kwargs[key] = self._substitute_template(str(value), tpl_vars)
-
-                # Pass arguments via environment variables (with template substitution)
-                env = os.environ.copy()
-                for key, value in sub_kwargs.items():
-                    env[f"BERNSTEIN_HOOK_{key.upper()}"] = value
-
-                # Also pass as JSON via stdin (with template substitution applied)
+                sub_kwargs, env = self._prepare_hook_env(**kwargs)
                 proc = subprocess.run(
                     [str(script)],
                     input=json.dumps(sub_kwargs),
@@ -283,37 +319,11 @@ class CommandHook:
                 )
 
                 if proc.returncode == 0:
-                    # Parse JSON response from stdout if present
-                    if proc.stdout.strip():
-                        try:
-                            response = cast("dict[str, Any]", json.loads(proc.stdout))
-                            status = str(response.get("status", ""))
-                            message = str(response.get("message", ""))
-                            if status == "error":
-                                log.warning(
-                                    "Hook script %s reported error: %s",
-                                    script.name,
-                                    message or "no message",
-                                )
-                        except (json.JSONDecodeError, TypeError):
-                            log.warning(
-                                "Hook script %s returned malformed JSON: %s",
-                                script.name,
-                                proc.stdout[:100],
-                            )
+                    self._handle_success(script, proc)
                     continue
 
                 if proc.returncode == 2:
-                    error_detail: str = proc.stderr.strip() or proc.stdout.strip()
-                    # Try to extract message from JSON if possible
-                    if proc.stdout.strip():
-                        try:
-                            response = cast("dict[str, Any]", json.loads(proc.stdout))
-                            if response.get("message"):
-                                error_detail = str(response["message"])
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                    raise HookBlockingError(hook_name, error_detail)
+                    self._handle_blocking(hook_name, proc)
                 else:
                     log.warning(
                         "Hook script %s exited with code %d: %s",

@@ -243,37 +243,35 @@ def _glob_match(pattern: str, value: str, *, case_insensitive: bool = False) -> 
     return fnmatch.fnmatch(value, pattern)
 
 
+def _glob_consume_char(pattern: str, i: int, n: int) -> tuple[str, int]:
+    """Consume one glob token starting at *i* and return (regex_fragment, new_index)."""
+    ch = pattern[i]
+    if ch == "*" and i + 1 < n and pattern[i + 1] == "*":
+        # ** matches anything including path separators
+        i += 2
+        if i < n and pattern[i] == "/":
+            i += 1
+        return ".*", i
+    if ch == "*":
+        return "[^/]*", i + 1
+    if ch == "?":
+        return "[^/]", i + 1
+    if ch == "[":
+        j = i + 1
+        while j < n and pattern[j] != "]":
+            j += 1
+        return pattern[i : j + 1], j + 1
+    return re.escape(ch), i + 1
+
+
 def _glob_to_regex(pattern: str) -> str:
     """Convert a glob pattern with ``**`` support to a regex string."""
     parts: list[str] = []
     i = 0
     n = len(pattern)
     while i < n:
-        ch = pattern[i]
-        if ch == "*" and i + 1 < n and pattern[i + 1] == "*":
-            # ** matches anything including path separators
-            parts.append(".*")
-            i += 2
-            # Skip trailing / after **
-            if i < n and pattern[i] == "/":
-                i += 1
-        elif ch == "*":
-            # * matches anything except path separators
-            parts.append("[^/]*")
-            i += 1
-        elif ch == "?":
-            parts.append("[^/]")
-            i += 1
-        elif ch == "[":
-            # Pass through character classes
-            j = i + 1
-            while j < n and pattern[j] != "]":
-                j += 1
-            parts.append(pattern[i : j + 1])
-            i = j + 1
-        else:
-            parts.append(re.escape(ch))
-            i += 1
+        fragment, i = _glob_consume_char(pattern, i, n)
+        parts.append(fragment)
     return "".join(parts)
 
 

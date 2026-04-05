@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.run_report import (
     RunReportGenerator,
     TimelineEntry,
@@ -97,8 +99,8 @@ def test_generate_report_with_mock_metrics(tmp_path: Path) -> None:
 
     assert report.run_id == "run-001"
     assert report.goal == "Add JWT auth"
-    assert report.duration_s == 300.0
-    assert report.total_cost_usd == 0.55
+    assert report.duration_s == pytest.approx(300.0)
+    assert report.total_cost_usd == pytest.approx(0.55)
     assert report.tasks_completed == 2
     assert report.tasks_failed == 1
     assert report.agents_spawned == 2
@@ -121,7 +123,7 @@ def test_generate_report_task_rows_correct(tmp_path: Path) -> None:
     assert fail_rows[0].role == "qa"
     # Each task ran for 90 seconds
     for row in report.task_rows:
-        assert row.duration_s == 90.0
+        assert row.duration_s == pytest.approx(90.0)
 
 
 def test_generate_report_model_costs(tmp_path: Path) -> None:
@@ -133,7 +135,7 @@ def test_generate_report_model_costs(tmp_path: Path) -> None:
     models = {mc.model: mc for mc in report.model_costs}
     assert "sonnet" in models
     assert "haiku" in models
-    assert models["sonnet"].total_cost_usd == 0.35
+    assert models["sonnet"].total_cost_usd == pytest.approx(0.35)
     assert models["haiku"].invocation_count == 2
 
 
@@ -146,9 +148,9 @@ def test_generate_report_timeline(tmp_path: Path) -> None:
     assert len(report.timeline_entries) == 3
     # First entry starts at offset 0
     offsets = sorted(e.start_offset_s for e in report.timeline_entries)
-    assert offsets[0] == 0.0
+    assert offsets[0] == pytest.approx(0.0)
     # Second starts 60s after first
-    assert offsets[1] == 60.0
+    assert offsets[1] == pytest.approx(60.0)
 
 
 # ---------------------------------------------------------------------------

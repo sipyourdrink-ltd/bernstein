@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+
+import pytest
 from typing import Any
 
 from bernstein.core.token_analyzer import (
@@ -51,7 +53,7 @@ def test_analyze_basic_stats(tmp_path: Path) -> None:
 
     assert result.total_tokens_prompt == 18000
     assert result.total_tokens_completion == 5000
-    assert result.total_cost_usd == 0.08
+    assert result.total_cost_usd == pytest.approx(0.08)
     assert len(result.task_stats) == 2
 
 
@@ -62,8 +64,8 @@ def test_analyze_io_ratio(tmp_path: Path) -> None:
         _make_record("t1", tokens_prompt=9000, tokens_completion=3000),
     ]
     result = analyzer.analyze(records)
-    assert result.overall_io_ratio == 3.0
-    assert result.task_stats[0].io_ratio == 3.0
+    assert result.overall_io_ratio == pytest.approx(3.0)
+    assert result.task_stats[0].io_ratio == pytest.approx(3.0)
 
 
 def test_analyze_zero_output_ratio(tmp_path: Path) -> None:
@@ -73,7 +75,7 @@ def test_analyze_zero_output_ratio(tmp_path: Path) -> None:
         _make_record("t1", tokens_prompt=5000, tokens_completion=0),
     ]
     result = analyzer.analyze(records)
-    assert result.task_stats[0].io_ratio == 999.0
+    assert result.task_stats[0].io_ratio == pytest.approx(999.0)
 
 
 def test_analyze_deduplicates_by_task_id(tmp_path: Path) -> None:
@@ -178,7 +180,7 @@ def test_model_spend_aggregation(tmp_path: Path) -> None:
     # Opus first (more expensive total).
     assert result.model_spend[0].model == "opus"
     assert result.model_spend[0].task_count == 2
-    assert result.model_spend[0].total_cost_usd == 0.18
+    assert result.model_spend[0].total_cost_usd == pytest.approx(0.18)
     # Sonnet second.
     assert result.model_spend[1].model == "sonnet"
     assert result.model_spend[1].task_count == 1
@@ -275,7 +277,7 @@ def test_analyze_empty_records(tmp_path: Path) -> None:
 
     assert result.total_tokens_prompt == 0
     assert result.total_tokens_completion == 0
-    assert result.total_cost_usd == 0.0
+    assert result.total_cost_usd == pytest.approx(0.0)
     assert len(result.task_stats) == 0
     assert len(result.waste_patterns) == 0
 
