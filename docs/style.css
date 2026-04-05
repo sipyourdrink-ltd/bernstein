@@ -457,9 +457,8 @@ section {
 }
 
 .hero-actions {
-  display: flex;
+  display: inline-flex;
   gap: var(--space-3);
-  flex-wrap: wrap;
 }
 
 /* Entry animation — single controlled reveal */

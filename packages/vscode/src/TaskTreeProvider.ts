@@ -9,6 +9,9 @@ const STATUS_ICON: Record<string, string> = {
   failed: '$(error)',
   blocked: '$(warning)',
   cancelled: '$(x)',
+  pending_approval: '$(bell)',
+  orphaned: '$(question)',
+  waiting_for_subtasks: '$(loading~spin)',
 };
 
 export class TaskItem extends vscode.TreeItem {

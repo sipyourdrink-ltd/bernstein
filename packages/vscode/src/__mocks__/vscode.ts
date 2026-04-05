@@ -28,6 +28,7 @@ export const workspace = {
 
 export const commands = {
   registerCommand: jest.fn(),
+  executeCommand: jest.fn(),
 };
 
 export const StatusBarAlignment = { Left: 1, Right: 2 };

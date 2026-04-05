@@ -1,108 +1,61 @@
-# Bernstein — Multi-Agent Orchestration
+# Bernstein — Multi-Agent Orchestration for VS Code
 
-Orchestrate parallel AI coding agents from your editor. Monitor tasks, agents, and costs in real-time.
+VS Code extension for monitoring and controlling [Bernstein](https://github.com/chernistry/bernstein), a multi-agent orchestration system that runs parallel AI coding agents. Gives you real-time visibility into tasks, agents, and costs without leaving your editor.
 
-## Screenshots
-
-![Sidebar — Agents and Tasks tree views](media/screenshots/sidebar.png)
-![Dashboard — stats, agent cards, cost sparkline](media/screenshots/dashboard.png)
-![Command palette — Bernstein: Start and other commands](media/screenshots/command-palette.png)
-
-## Overview
-
-Bernstein spawns teams of specialized coding agents to tackle complex development goals in parallel. Built for professional software engineering — not a toy for prompting experiments.
-
-- **Parallel execution** — multiple agents work simultaneously
-- **Task-driven** — break goals into concrete tasks, track completion
-- **Model routing** — assign agents by role and capability
-- **Cost tracking** — real-time spend visibility per agent and task
-- **Integrated monitoring** — dashboard, tree views, status bar all in VS Code
-
-## Quick Start
-
-1. **Start Bernstein** from the command palette: `Bernstein: Start`
-   - Launches the orchestrator on `http://127.0.0.1:8052`
-   - Extension auto-connects when detected
-
-2. **View the dashboard**
-   - Click the Bernstein icon in the activity bar
-   - See agents, tasks, and cost in real-time
-   - Or open the full dashboard: `Bernstein: Show Dashboard`
-
-3. **Control agents**
-   - Right-click any agent to kill it or inspect logs
-   - Click a task to view the diff or output
-   - Close VS Code — agents keep running if you don't kill them
-
-## Requirements
-
-- VS Code **1.100+** (or Cursor, VSCodium, or any VS Code fork)
-- **Bernstein server** running locally (`bernstein run` from the Bernstein repository)
-
-## Configuration
-
-Open VS Code settings and search for "Bernstein":
-
-```json
-{
-  "bernstein.apiUrl": "http://127.0.0.1:8052",
-  "bernstein.apiToken": "",
-  "bernstein.refreshInterval": 5
-}
-```
-
-- **apiUrl** — where Bernstein orchestrator is running (default: localhost:8052)
-- **apiToken** — optional bearer token if your orchestrator requires auth
-- **refreshInterval** — how often to poll for updates (seconds)
+![Dashboard](media/screenshot-dashboard.png)
 
 ## Features
 
-### Activity Bar Icon
-Navigate to the Bernstein panel to see:
-- **Agents** — current team composition, status, cost
-- **Tasks** — open, claimed, completed, and failed
-- **Dashboard** — overview stats and alerts
+- **Sidebar views** — dedicated activity bar panel with Agents, Tasks, and Overview views
+- **Agent tree with delegation hierarchy** — see active agents, their roles, models, and parent/child relationships
+- **Task grouping** — tasks organized by status (open, in progress, done, failed) with inline actions
+- **Dashboard webview** — at-a-glance stats: task breakdown, agent count, cost totals, alerts
+- **SSE real-time updates** — live streaming from the orchestrator, no manual refresh needed
+- **`@bernstein` chat participant** — query orchestrator status and costs from VS Code Chat
+- **Cost tracking** — per-agent and per-model spend, budget warnings when thresholds are exceeded
+- **Status bar** — persistent summary of agents, task progress, and total cost
 
-### Status Bar
-At the bottom of VS Code:
-```
-🎼 3 agents · 7/12 tasks · $0.42
-```
-Click to open the dashboard.
+## Commands
 
-### Commands
-- `Bernstein: Refresh` — force update the tree views
-- `Bernstein: Show Dashboard` — open the dashboard in a new panel
-- `Bernstein: Kill Agent` — terminate an agent (right-click menu)
-- `Bernstein: Show Agent Output` — view agent's execution logs (right-click menu)
+| Command | Description |
+|---|---|
+| `Bernstein: Start` | Launch the orchestrator in a terminal |
+| `Bernstein: Refresh` | Force-refresh all tree views |
+| `Bernstein: Show Dashboard` | Open the dashboard in a browser |
+| `Bernstein: Kill Agent` | Terminate a running agent (context menu) |
+| `Bernstein: Show Agent Output` | View an agent's execution logs (context menu) |
+| `Bernstein: Cancel Task` | Cancel an open or in-progress task (context menu) |
+| `Bernstein: Prioritize Task` | Move a task to the top of the queue (context menu) |
+| `Bernstein: Open Task Output` | Open output for a task's assigned agent |
+| `Bernstein: Inspect Agent` | Show agent details: role, model, runtime, cost, tasks |
 
-## How Bernstein Works
+## Configuration
 
-1. **Define a goal** in your Bernstein config or via CLI
-2. **Orchestrator decomposes** the goal into concrete tasks
-3. **Agents spawn** for their assigned tasks (parallel execution)
-4. **Real-time tracking** in VS Code shows progress, output, cost
-5. **Verification** — Bernstein auto-verifies results before marking done
-6. **Self-evolution** — Bernstein ships the code and improves itself
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `bernstein.apiUrl` | string | `http://127.0.0.1:8052` | Bernstein orchestrator API URL |
+| `bernstein.apiToken` | string | `""` | Bearer token for API authentication (optional) |
+| `bernstein.refreshInterval` | number | `5` | Tree view polling interval in seconds |
+| `bernstein.showNotifications` | boolean | `true` | Show notification toasts for task completions and failures |
+| `bernstein.costWarningThreshold` | number | `80` | Show a cost warning when budget usage exceeds this percentage |
+| `bernstein.autoStart` | boolean | `false` | Automatically start Bernstein when opening a workspace with a `.sdd` directory |
 
-## For Cursor Users
+## Requirements
 
-Bernstein works seamlessly in Cursor. Install from the Open VSX registry:
-- Search for "Bernstein" in Cursor's extensions panel
-- Or install manually: `code --install-extension alex-chernysh.bernstein`
+- VS Code 1.100+ (or compatible forks: Cursor, VSCodium)
+- Bernstein orchestrator running locally — install from [github.com/chernistry/bernstein](https://github.com/chernistry/bernstein)
 
-## Privacy & Data
+## Quick Start
 
-- Extension only connects to your local Bernstein server (default: `localhost:8052`)
-- No telemetry, no tracking, no external calls
-- All agent execution happens on your machine
+1. Install the extension from the VS Code Marketplace (or Open VSX)
+2. Start the orchestrator: run `bernstein run` in your project directory
+3. The extension auto-connects to `localhost:8052` and starts streaming updates
+4. Click the Bernstein icon in the activity bar to see agents, tasks, and the dashboard
 
-## Support
+## Privacy
 
-- **Issue tracker** — [GitHub issues](https://github.com/chernistry/bernstein/issues)
-- **Documentation** — [chernistry.github.io/bernstein](https://chernistry.github.io/bernstein/)
-- **Source code** — [github.com/chernistry/bernstein](https://github.com/chernistry/bernstein)
+The extension only communicates with your local Bernstein server. No telemetry, no external network calls.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](https://github.com/chernistry/bernstein/blob/main/LICENSE) for details.
+Apache-2.0

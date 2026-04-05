@@ -2,6 +2,25 @@
 
 All notable changes to the Bernstein VS Code extension will be documented in this file.
 
+## [0.2.0] - 2026-04-05
+
+### Added
+- **Approve/reject task commands** — new context menu actions for tasks pending approval
+- **Cost budget warning notifications** — toast alerts when spend exceeds configurable threshold
+- **Task grouping by status** — tasks tree view now groups items by status (open, in progress, done, failed)
+- **Agent tree: model badge** — agents display their assigned model in the tree view
+- **Agent tree: file ownership display** — see which files each agent owns
+- **Additional task status icons** — distinct icons for `pending_approval`, `orphaned`, and `waiting_for_subtasks` states
+
+### Improved
+- **Dashboard UI** — task breakdown chart, auto-refresh indicator, empty states for when no agents or tasks exist
+- **Dashboard auto-refresh** — visual indicator showing when data was last updated
+
+### Configuration
+- `bernstein.showNotifications` (boolean, default `true`) — control notification toasts for task completions and failures
+- `bernstein.costWarningThreshold` (number, default `80`) — percentage threshold for cost budget warnings
+- `bernstein.autoStart` (boolean, default `false`) — automatically start Bernstein when opening a workspace with a `.sdd` directory
+
 ## [0.1.0] - 2026-03-29
 
 ### Added
@@ -44,7 +63,7 @@ All notable changes to the Bernstein VS Code extension will be documented in thi
 - Monochrome icon (no rainbow colors)
 - Clean status bar — essential info only
 - Tight typography — 13px text, tabular figures for numbers
-- Status dots (●/○) for states
+- Status dots for states
 - Respects VS Code light/dark theme
 
 ---

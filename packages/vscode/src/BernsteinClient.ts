@@ -34,6 +34,7 @@ export interface BernsteinAgent {
   task_ids?: string[];
   agent_source?: string;
   parent_agent_id?: string;
+  owned_files?: string[];
   cost_usd: number;
   tasks?: Array<{ id: string; title: string; status: string; progress: number }>;
 }
@@ -149,6 +150,14 @@ export class BernsteinClient {
 
   prioritizeTask(taskId: string): Promise<void> {
     return this.post(`/tasks/${taskId}/prioritize`);
+  }
+
+  approveTask(taskId: string): Promise<void> {
+    return this.post(`/tasks/${taskId}/complete`, { result_summary: 'Approved from VS Code' });
+  }
+
+  rejectTask(taskId: string): Promise<void> {
+    return this.post(`/tasks/${taskId}/fail`, { reason: 'Rejected from VS Code' });
   }
 
   /**

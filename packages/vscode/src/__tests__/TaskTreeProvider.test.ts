@@ -34,6 +34,24 @@ describe('TaskItem', () => {
     const item = new TaskItem({ ...BASE_TASK, progress: 0 });
     expect(item.description).not.toContain('%');
   });
+
+  it('uses bell icon for pending_approval status', () => {
+    const item = new TaskItem({ ...BASE_TASK, status: 'pending_approval' });
+    expect(item.label).toContain('$(bell)');
+    expect(item.contextValue).toBe('task.pending_approval');
+  });
+
+  it('uses question icon for orphaned status', () => {
+    const item = new TaskItem({ ...BASE_TASK, status: 'orphaned' });
+    expect(item.label).toContain('$(question)');
+    expect(item.contextValue).toBe('task.orphaned');
+  });
+
+  it('uses loading~spin icon for waiting_for_subtasks status', () => {
+    const item = new TaskItem({ ...BASE_TASK, status: 'waiting_for_subtasks' });
+    expect(item.label).toContain('$(loading~spin)');
+    expect(item.contextValue).toBe('task.waiting_for_subtasks');
+  });
 });
 
 describe('TaskTreeProvider', () => {

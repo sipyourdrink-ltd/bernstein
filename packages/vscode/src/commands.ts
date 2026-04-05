@@ -97,6 +97,39 @@ export function registerCommands(
     ),
 
     vscode.commands.registerCommand(
+      'bernstein.approveTask',
+      async (item: TaskItem) => {
+        try {
+          await client.approveTask(item.task.id);
+          vscode.window.showInformationMessage(`Task "${item.task.title}" approved.`);
+          onRefresh();
+        } catch (e) {
+          vscode.window.showErrorMessage(`Failed to approve task: ${String(e)}`);
+        }
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      'bernstein.rejectTask',
+      async (item: TaskItem) => {
+        const answer = await vscode.window.showWarningMessage(
+          `Reject task "${item.task.title}"?`,
+          { modal: true },
+          'Reject',
+        );
+        if (answer === 'Reject') {
+          try {
+            await client.rejectTask(item.task.id);
+            vscode.window.showInformationMessage(`Task "${item.task.title}" rejected.`);
+            onRefresh();
+          } catch (e) {
+            vscode.window.showErrorMessage(`Failed to reject task: ${String(e)}`);
+          }
+        }
+      },
+    ),
+
+    vscode.commands.registerCommand(
       'bernstein.inspectAgent',
       (item: AgentItem) => {
         const a = item.agent;

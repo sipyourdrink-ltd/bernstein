@@ -2,7 +2,7 @@
   "name": "bernstein",
   "displayName": "Bernstein — Multi-Agent Orchestration",
   "description": "Orchestrate parallel AI coding agents from your editor. Monitor tasks, agents, costs in real-time.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "chernistry",
   "engines": { "vscode": "^1.100.0" },
   "categories": ["AI", "Other"],
@@ -56,7 +56,9 @@
       { "command": "bernstein.cancelTask", "title": "Bernstein: Cancel Task", "icon": "$(x)" },
       { "command": "bernstein.prioritizeTask", "title": "Bernstein: Prioritize Task", "icon": "$(arrow-up)" },
       { "command": "bernstein.openTask", "title": "Bernstein: Open Task Output", "icon": "$(go-to-file)" },
-      { "command": "bernstein.inspectAgent", "title": "Bernstein: Inspect Agent", "icon": "$(info)" }
+      { "command": "bernstein.inspectAgent", "title": "Bernstein: Inspect Agent", "icon": "$(info)" },
+      { "command": "bernstein.approveTask", "title": "Bernstein: Approve Task", "icon": "$(check)" },
+      { "command": "bernstein.rejectTask", "title": "Bernstein: Reject Task", "icon": "$(x)" }
     ],
     "menus": {
       "view/title": [
@@ -70,7 +72,11 @@
         { "command": "bernstein.showAgentOutput", "when": "view == bernstein.agents && viewItem == agent.active", "group": "1_agent_actions@2" },
         { "command": "bernstein.inspectAgent", "when": "view == bernstein.agents", "group": "1_agent_actions@3" },
         { "command": "bernstein.prioritizeTask", "when": "view == bernstein.tasks && viewItem =~ /^task\\.(open|claimed|in_progress)$/", "group": "1_task_actions@1" },
-        { "command": "bernstein.cancelTask", "when": "view == bernstein.tasks && viewItem =~ /^task\\.(open|claimed|in_progress)$/", "group": "1_task_actions@2" }
+        { "command": "bernstein.cancelTask", "when": "view == bernstein.tasks && viewItem =~ /^task\\.(open|claimed|in_progress)$/", "group": "1_task_actions@2" },
+        { "command": "bernstein.approveTask", "when": "view == bernstein.tasks && viewItem == task.pending_approval", "group": "inline" },
+        { "command": "bernstein.rejectTask", "when": "view == bernstein.tasks && viewItem == task.pending_approval", "group": "inline" },
+        { "command": "bernstein.approveTask", "when": "view == bernstein.tasks && viewItem == task.pending_approval", "group": "1_task_actions@1" },
+        { "command": "bernstein.rejectTask", "when": "view == bernstein.tasks && viewItem == task.pending_approval", "group": "1_task_actions@2" }
       ]
     },
     "chatParticipants": [

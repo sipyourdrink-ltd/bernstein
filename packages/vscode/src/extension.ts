@@ -33,6 +33,9 @@ export function activate(context: vscode.ExtensionContext): void {
     { dispose: () => outputManager.dispose() },
   );
 
+  let hasShownCostWarning = false;
+  let hasShownCostStop = false;
+
   const refresh = async (): Promise<void> => {
     try {
       const data = await client.getDashboardData();
@@ -40,6 +43,29 @@ export function activate(context: vscode.ExtensionContext): void {
       agentProvider.update(data.agents);
       statusBar.update(data);
       dashboardProvider.update(data);
+
+      // Cost budget notifications (show once per condition)
+      if (data.live_costs.should_stop) {
+        if (!hasShownCostStop) {
+          hasShownCostStop = true;
+          void vscode.window.showErrorMessage(
+            `Bernstein: Cost budget exceeded — $${data.live_costs.spent_usd.toFixed(2)} / $${data.live_costs.budget_usd.toFixed(2)} (${data.live_costs.percentage_used.toFixed(0)}%). Agents should be stopped.`,
+          );
+        }
+      } else {
+        hasShownCostStop = false;
+      }
+
+      if (data.live_costs.should_warn) {
+        if (!hasShownCostWarning) {
+          hasShownCostWarning = true;
+          void vscode.window.showWarningMessage(
+            `Bernstein: Cost budget warning — $${data.live_costs.spent_usd.toFixed(2)} / $${data.live_costs.budget_usd.toFixed(2)} (${data.live_costs.percentage_used.toFixed(0)}% used).`,
+          );
+        }
+      } else {
+        hasShownCostWarning = false;
+      }
     } catch (e) {
       statusBar.setError(String(e));
     }
