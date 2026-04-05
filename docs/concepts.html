@@ -122,10 +122,13 @@ Janitor (completion signal verification)</code></pre>
     <p>Every task moves through a well-defined state machine:</p>
 
     <div class="code-block">
-      <pre><code class="language-text">open → claimed → in_progress → done
-                              ↘ failed
-              ↑
-         blocked (dependency not yet met)</code></pre>
+      <pre><code class="language-text">open → claimed → in_progress → done → closed
+         ↑                    ↘ failed
+         │                    ↘ orphaned → open (retry)
+         │                               ↘ failed (max retries)
+         │
+    blocked (dependency not yet met)
+    open → cancelled (user cancellation)</code></pre>
     </div>
 
     <table>
@@ -138,7 +141,10 @@ Janitor (completion signal verification)</code></pre>
         <tr><td><code>claimed</code></td><td>An agent has reserved the task but hasn't started yet.</td></tr>
         <tr><td><code>in_progress</code></td><td>An agent is actively working. Heartbeat timeout triggers respawn if the agent goes silent.</td></tr>
         <tr><td><code>done</code></td><td>Agent reported completion <em>and</em> janitor verified completion signals.</td></tr>
+        <tr><td><code>closed</code></td><td>Janitor verification passed after <code>done</code>. Terminal state — the task is fully complete.</td></tr>
         <tr><td><code>failed</code></td><td>Agent reported failure, or janitor found completion signals unmet after max retries.</td></tr>
+        <tr><td><code>cancelled</code></td><td>User cancelled the task from <code>open</code> or <code>blocked</code> state.</td></tr>
+        <tr><td><code>orphaned</code></td><td>Agent crashed or went silent during <code>in_progress</code>. Retried back to <code>open</code>, or moved to <code>failed</code> after max retries.</td></tr>
       </tbody>
     </table>
 

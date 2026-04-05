@@ -69,7 +69,9 @@
       <li><a href="#plan-files">Plan files</a></li>
       <li><a href="#configuration">Configuration</a></li>
       <li><a href="#monitoring">Monitoring</a></li>
+      <li><a href="#task-states">Task states</a></li>
       <li><a href="#cli">CLI reference</a></li>
+      <li><a href="#recipes">Common recipes</a></li>
       <li><a href="#stopping">Stopping</a></li>
       <li><a href="#headless">Headless mode</a></li>
       <li><a href="#evolve">Evolve mode</a></li>
@@ -216,6 +218,12 @@ bernstein run plans/flask-api.yaml</code></pre>
         <tr><td><code>max_workers</code></td><td><code>6</code></td><td>Max simultaneous worker agents</td></tr>
         <tr><td><code>default_model</code></td><td><code>sonnet</code></td><td>Default model for workers</td></tr>
         <tr><td><code>default_effort</code></td><td><code>high</code></td><td>Default effort level</td></tr>
+        <tr><td><code>batch</code></td><td><code>BatchConfig</code></td><td>Provider batch execution settings (enabled, cost reduction for non-urgent tasks)</td></tr>
+        <tr><td><code>quality_gates</code></td><td><code>{}</code></td><td>Quality gate definitions — run commands (lint, test, etc.) after task completion</td></tr>
+        <tr><td><code>formal_verification</code></td><td><code>false</code></td><td>Enable formal verification checks on critical code paths</td></tr>
+        <tr><td><code>sandbox</code></td><td><code>SandboxConfig</code></td><td>Container sandbox settings (network isolation, read-only rootfs, two-phase execution)</td></tr>
+        <tr><td><code>rate_limit</code></td><td><code>null</code></td><td>Per-model API rate limiting (requests per minute/hour)</td></tr>
+        <tr><td><code>test_agent</code></td><td><code>TestAgentConfig</code></td><td>Configuration for the dedicated test-runner agent</td></tr>
       </tbody>
     </table>
 
@@ -332,6 +340,39 @@ bernstein run --budget 5.00 -g "Add auth"</code></pre>
     </div>
     <p>The cost engine tracks spend per model, per role, and per task. A bandit-based model selector learns the cheapest model that meets quality thresholds.</p>
 
+    <h2 id="task-states">Task states</h2>
+    <p>Every task moves through a well-defined state machine. The full set of states:</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">planned → open → claimed → in_progress → done → closed
+                                        ↘ failed
+                                        ↘ blocked (dependency not yet met)
+                                        ↘ orphaned (agent crashed)
+                                        ↘ waiting_for_subtasks
+                                        ↘ cancelled
+              done → pending_approval → closed</code></pre>
+    </div>
+
+    <table>
+      <thead>
+        <tr><th>State</th><th>Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>planned</code></td><td>Awaiting human approval before execution (plan mode). Not yet queued.</td></tr>
+        <tr><td><code>open</code></td><td>Waiting in the queue. No agent has picked it up yet.</td></tr>
+        <tr><td><code>blocked</code></td><td>Has unsatisfied <code>depends_on</code> entries. Becomes <code>open</code> automatically when dependencies complete.</td></tr>
+        <tr><td><code>claimed</code></td><td>An agent has reserved the task but hasn't started yet.</td></tr>
+        <tr><td><code>in_progress</code></td><td>An agent is actively working. Heartbeat timeout triggers respawn if the agent goes silent.</td></tr>
+        <tr><td><code>done</code></td><td>Agent reported completion. Janitor will verify completion signals.</td></tr>
+        <tr><td><code>closed</code></td><td>DONE &rarr; CLOSED after janitor verification. Terminal state for successful tasks.</td></tr>
+        <tr><td><code>failed</code></td><td>Agent reported failure, or janitor found completion signals unmet after max retries.</td></tr>
+        <tr><td><code>orphaned</code></td><td>Agent crashed mid-task. Pending crash recovery — will be requeued or failed.</td></tr>
+        <tr><td><code>pending_approval</code></td><td>Completed but awaiting human approval before taking effect (e.g. evolve L2+ changes).</td></tr>
+        <tr><td><code>waiting_for_subtasks</code></td><td>Task was split into subtasks. Resumes when all subtasks reach a terminal state.</td></tr>
+        <tr><td><code>cancelled</code></td><td>Explicitly cancelled by a user or the orchestrator. Terminal state.</td></tr>
+      </tbody>
+    </table>
+
     <h2 id="cli">CLI reference</h2>
     <table>
       <thead>
@@ -367,8 +408,62 @@ bernstein run --budget 5.00 -g "Add auth"</code></pre>
         <tr><td><code>bernstein verify</code></td><td>Verify task completion signals</td></tr>
         <tr><td><code>bernstein mcp</code></td><td>Start MCP server for tool integration</td></tr>
         <tr><td><code>bernstein plugins</code></td><td>List discovered plugins</td></tr>
+        <tr><td><code>bernstein templates</code></td><td>List, show, or create role/prompt templates</td></tr>
+        <tr><td><code>bernstein graph</code></td><td>Visualize task dependency graph</td></tr>
+        <tr><td><code>bernstein chaos</code></td><td>Run chaos tests (agent-kill, SLO budget, etc.)</td></tr>
+        <tr><td><code>bernstein profile</code></td><td>Profile agent performance and resource usage</td></tr>
+        <tr><td><code>bernstein report</code></td><td>Generate detailed run reports</td></tr>
+        <tr><td><code>bernstein gallery</code></td><td>Browse example plans and seed files</td></tr>
+        <tr><td><code>bernstein man-pages</code></td><td>Generate man pages for all commands</td></tr>
+        <tr><td><code>bernstein incident</code></td><td>Create or review incident reports from failed runs</td></tr>
+        <tr><td><code>bernstein dr</code></td><td>Disaster recovery: backup/restore <code>.sdd/</code> state</td></tr>
+        <tr><td><code>bernstein worker</code></td><td>Join a cluster as a remote worker node</td></tr>
+        <tr><td><code>bernstein ab-test</code></td><td>A/B test model or prompt variants across tasks</td></tr>
       </tbody>
     </table>
+
+    <h2 id="recipes">Common recipes</h2>
+
+    <h3>Run a plan file</h3>
+    <div class="code-block">
+      <pre><code class="language-bash">bernstein run plans/my-project.yaml</code></pre>
+    </div>
+
+    <h3>Run with a goal (no YAML needed)</h3>
+    <div class="code-block">
+      <pre><code class="language-bash">bernstein run -g "Add user authentication with JWT"</code></pre>
+    </div>
+
+    <h3>Run offline with Ollama (no cloud API keys)</h3>
+    <div class="code-block">
+      <pre><code class="language-bash">bernstein run -g "Fix the parser bug" --cli ollama</code></pre>
+    </div>
+
+    <h3>Use batch mode for large refactors</h3>
+    <div class="code-block">
+      <pre><code class="language-bash">bernstein run -g "Migrate all tests to pytest" --batch</code></pre>
+    </div>
+
+    <h3>Add a custom quality gate</h3>
+    <div class="code-block">
+      <pre><code class="language-yaml"># In bernstein.yaml:
+quality_gates:
+  gates:
+    - name: lint
+      command: "uv run ruff check src/"
+      blocking: true</code></pre>
+    </div>
+
+    <h3>View the TUI dashboard</h3>
+    <div class="code-block">
+      <pre><code class="language-bash">bernstein dashboard</code></pre>
+    </div>
+
+    <h3>Run chaos tests</h3>
+    <div class="code-block">
+      <pre><code class="language-bash">bernstein chaos agent-kill --count 2
+bernstein chaos slo --error-budget 0.1</code></pre>
+    </div>
 
   </main>
 </div>

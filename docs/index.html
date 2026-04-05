@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bernstein — Declarative Agent Orchestration</title>
-  <meta name="description" content="Declarative agent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep." />
+  <title>Bernstein — Agent-Independent Orchestration</title>
+  <meta name="description" content="Agent-independent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep." />
   <link rel="canonical" href="https://chernistry.github.io/bernstein/" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="Bernstein — Declarative Agent Orchestration" />
-  <meta property="og:description" content="Declarative agent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep." />
+  <meta property="og:title" content="Bernstein — Agent-Independent Orchestration" />
+  <meta property="og:description" content="Agent-independent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep." />
   <meta property="og:url" content="https://chernistry.github.io/bernstein/" />
   <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Bernstein — Declarative Agent Orchestration" />
-  <meta name="twitter:description" content="Declarative agent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep." />
+  <meta name="twitter:title" content="Bernstein — Agent-Independent Orchestration" />
+  <meta name="twitter:description" content="Agent-independent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep." />
   <meta name="twitter:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
   <script type="application/ld+json">
   {
@@ -22,7 +22,7 @@
     "name": "Bernstein",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS, Windows",
-    "description": "Declarative agent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep.",
+    "description": "Agent-independent orchestration for engineering teams. One YAML, multiple coding agents — ship while you sleep.",
     "url": "https://chernistry.github.io/bernstein/",
     "downloadUrl": "https://pypi.org/project/bernstein/",
     "codeRepository": "https://github.com/chernistry/bernstein",
@@ -80,9 +80,9 @@
   <div class="container">
     <div class="hero-inner">
       <div>
-        <h1>Declarative agent orchestration. Ship while you sleep.</h1>
+        <h1>Agent-independent orchestration. Ship while you sleep.</h1>
         <p class="hero-sub">
-          Describe a goal. Bernstein decomposes it, spawns short-lived coding agents in parallel, verifies the output, and commits the results. Works with Claude Code, Codex, Gemini CLI, Aider, Amp, Roo Code, Cursor, Kilo, Kiro, OpenCode, Qwen - or any future CLI agent.
+          Describe a goal. Bernstein decomposes it, spawns short-lived coding agents in parallel, verifies the output, and commits the results. Works with 18 CLI coding agents: Claude Code, Codex, Gemini CLI, Aider, Amp, Roo Code, Cursor, Kilo, Kiro, OpenCode, Qwen, Cody, Continue.dev, Goose, Ollama, Tabby, IaC (Terraform/Pulumi), and a Generic adapter for any CLI tool.
         </p>
         <p class="hero-analogy" style="margin-top:1.25rem;font-size:0.9rem;color:var(--text-muted, #666);line-height:1.6;max-width:36rem;margin-left:auto;margin-right:auto;">
           <strong>Think of it as what Kubernetes did for containers, but for AI coding agents.</strong>
@@ -150,7 +150,7 @@
         <div class="section-label">How it works</div>
         <h2 class="section-title">Short-lived agents, file-based state, deterministic orchestration</h2>
         <p class="section-desc">
-          Agents aren't long-lived workers. They spawn fresh, do 1-3 tasks, and exit. No idle loops, no context rot. All state lives in <code>.sdd/</code> files — git-native, inspectable, reproducible.
+          Agents aren't long-lived workers. They spawn fresh, do 1-3 tasks, and exit. No idle loops, no context rot. All state lives in <code>.sdd/</code> files — git-native, inspectable, reproducible. Tasks transition through OPEN &rarr; IN_PROGRESS &rarr; DONE &rarr; CLOSED, with the final CLOSED state applied only after janitor verification.
         </p>
         <ol class="flow-list">
           <li>
@@ -230,6 +230,14 @@
             <h4>Multi-cell orchestration</h4>
             <p>Organise agents into cells — self-contained teams with a manager and workers. A VP agent coordinates across cells for large-scale projects.</p>
           </div>
+          <div class="feature-item">
+            <h4>A/B model testing</h4>
+            <p>Run the same task with different models or configurations and compare results. Automated scoring picks the winner by cost, speed, and output quality.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Batch mode</h4>
+            <p>Queue hundreds of tasks from a YAML file and let Bernstein grind through them unattended. Ideal for large-scale refactors and migration campaigns.</p>
+          </div>
         </div>
       </div>
 
@@ -242,7 +250,7 @@
           </div>
           <div class="feature-item">
             <h4>File-based state</h4>
-            <p>All state lives in <code>.sdd/</code> files. Git-native, inspectable, reproducible. No database required for single-instance. State survives crashes and restarts.</p>
+            <p>All state lives in <code>.sdd/</code> files. Git-native, inspectable, reproducible. No database required for single-instance. State survives crashes and restarts. Tasks follow a strict lifecycle: OPEN &rarr; IN_PROGRESS &rarr; DONE &rarr; CLOSED (verified by the janitor before closing).</p>
           </div>
           <div class="feature-item">
             <h4>Cost budgeting</h4>
@@ -252,6 +260,14 @@
             <h4>Verified cache and quota-aware status</h4>
             <p>Only verified response-cache entries can auto-complete work. Provider health and quota snapshots are polled separately and shown in <code>bernstein status</code> and <code>/status</code>.</p>
           </div>
+          <div class="feature-item">
+            <h4>Token analyzer</h4>
+            <p>Per-task and per-agent token usage breakdowns. Tracks input, output, and cache-read tokens across providers. Surfaces waste patterns and suggests model downgrades.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Agent cache</h4>
+            <p>Caches agent outputs keyed by task hash. Identical re-runs skip spawning entirely. Cache entries are verified before reuse — stale or failed entries are evicted automatically.</p>
+          </div>
         </div>
       </div>
 
@@ -260,7 +276,7 @@
         <div class="feature-group-items">
           <div class="feature-item">
             <h4>Any CLI agent</h4>
-            <p>Claude Code, Codex, Gemini CLI, Kiro, OpenCode, Qwen - all supported via thin adapters. The orchestrator is model-agnostic. Mix models in the same run. No vendor lock-in.</p>
+            <p>18 CLI coding agents supported via thin adapters: Claude Code, Codex, Gemini CLI, Aider, Amp, Roo Code, Cursor, Kilo, Kiro, OpenCode, Qwen, Cody, Continue.dev, Goose, Ollama, Tabby, IaC (Terraform/Pulumi), and a Generic adapter for any CLI tool. Mix models in the same run. No vendor lock-in.</p>
           </div>
           <div class="feature-item">
             <h4>Agent catalogs</h4>
@@ -269,6 +285,10 @@
           <div class="feature-item">
             <h4>MCP tool access</h4>
             <p>Agents can use MCP servers (stdio/SSE) for external tools — GitHub, filesystem, web search. The orchestrator manages MCP server lifecycle automatically.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Plan templates</h4>
+            <p>Ship with built-in plan templates for common workflows: migration, refactor, greenfield feature, test backfill. Extend with your own YAML templates in <code>templates/plans/</code>.</p>
           </div>
         </div>
       </div>
@@ -305,6 +325,14 @@
           <div class="feature-item">
             <h4>Comparative benchmarks</h4>
             <p><code>bernstein benchmark compare</code> runs the same tasks single-agent vs orchestrated and produces a markdown report with wall time, cost, success rate, and token usage.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Run reports</h4>
+            <p>Every run produces a structured report: tasks completed, tokens spent, models used, wall time, and failure analysis. Export as Markdown, JSON, or HTML for post-mortems.</p>
+          </div>
+          <div class="feature-item">
+            <h4>Chaos testing</h4>
+            <p>Inject failures — kill agents mid-task, simulate API timeouts, corrupt worktrees. Validates that the orchestrator recovers gracefully and no work is silently lost.</p>
           </div>
         </div>
       </div>
@@ -348,7 +376,7 @@
             <td>&#8212;</td>
           </tr>
           <tr>
-            <td>File-based state (.sdd/)</td>
+            <td>File-based state (.sdd/, DONE&rarr;CLOSED verification)</td>
             <td class="col-bern"><span class="check">&#10003;</span></td>
             <td>&#8212;</td>
             <td>&#8212;</td>

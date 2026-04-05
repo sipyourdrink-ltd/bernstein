@@ -141,7 +141,47 @@
       </table>
     </section>
 
-    <p class="last-updated"><em>Last updated: 2026-03-30</em></p>
+    <!-- Troubleshooting: Top 5 Failure Modes -->
+    <section class="card" id="troubleshooting">
+      <h2>Troubleshooting: Top 5 Failure Modes</h2>
+
+      <h3>1. Rate Limits</h3>
+      <table class="props-table">
+        <tr><td><strong>Symptom</strong></td><td>Agents die with &ldquo;overloaded&rdquo; or 529 errors.</td></tr>
+        <tr><td><strong>Cause</strong></td><td>Too many agents hitting the same provider simultaneously.</td></tr>
+        <tr><td><strong>Fix</strong></td><td>Reduce <code>max_agents</code> in <code>bernstein.yaml</code>, or use <code>--cli auto</code> to spread load across providers. The cascade router (<code>src/bernstein/core/cascade_router.py</code>) handles automatic fallback.</td></tr>
+      </table>
+
+      <h3>2. Context Overflow</h3>
+      <table class="props-table">
+        <tr><td><strong>Symptom</strong></td><td>Agent produces garbage output or repeats itself.</td></tr>
+        <tr><td><strong>Cause</strong></td><td>Task description + codebase context exceeds the model&rsquo;s context window.</td></tr>
+        <tr><td><strong>Fix</strong></td><td>Break large tasks into smaller ones (<code>auto_decompose: true</code>), or use <code>scope: small</code> in plan steps. Context compression (<code>src/bernstein/core/context_compression.py</code>) helps but has limits.</td></tr>
+      </table>
+
+      <h3>3. Merge Conflicts</h3>
+      <table class="props-table">
+        <tr><td><strong>Symptom</strong></td><td>Agent work is lost, &ldquo;conflicting files&rdquo; in logs.</td></tr>
+        <tr><td><strong>Cause</strong></td><td>Two agents edited the same file.</td></tr>
+        <tr><td><strong>Fix</strong></td><td>Use <code>owned_files</code> in task definitions to prevent overlap. The file overlap checker (<code>src/bernstein/core/file_overlap.py</code>) blocks conflicting spawns automatically.</td></tr>
+      </table>
+
+      <h3>4. Idle Recycling Kills Working Agents</h3>
+      <table class="props-table">
+        <tr><td><strong>Symptom</strong></td><td>Agent killed while still working, &ldquo;idle&rdquo; in logs.</td></tr>
+        <tr><td><strong>Cause</strong></td><td>Heartbeat threshold too aggressive.</td></tr>
+        <tr><td><strong>Fix</strong></td><td>Increase <code>heartbeat_timeout_s</code> in config (default 300s). Agents must emit heartbeats via the signal file protocol. Check <code>.sdd/runtime/heartbeats/</code> for stale files.</td></tr>
+      </table>
+
+      <h3>5. Error Budget Exhaustion</h3>
+      <table class="props-table">
+        <tr><td><strong>Symptom</strong></td><td>Orchestrator stops spawning agents, &ldquo;SLO budget depleted&rdquo; in logs.</td></tr>
+        <tr><td><strong>Cause</strong></td><td>Too many task failures consumed the error budget.</td></tr>
+        <tr><td><strong>Fix</strong></td><td>Check the SLO dashboard (<code>bernstein status --slo</code>), reset with <code>POST /slo/reset</code>, or fix the failing tasks first. The adaptive parallelism system (<code>src/bernstein/core/adaptive_parallelism.py</code>) automatically throttles when error rate is high.</td></tr>
+      </table>
+    </section>
+
+    <p class="last-updated"><em>Last updated: 2026-04-05</em></p>
 
   </div>
 </main>

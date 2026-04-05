@@ -236,6 +236,81 @@ curl "http://127.0.0.1:8052/tasks?role=backend"</code></pre>
 
     <div class="endpoint">
       <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/tasks/{task_id}/close</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Mark a completed task as closed (DONE → CLOSED after verification).</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/tasks/abc123/close \
+  -H "Content-Type: application/json" \
+  -d '{"verified": true}'</code></pre>
+        </div>
+        <p>Returns <code>TaskResponse</code>. The task must be in <code>done</code> status; otherwise returns <code>409</code>.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/tasks/{task_id}/progress</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Append an intermediate progress update to a task.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/tasks/abc123/progress \
+  -H "Content-Type: application/json" \
+  -d '{"percent": 50, "message": "halfway"}'</code></pre>
+        </div>
+        <p>Returns <code>TaskResponse</code>. Progress snapshots are stored and retrievable via <code>/tasks/{task_id}/snapshots</code>.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/tasks/{task_id}/snapshots</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Return stored progress snapshots for a task (oldest-first, up to 10).</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/tasks/abc123/snapshots</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/tasks/{task_id}/prioritize</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Bump a task to priority 0 (highest).</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/tasks/abc123/prioritize</code></pre>
+        </div>
+        <p>Returns <code>TaskResponse</code> with updated priority.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/tasks/{task_id}/force-claim</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Force-claim a task regardless of its current state.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/tasks/abc123/force-claim \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "agent-42"}'</code></pre>
+        </div>
+        <p>Returns <code>TaskResponse</code>. Useful for reassigning stuck or orphaned tasks.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
         <span class="method method-get">GET</span>
         <span class="endpoint-path">/status</span>
       </div>
@@ -631,6 +706,45 @@ curl "http://127.0.0.1:8052/tasks?role=backend"</code></pre>
       </div>
       <div class="endpoint-body">
         <p>Semantic cache hit/miss statistics.</p>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/slo</span>
+      </div>
+      <div class="endpoint-body">
+        <p>SLO error budget status. Returns current SLO targets and violation counts.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/slo</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-get">GET</span>
+        <span class="endpoint-path">/slo/budget</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Current error budget percentage remaining.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl http://127.0.0.1:8052/slo/budget</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-header">
+        <span class="method method-post">POST</span>
+        <span class="endpoint-path">/slo/reset</span>
+      </div>
+      <div class="endpoint-body">
+        <p>Reset the error budget to 100%.</p>
+        <div class="code-block">
+          <pre><code class="language-bash">curl -X POST http://127.0.0.1:8052/slo/reset</code></pre>
+        </div>
       </div>
     </div>
 
