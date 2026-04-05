@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import pstats
 from pathlib import Path
+from typing import Any, cast
 
 import click
 
@@ -50,16 +51,20 @@ def _load_profile_result(prof_path: Path, top_n: int) -> ProfileResult:
     stats.sort_stats("cumulative")
 
     top_functions: list[tuple[str, float, int]] = []
-    for key in stats.fcn_list[:top_n]:  # type: ignore[attr-defined]
-        _file, _line, func_name = key
-        raw = stats.stats[key]
-        cumtime: float = raw[3]
-        calls: int = raw[1]
-        display_name = f"{_file}:{_line}({func_name})"
+    # pstats internal attributes — not in type stubs
+    raw_stats: Any = getattr(stats, "stats", {})
+    raw_fcn_list: Any = getattr(stats, "fcn_list", [])
+    for key in cast("list[tuple[str, int, str]]", raw_fcn_list[:top_n]):
+        file_name, line_no, func_name = key
+        raw: tuple[int, int, float, float, object] = raw_stats[key]
+        cumtime: float = float(raw[3])
+        calls: int = int(raw[1])
+        display_name = f"{file_name}:{line_no}({func_name})"
         top_functions.append((display_name, cumtime, calls))
 
+    total_tt: float = float(getattr(stats, "total_tt", 0.0))
     return ProfileResult(
-        total_time=stats.total_tt,
+        total_time=total_tt,
         top_functions=top_functions,
         output_path=prof_path,
     )

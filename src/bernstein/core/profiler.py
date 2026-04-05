@@ -39,7 +39,7 @@ import pstats
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -62,7 +62,7 @@ class ProfileResult:
     """
 
     total_time: float
-    top_functions: list[tuple[str, float, int]] = field(default_factory=list)
+    top_functions: list[tuple[str, float, int]] = field(default_factory=lambda: [])
     output_path: Path | None = None
 
 
@@ -265,16 +265,17 @@ def _extract_top_functions(
     stats.sort_stats("cumulative")
 
     result: list[tuple[str, float, int]] = []
-    # pstats.Stats.stats is dict[(file, line, func) -> (cc, nc, tt, ct, callers)]
-    # After sort_stats, fcn_list has keys in sorted order.
-    for key in stats.fcn_list[:top_n]:  # type: ignore[attr-defined]
-        _file, _line, func_name = key
-        raw = stats.stats[key]
-        # raw is (primitive_calls, total_calls, total_time, cumulative_time, callers)
-        cumtime: float = raw[3]
-        calls: int = raw[1]
-        # Build a readable name: "module.py:42(func)"
-        display_name = f"{_file}:{_line}({func_name})"
+    # pstats.Stats internal attributes — not in type stubs.
+    # stats.stats: dict[(file, line, func) -> (cc, nc, tt, ct, callers)]
+    # stats.fcn_list: sorted keys after sort_stats()
+    raw_stats: Any = getattr(stats, "stats", {})
+    raw_fcn_list: Any = getattr(stats, "fcn_list", [])
+    for key in cast("list[tuple[str, int, str]]", raw_fcn_list[:top_n]):
+        file_name, line_no, func_name = key
+        raw: tuple[int, int, float, float, object] = raw_stats[key]
+        cumtime: float = float(raw[3])
+        calls: int = int(raw[1])
+        display_name = f"{file_name}:{line_no}({func_name})"
         result.append((display_name, cumtime, calls))
 
     return result
