@@ -15,7 +15,6 @@ import concurrent.futures
 import contextlib
 import json
 import logging
-import os
 import re
 import time
 from datetime import UTC, datetime

@@ -98,18 +98,10 @@ def _acquire_pid_lock(workdir: Path) -> None:
             from bernstein.core.platform_compat import process_alive
 
             if process_alive(existing_pid):
-                # Process is alive ��� refuse to start
                 raise RuntimeError(
                     f"Another Bernstein instance is running (PID {existing_pid}). "
                     f"Stop it first with 'bernstein stop' or remove {pid_path}"
                 )
-            # Stale PID file — previous instance crashed
-            except PermissionError:
-                # Process exists but we lack permission to signal it
-                raise RuntimeError(
-                    f"Another Bernstein instance is running (PID {existing_pid}). "
-                    f"Stop it first with 'bernstein stop' or remove {pid_path}"
-                ) from None
 
     pid_path.write_text(str(os.getpid()))
 

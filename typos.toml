@@ -1,7 +1,7 @@
 [default]
 extend-ignore-re = [
-    # Test intentionally checks for substring "truncat"
-    '"truncat" in content',
+    # Test files intentionally use truncated strings to simulate partial writes
+    "Truncat",
 ]
 
 [default.extend-words]

@@ -22,3 +22,5 @@ _render_figlet_raw  # noqa
 _run_animated  # noqa
 _print_static  # noqa
 _agents_from_dicts  # noqa
+# Parameter kept for API consistency (callers may pass it in future)
+qualified_prefix  # noqa

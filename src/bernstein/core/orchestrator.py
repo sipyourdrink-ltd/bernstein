@@ -63,7 +63,6 @@ from bernstein.core.incident import IncidentManager
 from bernstein.core.manifest import build_manifest, save_manifest
 from bernstein.core.memory_guard import MemoryGuard
 from bernstein.core.merge_queue import MergeQueue
-from bernstein.core.platform_compat import kill_process_group
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
     AgentSession,
@@ -79,6 +78,7 @@ from bernstein.core.models import (
     TestAgentConfig,
 )
 from bernstein.core.notifications import NotificationManager, NotificationPayload, NotificationTarget
+from bernstein.core.platform_compat import kill_process_group
 from bernstein.core.quality_gate_coalescer import QualityGateCoalescer
 from bernstein.core.quarantine import QuarantineStore
 from bernstein.core.quota_poller import QuotaPoller

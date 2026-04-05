@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
-from bernstein.core.platform_compat import kill_process, kill_process_group, process_alive
+from bernstein.core.platform_compat import kill_process, kill_process_group
 from bernstein.core.process_utils import is_process_alive
 from bernstein.core.runtime_state import read_supervisor_state
 
