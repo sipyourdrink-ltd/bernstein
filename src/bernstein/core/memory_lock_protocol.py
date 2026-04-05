@@ -152,9 +152,9 @@ class MemoryFileGuard:
 def _is_process_alive(pid: int) -> bool:
     """Check whether a process with *pid* is still running.
 
-    Works on POSIX (Linux/macOS). On Windows, ``os.kill(pid, 0)`` may
-    succeed even when the process is gone due to PID recycling — callers
-    should treat the result as advisory only.
+    Delegates to :func:`platform_compat.process_alive` which works
+    correctly on both Unix (``os.kill(pid, 0)``) and Windows
+    (``kernel32.OpenProcess`` + ``GetExitCodeProcess``).
 
     Args:
         pid: OS process ID.
@@ -162,11 +162,9 @@ def _is_process_alive(pid: int) -> bool:
     Returns:
         True if the process appears to be alive.
     """
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
+    from bernstein.core.platform_compat import process_alive
+
+    return process_alive(pid)
 
 
 def _is_lock_stale(lock_path: Path, ttl_seconds: int) -> bool:

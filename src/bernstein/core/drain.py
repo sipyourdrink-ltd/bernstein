@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
+from bernstein.core.platform_compat import kill_process, kill_process_group, process_alive
 from bernstein.core.process_utils import is_process_alive
 from bernstein.core.runtime_state import read_supervisor_state
 
@@ -177,8 +178,7 @@ def _is_process_alive(pid: int) -> bool:
 
 def _send_signal(pid: int, sig: int) -> None:
     """Send *sig* to *pid*, ignoring errors if the process is already gone."""
-    with contextlib.suppress(OSError):
-        os.kill(pid, sig)
+    kill_process(pid, sig)
 
 
 # ---------------------------------------------------------------------------
@@ -797,15 +797,9 @@ class DrainCoordinator:
         if pid is None or not _is_process_alive(pid):
             return
 
-        try:
-            pgid = os.getpgid(pid)
-        except OSError:
-            pgid = None
-
-        if pgid is not None:
-            with contextlib.suppress(OSError):
-                os.killpg(pgid, signal.SIGTERM)
-        else:
+        # Try process-group kill first (covers child processes), fall
+        # back to single-process kill if the group call fails.
+        if not kill_process_group(pid, sig=signal.SIGTERM):
             _send_signal(pid, signal.SIGTERM)
 
         deadline = time.monotonic() + _SIGTERM_GRACE_S
@@ -815,11 +809,8 @@ class DrainCoordinator:
                 return
             await asyncio.sleep(0.05)
 
-        if pgid is not None:
-            with contextlib.suppress(OSError):
-                os.killpg(pgid, signal.SIGKILL)
-        else:
-            _send_signal(pid, signal.SIGKILL)
+        if not kill_process_group(pid, sig=9):
+            _send_signal(pid, 9)
 
         if _is_process_alive(pid):
             logger.warning("%s (pid %d) survived drain cleanup kill", label, pid)

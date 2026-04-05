@@ -25,6 +25,7 @@ import threading
 import time
 from pathlib import Path
 
+from bernstein.core.platform_compat import kill_process
 from bernstein.core.process_utils import is_process_alive
 from bernstein.core.runtime_state import SupervisorStateSnapshot, rotate_log_file, write_supervisor_state
 
@@ -279,12 +280,9 @@ def _health_check_loop(state: _SupervisorState) -> None:
                     failures * HEALTH_CHECK_INTERVAL_S,
                     pid,
                 )
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    time.sleep(3)
-                    if _is_alive(pid):
-                        os.kill(pid, signal.SIGKILL)
-                except OSError:
-                    pass
+                kill_process(pid, signal.SIGTERM)
+                time.sleep(3)
+                if _is_alive(pid):
+                    kill_process(pid, 9)
                 with state.lock:
                     state.consecutive_health_failures = 0

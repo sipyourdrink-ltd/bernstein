@@ -63,6 +63,7 @@ from bernstein.core.incident import IncidentManager
 from bernstein.core.manifest import build_manifest, save_manifest
 from bernstein.core.memory_guard import MemoryGuard
 from bernstein.core.merge_queue import MergeQueue
+from bernstein.core.platform_compat import kill_process_group
 from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
     AgentSession,
@@ -2505,7 +2506,7 @@ class Orchestrator:
         try:
             stdout, _ = proc.communicate(timeout=60)
         except subprocess.TimeoutExpired:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            kill_process_group(proc.pid, sig=9)
             proc.wait()
             return []
         return json.loads(stdout) if stdout.strip() else []
@@ -2599,9 +2600,7 @@ class Orchestrator:
         try:
             stdout, stderr = proc.communicate(timeout=120)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except OSError:
+            if not kill_process_group(proc.pid, sig=9):
                 proc.kill()
             proc.wait()
             info["summary"] = "pytest timed out after 120s"

@@ -238,11 +238,9 @@ def _is_pid_alive(pid: int | None) -> bool:
     """Return True when a process PID appears alive."""
     if pid is None or pid <= 0:
         return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    from bernstein.core.platform_compat import process_alive
+
+    return process_alive(pid)
 
 
 def _health_components(request: Request, store: TaskStore) -> dict[str, dict[str, Any]]:

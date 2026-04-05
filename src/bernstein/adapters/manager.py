@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import signal
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
@@ -14,6 +13,7 @@ if TYPE_CHECKING:
 
 from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult, build_worker_cmd
 from bernstein.adapters.env_isolation import build_filtered_env
+from bernstein.core.platform_compat import kill_process_group, process_alive
 
 
 class ManagerAdapter(CLIAdapter):
@@ -79,15 +79,10 @@ class ManagerAdapter(CLIAdapter):
         return result
 
     def is_alive(self, pid: int) -> bool:
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
+        return process_alive(pid)
 
     def kill(self, pid: int) -> None:
-        with contextlib.suppress(OSError):
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        kill_process_group(pid, sig=15)
 
     def name(self) -> str:
         return "Internal Manager"

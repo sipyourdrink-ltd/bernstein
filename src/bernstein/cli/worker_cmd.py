@@ -113,6 +113,8 @@ class WorkerLoop:
         Returns:
             ``True`` if at least one task was reaped (a slot became available).
         """
+        from bernstein.core.platform_compat import process_alive
+
         finished: list[str] = []
         for task_id, pid in self._active_tasks.items():
             try:
@@ -121,9 +123,7 @@ class WorkerLoop:
                 finished.append(task_id)
                 continue
             # Check if process is still alive
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
+            if not process_alive(pid):
                 finished.append(task_id)
         for task_id in finished:
             del self._active_tasks[task_id]

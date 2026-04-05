@@ -78,15 +78,14 @@ def agent_kill(agent_id: str | None) -> None:
 
     console.print(f"[bold red]CHAOS:[/bold red] Killing agent {target_name} (PID {target_pid})")
 
-    try:
-        import os
+    from bernstein.core.platform_compat import kill_process
 
-        os.kill(target_pid, _signal.SIGTERM)
+    if kill_process(target_pid, _signal.SIGTERM):
         _record_chaos_event("agent-kill", target_name, success=True)
         console.print(f"[green]Agent {target_name} killed. Crash recovery should handle it.[/green]")
-    except (OSError, ProcessLookupError) as exc:
-        _record_chaos_event("agent-kill", target_name, success=False, error=str(exc))
-        console.print(f"[red]Failed to kill agent: {exc}[/red]")
+    else:
+        _record_chaos_event("agent-kill", target_name, success=False, error="kill_process returned False")
+        console.print("[red]Failed to kill agent.[/red]")
 
 
 @chaos_group.command("rate-limit")

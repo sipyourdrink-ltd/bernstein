@@ -458,14 +458,15 @@ def _kill_agent(session_id: str) -> bool:  # type: ignore[reportUnusedFunction]
     if not agents_file.exists():
         return False
 
+    from bernstein.core.platform_compat import kill_process
+
     try:
         data = json.loads(agents_file.read_text())
         for agent in data:
             if agent.get("id") == session_id:
                 pid = agent.get("pid")
                 if pid:
-                    os.kill(pid, signal.SIGKILL)
-                    return True
+                    return kill_process(pid, sig=9)
     except Exception:
         pass
     return False
@@ -477,6 +478,8 @@ def _kill_all_agents() -> int:  # type: ignore[reportUnusedFunction]
     Returns:
         The number of agents successfully killed.
     """
+    from bernstein.core.platform_compat import kill_process
+
     agents_file = Path(".sdd/runtime/agents.json")
     if not agents_file.exists():
         return 0
@@ -486,12 +489,8 @@ def _kill_all_agents() -> int:  # type: ignore[reportUnusedFunction]
         data = json.loads(agents_file.read_text())
         for agent in data:
             pid = agent.get("pid")
-            if pid:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                    killed_count += 1
-                except OSError:
-                    continue
+            if pid and kill_process(pid, sig=9):
+                killed_count += 1
     except Exception:
         pass
     return killed_count
