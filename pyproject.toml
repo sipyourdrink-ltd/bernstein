@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bernstein"
-version = "1.4.15"
+version = "1.4.16"
 description = "Declarative agent orchestration for engineering teams"
 readme = "README.md"
 requires-python = ">=3.12"
