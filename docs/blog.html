@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blog — Bernstein</title>
+  <meta name="description" content="Engineering blog: multi-agent orchestration patterns, benchmarks, COBOL modernization, and lessons from running 12 AI agents in parallel." />
+  <link rel="stylesheet" href="style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="script.js"></script>
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/blog.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Blog — Bernstein" />
+  <meta property="og:description" content="Engineering blog: multi-agent orchestration patterns, benchmarks, and lessons from running AI agents in parallel." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/blog.html" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <style>
+    .blog-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-6); max-width: 720px; margin: 0 auto; }
+    .blog-card { background: var(--bg-card); border: 1px solid var(--bg-card-border); border-radius: var(--radius); padding: var(--space-8); transition: box-shadow var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
+    .blog-card:hover { box-shadow: var(--shadow-lg); border-color: var(--border-strong); }
+    .blog-card h3 { margin: 0 0 var(--space-2) 0; font-size: var(--text-xl); }
+    .blog-card h3 a { color: var(--text); text-decoration: none; }
+    .blog-card h3 a:hover { color: var(--accent); }
+    .blog-meta { font-size: var(--text-sm); color: var(--text-3); margin-bottom: var(--space-3); }
+    .blog-tag { display: inline-block; font-size: var(--text-xs); background: var(--accent-bg); color: var(--accent); padding: 2px 8px; border-radius: var(--radius-xs); margin-right: var(--space-1); }
+    .blog-excerpt { color: var(--text-2); font-size: var(--text-base); line-height: var(--leading); margin: 0; }
+  </style>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="blog.html" class="nav-link active" data-page="blog.html">Blog</a>
+      <a href="docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://alexchernysh.com/bernstein" class="btn-secondary" target="_blank" rel="noopener">
+        Homepage
+      </a>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Page hero ── -->
+<div class="page-hero">
+  <div class="container">
+    <h1>Blog</h1>
+    <p>Engineering write-ups on multi-agent orchestration, benchmarks, and lessons learned.</p>
+  </div>
+</div>
+
+<!-- ── Posts ── -->
+<section class="section">
+  <div class="container">
+    <div class="blog-grid">
+
+      <article class="blog-card">
+        <h3><a href="doc.html?path=blog/cobol-modernization.md">COBOL Modernization with Parallel Agents</a></h3>
+        <div class="blog-meta">April 2026 &middot; 5 min read</div>
+        <div><span class="blog-tag">cobol</span><span class="blog-tag">migration</span><span class="blog-tag">plan files</span></div>
+        <p class="blog-excerpt">800 billion lines of COBOL run the world's banks. Migrating them is a decade-long slog — unless you parallelize. A four-stage plan file, 8 agents, one YAML.</p>
+      </article>
+
+      <article class="blog-card">
+        <h3><a href="doc.html?path=blog/self-evolution-30-days.md">Self-Evolution: 30 Days of Running Bernstein on Itself</a></h3>
+        <div class="blog-meta">March 2026 &middot; 10 min read</div>
+        <div><span class="blog-tag">self-evolution</span><span class="blog-tag">metrics</span></div>
+        <p class="blog-excerpt">We ran Bernstein's self-evolution mode on its own codebase for 30 days. What improved, what broke, and what we learned about autonomous code improvement.</p>
+      </article>
+
+      <article class="blog-card">
+        <h3><a href="doc.html?path=blog/zero-llm-coordination.md">Zero LLM Tokens on Coordination</a></h3>
+        <div class="blog-meta">2026 &middot; 8 min read</div>
+        <div><span class="blog-tag">architecture</span><span class="blog-tag">determinism</span></div>
+        <p class="blog-excerpt">How Bernstein orchestrates multiple AI coding agents without spending a single LLM token on scheduling. Deterministic code beats LLM coordinators.</p>
+      </article>
+
+      <article class="blog-card">
+        <h3><a href="doc.html?path=blog/multi-agent-benchmark.md">Benchmarking Multi-Agent Orchestration Without Fake Confidence</a></h3>
+        <div class="blog-meta">2026 &middot; 7 min read</div>
+        <div><span class="blog-tag">benchmarks</span><span class="blog-tag">methodology</span></div>
+        <p class="blog-excerpt">Separating modeling harnesses from production benchmarks. How we measure 1.78x speedup without gaming the numbers.</p>
+      </article>
+
+      <article class="blog-card">
+        <h3><a href="doc.html?path=blog/swe-bench-orchestration-thesis.md">The SWE-Bench Orchestration Thesis</a></h3>
+        <div class="blog-meta">2026 &middot; 12 min read</div>
+        <div><span class="blog-tag">swe-bench</span><span class="blog-tag">research</span></div>
+        <p class="blog-excerpt">Applying multi-agent orchestration patterns to SWE-bench tasks. 12 agents, 47 hours, 737 tickets closed at 15.7/hour.</p>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; <a href="https://alexchernysh.com/bernstein" target="_blank" rel="noopener">Homepage</a> &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

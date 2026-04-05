@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bernstein.core.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
+from bernstein.core.platform_compat import process_alive
 
 if TYPE_CHECKING:
     import threading
@@ -397,11 +398,7 @@ class WorktreeManager:
             return False
         if worker_pid <= 0:
             return False
-        try:
-            os.kill(worker_pid, 0)
-            return True
-        except OSError:
-            return False
+        return process_alive(worker_pid)
 
     def list_active(self) -> list[str]:
         """Return session IDs that currently have active worktrees.
@@ -540,11 +537,7 @@ def is_worktree_lock_stale(repo_root: Path, session_id: str) -> bool:
         return True
     if pid <= 0:
         return True
-    try:
-        os.kill(pid, 0)
-        return False  # process is alive
-    except OSError:
-        return True  # process is dead
+    return not process_alive(pid)
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,6 @@ from bernstein.cli.helpers import console
 from bernstein.core.profiler import (
     OrchestratorProfiler,
     ProfileResult,
-    _extract_top_functions,
     resolve_profile_output_dir,
 )
 
@@ -106,10 +105,7 @@ def profile_cmd(top_n: int, markdown: bool, prof_file: str | None) -> None:
         path = _find_latest_prof(profiles_dir)
 
     if path is None:
-        console.print(
-            "[yellow]No profile data found.[/yellow]  "
-            "Run [bold]bernstein run --profile[/bold] first."
-        )
+        console.print("[yellow]No profile data found.[/yellow]  Run [bold]bernstein run --profile[/bold] first.")
         raise SystemExit(1)
 
     result = _load_profile_result(path, top_n)
@@ -135,6 +131,4 @@ def profile_cmd(top_n: int, markdown: bool, prof_file: str | None) -> None:
         table.add_row(str(i), name, f"{cumtime:.4f}", str(calls))
 
     console.print(table)
-    console.print(
-        f"\n[dim]Open with SnakeViz:[/dim]  snakeviz {path}"
-    )
+    console.print(f"\n[dim]Open with SnakeViz:[/dim]  snakeviz {path}")

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import os
 import signal
 import subprocess
 import sys
@@ -13,6 +11,8 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
+
+from bernstein.core.platform_compat import kill_process_group, process_alive
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -150,17 +150,13 @@ class CLIAdapter(ABC):
                 pid,
                 session_id,
             )
-            try:
-                os.killpg(os.getpgid(pid), signal.SIGTERM)
-            except OSError:
+            if not kill_process_group(pid, signal.SIGTERM):
                 return  # Already dead
 
             # Grace period for agent to commit partial work
             deadline = time.monotonic() + _SIGTERM_GRACE_SECONDS
             while time.monotonic() < deadline:
-                try:
-                    os.kill(pid, 0)
-                except OSError:
+                if not process_alive(pid):
                     return  # Exited cleanly after SIGTERM
                 time.sleep(1)
 
@@ -169,8 +165,7 @@ class CLIAdapter(ABC):
                 pid,
                 session_id,
             )
-            with contextlib.suppress(OSError):
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            kill_process_group(pid, signal.SIGKILL)
 
         timer = threading.Timer(timeout_seconds, _kill_on_timeout)
         timer.daemon = True
@@ -254,11 +249,7 @@ class CLIAdapter(ABC):
 
     def is_alive(self, pid: int) -> bool:
         """Check if the agent process is still running."""
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
+        return process_alive(pid)
 
     def kill(self, pid: int) -> None:
         """Terminate the agent process and its entire process group.
@@ -268,8 +259,7 @@ class CLIAdapter(ABC):
         failing when the wrapper process has already exited — this prevents
         orphan child processes from accumulating.
         """
-        with contextlib.suppress(OSError):
-            os.killpg(pid, signal.SIGTERM)
+        kill_process_group(pid, signal.SIGTERM)
 
     @abstractmethod
     def name(self) -> str:

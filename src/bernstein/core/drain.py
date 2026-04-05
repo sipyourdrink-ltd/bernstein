@@ -491,8 +491,7 @@ class DrainCoordinator:
             exited = [a for a in self._agents if a.status == "exited"]
             elapsed = self._config.wait_timeout_s - (deadline - time.monotonic())
             phase.detail = (
-                f"{len(exited)} exited, {len(remaining)} waiting"
-                f" ({int(elapsed)}s/{self._config.wait_timeout_s}s)"
+                f"{len(exited)} exited, {len(remaining)} waiting ({int(elapsed)}s/{self._config.wait_timeout_s}s)"
             )
             # Update UI each poll so the user sees live progress
             if self._callback is not None:

@@ -55,8 +55,6 @@ from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.compliance_cmd import compliance_group
 from bernstein.cli.cost import cost_cmd, estimate_cmd
-from bernstein.cli.man_page import man_pages_cmd
-from bernstein.cli.report_cmd import report_cmd
 from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.disaster_recovery_cmd import dr_group
 from bernstein.cli.eval_benchmark_cmd import (
@@ -68,6 +66,7 @@ from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.graph_cmd import graph_group
 from bernstein.cli.incident_cmd import incident_cmd
 from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
+from bernstein.cli.man_page import man_pages_cmd
 from bernstein.cli.manifest_cmd import manifest_group
 from bernstein.cli.memory_cmd import memory_group
 from bernstein.cli.merge_cmd import merge_cmd
@@ -75,6 +74,7 @@ from bernstein.cli.policy_cmd import policy_group
 from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
+from bernstein.cli.report_cmd import report_cmd
 from bernstein.cli.self_update_cmd import self_update_cmd
 from bernstein.cli.task_cmd import (
     add_task,

@@ -1,0 +1,240 @@
+# Bernstein Plan — COBOL Modernization
+#
+# A four-stage plan that migrates a COBOL application to Java:
+#   1. Discovery:    scan codebase, map dependencies, document business logic
+#   2. Spec:         generate formal specifications per module
+#   3. Translation:  parallel COBOL→Java conversion (one agent per module)
+#   4. Verification: equivalence testing, integration checks, compliance review
+#
+# Adapts to your codebase: set `source_dir` in constraints.
+# Each COBOL module is translated independently in its own worktree,
+# so agents never conflict.
+#
+# Run:
+#   bernstein run examples/plans/cobol-modernization.yaml
+#
+# Estimated cost: $30–80 depending on codebase size and model choice.
+# For large codebases (500+ programs), increase max_agents and budget.
+
+name: "COBOL to Java Modernization"
+description: >
+  Migrate a legacy COBOL application to Java. Automated discovery,
+  specification, parallel translation, and verification — each stage
+  builds on artifacts from the previous one.
+
+cli: auto
+budget: "$50"
+max_agents: 8
+constraints:
+  - "Source COBOL in cobol/"
+  - "Target Java 17+ with Spring Boot"
+  - "Preserve business logic exactly — no functional changes"
+  - "All generated code must pass compilation and unit tests"
+  - "Document every translation decision in MIGRATION.md"
+
+stages:
+  # ── Stage 1: Discovery ──
+  - name: "Discovery"
+    description: "Analyze COBOL codebase, map structure, document business rules"
+    steps:
+      - title: "Inventory COBOL programs and copybooks"
+        role: backend
+        scope: medium
+        complexity: low
+        description: >
+          Scan cobol/ directory. Produce inventory.json listing every program,
+          copybook, and JCL file with line counts, CALL graph, and COPY
+          dependencies. Identify dead code.
+        files:
+          - "migration/inventory.json"
+        completion_signals:
+          - type: path_exists
+            path: "migration/inventory.json"
+
+      - title: "Map data flow and external interfaces"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          For each program in inventory.json, identify: file I/O (VSAM, QSAM,
+          sequential), DB2/SQL calls, CICS transactions, MQ interactions,
+          and batch JCL dependencies. Output migration/interfaces.json.
+        files:
+          - "migration/interfaces.json"
+        completion_signals:
+          - type: path_exists
+            path: "migration/interfaces.json"
+
+      - title: "Extract business rules"
+        role: backend
+        scope: large
+        complexity: high
+        description: >
+          Read each COBOL program and extract business logic into plain-language
+          specifications. Document PERFORM paragraphs, EVALUATE/IF branches,
+          arithmetic rules, and validation checks. Output one markdown file
+          per program in migration/specs/.
+        files:
+          - "migration/specs/"
+        completion_signals:
+          - type: path_exists
+            path: "migration/specs"
+
+  # ── Stage 2: Specification ──
+  - name: "Specification"
+    depends_on: ["Discovery"]
+    description: "Produce formal module specs that guide translation"
+    steps:
+      - title: "Define Java module structure"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Based on inventory.json and interfaces.json, design the Java package
+          structure. Map COBOL programs to Java classes, copybooks to shared
+          DTOs, and CICS transactions to REST endpoints. Output
+          migration/module-map.yaml.
+        files:
+          - "migration/module-map.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "migration/module-map.yaml"
+
+      - title: "Generate test specifications"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          For each business rule in migration/specs/, write a test specification
+          with input/output pairs. These will be used to verify the Java
+          translation produces identical results. Output migration/test-specs/.
+        files:
+          - "migration/test-specs/"
+        completion_signals:
+          - type: path_exists
+            path: "migration/test-specs"
+
+      - title: "Create Spring Boot project skeleton"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Initialize a Spring Boot 3.x project with Java 17, Maven, and the
+          package structure from module-map.yaml. Include spring-boot-starter-web,
+          spring-boot-starter-data-jpa, and spring-boot-starter-test.
+          No business logic yet — just the skeleton.
+        files:
+          - "pom.xml"
+          - "src/main/java/"
+        completion_signals:
+          - type: path_exists
+            path: "pom.xml"
+          - type: file_contains
+            path: "pom.xml"
+            contains: "spring-boot-starter"
+
+  # ── Stage 3: Translation ──
+  - name: "Translation"
+    depends_on: ["Specification"]
+    description: "Parallel COBOL→Java translation, one agent per module group"
+    steps:
+      - title: "Translate core business modules"
+        role: backend
+        scope: large
+        complexity: high
+        priority: 1
+        description: >
+          Translate the core COBOL programs (identified as high-dependency in
+          inventory.json) to Java classes. Follow module-map.yaml for package
+          placement. Preserve COBOL arithmetic precision using BigDecimal.
+          Reference migration/specs/ for business rules.
+        completion_signals:
+          - type: command
+            run: "mvn compile -q"
+
+      - title: "Translate data access layer"
+        role: backend
+        scope: large
+        complexity: high
+        priority: 1
+        description: >
+          Convert VSAM/QSAM file operations and DB2 SQL to Spring Data JPA
+          repositories. Map COBOL record layouts (copybooks) to JPA entities.
+          Maintain field-level compatibility per interfaces.json.
+        completion_signals:
+          - type: command
+            run: "mvn compile -q"
+
+      - title: "Translate batch processing"
+        role: backend
+        scope: medium
+        complexity: high
+        priority: 2
+        description: >
+          Convert batch JCL jobs to Spring Batch jobs. Map COBOL SORT/MERGE
+          to Java equivalents. Preserve step-level restart capability.
+        completion_signals:
+          - type: command
+            run: "mvn compile -q"
+
+      - title: "Translate API/transaction layer"
+        role: backend
+        scope: medium
+        complexity: medium
+        priority: 2
+        description: >
+          Convert CICS transactions to REST controllers per module-map.yaml.
+          Map COMMAREA structures to request/response DTOs.
+        completion_signals:
+          - type: command
+            run: "mvn compile -q"
+
+  # ── Stage 4: Verification ──
+  - name: "Verification"
+    depends_on: ["Translation"]
+    description: "Verify functional equivalence and code quality"
+    steps:
+      - title: "Implement equivalence tests"
+        role: qa
+        scope: large
+        complexity: medium
+        priority: 1
+        description: >
+          Implement JUnit tests from migration/test-specs/. Each test feeds
+          the same inputs to both COBOL logic (documented) and Java code,
+          asserting identical outputs. Cover all business rules.
+        completion_signals:
+          - type: command
+            run: "mvn test -q"
+
+      - title: "Run static analysis and code review"
+        role: security
+        scope: medium
+        complexity: low
+        priority: 1
+        description: >
+          Run SpotBugs, PMD, and Checkstyle on the generated Java code.
+          Check for SQL injection in JPA queries, hardcoded credentials,
+          and unsafe BigDecimal operations (avoid floating-point).
+          Fix all critical findings.
+        completion_signals:
+          - type: command
+            run: "mvn verify -q"
+
+      - title: "Write migration report"
+        role: docs
+        scope: medium
+        complexity: low
+        priority: 2
+        description: >
+          Produce MIGRATION.md documenting: programs translated, test coverage,
+          known limitations, manual review items, and rollback instructions.
+          Include a table mapping every COBOL program to its Java equivalent.
+        files:
+          - "MIGRATION.md"
+        completion_signals:
+          - type: path_exists
+            path: "MIGRATION.md"
+          - type: file_contains
+            path: "MIGRATION.md"
+            contains: "## Programs Translated"

@@ -16,9 +16,12 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bernstein.core.rate_limit_tracker import RateLimitTracker
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +88,7 @@ def _truncate_large_code_blocks(text: str) -> tuple[str, bool]:
         if len(lines) > _CODE_BLOCK_MAX_LINES:
             changed = True
             kept = "\n".join(lines[:10])
-            return (
-                f"{opener}{kept}\n"
-                f"# ... ({len(lines) - 10} more lines truncated, "
-                f"{len(lines)} total)\n{closer}"
-            )
+            return f"{opener}{kept}\n# ... ({len(lines) - 10} more lines truncated, {len(lines)} total)\n{closer}"
         return match.group(0)
 
     result = _FENCED_CODE_RE.sub(_replacer, text)

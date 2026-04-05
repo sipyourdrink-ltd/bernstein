@@ -26,6 +26,7 @@ from bernstein.cli.ui import (
     format_duration,
     make_console,
 )
+from bernstein.core.view_mode import ViewConfig, ViewMode, get_view_config
 
 # ---------------------------------------------------------------------------
 # Task table
@@ -171,16 +172,21 @@ def render_status(
     data: dict[str, Any],
     *,
     console: Console | None = None,
+    view_config: ViewConfig | None = None,
 ) -> None:
     """Render a full status display from task-server response data.
 
     Shows: task table, agent table, summary stats, cost info.
     Falls back to plain text when stdout is not a TTY.
+    Sections are conditionally displayed based on *view_config*.
 
     Args:
         data: Dict returned by the ``/status`` endpoint.
         console: Optional Rich Console to use.
+        view_config: Controls which sections to display.  Defaults to
+            :attr:`ViewMode.STANDARD` when ``None``.
     """
+    vc = view_config or get_view_config(ViewMode.STANDARD)
     con = console or make_console()
 
     tasks: list[dict[str, Any]] = data.get("tasks", [])
@@ -244,7 +250,7 @@ def render_status(
     if elapsed > 0:
         con.print(Text.assemble(("Elapsed: ", "bold"), (format_duration(elapsed), "dim")))
 
-    # Cost
+    # Cost — total spend always shown; per-role breakdown gated on view config
     if total_cost > 0 or per_role:
         con.print(
             Text.assemble(
@@ -252,40 +258,44 @@ def render_status(
                 (f"${total_cost:.4f}", "bold green"),
             )
         )
-        cost_table = _build_cost_table(per_role)
-        if cost_table is not None:
-            con.print(cost_table)
+        if vc.show_cost_per_task:
+            cost_table = _build_cost_table(per_role)
+            if cost_table is not None:
+                con.print(cost_table)
 
-    provider_table = _build_provider_table(provider_status)
-    if provider_table is not None:
-        con.print()
-        con.print(provider_table)
+    # Provider / model details — expert only
+    if vc.show_model_details:
+        provider_table = _build_provider_table(provider_status)
+        if provider_table is not None:
+            con.print()
+            con.print(provider_table)
 
     dependency_scan_line = _format_dependency_scan_line(dependency_scan)
     if dependency_scan_line is not None:
         con.print()
         con.print(Text.assemble(("Security: ", "bold"), (dependency_scan_line, "dim")))
 
-    # Verification nudge alert
-    raw_nudge = data.get("verification_nudge")
-    nudge_data: dict[str, Any] = cast("dict[str, Any]", raw_nudge) if isinstance(raw_nudge, dict) else {}
-    if nudge_data.get("unverified_count", 0) > 0:
-        con.print()
-        unverified = int(nudge_data.get("unverified_count", 0))
-        total_comp = int(nudge_data.get("total_completions", 0))
-        ratio_pct = int(float(nudge_data.get("unverified_ratio", 0.0)) * 100)
-        exceeded = bool(nudge_data.get("threshold_exceeded", False))
-        nudge_style = "bold red" if exceeded else "bold yellow"
-        nudge_prefix = "ALERT" if exceeded else "Notice"
-        con.print(
-            Text.assemble(
-                (f"Verification {nudge_prefix}: ", nudge_style),
-                (
-                    f"{unverified}/{total_comp} tasks completed without verification ({ratio_pct}%)",
-                    "yellow" if not exceeded else "red",
-                ),
+    # Verification nudge alert — quality gate detail, standard+
+    if vc.show_quality_gates:
+        raw_nudge = data.get("verification_nudge")
+        nudge_data: dict[str, Any] = cast("dict[str, Any]", raw_nudge) if isinstance(raw_nudge, dict) else {}
+        if nudge_data.get("unverified_count", 0) > 0:
+            con.print()
+            unverified = int(nudge_data.get("unverified_count", 0))
+            total_comp = int(nudge_data.get("total_completions", 0))
+            ratio_pct = int(float(nudge_data.get("unverified_ratio", 0.0)) * 100)
+            exceeded = bool(nudge_data.get("threshold_exceeded", False))
+            nudge_style = "bold red" if exceeded else "bold yellow"
+            nudge_prefix = "ALERT" if exceeded else "Notice"
+            con.print(
+                Text.assemble(
+                    (f"Verification {nudge_prefix}: ", nudge_style),
+                    (
+                        f"{unverified}/{total_comp} tasks completed without verification ({ratio_pct}%)",
+                        "yellow" if not exceeded else "red",
+                    ),
+                )
             )
-        )
 
     # Clean summary table
     con.print()

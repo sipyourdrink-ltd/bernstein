@@ -76,13 +76,24 @@ def _load_remote_agents_from_snapshot(runtime_dir: Path) -> list[dict[str, Any]]
 @click.command("score", hidden=True)
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output raw JSON.")
 @click.option("--no-color", "no_color", is_flag=True, default=False, help="Disable colour output.")
-def status(as_json: bool, no_color: bool) -> None:
+@click.option(
+    "--mode",
+    "view_mode",
+    type=click.Choice(["novice", "standard", "expert"], case_sensitive=False),
+    default=None,
+    help="Dashboard detail level (novice, standard, expert). Default: persisted or standard.",
+)
+def status(as_json: bool, no_color: bool, view_mode: str | None) -> None:
     """Task summary, active agents, cost estimate.
 
     \b
-      bernstein status          # Rich table output
-      bernstein status --json   # machine-readable JSON
+      bernstein status                  # Rich table output
+      bernstein status --json           # machine-readable JSON
+      bernstein status --mode expert    # show all details
+      bernstein status --mode novice    # minimal output
     """
+    from bernstein.core.view_mode import ViewMode, get_view_config, load_view_mode
+
     data = server_get("/status")
     if data is None:
         if as_json or is_json():
@@ -99,11 +110,15 @@ def status(as_json: bool, no_color: bool) -> None:
 
     print_banner()
 
+    # Resolve view mode: CLI flag > persisted > standard
+    mode = ViewMode(view_mode.lower()) if view_mode is not None else load_view_mode(Path.cwd())
+    vc = get_view_config(mode)
+
     # Detect non-TTY (piped output) or explicit --no-color
     force_no_color = no_color or not sys.stdout.isatty()
     con = make_console(no_color=force_no_color)
 
-    render_status(data, console=con)
+    render_status(data, console=con, view_config=vc)
 
 
 # ---------------------------------------------------------------------------

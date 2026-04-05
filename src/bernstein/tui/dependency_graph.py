@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Any
 
-
 # Status tag labels
 _STATUS_LABEL: dict[str, str] = {
     "done": "DONE",

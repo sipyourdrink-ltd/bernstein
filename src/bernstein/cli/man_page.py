@@ -106,7 +106,7 @@ def generate_man_page(
 
     # SEE ALSO section
     lines.append(".SH SEE ALSO")
-    lines.append(f"\\fBbernstein\\fR(1)")
+    lines.append("\\fBbernstein\\fR(1)")
 
     return "\n".join(lines) + "\n"
 
@@ -152,8 +152,7 @@ def generate_all_man_pages(cli_group: click.Group) -> dict[str, str]:
     # Top-level page for the group itself
     top_options = _collect_options(cli_group)
     top_subcommands: list[tuple[str, str]] = [
-        (name, (cmd.help or cmd.short_help or "").split("\n")[0])
-        for name, cmd in sorted(cli_group.commands.items())
+        (name, (cmd.help or cmd.short_help or "").split("\n")[0]) for name, cmd in sorted(cli_group.commands.items())
     ]
     pages["bernstein"] = generate_man_page(
         cmd_name="bernstein",

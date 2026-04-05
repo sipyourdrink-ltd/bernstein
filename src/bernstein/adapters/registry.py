@@ -17,6 +17,7 @@ from bernstein.adapters.cursor import CursorAdapter
 from bernstein.adapters.gemini import GeminiAdapter
 from bernstein.adapters.generic import GenericAdapter
 from bernstein.adapters.goose import GooseAdapter
+from bernstein.adapters.iac import IaCAdapter
 from bernstein.adapters.kilo import KiloAdapter
 from bernstein.adapters.kiro import KiroAdapter
 from bernstein.adapters.mock import MockAgentAdapter
@@ -38,6 +39,7 @@ _ADAPTERS: dict[str, type[CLIAdapter] | CLIAdapter] = {
     "cursor": CursorAdapter,
     "gemini": GeminiAdapter,
     "goose": GooseAdapter,
+    "iac": IaCAdapter,
     "kilo": KiloAdapter,
     "kiro": KiroAdapter,
     "mock": MockAgentAdapter,

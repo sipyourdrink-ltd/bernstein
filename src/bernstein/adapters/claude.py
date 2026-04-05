@@ -17,6 +17,7 @@ from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnRe
 from bernstein.adapters.claude_agents import build_agents_json
 from bernstein.adapters.env_isolation import build_filtered_env
 from bernstein.core.models import ApiTier, ApiTierInfo, ModelConfig, ProviderType, RateLimit
+from bernstein.core.platform_compat import kill_process_group, process_alive
 
 # Map short model names to Claude Code CLI model IDs
 _MODEL_MAP: dict[str, str] = {
@@ -578,16 +579,12 @@ class ClaudeCodeAdapter(CLIAdapter):
         return result
 
     def is_alive(self, pid: int) -> bool:
-        # Use poll() to detect zombies — os.kill(pid, 0) can't
+        # Use poll() to detect zombies — process_alive can't
         proc = self._procs.get(pid)
         if proc is not None:
             return proc.poll() is None
         # Fallback for processes we didn't spawn
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
+        return process_alive(pid)
 
     def kill(self, pid: int) -> None:
         # The claude process is spawned with start_new_session=True, so
@@ -595,13 +592,11 @@ class ClaudeCodeAdapter(CLIAdapter):
         # of os.getpgid() which fails when the process is already dead —
         # this ensures we kill the entire session group including any
         # child processes (the actual claude CLI) that outlive the wrapper.
-        with contextlib.suppress(OSError):
-            os.killpg(pid, signal.SIGTERM)
+        kill_process_group(pid, signal.SIGTERM)
         # Also kill the wrapper process
         wrapper_pid = self._wrapper_pids.pop(pid, None)
         if wrapper_pid:
-            with contextlib.suppress(OSError):
-                os.killpg(wrapper_pid, signal.SIGTERM)
+            kill_process_group(wrapper_pid, signal.SIGTERM)
         self._procs.pop(pid, None)
 
     def name(self) -> str:

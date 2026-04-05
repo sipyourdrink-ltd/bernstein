@@ -167,12 +167,12 @@ class OrchestratorProfiler:
             A Markdown string with a table of top functions.
         """
         lines: list[str] = [
-            f"## Orchestrator Profile",
-            f"",
+            "## Orchestrator Profile",
+            "",
             f"**Total time:** {result.total_time:.2f}s",
-            f"",
-            f"| # | Function | Cumulative (s) | Calls |",
-            f"|---|----------|---------------:|------:|",
+            "",
+            "| # | Function | Cumulative (s) | Calls |",
+            "|---|----------|---------------:|------:|",
         ]
         for i, (name, cumtime, calls) in enumerate(result.top_functions, 1):
             lines.append(f"| {i} | `{name}` | {cumtime:.4f} | {calls} |")

@@ -363,6 +363,22 @@ def config_conflicts(project_dir: str) -> None:
             console.print(f"  [red]•[/red] {v['message']}")
 
 
+@config_group.command("view-mode")
+@click.argument("mode", type=click.Choice(["novice", "standard", "expert"], case_sensitive=False))
+def config_view_mode(mode: str) -> None:
+    """Set the dashboard detail level (novice, standard, expert).
+
+    \b
+      bernstein config view-mode novice   # minimal output
+      bernstein config view-mode expert   # full details
+    """
+    from bernstein.core.view_mode import ViewMode, save_view_mode
+
+    vm = ViewMode(mode.lower())
+    save_view_mode(Path.cwd(), vm)
+    console.print(f"[green]\u2713[/green] View mode set to [bold]{vm.value}[/bold]  [dim](.sdd/config.yaml)[/dim]")
+
+
 @click.command("plan")
 @click.option(
     "--export",

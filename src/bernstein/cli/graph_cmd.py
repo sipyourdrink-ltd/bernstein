@@ -47,18 +47,18 @@ def graph_tasks() -> None:
     except httpx.ConnectError:
         console.print("[red]Cannot connect to task server.[/red]")
         console.print(f"[dim]Is it running at {SERVER_URL}?[/dim]")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
     except httpx.HTTPStatusError as exc:
         console.print(f"[red]Server error:[/red] {exc.response.status_code}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     data: object = resp.json()
     # The server may return {"tasks": [...]} or just [...]
     raw_tasks: list[dict[str, Any]]
     if isinstance(data, list):
-        raw_tasks = cast(list[dict[str, Any]], data)
+        raw_tasks = cast("list[dict[str, Any]]", data)
     elif isinstance(data, dict) and "tasks" in data:
-        raw_tasks = cast(list[dict[str, Any]], data["tasks"])
+        raw_tasks = cast("list[dict[str, Any]]", data["tasks"])
     else:
         console.print("[red]Unexpected response format from server.[/red]")
         raise SystemExit(1)

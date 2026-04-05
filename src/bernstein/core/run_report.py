@@ -293,10 +293,7 @@ class RunReportGenerator:
             lines.append("| Model | Cost | Invocations | Tokens |")
             lines.append("|-------|------|-------------|--------|")
             for mc in report.model_costs:
-                lines.append(
-                    f"| {mc.model} | ${mc.total_cost_usd:.4f} "
-                    f"| {mc.invocation_count} | {mc.total_tokens:,} |"
-                )
+                lines.append(f"| {mc.model} | ${mc.total_cost_usd:.4f} | {mc.invocation_count} | {mc.total_tokens:,} |")
             lines.append("")
             # Most expensive task
             if report.task_rows:
