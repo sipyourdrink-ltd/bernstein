@@ -147,6 +147,18 @@ Only capabilities that ship with v1.4.11. Full matrix at [FEATURE_MATRIX.md](doc
 - **Cluster mode** — central server + remote worker nodes for distributed execution.
 - **MCP server mode** — run Bernstein as an MCP tool server for other agents.
 - **18 agent adapters** — Claude Code, Codex, Cursor, Gemini, Aider, Amp, Ollama, Cody, Continue.dev, Tabby, Roo Code, Kiro, Kilo, OpenCode, Qwen, Goose, IaC (Terraform/Pulumi), plus a generic catch-all.
+- **Contextual bandit router** — learns optimal (model, effort) pairs over time. Starts with heuristics, converges to data.
+- **Knowledge graph** — builds codebase dependency graph for impact analysis and context-aware task routing.
+- **Semantic caching** — LLM responses cached by similarity, not exact match. Saves tokens on repeated patterns.
+- **Cost anomaly detection** — Z-score flagging of unusual spend. Spend forecasting based on current trajectory.
+- **Policy limits** — fail-open policy enforcement with ETag caching. Multi-tenant isolation and per-tenant quotas.
+- **PII protection** — output gate blocks sensitive data. EU AI Act risk tagging on every task.
+- **OAuth 2.0 PKCE** — authorization flow for dashboard and GitHub App integrations.
+- **Prometheus / OTel / Datadog / Grafana** — built-in `/metrics` endpoint, OTel exporter presets, Grafana dashboards.
+- **WAL crash recovery** — on startup, replays uncommitted write-ahead log entries. No silent data loss.
+- **Chaos testing** — inject agent kills, API timeouts, disk failures. Validates orchestrator resilience.
+- **Release train orchestration** — coordinate multi-stage releases with stage gates and rollback plans.
+- **Dry-run mode** — `bernstein run --dry-run` previews tasks, dependencies, and estimated cost without spawning agents.
 
 ## Install
 
