@@ -760,7 +760,7 @@ class QualityPanel(Static):
 
         if not q:
             t.append(" QUALITY", style="bold dim")
-            t.append("\n [dim]waiting...[/dim]", style="")
+            t.append("\n waiting...", style="dim")
             return t
 
         overall: dict[str, Any] = q.get("overall", {})
@@ -863,7 +863,7 @@ class DelegationTreePanel(Static):
 
         alive = [a for a in agents if a.get("status") != "dead"]
         if not alive:
-            t.append(" [dim]no agents[/dim]", style="")
+            t.append(" no agents", style="dim")
             return t
 
         # Build tree from parent_id relationships.
@@ -968,7 +968,7 @@ class ExpertCostPanel(Static):
         t.append("\n")
         c = self.costs
         if not c:
-            t.append(" [dim]no cost data[/dim]", style="")
+            t.append(" no cost data", style="dim")
             return t
 
         spent = float(c.get("spent_usd", 0.0))
@@ -1009,8 +1009,8 @@ class ExpertBanditPanel(Static):
         t.append("\n")
         b = self.bandit
         if not b or b.get("active") is False:
-            t.append(" [dim]not active[/dim]", style="")
-            t.append("\n [dim]--routing bandit to enable[/dim]", style="")
+            t.append(" not active", style="dim")
+            t.append("\n \u2014routing bandit to enable", style="dim")
             return t
 
         arms: dict[str, Any] = b.get("arms", {})
@@ -1052,7 +1052,7 @@ class ExpertDepsPanel(Static):
         blocked = [tk for tk in all_tasks if tk.get("status") == "blocked"]
 
         if not tasks_with_deps and not blocked:
-            t.append(" [dim]no task dependencies[/dim]", style="")
+            t.append(" no task dependencies", style="dim")
             return t
 
         t.append(f" {len(tasks_with_deps)} with deps", style="bold")
