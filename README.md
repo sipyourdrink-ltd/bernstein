@@ -8,8 +8,8 @@
 
 <br>
 
-### Declarative agent orchestration for engineering teams.
-### One YAML. Multiple coding agents. Ship while you sleep.
+### Agent-independent orchestration for engineering teams.
+### Any agent. Any model. One YAML. Ship while you sleep.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tui.svg">
@@ -42,7 +42,7 @@
 
 If you're running one agent at a time, you're leaving performance on the table. Bernstein takes a goal, breaks it into tasks, assigns them to AI coding agents running in parallel, verifies the output, and commits the results. You come back to working code, passing tests, and a clean git history.
 
-No framework to learn. No vendor lock-in. Works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Cursor](https://www.cursor.com), [Aider](https://aider.chat), [Amp](https://ampcode.com), [Roo Code](https://github.com/RooVetGit/Roo-Code), [Goose](https://block.github.io/goose/), [Qwen](https://github.com/QwenLM/Qwen-Agent), and any CLI tool that accepts a prompt flag.
+No framework to learn. No vendor lock-in. Bernstein treats agents as interchangeable workers — swap any agent, any model, any provider. Ships with adapters for 18+ CLI tools including Claude Code, Codex, Gemini CLI, Cursor, Aider, Ollama, and more. Bring your own via the generic adapter.
 
 > **Think of it as what Kubernetes did for containers, but for AI coding agents.** You declare a goal. The control plane decomposes it into tasks. Short-lived agents execute them in isolated git worktrees -- like pods. A janitor verifies the output before anything lands.
 
@@ -73,7 +73,7 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 
 ## What it is
 
-Bernstein is a deterministic orchestrator for CLI coding agents. It schedules tasks in parallel across any installed agent — Claude Code, Codex, Cursor, Gemini, Aider, and more — with git worktree isolation, janitor-verified output, and file-based state you can inspect, back up, and recover from. No vendor lock-in. No framework to learn. Your agents, your models, your backlog.
+Bernstein is a deterministic, agent-independent orchestrator. It doesn't care which coding agent you use — Claude Code, Codex, Gemini, Cursor, Ollama, or anything with a CLI. Agents are interchangeable workers: the orchestrator decomposes goals, assigns tasks, verifies output, and merges results. Git worktree isolation, janitor-verified output, file-based state you can inspect and recover from. No vendor lock-in. Your agents, your models, your backlog.
 
 ## 5-minute setup
 
@@ -96,24 +96,30 @@ That's it. Your agents spawn, work in parallel, verify their output, and exit. W
 
 ## Supported agents
 
-Bernstein ships with adapters for 12 CLI agents. If you have any of these installed, Bernstein uses them — no API key plumbing required:
+Bernstein is agent-independent — install any of these and it picks them up automatically:
 
 | Agent | Models | Install |
 |-------|--------|---------|
-| [Aider](https://aider.chat) | Any OpenAI/Anthropic-compatible model | `pip install aider-chat` |
+| [Aider](https://aider.chat) | Any OpenAI/Anthropic-compatible | `pip install aider-chat` |
 | [Amp](https://ampcode.com) | opus 4.6, gpt-5.4 | `brew install amp` |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | opus 4.6, sonnet 4.6, haiku 4.5 | `npm install -g @anthropic-ai/claude-code` |
 | [Codex CLI](https://github.com/openai/codex) | gpt-5.4, o3, o4-mini | `npm install -g @openai/codex` |
-| [Cursor](https://www.cursor.com) | sonnet 4.6, opus 4.6, gpt-5.4 | [Cursor app](https://www.cursor.com) (sign in via app) |
+| [Cody](https://sourcegraph.com/cody) | Multi-provider | Install Cody CLI |
+| [Continue.dev](https://continue.dev) | Multi-provider | Install Continue CLI |
+| [Cursor](https://www.cursor.com) | sonnet 4.6, opus 4.6, gpt-5.4 | [Cursor app](https://www.cursor.com) |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | gemini-3-pro, 3-flash | `npm install -g @google/gemini-cli` |
 | [Goose](https://block.github.io/goose/) | Any provider | Install Goose CLI |
 | [Kilo](https://kilo.dev) | Configurable | `npm install -g kilo` |
 | [Kiro](https://kiro.dev) | Multi-provider | Install Kiro CLI |
+| [Ollama](https://ollama.ai) + Aider | Local models (offline) | `brew install ollama` |
 | [OpenCode](https://opencode.ai) | Multi-provider | Install OpenCode CLI |
 | [Qwen](https://github.com/QwenLM/Qwen-Agent) | qwen3-coder, qwen-max | `npm install -g qwen-code` |
 | [Roo Code](https://github.com/RooVetGit/Roo-Code) | opus 4.6, sonnet 4.6, gpt-4o | VS Code extension (headless CLI) |
+| [Tabby](https://tabby.tabbyml.com) | Self-hosted models | Install Tabby CLI |
+| IaC (Terraform/Pulumi) | Infrastructure-as-code | `brew install terraform` |
+| **Generic** | Any CLI with `--prompt` | Built-in, no install |
 
-Prefer a different agent? Bring your own -- the `generic` adapter accepts any CLI tool with a `--prompt-flag` interface. Mix models in the same run: cheap free-tier agents for boilerplate, heavy models for architecture.
+Mix agents in the same run: cheap local models for boilerplate, heavy cloud models for architecture. The orchestrator routes tasks based on complexity, not on which agent you installed.
 
 > [!TIP]
 > Run `bernstein --headless` for CI pipelines -- no TUI, structured JSON output, non-zero exit on failure.
@@ -140,7 +146,7 @@ Only capabilities that ship with v1.4.11. Full matrix at [FEATURE_MATRIX.md](doc
 - **Multi-repo workspaces** — orchestrate across multiple git repositories as one workspace.
 - **Cluster mode** — central server + remote worker nodes for distributed execution.
 - **MCP server mode** — run Bernstein as an MCP tool server for other agents.
-- **12 agent adapters** — Claude, Codex, Cursor, Gemini, Aider, Amp, Roo Code, Kiro, Kilo, OpenCode, Qwen, Goose, plus a generic catch-all.
+- **18 agent adapters** — Claude Code, Codex, Cursor, Gemini, Aider, Amp, Ollama, Cody, Continue.dev, Tabby, Roo Code, Kiro, Kilo, OpenCode, Qwen, Goose, IaC (Terraform/Pulumi), plus a generic catch-all.
 
 ## Install
 

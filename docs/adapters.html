@@ -74,6 +74,12 @@
       <li><a href="#opencode">OpenCode</a></li>
       <li><a href="#qwen">Qwen</a></li>
       <li><a href="#roo-code">Roo Code</a></li>
+      <li><a href="#cody">Cody</a></li>
+      <li><a href="#continue">Continue.dev</a></li>
+      <li><a href="#goose">Goose</a></li>
+      <li><a href="#ollama">Ollama (offline)</a></li>
+      <li><a href="#tabby">Tabby</a></li>
+      <li><a href="#iac">IaC (Terraform/Pulumi)</a></li>
       <li><a href="#generic">Generic adapter</a></li>
       <li><a href="#smoke-tests">Adapter smoke tests</a></li>
       <li><a href="#custom">Add a custom adapter</a></li>
@@ -410,6 +416,40 @@ opencode --version</code></pre>
     </div>
 
     <p>Roo Code is a VS Code extension with a headless CLI mode. It supports multiple providers (Anthropic, OpenAI, and OpenAI-compatible backends) and can use local models. Bernstein spawns it in headless mode for autonomous task execution.</p>
+
+    <h2 id="cody">Cody</h2>
+    <p><strong>Provider:</strong> Sourcegraph &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli cody</code></p>
+    <div class="code-block"><pre><code class="language-bash"># Install Cody CLI from https://sourcegraph.com/cody</code></pre></div>
+    <p>Sourcegraph Cody with multi-provider support. Bernstein runs it in headless mode with <code>--message</code> for autonomous task execution. Cody's code graph context is preserved within the agent session.</p>
+
+    <h2 id="continue">Continue.dev</h2>
+    <p><strong>Provider:</strong> Multi-provider &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli continue-dev</code></p>
+    <div class="code-block"><pre><code class="language-bash"># Install Continue CLI from https://continue.dev</code></pre></div>
+    <p>Continue.dev is an open-source AI code assistant. Bernstein uses its CLI mode for autonomous, non-interactive task execution with any configured model provider.</p>
+
+    <h2 id="goose">Goose</h2>
+    <p><strong>Provider:</strong> Any &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli goose</code></p>
+    <div class="code-block"><pre><code class="language-bash"># Install Goose from https://block.github.io/goose/</code></pre></div>
+    <p>Goose by Block supports any model provider. Bernstein runs it in non-interactive mode for autonomous coding tasks.</p>
+
+    <h2 id="ollama">Ollama (offline)</h2>
+    <p><strong>Provider:</strong> Local models &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli ollama</code></p>
+    <div class="code-block"><pre><code class="language-bash">brew install ollama
+pip install aider-chat
+ollama pull qwen2.5-coder:7b</code></pre></div>
+    <p>Run coding agents completely offline with no cloud API keys. Uses Ollama as the local LLM backend and Aider as the coding frontend. Supports any model you can pull: <code>qwen2.5-coder</code>, <code>codellama</code>, <code>deepseek-coder</code>, etc.</p>
+
+    <h2 id="tabby">Tabby</h2>
+    <p><strong>Provider:</strong> Self-hosted &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli tabby</code></p>
+    <div class="code-block"><pre><code class="language-bash"># Install Tabby from https://tabby.tabbyml.com</code></pre></div>
+    <p>Tabby is a self-hosted AI coding assistant. Bernstein supports it via its CLI interface for organizations that need fully self-hosted agent infrastructure.</p>
+
+    <h2 id="iac">IaC (Terraform/Pulumi)</h2>
+    <p><strong>Provider:</strong> Infrastructure &nbsp;|&nbsp; <strong>CLI flag:</strong> <code>--cli iac</code></p>
+    <div class="code-block"><pre><code class="language-bash">brew install terraform
+# or
+brew install pulumi</code></pre></div>
+    <p>Orchestrate infrastructure-as-code tasks. The IaC adapter auto-detects Terraform or Pulumi, runs plan/preview before apply, and enforces a safety gate: changes are only applied if the dry-run succeeds.</p>
 
     <h2 id="generic">Generic adapter</h2>
 
