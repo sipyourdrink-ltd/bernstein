@@ -129,6 +129,7 @@ def triggers_fire(name: str) -> None:
     """
     from rich.console import Console
 
+    from bernstein.cli.helpers import server_post
     from bernstein.core.models import TriggerEvent
     from bernstein.core.trigger_manager import TriggerManager
 
@@ -185,24 +186,21 @@ def triggers_fire(name: str) -> None:
         console.print("[dim]Cancelled.[/dim]")
         return
 
-    # Create tasks via HTTP
-    import httpx
-
+    # Create tasks via HTTP using proper server helper
     for payload in task_payloads:
-        try:
-            resp = httpx.post("http://127.0.0.1:8052/tasks", json=payload, timeout=5)
-            if resp.status_code in (200, 201):
-                task_id = resp.json().get("id", "unknown")
-                console.print(f"[green]Created task {task_id}[/green]")
-                mgr.record_fire(
-                    trigger_name=name,
-                    source=target.source,
-                    task_id=task_id,
-                    dedup_key="manual",
-                    summary="Manual fire from CLI",
-                )
-            else:
-                console.print(f"[red]Failed to create task: {resp.status_code} {resp.text}[/red]")
-        except httpx.ConnectError:
-            console.print("[red]Cannot connect to task server at http://127.0.0.1:8052[/red]")
-            raise SystemExit(1)  # noqa: B904
+        result = server_post("/tasks", payload)
+        if result is None:
+            from bernstein.cli.errors import server_unreachable
+
+            server_unreachable().print()
+            raise SystemExit(1)
+
+        task_id = result.get("id", "unknown")
+        console.print(f"[green]Created task {task_id}[/green]")
+        mgr.record_fire(
+            trigger_name=name,
+            source=target.source,
+            task_id=task_id,
+            dedup_key="manual",
+            summary="Manual fire from CLI",
+        )
