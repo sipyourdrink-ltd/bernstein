@@ -16,9 +16,9 @@ def _load_current_config() -> dict[str, object]:
         p = Path.cwd() / name
         if p.is_file():
             with open(p) as f:
-                data = yaml.safe_load(f) or {}
-            if isinstance(data, dict):
-                return data
+                raw: object = yaml.safe_load(f) or {}
+            data: dict[str, object] = raw if isinstance(raw, dict) else {}
+            return data
     return {}
 
 
