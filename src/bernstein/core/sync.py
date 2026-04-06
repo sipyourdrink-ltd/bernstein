@@ -189,6 +189,64 @@ def _build_existing_slugs(client: httpx.Client, server_url: str) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# Payload & fallback helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_task_payload(task: BacklogTask) -> dict[str, Any]:
+    """Build the JSON payload for creating a single task on the server.
+
+    Embeds the source filename in the description for traceability.
+
+    Args:
+        task: Parsed backlog task.
+
+    Returns:
+        Dict suitable for ``POST /tasks`` or inclusion in a batch.
+    """
+    description = task.description
+    if f"source: {task.source_file}" not in description:
+        description = description + f"\n\n<!-- source: {task.source_file} -->"
+
+    return {
+        "title": task.title,
+        "description": description,
+        "role": task.role,
+        "priority": task.priority,
+        "scope": task.scope,
+        "complexity": task.complexity,
+        "approval_required": task.approval_required,
+    }
+
+
+def _sync_one_by_one(
+    payloads: list[dict[str, Any]],
+    files: list[Path],
+    client: httpx.Client,
+    server_url: str,
+    result: SyncResult,
+) -> None:
+    """Create tasks one-by-one (fallback when ``/tasks/batch`` is unavailable).
+
+    Args:
+        payloads: Pre-built task payloads.
+        files: Corresponding backlog file paths (same order as *payloads*).
+        client: httpx client.
+        server_url: Base URL of the task server.
+        result: SyncResult to populate with created IDs or errors.
+    """
+    for payload, md_file in zip(payloads, files, strict=True):
+        try:
+            resp = client.post(f"{server_url}/tasks", json=payload)
+            resp.raise_for_status()
+            task_id: str = resp.json().get("id", "unknown")
+            result.created.append(task_id)
+            logger.info("Created task %s from %s", task_id, md_file.name)
+        except httpx.HTTPError as exc:
+            result.errors.append(f"Failed to create task from {md_file.name}: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # SyncResult
 # ---------------------------------------------------------------------------
 
@@ -261,7 +319,10 @@ def sync_backlog_to_server(
 
         md_files = sorted([*backlog_open.glob("*.yaml"), *backlog_open.glob("*.md")])
 
-        # --- Step 1: create new tasks ---
+        # --- Step 1: create new tasks (batched) ---
+        batch_payloads: list[dict[str, Any]] = []
+        batch_files: list[Path] = []
+
         for md_file in md_files:
             task = parse_backlog_file(md_file)
             if task is None:
@@ -273,30 +334,41 @@ def sync_backlog_to_server(
                 logger.debug("Skipping %s — task already on server", md_file.name)
                 continue
 
-            # Embed source filename in description so it can be traced back
-            description = task.description
-            if f"source: {task.source_file}" not in description:
-                description = description + f"\n\n<!-- source: {task.source_file} -->"
+            payload = _build_task_payload(task)
+            batch_payloads.append(payload)
+            batch_files.append(md_file)
+            # Track slug immediately so later files in the same batch
+            # with an identical title are deduplicated before sending.
+            existing_slugs.add(normalise_title(task.title))
 
-            payload: dict[str, Any] = {
-                "title": task.title,
-                "description": description,
-                "role": task.role,
-                "priority": task.priority,
-                "scope": task.scope,
-                "complexity": task.complexity,
-                "approval_required": task.approval_required,
-            }
+        if batch_payloads:
             try:
-                resp = _client.post(f"{server_url}/tasks", json=payload)
+                resp = _client.post(
+                    f"{server_url}/tasks/batch",
+                    json={"tasks": batch_payloads},
+                )
                 resp.raise_for_status()
-                task_id: str = resp.json().get("id", "unknown")
-                result.created.append(task_id)
-                # Add to slugs so subsequent files don't create duplicates
-                existing_slugs.add(normalise_title(task.title))
-                logger.info("Created task %s from %s", task_id, md_file.name)
+                data: dict[str, Any] = resp.json()
+                for created_task in data.get("created", []):
+                    task_id: str = created_task.get("id", "unknown")
+                    result.created.append(task_id)
+                    logger.info("Batch-created task %s", task_id)
+                for title in data.get("skipped_titles", []):
+                    result.skipped.append(title)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    # Server doesn't support batch — fall back to one-by-one
+                    _sync_one_by_one(
+                        batch_payloads,
+                        batch_files,
+                        _client,
+                        server_url,
+                        result,
+                    )
+                else:
+                    result.errors.append(f"Batch create failed: {exc}")
             except httpx.HTTPError as exc:
-                result.errors.append(f"Failed to create task from {md_file.name}: {exc}")
+                result.errors.append(f"Batch create failed: {exc}")
 
         # --- Step 2: move files for completed tasks ---
         done_slugs: set[str] = {
