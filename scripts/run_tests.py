@@ -6,19 +6,27 @@ tests this can grow to 100+ GB. Running each file in its own process caps
 memory at whatever a single file needs (~200MB max).
 
 Usage:
-    python scripts/run_tests.py              # run all unit tests
+    python scripts/run_tests.py              # run all unit tests (parallel by default)
     python scripts/run_tests.py -x           # stop on first failure
     python scripts/run_tests.py -k adapter   # filter by keyword
     python scripts/run_tests.py --parallel 4 # run 4 files at once
+    python scripts/run_tests.py --parallel 1 # force sequential execution
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+
+def _default_workers() -> int:
+    """Pick a sensible default worker count: min(cpu_count, 8), at least 1."""
+    cpus = os.cpu_count() or 1
+    return min(cpus, 8)
 
 
 def discover_test_files(test_dir: Path, keyword: str | None = None) -> list[Path]:
@@ -88,39 +96,56 @@ def run_parallel(files: list[Path], extra_args: list[str], workers: int, fail_fa
 
     passed = 0
     failed = 0
+    done = 0
     total = len(files)
     abort = False
+    wall_start = time.monotonic()
+
+    print(f"  Workers: {workers}")
 
     with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(run_file, f, extra_args): f for f in files}
         for future in as_completed(futures):
             if abort:
+                future.cancel()
                 continue
             try:
-                fpath, code, duration, output = future.result(timeout=120)
+                fpath, code, duration, output = future.result(timeout=360)
             except Exception as exc:
                 fpath = futures[future]
-                print(f"  ERROR {fpath.name}: {exc}")
+                done += 1
+                print(f"  ERROR [{done}/{total}] {fpath.name}: {exc}")
                 failed += 1
                 if fail_fast:
                     abort = True
+                    for f in futures:
+                        f.cancel()
                 continue
 
+            done += 1
             if code == 0 or code == 5:
                 passed += 1
-                last_line = [ln for ln in output.strip().split("\n") if ln.strip()][-1] if output.strip() else ""
-                print(f"  PASS {fpath.name} ({duration:.1f}s) {last_line}")
+                status = "SKIP" if code == 5 else "PASS"
+                last_line = ""
+                if code == 0:
+                    last_line = [ln for ln in output.strip().split("\n") if ln.strip()][-1] if output.strip() else ""
+                suffix = "(no tests)" if code == 5 else f"({duration:.1f}s) {last_line}"
+                print(f"  {status} [{done}/{total}] {fpath.name} {suffix}")
             else:
                 failed += 1
-                print(f"  FAIL {fpath.name} ({duration:.1f}s)")
+                print(f"  FAIL [{done}/{total}] {fpath.name} ({duration:.1f}s)")
                 for line in output.strip().split("\n")[-5:]:
                     if line.strip():
                         print(f"       {line}")
                 if fail_fast:
                     abort = True
+                    for f in futures:
+                        f.cancel()
 
+    wall_time = time.monotonic() - wall_start
     print(f"\n{'=' * 60}")
     print(f"Files: {passed} passed, {failed} failed, {total} total")
+    print(f"Wall:  {wall_time:.1f}s ({workers} workers)")
     return 1 if failed else 0
 
 
@@ -141,10 +166,16 @@ def discover_affected_files(base: str) -> list[Path]:
 
 
 def main() -> None:
+    default_workers = _default_workers()
     parser = argparse.ArgumentParser(description="Run tests in isolated subprocesses")
     parser.add_argument("-x", "--fail-fast", action="store_true", help="Stop on first failure")
     parser.add_argument("-k", "--keyword", help="Filter test files by keyword")
-    parser.add_argument("--parallel", type=int, default=0, help="Number of parallel workers (0=sequential)")
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=default_workers,
+        help=f"Number of parallel workers (1=sequential, default={default_workers})",
+    )
     parser.add_argument("--test-dir", default="tests/unit", help="Test directory")
     parser.add_argument(
         "--affected",
@@ -156,6 +187,8 @@ def main() -> None:
     parser.add_argument("extra", nargs="*", help="Extra args passed to pytest")
     args = parser.parse_args()
 
+    workers: int = max(1, args.parallel)
+
     if args.affected is not None:
         files = discover_affected_files(args.affected)
         if args.keyword:
@@ -165,8 +198,8 @@ def main() -> None:
             sys.exit(0)
         print(f"Running {len(files)} affected test files (each in its own process)")
         print(f"{'=' * 60}")
-        if args.parallel > 0:
-            code = run_parallel(files, args.extra, args.parallel, args.fail_fast)
+        if workers > 1:
+            code = run_parallel(files, args.extra, workers, args.fail_fast)
         else:
             code = run_sequential(files, args.extra, args.fail_fast)
         sys.exit(code)
@@ -181,11 +214,12 @@ def main() -> None:
         print("No test files found")
         sys.exit(0)
 
-    print(f"Running {len(files)} test files (each in its own process)")
+    mode = f"parallel ({workers} workers)" if workers > 1 else "sequential"
+    print(f"Running {len(files)} test files {mode} (each in its own process)")
     print(f"{'=' * 60}")
 
-    if args.parallel > 0:
-        code = run_parallel(files, args.extra, args.parallel, args.fail_fast)
+    if workers > 1:
+        code = run_parallel(files, args.extra, workers, args.fail_fast)
     else:
         code = run_sequential(files, args.extra, args.fail_fast)
 

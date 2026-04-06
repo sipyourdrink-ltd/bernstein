@@ -247,7 +247,7 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
-      - run: uv run python scripts/run_tests.py -x
+      - run: uv run python scripts/run_tests.py -x --parallel 4
       - name: Generate coverage report (3.13 only)
         if: matrix.python-version == '3.13'
         run: |
