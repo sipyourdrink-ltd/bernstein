@@ -58,6 +58,7 @@ def _set_cli(cli_group: Any) -> None:  # type: ignore[reportUnusedFunction]
     show_default=True,
 )
 @click.option("--depends-on", multiple=True, metavar="TASK_ID", help="Task IDs this depends on.")
+@click.option("--dry-run", is_flag=True, help="Print the JSON payload that would be sent without actually calling the API.")
 @click.pass_context
 def add_task(
     ctx: click.Context,
@@ -68,6 +69,7 @@ def add_task(
     scope: str,
     complexity: str,
     depends_on: tuple[str, ...],
+    dry_run: bool,
 ) -> None:
     """Add a task to the running server.
 
@@ -82,6 +84,14 @@ def add_task(
         "complexity": complexity,
         "depends_on": list(depends_on),
     }
+
+    if dry_run:
+        if is_json():
+            print_json(payload)
+        else:
+            console.print("[yellow]Dry run - payload that would be sent:[/yellow]")
+            console.print_json(json.dumps(payload, indent=2))
+        return
 
     result = server_post("/tasks", payload)
     if result is None:
