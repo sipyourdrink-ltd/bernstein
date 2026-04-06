@@ -26,7 +26,7 @@
 [![MCP Compatible](https://img.shields.io/badge/MCP-1.0%2C%201.1-blue)](docs/compatibility.md)
 [![A2A Compatible](https://img.shields.io/badge/A2A-0.2%2C%200.3-blue)](docs/compatibility.md)
 
-[Documentation](https://chernistry.github.io/bernstein/) &middot; [Getting Started](docs/GETTING_STARTED.md) &middot; [Limitations](docs/KNOWN_LIMITATIONS.md)
+[Documentation](https://chernistry.github.io/bernstein/) &middot; [Getting Started](docs/GETTING_STARTED.md) &middot; [Glossary](docs/GLOSSARY.md) &middot; [Limitations](docs/KNOWN_LIMITATIONS.md)
 
 #### Wall of fame
 
