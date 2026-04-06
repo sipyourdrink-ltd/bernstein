@@ -457,7 +457,8 @@ section {
 }
 
 .hero-actions {
-  display: inline-flex;
+  display: flex;
+  justify-content: center;
   gap: var(--space-3);
 }
 
