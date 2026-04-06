@@ -283,11 +283,13 @@ class BernsteinApp(App[None]):
         scope = self.query_one("#oscilloscope", OscilloscopeWidget)
         if scope.display:
             scope.update_agents(agents_data)
-            samples = {
-                a.get("session_id", ""): a.get("tokens_per_sec", 0.0)
-                for a in agents_data
-                if isinstance(a, dict) and a.get("session_id")
-            }
+            samples: dict[str, float] = {}
+            for a in agents_data:
+                if isinstance(a, dict):
+                    agent = cast("dict[str, Any]", a)
+                    sid = agent.get("session_id", "")
+                    if sid:
+                        samples[str(sid)] = float(agent.get("tokens_per_sec", 0.0))
             if samples:
                 scope.add_samples(samples)
 
