@@ -13,10 +13,13 @@ import os
 import select
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from rich.console import Console
 from rich.style import Style
 from rich.text import Text
+
+if TYPE_CHECKING:
+    from rich.console import Console
 
 # ---------------------------------------------------------------------------
 # ANSI art logo — ACiD/iCE-era block characters with shadow
