@@ -74,12 +74,15 @@ _PUBLIC_PATHS = frozenset(
         "/dashboard/data",
         "/dashboard/file_locks",
         "/events",
+        "/ws",
+        "/health/deps",
+        "/grafana/dashboard",
     }
 )
 
 # Path prefixes that are always accessible without auth.
 # Used for routes with path parameters (e.g. /hooks/{session_id}).
-_PUBLIC_PATH_PREFIXES = ("/hooks/",)
+_PUBLIC_PATH_PREFIXES = ("/hooks/", "/export/", "/dashboard/tasks/")
 
 
 class BearerAuthMiddleware(BaseHTTPMiddleware):
@@ -1173,6 +1176,11 @@ def create_app(
         log_path=jsonl_path.parent / "access.jsonl",
     )
 
+    # WEB-010: Request/response logging middleware (method, path, status, duration)
+    from bernstein.core.request_logging import RequestLoggingMiddleware
+
+    application.add_middleware(RequestLoggingMiddleware)
+
     # Read-only mode — blocks all writes before auth is even checked
     if readonly:
         application.add_middleware(ReadOnlyMiddleware)
@@ -1261,6 +1269,12 @@ def create_app(
     def root() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         return {"name": "Bernstein Task Server", "status": "running", "docs": "/docs"}
 
+    # WEB-011: Paginated task search — must precede tasks_router so /tasks/search
+    # is matched before /tasks/{task_id}.
+    from bernstein.core.routes.paginated_tasks import router as paginated_tasks_router
+
+    application.include_router(paginated_tasks_router)
+
     # Mount routers
     application.include_router(agents_router)
     application.include_router(auth_router)
@@ -1316,6 +1330,44 @@ def create_app(
     from bernstein.core.routes.hooks import router as hooks_router
 
     application.include_router(hooks_router)
+
+    # WEB-006: WebSocket live dashboard
+    from bernstein.core.routes.websocket import router as ws_router
+
+    application.include_router(ws_router)
+
+    # WEB-008: Data export endpoints
+    from bernstein.core.routes.export import router as export_router
+
+    application.include_router(export_router)
+
+    # WEB-009: Grafana dashboard endpoint
+    from bernstein.core.routes.grafana import router as grafana_router
+
+    application.include_router(grafana_router)
+
+    # WEB-012: Dashboard task detail with live log streaming
+    from bernstein.core.routes.task_detail import router as task_detail_router
+
+    application.include_router(task_detail_router)
+
+    # WEB-013: Health endpoint with dependency status
+    from bernstein.core.routes.health import router as health_deps_router
+
+    application.include_router(health_deps_router)
+
+    # WEB-007: API v1 versioned routes — mount all existing routers under /api/v1/
+    from bernstein.core.routes.api_v1 import router as api_v1_router
+
+    api_v1_router.include_router(paginated_tasks_router)
+    api_v1_router.include_router(tasks_router)
+    api_v1_router.include_router(status_router)
+    api_v1_router.include_router(agents_router)
+    api_v1_router.include_router(costs_router)
+    api_v1_router.include_router(export_router)
+    api_v1_router.include_router(grafana_router)
+    api_v1_router.include_router(health_deps_router)
+    application.include_router(api_v1_router)
 
     return application
 

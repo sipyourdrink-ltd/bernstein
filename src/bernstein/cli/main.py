@@ -43,9 +43,10 @@ from bernstein.cli.advanced_cmd import (
     retro,
     trace_cmd,
 )
-
-# Subcommand imports from modules
 from bernstein.cli.agents_cmd import agents_group
+
+# New CLI commands (CLI-004 through CLI-013)
+from bernstein.cli.aliases import ALIASES, aliases_cmd
 from bernstein.cli.audit_cmd import audit_group
 from bernstein.cli.auth_cmd import auth_group, auth_login
 from bernstein.cli.cache_cmd import cache_group
@@ -54,17 +55,21 @@ from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
 from bernstein.cli.compliance_cmd import compliance_group
+from bernstein.cli.config_path_cmd import config_path_cmd
 from bernstein.cli.cost import cost_cmd, estimate_cmd
 from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.disaster_recovery_cmd import dr_group
+from bernstein.cli.dry_run_cmd import dry_run_cmd
 from bernstein.cli.eval_benchmark_cmd import (
     benchmark_group,
     eval_group,
 )
 from bernstein.cli.evolve_cmd import evolve
+from bernstein.cli.explain_help_cmd import explain_help_cmd
 from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.graph_cmd import graph_group
 from bernstein.cli.incident_cmd import incident_cmd
+from bernstein.cli.init_wizard_cmd import init_wizard_cmd
 from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
 from bernstein.cli.man_page import man_pages_cmd
 from bernstein.cli.manifest_cmd import manifest_group
@@ -91,6 +96,7 @@ from bernstein.cli.task_cmd import (
 )
 from bernstein.cli.templates_cmd import templates_group
 from bernstein.cli.undo_cmd import undo_cmd
+from bernstein.cli.verbosity import apply_verbosity
 from bernstein.cli.verify_cmd import verify_cmd
 from bernstein.cli.voice_cmd import listen_cmd
 from bernstein.cli.watch_cmd import watch_cmd
@@ -351,10 +357,32 @@ def print_rich_help() -> None:
 
 
 class _RichGroup(click.Group):
-    """Click group that renders help with Rich instead of plain text."""
+    """Click group that renders help with Rich instead of plain text.
+
+    Also resolves short aliases (CLI-013) so ``bernstein s`` maps to
+    ``bernstein status``, etc.
+    """
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         print_rich_help()
+
+    def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+        # Resolve alias first (CLI-013)
+        resolved = ALIASES.get(cmd_name)
+        if resolved is not None:
+            return super().get_command(ctx, resolved)
+        return super().get_command(ctx, cmd_name)
+
+    def resolve_command(
+        self,
+        ctx: click.Context,
+        args: list[str],
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        if args:
+            resolved = ALIASES.get(args[0])
+            if resolved is not None:
+                args = [resolved, *args[1:]]
+        return super().resolve_command(ctx, args)
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         """Intercept ``--help-all`` so it works as both option and subcommand."""
@@ -430,6 +458,8 @@ class _RichGroup(click.Group):
     default=None,
     help="Activate governed workflow mode (deterministic phase-based execution).",
 )
+@click.option("--verbose", "-v", is_flag=True, default=False, help="Show debug-level output.")
+@click.option("--quiet", "-q", is_flag=True, default=False, help="Suppress all non-error output.")
 @click.pass_context
 def cli(
     ctx: click.Context,
@@ -453,12 +483,18 @@ def cli(
     plan_only: bool,
     from_plan: str | None,
     auto_approve: bool,
+    verbose: bool,
+    quiet: bool,
 ) -> None:
     """Declarative agent orchestration for engineering teams."""
     setup_json_logging()
     ctx.ensure_object(dict)
     # --json flag or --output json both enable JSON output mode
     ctx.obj["JSON"] = output_json or (output_format == "json")
+    # Apply --verbose / --quiet (CLI-005)
+    if verbose and quiet:
+        raise click.UsageError("Cannot use --verbose and --quiet together.")
+    apply_verbosity(verbose, quiet)
 
     if ctx.invoked_subcommand is not None:
         return
@@ -711,3 +747,10 @@ cli.add_command(incident_cmd, "incident")
 cli.add_command(profile_cmd, "profile")
 cli.add_command(templates_group, "templates")
 cli.add_command(validate_plan, "validate")
+
+# New CLI commands (CLI-004 through CLI-013)
+cli.add_command(dry_run_cmd, "dry-run")
+cli.add_command(explain_help_cmd, "explain")
+cli.add_command(config_path_cmd, "config-path")
+cli.add_command(init_wizard_cmd, "init-wizard")
+cli.add_command(aliases_cmd, "aliases")

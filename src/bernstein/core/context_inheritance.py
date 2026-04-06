@@ -4,18 +4,127 @@ When Claude Code spawns its own subagents (via the Agent tool), those
 subagents need Bernstein's task context and file ownership rules.  This
 module writes configuration to CLAUDE.md and .claude/settings.local.json
 in the worktree so subagents inherit the parent agent's constraints.
+
+Extended for AGENT-012: full parent context inheritance including role
+constraints, environment variables, and resource limits.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Inherited context dataclass (AGENT-012)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InheritedContext:
+    """Full context inherited by a child agent from its parent.
+
+    Attributes:
+        parent_session_id: Parent agent's session identifier.
+        parent_role: Parent agent's role.
+        task_ids: Task IDs the parent is working on.
+        owned_files: Files the parent is allowed to modify.
+        role_constraints: Role-specific constraints (e.g. read-only for QA).
+        environment: Environment variables to propagate to children.
+        server_url: Bernstein task server URL.
+        max_depth: Maximum nesting depth for sub-agent delegation.
+        current_depth: Current depth in the delegation tree.
+    """
+
+    parent_session_id: str
+    parent_role: str
+    task_ids: list[str] = field(default_factory=list[str])
+    owned_files: list[str] = field(default_factory=list[str])
+    role_constraints: dict[str, Any] = field(default_factory=dict[str, Any])
+    environment: dict[str, str] = field(default_factory=dict[str, str])
+    server_url: str = "http://127.0.0.1:8052"
+    max_depth: int = 3
+    current_depth: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-safe dict.
+
+        Returns:
+            Serialized context.
+        """
+        return {
+            "parent_session_id": self.parent_session_id,
+            "parent_role": self.parent_role,
+            "task_ids": self.task_ids,
+            "owned_files": self.owned_files,
+            "role_constraints": self.role_constraints,
+            "environment": self.environment,
+            "server_url": self.server_url,
+            "max_depth": self.max_depth,
+            "current_depth": self.current_depth,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> InheritedContext:
+        """Deserialize from a dict.
+
+        Args:
+            data: Dict with context fields.
+
+        Returns:
+            Parsed InheritedContext.
+        """
+        return cls(
+            parent_session_id=str(data.get("parent_session_id", "")),
+            parent_role=str(data.get("parent_role", "")),
+            task_ids=list(data.get("task_ids", [])),
+            owned_files=list(data.get("owned_files", [])),
+            role_constraints=dict(data.get("role_constraints", {})),
+            environment=dict(data.get("environment", {})),
+            server_url=str(data.get("server_url", "http://127.0.0.1:8052")),
+            max_depth=int(data.get("max_depth", 3)),
+            current_depth=int(data.get("current_depth", 0)),
+        )
+
+    def can_delegate(self) -> bool:
+        """Check if further delegation (sub-spawning) is allowed.
+
+        Returns:
+            True if current depth is below the max depth.
+        """
+        return self.current_depth < self.max_depth
+
+    def child_context(self, child_session_id: str, child_role: str) -> InheritedContext:
+        """Create an inherited context for a child agent.
+
+        The child inherits the parent's file ownership and constraints,
+        with incremented depth.
+
+        Args:
+            child_session_id: Session ID for the child agent.
+            child_role: Role assigned to the child agent.
+
+        Returns:
+            InheritedContext for the child agent.
+        """
+        return InheritedContext(
+            parent_session_id=child_session_id,
+            parent_role=child_role,
+            task_ids=list(self.task_ids),
+            owned_files=list(self.owned_files),
+            role_constraints=dict(self.role_constraints),
+            environment=dict(self.environment),
+            server_url=self.server_url,
+            max_depth=self.max_depth,
+            current_depth=self.current_depth + 1,
+        )
 
 
 def build_subagent_context(
