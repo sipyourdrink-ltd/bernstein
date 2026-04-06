@@ -27,13 +27,13 @@ class TestBasicRateLimiting:
 
     def test_first_spawn_allowed(self) -> None:
         limiter = SpawnRateLimiter()
-        assert limiter.check("anthropic") == 0.0
+        assert limiter.check("anthropic") == pytest.approx(0.0)
 
     def test_under_limit_allowed(self) -> None:
         limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=3))
         limiter.record("anthropic")
         limiter.record("anthropic")
-        assert limiter.check("anthropic") == 0.0
+        assert limiter.check("anthropic") == pytest.approx(0.0)
 
     def test_at_limit_rejected(self) -> None:
         limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=2, window_seconds=10))
@@ -46,13 +46,13 @@ class TestBasicRateLimiting:
         limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1))
         limiter.record("anthropic")
         assert limiter.check("anthropic") > 0
-        assert limiter.check("openai") == 0.0
+        assert limiter.check("openai") == pytest.approx(0.0)
 
     def test_window_expiry(self) -> None:
         limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1, window_seconds=0.1))
         limiter.record("anthropic")
         time.sleep(0.15)
-        assert limiter.check("anthropic") == 0.0
+        assert limiter.check("anthropic") == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ class TestWaitAndAcquire:
     def test_no_wait_needed(self) -> None:
         limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=2))
         waited = limiter.wait_and_acquire("anthropic")
-        assert waited == 0.0
+        assert waited == pytest.approx(0.0)
 
     def test_waits_then_acquires(self) -> None:
         limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1, window_seconds=0.2))
@@ -115,7 +115,7 @@ class TestProviderOverrides:
         limiter = SpawnRateLimiter(config)
         for _ in range(4):
             limiter.record("anthropic")
-        assert limiter.check("anthropic") == 0.0
+        assert limiter.check("anthropic") == pytest.approx(0.0)
 
     def test_default_provider_still_limited(self) -> None:
         config = SpawnRateLimitConfig(
@@ -171,6 +171,6 @@ class TestExceptionAttributes:
     def test_attributes(self) -> None:
         exc = SpawnRateLimitExceeded("anthropic", 5.5)
         assert exc.provider == "anthropic"
-        assert exc.retry_after_s == 5.5
+        assert exc.retry_after_s == pytest.approx(5.5)
         assert "anthropic" in str(exc)
         assert "5.5" in str(exc)

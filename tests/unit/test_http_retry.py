@@ -30,11 +30,11 @@ class TestComputeBackoff:
         d2 = compute_backoff(2, 1.0, 60.0, jitter=False)
         assert d0 == pytest.approx(1.0)
         assert d1 == pytest.approx(2.0)
-        assert d2 == 4.0
+        assert d2 == pytest.approx(4.0)
 
     def test_capped_at_max_delay(self) -> None:
         delay = compute_backoff(100, 1.0, 30.0, jitter=False)
-        assert delay == 30.0
+        assert delay == pytest.approx(30.0)
 
     def test_jitter_within_range(self) -> None:
         for _ in range(100):
@@ -43,7 +43,7 @@ class TestComputeBackoff:
 
     def test_zero_base_delay(self) -> None:
         delay = compute_backoff(5, 0.0, 30.0, jitter=False)
-        assert delay == 0.0
+        assert delay == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -206,8 +206,8 @@ class TestRetryConfig:
     def test_defaults(self) -> None:
         config = RetryConfig()
         assert config.max_retries == 3
-        assert config.base_delay_s == 1.0
-        assert config.max_delay_s == 30.0
+        assert config.base_delay_s == pytest.approx(1.0)
+        assert config.max_delay_s == pytest.approx(30.0)
         assert config.jitter is True
         assert 429 in config.retryable_status_codes
         assert 503 in config.retryable_status_codes

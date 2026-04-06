@@ -299,4 +299,4 @@ class TestReplaySummary:
         assert summary.skipped_stale == 0
         assert summary.failed == 0
         assert summary.results == []
-        assert summary.duration_s == 0.0
+        assert summary.duration_s == pytest.approx(0.0)

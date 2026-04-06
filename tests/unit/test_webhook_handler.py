@@ -80,7 +80,7 @@ class TestWebhookTarget:
             max_retries=5,
         )
         assert t.events == ["task.completed"]
-        assert t.timeout_s == 15.0
+        assert t.timeout_s == pytest.approx(15.0)
         assert t.max_retries == 5
 
 
@@ -421,7 +421,7 @@ class TestParseWebhookConfig:
             },
         ]
         targets = parse_webhook_config(raw)
-        assert targets[0].timeout_s == 30.0
+        assert targets[0].timeout_s == pytest.approx(30.0)
         assert targets[0].max_retries == 5
 
     def test_missing_url_skipped(self) -> None:

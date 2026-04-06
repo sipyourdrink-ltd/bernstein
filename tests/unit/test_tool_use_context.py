@@ -17,7 +17,7 @@ from bernstein.core.tool_use_context import ToolInvocation, ToolUseContext
 class TestToolInvocation:
     def test_duration_ms_zero_when_not_finished(self) -> None:
         inv = ToolInvocation(tool_name="Bash", session_id="s1")
-        assert inv.duration_ms == 0.0
+        assert inv.duration_ms == pytest.approx(0.0)
 
     def test_duration_ms_computed_when_finished(self) -> None:
         inv = ToolInvocation(
@@ -125,7 +125,7 @@ class TestToolUseContext:
 
     def test_success_rate_no_invocations(self) -> None:
         ctx = ToolUseContext(session_id="s1")
-        assert ctx.success_rate == 1.0
+        assert ctx.success_rate == pytest.approx(1.0)
 
     def test_tool_counts(self) -> None:
         ctx = ToolUseContext(session_id="s1")

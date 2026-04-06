@@ -154,10 +154,10 @@ class TestTickGuardStats:
         assert stats.total_attempts == 0
         assert stats.total_acquired == 0
         assert stats.total_skipped == 0
-        assert stats.last_tick_start == 0.0
-        assert stats.last_tick_end == 0.0
-        assert stats.last_tick_duration_s == 0.0
-        assert stats.longest_tick_duration_s == 0.0
+        assert stats.last_tick_start == pytest.approx(0.0)
+        assert stats.last_tick_end == pytest.approx(0.0)
+        assert stats.last_tick_duration_s == pytest.approx(0.0)
+        assert stats.longest_tick_duration_s == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

@@ -133,7 +133,7 @@ class TestSLAMonitor:
             simple_monitor.record_observation(SLAMetricKind.TASK_COMPLETION_RATE, 1.0, timestamp=now + i)
         results = simple_monitor.evaluate(now=now + 20)
         assert results[0].status == SLAStatus.MET
-        assert results[0].current_value == 1.0
+        assert results[0].current_value == pytest.approx(1.0)
 
     def test_evaluate_warning(self) -> None:
         # For higher-is-better: warning zone is [warning_threshold, target).
@@ -326,7 +326,7 @@ class TestSLAAlerts:
         d = alert.to_dict()
         assert d["sla_name"] == "test"
         assert d["alert_type"] == "breached"
-        assert d["evaluation"]["current_value"] == 0.80
+        assert d["evaluation"]["current_value"] == pytest.approx(0.80)
 
 
 class TestLowerIsBetter:

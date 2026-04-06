@@ -33,7 +33,7 @@ class TestTransportConfig:
         assert cfg.url == ""
         assert cfg.env == {}
         assert cfg.headers == {}
-        assert cfg.timeout == 10.0
+        assert cfg.timeout == pytest.approx(10.0)
 
     def test_custom_values(self) -> None:
         cfg = TransportConfig(
@@ -45,7 +45,7 @@ class TestTransportConfig:
         )
         assert cfg.command == ["npx", "-y", "server"]
         assert cfg.url == "http://localhost:8080"
-        assert cfg.timeout == 5.0
+        assert cfg.timeout == pytest.approx(5.0)
 
     def test_frozen(self) -> None:
         cfg = TransportConfig()

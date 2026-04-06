@@ -128,7 +128,7 @@ class TestFallbackDisplay:
         """FallbackDisplay can be created with defaults."""
         display = FallbackDisplay()
         assert display._server_url == "http://127.0.0.1:8052"
-        assert display._interval == 2.0
+        assert display._interval == pytest.approx(2.0)
 
     def test_custom_server_url(self) -> None:
         """FallbackDisplay accepts a custom server URL."""
@@ -138,7 +138,7 @@ class TestFallbackDisplay:
     def test_custom_interval(self) -> None:
         """FallbackDisplay accepts a custom polling interval."""
         display = FallbackDisplay(interval=5.0)
-        assert display._interval == 5.0
+        assert display._interval == pytest.approx(5.0)
 
     def test_render_offline(self) -> None:
         """Render shows output when server is unreachable."""

@@ -76,7 +76,7 @@ class TestCostsCurrentEndpoint:
 
         # Check budget status
         status = tracker.status()
-        assert status.budget_usd == 5.0
+        assert status.budget_usd == pytest.approx(5.0)
         assert status.spent_usd == pytest.approx(0.15, abs=1e-4)
         assert status.should_stop is False
 

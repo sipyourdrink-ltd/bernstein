@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.prompt_precheck import (
     PromptAction,
     check_prompt_size,
@@ -102,7 +104,7 @@ class TestCheckPromptSize:
         # 10k tokens out of 200k = 5%
         prompt = "a" * 40_000
         result = check_prompt_size(prompt, context_limit=200_000)
-        assert result.utilization_pct == 5.0
+        assert result.utilization_pct == pytest.approx(5.0)
 
     def test_safe_char_limit_calculated(self) -> None:
         result = check_prompt_size("hello", context_limit=100_000)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from bernstein.core.provider_circuit_breaker import (
     CircuitBreakerConfig,
     CircuitBreakerSnapshot,
@@ -38,7 +40,7 @@ class TestCircuitBreakerConfig:
     def test_defaults(self) -> None:
         config = CircuitBreakerConfig()
         assert config.failure_threshold == 5
-        assert config.recovery_timeout_s == 60.0
+        assert config.recovery_timeout_s == pytest.approx(60.0)
         assert config.half_open_max_probes == 1
         assert config.success_threshold == 1
 
@@ -50,7 +52,7 @@ class TestCircuitBreakerConfig:
             success_threshold=2,
         )
         assert config.failure_threshold == 3
-        assert config.recovery_timeout_s == 30.0
+        assert config.recovery_timeout_s == pytest.approx(30.0)
 
 
 # ---------------------------------------------------------------------------

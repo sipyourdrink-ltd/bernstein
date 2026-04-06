@@ -74,14 +74,14 @@ class TestTenantQuota:
         q = TenantQuota()
         assert q.max_tasks == 100
         assert q.max_agents == 10
-        assert q.budget_usd == 100.0
+        assert q.budget_usd == pytest.approx(100.0)
         assert q.max_wal_entries == 10000
 
     def test_custom_values(self) -> None:
         q = TenantQuota(max_tasks=50, max_agents=5, budget_usd=50.0)
         assert q.max_tasks == 50
         assert q.max_agents == 5
-        assert q.budget_usd == 50.0
+        assert q.budget_usd == pytest.approx(50.0)
 
 
 class TestTenantIsolationContext:

@@ -110,7 +110,7 @@ class TestErrorContext:
         assert d["task_id"] == "T-001"
         assert d["error_type"] == "RuntimeError"
         assert d["error_message"] == "something failed"
-        assert d["error_timestamp"] == 1234567890.0
+        assert d["error_timestamp"] == pytest.approx(1234567890.0)
 
 
 # ---------------------------------------------------------------------------

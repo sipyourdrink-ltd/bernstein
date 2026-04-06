@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from bernstein.core.mcp_health_monitor import (
     BACKOFF_MULTIPLIER,
     DEFAULT_INITIAL_BACKOFF,
@@ -350,13 +352,13 @@ class TestConstants:
     def test_probe_interval(self) -> None:
         from bernstein.core.mcp_health_monitor import DEFAULT_PROBE_INTERVAL
 
-        assert DEFAULT_PROBE_INTERVAL == 30.0
+        assert DEFAULT_PROBE_INTERVAL == pytest.approx(30.0)
 
     def test_initial_backoff(self) -> None:
-        assert DEFAULT_INITIAL_BACKOFF == 1.0
+        assert DEFAULT_INITIAL_BACKOFF == pytest.approx(1.0)
 
     def test_max_backoff(self) -> None:
-        assert DEFAULT_MAX_BACKOFF == 30.0
+        assert DEFAULT_MAX_BACKOFF == pytest.approx(30.0)
 
     def test_backoff_multiplier(self) -> None:
-        assert BACKOFF_MULTIPLIER == 2.0
+        assert BACKOFF_MULTIPLIER == pytest.approx(2.0)
