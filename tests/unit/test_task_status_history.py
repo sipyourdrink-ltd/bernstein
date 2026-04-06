@@ -61,7 +61,7 @@ class TestTaskHistory:
         assert len(dicts) == 1
         assert dicts[0]["from_status"] == "open"
         assert dicts[0]["to_status"] == "claimed"
-        assert dicts[0]["timestamp"] == 100.0
+        assert abs(dicts[0]["timestamp"] - 100.0) < 1e-9
         assert dicts[0]["reason"] == "scheduled"
         assert dicts[0]["triggered_by"] == "orch"
 
@@ -79,7 +79,7 @@ class TestStatusHistoryTracker:
         )
         assert transition.from_status == "open"
         assert transition.to_status == "claimed"
-        assert transition.timestamp == 100.0
+        assert abs(transition.timestamp - 100.0) < 1e-9
 
         history = tracker.get_history("t1")
         assert history is not None

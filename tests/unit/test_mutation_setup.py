@@ -71,7 +71,7 @@ class TestMutmutConfigFile:
     def test_config_written(self) -> None:
         """Validate the mutmut_config.py would be valid if written."""
         root = Path(__file__).resolve().parent.parent.parent
-        root / "mutmut_config.py"
+        _config_path = root / "mutmut_config.py"
 
         # Generate the config content
         paths = "\n".join(f'    "{p}",' for p in MUTMUT_CONFIG["paths_to_mutate"])
