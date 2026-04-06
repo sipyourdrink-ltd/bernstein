@@ -103,13 +103,25 @@ class TestCycleTheme:
     def test_light_to_high_contrast(self) -> None:
         assert cycle_theme(ThemeMode.LIGHT) == ThemeMode.HIGH_CONTRAST
 
-    def test_high_contrast_to_dark(self) -> None:
-        assert cycle_theme(ThemeMode.HIGH_CONTRAST) == ThemeMode.DARK
+    def test_high_contrast_to_retro_amber(self) -> None:
+        assert cycle_theme(ThemeMode.HIGH_CONTRAST) == ThemeMode.RETRO_AMBER
+
+    def test_retro_cycle(self) -> None:
+        assert cycle_theme(ThemeMode.RETRO_AMBER) == ThemeMode.RETRO_GREEN
+        assert cycle_theme(ThemeMode.RETRO_GREEN) == ThemeMode.RETRO_COOL
+        assert cycle_theme(ThemeMode.RETRO_COOL) == ThemeMode.DARK
 
     def test_auto_resolves_and_cycles(self) -> None:
         result = cycle_theme(ThemeMode.AUTO)
         # AUTO resolves to detected (likely DARK), then cycles
-        assert result in (ThemeMode.DARK, ThemeMode.LIGHT, ThemeMode.HIGH_CONTRAST)
+        assert result in (
+            ThemeMode.DARK,
+            ThemeMode.LIGHT,
+            ThemeMode.HIGH_CONTRAST,
+            ThemeMode.RETRO_AMBER,
+            ThemeMode.RETRO_GREEN,
+            ThemeMode.RETRO_COOL,
+        )
 
 
 class TestGenerateThemeCss:
