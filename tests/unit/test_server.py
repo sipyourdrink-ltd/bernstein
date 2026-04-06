@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from bernstein.core.auth_rate_limiter import RequestRateLimitMiddleware
 from bernstein.core.bulletin import BulletinBoard, MessageBoard
 from bernstein.core.server import SSEBus, TaskStore, create_app
 
@@ -43,8 +44,16 @@ def _reset_app_state(app, tmp_path: Path) -> None:  # type: ignore[no-untyped-de
     app.state.draining = False
     app.state.sdd_dir = tmp_path
     app.state.runtime_dir = tmp_path
-    # Force middleware stack rebuild so rate limiters reset
-    app.middleware_stack = None  # type: ignore[assignment]
+    # Clear rate limiter hit counters without rebuilding the middleware stack.
+    # Rebuilding (middleware_stack = None) forces FastAPI to re-register all
+    # routes + recreate pydantic validators, which leaks memory and eventually
+    # hits the 2 GB RLIMIT_AS on CI.
+    mw = app.middleware_stack
+    while mw is not None:
+        if isinstance(mw, RequestRateLimitMiddleware):
+            mw._limiter._hits.clear()
+            break
+        mw = getattr(mw, "app", None)
 
 
 @pytest.fixture()
