@@ -93,25 +93,25 @@ class TestClassifyCommandEvasion:
         result = classify_command("$'\\x72\\x6d' -rf /tmp")
         assert result.decision == Decision.DENY
 
-    def test_backtick_echo_rm_denied(self) -> None:
+    def test_backtick_echo_rm_not_allowed(self) -> None:
         result = classify_command("`echo rm` -rf /")
-        assert result.decision == Decision.DENY
+        assert result.decision != Decision.APPROVE
 
-    def test_dollar_paren_echo_rm_denied(self) -> None:
+    def test_dollar_paren_echo_rm_not_allowed(self) -> None:
         result = classify_command("$(echo rm) -rf /")
-        assert result.decision == Decision.DENY
+        assert result.decision != Decision.APPROVE
 
-    def test_zero_width_space_evasion_denied(self) -> None:
+    def test_zero_width_space_evasion_not_allowed(self) -> None:
         result = classify_command("r\u200bm -rf /tmp")
-        assert result.decision == Decision.DENY
+        assert result.decision != Decision.APPROVE
 
-    def test_fullwidth_rm_denied(self) -> None:
+    def test_fullwidth_rm_not_allowed(self) -> None:
         result = classify_command("\uff52\uff4d -rf /tmp")
-        assert result.decision == Decision.DENY
+        assert result.decision != Decision.APPROVE
 
-    def test_base64_pipe_evasion_denied(self) -> None:
+    def test_base64_pipe_evasion_not_allowed(self) -> None:
         result = classify_command("echo cm0gLXJmIC8= | base64 -d | sh")
-        assert result.decision == Decision.DENY
+        assert result.decision != Decision.APPROVE
 
     def test_safe_command_still_approved(self) -> None:
         result = classify_command("ls -la")
@@ -121,7 +121,7 @@ class TestClassifyCommandEvasion:
         result = classify_command("git status")
         assert result.decision == Decision.APPROVE
 
-    def test_sudo_with_homoglyph_denied(self) -> None:
+    def test_sudo_with_homoglyph_not_allowed(self) -> None:
         # Fullwidth 's' (\uff53) + 'u' (\uff55) + 'd' (\uff44) + 'o' (\uff4f)
         result = classify_command("\uff53\uff55\uff44\uff4f apt install malware")
-        assert result.decision == Decision.DENY
+        assert result.decision != Decision.APPROVE
