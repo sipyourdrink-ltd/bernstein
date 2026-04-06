@@ -13,7 +13,11 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 
+from bernstein.tui.crt_shader import CRTMode, CRTShader
+from bernstein.tui.oscilloscope import OscilloscopeWidget
+from bernstein.tui.plasma import PlasmaCanvas
 from bernstein.tui.timeline import TaskTimeline, TimelineEntry
+from bernstein.tui.tracker_view import TrackerView
 from bernstein.tui.widgets import (
     ActionBar,
     AgentLogWidget,
@@ -125,6 +129,10 @@ class BernsteinApp(App[None]):
         Binding("w", "toggle_coordinator", "Coordinator", show=True),
         Binding("a", "toggle_approvals", "Approvals", show=True),
         Binding("l", "toggle_tool_observer", "Tool calls", show=True),
+        Binding("C", "toggle_crt", "CRT", show=True),
+        Binding("P", "toggle_plasma", "Plasma", show=True),
+        Binding("T", "toggle_tracker", "Tracker", show=True),
+        Binding("O", "toggle_oscilloscope", "Scope", show=True),
         Binding("/", "scratchpad_filter", "Filter scratchpad", show=False),
         Binding("escape", "close_action_bar", "Close", show=False),
         Binding("up", "cursor_up", "Up", show=False),
@@ -145,6 +153,7 @@ class BernsteinApp(App[None]):
         self._action_bar_visible = False
         self._current_rows: list[TaskRow] = []
         self._log_offsets: dict[str, int] = {}  # session_id → last-read byte offset
+        self._crt_shader = CRTShader(CRTMode.OFF)
 
     # -- layout ---------------------------------------------------------------
 
@@ -159,6 +168,9 @@ class BernsteinApp(App[None]):
             yield CoordinatorDashboard(id="coordinator-dashboard")
             yield ApprovalPanel(id="approval-panel")
             yield ToolObserverWidget(id="tool-observer")
+            yield PlasmaCanvas(id="plasma-canvas")
+            yield TrackerView(id="tracker-view")
+            yield OscilloscopeWidget(id="oscilloscope")
             yield ActionBar(id="action-bar")
             yield AgentLogWidget(id="agent-log")
         yield ShortcutsFooter(id="shortcuts-footer")
@@ -173,6 +185,9 @@ class BernsteinApp(App[None]):
         self.query_one("#coordinator-dashboard", CoordinatorDashboard).display = False
         self.query_one(_APPROVAL_PANEL_SELECTOR, ApprovalPanel).display = False
         self.query_one("#tool-observer", ToolObserverWidget).display = False
+        self.query_one("#plasma-canvas", PlasmaCanvas).display = False
+        self.query_one("#tracker-view", TrackerView).display = False
+        self.query_one("#oscilloscope", OscilloscopeWidget).display = False
 
         self._load_historical_logs()
         self.set_interval(self._poll_interval, self.action_refresh)
@@ -253,6 +268,30 @@ class BernsteinApp(App[None]):
         # Update timeline if visible
         if self.query_one("#task-timeline", TaskTimeline).display:
             self.run_worker(self._refresh_timeline())
+
+        # Retro widget data flow
+        agents_data: list[Any] = data.get("agents", [])
+
+        plasma = self.query_one("#plasma-canvas", PlasmaCanvas)
+        if plasma.display:
+            plasma.update_activity(len(agents_data))
+
+        tracker = self.query_one("#tracker-view", TrackerView)
+        if tracker.display:
+            tracker.update_agents(agents_data)
+
+        scope = self.query_one("#oscilloscope", OscilloscopeWidget)
+        if scope.display:
+            scope.update_agents(agents_data)
+            samples: dict[str, float] = {}
+            for a in agents_data:
+                if isinstance(a, dict):
+                    agent = cast("dict[str, Any]", a)
+                    sid = agent.get("session_id", "")
+                    if sid:
+                        samples[str(sid)] = float(agent.get("tokens_per_sec", 0.0))
+            if samples:
+                scope.add_samples(samples)
 
     def action_toggle_timeline(self) -> None:
         """Show/hide the task execution timeline."""
@@ -396,6 +435,26 @@ class BernsteinApp(App[None]):
         ]
         rows.sort(key=lambda row: {"coordinator": 0, "worker": 1}.get(classify_role(row.role), 2))
         self.query_one("#coordinator-dashboard", CoordinatorDashboard).refresh_data(rows)
+
+    def action_toggle_crt(self) -> None:
+        """Cycle CRT phosphor shader mode."""
+        mode = self._crt_shader.cycle_mode()
+        self.notify(f"CRT: {mode.value}", timeout=2)
+
+    def action_toggle_plasma(self) -> None:
+        """Show/hide the demoscene plasma canvas."""
+        plasma = self.query_one("#plasma-canvas", PlasmaCanvas)
+        plasma.display = not plasma.display
+
+    def action_toggle_tracker(self) -> None:
+        """Show/hide the tracker-style task monitor."""
+        tracker = self.query_one("#tracker-view", TrackerView)
+        tracker.display = not tracker.display
+
+    def action_toggle_oscilloscope(self) -> None:
+        """Show/hide the braille oscilloscope."""
+        scope = self.query_one("#oscilloscope", OscilloscopeWidget)
+        scope.display = not scope.display
 
     def action_toggle_action_bar(self) -> None:
         """Toggle the action bar for the selected task."""
