@@ -52,11 +52,11 @@ def test_session_state_roundtrip() -> None:
         cost_spent=1.25,
     )
     restored = SessionState.from_dict(original.to_dict())
-    assert restored.saved_at == 12345.0
+    assert restored.saved_at == pytest.approx(12345.0)
     assert restored.goal == "Build auth"
     assert restored.completed_task_ids == ["T-001", "T-002"]
     assert restored.pending_task_ids == ["T-003"]
-    assert restored.cost_spent == 1.25
+    assert restored.cost_spent == pytest.approx(1.25)
 
 
 def test_session_state_roundtrip_without_pending() -> None:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+import pytest
+
 from bernstein.core.rate_limit_tracker import RateLimitTracker, ThrottleState
 from bernstein.core.router import (
     ProviderConfig,
@@ -94,22 +96,22 @@ class TestThrottleManagement:
     def test_throttle_duration_base(self) -> None:
         tracker = RateLimitTracker(base_throttle_s=60.0)
         duration = tracker.throttle_provider("claude")
-        assert duration == 60.0
+        assert duration == pytest.approx(60.0)
 
     def test_throttle_exponential_backoff(self) -> None:
         tracker = RateLimitTracker(base_throttle_s=60.0, max_throttle_s=3600.0)
         d1 = tracker.throttle_provider("claude")  # trigger #1
         d2 = tracker.throttle_provider("claude")  # trigger #2
         d3 = tracker.throttle_provider("claude")  # trigger #3
-        assert d1 == 60.0
-        assert d2 == 120.0
-        assert d3 == 240.0
+        assert d1 == pytest.approx(60.0)
+        assert d2 == pytest.approx(120.0)
+        assert d3 == pytest.approx(240.0)
 
     def test_throttle_capped_at_max(self) -> None:
         tracker = RateLimitTracker(base_throttle_s=60.0, max_throttle_s=100.0)
         tracker.throttle_provider("claude")  # 60 s
         duration = tracker.throttle_provider("claude")  # 120 s → capped at 100
-        assert duration == 100.0
+        assert duration == pytest.approx(100.0)
 
     def test_throttle_updates_router_health(self) -> None:
         tracker = RateLimitTracker()

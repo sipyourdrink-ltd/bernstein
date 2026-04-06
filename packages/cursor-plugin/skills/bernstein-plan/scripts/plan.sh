@@ -9,7 +9,7 @@ TOKEN="${BERNSTEIN_API_TOKEN:-}"
 ACTION="${1:?Usage: plan.sh <list|submit|show> [plan_file_or_id]}"
 
 HEADERS=(-H "Content-Type: application/json")
-if [ -n "$TOKEN" ]; then
+if [[ -n "$TOKEN" ]]; then
   HEADERS+=(-H "Authorization: Bearer $TOKEN")
 fi
 
@@ -23,7 +23,7 @@ case "$ACTION" in
     ;;
   submit)
     FILE="${2:?Plan YAML file required}"
-    if [ ! -f "$FILE" ]; then
+    if [[ ! -f "$FILE" ]]; then
       echo "{\"error\": \"File not found: $FILE\"}"
       exit 1
     fi

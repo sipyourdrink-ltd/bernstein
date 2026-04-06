@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -85,7 +85,7 @@ async def test_batch_execution(test_client: TestClient, orchestrator_factory, in
             tasks = resp.json()
             if all(t["status"] == "done" for t in tasks):
                 break
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
         # 3. Verify
         assert spawn_count == 1

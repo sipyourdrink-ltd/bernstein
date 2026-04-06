@@ -199,7 +199,7 @@ def _is_lock_stale(lock_path: Path, ttl_seconds: int) -> bool:
         if pid is not None and not _is_process_alive(int(pid)):
             logger.debug("Lock %s belongs to dead process %d", lock_path, pid)
             return True
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (OSError, ValueError):
         # Corrupt lock file — treat as stale
         return True
 
@@ -238,7 +238,7 @@ def _lock_held_error(lock_path: Path) -> TimeoutError:
     try:
         holder_pid = json.loads(lock_path.read_text()).get("pid")
         age = time.time() - lock_path.stat().st_mtime
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (OSError, ValueError):
         holder_pid = "unknown"
         age = 0.0
     return TimeoutError(f"Lock {lock_path} is held by another live process (PID {holder_pid}, age={age:.0f}s)")

@@ -233,7 +233,7 @@ class TestClaudeAdapterBatchMaxTurns:
 
     def test_spawn_autodetects_batch_from_prompt_prefix(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """spawn() auto-detects batch mode when prompt starts with /batch."""
-        adapter = ClaudeCodeAdapter()
+        _adapter = ClaudeCodeAdapter()
         captured: dict[str, object] = {}
 
         def fake_build_command(  # type: ignore[no-untyped-def]

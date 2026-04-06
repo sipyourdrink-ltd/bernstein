@@ -165,7 +165,7 @@ def check_mcp_servers(workdir: Path) -> list[DoctorWarning]:
                 raw = json.loads(mcp_path.read_text(encoding="utf-8"))
                 _collect_mcp_servers(raw, mcp_servers)
             except Exception:
-                pass
+                pass  # Skip unreadable/malformed MCP config files
 
     if not mcp_servers:
         results.append(

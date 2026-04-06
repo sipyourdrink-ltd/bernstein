@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein_sdk.models import (
     StatusSummary,
     TaskComplexity,
@@ -106,7 +108,7 @@ class TestTaskResponse:
         assert t.status == TaskStatus.DONE
         assert t.result_summary == "done well"
         assert t.external_ref == "jira:P-1"
-        assert t.created_at == 1700000000.0
+        assert t.created_at == pytest.approx(1700000000.0)
 
 
 class TestStatusSummary:
@@ -122,9 +124,9 @@ class TestStatusSummary:
         }
         s = StatusSummary.from_api_response(data)
         assert s.total == 10
-        assert s.cost_usd == 0.75
+        assert s.cost_usd == pytest.approx(0.75)
 
     def test_defaults(self) -> None:
         s = StatusSummary.from_api_response({})
         assert s.total == 0
-        assert s.cost_usd == 0.0
+        assert s.cost_usd == pytest.approx(0.0)

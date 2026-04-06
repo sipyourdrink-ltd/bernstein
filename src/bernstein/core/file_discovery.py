@@ -17,8 +17,6 @@ from bernstein.core.git_context import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    pass
-
 logger = logging.getLogger(__name__)
 
 _file_tree_cache: dict[str, tuple[float, str]] = {}
@@ -212,7 +210,7 @@ def get_recent_project_memory(sdd_dir: Path, limit: int = 5) -> list[dict[str, A
                 }
             )
         except OSError:
-            pass
+            pass  # Skip unreadable files
 
     return items
 

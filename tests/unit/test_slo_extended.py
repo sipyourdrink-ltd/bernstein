@@ -81,7 +81,7 @@ class TestSLOPersistence:
 
         tracker.save(tmp_path)
         loaded = SLOTracker.load(tmp_path)
-        assert loaded.targets["task_success"].current == 0.85
+        assert loaded.targets["task_success"].current == pytest.approx(0.85)
         assert loaded.error_budget.total_tasks == 100
         assert loaded.error_budget.failed_tasks == 15
 
@@ -115,7 +115,7 @@ class TestSLOStatus:
 
     def test_zero_tasks_budget_fraction_is_one(self) -> None:
         eb = ErrorBudget(total_tasks=0, failed_tasks=0)
-        assert eb.budget_fraction == 1.0
+        assert eb.budget_fraction == pytest.approx(1.0)
         assert not eb.is_depleted
 
     def test_budget_exactly_at_depletion(self) -> None:

@@ -76,7 +76,7 @@ class TestFileLessonBasic:
         assert data["filed_by_agent"] == "agent_a"
         assert data["content"] == "Test content"
         assert data["tags"] == ["testing"]
-        assert data["confidence"] == 0.8
+        assert data["confidence"] == pytest.approx(0.8)
         assert data["version"] == 1
 
     def test_file_lesson_normalizes_tags(self, temp_sdd_dir: Path) -> None:
@@ -108,7 +108,7 @@ class TestFileLessonBasic:
 
         lessons_path = temp_sdd_dir / "memory" / "lessons.jsonl"
         data = json.loads(lessons_path.read_text().strip())
-        assert data["confidence"] == 1.0
+        assert data["confidence"] == pytest.approx(1.0)
 
         file_lesson(
             sdd_dir=temp_sdd_dir,
@@ -121,7 +121,7 @@ class TestFileLessonBasic:
 
         lines = lessons_path.read_text().strip().split("\n")
         data = json.loads(lines[1])
-        assert data["confidence"] == 0.0
+        assert data["confidence"] == pytest.approx(0.0)
 
 
 class TestFileLessonDeduplication:
@@ -157,7 +157,7 @@ class TestFileLessonDeduplication:
         assert len(lines) == 1
 
         data = json.loads(lines[0])
-        assert data["confidence"] == 0.95
+        assert data["confidence"] == pytest.approx(0.95)
         assert data["version"] == 2
 
     def test_different_lessons_stored_separately(self, temp_sdd_dir: Path) -> None:
@@ -291,7 +291,7 @@ class TestGetLessonsForAgent:
 
         assert len(result) == 2
         assert result[0].content == "High confidence"
-        assert result[0].confidence == 0.95
+        assert result[0].confidence == pytest.approx(0.95)
         assert result[1].content == "Low confidence"
 
     def test_get_lessons_handles_multiple_tag_overlap(self, temp_sdd_dir: Path) -> None:

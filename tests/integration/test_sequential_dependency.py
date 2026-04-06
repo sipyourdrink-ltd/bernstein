@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -117,7 +117,7 @@ time.sleep(2)
             resp = test_client.get("/tasks")
             if all(t["status"] == "done" for t in resp.json()):
                 break
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
         # 4. Verify
         resp = test_client.get("/tasks")

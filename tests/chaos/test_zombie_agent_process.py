@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import time
@@ -82,7 +83,7 @@ async def test_zombie_agent_process(test_client: TestClient, orchestrator_factor
         assert session_id in orch._idle_shutdown_ts
 
         # Wait for grace period
-        time.sleep(1.5)
+        await asyncio.sleep(1.5)
 
         # Tick 2: Grace period elapsed, should KILL process
         orch.tick()

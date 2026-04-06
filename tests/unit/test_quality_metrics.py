@@ -12,6 +12,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from bernstein.core.metric_collector import MetricsCollector
@@ -30,23 +31,23 @@ if TYPE_CHECKING:
 
 
 def test_pct_empty() -> None:
-    assert _pct([], 0.5) == 0.0
+    assert _pct([], 0.5) == pytest.approx(0.0)
 
 
 def test_pct_single() -> None:
-    assert _pct([42.0], 0.5) == 42.0
-    assert _pct([42.0], 1.0) == 42.0
+    assert _pct([42.0], 0.5) == pytest.approx(42.0)
+    assert _pct([42.0], 1.0) == pytest.approx(42.0)
 
 
 def test_pct_known_values() -> None:
     data = [10.0, 20.0, 30.0, 40.0, 50.0]
-    assert _pct(data, 0.50) == 30.0
-    assert _pct(data, 1.00) == 50.0
+    assert _pct(data, 0.50) == pytest.approx(30.0)
+    assert _pct(data, 1.00) == pytest.approx(50.0)
 
 
 def test_pct_unsorted_input() -> None:
     data = [50.0, 10.0, 30.0, 20.0, 40.0]
-    assert _pct(data, 0.50) == 30.0
+    assert _pct(data, 0.50) == pytest.approx(30.0)
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +95,7 @@ def test_compute_per_model_single_model() -> None:
     assert abs(stats["success_rate"] - 2 / 3) < 0.001
     assert abs(stats["avg_tokens"] - 150.0) < 0.001
     assert abs(stats["avg_completion_seconds"] - 20.0) < 0.001
-    assert stats["p50_completion_seconds"] == 20.0
+    assert stats["p50_completion_seconds"] == pytest.approx(20.0)
 
 
 def test_compute_per_model_multiple_models() -> None:
@@ -134,7 +135,7 @@ def test_compute_gate_stats_all_pass() -> None:
     stats = _compute_gate_stats(records)
     assert stats["lint"]["total"] == 2
     assert stats["lint"]["pass"] == 2
-    assert stats["lint"]["pass_rate"] == 1.0
+    assert stats["lint"]["pass_rate"] == pytest.approx(1.0)
 
 
 def test_compute_gate_stats_mixed() -> None:
@@ -147,7 +148,7 @@ def test_compute_gate_stats_mixed() -> None:
     ]
     stats = _compute_gate_stats(records)
     assert stats["lint"]["blocked"] == 1
-    assert stats["lint"]["pass_rate"] == 0.5
+    assert stats["lint"]["pass_rate"] == pytest.approx(0.5)
     assert stats["tests"]["pass"] == 2
     assert abs(stats["tests"]["pass_rate"] - 2 / 3) < 0.001
 
@@ -188,8 +189,8 @@ def test_get_quality_metrics_empty(tmp_path: Path) -> None:
     result = mc.get_quality_metrics()
     assert result["per_model"] == {}
     assert result["overall"]["total_tasks"] == 0
-    assert result["guardrail_pass_rate"] == 1.0
-    assert result["review_rejection_rate"] == 0.0
+    assert result["guardrail_pass_rate"] == pytest.approx(1.0)
+    assert result["review_rejection_rate"] == pytest.approx(0.0)
 
 
 def test_get_quality_metrics_per_model(tmp_path: Path) -> None:
@@ -207,7 +208,7 @@ def test_get_quality_metrics_per_model(tmp_path: Path) -> None:
 
     haiku = result["per_model"]["haiku"]
     assert haiku["total_tasks"] == 1
-    assert haiku["success_rate"] == 1.0
+    assert haiku["success_rate"] == pytest.approx(1.0)
 
 
 def test_get_quality_metrics_overall(tmp_path: Path) -> None:
@@ -238,9 +239,9 @@ def test_get_quality_metrics_completion_percentiles(tmp_path: Path) -> None:
 
     result = mc.get_quality_metrics()
     sonnet = result["per_model"]["sonnet"]
-    assert sonnet["p50_completion_seconds"] == 30.0
+    assert sonnet["p50_completion_seconds"] == pytest.approx(30.0)
     # p99 of 5 elements: idx = int(0.99 * 4) = 3 → 40.0
-    assert sonnet["p99_completion_seconds"] == 40.0
+    assert sonnet["p99_completion_seconds"] == pytest.approx(40.0)
 
 
 # ---------------------------------------------------------------------------
@@ -348,9 +349,9 @@ def test_quality_budget_forecast_endpoint(tmp_path: Path) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["task_count"] == 1
-    assert body["current_spend_usd"] == 0.4
+    assert body["current_spend_usd"] == pytest.approx(0.4)
     assert body["projected_total_cost_usd"] >= body["current_spend_usd"]
-    assert body["budget_usd"] == 1.0
+    assert body["budget_usd"] == pytest.approx(1.0)
     assert "generated_at" in body
 
 

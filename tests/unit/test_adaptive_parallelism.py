@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.core.adaptive_parallelism import (
     _LOW_ERROR_SUSTAIN_S,
     AdaptiveParallelism,
@@ -225,11 +227,11 @@ class TestSlidingWindow:
 
         # Old failures should be pruned; error rate should be 0
         now = time.time()
-        assert ap._error_rate(now) == 0.0
+        assert ap._error_rate(now) == pytest.approx(0.0)
 
     def test_empty_window_returns_zero_error_rate(self) -> None:
         ap = AdaptiveParallelism(configured_max=6)
-        assert ap._error_rate(time.time()) == 0.0
+        assert ap._error_rate(time.time()) == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +256,7 @@ class TestStatus:
         status = ap.status()
         assert status.configured_max == 8
         assert status.current_max == 5
-        assert status.error_rate == 0.0
+        assert status.error_rate == pytest.approx(0.0)
         assert status.last_adjustment_reason == "error_rate_high (25%)"
         assert status.window_size == 5
 
@@ -263,7 +265,7 @@ class TestStatus:
         mock_cpu.return_value = 42.5  # type: ignore[union-attr]
         ap = AdaptiveParallelism(configured_max=6)
         status = ap.status()
-        assert status.cpu_percent == 42.5
+        assert status.cpu_percent == pytest.approx(42.5)
 
 
 # ---------------------------------------------------------------------------

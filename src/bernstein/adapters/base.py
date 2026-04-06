@@ -279,7 +279,7 @@ class CLIAdapter(ABC):
         """Return True if this adapter supports automated auth refresh (OAuth)."""
         return False
 
-    def refresh_auth(self, workdir: Path) -> bool:
+    def refresh_auth(self, _workdir: Path) -> bool:
         """Attempt to refresh authentication credentials.
 
         Returns:
@@ -298,13 +298,13 @@ class CLIAdapter(ABC):
         """
         return False
 
-    def cancel_tool_batch(self, session_id: str, batch_id: str) -> None:
+    def cancel_tool_batch(self, _session_id: str, _batch_id: str) -> None:
         """Abort all pending tool calls in a batch.
 
         Optional: implemented by adapters that support concurrent tool execution.
 
         Args:
-            session_id: Agent session ID.
-            batch_id: The batch identifier to cancel.
+            _session_id: Agent session ID.
+            _batch_id: The batch identifier to cancel.
         """
         return

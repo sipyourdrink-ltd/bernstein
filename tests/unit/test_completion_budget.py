@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from bernstein.core.completion_budget import CompletionBudget
 
 
@@ -76,4 +78,4 @@ def test_cost_tracking(tmp_path: Path, make_task: Any) -> None:
     budget.record_attempt(task, cost_usd=0.8)
     budget.record_attempt(task, cost_usd=0.5)
 
-    assert budget.check(task).total_cost_usd == 2.5
+    assert budget.check(task).total_cost_usd == pytest.approx(2.5)

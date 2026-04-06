@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -246,6 +247,10 @@ class CostTracker:
         init=False,
         repr=False,
     )
+    # Thread-safe lock for atomic budget check-and-record (COST-001).
+    # Prevents race where two concurrent agents both pass the budget check
+    # before either's cost is recorded, causing budget overshoot.
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     # ---- recording --------------------------------------------------------
 
@@ -301,12 +306,13 @@ class CostTracker:
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
         )
-        self._usages.append(usage)
-        self._spent_usd += cost_usd
-        self._spent_by_agent[agent_id] = self._spent_by_agent.get(agent_id, 0.0) + cost_usd
-        self._spent_by_model[model] = self._spent_by_model.get(model, 0.0) + cost_usd
+        with self._lock:
+            self._usages.append(usage)
+            self._spent_usd += cost_usd
+            self._spent_by_agent[agent_id] = self._spent_by_agent.get(agent_id, 0.0) + cost_usd
+            self._spent_by_model[model] = self._spent_by_model.get(model, 0.0) + cost_usd
+            status = self.status()
 
-        status = self.status()
         self._emit_threshold_warnings(status)
         return status
 
@@ -389,6 +395,23 @@ class CostTracker:
         )
         self._cumulative_tokens[key] = (cur_input, cur_output, cur_cache_read, cur_cache_write)
         return self._spent_usd - before
+
+    def can_spawn(self) -> bool:
+        """Atomically check whether the budget permits spawning another agent.
+
+        This method acquires the internal lock so that no concurrent
+        ``record()`` can change the spend between the caller's check and
+        their subsequent spawn decision.
+
+        Returns:
+            ``True`` if budget is unlimited or spend is below the hard-stop
+            threshold.
+        """
+        with self._lock:
+            if self.budget_usd <= 0:
+                return True
+            pct = self._spent_usd / self.budget_usd
+            return pct < self.hard_stop_threshold
 
     # ---- status -----------------------------------------------------------
 
@@ -612,12 +635,16 @@ class CostTracker:
                     "total": 0.0,
                     "tokens": 0,
                     "count": 0,
+                    "input": 0,
+                    "output": 0,
                     "cache_read": 0,
                     "cache_write": 0,
                 }
             data[u.model]["total"] += u.cost_usd
             data[u.model]["tokens"] += u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens
             data[u.model]["count"] += 1
+            data[u.model]["input"] += u.input_tokens
+            data[u.model]["output"] += u.output_tokens
             data[u.model]["cache_read"] += u.cache_read_tokens
             data[u.model]["cache_write"] += u.cache_write_tokens
 
@@ -627,6 +654,8 @@ class CostTracker:
                 total_cost_usd=round(d["total"], 6),
                 total_tokens=int(d["tokens"]),
                 invocation_count=int(d["count"]),
+                input_tokens=int(d["input"]),
+                output_tokens=int(d["output"]),
                 cache_read_tokens=int(d["cache_read"]),
                 cache_write_tokens=int(d["cache_write"]),
             )

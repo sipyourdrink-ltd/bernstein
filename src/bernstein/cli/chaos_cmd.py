@@ -253,7 +253,7 @@ def chaos_status(limit: int) -> None:
             else:
                 rate_limit_file.unlink(missing_ok=True)
         except (json.JSONDecodeError, OSError):
-            pass
+            pass  # Rate-limit file missing or corrupt; skip
 
 
 @chaos_group.command("slo")
@@ -334,4 +334,4 @@ def _record_chaos_event(
         with log_path.open("a") as f:
             f.write(json.dumps(event) + "\n")
     except OSError:
-        pass
+        pass  # Best-effort logging; non-critical

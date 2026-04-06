@@ -90,7 +90,7 @@ class TestEvalBaseline:
         save_baseline(tmp_path, baseline)
         loaded = load_baseline(tmp_path)
         assert loaded is not None
-        assert loaded.score == 0.72
+        assert loaded.score == pytest.approx(0.72)
         assert loaded.components == {"smoke": 0.85, "capability": 0.60}
         assert loaded.config_hash == "abc123"
 
@@ -144,8 +144,8 @@ class TestEvalGateResult:
         )
         d = result.to_dict()
         assert d["accepted"] is True
-        assert d["score"] == 0.80
-        assert d["delta"] == 0.05
+        assert d["score"] == pytest.approx(0.80)
+        assert d["delta"] == pytest.approx(0.05)
         assert d["tier"] == "smoke"
         assert d["skipped"] is False
 
@@ -282,7 +282,7 @@ class TestEvalGate:
         # Verify baseline was updated.
         new_baseline = load_baseline(tmp_path)
         assert new_baseline is not None
-        assert new_baseline.score == 0.80
+        assert new_baseline.score == pytest.approx(0.80)
 
     def test_no_promote_on_small_improvement(self, tmp_path: Path) -> None:
         """Small improvement should not promote baseline."""
@@ -299,7 +299,7 @@ class TestEvalGate:
         # Baseline should not change.
         bl = load_baseline(tmp_path)
         assert bl is not None
-        assert bl.score == 0.70
+        assert bl.score == pytest.approx(0.70)
 
     def test_no_baseline_uses_zero(self, tmp_path: Path) -> None:
         """When no baseline exists, use 0.0 as the baseline score."""
@@ -310,7 +310,7 @@ class TestEvalGate:
         result = gate.evaluate(proposal, RiskLevel.L1_TEMPLATE)
 
         assert result.accepted is True
-        assert result.baseline_score == 0.0
+        assert result.baseline_score == pytest.approx(0.0)
         assert result.delta == pytest.approx(0.60, abs=1e-6)
 
     def test_harness_failure_rejects(self, tmp_path: Path) -> None:
@@ -366,8 +366,8 @@ class TestEvalTrajectory:
 
         record = json.loads(lines[0])
         assert record["proposal_id"] == "P-001"
-        assert record["baseline"] == 0.70
-        assert record["proposed"] == 0.75
+        assert record["baseline"] == pytest.approx(0.70)
+        assert record["proposed"] == pytest.approx(0.75)
         assert record["accepted"] is True
 
     def test_trajectory_not_written_for_skipped(self, tmp_path: Path) -> None:
@@ -407,8 +407,8 @@ class TestEvalGateFunction:
         )
 
         assert result.accepted is True
-        assert result.score == 0.75
-        assert result.baseline_score == 0.70
+        assert result.score == pytest.approx(0.75)
+        assert result.baseline_score == pytest.approx(0.70)
 
     def test_convenience_function_rejects(self, tmp_path: Path) -> None:
         """The eval_gate() function should reject below threshold."""
@@ -448,7 +448,7 @@ class TestEvalTier:
 
 class TestConstants:
     def test_regression_tolerance(self) -> None:
-        assert EVAL_REGRESSION_TOLERANCE == 0.02
+        assert EVAL_REGRESSION_TOLERANCE == pytest.approx(0.02)
 
     def test_promotion_threshold(self) -> None:
-        assert EVAL_PROMOTION_THRESHOLD == 0.05
+        assert EVAL_PROMOTION_THRESHOLD == pytest.approx(0.05)

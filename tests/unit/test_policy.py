@@ -6,6 +6,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from bernstein.core.policy import (
     Action,
     ActionType,
@@ -213,7 +215,7 @@ class TestAction:
 
         action.apply(decision)
 
-        assert decision["max_cost_per_task"] == 0.01
+        assert decision["max_cost_per_task"] == pytest.approx(0.01)
 
     def test_require_free_tier_action(self) -> None:
         action = Action(action_type=ActionType.REQUIRE_FREE_TIER, value=True)
@@ -968,7 +970,7 @@ class TestPolicyEngineIntegration:
         decision = engine.evaluate(context["task"], budget=context["budget"])
 
         assert decision.get("require_free_tier") is True
-        assert decision.get("max_cost_per_task") == 0.01
+        assert decision.get("max_cost_per_task") == pytest.approx(0.01)
 
     def test_rate_limit_avoidance_scenario(self) -> None:
         """Test provider switching when approaching rate limits."""

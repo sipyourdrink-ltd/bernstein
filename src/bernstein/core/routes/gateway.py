@@ -21,7 +21,7 @@ def _get_gateway(request: Request) -> Any | None:
 
 
 @router.get("/gateway/metrics")
-async def gateway_metrics(request: Request) -> JSONResponse:
+def gateway_metrics(request: Request) -> JSONResponse:
     """Return per-tool MCP call metrics from the active gateway session.
 
     Returns an empty ``metrics`` dict when no gateway is running.

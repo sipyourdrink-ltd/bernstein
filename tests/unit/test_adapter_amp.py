@@ -5,6 +5,7 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
+from collections.abc import Generator
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -15,10 +16,10 @@ from bernstein.core.models import ModelConfig
 
 
 @pytest.fixture(autouse=True)
-def _no_watchdog_threads() -> None:  # type: ignore[misc]
+def _no_watchdog_threads() -> Generator[None, None, None]:
     """Disable watchdog threads to avoid 'can't start new thread' on CI."""
     with patch("bernstein.adapters.base.CLIAdapter._start_timeout_watchdog", return_value=None):
-        yield  # type: ignore[misc]
+        yield
 
 
 if TYPE_CHECKING:

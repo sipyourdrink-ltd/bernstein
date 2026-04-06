@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.home import BernsteinHome, resolve_config
 
 # ---------------------------------------------------------------------------
@@ -81,7 +83,7 @@ class TestBernsteinHomeGetSet:
         home = BernsteinHome(tmp_path / ".bernstein")
         home.ensure()
         home.set("budget", 10.0)
-        assert home.get("budget") == 10.0
+        assert home.get("budget") == pytest.approx(10.0)
 
     def test_get_unknown_key_returns_none(self, tmp_path: Path) -> None:
         home = BernsteinHome(tmp_path / ".bernstein")

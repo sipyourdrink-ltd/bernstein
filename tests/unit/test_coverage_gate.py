@@ -24,7 +24,7 @@ def test_evaluate_passes_when_delta_is_non_negative(monkeypatch: pytest.MonkeyPa
     result = gate.evaluate()
 
     assert result.passed is True
-    assert result.delta_pct == 1.0
+    assert result.delta_pct == pytest.approx(1.0)
     assert result.detail == "Coverage: 80.0% -> 81.0% (delta: +1.0%)"
 
 
@@ -36,7 +36,7 @@ def test_evaluate_fails_when_delta_is_negative(monkeypatch: pytest.MonkeyPatch, 
     result = gate.evaluate()
 
     assert result.passed is False
-    assert result.delta_pct == -5.0
+    assert result.delta_pct == pytest.approx(-5.0)
 
 
 def test_load_or_measure_baseline_uses_valid_cache(tmp_path: Path) -> None:
@@ -50,7 +50,7 @@ def test_load_or_measure_baseline_uses_valid_cache(tmp_path: Path) -> None:
 
     baseline = gate._load_or_measure_baseline()
 
-    assert baseline == 77.3
+    assert baseline == pytest.approx(77.3)
 
 
 def test_load_or_measure_baseline_invalidates_cache_on_mismatch(
@@ -69,10 +69,10 @@ def test_load_or_measure_baseline_invalidates_cache_on_mismatch(
     baseline = gate._load_or_measure_baseline()
     persisted = json.loads(baseline_path.read_text(encoding="utf-8"))
 
-    assert baseline == 66.6
+    assert baseline == pytest.approx(66.6)
     assert persisted["base_ref"] == "release"
     assert persisted["coverage_command"] == "cmd-b"
-    assert persisted["baseline_pct"] == 66.6
+    assert persisted["baseline_pct"] == pytest.approx(66.6)
 
 
 def test_parse_total_pct_reads_percent_from_report(tmp_path: Path) -> None:
@@ -80,7 +80,7 @@ def test_parse_total_pct_reads_percent_from_report(tmp_path: Path) -> None:
     report = tmp_path / "coverage.json"
     report.write_text(json.dumps({"totals": {"percent_covered": 91.25}}), encoding="utf-8")
 
-    assert gate._parse_total_pct(report) == 91.25
+    assert gate._parse_total_pct(report) == pytest.approx(91.25)
 
 
 def test_parse_total_pct_raises_on_missing_percent(tmp_path: Path) -> None:

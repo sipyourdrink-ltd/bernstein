@@ -263,7 +263,7 @@ class TestParseTrace:
     def test_duration_calculated(self, sample_trace_file: Path) -> None:
         meta = parse_trace(sample_trace_file)
         assert meta is not None
-        assert meta.duration_seconds == 3600.0
+        assert meta.duration_seconds == pytest.approx(3600.0)
 
 
 # --- TestAnalyzeTraces ---
@@ -295,7 +295,7 @@ class TestAnalyzeTraces:
     def test_empty_directory(self, tmp_path: Path) -> None:
         report = analyze_traces(tmp_path / "traces")
         assert report.total_sessions == 0
-        assert report.avg_helpfulness == 0.0
+        assert report.avg_helpfulness == pytest.approx(0.0)
 
     def test_top_goals(self, traces_dir: Path) -> None:
         report = analyze_traces(traces_dir)

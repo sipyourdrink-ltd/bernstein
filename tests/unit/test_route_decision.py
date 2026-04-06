@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.route_decision import (
     RouteDecision,
     RouteDecisionTracker,
@@ -44,7 +46,7 @@ class TestRouteDecision:
 
         assert data["task_id"] == "task-123"
         assert data["reasons"] == ["reason1"]
-        assert data["timestamp"] == 1234567890.0
+        assert data["timestamp"] == pytest.approx(1234567890.0)
 
     def test_decision_from_dict(self) -> None:
         """Test deserializing decision."""

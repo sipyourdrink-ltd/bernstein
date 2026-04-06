@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.core.tool_timing import (
     ToolTimingRecord,
     ToolTimingRecorder,
@@ -64,7 +66,7 @@ class TestToolTimingRecord:
             "session_id": "test",
         }
         record = ToolTimingRecord.from_dict(d)
-        assert record.timestamp == 0.0
+        assert record.timestamp == pytest.approx(0.0)
 
 
 # --- ToolTimingRecorder ---
@@ -153,7 +155,7 @@ class TestToolTimingRecorder:
         )
 
         assert record.tool_name == "grep"
-        assert record.total_ms == 100.0
+        assert record.total_ms == pytest.approx(100.0)
         histogram = recorder.get_histogram("grep")
         self._almost_equals(histogram["p50"], 100.0)
 
@@ -213,8 +215,8 @@ class TestSlidingWindow:
         total_values = recorder.get_tool_window("search")
         assert len(total_values) == 1000
         # Should be values 101..1100 (0-indexed: i+1 = 101..1100)
-        assert total_values[0] == 101.0
-        assert total_values[-1] == 1100.0
+        assert total_values[0] == pytest.approx(101.0)
+        assert total_values[-1] == pytest.approx(1100.0)
 
     def test_window_enforced_across_all_splits(self, tmp_path: Path) -> None:
         recorder = ToolTimingRecorder(metrics_dir=tmp_path / "metrics")
@@ -244,7 +246,7 @@ class TestPersistence:
         data = json.loads(lines[0])
         assert data["tool_name"] == "search"
         assert data["session_id"] == "s1"
-        assert data["total_ms"] == 100.0
+        assert data["total_ms"] == pytest.approx(100.0)
 
     def test_load_from_jsonl_populates_windows(self, tmp_path: Path) -> None:
         metrics_dir = tmp_path / "metrics"
@@ -302,7 +304,7 @@ class TestPersistence:
         loaded = recorder.load_from_jsonl()
         # Only the second line is valid
         assert loaded == 1
-        assert recorder.get_histogram("search")["p50"] == 100.0
+        assert recorder.get_histogram("search")["p50"] == pytest.approx(100.0)
 
     def test_load_from_jsonl_handles_os_error_gracefully(self, tmp_path: Path) -> None:
         recorder = ToolTimingRecorder(metrics_dir=tmp_path / "metrics")
@@ -322,7 +324,7 @@ class TestPersistence:
             recorder.record_direct("search", "s1", 1.0, 1.0, 2.0)
 
         # In-memory data should still be recorded
-        assert recorder.get_histogram("search")["p50"] == 2.0
+        assert recorder.get_histogram("search")["p50"] == pytest.approx(2.0)
 
 
 # --- Percentile computation ---
@@ -338,20 +340,20 @@ class TestPercentiles:
 
         hist = recorder.get_histogram("search")
         # p50 of 1..100 ~= 50
-        assert hist["p50"] == 50.0
+        assert hist["p50"] == pytest.approx(50.0)
         # p90 of 1..100 ~= 90
-        assert hist["p90"] == 90.0
+        assert hist["p90"] == pytest.approx(90.0)
         # p99 of 1..100 ~= 99
-        assert hist["p99"] == 99.0
+        assert hist["p99"] == pytest.approx(99.0)
 
     def test_single_value(self, tmp_path: Path) -> None:
         recorder = ToolTimingRecorder(metrics_dir=tmp_path / "metrics")
         recorder.record_direct("grep", "s1", 0.0, 0.0, 42.0)
 
         hist = recorder.get_histogram("grep")
-        assert hist["p50"] == 42.0
-        assert hist["p90"] == 42.0
-        assert hist["p99"] == 42.0
+        assert hist["p50"] == pytest.approx(42.0)
+        assert hist["p90"] == pytest.approx(42.0)
+        assert hist["p99"] == pytest.approx(42.0)
 
     def test_two_values(self, tmp_path: Path) -> None:
         recorder = ToolTimingRecorder(metrics_dir=tmp_path / "metrics")
@@ -359,9 +361,9 @@ class TestPercentiles:
         recorder.record_direct("grep", "s2", 0.0, 0.0, 20.0)
 
         hist = recorder.get_histogram("grep")
-        assert hist["p50"] == 10.0
-        assert hist["p90"] == 10.0
-        assert hist["p99"] == 10.0
+        assert hist["p50"] == pytest.approx(10.0)
+        assert hist["p90"] == pytest.approx(10.0)
+        assert hist["p99"] == pytest.approx(10.0)
 
 
 # --- Singleton ---

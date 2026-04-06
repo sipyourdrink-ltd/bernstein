@@ -125,7 +125,7 @@ class SemanticCacheManifest:
         total_saved_calls: Alias for total_hits (used in dashboards).
     """
 
-    entries: dict[str, SemanticCacheEntry] = field(default_factory=lambda: dict[str, SemanticCacheEntry]())
+    entries: dict[str, SemanticCacheEntry] = field(default_factory=dict)
     total_hits: int = 0
     total_saved_calls: int = 0
 

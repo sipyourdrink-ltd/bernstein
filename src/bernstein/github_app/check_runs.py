@@ -191,7 +191,7 @@ class CheckRunClient:
                 check_run_id=int(data.get("id", 0)),
                 html_url=str(data.get("html_url", "")),
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
+        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
             logger.debug("gh api call failed: %s", exc)
             return None
 

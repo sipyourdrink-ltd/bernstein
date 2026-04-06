@@ -208,7 +208,7 @@ class TestCheckUsageBudget:
         budget = check_usage_budget(tmp_path)
         assert budget.daily_limit_usd is None
         assert budget.daily_limit_tokens is None
-        assert budget.current_usage_usd == 0.0
+        assert budget.current_usage_usd == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

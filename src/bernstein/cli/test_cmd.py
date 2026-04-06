@@ -62,7 +62,6 @@ async def _chaos_injector(duration_s: int):
 
         # We call the CLI commands directly for now (simplified)
         if scenario == "agent-kill":
-            # We need to bridge click command to async or just call implementation
-            pass  # Simplified for this ticket
+            pass  # TODO: bridge click command to async agent-kill implementation
         elif scenario == "rate-limit":
-            pass
+            pass  # TODO: implement rate-limit test scenario

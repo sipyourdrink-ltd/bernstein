@@ -225,7 +225,7 @@ async def test_dashboard_data_reads_context_window_fields_from_agents_snapshot(t
     assert resp.status_code == 200
     data = resp.json()
     assert data["agents"][0]["context_window_tokens"] == 200000
-    assert data["agents"][0]["context_utilization_pct"] == 85.0
+    assert data["agents"][0]["context_utilization_pct"] == pytest.approx(85.0)
     assert data["agents"][0]["context_utilization_alert"] is True
     assert any("nearing context limit" in alert["message"] for alert in data["alerts"])
 

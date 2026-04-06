@@ -70,7 +70,7 @@ class RecordEventRequest(BaseModel):
 
 
 @router.get("/status")
-async def graduation_status(request: Request) -> JSONResponse:
+def graduation_status(request: Request) -> JSONResponse:
     """Return graduation stage and metrics for all tracked sessions.
 
     Returns:
@@ -95,7 +95,7 @@ async def graduation_status(request: Request) -> JSONResponse:
 
 
 @router.get("/config/policies")
-async def get_policies(request: Request) -> JSONResponse:
+def get_policies(request: Request) -> JSONResponse:
     """Return the current graduation stage policies.
 
     Returns:
@@ -117,7 +117,7 @@ async def get_policies(request: Request) -> JSONResponse:
 
 
 @router.get("/{session_id}", responses={404: {"description": "No graduation record for session"}})
-async def session_graduation(request: Request, session_id: str) -> JSONResponse:
+def session_graduation(request: Request, session_id: str) -> JSONResponse:
     """Return graduation state for a specific session.
 
     Args:
@@ -154,7 +154,7 @@ async def session_graduation(request: Request, session_id: str) -> JSONResponse:
         409: {"description": "Already at terminal stage"},
     },
 )
-async def promote_session(
+def promote_session(
     request: Request,
     session_id: str,
     body: PromoteRequest,
@@ -202,7 +202,7 @@ async def promote_session(
 
 
 @router.post("/{session_id}/record-event", responses={422: {"description": "Invalid graduation stage"}})
-async def record_task_event(
+def record_task_event(
     request: Request,
     session_id: str,
     body: RecordEventRequest,

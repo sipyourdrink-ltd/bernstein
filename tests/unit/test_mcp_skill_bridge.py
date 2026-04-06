@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 from mcp.server.fastmcp import FastMCP
 
 from bernstein.core.mcp_skill_bridge import (
-    MCPToolInfo,
     _BUILDERS,
+    MCPToolInfo,
     build_skills_from_mcp_server,
     collect_mcp_skills,
     register_skill_builder,
 )
 from bernstein.core.skill_discovery import SkillSource
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -21,7 +22,7 @@ from bernstein.core.skill_discovery import SkillSource
 
 
 @pytest.fixture(autouse=True)
-def _reset_builders() -> None:
+def _reset_builders() -> Generator[None, None, None]:
     """Clear the global _BUILDERS registry before and after each test."""
     _BUILDERS.clear()
     yield

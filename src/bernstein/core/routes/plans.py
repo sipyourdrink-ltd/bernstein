@@ -47,7 +47,7 @@ class PlanDecisionRequest(BaseModel):
 @router.get(
     "", responses={400: {"description": "Invalid status filter"}, 503: {"description": "Plan store not initialized"}}
 )
-async def list_plans(request: Request, status: str | None = None) -> list[dict[str, Any]]:
+def list_plans(request: Request, status: str | None = None) -> list[dict[str, Any]]:
     """List all plans, optionally filtered by status.
 
     Query params:
@@ -67,7 +67,7 @@ async def list_plans(request: Request, status: str | None = None) -> list[dict[s
 @router.get(
     "/{plan_id}", responses={404: {"description": "Plan not found"}, 503: {"description": "Plan store not initialized"}}
 )
-async def get_plan(request: Request, plan_id: str) -> dict[str, Any]:
+def get_plan(request: Request, plan_id: str) -> dict[str, Any]:
     """Get a single plan by ID."""
     store = _get_plan_store(request)
     plan = store.get_plan(plan_id)
@@ -84,7 +84,7 @@ async def get_plan(request: Request, plan_id: str) -> dict[str, Any]:
         503: {"description": "Plan store not initialized"},
     },
 )
-async def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:
+def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:
     """Approve a plan: promotes all its PLANNED tasks to OPEN.
 
     This is the key operation: once approved, the orchestrator will
@@ -129,7 +129,7 @@ async def approve_plan(request: Request, plan_id: str, body: PlanDecisionRequest
         503: {"description": "Plan store not initialized"},
     },
 )
-async def reject_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:
+def reject_plan(request: Request, plan_id: str, body: PlanDecisionRequest | None = None) -> dict[str, Any]:
     """Reject a plan: cancels all its PLANNED tasks.
 
     Rejected tasks are moved to CANCELLED status so they never execute.

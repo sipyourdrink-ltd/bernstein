@@ -289,7 +289,7 @@ def bytes_per_token_for_file_type(file_path: str | Path) -> float | None:
             # Treat unknown text files as code
             return CODE_BYTES_PER_TOKEN
         except OSError:
-            pass
+            pass  # File unreadable; use default estimate
 
     return DEFAULT_BYTES_PER_TOKEN
 

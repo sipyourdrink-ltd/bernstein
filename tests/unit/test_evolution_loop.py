@@ -127,14 +127,14 @@ def test_experiment_result_to_dict() -> None:
     assert d["proposal_id"] == "P-001"
     assert d["title"] == "Test"
     assert d["risk_level"] == "config"
-    assert d["baseline_score"] == 1.0
-    assert d["candidate_score"] == 1.05
-    assert d["delta"] == 0.05
+    assert d["baseline_score"] == pytest.approx(1.0)
+    assert d["candidate_score"] == pytest.approx(1.05)
+    assert d["delta"] == pytest.approx(0.05)
     assert d["accepted"] is True
     assert d["reason"] == "Applied successfully"
-    assert d["cost_usd"] == 0.05
-    assert d["duration_seconds"] == 12.3
-    assert d["timestamp"] == 1000000.0
+    assert d["cost_usd"] == pytest.approx(0.05)
+    assert d["duration_seconds"] == pytest.approx(12.3)
+    assert d["timestamp"] == pytest.approx(1000000.0)
     # Exactly 11 keys
     assert len(d) == 11
 
@@ -441,7 +441,7 @@ def test_get_summary(tmp_path: Path) -> None:
     assert summary["acceptance_rate"] == pytest.approx(1 / 3)
     assert summary["elapsed_seconds"] > 0
     assert summary["experiments_per_hour"] > 0
-    assert summary["total_cost_usd"] == 0.05
+    assert summary["total_cost_usd"] == pytest.approx(0.05)
     assert summary["running"] is True
 
 
@@ -451,7 +451,7 @@ def test_acceptance_rate_zero_generated(tmp_path: Path) -> None:
     state_dir.mkdir()
     loop = EvolutionLoop(state_dir, repo_root=tmp_path)
 
-    assert loop.acceptance_rate == 0.0
+    assert loop.acceptance_rate == pytest.approx(0.0)
 
 
 def test_acceptance_rate(tmp_path: Path) -> None:
@@ -536,7 +536,7 @@ def test_run_baseline_no_benchmarks(tmp_path: Path) -> None:
 
     score = loop._run_baseline()
 
-    assert score == 1.0
+    assert score == pytest.approx(1.0)
 
 
 def test_generate_proposal_filters_high_risk(tmp_path: Path) -> None:
@@ -832,7 +832,7 @@ def test_run_cycle_selects_highest_confidence_opportunity(tmp_path: Path) -> Non
         loop.run_cycle()
 
     assert len(selected_opportunity) == 1
-    assert selected_opportunity[0].confidence == 0.92
+    assert selected_opportunity[0].confidence == pytest.approx(0.92)
 
 
 # ---------------------------------------------------------------------------
@@ -993,8 +993,8 @@ def test_run_cycle_partial_failure_proposal_applied_but_failed(tmp_path: Path) -
     # Despite sandbox showing improvement, application failed → not accepted
     assert result is not None
     assert result.accepted is False
-    assert result.candidate_score == 1.0  # falls back to baseline on failure
-    assert result.delta == 0.0
+    assert result.candidate_score == pytest.approx(1.0)  # falls back to baseline on failure
+    assert result.delta == pytest.approx(0.0)
 
     # Rollback called to recover
     executor_mock.rollback_upgrade.assert_called_once_with(proposal)

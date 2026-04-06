@@ -9,7 +9,7 @@ TOKEN="${BERNSTEIN_API_TOKEN:-}"
 ACTION="${1:?Usage: agents.sh <list|logs|kill> [session_id]}"
 
 HEADERS=(-H "Content-Type: application/json")
-if [ -n "$TOKEN" ]; then
+if [[ -n "$TOKEN" ]]; then
   HEADERS+=(-H "Authorization: Bearer $TOKEN")
 fi
 

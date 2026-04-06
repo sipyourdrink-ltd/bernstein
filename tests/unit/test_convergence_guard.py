@@ -44,15 +44,15 @@ class TestConvergenceGuardConfig:
         cfg = ConvergenceGuardConfig()
         assert cfg.max_pending_merges == 10
         assert cfg.max_active_agents == 8
-        assert cfg.max_error_rate == 0.5
-        assert cfg.max_spawn_rate == 12.0
+        assert cfg.max_error_rate == pytest.approx(0.5)
+        assert cfg.max_spawn_rate == pytest.approx(12.0)
         assert cfg.error_rate_window_seconds == 300
         assert cfg.spawn_rate_window_seconds == 60
 
     def test_custom_values(self) -> None:
         cfg = ConvergenceGuardConfig(max_active_agents=4, max_spawn_rate=6.0)
         assert cfg.max_active_agents == 4
-        assert cfg.max_spawn_rate == 6.0
+        assert cfg.max_spawn_rate == pytest.approx(6.0)
         # Others stay at defaults
         assert cfg.max_pending_merges == 10
 
@@ -105,14 +105,14 @@ class TestConvergenceGuardIsConverged:
         guard = ConvergenceGuard(ConvergenceGuardConfig(max_error_rate=0.3))
         status = guard.is_converged(error_rate=0.6)
         assert status.ready is False
-        assert status.error_rate == 0.6
+        assert status.error_rate == pytest.approx(0.6)
         assert any("error rate" in r.lower() for r in status.reasons)
 
     def test_rejects_high_spawn_rate(self) -> None:
         guard = ConvergenceGuard(ConvergenceGuardConfig(max_spawn_rate=5.0))
         status = guard.is_converged(spawn_rate=10.0)
         assert status.ready is False
-        assert status.spawn_rate == 10.0
+        assert status.spawn_rate == pytest.approx(10.0)
         assert any("Spawn rate" in r for r in status.reasons)
 
     def test_error_rate_at_threshold_not_rejected(self) -> None:
@@ -186,14 +186,14 @@ class TestSlidingWindows:
 
     def test_error_rate_no_data_returns_negative_one(self) -> None:
         guard = self._guard()
-        assert guard.current_error_rate() == -1.0
+        assert guard.current_error_rate() == pytest.approx(-1.0)
 
     def test_error_rate_all_success(self) -> None:
         now = time.time()
         guard = self._guard()
         for i in range(5):
             guard.record_success(now=now - i * 10)
-        assert guard.current_error_rate(now=now) == 0.0
+        assert guard.current_error_rate(now=now) == pytest.approx(0.0)
 
     def test_error_rate_half_failures(self) -> None:
         now = time.time()
@@ -222,11 +222,11 @@ class TestSlidingWindows:
         guard.record_success(now=now - 10)
         guard.record_success(now=now - 20)
         rate = guard.current_error_rate(now=now)
-        assert rate == 0.0  # old failures pruned, only successes remain
+        assert rate == pytest.approx(0.0)  # old failures pruned, only successes remain
 
     def test_spawn_rate_zero_when_no_spawns(self) -> None:
         guard = self._guard()
-        assert guard.current_spawn_rate() == 0.0
+        assert guard.current_spawn_rate() == pytest.approx(0.0)
 
     def test_reset_clears_all(self) -> None:
         now = time.time()
@@ -235,5 +235,5 @@ class TestSlidingWindows:
         guard.record_success(now=now)
         guard.record_failure(now=now)
         guard.reset()
-        assert guard.current_spawn_rate(now=now) == 0.0
-        assert guard.current_error_rate(now=now) == -1.0
+        assert guard.current_spawn_rate(now=now) == pytest.approx(0.0)
+        assert guard.current_error_rate(now=now) == pytest.approx(-1.0)

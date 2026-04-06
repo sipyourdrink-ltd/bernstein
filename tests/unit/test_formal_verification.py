@@ -11,7 +11,7 @@ Tests cover:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -36,10 +36,17 @@ if TYPE_CHECKING:
 
 @dataclass
 class _FakeTask:
+    """Minimal Task stub implementing the subset used by formal_verification."""
+
     id: str = "task-abc123"
     title: str = "Test task"
     result_summary: str | None = "Done"
     role: str = "backend"
+
+
+def _fake_task(**kwargs: Any) -> Any:
+    """Create a _FakeTask cast to Any to satisfy formal_verification signatures."""
+    return _FakeTask(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +56,7 @@ class _FakeTask:
 
 class TestBuildContext:
     def test_defaults(self) -> None:
-        task = _FakeTask()
+        task = _fake_task()
         ctx = _build_context(task)
         assert ctx["files_modified"] == 0
         assert ctx["test_passed"] is True
@@ -58,18 +65,18 @@ class TestBuildContext:
         assert ctx["title_length"] == len("Test task")
 
     def test_no_result_summary(self) -> None:
-        task = _FakeTask(result_summary=None)
+        task = _fake_task(result_summary=None)
         ctx = _build_context(task)
         assert ctx["has_result"] is False
         assert ctx["result_length"] == 0
 
     def test_files_modified_passed_through(self) -> None:
-        task = _FakeTask()
+        task = _fake_task()
         ctx = _build_context(task, files_modified=7)
         assert ctx["files_modified"] == 7
 
     def test_test_passed_false(self) -> None:
-        task = _FakeTask()
+        task = _fake_task()
         ctx = _build_context(task, test_passed=False)
         assert ctx["test_passed"] is False
 
@@ -129,7 +136,7 @@ class TestVerifyPythonEval:
 
 class TestRunFormalVerificationGatekeeping:
     def _task(self) -> _FakeTask:
-        return _FakeTask()
+        return _fake_task()
 
     def test_disabled_config_skips(self, tmp_path: Path) -> None:
         config = FormalVerificationConfig(enabled=False, properties=[])
@@ -165,7 +172,7 @@ class TestRunFormalVerificationZ3:
         )
 
     def test_all_pass(self, tmp_path: Path) -> None:
-        task = _FakeTask(result_summary="Done")
+        task = _fake_task(result_summary="Done")
         config = self._config(["result_length > 0", "has_result"])
         result = run_formal_verification(task, tmp_path, config, files_modified=1)  # type: ignore[arg-type]
         assert result.passed is True
@@ -173,7 +180,7 @@ class TestRunFormalVerificationZ3:
         assert result.properties_checked == 2
 
     def test_violation_detected(self, tmp_path: Path) -> None:
-        task = _FakeTask(result_summary="")
+        task = _fake_task(result_summary="")
         config = self._config(["result_length > 0"])
         result = run_formal_verification(task, tmp_path, config)  # type: ignore[arg-type]
         assert result.passed is False
@@ -181,7 +188,7 @@ class TestRunFormalVerificationZ3:
         assert result.violations[0].property_name == "prop_0"
 
     def test_partial_violation(self, tmp_path: Path) -> None:
-        task = _FakeTask(result_summary="x")
+        task = _fake_task(result_summary="x")
         # First property passes, second fails
         config = self._config(["result_length > 0", "files_modified > 0"])
         result = run_formal_verification(task, tmp_path, config, files_modified=0)  # type: ignore[arg-type]
@@ -191,7 +198,7 @@ class TestRunFormalVerificationZ3:
         assert result.violations[0].property_name == "prop_1"
 
     def test_block_on_violation_false_still_records(self, tmp_path: Path) -> None:
-        task = _FakeTask(result_summary="")
+        task = _fake_task(result_summary="")
         config = FormalVerificationConfig(
             enabled=True,
             properties=[FormalProperty(name="p", invariant="result_length > 0")],
@@ -213,7 +220,7 @@ class TestRunFormalVerificationLean4:
         return FormalProperty(name="lean_prop", invariant=invariant, checker="lean4")
 
     def test_lean4_pass_when_cli_succeeds(self, tmp_path: Path) -> None:
-        task = _FakeTask()
+        task = _fake_task()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop()])
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -221,7 +228,7 @@ class TestRunFormalVerificationLean4:
         assert result.passed is True
 
     def test_lean4_fail_when_cli_fails(self, tmp_path: Path) -> None:
-        task = _FakeTask()
+        task = _fake_task()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop("False")])
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error: tactic 'decide' failed")
@@ -232,7 +239,7 @@ class TestRunFormalVerificationLean4:
         assert "tactic" in result.violations[0].counterexample
 
     def test_lean4_skipped_when_cli_not_found(self, tmp_path: Path) -> None:
-        task = _FakeTask()
+        task = _fake_task()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop()])
         with patch("subprocess.run", side_effect=FileNotFoundError("lean not found")):
             result = run_formal_verification(task, tmp_path, config)  # type: ignore[arg-type]
@@ -243,7 +250,7 @@ class TestRunFormalVerificationLean4:
     def test_lean4_timeout_produces_violation(self, tmp_path: Path) -> None:
         import subprocess
 
-        task = _FakeTask()
+        task = _fake_task()
         config = FormalVerificationConfig(enabled=True, properties=[self._lean4_prop()], timeout_s=1)
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["lean"], 1)):
             result = run_formal_verification(task, tmp_path, config)  # type: ignore[arg-type]

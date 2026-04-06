@@ -19,7 +19,7 @@ from bernstein.github_app.cost_reporter import (
 
 class TestAggregatePrCost:
     def test_empty_list_returns_zero(self) -> None:
-        assert aggregate_pr_cost([]) == 0.0
+        assert aggregate_pr_cost([]) == pytest.approx(0.0)
 
     def test_sums_cost_fields(self) -> None:
         costs = [{"cost_usd": 0.001}, {"cost_usd": 0.002}, {"cost_usd": 0.003}]

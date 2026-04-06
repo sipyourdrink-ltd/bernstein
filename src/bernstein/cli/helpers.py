@@ -285,19 +285,70 @@ def is_process_alive(pid: int) -> bool:
 
 
 def is_json() -> bool:
-    """Check if the current CLI context has the JSON flag enabled."""
+    """Check if the current CLI context has the JSON flag enabled.
+
+    This returns ``True`` when either ``--json`` or ``--output json`` was
+    passed to the top-level CLI group or to the current subcommand.
+    """
     try:
         ctx = click.get_current_context(silent=True)
         if ctx and ctx.obj:
-            return ctx.obj.get("JSON", False)
+            return bool(ctx.obj.get("JSON", False))
     except Exception:
         pass
     return False
 
 
+def set_json_output(enabled: bool = True) -> None:
+    """Programmatically enable JSON output mode in the current Click context.
+
+    Args:
+        enabled: Whether to enable or disable JSON output.
+    """
+    try:
+        ctx = click.get_current_context(silent=True)
+        if ctx:
+            ctx.ensure_object(dict)
+            ctx.obj["JSON"] = enabled
+    except Exception:
+        pass
+
+
 def print_json(data: Any) -> None:
     """Print the given data as a JSON object to the console."""
     console.print_json(data=data)
+
+
+def output_option(fn: Any) -> Any:
+    """Click decorator that adds ``--output json`` as an alias for ``--json``.
+
+    When ``--output json`` is specified the flag is stored in the Click
+    context so that :func:`is_json` returns ``True`` for all downstream code.
+
+    Usage::
+
+        @click.command()
+        @output_option
+        def my_command(**kwargs: Any) -> None:
+            if is_json():
+                print_json({...})
+    """
+    import functools
+
+    @click.option(
+        "--output",
+        "output_format",
+        type=click.Choice(["json", "text"]),
+        default=None,
+        help="Output format: json for machine-readable, text for Rich (default).",
+    )
+    @functools.wraps(fn)
+    def wrapper(*args: Any, output_format: str | None = None, **kwargs: Any) -> Any:
+        if output_format == "json":
+            set_json_output(True)
+        return fn(*args, **kwargs)
+
+    return wrapper
 
 
 # ---------------------------------------------------------------------------

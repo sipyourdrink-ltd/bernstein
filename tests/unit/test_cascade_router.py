@@ -476,7 +476,7 @@ class TestGetChainReport:
         router = CascadeRouter()
         fake_id = "nonexistent"
         report = router.get_chain_report(fake_id, _task())
-        assert report.total_cost_usd == 0.0
+        assert report.total_cost_usd == pytest.approx(0.0)
         assert report.final_model == "unknown"
         assert report.succeeded is False
 
@@ -553,8 +553,8 @@ class TestLoadCascadeSavingsSummary:
     def test_returns_zeros_when_no_file(self, tmp_path: Path) -> None:
         summary = load_cascade_savings_summary(tmp_path)
         assert summary["total_chains"] == 0
-        assert summary["total_cost_usd"] == 0.0
-        assert summary["escalation_rate"] == 0.0
+        assert summary["total_cost_usd"] == pytest.approx(0.0)
+        assert summary["escalation_rate"] == pytest.approx(0.0)
 
     def test_aggregates_correctly(self, tmp_path: Path) -> None:
         router = CascadeRouter()

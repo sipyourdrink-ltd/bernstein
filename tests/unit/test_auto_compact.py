@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.auto_compact import AutoCompactConfig, AutoCompactTrigger, CircuitState
 
 # ---------------------------------------------------------------------------
@@ -188,7 +190,7 @@ class TestCounters:
 class TestAutoCompactConfigDefaults:
     def test_default_threshold_pct(self) -> None:
         config = AutoCompactConfig()
-        assert config.threshold_pct == 80.0
+        assert config.threshold_pct == pytest.approx(80.0)
 
     def test_default_max_consecutive_failures(self) -> None:
         config = AutoCompactConfig()
@@ -196,4 +198,4 @@ class TestAutoCompactConfigDefaults:
 
     def test_default_retry_delay_s(self) -> None:
         config = AutoCompactConfig()
-        assert config.retry_delay_s == 120.0
+        assert config.retry_delay_s == pytest.approx(120.0)

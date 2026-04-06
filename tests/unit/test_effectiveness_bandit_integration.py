@@ -28,6 +28,12 @@ def _write_effectiveness_records(
     history_path.parent.mkdir(parents=True, exist_ok=True)
     with history_path.open("a", encoding="utf-8") as f:
         for i, total in enumerate(totals):
+            if total >= 90:
+                grade = "A"
+            elif total >= 80:
+                grade = "B"
+            else:
+                grade = "C"
             record = {
                 "session_id": f"s-{model}-{i}",
                 "task_id": f"t-{model}-{i}",
@@ -40,7 +46,7 @@ def _write_effectiveness_records(
                 "retry_score": 100,
                 "completion_score": 100,
                 "total": total,
-                "grade": "A" if total >= 90 else ("B" if total >= 80 else "C"),
+                "grade": grade,
                 "wall_time_s": 120.0,
                 "estimated_time_s": 180.0,
                 "tokens_used": 5000,

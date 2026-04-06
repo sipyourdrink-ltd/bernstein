@@ -100,7 +100,7 @@ def undo_cmd(task_id: str | None, revert_all: bool, yes: bool) -> None:
                     },
                 )
         except Exception:
-            pass
+            pass  # Audit logging is best-effort
 
         # Post-revert safety: run tests
 

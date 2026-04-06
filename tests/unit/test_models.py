@@ -107,10 +107,10 @@ class TestRateLimit:
 class TestCostStructure:
     def test_cost_structure_defaults(self) -> None:
         cost = CostStructure()
-        assert cost.input_cost_per_1k_tokens == 0.0
-        assert cost.output_cost_per_1k_tokens == 0.0
-        assert cost.monthly_subscription == 0.0
-        assert cost.overage_cost_per_1k_tokens == 0.0
+        assert cost.input_cost_per_1k_tokens == pytest.approx(0.0)
+        assert cost.output_cost_per_1k_tokens == pytest.approx(0.0)
+        assert cost.monthly_subscription == pytest.approx(0.0)
+        assert cost.overage_cost_per_1k_tokens == pytest.approx(0.0)
 
     def test_cost_structure_with_values(self) -> None:
         cost = CostStructure(
@@ -119,10 +119,10 @@ class TestCostStructure:
             monthly_subscription=20.0,
             overage_cost_per_1k_tokens=0.005,
         )
-        assert cost.input_cost_per_1k_tokens == 0.003
-        assert cost.output_cost_per_1k_tokens == 0.015
-        assert cost.monthly_subscription == 20.0
-        assert cost.overage_cost_per_1k_tokens == 0.005
+        assert cost.input_cost_per_1k_tokens == pytest.approx(0.003)
+        assert cost.output_cost_per_1k_tokens == pytest.approx(0.015)
+        assert cost.monthly_subscription == pytest.approx(20.0)
+        assert cost.overage_cost_per_1k_tokens == pytest.approx(0.005)
 
     def test_cost_structure_is_frozen(self) -> None:
         cost = CostStructure()
@@ -131,7 +131,7 @@ class TestCostStructure:
 
     def test_cost_structure_free_tier(self) -> None:
         cost = CostStructure()
-        assert cost.monthly_subscription == 0.0
+        assert cost.monthly_subscription == pytest.approx(0.0)
 
     def test_cost_structure_enterprise_tier(self) -> None:
         cost = CostStructure(
@@ -140,7 +140,7 @@ class TestCostStructure:
             monthly_subscription=500.0,
             overage_cost_per_1k_tokens=0.0,
         )
-        assert cost.monthly_subscription == 500.0
+        assert cost.monthly_subscription == pytest.approx(500.0)
 
 
 # --- ApiTierInfo Tests ---
@@ -279,8 +279,8 @@ class TestSerialization:
         from dataclasses import asdict
 
         data = asdict(cost)
-        assert data["input_cost_per_1k_tokens"] == 0.005
-        assert data["output_cost_per_1k_tokens"] == 0.015
+        assert data["input_cost_per_1k_tokens"] == pytest.approx(0.005)
+        assert data["output_cost_per_1k_tokens"] == pytest.approx(0.015)
 
     def test_api_tier_info_dict_conversion(self) -> None:
         info = ApiTierInfo(
@@ -326,7 +326,7 @@ class TestApiTierInfoIntegration:
             cost_structure=CostStructure(monthly_subscription=500.0),
         )
         assert info.tier == ApiTier.ENTERPRISE
-        assert info.cost_structure.monthly_subscription == 500.0
+        assert info.cost_structure.monthly_subscription == pytest.approx(500.0)
 
     def test_codex_pro_tier_config(self) -> None:
         info = ApiTierInfo(

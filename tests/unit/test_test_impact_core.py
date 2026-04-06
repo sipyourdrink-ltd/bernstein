@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.test_impact import TestImpactAnalyzer as ImpactAnalyzer
 
 
@@ -32,7 +34,7 @@ def test_analyze_expands_transitive_source_dependencies(tmp_path: Path) -> None:
     analysis = analyzer.analyze(["src/demo/models.py"])
 
     assert analysis.fallback_used is False
-    assert analysis.coverage_pct == 100.0
+    assert analysis.coverage_pct == pytest.approx(100.0)
     assert analysis.affected_tests == [
         "tests/unit/test_models.py",
         "tests/unit/test_service.py",
@@ -63,7 +65,7 @@ def test_conftest_change_falls_back_to_all_tests(tmp_path: Path) -> None:
     analysis = analyzer.analyze(["tests/conftest.py"])
 
     assert analysis.fallback_used is True
-    assert analysis.coverage_pct == 100.0
+    assert analysis.coverage_pct == pytest.approx(100.0)
     assert analysis.affected_tests == [
         "tests/unit/test_one.py",
         "tests/unit/test_two.py",
@@ -96,5 +98,5 @@ def test_direct_test_file_change_is_always_selected(tmp_path: Path) -> None:
     analysis = analyzer.analyze(["tests/unit/test_core.py"])
 
     assert analysis.fallback_used is False
-    assert analysis.coverage_pct == 100.0
+    assert analysis.coverage_pct == pytest.approx(100.0)
     assert analysis.affected_tests == ["tests/unit/test_core.py"]

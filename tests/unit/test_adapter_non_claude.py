@@ -5,6 +5,7 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
+from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -25,10 +26,10 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
-def _no_watchdog_threads() -> None:  # type: ignore[misc]
+def _no_watchdog_threads() -> Generator[None, None, None]:
     """Disable watchdog threads in tests to avoid 'can't start new thread' on CI."""
     with patch("bernstein.adapters.base.CLIAdapter._start_timeout_watchdog", return_value=None):
-        yield  # type: ignore[misc]
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -628,14 +629,14 @@ class TestGenericAdapterName:
 class TestIsAlive:
     """is_alive() returns True/False based on process_alive(pid)."""
 
-    def test_true_when_process_exists(self, adapter_factory: object) -> None:
-        adapter = adapter_factory()  # type: ignore[operator]
+    def test_true_when_process_exists(self, adapter_factory: Callable[[], CLIAdapter]) -> None:
+        adapter = adapter_factory()
         with patch("bernstein.adapters.base.process_alive", return_value=True) as mock_alive:
             assert adapter.is_alive(1234) is True
         mock_alive.assert_called_once_with(1234)
 
-    def test_false_when_oserror(self, adapter_factory: object) -> None:
-        adapter = adapter_factory()  # type: ignore[operator]
+    def test_false_when_oserror(self, adapter_factory: Callable[[], CLIAdapter]) -> None:
+        adapter = adapter_factory()
         with patch("bernstein.adapters.base.process_alive", return_value=False):
             assert adapter.is_alive(9999) is False
 
@@ -658,15 +659,15 @@ class TestIsAlive:
 class TestKill:
     """kill() calls kill_process_group with SIGTERM and handles failure gracefully."""
 
-    def test_calls_killpg(self, adapter_factory: object) -> None:
-        adapter = adapter_factory()  # type: ignore[operator]
+    def test_calls_killpg(self, adapter_factory: Callable[[], CLIAdapter]) -> None:
+        adapter = adapter_factory()
         with patch("bernstein.adapters.base.kill_process_group") as mock_killpg:
             adapter.kill(555)
         # PID is used directly as PGID (start_new_session=True)
         mock_killpg.assert_called_once_with(555, signal.SIGTERM)
 
-    def test_does_not_raise_on_oserror(self, adapter_factory: object) -> None:
-        adapter = adapter_factory()  # type: ignore[operator]
+    def test_does_not_raise_on_oserror(self, adapter_factory: Callable[[], CLIAdapter]) -> None:
+        adapter = adapter_factory()
         with patch("bernstein.adapters.base.kill_process_group", return_value=False):
             adapter.kill(556)  # must not raise
 
@@ -692,9 +693,9 @@ class TestSpawnMissingBinary:
     """spawn() raises RuntimeError with a clear message when binary is missing."""
 
     def test_file_not_found_raises_runtime_error(
-        self, adapter_factory: object, popen_path: str, tmp_path: Path
+        self, adapter_factory: Callable[[], CLIAdapter], popen_path: str, tmp_path: Path
     ) -> None:
-        adapter = adapter_factory()  # type: ignore[operator]
+        adapter = adapter_factory()
         with patch(popen_path, side_effect=FileNotFoundError("No such file")):
             with pytest.raises(RuntimeError, match="not found in PATH"):
                 adapter.spawn(
@@ -705,9 +706,9 @@ class TestSpawnMissingBinary:
                 )
 
     def test_permission_error_raises_runtime_error(
-        self, adapter_factory: object, popen_path: str, tmp_path: Path
+        self, adapter_factory: Callable[[], CLIAdapter], popen_path: str, tmp_path: Path
     ) -> None:
-        adapter = adapter_factory()  # type: ignore[operator]
+        adapter = adapter_factory()
         with patch(popen_path, side_effect=PermissionError("Permission denied")):
             with pytest.raises(RuntimeError, match="[Pp]ermission"):
                 adapter.spawn(

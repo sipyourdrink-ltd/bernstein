@@ -108,7 +108,7 @@ def _get_acp_handler(request: Request) -> ACPHandler:
 
 
 @router.get("/.well-known/acp.json")
-async def acp_discovery(request: Request) -> ACPDiscoveryResponse:
+def acp_discovery(request: Request) -> ACPDiscoveryResponse:
     """ACP discovery document — editors poll this to find ACP-compatible agents."""
     handler = _get_acp_handler(request)
     doc = handler.discovery_doc()
@@ -125,7 +125,7 @@ async def acp_discovery(request: Request) -> ACPDiscoveryResponse:
 
 
 @router.get("/acp/v0/agents")
-async def list_acp_agents(request: Request) -> list[ACPAgentListEntry]:
+def list_acp_agents(request: Request) -> list[ACPAgentListEntry]:
     """List all ACP-advertised agents."""
     handler = _get_acp_handler(request)
     doc = handler.discovery_doc()
@@ -136,7 +136,7 @@ async def list_acp_agents(request: Request) -> list[ACPAgentListEntry]:
     "/acp/v0/agents/{agent_id}",
     responses={404: {"description": "ACP agent not found"}},
 )
-async def get_acp_agent(agent_id: str, request: Request) -> ACPAgentResponse:
+def get_acp_agent(agent_id: str, request: Request) -> ACPAgentResponse:
     """Get detailed metadata for a specific ACP agent."""
     if agent_id != "bernstein":
         raise HTTPException(status_code=404, detail=f"ACP agent '{agent_id}' not found")
@@ -198,7 +198,7 @@ async def create_acp_run(body: ACPRunCreateRequest, request: Request) -> ACPRunR
 
 
 @router.get("/acp/v0/runs/{run_id}", responses={404: {"description": "ACP run not found"}})
-async def get_acp_run(run_id: str, request: Request) -> ACPRunResponse:
+def get_acp_run(run_id: str, request: Request) -> ACPRunResponse:
     """Get ACP run status, syncing from the underlying Bernstein task."""
     store = _get_store(request)
     handler = _get_acp_handler(request)

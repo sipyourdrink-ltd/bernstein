@@ -215,7 +215,7 @@ def load_golden_transcripts(directory: Path) -> list[GoldenTranscript]:
             if isinstance(raw, dict) and "name" in raw and "adapter_class" in raw:
                 transcripts.append(GoldenTranscript.from_dict(raw))
         except Exception:
-            pass
+            pass  # Skip malformed YAML transcript files
 
     for path in sorted(directory.glob("*.json")) or []:
         try:
@@ -223,7 +223,7 @@ def load_golden_transcripts(directory: Path) -> list[GoldenTranscript]:
             if isinstance(raw, dict) and "name" in raw and "adapter_class" in raw:
                 transcripts.append(GoldenTranscript.from_dict(raw))
         except Exception:
-            pass
+            pass  # Skip malformed JSON transcript files
 
     return sorted(transcripts, key=lambda t: t.name)
 

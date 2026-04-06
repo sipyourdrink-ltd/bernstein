@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.session import (
     BridgeRebuildReason,
     BridgeTransportEvent,
@@ -26,8 +28,8 @@ class TestBridgeTransportEvent:
         assert d["session_id"] == "abc123"
         assert d["event_type"] == "rebuild"
         assert d["reason"] == "credential_refresh"
-        assert d["credential_expiry"] == 9999999.0
-        assert d["gap_seconds"] == 2.5
+        assert d["credential_expiry"] == pytest.approx(9999999.0)
+        assert d["gap_seconds"] == pytest.approx(2.5)
 
 
 class TestRecordAndLoadBridgeLineage:
@@ -54,7 +56,7 @@ class TestRecordAndLoadBridgeLineage:
         events = load_bridge_lineage(tmp_path)
         assert len(events) == 2
         assert events[1].reason == "timeout"
-        assert events[1].gap_seconds == 5.0
+        assert events[1].gap_seconds == pytest.approx(5.0)
 
     def test_filter_by_session_id(self, tmp_path: Path) -> None:
         record_bridge_event(tmp_path, BridgeTransportEvent(session_id="s1", event_type="connect"))
@@ -72,5 +74,5 @@ class TestRecordAndLoadBridgeLineage:
         )
         record_bridge_event(tmp_path, evt)
         events = load_bridge_lineage(tmp_path)
-        assert events[0].credential_expiry == 1234567890.0
+        assert events[0].credential_expiry == pytest.approx(1234567890.0)
         assert events[0].event_type == "credential_refresh"

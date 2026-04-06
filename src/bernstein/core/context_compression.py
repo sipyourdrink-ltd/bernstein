@@ -314,7 +314,7 @@ class BM25Ranker:
                     [documents[f] for f in self.filenames]
                 )
                 self._use_sklearn = True
-            except (ImportError, Exception):
+            except Exception:
                 logger.debug("sklearn not available, using fallback TF ranking")
 
     def rank(

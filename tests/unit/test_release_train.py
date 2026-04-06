@@ -17,7 +17,6 @@ from bernstein.core.release_train import (
     _gh_check_runs,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -260,7 +259,7 @@ def test_orchestrator_get_history_empty_when_no_file(mock_eval, orchestrator) ->
 
 
 def test_result_summary_go() -> None:
-    result_obj = pytest.importorskip("bernstein.core.release_train")
+    pytest.importorskip("bernstein.core.release_train")
     from bernstein.core.release_train import ReleaseTrainResult
 
     r = ReleaseTrainResult(

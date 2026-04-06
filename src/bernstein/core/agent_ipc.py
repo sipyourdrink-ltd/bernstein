@@ -60,7 +60,7 @@ def send_message(session_id: str, message: str) -> bool:
         pipe.flush()
         logger.debug("Sent message via stdin pipe to session %s", session_id)
         return True
-    except (BrokenPipeError, OSError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("Stdin pipe broken for session %s: %s", session_id, exc)
         unregister_stdin_pipe(session_id)
         return False

@@ -54,18 +54,18 @@ class TestVersionMetrics:
     def test_initial_state(self) -> None:
         m = VersionMetrics()
         assert m.observations == 0
-        assert m.success_rate == 0.0
-        assert m.avg_quality == 0.0
-        assert m.avg_cost == 0.0
+        assert m.success_rate == pytest.approx(0.0)
+        assert m.avg_quality == pytest.approx(0.0)
+        assert m.avg_cost == pytest.approx(0.0)
 
     def test_record_success(self) -> None:
         m = VersionMetrics()
         m.record(success=True, quality_score=0.9, cost_usd=0.05, latency_s=10.0)
         assert m.observations == 1
         assert m.successes == 1
-        assert m.success_rate == 1.0
-        assert m.avg_quality == 0.9
-        assert m.avg_cost == 0.05
+        assert m.success_rate == pytest.approx(1.0)
+        assert m.avg_quality == pytest.approx(0.9)
+        assert m.avg_cost == pytest.approx(0.05)
 
     def test_record_mixed(self) -> None:
         m = VersionMetrics()
@@ -73,7 +73,7 @@ class TestVersionMetrics:
         m.record(success=False, quality_score=0.2, cost_usd=0.06)
         assert m.observations == 2
         assert m.successes == 1
-        assert m.success_rate == 0.5
+        assert m.success_rate == pytest.approx(0.5)
         assert m.avg_quality == pytest.approx(0.5)
         assert m.avg_cost == pytest.approx(0.05)
 
@@ -83,7 +83,7 @@ class TestVersionMetrics:
         m2 = VersionMetrics.from_dict(d)
         assert m2.observations == 10
         assert m2.successes == 8
-        assert m2.total_quality_score == 7.5
+        assert m2.total_quality_score == pytest.approx(7.5)
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ class TestMetricsRecording:
         m = VersionMetrics.from_dict(meta.versions[1].get("metrics", {}))
         assert m.observations == 2
         assert m.successes == 1
-        assert m.success_rate == 0.5
+        assert m.success_rate == pytest.approx(0.5)
 
     def test_record_outcome_missing(self, registry: PromptRegistry) -> None:
         # Should not raise
@@ -242,7 +242,7 @@ class TestMetricsRecording:
         assert result is not None
         assert result["v1"]["observations"] == 5
         assert result["v2"]["observations"] == 6
-        assert result["v1"]["success_rate"] == 1.0
+        assert result["v1"]["success_rate"] == pytest.approx(1.0)
 
     def test_compare_versions_missing(self, registry: PromptRegistry) -> None:
         assert registry.compare_versions("nope", 1, 2) is None
@@ -357,7 +357,7 @@ class TestPromptMeta:
         assert meta2.active_version == 2
         assert meta2.ab_enabled
         assert meta2.ab_versions == [1, 2]
-        assert meta2.ab_traffic_split == 0.3
+        assert meta2.ab_traffic_split == pytest.approx(0.3)
 
 
 # ---------------------------------------------------------------------------

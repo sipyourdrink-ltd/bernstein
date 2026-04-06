@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from bernstein.core.hijacker import (
     EnvVarConfig,
     EnvVarTierDetector,
@@ -231,7 +233,7 @@ class TestTierHijacker:
         opportunities = hijacker.scan_for_opportunities()
 
         assert len(opportunities) >= 1
-        assert opportunities[0].confidence == 0.9
+        assert opportunities[0].confidence == pytest.approx(0.9)
 
     def test_scan_for_opportunities_sorts_by_confidence(self) -> None:
         router = _make_router()
@@ -666,4 +668,4 @@ class TestHijackerIntegration:
         assert result.success is True
         assert "mock-free-provider" in router.state.providers
         assert router.state.providers["mock-free-provider"].tier == Tier.FREE
-        assert router.state.providers["mock-free-provider"].cost_per_1k_tokens == 0.0
+        assert router.state.providers["mock-free-provider"].cost_per_1k_tokens == pytest.approx(0.0)

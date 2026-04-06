@@ -132,6 +132,8 @@ from bernstein.core.workflow import WorkflowExecutor, load_workflow
 from bernstein.evolution.governance import AdaptiveGovernor, GovernanceEntry, ProjectContext
 from bernstein.evolution.risk import RiskScorer
 
+_BERNSTEIN_YAML = "bernstein.yaml"
+
 # Preserve underscore-prefixed aliases so existing test imports keep working
 _compute_total_spent = compute_total_spent
 _total_spent_cache = total_spent_cache
@@ -341,7 +343,7 @@ class Orchestrator:
                 load_model_policy_from_yaml(model_policy_yaml, self._router)
             else:
                 # Fall back to bernstein.yaml model_policy section
-                seed_path = workdir / "bernstein.yaml"
+                seed_path = workdir / _BERNSTEIN_YAML
                 if seed_path.exists():
                     load_model_policy_from_yaml(seed_path, self._router)
             # Warn on startup if policy leaves no viable providers
@@ -448,7 +450,7 @@ class Orchestrator:
         # Deterministic replay recorder: appends events to
         # .sdd/runs/{run_id}/replay.jsonl for post-hoc debugging.
         self._recorder = RunRecorder(run_id=run_id, sdd_dir=workdir / ".sdd")
-        _seed_path = workdir / "bernstein.yaml"
+        _seed_path = workdir / _BERNSTEIN_YAML
         self._replay_metadata = SessionReplayMetadata(
             run_id=run_id,
             started_at=time.time(),
@@ -506,7 +508,7 @@ class Orchestrator:
 
         # Config hot-reload: track bernstein.yaml mtime so mutable config
         # fields (max_agents, budget_usd) are picked up without restart.
-        self._config_path: Path = workdir / "bernstein.yaml"
+        self._config_path: Path = workdir / _BERNSTEIN_YAML
         self._config_mtime: float = self._config_path.stat().st_mtime if self._config_path.exists() else 0.0
 
         # Memory leak detection: sampled every few ticks
@@ -933,12 +935,12 @@ class Orchestrator:
                 emitted = emit_roadmap_wave(self._workdir)
                 if emitted:
                     logger.info("Emitted %d roadmap ticket(s) into backlog/open", len(emitted))
-            except (OSError, json.JSONDecodeError, ValueError) as exc:
+            except (OSError, ValueError) as exc:
                 logger.warning("roadmap wave emission failed: %s", exc)
 
             try:
                 self.ingest_backlog()
-            except (OSError, json.JSONDecodeError, ValueError) as exc:
+            except (OSError, ValueError) as exc:
                 logger.warning("ingest_backlog failed: %s", exc)
 
             if self._running:
@@ -2087,7 +2089,7 @@ class Orchestrator:
             # Read internal LLM provider/model from seed config
             _mgr_provider = "openrouter_free"
             _mgr_model = "nvidia/nemotron-3-super-120b-a12b"
-            _seed_path = workdir / "bernstein.yaml"
+            _seed_path = workdir / _BERNSTEIN_YAML
             if _seed_path.exists():
                 try:
                     _seed = parse_seed(_seed_path)
@@ -2516,7 +2518,7 @@ class Orchestrator:
         )
 
         # Step 4: PLAN
-        focus_areas: list[str] = list(self._EVOLVE_FOCUS_AREAS)
+        focus_areas: list[str] = self._EVOLVE_FOCUS_AREAS
         focus_idx: int = cycle_count % len(focus_areas)
         focus: str = str(focus_areas[focus_idx])
         self._evolve_spawn_manager(
@@ -3600,7 +3602,7 @@ if __name__ == "__main__":
     try:
         # Try to load adapter from seed if available
         adapter_name = args.adapter
-        seed_path = workdir / "bernstein.yaml"
+        seed_path = workdir / _BERNSTEIN_YAML
         seed: SeedConfig | None = None
         if seed_path.exists():
             try:
@@ -3816,7 +3818,7 @@ if __name__ == "__main__":
                 merge_strategy = str(run_cfg.get("merge_strategy", "pr"))
                 auto_merge = bool(run_cfg.get("auto_merge", True))
                 workflow_mode = run_cfg.get("workflow") or None
-            except (json.JSONDecodeError, ValueError):
+            except ValueError:
                 pass
         # Env var override for workflow mode
         workflow_mode = os.environ.get("BERNSTEIN_WORKFLOW", workflow_mode or "") or None

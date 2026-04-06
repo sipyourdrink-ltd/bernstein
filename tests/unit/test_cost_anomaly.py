@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.cost_anomaly import (
     AnomalySignal,
     CostAnomalyDetector,
@@ -252,7 +254,7 @@ def test_token_ratio_explosion_detected(tmp_path: Path) -> None:
     assert len(ratio_signals) == 1
     assert ratio_signals[0].severity == "critical"
     assert ratio_signals[0].action == "kill_agent"
-    assert ratio_signals[0].details["ratio"] == 8.0
+    assert ratio_signals[0].details["ratio"] == pytest.approx(8.0)
 
 
 def test_token_ratio_below_threshold_no_signal(tmp_path: Path) -> None:
@@ -449,8 +451,8 @@ def test_baseline_save_and_load_round_trip(tmp_path: Path) -> None:
     assert "large" in baseline.per_tier
     assert baseline.per_tier["medium"].sample_count == 6
     assert baseline.per_tier["large"].sample_count == 4
-    assert baseline.per_tier["medium"].median_cost_usd == 0.10
-    assert baseline.per_tier["large"].median_cost_usd == 0.50
+    assert baseline.per_tier["medium"].median_cost_usd == pytest.approx(0.10)
+    assert baseline.per_tier["large"].median_cost_usd == pytest.approx(0.50)
     assert baseline.sample_count == 10
 
 
@@ -507,7 +509,7 @@ def test_record_signal_appends_to_anomalies_jsonl(tmp_path: Path) -> None:
     assert data["task_id"] == "task-1"
     assert data["message"] == "Test anomaly detected"
     assert data["details"] == {"key": "value"}
-    assert data["timestamp"] == 1000.0
+    assert data["timestamp"] == pytest.approx(1000.0)
 
 
 def test_multiple_signals_each_on_own_line(tmp_path: Path) -> None:
@@ -654,4 +656,4 @@ def test_zero_input_tokens_no_division_error(tmp_path: Path) -> None:
     # Should fire (6000/1 = 6000.0 > 5.0) but the key point is no crash.
     ratio_signals = [s for s in signals if s.rule == "token_ratio"]
     assert len(ratio_signals) == 1
-    assert ratio_signals[0].details["ratio"] == 6000.0
+    assert ratio_signals[0].details["ratio"] == pytest.approx(6000.0)

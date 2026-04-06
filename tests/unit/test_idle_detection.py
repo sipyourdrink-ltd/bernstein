@@ -17,7 +17,7 @@ from bernstein.core.idle_detection import (
 
 
 @pytest.fixture()
-def mock_aggregator(tmp_path: Path) -> AgentLogAggregator:
+def mock_aggregator(tmp_path: Path) -> MagicMock:
     """Create a mock log aggregator."""
     aggregator = MagicMock(spec=AgentLogAggregator)
     aggregator._workdir = tmp_path
@@ -284,7 +284,7 @@ class TestIdleDetectionResult:
 
         assert result.session_id == "test-session"
         assert result.is_idle is True
-        assert result.idle_seconds == 200.0
+        assert result.idle_seconds == pytest.approx(200.0)
         assert "log_unchanged" in result.reason
 
     def test_active_result(self) -> None:

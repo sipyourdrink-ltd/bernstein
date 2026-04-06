@@ -293,7 +293,7 @@ class SLOTracker:
             eb = data.get("error_budget", {})
             tracker.error_budget.total_tasks = int(eb.get("total_tasks", 0))
             tracker.error_budget.failed_tasks = int(eb.get("failed_tasks", 0))
-        except (json.JSONDecodeError, OSError, ValueError) as exc:
+        except (OSError, ValueError) as exc:
             logger.warning("Failed to load SLO state: %s", exc)
         return tracker
 

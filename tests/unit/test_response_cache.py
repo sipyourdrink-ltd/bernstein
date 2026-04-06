@@ -77,7 +77,7 @@ class TestResponseCacheManagerMiss:
     def test_miss_on_empty_cache(self, rcache: ResponseCacheManager) -> None:
         result, score = rcache.lookup(ResponseCacheManager.task_key("backend", "Fix bug", "desc"))
         assert result is None
-        assert score == 0.0
+        assert score == pytest.approx(0.0)
 
 
 class TestResponseCacheManagerExactHit:
@@ -304,4 +304,4 @@ class TestResponseCacheManagerDefaultThreshold:
     def test_default_threshold_is_0_95(self, tmp_path: Path) -> None:
         mgr = ResponseCacheManager(tmp_path)
         assert mgr.get_stats()["threshold"] == RESPONSE_CACHE_SIMILARITY_THRESHOLD
-        assert RESPONSE_CACHE_SIMILARITY_THRESHOLD == 0.95
+        assert RESPONSE_CACHE_SIMILARITY_THRESHOLD == pytest.approx(0.95)

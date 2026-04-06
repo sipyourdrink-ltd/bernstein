@@ -111,7 +111,7 @@ def _load_pending(filepath: Path) -> PendingApproval | None:
 
 
 @router.get("")
-async def list_approvals() -> ListApprovalsResponse:
+def list_approvals() -> ListApprovalsResponse:
     """List all pending approval requests."""
     pending_dir = _pending_dir()
     if not pending_dir.exists():
@@ -130,7 +130,7 @@ async def list_approvals() -> ListApprovalsResponse:
     "/{task_id}/approve",
     responses={400: {"description": _INVALID_TASK_ID_MSG}, 404: {"description": "No pending approval for task"}},
 )
-async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
+def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
     """Approve a pending approval request.
 
     Writes a .approved decision file so the orchestrator poll loop unblocks.
@@ -168,7 +168,7 @@ async def approve_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str,
     "/{task_id}/reject",
     responses={400: {"description": _INVALID_TASK_ID_MSG}, 404: {"description": "No pending approval for task"}},
 )
-async def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
+def reject_task(task_id: str, body: ApprovalDecisionRequest) -> dict[str, str]:
     """Reject a pending approval request.
 
     Writes a .rejected decision file so the orchestrator poll loop unblocks.

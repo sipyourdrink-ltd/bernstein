@@ -36,12 +36,12 @@ def test_checkpoint_state_roundtrip() -> None:
         git_sha="abc123def456",
     )
     restored = CheckpointState.from_dict(original.to_dict())
-    assert restored.timestamp == 12345.0
+    assert restored.timestamp == pytest.approx(12345.0)
     assert restored.completed_task_ids == ["T-1", "T-2"]
     assert restored.in_flight_task_ids == ["T-3"]
     assert restored.next_steps == ["do X", "do Y"]
     assert restored.goal == "Build auth"
-    assert restored.cost_spent == 1.25
+    assert restored.cost_spent == pytest.approx(1.25)
     assert restored.git_sha == "abc123def456"
 
 
@@ -50,19 +50,19 @@ def test_checkpoint_state_defaults() -> None:
     assert state.completed_task_ids == []
     assert state.in_flight_task_ids == []
     assert state.next_steps == []
-    assert state.cost_spent == 0.0
+    assert state.cost_spent == pytest.approx(0.0)
     assert state.git_sha == ""
 
 
 def test_checkpoint_state_from_dict_missing_optional_fields() -> None:
     data = {"timestamp": 99.0, "goal": "sparse"}
     state = CheckpointState.from_dict(data)
-    assert state.timestamp == 99.0
+    assert state.timestamp == pytest.approx(99.0)
     assert state.goal == "sparse"
     assert state.completed_task_ids == []
     assert state.in_flight_task_ids == []
     assert state.next_steps == []
-    assert state.cost_spent == 0.0
+    assert state.cost_spent == pytest.approx(0.0)
     assert state.git_sha == ""
 
 
@@ -176,7 +176,7 @@ def test_wrapup_brief_roundtrip() -> None:
         git_diff_stat="3 files changed, 42 insertions",
     )
     restored = WrapUpBrief.from_dict(original.to_dict())
-    assert restored.timestamp == 99999.0
+    assert restored.timestamp == pytest.approx(99999.0)
     assert restored.session_id == "sess-abc"
     assert restored.changes_summary == "Added X, fixed Y"
     assert restored.learnings == ["prefer async", "use dataclasses"]

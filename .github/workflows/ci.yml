@@ -170,10 +170,31 @@ jobs:
       - name: Generate coverage report (3.13 only)
         if: matrix.python-version == '3.13'
         run: |
-          uv run pytest tests/unit/ \
-            --cov=bernstein --cov-report=xml:coverage.xml \
-            -q --tb=no --no-header \
-            --timeout=120 || true
+          # Run each test file in its own process with coverage to avoid OOM.
+          # pytest --cov on 562 files in one process exceeds 7GB runner RAM.
+          uv run python -c "
+          import subprocess, sys, os
+          from pathlib import Path
+
+          os.environ['COVERAGE_FILE'] = '.coverage'
+          test_dir = Path('tests/unit')
+          files = sorted(test_dir.glob('test_*.py'))
+          failed = 0
+          for i, f in enumerate(files):
+              cmd = [
+                  sys.executable, '-m', 'coverage', 'run',
+                  '--source=src/bernstein', '--parallel-mode',
+                  '-m', 'pytest', str(f), '-x', '-q', '--tb=no', '--timeout=120',
+              ]
+              r = subprocess.run(cmd, capture_output=True, timeout=180)
+              if r.returncode != 0:
+                  failed += 1
+              if (i + 1) % 50 == 0:
+                  print(f'  coverage: {i+1}/{len(files)} files done', flush=True)
+          print(f'Coverage collected from {len(files)} files ({failed} had failures)')
+          "
+          uv run python -m coverage combine || true
+          uv run python -m coverage xml -o coverage.xml || true
           if [ ! -f coverage.xml ]; then
             echo "::warning::coverage.xml was not generated"
           fi

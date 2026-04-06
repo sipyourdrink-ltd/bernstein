@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.core.metric_collector import MetricsCollector, ProviderStatus
 
 
@@ -60,7 +62,7 @@ def test_get_metrics_summary_aggregates_tasks_agents_and_provider_stats(tmp_path
     assert summary["total_tasks"] == 1
     assert summary["successful_tasks"] == 1
     assert summary["total_agents"] == 1
-    assert summary["provider_stats"]["openai"]["total_cost_usd"] == 2.0
+    assert summary["provider_stats"]["openai"]["total_cost_usd"] == pytest.approx(2.0)
 
 
 def test_get_quality_metrics_groups_completed_tasks_by_model(tmp_path: Path) -> None:
@@ -82,6 +84,6 @@ def test_get_quality_metrics_groups_completed_tasks_by_model(tmp_path: Path) -> 
     metrics = collector.get_quality_metrics()
 
     assert metrics["overall"]["total_tasks"] == 2
-    assert metrics["per_model"]["sonnet"]["success_rate"] == 1.0
-    assert metrics["per_model"]["opus"]["success_rate"] == 0.0
-    assert metrics["review_rejection_rate"] == 0.5
+    assert metrics["per_model"]["sonnet"]["success_rate"] == pytest.approx(1.0)
+    assert metrics["per_model"]["opus"]["success_rate"] == pytest.approx(0.0)
+    assert metrics["review_rejection_rate"] == pytest.approx(0.5)

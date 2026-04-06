@@ -418,7 +418,7 @@ class MemoryFirewall:
                                 quarantined_at_iso=str(data.get("quarantined_at_iso", "")),
                             )
                         )
-                    except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                    except (KeyError, ValueError) as exc:
                         logger.debug("Skipped malformed quarantine entry at line %d: %s", lineno, exc)
         except OSError as exc:
             logger.warning("Failed to read quarantine log: %s", exc)

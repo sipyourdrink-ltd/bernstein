@@ -56,7 +56,7 @@ def get_commit_files(head_sha: str, cwd: Path | None = None) -> list[str]:
         )
         if result.returncode == 0:
             return sorted(f.strip() for f in result.stdout.splitlines() if f.strip())
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError) as exc:
         logger.debug("git diff-tree %s failed: %s", head_sha[:8], exc)
     return []
 
@@ -84,7 +84,7 @@ def get_commit_diff(head_sha: str, cwd: Path | None = None) -> str:
         )
         if result.returncode == 0:
             return result.stdout[:_DIFF_MAX_CHARS]
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError) as exc:
         logger.debug("git show %s failed: %s", head_sha[:8], exc)
     return ""
 
@@ -109,7 +109,7 @@ def get_commit_message(head_sha: str, cwd: Path | None = None) -> str:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError) as exc:
         logger.debug("git log %s failed: %s", head_sha[:8], exc)
     return ""
 

@@ -200,7 +200,7 @@ def resolve_mode(raw: str | None) -> PermissionMode:
     try:
         return PermissionMode(cleaned)
     except ValueError:
-        pass
+        pass  # Not a canonical value; try legacy mappings below
 
     # Try legacy flag mapping
     mapped = LEGACY_FLAG_TO_MODE.get(cleaned)

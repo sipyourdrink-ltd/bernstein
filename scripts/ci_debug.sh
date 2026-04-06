@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # CI Debug Framework — quick commands for diagnosing and fixing CI failures
 # Usage: source scripts/ci_debug.sh && ci_status
 
@@ -21,7 +21,7 @@ ci_errors() {
   echo "=== Errors in run $run_id ==="
   for job_name in "Lint" "Type check" "Test (Python 3.12)" "Test (Python 3.13)" "Dead code (Vulture)" "Spelling (typos)"; do
     JID=$(gh api "repos/chernistry/bernstein/actions/runs/$run_id/jobs" --jq ".jobs[] | select(.name == \"$job_name\" and .conclusion == \"failure\") | .id" 2>/dev/null)
-    if [ -n "$JID" ]; then
+    if [[ -n "$JID" ]]; then
       echo ""
       echo "--- $job_name ---"
       gh api "repos/chernistry/bernstein/actions/jobs/$JID/logs" 2>&1 | grep -E "error:|FAILED|Error" | head -5
@@ -39,7 +39,7 @@ ci_fix_lint() {
 ci_fix_pyright() {
   echo "Checking pyright..."
   local files=$(uv run pyright 2>&1 | grep "error:" | sed 's|.*/src/bernstein/||; s|:.*||' | sort -u)
-  if [ -n "$files" ]; then
+  if [[ -n "$files" ]]; then
     echo "Files with errors: $files"
     echo "Add to pyproject.toml [tool.pyright] exclude list"
   else
@@ -59,9 +59,9 @@ git_hygiene() {
 git_clean_agents() {
   echo "Cleaning agent worktrees and branches..."
   for wt in .sdd/worktrees/*/; do
-    git worktree remove "$wt" --force 2>/dev/null && echo "Removed: $(basename $wt)"
+    git worktree remove "$wt" --force 2>/dev/null && echo "Removed: $(basename "$wt")"
   done
-  git branch | grep agent/ | while read br; do git branch -D "$br" 2>/dev/null; done
+  git branch | grep agent/ | while read -r br; do git branch -D "$br" 2>/dev/null; done
   echo "Done"
 }
 
@@ -91,6 +91,7 @@ server_kill() {
   pkill -9 -f "uvicorn.*bernstein" 2>/dev/null
   pkill -9 -f "bernstein.core.server" 2>/dev/null
   sleep 1
+  local remaining
   remaining=$(pgrep -f "bernstein" 2>/dev/null | wc -l | tr -d ' ')
   echo "Killed. Remaining: $remaining"
 }

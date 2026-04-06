@@ -298,7 +298,7 @@ class AgentCache:
                     size = entry_file.stat().st_size
                     entries.append((created, size, entry_file))
                     total_size += size
-                except (OSError, json.JSONDecodeError, ValueError):
+                except (OSError, ValueError):
                     pass
 
         if total_size <= self._max_size_bytes:

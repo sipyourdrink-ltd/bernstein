@@ -342,7 +342,7 @@ class TestWorkflowPhaseEvent:
             reason="test",
             tasks_completed=("t1", "t2"),
         )
-        assert event.timestamp == 123.456
+        assert event.timestamp == pytest.approx(123.456)
         assert event.workflow_hash == "deadbeef"
         assert event.tasks_completed == ("t1", "t2")
 

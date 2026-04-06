@@ -394,7 +394,7 @@ class WorktreeManager:
         try:
             data = json.loads(pid_file.read_text(encoding="utf-8"))
             worker_pid = int(data.get("worker_pid", 0) or 0)
-        except (OSError, ValueError, json.JSONDecodeError):
+        except (OSError, ValueError):
             return False
         if worker_pid <= 0:
             return False
@@ -533,7 +533,7 @@ def is_worktree_lock_stale(repo_root: Path, session_id: str) -> bool:
     try:
         data = json.loads(lock_path.read_text(encoding="utf-8"))
         pid = int(data.get("pid", 0))
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (OSError, ValueError):
         return True
     if pid <= 0:
         return True

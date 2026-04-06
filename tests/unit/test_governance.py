@@ -96,7 +96,7 @@ def test_project_context_fields() -> None:
         consecutive_empty_cycles=0,
     )
     assert ctx.cycle_number == 5
-    assert ctx.test_pass_rate == 0.95
+    assert ctx.test_pass_rate == pytest.approx(0.95)
     assert ctx.lint_violations == 3
 
 

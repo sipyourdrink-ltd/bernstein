@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -81,7 +81,7 @@ async def test_full_lifecycle(test_client: TestClient, orchestrator_factory, int
                         marker.unlink()
 
             orch.tick()
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             # Log current task status
             resp = test_client.get(f"/tasks/{task_id}")
             status = resp.json()["status"]
@@ -95,7 +95,7 @@ async def test_full_lifecycle(test_client: TestClient, orchestrator_factory, int
         status = resp.json()["status"]
         if status != "done":
             print(f"FAILED! SDD path: {integration_sdd}")
-            time.sleep(10)
+            await asyncio.sleep(10)
         assert status == "done"
 
         # 4. Verify file was created and merged to main

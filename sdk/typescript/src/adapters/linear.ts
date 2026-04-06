@@ -16,6 +16,12 @@
 import type { TaskCreate, TaskStatus } from '../models.js';
 import { linearToBernstein, bernsteinToLinear } from '../state-map.js';
 
+/** Safely extract a string from a Record entry (avoids [object Object] from `String()`). */
+function str(obj: Record<string, unknown>, key: string, fallback = ''): string {
+  const v = obj[key];
+  return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : fallback;
+}
+
 export interface LinearIssueRef {
   identifier: string;   // e.g. "ENG-42"
   title: string;
@@ -119,16 +125,16 @@ function parseLinearIssue(
     : [];
 
   return {
-    identifier: String(data['identifier'] ?? ''),
-    title: String(data['title'] ?? ''),
-    description: String(data['description'] ?? ''),
-    stateName: String(state['name'] ?? 'Todo'),
-    stateType: String(state['type'] ?? 'unstarted'),
+    identifier: str(data, 'identifier'),
+    title: str(data, 'title'),
+    description: str(data, 'description'),
+    stateName: str(state, 'name', 'Todo'),
+    stateType: str(state, 'type', 'unstarted'),
     priority: typeof data['priority'] === 'number' ? data['priority'] : 0,
     estimate:
       typeof data['estimate'] === 'number' ? data['estimate'] : null,
-    labels: labelNodes.map((n) => String(n['name'] ?? '')),
-    teamId: String(team['id'] ?? ''),
+    labels: labelNodes.map((n) => str(n, 'name')),
+    teamId: str(team, 'id'),
     assigneeEmail:
       typeof assignee['email'] === 'string' ? assignee['email'] : null,
   };

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -117,7 +117,7 @@ async def test_plan_execution(test_client: TestClient, orchestrator_factory, int
                         marker.unlink()
 
             orch.tick()
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
             resp = test_client.get("/tasks")
             all_tasks = resp.json()

@@ -10,7 +10,6 @@ import pytest
 
 from bernstein.core.ssh_backend import SSHBackend, SSHError, SSHHostConfig, parse_ssh_config
 
-
 # ---------------------------------------------------------------------------
 # parse_ssh_config
 # ---------------------------------------------------------------------------

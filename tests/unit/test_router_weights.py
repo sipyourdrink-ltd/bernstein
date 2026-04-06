@@ -30,11 +30,11 @@ def test_routing_weight_updates() -> None:
     # Caps
     for _ in range(20):
         router.record_outcome("p1", success=True)
-    assert router.state.providers["p1"].routing_weight == 2.0
+    assert router.state.providers["p1"].routing_weight == pytest.approx(2.0)
 
     for _ in range(30):
         router.record_outcome("p1", success=False)
-    assert router.state.providers["p1"].routing_weight == 0.1
+    assert router.state.providers["p1"].routing_weight == pytest.approx(0.1)
 
 
 def test_routing_weight_impacts_score() -> None:

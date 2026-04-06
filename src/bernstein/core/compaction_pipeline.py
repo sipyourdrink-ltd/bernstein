@@ -18,8 +18,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    pass
-
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------

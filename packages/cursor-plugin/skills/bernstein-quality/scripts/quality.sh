@@ -7,7 +7,7 @@ API="${BERNSTEIN_API_URL:-http://127.0.0.1:8052}"
 TOKEN="${BERNSTEIN_API_TOKEN:-}"
 
 HEADERS=(-H "Content-Type: application/json")
-if [ -n "$TOKEN" ]; then
+if [[ -n "$TOKEN" ]]; then
   HEADERS+=(-H "Authorization: Bearer $TOKEN")
 fi
 

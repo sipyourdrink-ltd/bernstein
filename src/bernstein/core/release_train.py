@@ -180,7 +180,7 @@ def _gh_check_runs(repo: str, branch: str, timeout: int = 30) -> list[dict[str, 
             except json.JSONDecodeError:
                 continue
         return runs
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError) as exc:
         logger.debug("gh CLI unavailable for %s: %s", repo, exc)
         return []
 

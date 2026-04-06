@@ -19,7 +19,6 @@ from bernstein.core.session import (
     save_startup_gate_checkpoints,
 )
 
-
 # ---------------------------------------------------------------------------
 # StartupGateCheckpoint dataclass
 # ---------------------------------------------------------------------------

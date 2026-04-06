@@ -22,9 +22,9 @@ from bernstein.core.differential_privacy import (
 def test_dp_config_defaults() -> None:
     """Default config uses ε=1.0, δ=1e-5."""
     cfg = DPConfig()
-    assert cfg.epsilon == 1.0
+    assert cfg.epsilon == pytest.approx(1.0)
     assert cfg.delta == 1e-5
-    assert cfg.clip_min == 0.0
+    assert cfg.clip_min == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

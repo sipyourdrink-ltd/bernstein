@@ -270,7 +270,7 @@ class TestSelectProviderForTask:
         # Cost score: cheap=1.0, expensive=0.98
         # Both have free_tier_score=1.0
         assert decision.provider == "free-cheap"
-        assert decision.estimated_cost == 0.0
+        assert decision.estimated_cost == pytest.approx(0.0)
 
     def test_preferred_provider_override_is_honored(self) -> None:
         router = TierAwareRouter()
@@ -387,7 +387,7 @@ class TestCostEstimation:
 
         # Estimated tokens = max_tokens * 0.5 = 200000 * 0.5 = 100000
         # Cost = (100000 / 1000) * 0.003 = 0.3
-        assert decision.estimated_cost == 0.3
+        assert decision.estimated_cost == pytest.approx(0.3)
 
     def test_free_tier_has_zero_cost(self) -> None:
         router = TierAwareRouter()
@@ -396,7 +396,7 @@ class TestCostEstimation:
         task = _make_task()
         decision = router.select_provider_for_task(task)
 
-        assert decision.estimated_cost == 0.0
+        assert decision.estimated_cost == pytest.approx(0.0)
 
 
 # --- Batch routing ---
@@ -614,7 +614,7 @@ class TestRoutingWithMockedTierStates:
         simple_task = _make_task(complexity=Complexity.LOW)
         simple_decision = router.select_provider_for_task(simple_task)
         assert simple_decision.tier == Tier.FREE
-        assert simple_decision.estimated_cost == 0.0
+        assert simple_decision.estimated_cost == pytest.approx(0.0)
 
         # Complex task (manager) should fall back to paid if free doesn't support opus
         manager_task = _make_task(role="manager")

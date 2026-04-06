@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 class TestProgressSnapshot:
     def test_default_fields(self) -> None:
         snap = ProgressSnapshot(timestamp=1000.0)
-        assert snap.timestamp == 1000.0
+        assert snap.timestamp == pytest.approx(1000.0)
         assert snap.files_changed == 0
         assert snap.tests_passing == -1
         assert snap.errors == 0

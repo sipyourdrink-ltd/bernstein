@@ -11,7 +11,6 @@ from bernstein.core.batch_mode import (
 )
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

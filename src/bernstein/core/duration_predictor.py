@@ -342,7 +342,7 @@ class DurationPredictor:
                             timestamp=float(d.get("timestamp", 0.0)),
                         )
                     )
-                except (KeyError, ValueError, json.JSONDecodeError):
+                except (KeyError, ValueError):
                     continue
         except OSError:
             pass

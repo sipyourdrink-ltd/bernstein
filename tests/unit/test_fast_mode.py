@@ -48,7 +48,7 @@ class TestFastModeCoordinator:
 
     def test_cooldown_remaining_zero_when_in_fast_mode(self) -> None:
         coord = FastModeCoordinator()
-        assert coord.cooldown_remaining == 0.0
+        assert coord.cooldown_remaining == pytest.approx(0.0)
 
     def test_cooldown_remaining_decreases(self) -> None:
         coord = FastModeCoordinator(min_cooldown_seconds=100.0)
@@ -66,8 +66,8 @@ class TestFastModeCoordinator:
         coord.enter_cooldown(retry_after_seconds=300.0, now=1000.0, strike_count=2)
         info = coord.cooldown_info()
         assert info is not None
-        assert info["started_at"] == 1000.0
-        assert info["retry_after_seconds"] == 300.0
+        assert info["started_at"] == pytest.approx(1000.0)
+        assert info["retry_after_seconds"] == pytest.approx(300.0)
         assert info["strike_count"] == 2
 
     def test_cooldown_info_returns_none_in_fast_mode(self) -> None:
@@ -101,7 +101,7 @@ class TestFastModeCoordinator:
         """Before enter_cooldown, the coordinator should have no cooldown."""
         coord = FastModeCoordinator()
         assert not coord.cooldown_info()
-        assert coord.cooldown_remaining == 0.0
+        assert coord.cooldown_remaining == pytest.approx(0.0)
 
     def test_retry_after_defaults_to_min(self) -> None:
         coord = FastModeCoordinator(min_cooldown_seconds=45.0)
@@ -109,7 +109,7 @@ class TestFastModeCoordinator:
         # Without retry_after, should default to min_cooldown
         info = coord._cooldown
         assert info is not None
-        assert info.retry_after_seconds == 45.0 if info else True
+        assert info.retry_after_seconds == pytest.approx(45.0) if info else True
 
     def test_manual_transition_logs(self, caplog: pytest.LogCaptureFixture) -> None:
         coord = FastModeCoordinator()

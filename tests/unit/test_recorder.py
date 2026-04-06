@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.core.recorder import (
     RunRecorder,
     compute_replay_fingerprint,
@@ -24,7 +26,7 @@ def test_record_writes_event_with_elapsed_time(tmp_path: Path) -> None:
     assert payload["event"] == "task_claimed"
     assert payload["task_id"] == "T-1"
     assert payload["agent_id"] == "A-1"
-    assert payload["elapsed_s"] == 0.5
+    assert payload["elapsed_s"] == pytest.approx(0.5)
 
 
 def test_fingerprint_changes_when_new_events_are_added(tmp_path: Path) -> None:

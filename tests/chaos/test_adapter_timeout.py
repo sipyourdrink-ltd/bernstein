@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -64,7 +64,7 @@ async def test_adapter_timeout(test_client: TestClient, orchestrator_factory, in
             task = next(t for t in tasks if t["title"] == "Timeout Task")
             if task["status"] == "failed":
                 break
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
 
         # 3. Verify
         resp = test_client.get("/tasks")

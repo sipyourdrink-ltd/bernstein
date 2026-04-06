@@ -296,7 +296,7 @@ class TestCheckTokenGrowthCompaction:
 
         check_token_growth(orch)
 
-        assert sess.context_utilization_pct == 75.0
+        assert sess.context_utilization_pct == pytest.approx(75.0)
         assert sess.context_utilization_alert is False
         orch._signal_mgr.write_wakeup.assert_not_called()
 

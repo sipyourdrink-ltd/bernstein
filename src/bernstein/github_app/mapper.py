@@ -139,7 +139,12 @@ def issue_to_tasks(event: WebhookEvent) -> list[dict[str, Any]]:
     role = _role_from_labels(labels)
 
     # Estimate scope from body length
-    scope = "small" if len(body) < 200 else ("large" if len(body) > 1000 else "medium")
+    if len(body) < 200:
+        scope = "small"
+    elif len(body) > 1000:
+        scope = "large"
+    else:
+        scope = "medium"
 
     description = f"GitHub issue #{number} from {event.sender} in {event.repo_full_name}.\n\n{body[:2000]}"
 
@@ -386,7 +391,12 @@ def trigger_label_to_task(event: WebhookEvent) -> dict[str, Any] | None:
     all_labels = _extract_labels(event.payload)
     priority = _priority_from_labels(all_labels)
     role = _role_from_labels(all_labels)
-    scope = "small" if len(body) < 200 else ("large" if len(body) > 1000 else "medium")
+    if len(body) < 200:
+        scope = "small"
+    elif len(body) > 1000:
+        scope = "large"
+    else:
+        scope = "medium"
 
     description = (
         f"GitHub issue #{number} assigned to Bernstein via `{label_name}` label "

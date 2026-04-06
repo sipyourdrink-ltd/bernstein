@@ -242,7 +242,7 @@ class SubTask:
     role: str
     description: str
     estimated_minutes: float
-    depends_on: list[str] = field(default_factory=lambda: list[str]())
+    depends_on: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -834,7 +834,7 @@ def _read_run_cost(sdd_dir: Path = Path(".sdd")) -> float:
             try:
                 record = json.loads(line)
                 total += float(record.get("cost_usd", 0.0))
-            except (json.JSONDecodeError, TypeError, ValueError):
+            except (TypeError, ValueError):
                 continue
     return total
 
@@ -849,7 +849,7 @@ def _read_test_pass_rate(sdd_dir: Path = Path(".sdd")) -> float:
         passed = int(data.get("passed", 0))
         total = int(data.get("total", 1))
         return passed / total if total > 0 else 0.0
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except (TypeError, ValueError):
         return 0.0
 
 

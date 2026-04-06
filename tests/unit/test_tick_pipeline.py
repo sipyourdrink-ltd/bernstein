@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from bernstein.core.tick_pipeline import (
     complete_task,
     compute_total_spent,
@@ -77,10 +79,10 @@ def test_compute_total_spent_uses_cache_and_updates_when_file_changes(tmp_path: 
     cost_file.write_text(json.dumps({"value": 2.0, "labels": {"task_id": "T-2"}}) + "\n", encoding="utf-8")
     third = compute_total_spent(tmp_path)
 
-    assert first == 1.5
-    assert second == 1.5
+    assert first == pytest.approx(1.5)
+    assert second == pytest.approx(1.5)
     mock_parse.assert_not_called()
-    assert third == 2.0
+    assert third == pytest.approx(2.0)
 
 
 def test_compute_total_spent_removes_deleted_file_contribution(tmp_path: Path) -> None:
@@ -91,7 +93,7 @@ def test_compute_total_spent_removes_deleted_file_contribution(tmp_path: Path) -
     cost_file = metrics_dir / "cost_efficiency_2026-03-31.jsonl"
     cost_file.write_text(json.dumps({"value": 3.0, "labels": {"task_id": "T-1"}}) + "\n", encoding="utf-8")
 
-    assert compute_total_spent(tmp_path) == 3.0
+    assert compute_total_spent(tmp_path) == pytest.approx(3.0)
     cost_file.unlink()
 
-    assert compute_total_spent(tmp_path) == 0.0
+    assert compute_total_spent(tmp_path) == pytest.approx(0.0)

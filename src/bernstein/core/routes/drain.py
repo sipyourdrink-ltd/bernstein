@@ -23,7 +23,7 @@ def _count_claimed(store: TaskStore) -> int:
 
 
 @router.post("/drain")
-async def drain_start(request: Request) -> JSONResponse:
+def drain_start(request: Request) -> JSONResponse:
     """Begin draining -- stop accepting new task claims."""
     request.app.state.draining = True  # type: ignore[attr-defined]
     active = _count_claimed(_get_store(request))
@@ -31,14 +31,14 @@ async def drain_start(request: Request) -> JSONResponse:
 
 
 @router.post("/drain/cancel")
-async def drain_cancel(request: Request) -> JSONResponse:
+def drain_cancel(request: Request) -> JSONResponse:
     """Cancel drain -- resume accepting claims."""
     request.app.state.draining = False  # type: ignore[attr-defined]
     return JSONResponse({"status": "cancelled"})
 
 
 @router.get("/drain")
-async def drain_status(request: Request) -> JSONResponse:
+def drain_status(request: Request) -> JSONResponse:
     """Check drain status."""
     draining: bool = request.app.state.draining  # type: ignore[attr-defined]
     active = _count_claimed(_get_store(request))

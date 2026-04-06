@@ -6,6 +6,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from bernstein.away_summary import (
     AwaySummary,
     _collect_api_usage_since,
@@ -188,7 +190,7 @@ class TestCollectErrorRecords:
 
 class TestEstimateCostFromApiUsage:
     def test_empty_list_returns_zero(self) -> None:
-        assert _estimate_cost_from_api_usage([]) == 0.0
+        assert _estimate_cost_from_api_usage([]) == pytest.approx(0.0)
 
     def test_uses_value_field(self, tmp_path: Path) -> None:
         records = [{"value": 0.42, "labels": {}}]

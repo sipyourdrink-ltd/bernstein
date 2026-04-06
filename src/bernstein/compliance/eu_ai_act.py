@@ -23,6 +23,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_NOT_DOCUMENTED = "Not documented"
+
 
 # ---------------------------------------------------------------------------
 # Risk taxonomy
@@ -733,7 +735,7 @@ class ConformityAssessor:
                 article="Article 9",
                 requirement="Establish and maintain a risk management system throughout lifecycle",
                 status="PASS" if has_risk_mgmt else "FAIL",
-                evidence=d.metadata.get("risk_management_system", "Not documented"),
+                evidence=d.metadata.get("risk_management_system", _NOT_DOCUMENTED),
                 remediation=(
                     ""
                     if has_risk_mgmt
@@ -749,7 +751,7 @@ class ConformityAssessor:
                 article="Article 10",
                 requirement="Training/validation/test data must meet quality criteria and data governance practices",
                 status="PASS" if has_data_gov else "FAIL",
-                evidence=d.metadata.get("data_governance_practices", "Not documented"),
+                evidence=d.metadata.get("data_governance_practices", _NOT_DOCUMENTED),
                 remediation=(
                     ""
                     if has_data_gov
@@ -782,7 +784,7 @@ class ConformityAssessor:
                 article="Article 12",
                 requirement="System must enable automatic logging of events throughout operational lifetime",
                 status="PASS" if has_logging else "FAIL",
-                evidence=d.metadata.get("logging_capabilities", "Not documented"),
+                evidence=d.metadata.get("logging_capabilities", _NOT_DOCUMENTED),
                 remediation=(
                     ""
                     if has_logging
@@ -798,7 +800,7 @@ class ConformityAssessor:
                 article="Article 13",
                 requirement="System must be transparent; deployers must receive adequate information",
                 status="PASS" if has_transparency else "PARTIAL",
-                evidence=d.metadata.get("instructions_for_use", "Not documented"),
+                evidence=d.metadata.get("instructions_for_use", _NOT_DOCUMENTED),
                 remediation=(
                     ""
                     if has_transparency
@@ -814,7 +816,7 @@ class ConformityAssessor:
                 article="Article 14",
                 requirement="System must enable effective human oversight and intervention capability",
                 status="PASS" if has_oversight else "FAIL",
-                evidence=d.metadata.get("human_oversight", "Not documented"),
+                evidence=d.metadata.get("human_oversight", _NOT_DOCUMENTED),
                 remediation=(
                     ""
                     if has_oversight
@@ -830,7 +832,7 @@ class ConformityAssessor:
                 article="Article 15",
                 requirement="System must achieve appropriate accuracy, robustness, and cybersecurity",
                 status="PASS" if has_robustness else "PARTIAL",
-                evidence=d.metadata.get("robustness_testing", "Not documented"),
+                evidence=d.metadata.get("robustness_testing", _NOT_DOCUMENTED),
                 remediation=(
                     ""
                     if has_robustness
@@ -856,7 +858,7 @@ class ConformityAssessor:
                     article=article_ref,
                     requirement=trigger,
                     status="PASS" if has_disclosure else "FAIL",
-                    evidence=d.metadata.get("disclosure_mechanism", "Not documented"),
+                    evidence=d.metadata.get("disclosure_mechanism", _NOT_DOCUMENTED),
                     remediation=("" if has_disclosure else f"Implement disclosure mechanism for: {trigger}"),
                 )
             )

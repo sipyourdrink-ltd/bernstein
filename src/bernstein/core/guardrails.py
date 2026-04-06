@@ -165,20 +165,75 @@ class GuardrailsConfig:
 # ---------------------------------------------------------------------------
 
 _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # AWS
     ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("aws_secret_key", re.compile(r"(?i)aws[_\s]*secret[_\s]*access[_\s]*key\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{40}")),
+    ("aws_session_token", re.compile(r"(?i)aws[_\s]*session[_\s]*token\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{100,}")),
+    # GCP
+    ("gcp_service_account", re.compile(r'"type"\s*:\s*"service_account"')),
+    ("gcp_api_key", re.compile(r"AIza[0-9A-Za-z_-]{35}")),
+    ("gcp_oauth_token", re.compile(r"ya29\.[0-9A-Za-z_-]{50,}")),
+    # GitHub
     ("github_token", re.compile(r"ghp_[a-zA-Z0-9]{36}")),
     ("github_pat", re.compile(r"github_pat_[a-zA-Z0-9_]{82}")),
+    ("github_oauth", re.compile(r"gho_[a-zA-Z0-9]{36}")),
+    ("github_app_token", re.compile(r"(?:ghs|ghu)_[a-zA-Z0-9]{36}")),
+    ("github_fine_grained", re.compile(r"github_pat_[a-zA-Z0-9_]{22,}")),
+    # GitLab
+    ("gitlab_pat", re.compile(r"glpat-[a-zA-Z0-9_-]{20,}")),
+    ("gitlab_runner", re.compile(r"GR1348941[a-zA-Z0-9_-]{20,}")),
+    # Slack
+    ("slack_bot_token", re.compile(r"xoxb-[0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{24,}")),
+    ("slack_user_token", re.compile(r"xoxp-[0-9]{10,}-[0-9]{10,}-[0-9]{10,}-[a-f0-9]{32}")),
+    ("slack_webhook", re.compile(r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+")),
+    ("slack_app_token", re.compile(r"xapp-[0-9]+-[A-Z0-9]+-[0-9]+-[a-f0-9]+")),
+    # Database URLs
+    (
+        "database_url",
+        re.compile(
+            r"(?i)(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql)"
+            r"://[^\s'\"]{8,}"
+        ),
+    ),
+    # Private keys and certificates
     (
         "private_key",
         re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"),
     ),
+    ("pgp_private", re.compile(r"-----BEGIN PGP PRIVATE KEY BLOCK-----")),
+    # JWT tokens (embedded)
     (
         "jwt_token",
         re.compile(r"eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}"),
     ),
+    # Azure
+    ("azure_storage_key", re.compile(r"(?i)AccountKey=[A-Za-z0-9+/=]{44,}")),
+    ("azure_connection_string", re.compile(r"(?i)DefaultEndpointsProtocol=https?;.*AccountKey=")),
+    # Stripe
+    ("stripe_live_key", re.compile(r"sk_live_[a-zA-Z0-9]{24,}")),
+    ("stripe_restricted", re.compile(r"rk_live_[a-zA-Z0-9]{24,}")),
+    # Twilio
+    ("twilio_api_key", re.compile(r"SK[a-f0-9]{32}")),
+    # SendGrid
+    ("sendgrid_api_key", re.compile(r"SG\.[a-zA-Z0-9_-]{22,}\.[a-zA-Z0-9_-]{43,}")),
+    # Npm
+    ("npm_token", re.compile(r"npm_[a-zA-Z0-9]{36}")),
+    # PyPI
+    ("pypi_token", re.compile(r"pypi-[a-zA-Z0-9_-]{50,}")),
+    # Docker Hub
+    ("dockerhub_pat", re.compile(r"dckr_pat_[a-zA-Z0-9_-]{20,}")),
+    # Heroku
+    ("heroku_api_key", re.compile(r"(?i)heroku[_\s]*api[_\s]*key\s*[=:]\s*['\"]?[a-f0-9-]{36}")),
+    # Mailgun
+    ("mailgun_api_key", re.compile(r"key-[a-f0-9]{32}")),
+    # Generic patterns (lowest priority — more prone to false positives)
     (
         "generic_secret",
         re.compile(r"(?i)(?:password|passwd|secret|token|api_key)\s*=\s*['\"][^'\"]{8,}['\"]"),
+    ),
+    (
+        "generic_bearer",
+        re.compile(r"(?i)(?:authorization|bearer)\s*[=:]\s*['\"]?(?:Bearer\s+)?[a-zA-Z0-9_-]{20,}['\"]?"),
     ),
 ]
 

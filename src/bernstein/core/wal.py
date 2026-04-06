@@ -101,7 +101,7 @@ class WALWriter:
         try:
             data = json.loads(non_empty[-1])
             return int(data["seq"]), str(data["entry_hash"])
-        except (json.JSONDecodeError, KeyError, ValueError):
+        except (KeyError, ValueError):
             logger.warning("WAL tail unreadable at %s; chain will continue from truncation point", self._path)
             return len(non_empty) - 1, GENESIS_HASH
 

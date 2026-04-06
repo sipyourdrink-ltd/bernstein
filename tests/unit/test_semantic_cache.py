@@ -29,7 +29,7 @@ class TestCosine:
     def test_orthogonal_vectors(self) -> None:
         v1 = {"a": 1.0}
         v2 = {"b": 1.0}
-        assert _cosine(v1, v2) == 0.0
+        assert _cosine(v1, v2) == pytest.approx(0.0)
 
     def test_partial_overlap(self) -> None:
         v1 = {"a": 0.5, "b": 0.5}
@@ -38,9 +38,9 @@ class TestCosine:
         assert 0.0 < score < 1.0
 
     def test_empty_vectors(self) -> None:
-        assert _cosine({}, {"a": 1.0}) == 0.0
-        assert _cosine({"a": 1.0}, {}) == 0.0
-        assert _cosine({}, {}) == 0.0
+        assert _cosine({}, {"a": 1.0}) == pytest.approx(0.0)
+        assert _cosine({"a": 1.0}, {}) == pytest.approx(0.0)
+        assert _cosine({}, {}) == pytest.approx(0.0)
 
     def test_symmetry(self) -> None:
         v1 = {"add": 0.3, "tests": 0.4, "for": 0.3}
@@ -73,7 +73,7 @@ class TestSemanticCacheManager:
     def test_miss_on_empty_cache(self, cache: SemanticCacheManager) -> None:
         response, score = cache.lookup("add unit tests for auth", model="gpt-4")
         assert response is None
-        assert score == 0.0
+        assert score == pytest.approx(0.0)
 
     def test_exact_hit_after_store(self, cache: SemanticCacheManager) -> None:
         cache.store("add unit tests for auth", "response A", model="gpt-4")

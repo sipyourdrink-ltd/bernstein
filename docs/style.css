@@ -1325,3 +1325,67 @@ button:focus:not(:focus-visible) {
     color: #666;
   }
 }
+
+/* ================================================================
+   FAQ / "People also ask" sections
+   ================================================================ */
+.faq-section h2 {
+  font-size: var(--text-xl);
+  margin-bottom: var(--space-6);
+}
+
+.faq-section details {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-3);
+  background: var(--bg-card);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.faq-section details[open] {
+  border-color: var(--border-strong);
+}
+
+.faq-section summary {
+  padding: var(--space-4) var(--space-5);
+  font-weight: 500;
+  font-size: var(--text-base);
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.faq-section summary::before {
+  content: "+";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.faq-section details[open] summary::before {
+  content: "\2212";
+}
+
+.faq-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.faq-section details p {
+  padding: 0 var(--space-5) var(--space-5);
+  color: var(--text-2);
+  font-size: var(--text-base);
+  line-height: var(--leading);
+  max-width: none;
+}

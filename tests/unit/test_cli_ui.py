@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.cli.ui import AgentInfo, AgentStatusTable
 
 # --- TestAgentInfo ---
@@ -23,25 +25,25 @@ class TestAgentInfo:
         info = AgentInfo.from_dict(data)
         assert info.tokens_used == 50_000
         assert info.token_budget == 200_000
-        assert info.context_utilization_pct == 45.5
+        assert info.context_utilization_pct == pytest.approx(45.5)
 
     def test_token_budget_pct_computed(self) -> None:
         info = AgentInfo(tokens_used=50_000, token_budget=200_000)
-        assert info.token_budget_pct == 25.0
+        assert info.token_budget_pct == pytest.approx(25.0)
 
     def test_token_budget_pct_zero_when_no_budget(self) -> None:
         info = AgentInfo(tokens_used=50_000, token_budget=0)
-        assert info.token_budget_pct == 0.0
+        assert info.token_budget_pct == pytest.approx(0.0)
 
     def test_token_budget_pct_capped_at_100(self) -> None:
         info = AgentInfo(tokens_used=500_000, token_budget=200_000)
-        assert info.token_budget_pct == 100.0
+        assert info.token_budget_pct == pytest.approx(100.0)
 
     def test_defaults_are_zero(self) -> None:
         info = AgentInfo()
         assert info.tokens_used == 0
         assert info.token_budget == 0
-        assert info.context_utilization_pct == 0.0
+        assert info.context_utilization_pct == pytest.approx(0.0)
 
 
 # --- TestAgentStatusTableTokenDisplay ---

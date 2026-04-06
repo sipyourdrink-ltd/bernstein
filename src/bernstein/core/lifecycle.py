@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import time
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core.models import AbortReason, AgentSession, LifecycleEvent, Task, TaskStatus, TransitionReason
@@ -22,6 +23,48 @@ if TYPE_CHECKING:
     from bernstein.core.audit import AuditLog
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Idempotency token tracking (TASK-001)
+# ---------------------------------------------------------------------------
+
+# Bounded LRU set of recently seen transition IDs.  Prevents replay of
+# duplicate requests while keeping memory usage predictable.
+_SEEN_TRANSITION_IDS_MAX: int = 10_000
+
+
+class _LRUSet:
+    """Bounded set with LRU eviction, backed by an OrderedDict."""
+
+    def __init__(self, maxsize: int) -> None:
+        self._data: OrderedDict[str, None] = OrderedDict()
+        self._maxsize = maxsize
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._data
+
+    def add(self, key: str) -> None:
+        if key in self._data:
+            self._data.move_to_end(key)
+            return
+        self._data[key] = None
+        if len(self._data) > self._maxsize:
+            self._data.popitem(last=False)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+
+_seen_transition_ids = _LRUSet(_SEEN_TRANSITION_IDS_MAX)
+
+
+class DuplicateTransitionError(Exception):
+    """Raised when a transition_id has already been applied."""
+
+    def __init__(self, transition_id: str) -> None:
+        self.transition_id = transition_id
+        super().__init__(f"Duplicate transition_id: {transition_id!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +178,7 @@ TASK_TRANSITIONS: dict[tuple[TaskStatus, TaskStatus], Callable[[Task], bool]] = 
     (TaskStatus.BLOCKED, TaskStatus.OPEN): _always,
     (TaskStatus.BLOCKED, TaskStatus.CANCELLED): _always,
     (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.DONE): _always,
+    (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.BLOCKED): _always,  # subtask timeout escalation
     (TaskStatus.WAITING_FOR_SUBTASKS, TaskStatus.CANCELLED): _always,
     # Retry from failed
     (TaskStatus.FAILED, TaskStatus.OPEN): _always,
@@ -204,6 +248,7 @@ def transition_task(
     actor: str = "",
     reason: str = "",
     transition_reason: TransitionReason | None = None,
+    transition_id: str | None = None,
 ) -> LifecycleEvent:
     """Validate and apply a task status transition.
 
@@ -215,13 +260,23 @@ def transition_task(
         new_status: Target status.
         actor: Who triggered this (e.g. "task_store", "plan_approval").
         reason: Human-readable explanation.
+        transition_id: Optional UUID for idempotency.  If a transition with the
+            same ID has already been applied, ``DuplicateTransitionError`` is
+            raised and the task is left unchanged.
 
     Returns:
         The emitted LifecycleEvent.
 
     Raises:
         IllegalTransitionError: If the transition is not allowed.
+        DuplicateTransitionError: If *transition_id* was already applied.
     """
+    # Idempotency check (TASK-001)
+    if transition_id is not None:
+        if transition_id in _seen_transition_ids:
+            raise DuplicateTransitionError(transition_id)
+        _seen_transition_ids.add(transition_id)
+
     old_status = task.status
     key = (old_status, new_status)
 
@@ -293,6 +348,7 @@ def transition_agent(
     abort_reason: AbortReason | None = None,
     abort_detail: str = "",
     finish_reason: str = "",
+    transition_id: str | None = None,
 ) -> LifecycleEvent:
     """Validate and apply an agent session status transition.
 
@@ -301,13 +357,23 @@ def transition_agent(
         new_status: Target status.
         actor: Who triggered this.
         reason: Human-readable explanation.
+        transition_id: Optional UUID for idempotency.  If a transition with the
+            same ID has already been applied, ``DuplicateTransitionError`` is
+            raised and the agent is left unchanged.
 
     Returns:
         The emitted LifecycleEvent.
 
     Raises:
         IllegalTransitionError: If the transition is not allowed.
+        DuplicateTransitionError: If *transition_id* was already applied.
     """
+    # Idempotency check (TASK-001)
+    if transition_id is not None:
+        if transition_id in _seen_transition_ids:
+            raise DuplicateTransitionError(transition_id)
+        _seen_transition_ids.add(transition_id)
+
     old_status: AgentStatus = agent.status
     key = (old_status, new_status)
 

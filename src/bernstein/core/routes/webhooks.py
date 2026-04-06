@@ -57,7 +57,7 @@ def _verify_generic_webhook_secret(request: Request, body: bytes) -> JSONRespons
 
 
 @router.get("/alerts")
-async def get_alerts(request: Request) -> JSONResponse:
+def get_alerts(request: Request) -> JSONResponse:
     """Return current dashboard alerts as JSON.
 
     Builds alerts from the live task/agent state — failed tasks, blocked

@@ -15,7 +15,6 @@ from bernstein.core.profiler import (
     resolve_profile_output_dir,
 )
 
-
 # ---------------------------------------------------------------------------
 # ProfilerSession (context-manager API)
 # ---------------------------------------------------------------------------

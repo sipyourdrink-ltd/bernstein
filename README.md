@@ -149,6 +149,11 @@ PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and code style.
 
 If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry) &middot; [Open Collective](https://opencollective.com/bernstein)
 
+## Wall of Fame
+
+> "lol, good luck, keep vibecoding shit that you have no idea about xD"
+> — [PeaceFirePL](https://www.reddit.com/r/coolgithubprojects/comments/1sc7pxn/comment/oel89qf/), Reddit
+
 ## License
 
 [Apache License 2.0](LICENSE)

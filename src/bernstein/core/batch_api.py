@@ -190,7 +190,7 @@ class BatchJobStore:
         for path in sorted(self._dir.glob("*.json")):
             try:
                 job = BatchJobRecord.from_dict(json.loads(path.read_text(encoding="utf-8")))
-            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            except (OSError, KeyError, TypeError, ValueError):
                 logger.warning("Skipping malformed batch job record: %s", path)
                 continue
             if job.status in {BatchJobStatus.SUBMITTED, BatchJobStatus.PROCESSING}:

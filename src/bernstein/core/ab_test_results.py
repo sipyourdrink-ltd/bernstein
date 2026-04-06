@@ -203,7 +203,7 @@ class ABTestStore:
                     continue
                 try:
                     records.append(ABTestRecord.from_dict(json.loads(line)))
-                except (json.JSONDecodeError, KeyError, ValueError) as exc:
+                except (KeyError, ValueError) as exc:
                     logger.debug("ABTestStore: skipping malformed line: %s", exc)
         except OSError as exc:
             logger.warning("ABTestStore: failed to read results: %s", exc)

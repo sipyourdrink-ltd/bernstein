@@ -132,7 +132,7 @@ def _build_live_splash_context(seed_path: Path | None, seed_cfg: Any) -> dict[st
 
         version = get_version("bernstein")
     except Exception:
-        pass
+        pass  # Version metadata unavailable
 
     agents: list[dict[str, object]] = []
     try:
@@ -144,7 +144,7 @@ def _build_live_splash_context(seed_path: Path | None, seed_cfg: Any) -> dict[st
             for agent in discovery.agents
         ]
     except Exception:
-        pass
+        pass  # Agent discovery unavailable
 
     task_count = 0
     try:
@@ -152,7 +152,7 @@ def _build_live_splash_context(seed_path: Path | None, seed_cfg: Any) -> dict[st
         if open_dir.exists():
             task_count = sum(1 for file in open_dir.iterdir() if file.suffix in (".yaml", ".yml", ".md"))
     except Exception:
-        pass
+        pass  # Backlog directory not accessible
 
     goal_preview = str(getattr(seed_cfg, "goal", "") or "")[:80]
     budget = float(getattr(seed_cfg, "budget_usd", 0.0) or 0.0)
@@ -706,9 +706,12 @@ def trace_cmd(task_id: str, as_json: bool, traces_dir: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+_REPLAY_JSONL = "replay.jsonl"
+
+
 def _should_use_run_replay(run_id: str, runs_dir: Path) -> bool:
     """Return whether replay should use the legacy run-event mode."""
-    return run_id in {"list", "latest"} or (runs_dir / run_id / "replay.jsonl").exists()
+    return run_id in {"list", "latest"} or (runs_dir / run_id / _REPLAY_JSONL).exists()
 
 
 def _wait_for_replay_completion(
@@ -824,7 +827,7 @@ def replay_cmd(
             console.print("[dim]No runs recorded yet.[/dim]")
             return
         run_dirs = sorted(
-            (d for d in runs_dir.iterdir() if d.is_dir() and (d / "replay.jsonl").exists()),
+            (d for d in runs_dir.iterdir() if d.is_dir() and (d / _REPLAY_JSONL).exists()),
             key=lambda d: d.name,
             reverse=True,
         )
@@ -841,7 +844,7 @@ def replay_cmd(
         table.add_column("Events", justify="right")
         table.add_column("Size", justify="right")
         for d in run_dirs:
-            replay_file = d / "replay.jsonl"
+            replay_file = d / _REPLAY_JSONL
             event_count = sum(1 for line in replay_file.read_text().splitlines() if line.strip())
             size_kb = replay_file.stat().st_size / 1024
             metadata = read_session_replay_metadata(d)
@@ -862,7 +865,7 @@ def replay_cmd(
             console.print("[red]No runs recorded yet.[/red]")
             raise SystemExit(1)
         run_dirs = sorted(
-            (d for d in runs_dir.iterdir() if d.is_dir() and (d / "replay.jsonl").exists()),
+            (d for d in runs_dir.iterdir() if d.is_dir() and (d / _REPLAY_JSONL).exists()),
             key=lambda d: d.name,
             reverse=True,
         )
@@ -872,7 +875,7 @@ def replay_cmd(
         run_id = run_dirs[0].name
         console.print(f"[dim]Replaying latest run:[/dim] {run_id}")
 
-    replay_path = runs_dir / run_id / "replay.jsonl"
+    replay_path = runs_dir / run_id / _REPLAY_JSONL
     if not replay_path.exists():
         console.print(f"[red]Replay log not found:[/red] {replay_path}")
         console.print("[dim]Use 'bernstein replay list' to see available runs.[/dim]")

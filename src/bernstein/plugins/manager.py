@@ -285,7 +285,7 @@ class CommandHook:
                 if response.get("message"):
                     error_detail = str(response["message"])
             except (json.JSONDecodeError, TypeError):
-                pass
+                pass  # Non-JSON error output; use raw text fallback
         raise HookBlockingError(hook_name, error_detail)
 
     def _run_command(self, hook_name: str, **kwargs: Any) -> None:

@@ -19,6 +19,8 @@ from typing import Final, cast
 
 logger = logging.getLogger(__name__)
 
+_LOGIN_API_KEY = "API key"
+
 # ---------------------------------------------------------------------------
 # Model name constants (avoid duplicating magic strings across detectors)
 # ---------------------------------------------------------------------------
@@ -92,7 +94,7 @@ def _run_probe(cmd: list[str], timeout: float = _PROBE_TIMEOUT_S) -> subprocess.
             text=True,
             timeout=timeout,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, PermissionError, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
 
 
@@ -179,13 +181,13 @@ def _detect_codex() -> tuple[AgentCapabilities | None, list[str]]:
             if "chatgpt" in combined_lower:
                 login_method = "ChatGPT"
             elif "api" in combined_lower:
-                login_method = "API key"
+                login_method = _LOGIN_API_KEY
             else:
                 login_method = "CLI auth"
     # Also accept OPENAI_API_KEY as auth
     if not logged_in and os.environ.get("OPENAI_API_KEY"):
         logged_in = True
-        login_method = "API key"
+        login_method = _LOGIN_API_KEY
 
     if binary and not logged_in:
         warnings.append("codex found but not logged in — run: codex login")
@@ -261,7 +263,7 @@ def _detect_claude() -> tuple[AgentCapabilities | None, list[str]]:
     login_method = ""
     if os.environ.get("ANTHROPIC_API_KEY"):
         logged_in = True
-        login_method = "API key"
+        login_method = _LOGIN_API_KEY
     else:
         # Check for OAuth session — claude --version succeeding is a good proxy
         oauth_probe = _run_probe(["claude", "--version"])
@@ -397,7 +399,7 @@ def _detect_kilo() -> tuple[AgentCapabilities | None, list[str]]:
     login_method = ""
     if os.environ.get("KILO_API_KEY"):
         logged_in = True
-        login_method = "API key"
+        login_method = _LOGIN_API_KEY
     else:
         kilo_dir = Path.home() / ".kilo"
         if kilo_dir.exists():
@@ -450,7 +452,7 @@ def _detect_kiro() -> tuple[AgentCapabilities | None, list[str]]:
             pass
     elif os.environ.get("KIRO_API_KEY"):
         logged_in = True
-        login_method = "API key"
+        login_method = _LOGIN_API_KEY
     elif (Path.home() / ".kiro").exists():
         logged_in = True
         login_method = "config"
@@ -562,7 +564,7 @@ def _detect_aider() -> tuple[AgentCapabilities | None, list[str]]:
     login_method = ""
     if os.environ.get("OPENAI_API_KEY"):
         logged_in = True
-        login_method = "API key"
+        login_method = _LOGIN_API_KEY
     elif _run_probe(["aider", "--version"]) is not None:
         # If aider --version works, it's at least installed and functional
         logged_in = True

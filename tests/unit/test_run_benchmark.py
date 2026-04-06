@@ -85,7 +85,7 @@ def test_total_minutes_sums_all_subtasks() -> None:
             SubTask(id="c", role="docs", description="c", estimated_minutes=3.0),
         ]
     )
-    assert task.total_minutes == 18.0
+    assert task.total_minutes == pytest.approx(18.0)
 
 
 def test_subtask_count_matches_list_length() -> None:

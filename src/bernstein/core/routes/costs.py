@@ -83,7 +83,7 @@ def _build_breakdowns(tracker: Any) -> dict[str, Any]:
 
 
 @router.get("/events/cost")
-async def cost_events(request: Request) -> StreamingResponse:
+def cost_events(request: Request) -> StreamingResponse:
     """SSE endpoint for real-time cost updates.
 
     Listens to the global SSE bus for ``bulletin`` events that match
@@ -133,7 +133,7 @@ async def cost_events(request: Request) -> StreamingResponse:
 @router.get(
     "/costs", responses={403: {"description": "Tenant access denied"}, 404: {"description": "Tenant not found"}}
 )
-async def get_costs(request: Request, tenant: str | None = None) -> JSONResponse:
+def get_costs(request: Request, tenant: str | None = None) -> JSONResponse:
     """Aggregate cost data across all runs.
 
     Scans every persisted cost file in ``.sdd/runtime/costs/``, aggregates
@@ -212,7 +212,7 @@ async def get_costs(request: Request, tenant: str | None = None) -> JSONResponse
 @router.get(
     "/costs/live", responses={403: {"description": "Tenant access denied"}, 404: {"description": "Tenant not found"}}
 )
-async def get_cost_live(request: Request, tenant: str | None = None) -> JSONResponse:
+def get_cost_live(request: Request, tenant: str | None = None) -> JSONResponse:
     """Return live cost breakdown for the most recent run.
 
     Finds the most recently modified cost file in ``.sdd/runtime/costs/``,
@@ -261,8 +261,71 @@ async def get_cost_live(request: Request, tenant: str | None = None) -> JSONResp
     return JSONResponse(content=result)
 
 
+@router.get("/costs/current")
+def get_cost_current(request: Request) -> JSONResponse:
+    """Return real-time cost snapshot for the active run.
+
+    Updated after each agent completion.  Designed for TUI sidebar polling
+    and lightweight dashboard widgets.  Returns per-model input/output/cache
+    token breakdown alongside spend and budget status.
+    """
+    from bernstein.core.cost_tracker import CostTracker
+
+    sdd_dir = _get_sdd_dir(request)
+    costs_dir = sdd_dir / "runtime" / "costs"
+
+    empty: dict[str, Any] = {
+        "spent_usd": 0.0,
+        "budget_usd": 0.0,
+        "remaining_usd": 0.0,
+        "percentage_used": 0.0,
+        "should_warn": False,
+        "should_stop": False,
+        "per_model": [],
+        "per_agent": {},
+        "timestamp": time.time(),
+    }
+    if not costs_dir.exists():
+        return JSONResponse(content=empty)
+
+    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not cost_files:
+        return JSONResponse(content=empty)
+
+    run_id = cost_files[0].stem
+    tracker = CostTracker.load(sdd_dir, run_id)
+    if tracker is None:
+        return JSONResponse(content=empty)
+
+    budget_status = tracker.status()
+    model_breakdowns = tracker.model_breakdowns()
+
+    per_agent: dict[str, float] = defaultdict(float)
+    for u in tracker.usages:
+        per_agent[u.agent_id] += u.cost_usd
+
+    import math
+
+    remaining = budget_status.remaining_usd if math.isfinite(budget_status.remaining_usd) else 0.0
+
+    return JSONResponse(
+        content={
+            "run_id": run_id,
+            "spent_usd": round(budget_status.spent_usd, 6),
+            "budget_usd": round(budget_status.budget_usd, 6),
+            "remaining_usd": round(remaining, 6),
+            "percentage_used": round(budget_status.percentage_used, 4),
+            "should_warn": budget_status.should_warn,
+            "should_stop": budget_status.should_stop,
+            "per_model": [m.to_dict() for m in model_breakdowns],
+            "per_agent": {k: round(v, 6) for k, v in per_agent.items()},
+            "timestamp": time.time(),
+        }
+    )
+
+
 @router.get("/costs/alerts")
-async def get_cost_alerts(request: Request) -> JSONResponse:
+def get_cost_alerts(request: Request) -> JSONResponse:
     """Return active budget alerts and 30d/90d cost trends.
 
     Reads the live cost data for the most recent run, checks whether spend
@@ -299,7 +362,7 @@ async def get_cost_alerts(request: Request) -> JSONResponse:
 
 
 @router.get("/costs/history")
-async def get_cost_history(request: Request) -> JSONResponse:
+def get_cost_history(request: Request) -> JSONResponse:
     """Return daily cost history with burn rate for chart visualization.
 
     Loads daily snapshots from ``.sdd/metrics/cost_history.jsonl`` and computes
@@ -327,7 +390,7 @@ async def get_cost_history(request: Request) -> JSONResponse:
 
 
 @router.get("/costs/{run_id}", responses={404: {"description": "No cost data for run"}})
-async def get_cost_budget(run_id: str, request: Request) -> JSONResponse:
+def get_cost_budget(run_id: str, request: Request) -> JSONResponse:
     """Return budget status for a specific run.
 
     Loads the persisted cost tracker from ``.sdd/runtime/costs/{run_id}.json``
@@ -346,7 +409,7 @@ async def get_cost_budget(run_id: str, request: Request) -> JSONResponse:
 
 
 @router.get("/costs/export")
-async def export_costs(request: Request, format: str = "json") -> Response:
+def export_costs(request: Request, format: str = "json") -> Response:
     """Export cost data as CSV or JSON for finance analysis.
 
     Args:
@@ -416,7 +479,7 @@ async def export_costs(request: Request, format: str = "json") -> Response:
 
 
 @router.get("/costs/forecast")
-async def forecast_costs(request: Request) -> JSONResponse:
+def forecast_costs(request: Request) -> JSONResponse:
     """Forecast cost for next hour based on current burn rate.
 
     Extrapolates current spending rate to predict next hour's cost.
@@ -497,7 +560,7 @@ async def forecast_costs(request: Request) -> JSONResponse:
 
 
 @router.get("/costs/compare")
-async def compare_model_costs(request: Request) -> JSONResponse:
+def compare_model_costs(request: Request) -> JSONResponse:
     """Return live model cost comparison during execution.
 
     Shows current costs by model with token usage statistics.
@@ -555,7 +618,7 @@ async def compare_model_costs(request: Request) -> JSONResponse:
 
 
 @router.get("/costs/cache-stats")
-async def cache_stats(request: Request) -> JSONResponse:
+def cache_stats(request: Request) -> JSONResponse:
     """Return prompt cache hit rate statistics.
 
     Shows cache hits/misses and savings by model.
@@ -627,7 +690,7 @@ async def cache_stats(request: Request) -> JSONResponse:
 
 
 @router.get("/costs/model-comparison")
-async def model_cost_comparison(request: Request) -> JSONResponse:
+def model_cost_comparison(request: Request) -> JSONResponse:
     """Return model cost comparison report.
 
     Shows what the current run would have cost with different models.
@@ -697,7 +760,7 @@ async def model_cost_comparison(request: Request) -> JSONResponse:
 
 
 @router.get("/costs/token-efficiency")
-async def token_efficiency(request: Request) -> JSONResponse:
+def token_efficiency(request: Request) -> JSONResponse:
     """Compare token efficiency across models and tasks.
 
     Ranks models by tokens per useful line of code.

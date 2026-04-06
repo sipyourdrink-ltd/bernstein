@@ -244,7 +244,7 @@ class TestVotingResult:
         config = VotingConfig(strategy=VotingStrategy.MAJORITY)
         protocol = VotingProtocol(config)
         result = protocol.tally([_vote("abstain")])
-        assert result.confidence == 0.0
+        assert result.confidence == pytest.approx(0.0)
 
     def test_reasoning_contains_strategy_and_verdict(self) -> None:
         protocol = VotingProtocol(VotingConfig(strategy=VotingStrategy.QUORUM, quorum_k=1))
@@ -284,7 +284,7 @@ class TestParseVote:
         raw = json.dumps({"verdict": "approve", "feedback": "Looks good.", "confidence": 0.95})
         vote = protocol._parse_vote(raw, "m")
         assert vote.verdict == "approve"
-        assert vote.confidence == 0.95
+        assert vote.confidence == pytest.approx(0.95)
         assert vote.reasoning == "Looks good."
 
     def test_parse_request_changes(self) -> None:
@@ -303,19 +303,19 @@ class TestParseVote:
         protocol = self._protocol()
         vote = protocol._parse_vote("not json at all", "m")
         assert vote.verdict == "abstain"
-        assert vote.confidence == 0.0
+        assert vote.confidence == pytest.approx(0.0)
 
     def test_confidence_clamped_above_1(self) -> None:
         protocol = self._protocol()
         raw = json.dumps({"verdict": "approve", "feedback": "ok", "confidence": 9.9})
         vote = protocol._parse_vote(raw, "m")
-        assert vote.confidence == 1.0
+        assert vote.confidence == pytest.approx(1.0)
 
     def test_confidence_clamped_below_0(self) -> None:
         protocol = self._protocol()
         raw = json.dumps({"verdict": "approve", "feedback": "ok", "confidence": -1.5})
         vote = protocol._parse_vote(raw, "m")
-        assert vote.confidence == 0.0
+        assert vote.confidence == pytest.approx(0.0)
 
     def test_strips_markdown_fences(self) -> None:
         protocol = self._protocol()

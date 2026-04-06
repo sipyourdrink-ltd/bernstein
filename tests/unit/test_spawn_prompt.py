@@ -223,7 +223,7 @@ def test_lesson_cache_expires_after_ttl(tmp_path: Path, make_task: Any) -> None:
         assert call_count == 1
 
         # Expire the cache by backdating the timestamp
-        for key in list(_lesson_cache.keys()):
+        for key in _lesson_cache:
             ts, text = _lesson_cache[key]
             _lesson_cache[key] = (ts - _LESSON_CACHE_TTL - 1, text)
 

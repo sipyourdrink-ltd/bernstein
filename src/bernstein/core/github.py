@@ -599,7 +599,7 @@ class GitHubClient:
                 timeout=5,
             )
             return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        except (subprocess.TimeoutExpired, OSError):
             logger.debug("gh CLI not available or timed out during auth check")
             return False
 
@@ -629,7 +629,7 @@ class GitHubClient:
                 )
                 return None
             return result.stdout
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        except (subprocess.TimeoutExpired, OSError) as exc:
             logger.debug("gh command error: %s", exc)
             return None
 
@@ -806,7 +806,7 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
             timeout=30,
             cwd=str(workdir),
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError) as exc:
         logger.debug("gh issue list failed: %s", exc)
         return 0
 
@@ -820,7 +820,7 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
 
     try:
         issues: list[dict[str, Any]] = json.loads(result.stdout)
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         logger.warning("Failed to parse gh issue list JSON output")
         return 0
 

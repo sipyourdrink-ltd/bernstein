@@ -141,7 +141,7 @@ def _check_git_changes(workdir: Path, session_id: str) -> bool:
         if result.stdout.strip():
             return True
 
-    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         logger.debug("Failed to check git changes for session %s", session_id)
 
     return False

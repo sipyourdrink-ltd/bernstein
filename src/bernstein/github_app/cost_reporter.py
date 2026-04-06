@@ -113,7 +113,7 @@ def _find_existing_cost_comment(pr_number: int, repo: str) -> int | None:
             stripped = result.stdout.strip()
             if stripped and stripped != "null":
                 return int(stripped)
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+    except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
         logger.debug("Could not search for existing cost comment: %s", exc)
     return None
 
@@ -191,7 +191,7 @@ def _run_gh(args: list[str], stdin: bytes | None = None) -> bool:
             )
             return False
         return True
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError) as exc:
         logger.debug("gh command error: %s", exc)
         return False
 

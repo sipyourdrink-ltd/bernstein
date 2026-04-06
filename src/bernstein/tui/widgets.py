@@ -70,7 +70,12 @@ def build_token_budget_bar(used: int, budget: int, width: int = 20) -> str:
     filled = int(pct * width)
     empty = width - filled
     bar = "█" * filled + "░" * empty
-    color = "green" if pct < 0.6 else "yellow" if pct < 0.9 else "red"
+    if pct < 0.6:
+        color = "green"
+    elif pct < 0.9:
+        color = "yellow"
+    else:
+        color = "red"
     return f"[{color}]{bar}[/{color}] {int(pct * 100):>3}%"
 
 
@@ -119,7 +124,12 @@ def build_cache_hit_sparkline(hit_rates: list[float], width: int = 12) -> str:
         level = int(val * (len(SPARKLINE_CHARS) - 1))
         sparkline.append(SPARKLINE_CHARS[level])
     pct = int(sum(recent) / len(recent) * 100)
-    color = "green" if pct >= 70 else "yellow" if pct >= 40 else "red"
+    if pct >= 70:
+        color = "green"
+    elif pct >= 40:
+        color = "yellow"
+    else:
+        color = "red"
     bar = "".join(sparkline)
     return f"[{color}]{bar}[/{color}] {pct:3}%"
 
@@ -745,7 +755,7 @@ def list_scratchpad_files(scratchpad_root: Path | None = None) -> list[Scratchpa
                     )
                 )
     except PermissionError:
-        pass
+        pass  # Cannot traverse scratchpad directory; return partial results
 
     # Sort newest first
     entries.sort(key=lambda e: e.modified, reverse=True)
@@ -1013,7 +1023,12 @@ class CoordinatorDashboard(DataTable[Text]):
         self.clear()
         for row in rows:
             typ = classify_role(row.role)
-            role_label = "coordinator" if typ == "coordinator" else "worker" if typ == "worker" else "other"
+            if typ == "coordinator":
+                role_label = "coordinator"
+            elif typ == "worker":
+                role_label = "worker"
+            else:
+                role_label = "other"
             self.add_row(
                 Text(role_label),
                 Text(row.task_id, style="cyan"),
@@ -1130,7 +1145,7 @@ class ApprovalPanel(Static):
                 details_label.update(details)
                 details_label.remove_class("approval-empty")
             except StopIteration:
-                pass
+                pass  # No approval entry selected; nothing to display
 
     async def action_approve(self) -> None:
         """Approve the currently selected pending task."""
@@ -1409,7 +1424,7 @@ def read_new_tool_calls(
                             timestamp=float(data.get("timestamp", 0.0)),
                         )
                     )
-                except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                except (KeyError, ValueError, TypeError):
                     continue
             new_pos = f.tell()
     except OSError:

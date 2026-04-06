@@ -228,7 +228,7 @@ class TestUtilizationPct:
 
     def test_zero_budget_returns_zero(self) -> None:
         b = TokenBudget(task_id="T", budget_tokens=0)
-        assert b.utilization_pct() == 0.0
+        assert b.utilization_pct() == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

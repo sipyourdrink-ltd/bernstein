@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -105,7 +105,7 @@ async def test_critical_path_priority(test_client: TestClient, orchestrator_fact
             resp = test_client.get("/tasks")
             if all(t["status"] == "done" for t in resp.json()):
                 break
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
 
         # 3. Verify order
         # Expected order: Task A (to unblock B), Task B (highest priority), then others

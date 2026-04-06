@@ -59,7 +59,7 @@ class TestTenantSeedConfig:
         config = parse_seed(tmp_path / "bernstein.yaml")
 
         assert [tenant.id for tenant in config.tenants] == ["team-a", "team-b"]
-        assert config.tenants[0].budget_usd == 100.0
+        assert config.tenants[0].budget_usd == pytest.approx(100.0)
         assert config.tenants[0].allowed_agents == ("claude", "codex")
         assert config.tenants[1].allowed_agents == ("gemini",)
 
@@ -154,9 +154,9 @@ class TestTenantMetricsAndCosts:
 
         assert costs_a.status_code == 200
         assert costs_a.json()["tenant_id"] == "team-a"
-        assert costs_a.json()["total_spent_usd"] == 1.5
-        assert costs_a.json()["total_budget_usd"] == 100.0
+        assert costs_a.json()["total_spent_usd"] == pytest.approx(1.5)
+        assert costs_a.json()["total_budget_usd"] == pytest.approx(100.0)
 
         assert live_b.status_code == 200
         assert live_b.json()["tenant_id"] == "team-b"
-        assert live_b.json()["spent_usd"] == 3.0
+        assert live_b.json()["spent_usd"] == pytest.approx(3.0)

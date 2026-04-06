@@ -77,7 +77,7 @@ class TipState:
         last_seen: Mapping of tip text to the Unix timestamp it was last shown.
     """
 
-    last_seen: dict[str, float] = field(default_factory=lambda: dict[str, float]())
+    last_seen: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, dict[str, float]]:
         """Serialise to a JSON-safe dict."""
@@ -211,7 +211,7 @@ class TipsCatalog:
         try:
             raw = json.loads(self._active_path.read_text(encoding="utf-8"))
             self._state = TipState.from_dict(raw)
-        except (json.JSONDecodeError, ValueError, KeyError):
+        except (ValueError, KeyError):
             self._state = TipState()
 
     def _save_state(self) -> None:

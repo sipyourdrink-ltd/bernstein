@@ -27,11 +27,11 @@ from bernstein.eval.telemetry import AgentTelemetry
 class TestTaskCompletionRate:
     def test_zero_tasks(self) -> None:
         m = TaskCompletionRate(total_tasks=0, passed_tasks=0)
-        assert m.rate == 0.0
+        assert m.rate == pytest.approx(0.0)
 
     def test_all_pass(self) -> None:
         m = TaskCompletionRate(total_tasks=10, passed_tasks=10)
-        assert m.rate == 1.0
+        assert m.rate == pytest.approx(1.0)
 
     def test_partial_pass(self) -> None:
         m = TaskCompletionRate(total_tasks=10, passed_tasks=7)
@@ -39,7 +39,7 @@ class TestTaskCompletionRate:
 
     def test_none_pass(self) -> None:
         m = TaskCompletionRate(total_tasks=5, passed_tasks=0)
-        assert m.rate == 0.0
+        assert m.rate == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -50,15 +50,15 @@ class TestTaskCompletionRate:
 class TestRetryRate:
     def test_zero_tasks(self) -> None:
         m = RetryRate(total_tasks=0, retried_tasks=0)
-        assert m.rate == 0.0
+        assert m.rate == pytest.approx(0.0)
 
     def test_no_retries(self) -> None:
         m = RetryRate(total_tasks=10, retried_tasks=0)
-        assert m.rate == 0.0
+        assert m.rate == pytest.approx(0.0)
 
     def test_all_retried(self) -> None:
         m = RetryRate(total_tasks=5, retried_tasks=5)
-        assert m.rate == 1.0
+        assert m.rate == pytest.approx(1.0)
 
     def test_partial_retries(self) -> None:
         m = RetryRate(total_tasks=10, retried_tasks=3)
@@ -73,11 +73,11 @@ class TestRetryRate:
 class TestAgentUtilization:
     def test_zero_turns(self) -> None:
         m = AgentUtilization(productive_turns=0, total_turns=0)
-        assert m.rate == 0.0
+        assert m.rate == pytest.approx(0.0)
 
     def test_all_productive(self) -> None:
         m = AgentUtilization(productive_turns=20, total_turns=20)
-        assert m.rate == 1.0
+        assert m.rate == pytest.approx(1.0)
 
     def test_half_productive(self) -> None:
         m = AgentUtilization(productive_turns=5, total_turns=10)
@@ -93,7 +93,7 @@ class TestCostEfficiency:
     def test_zero_completed(self) -> None:
         m = CostEfficiency(total_cost_usd=10.0, tasks_completed=0)
         assert m.cost_per_task == float("inf")
-        assert m.efficiency == 0.0
+        assert m.efficiency == pytest.approx(0.0)
 
     def test_at_baseline(self) -> None:
         m = CostEfficiency(
@@ -132,7 +132,7 @@ class TestTimeEfficiency:
     def test_zero_completed(self) -> None:
         m = TimeEfficiency(total_duration_s=100.0, tasks_completed=0)
         assert m.seconds_per_task == float("inf")
-        assert m.efficiency == 0.0
+        assert m.efficiency == pytest.approx(0.0)
 
     def test_at_baseline(self) -> None:
         m = TimeEfficiency(
@@ -170,7 +170,7 @@ class TestTimeEfficiency:
 class TestContextWaste:
     def test_zero_tokens(self) -> None:
         m = ContextWaste(exploration_tokens=0, coding_tokens=0)
-        assert m.waste_ratio == 0.0
+        assert m.waste_ratio == pytest.approx(0.0)
 
     def test_all_exploration(self) -> None:
         m = ContextWaste(exploration_tokens=1000, coding_tokens=0)
@@ -178,7 +178,7 @@ class TestContextWaste:
 
     def test_all_coding(self) -> None:
         m = ContextWaste(exploration_tokens=0, coding_tokens=1000)
-        assert m.waste_ratio == 0.0
+        assert m.waste_ratio == pytest.approx(0.0)
 
     def test_mixed(self) -> None:
         m = ContextWaste(exploration_tokens=300, coding_tokens=700)
@@ -210,7 +210,7 @@ class TestEvalScoreComponents:
             reliability=1.0,
             safety=1.0,
         )
-        assert c.final_score == 0.0
+        assert c.final_score == pytest.approx(0.0)
 
     def test_weighted_base(self) -> None:
         c = EvalScoreComponents(
@@ -232,7 +232,7 @@ class TestEvalScoreComponents:
             reliability=1.0,
             safety=0.0,
         )
-        assert c.final_score == 0.0
+        assert c.final_score == pytest.approx(0.0)
 
     def test_reliability_degrades_score(self) -> None:
         c = EvalScoreComponents(
@@ -252,7 +252,7 @@ class TestEvalScoreComponents:
             reliability=0.8,
             safety=0.0,
         )
-        assert c.final_score == 0.0
+        assert c.final_score == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -263,15 +263,15 @@ class TestEvalScoreComponents:
 class TestTierScores:
     def test_defaults(self) -> None:
         t = TierScores()
-        assert t.smoke == 0.0
-        assert t.standard == 0.0
-        assert t.stretch == 0.0
-        assert t.adversarial == 0.0
+        assert t.smoke == pytest.approx(0.0)
+        assert t.standard == pytest.approx(0.0)
+        assert t.stretch == pytest.approx(0.0)
+        assert t.adversarial == pytest.approx(0.0)
 
     def test_custom_values(self) -> None:
         t = TierScores(smoke=1.0, standard=0.8, stretch=0.6, adversarial=0.4)
-        assert t.smoke == 1.0
-        assert t.adversarial == 0.4
+        assert t.smoke == pytest.approx(1.0)
+        assert t.adversarial == pytest.approx(0.4)
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +281,7 @@ class TestTierScores:
 
 class TestComputeEfficiency:
     def test_zero_completed(self) -> None:
-        assert compute_efficiency([], 0) == 0.0
+        assert compute_efficiency([], 0) == pytest.approx(0.0)
 
     def test_with_telemetry(self) -> None:
         telemetry = [
@@ -313,7 +313,7 @@ class TestComputeEfficiency:
 
 class TestComputeReliability:
     def test_perfect(self) -> None:
-        assert compute_reliability() == 1.0
+        assert compute_reliability() == pytest.approx(1.0)
 
     def test_crashes_degrade(self) -> None:
         r = compute_reliability(crash_count=3)
@@ -334,7 +334,7 @@ class TestComputeReliability:
 
     def test_floor_at_zero(self) -> None:
         r = compute_reliability(crash_count=20)
-        assert r == 0.0
+        assert r == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +344,7 @@ class TestComputeReliability:
 
 class TestComputeSafety:
     def test_no_regressions(self) -> None:
-        assert compute_safety(False) == 1.0
+        assert compute_safety(False) == pytest.approx(1.0)
 
     def test_with_regressions(self) -> None:
-        assert compute_safety(True) == 0.0
+        assert compute_safety(True) == pytest.approx(0.0)

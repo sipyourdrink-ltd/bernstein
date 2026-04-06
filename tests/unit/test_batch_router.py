@@ -57,47 +57,47 @@ class TestClassifyBatchModeRealtimeGates:
         task = _task(role=role, complexity=Complexity.LOW)
         result = classify_batch_mode(task)
         assert result.mode == BatchMode.REALTIME
-        assert result.discount_factor == 1.0
+        assert result.discount_factor == pytest.approx(1.0)
         assert role in result.reason
 
     def test_critical_priority_1_is_realtime(self) -> None:
         task = _task(priority=1, complexity=Complexity.LOW)
         result = classify_batch_mode(task)
         assert result.mode == BatchMode.REALTIME
-        assert result.discount_factor == 1.0
+        assert result.discount_factor == pytest.approx(1.0)
         assert "critical" in result.reason.lower()
 
     def test_large_scope_is_realtime(self) -> None:
         task = _task(scope=Scope.LARGE, complexity=Complexity.LOW)
         result = classify_batch_mode(task)
         assert result.mode == BatchMode.REALTIME
-        assert result.discount_factor == 1.0
+        assert result.discount_factor == pytest.approx(1.0)
         assert "large" in result.reason.lower()
 
     def test_high_complexity_is_realtime(self) -> None:
         task = _task(complexity=Complexity.HIGH)
         result = classify_batch_mode(task)
         assert result.mode == BatchMode.REALTIME
-        assert result.discount_factor == 1.0
+        assert result.discount_factor == pytest.approx(1.0)
         assert "high" in result.reason.lower()
 
     def test_research_task_type_is_realtime(self) -> None:
         task = _task(task_type=TaskType.RESEARCH, complexity=Complexity.LOW)
         result = classify_batch_mode(task)
         assert result.mode == BatchMode.REALTIME
-        assert result.discount_factor == 1.0
+        assert result.discount_factor == pytest.approx(1.0)
 
     def test_upgrade_proposal_task_type_is_realtime(self) -> None:
         task = _task(task_type=TaskType.UPGRADE_PROPOSAL, complexity=Complexity.LOW)
         result = classify_batch_mode(task)
         assert result.mode == BatchMode.REALTIME
-        assert result.discount_factor == 1.0
+        assert result.discount_factor == pytest.approx(1.0)
 
     def test_opus_model_override_is_realtime(self) -> None:
         task = _task(model="opus", complexity=Complexity.LOW)
         result = classify_batch_mode(task)
         assert result.mode == BatchMode.REALTIME
-        assert result.discount_factor == 1.0
+        assert result.discount_factor == pytest.approx(1.0)
         assert "opus" in result.reason.lower()
 
     def test_explicit_batch_eligible_false_is_realtime(self) -> None:
@@ -105,7 +105,7 @@ class TestClassifyBatchModeRealtimeGates:
         # LOW complexity would normally batch, but explicit False overrides
         result = classify_batch_mode(task)
         assert result.mode == BatchMode.REALTIME
-        assert result.discount_factor == 1.0
+        assert result.discount_factor == pytest.approx(1.0)
         assert "False" in result.reason
 
 
@@ -180,7 +180,7 @@ class TestClassifyBatchModeDefault:
         )
         result = classify_batch_mode(task)
         assert result.mode == BatchMode.REALTIME
-        assert result.discount_factor == 1.0
+        assert result.discount_factor == pytest.approx(1.0)
 
     def test_standard_task_no_batch_criteria_is_realtime(self) -> None:
         task = _task(
@@ -250,4 +250,4 @@ class TestBatchClassification:
         c = BatchClassification(mode=BatchMode.REALTIME, reason="test reason", discount_factor=1.0)
         assert c.mode == BatchMode.REALTIME
         assert c.reason == "test reason"
-        assert c.discount_factor == 1.0
+        assert c.discount_factor == pytest.approx(1.0)

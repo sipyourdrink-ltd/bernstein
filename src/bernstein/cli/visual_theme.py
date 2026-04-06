@@ -162,10 +162,9 @@ def gradient_markup_lines(
     Returns:
         Rich-markup string with each non-empty line styled separately.
     """
-    sequence = list(lines)
-    palette = sample_gradient(tuple(colors), len(sequence))
+    palette = sample_gradient(tuple(colors), len(lines))
     styled: list[str] = []
-    for index, line in enumerate(sequence):
+    for index, line in enumerate(lines):
         if not line:
             styled.append("")
             continue

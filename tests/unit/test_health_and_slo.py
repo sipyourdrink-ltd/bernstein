@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.health_score import (
     HealthScore,
     calculate_health_score,
@@ -116,7 +118,7 @@ class TestSLOTracker:
             hours_tracked=24,
         )
 
-        assert status.target_tasks_per_hour == 10.0
+        assert status.target_tasks_per_hour == pytest.approx(10.0)
         assert status.is_meeting_slo is False
 
     def test_slo_tracker_no_data(self, tmp_path: Path) -> None:
@@ -124,7 +126,7 @@ class TestSLOTracker:
         tracker = SLOTracker(tmp_path, target=10.0)
         status = tracker.check_slo()
 
-        assert status.actual_tasks_per_hour == 0.0
+        assert status.actual_tasks_per_hour == pytest.approx(0.0)
         assert status.is_meeting_slo is False
 
     def test_slo_tracker_record_completion(self, tmp_path: Path) -> None:

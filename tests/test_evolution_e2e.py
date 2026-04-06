@@ -495,7 +495,7 @@ class TestEvolutionLoopFullCycle:
         assert result is not None
         assert isinstance(result, ExperimentResult)
         assert result.accepted is True
-        assert result.delta == 0.05
+        assert result.delta == pytest.approx(0.05)
         assert result.reason == "Applied successfully"
 
     def test_run_cycle_logs_experiment_to_jsonl(self, tmp_path: Path) -> None:
@@ -592,7 +592,7 @@ class TestEvolutionLoopFullCycle:
 
     def test_acceptance_rate_zero_when_no_proposals(self, tmp_path: Path) -> None:
         loop = self._make_loop(tmp_path)
-        assert loop.acceptance_rate == 0.0
+        assert loop.acceptance_rate == pytest.approx(0.0)
 
     def test_get_summary_returns_expected_keys(self, tmp_path: Path) -> None:
         """get_summary() returns a dict with required session statistics."""
@@ -683,7 +683,7 @@ class TestEvolutionLoopEmptyMetrics:
         assert result is None
         summary = loop.get_summary()
         assert summary["experiments_run"] == 0
-        assert summary["acceptance_rate"] == 0.0
+        assert summary["acceptance_rate"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

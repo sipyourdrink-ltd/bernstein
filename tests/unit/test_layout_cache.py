@@ -108,7 +108,7 @@ class TestLayoutCache:
         assert cache.is_dirty("comp1") is True
 
     def test_hit_rate(self, cache: LayoutCache, compute_fn: object) -> None:
-        assert cache.hit_rate == 0.0
+        assert cache.hit_rate == pytest.approx(0.0)
 
         cache.get_or_compute("comp1", "content", compute_fn)
         cache.get_or_compute("comp1", "content", compute_fn)
@@ -125,7 +125,7 @@ class TestLayoutCache:
         assert stats["hits"] == 1
         assert stats["misses"] == 1
         assert stats["size"] == 1
-        assert stats["hit_rate"] == 0.5
+        assert stats["hit_rate"] == pytest.approx(0.5)
 
     def test_dirty_components(self, cache: LayoutCache) -> None:
         cache.set_cached("comp1", "content", "result")

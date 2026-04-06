@@ -38,7 +38,7 @@ class InstanceResult:
     wall_time_s: float  # Total wall-clock time for the full pipeline
     total_tokens: int
     total_cost_usd: float
-    agent_traces: list[AgentTrace] = field(default_factory=lambda: list[AgentTrace]())
+    agent_traces: list[AgentTrace] = field(default_factory=list)
     error_message: str = ""
     patch: str = ""  # Final unified diff applied to the repo
 
@@ -73,7 +73,7 @@ class ScenarioSummary:
     sample_size: int = 0
     run_at: str = ""
     commit_sha: str = ""
-    scenarios: list[str] = field(default_factory=lambda: list[str]())
+    scenarios: list[str] = field(default_factory=list)
     model_family: str = ""
     notes: str = ""
 

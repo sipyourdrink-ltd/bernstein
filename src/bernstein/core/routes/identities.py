@@ -33,7 +33,7 @@ def _identity_store(request: Request) -> Any:
 
 
 @router.get("/identities")
-async def list_identities(
+def list_identities(
     request: Request,
     status: str | None = None,
     role: str | None = None,
@@ -70,7 +70,7 @@ async def list_identities(
 
 
 @router.get("/identities/{identity_id}", responses={404: {"description": "Identity not found"}})
-async def get_identity(request: Request, identity_id: str) -> JSONResponse:
+def get_identity(request: Request, identity_id: str) -> JSONResponse:
     """Get details for a single agent identity."""
     store = _identity_store(request)
     identity = store.get(identity_id)
@@ -109,7 +109,7 @@ async def revoke_identity(request: Request, identity_id: str) -> JSONResponse:
 
 
 @router.get("/identities/{identity_id}/audit")
-async def identity_audit(request: Request, identity_id: str, limit: int = 100) -> JSONResponse:
+def identity_audit(request: Request, identity_id: str, limit: int = 100) -> JSONResponse:
     """Return the audit trail for an agent identity."""
     store = _identity_store(request)
     events = store.get_audit_trail(identity_id, limit=limit)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.metric_collector import PercentileTracker
 
 
@@ -12,9 +14,9 @@ class TestPercentileTracker:
         """Test tracker with no data returns 0.0."""
         tracker = PercentileTracker()
 
-        assert tracker.p50() == 0.0
-        assert tracker.p95() == 0.0
-        assert tracker.p99() == 0.0
+        assert tracker.p50() == pytest.approx(0.0)
+        assert tracker.p95() == pytest.approx(0.0)
+        assert tracker.p99() == pytest.approx(0.0)
         assert tracker.count() == 0
 
     def test_single_value(self) -> None:
@@ -22,9 +24,9 @@ class TestPercentileTracker:
         tracker = PercentileTracker()
         tracker.add(100.0)
 
-        assert tracker.p50() == 100.0
-        assert tracker.p95() == 100.0
-        assert tracker.p99() == 100.0
+        assert tracker.p50() == pytest.approx(100.0)
+        assert tracker.p95() == pytest.approx(100.0)
+        assert tracker.p99() == pytest.approx(100.0)
         assert tracker.count() == 1
 
     def test_multiple_values(self) -> None:
@@ -66,7 +68,7 @@ class TestPercentileTracker:
         tracker.clear()
 
         assert tracker.count() == 0
-        assert tracker.p50() == 0.0
+        assert tracker.p50() == pytest.approx(0.0)
 
     def test_percentile_accuracy(self) -> None:
         """Test percentile calculation accuracy."""
@@ -110,7 +112,7 @@ class TestPercentileTracker:
         tracker.add(100.0)
 
         # p50 should be 0 (median)
-        assert tracker.p50() == 0.0
+        assert tracker.p50() == pytest.approx(0.0)
         # p95/p99 with only 5 values will be near the max
         assert tracker.p95() >= 50.0
         assert tracker.p99() >= 50.0

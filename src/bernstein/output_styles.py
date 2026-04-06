@@ -173,7 +173,7 @@ def _resolve_active_style(
                         active = s
                         break
         except Exception:
-            pass
+            pass  # Config read failed; use default style
 
     return active
 

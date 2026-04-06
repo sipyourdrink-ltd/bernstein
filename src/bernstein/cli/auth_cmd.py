@@ -250,7 +250,7 @@ def auth_login(server: str | None, sso: bool) -> None:
                     console.print(f"  Email: {profile.get('email', 'unknown')}")
                     console.print(f"  Role:  {profile.get('role', 'unknown')}")
             except Exception:
-                pass
+                pass  # Profile fetch failed; token is still valid
 
             console.print(f"\n[dim]Token cached at {_TOKEN_FILE}[/dim]")
             return

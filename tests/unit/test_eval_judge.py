@@ -32,7 +32,7 @@ class TestJudgeVerdict:
 
     def test_average_score_zero(self) -> None:
         v = JudgeVerdict()
-        assert v.average_score == 0.0
+        assert v.average_score == pytest.approx(0.0)
 
     def test_average_score_perfect(self) -> None:
         v = JudgeVerdict(correctness=5, style=5, test_coverage=5, safety=5, verdict="PASS")

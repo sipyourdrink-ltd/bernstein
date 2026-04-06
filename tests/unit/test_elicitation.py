@@ -28,7 +28,7 @@ class TestElicitationRequest:
         assert req.session_id == "abc123"
         assert req.prompt == "What now?"
         assert req.options == []
-        assert req.timeout_seconds == 30.0
+        assert req.timeout_seconds == pytest.approx(30.0)
 
     def test_custom_timeout(self) -> None:
         req = ElicitationRequest(
@@ -36,7 +36,7 @@ class TestElicitationRequest:
             prompt="Quick?",
             timeout_seconds=5.0,
         )
-        assert req.timeout_seconds == 5.0
+        assert req.timeout_seconds == pytest.approx(5.0)
 
     def test_options(self) -> None:
         req = ElicitationRequest(
@@ -52,7 +52,7 @@ class TestElicitationRequest:
         assert data["session_id"] == "s1"
         assert data["prompt"] == "Hi?"
         assert data["options"] == ["1", "2"]
-        assert data["timeout_seconds"] == 30.0
+        assert data["timeout_seconds"] == pytest.approx(30.0)
 
 
 # --- ElicitationResponse ---

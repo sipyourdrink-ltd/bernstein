@@ -15,7 +15,6 @@ from bernstein.core.prompt_token_analysis import (
     save_prompt_token_report,
 )
 
-
 # ---------------------------------------------------------------------------
 # _section_category — section → bucket mapping
 # ---------------------------------------------------------------------------

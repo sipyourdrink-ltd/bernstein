@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
-from typing import Any
 
 from bernstein.core.token_analyzer import (
     HIGH_RATIO_THRESHOLD,

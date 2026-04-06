@@ -232,7 +232,7 @@ def _get_worktree_changed_files(worktree_path: Path) -> list[str] | None:
         )
         untracked = [f.strip() for f in result2.stdout.splitlines() if f.strip()]
         return list(dict.fromkeys(diff_files + untracked))  # deduplicate, preserve order
-    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
 
 
@@ -269,7 +269,7 @@ def _get_worktree_diff(worktree_path: Path) -> str | None:
         if result.returncode != 0:
             return None
         return result.stdout
-    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
 
 

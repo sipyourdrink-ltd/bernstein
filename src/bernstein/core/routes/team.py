@@ -28,7 +28,7 @@ def _get_sdd_dir(request: Request) -> Path:
 
 
 @router.get("/team")
-async def team_summary(request: Request) -> JSONResponse:
+def team_summary(request: Request) -> JSONResponse:
     """Return a summary of the current team state.
 
     Includes total members, active/finished counts, role distribution,
@@ -44,7 +44,7 @@ async def team_summary(request: Request) -> JSONResponse:
 
 
 @router.get("/team/active")
-async def team_active(request: Request) -> JSONResponse:
+def team_active(request: Request) -> JSONResponse:
     """Return only active team members."""
     store = TeamStateStore(_get_sdd_dir(request))
     members = store.list_members(active_only=True)
@@ -57,7 +57,7 @@ async def team_active(request: Request) -> JSONResponse:
 
 
 @router.get("/team/{agent_id}")
-async def team_member(request: Request, agent_id: str) -> JSONResponse:
+def team_member(request: Request, agent_id: str) -> JSONResponse:
     """Return metadata for a single team member.
 
     Returns 404 if the agent is not in the team roster.

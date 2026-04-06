@@ -18,6 +18,9 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from bernstein.core.telemetry import start_span
 
+_NO_PYTHON_FILES = "No Python files changed."
+_TIMED_OUT_PREFIX = "Timed out after "
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -369,7 +372,7 @@ class GateRunner:
         if step.name == "lint":
             command = self._lint_command(step, changed_files)
             if command is None:
-                return self._skipped(step, "No Python files changed.")
+                return self._skipped(step, _NO_PYTHON_FILES)
             return await self._run_command_gate(
                 step,
                 command,
@@ -381,7 +384,7 @@ class GateRunner:
         if step.name == "type_check":
             command = self._type_check_command(step, changed_files)
             if command is None:
-                return self._skipped(step, "No Python files changed.")
+                return self._skipped(step, _NO_PYTHON_FILES)
             return await self._run_command_gate(
                 step,
                 command,
@@ -539,7 +542,7 @@ class GateRunner:
         status: GateStatus
         blocked = False
         normalized_detail = detail
-        if detail.startswith("Timed out after "):
+        if detail.startswith(_TIMED_OUT_PREFIX):
             status = "timeout"
         elif ok:
             status = "pass"
@@ -575,7 +578,7 @@ class GateRunner:
 
         ok, detail = await asyncio.to_thread(qg.run_command_sync, command, run_dir, self._config.timeout_s)
         metadata: dict[str, Any] = {"command": command}
-        if detail.startswith("Timed out after "):
+        if detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,
                 status="timeout",
@@ -631,7 +634,7 @@ class GateRunner:
         python_files = self._python_files(changed_files)
         command = self._complexity_gate_command(step, python_files)
         if command is None:
-            return self._skipped(step, "No Python files changed.")
+            return self._skipped(step, _NO_PYTHON_FILES)
 
         current_score, detail = self._measure_complexity_sync(command, run_dir)
         if current_score is None:
@@ -678,11 +681,11 @@ class GateRunner:
 
         python_files = self._python_files(changed_files)
         if not python_files:
-            return self._skipped(step, "No Python files changed.")
+            return self._skipped(step, _NO_PYTHON_FILES)
 
         command = self._dead_code_command(step, python_files)
         ok, detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
-        if detail.startswith("Timed out after "):
+        if detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,
                 status="timeout",
@@ -737,7 +740,7 @@ class GateRunner:
         command = self._optional_command("import_cycle", step.command_override)
         python_files = self._python_files(changed_files)
         if not python_files:
-            return self._skipped(step, "No Python files changed.")
+            return self._skipped(step, _NO_PYTHON_FILES)
         if command is not None:
             ok, detail = self._run_command_and_capture(command, run_dir)
             if ok:
@@ -776,7 +779,7 @@ class GateRunner:
 
         python_files = self._python_files(changed_files)
         if not python_files:
-            return self._skipped(step, "No Python files changed.")
+            return self._skipped(step, _NO_PYTHON_FILES)
 
         command = self._optional_command("coverage_delta", step.command_override)
         if command is not None:
@@ -1066,7 +1069,7 @@ class GateRunner:
 
     def _command_failure_result(self, step: GatePipelineStep, detail: str, command: str) -> GateResult:
         """Translate a command failure into a gate result."""
-        if detail.startswith("Timed out after "):
+        if detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,
                 status="timeout",

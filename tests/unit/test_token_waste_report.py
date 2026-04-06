@@ -18,7 +18,6 @@ from bernstein.core.token_waste_report import (
     generate_session_waste_report,
 )
 
-
 # ---------------------------------------------------------------------------
 # _parse_token_records
 # ---------------------------------------------------------------------------
@@ -150,7 +149,7 @@ class TestAnalyzeTokenWaste:
         report = analyze_token_waste("s1", [])
         assert report.total_tokens == 0
         assert report.wasted_tokens == 0
-        assert report.efficiency_pct == 100.0
+        assert report.efficiency_pct == pytest.approx(100.0)
         assert report.findings == []
 
     def test_all_small_records_clean(self) -> None:
@@ -158,7 +157,7 @@ class TestAnalyzeTokenWaste:
         report = analyze_token_waste("s2", records, retry_spike_threshold=5_000, oversized_threshold=20_000)
         assert report.total_tokens == 550
         assert report.findings == []
-        assert report.efficiency_pct == 100.0
+        assert report.efficiency_pct == pytest.approx(100.0)
 
     def test_retry_increases_waste(self) -> None:
         records = [

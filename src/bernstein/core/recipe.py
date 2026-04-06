@@ -74,9 +74,13 @@ class Recipe:
         steps: list[RecipeStep] = []
         for step_data in data.get("steps", []):
             complexity_raw = str(step_data.get("complexity", "medium"))
-            complexity: Literal["low", "medium", "high"] = (
-                "low" if complexity_raw == "low" else "high" if complexity_raw == "high" else "medium"
-            )
+            complexity: Literal["low", "medium", "high"]
+            if complexity_raw == "low":
+                complexity = "low"
+            elif complexity_raw == "high":
+                complexity = "high"
+            else:
+                complexity = "medium"
             steps.append(
                 RecipeStep(
                     id=str(step_data.get("id", "")),

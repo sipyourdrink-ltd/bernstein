@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -108,7 +108,7 @@ async def test_auto_decomposition(test_client: TestClient, orchestrator_factory,
             subtasks = [t for t in tasks if "Subtask" in t["title"] and not t["title"].startswith("[CONFLICT]")]
             if subtasks and len(subtasks) == 2 and all(t["status"] == "done" for t in subtasks):
                 break
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
         # 3. Verify
         resp = test_client.get("/tasks")

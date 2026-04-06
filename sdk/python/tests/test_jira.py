@@ -51,7 +51,7 @@ class TestJiraIssueRef:
         }
         ref = JiraIssueRef.from_api_response(data)
         assert ref.key == "PROJ-42"
-        assert ref.story_points == 5.0
+        assert ref.story_points == pytest.approx(5.0)
         assert ref.labels == ["backend", "security"]
         assert ref.assignee_email == "dev@example.com"
         assert "desc text" in ref.description

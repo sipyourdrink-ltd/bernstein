@@ -15,7 +15,7 @@ TOKEN="${BERNSTEIN_API_TOKEN:-}"
 ACTION="${1:?Usage: approvals.sh <list|plans|approve|reject|approve-plan|reject-plan> [id] [reason]}"
 
 HEADERS=(-H "Content-Type: application/json")
-if [ -n "$TOKEN" ]; then
+if [[ -n "$TOKEN" ]]; then
   HEADERS+=(-H "Authorization: Bearer $TOKEN")
 fi
 

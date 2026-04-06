@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from bernstein.core.batch_api import (
     BatchPollResult,
     BatchProviderRequest,
@@ -231,13 +233,13 @@ def test_poll_applies_diff_and_records_discounted_cost(tmp_path: Path, make_task
     job_path = tmp_path / ".sdd" / "runtime" / "batch_jobs" / "batch-T-batch-ok.json"
     job = json.loads(job_path.read_text(encoding="utf-8"))
     assert job["status"] == "applied"
-    assert job["cost_usd"] == 0.01
+    assert job["cost_usd"] == pytest.approx(0.01)
     metrics_path = tmp_path / ".sdd" / "metrics" / "tasks.jsonl"
     record = json.loads(metrics_path.read_text(encoding="utf-8").splitlines()[-1])
     assert record["task_id"] == "T-batch-ok"
     assert record["batch_state"] == "applied"
-    assert record["cost_usd"] == 0.01
-    assert record["estimated_savings_usd"] == 0.01
+    assert record["cost_usd"] == pytest.approx(0.01)
+    assert record["estimated_savings_usd"] == pytest.approx(0.01)
 
 
 def test_poll_failure_marks_task_for_realtime_fallback(tmp_path: Path, make_task: Any) -> None:

@@ -78,9 +78,9 @@ class TestTaskContext:
         from bernstein.core.bandit_router import TaskContext
 
         # priority 1 (critical) → 0.0, priority 2 (normal) → 0.5, priority 3 → 1.0
-        assert TaskContext.from_task(_task(priority=1)).priority_norm == 0.0
+        assert TaskContext.from_task(_task(priority=1)).priority_norm == pytest.approx(0.0)
         assert TaskContext.from_task(_task(priority=2)).priority_norm == pytest.approx(0.5)
-        assert TaskContext.from_task(_task(priority=3)).priority_norm == 1.0
+        assert TaskContext.from_task(_task(priority=3)).priority_norm == pytest.approx(1.0)
 
     def test_file_count_from_owned_files(self) -> None:
         from bernstein.core.bandit_router import TaskContext
@@ -263,7 +263,7 @@ class TestBanditRouter:
         from bernstein.core.bandit_router import BanditRouter
 
         router = BanditRouter(warmup_min=100)
-        assert router.exploration_rate == 0.0
+        assert router.exploration_rate == pytest.approx(0.0)
 
     def test_exploration_rate_positive_after_warmup(self) -> None:
         from bernstein.core.bandit_router import BanditRouter

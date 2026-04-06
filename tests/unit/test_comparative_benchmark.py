@@ -219,8 +219,8 @@ class TestComputeReport:
 
     def test_success_rate(self, sample_results: list[BenchmarkResult]) -> None:
         report = compute_report(sample_results)
-        assert report.summary["single"].success_rate == 0.5
-        assert report.summary["orchestrated"].success_rate == 1.0
+        assert report.summary["single"].success_rate == pytest.approx(0.5)
+        assert report.summary["orchestrated"].success_rate == pytest.approx(1.0)
 
     def test_total_tasks(self, sample_results: list[BenchmarkResult]) -> None:
         report = compute_report(sample_results)
@@ -246,8 +246,8 @@ class TestComputeReport:
 
     def test_verification_rate(self, sample_results: list[BenchmarkResult]) -> None:
         report = compute_report(sample_results)
-        assert report.summary["single"].verification_rate == 0.5
-        assert report.summary["orchestrated"].verification_rate == 1.0
+        assert report.summary["single"].verification_rate == pytest.approx(0.5)
+        assert report.summary["orchestrated"].verification_rate == pytest.approx(1.0)
 
     def test_empty_results(self) -> None:
         report = compute_report([])
@@ -292,8 +292,8 @@ class TestBenchmarkResult:
         d = r.to_dict()
         assert d["task_id"] == "t1"
         assert d["mode"] == "single"
-        assert d["wall_time_seconds"] == 10.12
-        assert d["cost_usd"] == 0.0457
+        assert d["wall_time_seconds"] == pytest.approx(10.12)
+        assert d["cost_usd"] == pytest.approx(0.0457)
         assert d["tokens_used"] == 500
         assert d["success"] is True
         assert d["verification_passed"] is False
