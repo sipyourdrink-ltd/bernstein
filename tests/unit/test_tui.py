@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from bernstein.tui.app import BernsteinApp, _kill_agent, _kill_all_agents
 from bernstein.tui.widgets import (
     STATUS_COLORS,

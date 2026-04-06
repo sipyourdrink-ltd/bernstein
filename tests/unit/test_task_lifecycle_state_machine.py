@@ -21,8 +21,8 @@ import pytest
 
 from bernstein.core.lifecycle import (
     DuplicateTransitionError,
-    TransitionIdTracker,
-    clear_transition_ids,
+    _LRUSet,
+    _seen_transition_ids,
     transition_agent,
     transition_task,
 )
@@ -106,7 +106,7 @@ class TestIdempotencyTokens:
 
     def setup_method(self) -> None:
         """Clear the global seen-IDs set before each test."""
-        clear_transition_ids()
+        _seen_transition_ids._data.clear()
 
     def test_transition_task_accepts_unique_transition_id(self) -> None:
         task = _make_task()
@@ -154,7 +154,7 @@ class TestIdempotencyTokens:
 
     def test_lru_eviction_allows_reuse_after_overflow(self) -> None:
         """After exceeding the max capacity, the oldest ID is evicted."""
-        lru = TransitionIdTracker(maxsize=3)
+        lru = _LRUSet(maxsize=3)
         lru.add("a")
         lru.add("b")
         lru.add("c")
