@@ -442,6 +442,19 @@ class BatchClaimResponse(BaseModel):
     failed: list[str]
 
 
+class BatchCreateRequest(BaseModel):
+    """Body for POST /tasks/batch."""
+
+    tasks: list[TaskCreate]
+
+
+class BatchCreateResponse(BaseModel):
+    """Response for POST /tasks/batch."""
+
+    created: list[TaskResponse]
+    skipped_titles: list[str]
+
+
 class RoleCounts(BaseModel):
     """Per-role open task counts."""
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,7 @@ from starlette.responses import StreamingResponse
 from bernstein.core.bulletin import BulletinBoard, BulletinMessage
 from bernstein.core.difficulty_estimator import estimate_difficulty, minutes_for_level
 from bernstein.core.eu_ai_act import (
+    TaskRiskAssessment,
     append_assessment_log,
     assess_task,
     build_log_record,
@@ -37,6 +39,8 @@ from bernstein.core.server import (
     A2ATaskSendRequest,
     BatchClaimRequest,
     BatchClaimResponse,
+    BatchCreateRequest,
+    BatchCreateResponse,
     BulletinMessageResponse,
     BulletinPostRequest,
     ClusterStatusResponse,
@@ -72,6 +76,8 @@ from bernstein.core.task_store import ArchiveRecord, SnapshotEntry
 from bernstein.core.telemetry import start_span
 from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
 from bernstein.plugins.manager import HookBlockingError, get_plugin_manager
+
+logger = logging.getLogger(__name__)
 
 _DRAINING_DETAIL = "Server is draining -- no new claims accepted"
 
@@ -199,6 +205,81 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
         get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
         return task_to_response(task)
+
+
+@router.post(
+    "/tasks/batch",
+    status_code=201,
+    response_model=BatchCreateResponse,
+    responses={503: {"description": "Server is draining"}},
+)
+async def create_tasks_batch(body: BatchCreateRequest, request: Request) -> BatchCreateResponse:
+    """Create multiple tasks atomically with title dedup."""
+    if request.app.state.draining:  # type: ignore[attr-defined]
+        raise HTTPException(
+            status_code=503,
+            detail=_DRAINING_DETAIL,
+        )
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+
+    prepared: list[TaskCreate] = []
+    assessments: list[TaskRiskAssessment] = []
+    for task_body in body.tasks:
+        effective = task_body.model_copy(update={"tenant_id": request_tenant_id(request)})
+
+        # Auto-classify role if not specified
+        if effective.role == "auto":
+            effective.role = classify_role(effective.description)
+
+        # Auto-estimate difficulty if minutes not provided
+        if effective.estimated_minutes is None:
+            score = estimate_difficulty(effective.description)
+            effective.estimated_minutes = minutes_for_level(score.level)
+
+        assessment = assess_task(effective)
+        effective = effective.model_copy(
+            update={
+                "eu_ai_act_risk": merge_eu_ai_act_risk(effective.eu_ai_act_risk, assessment.risk_level).value,
+                "approval_required": bool(effective.approval_required or assessment.approval_required),
+                "risk_level": merge_bernstein_risk(effective.risk_level, assessment.bernstein_risk_level),
+            }
+        )
+
+        # Pre-create hook: skip individual task if blocked (don't fail entire batch)
+        try:
+            pm = get_plugin_manager()
+            pm.fire_pre_task_create(
+                task_id="",
+                role=effective.role,
+                title=effective.title,
+                description=effective.description,
+            )
+        except HookBlockingError:
+            logger.warning("Pre-create hook blocked task '%s' — skipping", effective.title)
+            continue
+
+        prepared.append(effective)
+        assessments.append(assessment)
+
+    created_tasks, skipped_titles = await store.create_batch(prepared, dedup_by_title=True)
+
+    # Build a title->assessment lookup for created tasks (dedup may have dropped some)
+    assessment_by_title = dict(zip([t.title for t in prepared], assessments, strict=False))
+    for task in created_tasks:
+        task_assessment = assessment_by_title.get(task.title)
+        if task_assessment is not None:
+            append_assessment_log(
+                request.app.state.sdd_dir,
+                build_log_record(task.id, task, task_assessment),
+            )
+        sse_bus.publish("task_update", json.dumps({"id": task.id, "status": task.status.value}))
+        get_plugin_manager().fire_task_created(task_id=task.id, role=task.role, title=task.title)
+
+    return BatchCreateResponse(
+        created=[task_to_response(t) for t in created_tasks],
+        skipped_titles=skipped_titles,
+    )
 
 
 @router.post(
