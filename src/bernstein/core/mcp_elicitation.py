@@ -17,7 +17,7 @@ Usage::
     from bernstein.core.mcp_elicitation import ElicitationHandler
 
     handler = ElicitationHandler()
-    handler.add_auto_policy("confirm_delete", pattern="confirm.*delet", response="yes")
+    handler.add_auto_policy("confirm_delete", pattern="confirm.*delete", response="yes")
     result = handler.handle(ElicitationRequest(
         id="e1", server_name="github", message="Confirm delete branch?",
         schema={"type": "string"}, request_type="confirmation",
