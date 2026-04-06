@@ -59,6 +59,35 @@ def run_file(path: Path, extra_args: list[str]) -> tuple[Path, int, float, str]:
     return path, result.returncode, duration, output
 
 
+def _print_failure_summary(output: str) -> None:
+    """Print the pytest failure summary from subprocess output.
+
+    Extracts the 'FAILURES' section and 'short test summary' rather than
+    dumping everything (which can be 1000+ lines with -s / no-capture).
+    """
+    lines = output.strip().split("\n")
+    # Find the FAILURES section and short test summary
+    in_section = False
+    printed = 0
+    for line in lines:
+        stripped = line.strip()
+        if "FAILURES" in stripped and "===" in stripped:
+            in_section = True
+        if "short test summary" in stripped:
+            in_section = True
+        if in_section:
+            print(f"       {line}")
+            printed += 1
+            if printed > 80:
+                print("       ... (truncated)")
+                break
+    if not printed:
+        # Fallback: show last 30 lines
+        for line in lines[-30:]:
+            if line.strip():
+                print(f"       {line}")
+
+
 def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool) -> int:
     """Run test files one by one."""
     passed = 0
@@ -89,11 +118,7 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool) ->
         else:
             failed += 1
             print(f"  FAIL {label} ({duration:.1f}s)")
-            # Show pytest summary (last 50 lines) — not the entire output
-            # which can be massive with -s (no capture).
-            lines = [ln for ln in output.strip().split("\n") if ln.strip()]
-            for line in lines[-50:]:
-                print(f"       {line}")
+            _print_failure_summary(output)
             if fail_fast:
                 break
 
@@ -147,9 +172,7 @@ def run_parallel(files: list[Path], extra_args: list[str], workers: int, fail_fa
             else:
                 failed += 1
                 print(f"  FAIL [{done}/{total}] {fpath.name} ({duration:.1f}s)")
-                lines = [ln for ln in output.strip().split("\n") if ln.strip()]
-                for line in lines[-50:]:
-                    print(f"       {line}")
+                _print_failure_summary(output)
                 if fail_fast:
                     abort = True
                     for f in futures:
