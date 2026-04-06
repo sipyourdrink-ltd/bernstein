@@ -8,7 +8,6 @@ from bernstein.core.batch_transitions import (
     complete_stage,
     fail_stage,
 )
-
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
 
 

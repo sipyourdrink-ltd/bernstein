@@ -20,6 +20,8 @@ from bernstein.core.models import ModelConfig
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bernstein.adapters.base import CLIAdapter
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

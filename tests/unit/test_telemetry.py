@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -81,7 +82,7 @@ def test_list_presets_sorted() -> None:
 def test_preset_is_frozen() -> None:
     preset = get_preset("jaeger")
     assert preset is not None
-    with pytest.raises(Exception):  # frozen dataclass raises FrozenInstanceError
+    with pytest.raises(FrozenInstanceError):
         preset.endpoint = "http://hacked"  # type: ignore[misc]
 
 

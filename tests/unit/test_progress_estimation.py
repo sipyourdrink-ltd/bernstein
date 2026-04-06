@@ -5,9 +5,9 @@ from __future__ import annotations
 import time
 
 import pytest
-from bernstein.core.progress_estimation import ProgressEstimator
 
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
+from bernstein.core.progress_estimation import ProgressEstimator
 
 
 def _t(

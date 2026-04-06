@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import json
 from pathlib import Path
@@ -103,10 +104,8 @@ class TestDiskFullDuringJSONLWrite:
                 line = line.strip()
                 if not line:
                     continue
-                try:
+                with contextlib.suppress(json.JSONDecodeError):
                     valid_records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass  # Skip corrupt lines
 
         assert len(valid_records) == 2
         assert valid_records[0]["id"] == "T-0"

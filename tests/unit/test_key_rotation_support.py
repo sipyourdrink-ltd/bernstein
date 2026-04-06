@@ -5,18 +5,18 @@ from __future__ import annotations
 import time
 
 import pytest
-from bernstein.core.key_rotation_support import (
-    AgentKeyUpdater,
-    ExpiryStatus,
-    KeyExpiryDetector,
-    RotationOrchestrator,
-)
 
 from bernstein.core.key_rotation import (
     KeyRotationConfig,
     KeyRotationManager,
     KeyState,
     ManagedKey,
+)
+from bernstein.core.key_rotation_support import (
+    AgentKeyUpdater,
+    ExpiryStatus,
+    KeyExpiryDetector,
+    RotationOrchestrator,
 )
 
 

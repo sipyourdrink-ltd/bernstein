@@ -78,10 +78,8 @@ class TestFuzzedYAMLNoCrash:
     @given(data=random_yaml_dict())
     def test_random_dict_no_crash(self, data: dict[str, Any]) -> None:
         """Feeding random dicts to BernsteinConfig must raise ValidationError or succeed."""
-        try:
+        with contextlib.suppress(ValidationError, TypeError, ValueError):
             BernsteinConfig.model_validate(data)
-        except (ValidationError, TypeError, ValueError):
-            pass  # Expected for garbage input
 
     @settings(max_examples=30, suppress_health_check=[HealthCheck.too_slow])
     @given(text=malformed_yaml_text())
@@ -147,10 +145,8 @@ class TestEnvExpansionFuzz:
     @given(text=st.text(min_size=0, max_size=200))
     def test_expand_no_crash(self, text: str) -> None:
         """expand_env_vars must never crash -- only raise EnvExpansionError."""
-        try:
+        with contextlib.suppress(EnvExpansionError):
             expand_env_vars(text, field_name="fuzz")
-        except EnvExpansionError:
-            pass  # Expected for unset ${VAR} references
 
     def test_blocked_var_raises(self) -> None:
         with pytest.raises(EnvExpansionError, match="blocked"):

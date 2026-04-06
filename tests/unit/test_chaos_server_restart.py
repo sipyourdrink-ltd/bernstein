@@ -7,6 +7,7 @@ orphaned agents are detected.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from pathlib import Path
@@ -309,10 +310,8 @@ class TestTaskStorePersistence:
             line = line.strip()
             if not line:
                 continue
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 recovered.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass  # Skip corrupt line
 
         assert len(recovered) == 2
         assert recovered[-1]["id"] == "T-2"
