@@ -16,6 +16,8 @@
   <img alt="Bernstein TUI — live task dashboard" src="docs/assets/tui.svg" width="700">
 </picture>
 
+> *"lol, good luck, keep vibecoding shit that you have no idea about xD"* — [PeaceFirePL](https://www.reddit.com/r/coolgithubprojects/comments/1sc7pxn/comment/oel89qf/), Reddit
+
 [![CI](https://github.com/chernistry/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/chernistry/bernstein/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/chernistry/bernstein/graph/badge.svg)](https://codecov.io/gh/chernistry/bernstein)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
@@ -148,11 +150,6 @@ PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and code style.
 ## Support
 
 If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chernistry) &middot; [Open Collective](https://opencollective.com/bernstein)
-
-## Wall of Fame
-
-> "lol, good luck, keep vibecoding shit that you have no idea about xD"
-> — [PeaceFirePL](https://www.reddit.com/r/coolgithubprojects/comments/1sc7pxn/comment/oel89qf/), Reddit
 
 ## License
 
