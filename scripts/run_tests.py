@@ -31,7 +31,7 @@ def discover_test_files(test_dir: Path, keyword: str | None = None) -> list[Path
 
 def run_file(path: Path, extra_args: list[str]) -> tuple[Path, int, float, str]:
     """Run a single test file in a subprocess. Returns (path, exitcode, duration, output)."""
-    cmd = [sys.executable, "-m", "pytest", str(path), "-x", "-q", "--tb=short", *extra_args]
+    cmd = [sys.executable, "-m", "pytest", str(path), "-x", "-q", "--tb=short", "-p", "no:cacheprovider", *extra_args]
     start = time.monotonic()
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     duration = time.monotonic() - start
