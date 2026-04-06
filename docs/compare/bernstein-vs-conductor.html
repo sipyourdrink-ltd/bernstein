@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bernstein vs Conductor — AI Agent Orchestration Comparison</title>
+  <meta name="description" content="Compare Bernstein and Conductor for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/compare/bernstein-vs-conductor.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="Bernstein vs Conductor — AI Agent Orchestration Comparison" />
+  <meta property="og:description" content="Compare Bernstein and Conductor for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/compare/bernstein-vs-conductor.html" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Bernstein vs Conductor — AI Agent Orchestration Comparison" />
+  <meta name="twitter:description" content="Compare Bernstein and Conductor for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="author" href="https://alexchernysh.com" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Bernstein vs Conductor — AI Agent Orchestration Comparison",
+    "description": "Conductor is a workflow orchestration engine for production business processes. Bernstein is a coding agent orchestrator. They solve different problems.",
+    "author": { "@type": "Person", "name": "Alex Chernysh", "url": "https://alexchernysh.com" },
+    "datePublished": "2026-03-28",
+    "dateModified": "2026-04-06",
+    "publisher": { "@type": "Organization", "name": "Bernstein", "url": "https://chernistry.github.io/bernstein/" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "Bernstein vs Conductor Feature Comparison",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Bernstein", "description": "AI coding agent orchestrator with deterministic scheduling, 18+ CLI adapters, git worktree isolation, and janitor verification" },
+      { "@type": "ListItem", "position": 2, "name": "Conductor", "description": "Production workflow orchestration engine with durable execution, worker polling, and database-backed state" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Is Conductor or Bernstein better for AI coding agents?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Bernstein is purpose-built for AI coding agent orchestration. Conductor is designed for production business workflow orchestration (microservice coordination, durable execution). They solve different problems." }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I use Conductor to orchestrate coding agents?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Technically yes, but Conductor's execution model (persistent workflows, worker polling, workflow versioning) does not match the short-lived process model that coding agents need. Bernstein is designed specifically for this use case." }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I use Bernstein and Conductor together?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. Some teams use Conductor for production business workflows and Bernstein for automated development tasks like CI-integrated PR generation, overnight issue triage, and scheduled code quality improvements. They are complementary tools." }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="../style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="../script.js"></script>
+</head>
+<body>
+
+<!-- ── Navigation ── -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="../index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="../getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="../concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="../adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="../api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="../leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="index.html" class="nav-link" data-page="compare/index.html">Compare</a>
+      <a href="../docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+      <a href="../blog.html" class="nav-link" data-page="blog.html">Blog</a>
+      <a href="../limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Page hero ── -->
+<div class="page-hero">
+  <div class="container">
+    <h1>Bernstein vs Conductor</h1>
+    <p>How Bernstein compares to Netflix Conductor for orchestrating AI coding agents.</p>
+  </div>
+</div>
+
+<!-- ── Doc layout ── -->
+<div class="doc-layout">
+
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#feature-comparison">Feature comparison</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#cost">Cost comparison</a></li>
+      <li><a href="#when-conductor">When to use Conductor</a></li>
+      <li><a href="#when-bernstein">When to use Bernstein</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+  </aside>
+
+  <main class="doc-content">
+
+    <p>Conductor is a workflow orchestration engine for production business processes. Bernstein is a coding agent orchestrator that coordinates AI coding agents to work on software development tasks in parallel. They share the word "orchestration" but solve fundamentally different problems: Conductor manages microservice workflows with durable execution, while Bernstein spawns short-lived CLI coding agents, verifies their output against tests, and merges working code.</p>
+
+    <h2 id="overview">What each tool is</h2>
+
+    <p><strong>Conductor</strong> (Netflix Conductor, or the OSS forks/successors) is a workflow orchestration engine designed for production microservice coordination. It has durable execution, state machines, retry policies, human approval steps, and a web UI for workflow visualization. It is used to orchestrate processes like "charge customer, provision account, send welcome email, start onboarding sequence."</p>
+
+    <p><strong>Bernstein</strong> is an orchestrator for CLI coding agents. It takes a natural language goal, decomposes it into subtasks, spawns short-lived AI coding agents (Claude Code, Codex, Gemini CLI) to work the subtasks in parallel, verifies each result, and merges the output. It is used to orchestrate processes like "add REST endpoints + write tests + update docs, run in parallel, verify, commit."</p>
+
+    <h3>Where the confusion comes from</h3>
+
+    <p>Multi-agent AI systems are being built on top of general workflow engines. Teams with existing Conductor infrastructure sometimes try to use it as the coordination layer for AI coding agents. The result is usually more complexity than value: Conductor's execution model (persistent workflows, worker polling, workflow versioning) does not match the filesystem-native, short-lived process model that coding agents need.</p>
+
+    <p>Bernstein is purpose-built for the coding agent use case. No workflow versioning, no worker registration, no durable execution across process restarts -- just task files, agent processes, and a janitor.</p>
+
+    <h2 id="feature-comparison">Feature comparison</h2>
+
+    <table>
+      <thead>
+        <tr><th>Feature</th><th>Bernstein</th><th>Conductor</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Primary use case</strong></td><td>AI coding agent coordination</td><td>Production workflow orchestration</td></tr>
+        <tr><td><strong>Task execution</strong></td><td>Spawned CLI processes (short-lived)</td><td>Registered workers (long-running)</td></tr>
+        <tr><td><strong>State storage</strong></td><td>Plain files (<code>.sdd/</code>)</td><td>Database-backed (Postgres/Redis)</td></tr>
+        <tr><td><strong>Workflow definition</strong></td><td>Natural language, auto-decomposed</td><td>YAML/JSON workflow DSL</td></tr>
+        <tr><td><strong>Human-in-the-loop</strong></td><td>No (headless)</td><td>Yes -- human task steps</td></tr>
+        <tr><td><strong>Durable execution</strong></td><td>No -- restart from queue</td><td>Yes -- survives restarts</td></tr>
+        <tr><td><strong>Retry logic</strong></td><td>Quarantine + retry via janitor</td><td>Configurable per workflow step</td></tr>
+        <tr><td><strong>Parallel execution</strong></td><td>Yes -- multiple agents on independent tasks</td><td>Yes -- fork/join operators</td></tr>
+        <tr><td><strong>Web UI</strong></td><td>TUI + local web dashboard</td><td>Full workflow visualization UI</td></tr>
+        <tr><td><strong>Self-evolution</strong></td><td>Yes</td><td>No</td></tr>
+        <tr><td><strong>AI model integration</strong></td><td>First-class (18+ CLI agents)</td><td>Plugin/worker integration</td></tr>
+        <tr><td><strong>License</strong></td><td>Apache 2.0</td><td>Apache 2.0</td></tr>
+        <tr><td><strong>Operational complexity</strong></td><td>Low (runs locally, no external services)</td><td>Medium-high (requires backend services)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="architecture">Architecture comparison</h2>
+
+    <p><strong>Conductor</strong> uses persistent workers that register with a server and poll for work. Workflow definitions are versioned schemas. State survives restarts because it lives in a database.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">Workflow definition (YAML/JSON)
+    |
+    v
+Conductor Server (backend services: Postgres, Redis, etc.)
+    |
+    +-- Worker A (polls for tasks, long-running process)
+    +-- Worker B (polls for tasks, long-running process)
+    +-- Worker C (polls for tasks, long-running process)
+         |
+         v
+    Durable state, retry policies, human approval gates</code></pre>
+    </div>
+
+    <p><strong>Bernstein</strong> spawns fresh agent processes per task. State is plain files. No persistent services required. The server is a lightweight FastAPI process that Bernstein starts automatically.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">bernstein -g "goal"  (terminal)
+    |
+    v
+Task server (local FastAPI, no external dependencies)
+    |
+    +-- Task A -> claude  (spawned process, exits after 1-3 tasks)
+    +-- Task B -> codex   (spawned process, exits after 1-3 tasks)
+    +-- Task C -> gemini  (spawned process, exits after 1-3 tasks)
+         |
+         v
+    Git worktree -> janitor -> merge</code></pre>
+    </div>
+
+    <h2 id="cost">Cost comparison</h2>
+
+    <p>Conductor requires operational infrastructure: a database, a server process, and worker services. For self-hosted deployments, this means ongoing ops work. Managed Conductor offerings add a subscription cost.</p>
+
+    <p>Bernstein requires nothing but the Python package and model API tokens. A typical medium-complexity session costs $1-3 in API tokens. No backend, no subscription.</p>
+
+    <h2 id="when-conductor">When Conductor is the right tool</h2>
+
+    <ul>
+      <li><strong>You are orchestrating production business workflows</strong>, not development tasks. Order processing, account provisioning, approval chains, notification sequences -- these are Conductor's domain.</li>
+      <li><strong>You need durable execution.</strong> The workflow must survive process crashes, server restarts, and network partitions.</li>
+      <li><strong>You have human approval steps.</strong> A human must review and approve before the next step proceeds. Conductor has first-class human task support.</li>
+      <li><strong>You need workflow versioning and rollback.</strong> Conductor tracks workflow definition versions and allows in-flight migrations.</li>
+      <li><strong>Your team already runs Conductor.</strong> If you have the infrastructure, adding another AI-native workflow is reasonable.</li>
+    </ul>
+
+    <h2 id="when-bernstein">When Bernstein is the right tool</h2>
+
+    <ul>
+      <li><strong>You want to run coding agents on development tasks.</strong> Bernstein is purpose-built for this. No DSL required -- just <code>bernstein -g "add rate limiting to the API"</code>.</li>
+      <li><strong>You want zero infrastructure.</strong> No database, no server services, no ops burden. Bernstein starts a local process and exits when done.</li>
+      <li><strong>You want model-agnostic agent orchestration.</strong> Mix Claude, Codex, Gemini, and Qwen in the same run, routing each task to the cheapest capable model.</li>
+      <li><strong>You want self-evolution.</strong> Bernstein analyzes its own run metrics and improves prompts and routing over time.</li>
+      <li><strong>Your state can live in git.</strong> Bernstein's <code>.sdd/</code> files are checked in alongside code. The audit trail is the git history.</li>
+    </ul>
+
+    <h3>Can you use both?</h3>
+
+    <p>Yes. If you run Conductor for production business workflows and want to add AI coding agent orchestration for your development pipeline, Bernstein is not a replacement -- it is a different tool for a different problem. Some teams use Conductor for production orchestration and Bernstein for automated development tasks (CI-integrated PR generation, overnight issue triage, scheduled code quality improvements). These are complementary, not conflicting.</p>
+
+    <h2 id="faq">Frequently asked questions</h2>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Is Conductor or Bernstein better for AI coding agents?</strong></p>
+        <p>Bernstein is purpose-built for AI coding agent orchestration. Conductor is designed for production business workflow orchestration (microservice coordination, durable execution). They solve different problems.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Can I use Conductor to orchestrate coding agents?</strong></p>
+        <p>Technically yes, but Conductor's execution model (persistent workflows, worker polling, workflow versioning) does not match the short-lived process model that coding agents need. Bernstein is designed specifically for this use case.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Can I use Bernstein and Conductor together?</strong></p>
+        <p>Yes. Some teams use Conductor for production business workflows and Bernstein for automated development tasks like CI-integrated PR generation, overnight issue triage, and scheduled code quality improvements. They are complementary tools.</p>
+      </div>
+    </div>
+
+    <p style="margin-top:2rem;"><a href="index.html">&larr; Back to all comparisons</a></p>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; Created by <a href="https://alexchernysh.com" target="_blank" rel="noopener author">Alex Chernysh</a> &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 _SEEN_TRANSITION_IDS_MAX: int = 10_000
 
 
-class _LRUSet:
-    """Bounded set with LRU eviction, backed by an OrderedDict."""
+class TransitionIdTracker:
+    """Bounded set with LRU eviction for tracking seen transition IDs."""
 
     def __init__(self, maxsize: int) -> None:
         self._data: OrderedDict[str, None] = OrderedDict()
@@ -45,6 +45,7 @@ class _LRUSet:
         return key in self._data
 
     def add(self, key: str) -> None:
+        """Record a transition ID. Evicts the oldest if at capacity."""
         if key in self._data:
             self._data.move_to_end(key)
             return
@@ -55,8 +56,17 @@ class _LRUSet:
     def __len__(self) -> int:
         return len(self._data)
 
+    def clear(self) -> None:
+        """Remove all tracked transition IDs (useful for testing)."""
+        self._data.clear()
 
-_seen_transition_ids = _LRUSet(_SEEN_TRANSITION_IDS_MAX)
+
+_seen_transition_ids = TransitionIdTracker(_SEEN_TRANSITION_IDS_MAX)
+
+
+def clear_transition_ids() -> None:
+    """Clear the global idempotency tracker.  Intended for test teardown."""
+    _seen_transition_ids.clear()
 
 
 class DuplicateTransitionError(Exception):

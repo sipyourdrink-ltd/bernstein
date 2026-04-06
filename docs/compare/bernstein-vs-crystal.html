@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bernstein vs Crystal — AI Agent Orchestration Comparison</title>
+  <meta name="description" content="Compare Bernstein and Crystal for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/compare/bernstein-vs-crystal.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="Bernstein vs Crystal — AI Agent Orchestration Comparison" />
+  <meta property="og:description" content="Compare Bernstein and Crystal for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/compare/bernstein-vs-crystal.html" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Bernstein vs Crystal — AI Agent Orchestration Comparison" />
+  <meta name="twitter:description" content="Compare Bernstein and Crystal for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="author" href="https://alexchernysh.com" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Bernstein vs Crystal — AI Agent Orchestration Comparison",
+    "description": "Crystal uses iterative self-review loops. Bernstein uses external verification via tests and linter. Compare verification approaches for AI coding agents.",
+    "author": { "@type": "Person", "name": "Alex Chernysh", "url": "https://alexchernysh.com" },
+    "datePublished": "2026-03-28",
+    "dateModified": "2026-04-06",
+    "publisher": { "@type": "Organization", "name": "Bernstein", "url": "https://chernistry.github.io/bernstein/" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "Bernstein vs Crystal Feature Comparison",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Bernstein", "description": "External verification via tests and linter, parallel task execution, 18+ CLI agents, deterministic scheduling" },
+      { "@type": "ListItem", "position": 2, "name": "Crystal", "description": "Iterative self-review loops with LLM reviewer agent, sequential per-task review cycles" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is the difference between Crystal and Bernstein for code verification?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Crystal uses an LLM reviewer agent that critiques code output in iterative loops. Bernstein uses external verification: the janitor runs pytest, ruff, and file existence checks. Crystal trusts agent judgment; Bernstein trusts test results." }
+      },
+      {
+        "@type": "Question",
+        "name": "Is Crystal or Bernstein better for codebases with low test coverage?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Crystal is better when test coverage is low (under 40%), because its LLM review loop catches issues that tests cannot cover. Bernstein is better when test coverage is high, because external verification is faster, cheaper, and more reliable." }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Bernstein support iterative code review like Crystal?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Not by default. Bernstein's verification is external (tests and linter). However, some teams combine both: Bernstein for the primary coding loop with test-based verification, and a Crystal-style LLM review as an additional pre-merge gate." }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="../style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="../script.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="../index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="../getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="../concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="../adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="../api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="../leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="index.html" class="nav-link" data-page="compare/index.html">Compare</a>
+      <a href="../docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+      <a href="../blog.html" class="nav-link" data-page="blog.html">Blog</a>
+      <a href="../limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</nav>
+
+<div class="page-hero">
+  <div class="container">
+    <h1>Bernstein vs Crystal</h1>
+    <p>External test verification vs iterative LLM review loops for AI coding agents.</p>
+  </div>
+</div>
+
+<div class="doc-layout">
+
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#feature-comparison">Feature comparison</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#hallucination">Reviewer hallucination</a></li>
+      <li><a href="#cost">Cost comparison</a></li>
+      <li><a href="#when-crystal">When to use Crystal</a></li>
+      <li><a href="#when-bernstein">When to use Bernstein</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+  </aside>
+
+  <main class="doc-content">
+
+    <p>Crystal uses iterative self-review loops where an LLM reviewer critiques code output until quality gates pass. Bernstein uses external verification where a deterministic janitor runs pytest and ruff to decide whether work is accepted. Crystal is better when test coverage is thin and subjective quality matters. Bernstein is better when tests are ground truth and you want fast, deterministic, cost-efficient verification.</p>
+
+    <h2 id="overview">What each tool is</h2>
+
+    <p><strong>Crystal</strong> is a multi-agent coding framework that wraps each coding task in a review loop. A writer agent produces output; a reviewer agent critiques it against a rubric; the writer revises; the cycle continues until the reviewer approves or a max-iteration limit is reached. The verification is agent-to-agent, internal to the system.</p>
+
+    <p><strong>Bernstein</strong> separates writing from verification entirely. A coding agent (Claude Code, Codex, Gemini CLI) produces output in an isolated git worktree. A deterministic janitor -- not another LLM -- runs pytest, ruff, and file existence checks. If any check fails, the task goes back to the queue. The agent's self-assessment is not trusted.</p>
+
+    <p>The core difference: Crystal trusts agent judgment to improve quality through iteration. Bernstein trusts test results to define quality.</p>
+
+    <h2 id="feature-comparison">Feature comparison</h2>
+
+    <table>
+      <thead>
+        <tr><th>Feature</th><th>Bernstein</th><th>Crystal</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Verification approach</strong></td><td>External: tests, linter, file checks</td><td>Internal: LLM reviewer agent</td></tr>
+        <tr><td><strong>Reviewer type</strong></td><td>Deterministic (pytest, ruff)</td><td>LLM-based (another agent)</td></tr>
+        <tr><td><strong>Review cost</strong></td><td>Near-zero (test runner is cheap)</td><td>Additional LLM API calls per cycle</td></tr>
+        <tr><td><strong>Task isolation</strong></td><td>Git worktree per agent</td><td>Shared context within review cycle</td></tr>
+        <tr><td><strong>Parallelism</strong></td><td>Yes -- multiple tasks concurrently</td><td>Review cycles are sequential per task</td></tr>
+        <tr><td><strong>CLI agent support</strong></td><td>Yes -- 18+ installed CLI tools</td><td>SDK-based integration</td></tr>
+        <tr><td><strong>Model routing</strong></td><td>Cost-aware bandit across providers</td><td>Configurable per role</td></tr>
+        <tr><td><strong>Self-evolution</strong></td><td>Yes</td><td>No</td></tr>
+        <tr><td><strong>Headless operation</strong></td><td>Yes</td><td>Depends on deployment</td></tr>
+        <tr><td><strong>Open source</strong></td><td>Apache 2.0</td><td>Varies</td></tr>
+        <tr><td><strong>Primary use case</strong></td><td>Parallel coding with test verification</td><td>High-quality single-task output via review loops</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="architecture">Architecture comparison</h2>
+
+    <p><strong>Crystal</strong> runs an internal review loop: two LLMs in dialogue. The quality gate is "reviewer LLM approves," not "test suite passes."</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">Task
+    |
+    v
+Writer agent (LLM) --> code output
+    |
+    v
+Reviewer agent (LLM) --> critique + rubric check
+    |
+    +-- Approved -> output
+    +-- Rejected -> writer agent (revised prompt with critique)
+         |
+         +-- (loop, max N iterations)</code></pre>
+    </div>
+
+    <p><strong>Bernstein</strong> runs external verification: the janitor checks objective criteria.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">Task
+    |
+    v
+Coding agent (Claude Code / Codex / Gemini CLI)
+    |
+    v
+Janitor (deterministic)
+    +-- pytest -> pass/fail
+    +-- ruff -> lint violations count
+    +-- file existence checks -> pass/fail
+    |
+    +-- All pass -> commit + merge
+    +-- Any fail -> task back to queue</code></pre>
+    </div>
+
+    <h2 id="hallucination">The reviewer hallucination problem</h2>
+
+    <p>Crystal's LLM reviewer can approve incorrect code if the reviewer hallucinates correctness. This is the same failure mode as asking "does this look right?" -- if the reviewer does not actually run the code, it is making an educated guess.</p>
+
+    <p>Bernstein's janitor is not a language model. It runs pytest and reads exit codes. It cannot be convinced by an argument that the code is correct if the tests fail. This matters most for:</p>
+
+    <ul>
+      <li><strong>Logic errors that look syntactically correct.</strong> A reviewer LLM may not catch off-by-one errors, incorrect algorithm choices, or wrong API usage. Tests catch these.</li>
+      <li><strong>Integration failures.</strong> Code that works in isolation but breaks when integrated. Tests that import and exercise the code catch these; a reviewing LLM reading the diff may not.</li>
+      <li><strong>Regressions.</strong> Changes that break unrelated functionality. A regression test suite catches these automatically.</li>
+    </ul>
+
+    <p>Crystal's review loop catches things tests do not cover -- code organization, naming consistency, documentation quality, architectural alignment. For these concerns, LLM review adds value that deterministic checks cannot provide.</p>
+
+    <h2 id="cost">Cost comparison</h2>
+
+    <p>Crystal's review loop adds API calls per task. For a 3-iteration loop with writer + reviewer:</p>
+
+    <table>
+      <thead>
+        <tr><th>Review cycles</th><th>API calls</th><th>Approximate additional cost</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1 (write only, no review)</td><td>1</td><td>$0</td></tr>
+        <tr><td>2 (write + one review)</td><td>2-3</td><td>+$0.10-0.20</td></tr>
+        <tr><td>3 (write + two reviews)</td><td>4-5</td><td>+$0.20-0.40</td></tr>
+        <tr><td>4 (write + three reviews)</td><td>6-7</td><td>+$0.30-0.60</td></tr>
+      </tbody>
+    </table>
+
+    <p>Bernstein benchmark (25 GitHub issues, 2026-03-28):</p>
+
+    <table>
+      <thead>
+        <tr><th>Metric</th><th>Bernstein</th><th>Estimated Crystal (3-cycle)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Median cost per task</strong></td><td>$0.150</td><td>~$0.30-0.50</td></tr>
+        <tr><td><strong>CI pass rate</strong></td><td>80%</td><td>Varies</td></tr>
+        <tr><td><strong>Verification time</strong></td><td>Seconds (test runner)</td><td>Minutes (LLM review cycles)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>When test coverage changes the calculus</h3>
+
+    <table>
+      <thead>
+        <tr><th>Scenario</th><th>Better choice</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Good test suite (80%+ coverage)</td><td>Bernstein -- external verification is definitive</td></tr>
+        <tr><td>Thin test suite (&lt; 40% coverage)</td><td>Crystal -- LLM review catches what tests miss</td></tr>
+        <tr><td>No tests at all</td><td>Crystal or manual review</td></tr>
+        <tr><td>Tests exist but are slow (&gt; 5 min)</td><td>Crystal may be faster</td></tr>
+        <tr><td>Legacy codebase with fragile tests</td><td>Crystal -- LLM review can reason about intent</td></tr>
+        <tr><td>New greenfield project with tests</td><td>Bernstein -- tests are ground truth</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="when-crystal">When to use Crystal</h2>
+
+    <ul>
+      <li><strong>Your test coverage is low.</strong> If tests cover only 30-40% of the codebase, Bernstein's janitor misses most quality issues. Crystal's review loop adds value where tests do not exist.</li>
+      <li><strong>Code quality is harder to define than correctness.</strong> API design consistency, documentation completeness, architectural alignment -- these require judgment.</li>
+      <li><strong>You work in a domain where tests are hard to write.</strong> ML model training, infrastructure code, database migrations.</li>
+      <li><strong>You want the agent to self-correct before verification.</strong> Crystal's iterative loop catches obvious mistakes before they hit the test suite.</li>
+    </ul>
+
+    <h2 id="when-bernstein">When to use Bernstein</h2>
+
+    <ul>
+      <li><strong>Your test suite is the ground truth.</strong> Tests either pass or fail -- agent consensus about correctness is irrelevant.</li>
+      <li><strong>You want parallel task execution.</strong> Bernstein runs multiple independent tasks concurrently.</li>
+      <li><strong>You want faster verification.</strong> Running pytest takes seconds. Three LLM review cycles takes minutes.</li>
+      <li><strong>You want deterministic quality gates.</strong> A test suite gives the same result every time.</li>
+      <li><strong>You want cost transparency.</strong> Bernstein logs per-task API costs.</li>
+      <li><strong>You want model-agnostic CLI agent support.</strong> 18+ adapters for installed CLI tools.</li>
+    </ul>
+
+    <h2 id="faq">Frequently asked questions</h2>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>What is the difference between Crystal and Bernstein for code verification?</strong></p>
+        <p>Crystal uses an LLM reviewer agent that critiques code output in iterative loops. Bernstein uses external verification: the janitor runs pytest, ruff, and file existence checks. Crystal trusts agent judgment; Bernstein trusts test results.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Is Crystal or Bernstein better for codebases with low test coverage?</strong></p>
+        <p>Crystal is better when test coverage is low (under 40%), because its LLM review loop catches issues that tests cannot cover. Bernstein is better when test coverage is high, because external verification is faster, cheaper, and more reliable.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Does Bernstein support iterative code review like Crystal?</strong></p>
+        <p>Not by default. Bernstein's verification is external (tests and linter). However, some teams combine both: Bernstein for the primary coding loop with test-based verification, and a Crystal-style LLM review as an additional pre-merge gate.</p>
+      </div>
+    </div>
+
+    <p style="margin-top:2rem;"><a href="index.html">&larr; Back to all comparisons</a></p>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; Created by <a href="https://alexchernysh.com" target="_blank" rel="noopener author">Alex Chernysh</a> &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

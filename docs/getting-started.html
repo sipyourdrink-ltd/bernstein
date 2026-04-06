@@ -22,6 +22,9 @@
   <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"HowTo","name":"Getting Started with Bernstein","description":"Install and configure Bernstein multi-agent orchestration","datePublished":"2025-03-01","dateModified":"2026-04-06","step":[{"@type":"HowToStep","name":"Install","text":"pip install bernstein"},{"@type":"HowToStep","name":"Initialize","text":"bernstein init"},{"@type":"HowToStep","name":"Run","text":"bernstein -g 'your goal'"}],"tool":{"@type":"SoftwareApplication","name":"Bernstein"}}
 </script>
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"How do I install Bernstein?","acceptedAnswer":{"@type":"Answer","text":"Install with pip: pip install bernstein. Also available via pipx, uv, Homebrew, dnf copr, and npx."}},{"@type":"Question","name":"What AI coding agents does Bernstein support?","acceptedAnswer":{"@type":"Answer","text":"Bernstein supports 18+ agents: Claude Code, Codex CLI, Gemini CLI, Cursor, Aider, Amp, Roo Code, Kilo, Kiro, OpenCode, Qwen, Cody, Continue.dev, Goose, Ollama, Tabby, and any CLI tool with a --prompt flag."}},{"@type":"Question","name":"How do I run my first multi-agent orchestration?","acceptedAnswer":{"@type":"Answer","text":"Run: bernstein init to create a workspace, then bernstein -g 'your goal' to start orchestration. Agents spawn automatically."}}]}
+</script>
   <link rel="stylesheet" href="style.css" />
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -40,6 +43,7 @@
       <a href="adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
       <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
       <a href="leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="compare/index.html" class="nav-link" data-page="compare/index.html">Compare</a>
       <a href="docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
       <a href="blog.html" class="nav-link" data-page="blog.html">Blog</a>
       <a href="limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
@@ -60,7 +64,7 @@
 <div class="page-hero">
   <div class="container">
     <h1>Getting Started</h1>
-    <p>Install Bernstein, run your first orchestration, and understand the configuration options.</p>
+    <p>Install Bernstein and run your first multi-agent orchestration in under 60 seconds. Bernstein works with any installed CLI coding agent -- Claude Code, Codex, Gemini CLI, Cursor, Aider, and 13+ others -- coordinating them to work on your codebase in parallel.</p>
   </div>
 </div>
 

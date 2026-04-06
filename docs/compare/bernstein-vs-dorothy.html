@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bernstein vs Dorothy — AI Agent Orchestration Comparison</title>
+  <meta name="description" content="Compare Bernstein and Dorothy for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/compare/bernstein-vs-dorothy.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="Bernstein vs Dorothy — AI Agent Orchestration Comparison" />
+  <meta property="og:description" content="Compare Bernstein and Dorothy for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/compare/bernstein-vs-dorothy.html" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Bernstein vs Dorothy — AI Agent Orchestration Comparison" />
+  <meta name="twitter:description" content="Compare Bernstein and Dorothy for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="author" href="https://alexchernysh.com" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Bernstein vs Dorothy — AI Agent Orchestration Comparison",
+    "description": "Dorothy is a graph-based multi-agent conversation framework. Bernstein is a task dispatch system. Compare agent communication models for AI coding.",
+    "author": { "@type": "Person", "name": "Alex Chernysh", "url": "https://alexchernysh.com" },
+    "datePublished": "2026-03-28",
+    "dateModified": "2026-04-06",
+    "publisher": { "@type": "Organization", "name": "Bernstein", "url": "https://chernistry.github.io/bernstein/" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "Bernstein vs Dorothy Feature Comparison",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Bernstein", "description": "Isolated task dispatch with external verification, parallel execution, 18+ CLI agents" },
+      { "@type": "ListItem", "position": 2, "name": "Dorothy", "description": "Graph-based multi-agent conversation framework with multi-turn message passing between agents" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is the difference between Dorothy and Bernstein for multi-agent coding?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Dorothy coordinates agents that talk to each other via conversation graphs and multi-turn message passing. Bernstein coordinates agents that work independently on isolated tasks with external verification. Dorothy is better for deliberation; Bernstein is better for parallel coding." }
+      },
+      {
+        "@type": "Question",
+        "name": "Is Dorothy or Bernstein better for parallel code generation?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Bernstein is better for parallel code generation because agents work independently in isolated git worktrees. Dorothy's conversation graphs have sequential dependencies by design -- Agent B cannot respond until Agent A sends its message." }
+      },
+      {
+        "@type": "Question",
+        "name": "When should I use conversation-based agent orchestration instead of task dispatch?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Use conversation-based orchestration (Dorothy) when the task requires agents to challenge and refine each other's reasoning, such as research synthesis, design review, or threat modeling. Use task dispatch (Bernstein) when the problem decomposes into parallel independent subtasks with external verification requirements." }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="../style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="../script.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="../index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="../getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="../concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="../adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="../api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="../leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="index.html" class="nav-link" data-page="compare/index.html">Compare</a>
+      <a href="../docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+      <a href="../blog.html" class="nav-link" data-page="blog.html">Blog</a>
+      <a href="../limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</nav>
+
+<div class="page-hero">
+  <div class="container">
+    <h1>Bernstein vs Dorothy</h1>
+    <p>Isolated task dispatch vs graph-based agent conversation for AI coding orchestration.</p>
+  </div>
+</div>
+
+<div class="doc-layout">
+
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#feature-comparison">Feature comparison</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#isolation-vs-deliberation">Isolation vs deliberation</a></li>
+      <li><a href="#cost">Cost and performance</a></li>
+      <li><a href="#when-dorothy">When to use Dorothy</a></li>
+      <li><a href="#when-bernstein">When to use Bernstein</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+  </aside>
+
+  <main class="doc-content">
+
+    <p>Dorothy is a graph-based multi-agent conversation framework where agents deliberate and pass messages over multiple turns until they converge on a result. Bernstein is a task dispatch system where agents get isolated tasks, work them independently in git worktrees, and exit after external verification. Dorothy is better when the problem requires multi-turn reasoning between agents. Bernstein is better when the problem decomposes into parallel independent subtasks.</p>
+
+    <h2 id="overview">What each tool is</h2>
+
+    <p><strong>Dorothy</strong> is a multi-agent framework built around conversation graphs. You define agents as nodes and message-passing edges. Agents can deliberate -- passing context back and forth over multiple turns until they reach a result. It is designed for problems where the reasoning process itself is the output: research synthesis, design deliberation, multi-perspective analysis.</p>
+
+    <p><strong>Bernstein</strong> is a task dispatch orchestrator for CLI coding agents. It decomposes a goal into tasks, assigns each task to a short-lived coding agent (Claude Code, Codex, Gemini CLI), verifies the result against external criteria (tests, linter), and merges the output. The orchestrator is deterministic Python -- no LLM makes scheduling decisions.</p>
+
+    <p>The core architectural difference: Dorothy coordinates agents that talk to each other. Bernstein coordinates agents that do not.</p>
+
+    <h2 id="feature-comparison">Feature comparison</h2>
+
+    <table>
+      <thead>
+        <tr><th>Feature</th><th>Bernstein</th><th>Dorothy</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Agent communication</strong></td><td>None -- agents are isolated</td><td>Multi-turn message passing</td></tr>
+        <tr><td><strong>Task model</strong></td><td>Discrete tasks with completion signal</td><td>Conversational turns until convergence</td></tr>
+        <tr><td><strong>Verification</strong></td><td>External (tests, linter, file checks)</td><td>Internal (agent consensus)</td></tr>
+        <tr><td><strong>CLI agent support</strong></td><td>Yes -- 18+ installed CLI tools</td><td>Typically SDK-based agents</td></tr>
+        <tr><td><strong>Parallel execution</strong></td><td>Yes -- independent tasks run concurrently</td><td>Depends on graph topology</td></tr>
+        <tr><td><strong>Deterministic coordinator</strong></td><td>Yes -- Python, no LLM for scheduling</td><td>Graph structure defines flow</td></tr>
+        <tr><td><strong>Self-evolution</strong></td><td>Yes</td><td>No</td></tr>
+        <tr><td><strong>Model routing</strong></td><td>Cost-aware bandit across providers</td><td>Configurable per node</td></tr>
+        <tr><td><strong>Headless / overnight</strong></td><td>Yes</td><td>Depends on deployment</td></tr>
+        <tr><td><strong>Open source</strong></td><td>Apache 2.0</td><td>MIT</td></tr>
+        <tr><td><strong>Primary use case</strong></td><td>Parallel coding tasks</td><td>Multi-perspective reasoning and deliberation</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="architecture">Architecture comparison</h2>
+
+    <p><strong>Dorothy</strong> agents communicate within the framework. The researcher can ask the analyst a clarifying question. Completion is defined by the graph reaching a terminal node.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">User goal
+    |
+    v
+Orchestrator agent (LLM-based)
+    |
+    +-- Researcher agent  <--+
+    |       |                | (multi-turn message passing)
+    |       v                |
+    +-- Analyst agent  ------+
+    |       |                |
+    |       v                |
+    +-- Synthesizer agent ---+
+         |
+         v
+    Final output (after convergence)</code></pre>
+    </div>
+
+    <p><strong>Bernstein</strong> agents do not communicate. Each one reads its task description and the codebase, works independently, and exits.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">bernstein -g "goal"  (terminal)
+    |
+    v
+Task server (deterministic Python)
+    |
+    +-- Task A -> claude  (no knowledge of B/C) -> janitor -> merge
+    +-- Task B -> codex   (no knowledge of A/C) -> janitor -> merge
+    +-- Task C -> gemini  (no knowledge of A/B) -> janitor -> merge
+
+Verification: pytest + ruff pass rate, not agent consensus</code></pre>
+    </div>
+
+    <h2 id="isolation-vs-deliberation">When isolation beats deliberation</h2>
+
+    <p>For coding tasks, isolation has specific advantages:</p>
+
+    <ul>
+      <li><strong>Hallucination containment.</strong> If Agent A takes a wrong turn and reasons incorrectly about an API, that incorrect reasoning does not propagate to Agent B and C. Each agent starts from the codebase, not from other agents' assumptions.</li>
+      <li><strong>Parallelism.</strong> Independent agents can run simultaneously. Dorothy's conversation graphs have sequential dependencies by design.</li>
+      <li><strong>Objective verification.</strong> "The tests pass" is a verifiable criterion. "The agents reached consensus" is not.</li>
+      <li><strong>Speed.</strong> Multi-turn deliberation is slow. A Dorothy workflow with 3 agents doing 4 turns each is 12 LLM calls before any code is written. Bernstein dispatches coding agents immediately.</li>
+    </ul>
+
+    <h3>When deliberation beats isolation</h3>
+
+    <ul>
+      <li><strong>Research and synthesis.</strong> "Analyze this codebase from a security perspective, cross-check with performance implications" benefits from agents challenging each other.</li>
+      <li><strong>Ambiguous requirements.</strong> If agents need to negotiate what "done" means before starting, a conversation graph is better.</li>
+      <li><strong>Multi-perspective review.</strong> Code review where a security agent, a performance agent, and a readability agent all comment on the same diff and respond to each other.</li>
+      <li><strong>Problems without external verification.</strong> If there is no test suite and no objective completion criterion, agent consensus becomes the verification mechanism.</li>
+    </ul>
+
+    <h2 id="cost">Cost and performance</h2>
+
+    <p>Dorothy's multi-turn model means more LLM calls per outcome. If 3 agents do 4 turns each, that is 12 API calls before completion.</p>
+
+    <table>
+      <thead>
+        <tr><th>Metric</th><th>Bernstein</th><th>Typical multi-turn deliberation</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>API calls per task</strong></td><td>1 per agent (3-5 total)</td><td>10-20 (3 agents x 4-6 turns)</td></tr>
+        <tr><td><strong>Median cost per task</strong></td><td>$0.150</td><td>Varies (2-5x higher)</td></tr>
+        <tr><td><strong>CI pass rate</strong></td><td>80%</td><td>Depends on task type</td></tr>
+        <tr><td><strong>Verification method</strong></td><td>External: pytest, ruff</td><td>Internal: agent consensus</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="when-dorothy">When to use Dorothy</h2>
+
+    <ul>
+      <li><strong>The task requires agents to challenge and refine each other's reasoning.</strong> Research synthesis, design review, threat modeling, competitive analysis.</li>
+      <li><strong>Requirements are ambiguous and need negotiation.</strong> Agents need to decide what to build before building it.</li>
+      <li><strong>There is no external verification criterion.</strong> Success is "the output is good" rather than "the tests pass."</li>
+      <li><strong>You want visible agent reasoning.</strong> Dorothy surfaces the full conversation between agents.</li>
+      <li><strong>You are building an agent application, not automating coding tasks.</strong> Dorothy is a framework for building products.</li>
+    </ul>
+
+    <h2 id="when-bernstein">When to use Bernstein</h2>
+
+    <ul>
+      <li><strong>The task decomposes into parallel independent subtasks.</strong> REST endpoints + tests + docs can all happen simultaneously.</li>
+      <li><strong>You need external verification.</strong> Tests either pass or fail -- agent consensus is irrelevant.</li>
+      <li><strong>You want CLI agent support.</strong> 18+ adapters for installed CLI tools.</li>
+      <li><strong>You want cost-aware model routing.</strong> Cheap models for simple tasks, expensive models for architecture decisions.</li>
+      <li><strong>You want headless, overnight operation.</strong> <code>bernstein --headless --budget 20.00</code> runs until the backlog is empty or the budget runs out.</li>
+    </ul>
+
+    <h2 id="faq">Frequently asked questions</h2>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>What is the difference between Dorothy and Bernstein for multi-agent coding?</strong></p>
+        <p>Dorothy coordinates agents that talk to each other via conversation graphs and multi-turn message passing. Bernstein coordinates agents that work independently on isolated tasks with external verification. Dorothy is better for deliberation; Bernstein is better for parallel coding.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Is Dorothy or Bernstein better for parallel code generation?</strong></p>
+        <p>Bernstein is better for parallel code generation because agents work independently in isolated git worktrees. Dorothy's conversation graphs have sequential dependencies by design.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>When should I use conversation-based agent orchestration instead of task dispatch?</strong></p>
+        <p>Use conversation-based orchestration (Dorothy) when the task requires agents to challenge and refine each other's reasoning, such as research synthesis, design review, or threat modeling. Use task dispatch (Bernstein) when the problem decomposes into parallel independent subtasks with external verification requirements.</p>
+      </div>
+    </div>
+
+    <p style="margin-top:2rem;"><a href="index.html">&larr; Back to all comparisons</a></p>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; Created by <a href="https://alexchernysh.com" target="_blank" rel="noopener author">Alex Chernysh</a> &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

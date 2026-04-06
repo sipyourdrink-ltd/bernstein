@@ -70,13 +70,13 @@ _HOMOGLYPH_MAP: Final[dict[str, str]] = {
     "\uff4e": "n",
     "\uff56": "v",
     # Cyrillic lookalikes
-    "\u0430": "a",  # а
-    "\u0435": "e",  # е
-    "\u043e": "o",  # о
-    "\u0440": "p",  # р
-    "\u0441": "c",  # с
-    "\u0443": "y",  # у
-    "\u0445": "x",  # х
+    "\u0430": "a",  # Cyrillic a
+    "\u0435": "e",  # Cyrillic ie
+    "\u043e": "o",  # Cyrillic o
+    "\u0440": "p",  # Cyrillic er
+    "\u0441": "c",  # Cyrillic es
+    "\u0443": "y",  # Cyrillic u
+    "\u0445": "x",  # Cyrillic ha
     # Zero-width chars (just strip them)
     "\u200b": "",  # zero-width space
     "\u200c": "",  # zero-width non-joiner
@@ -141,17 +141,15 @@ def _extract_substitution_payloads(cmd: str) -> str:
     """Extract the inner content of backtick and $() substitutions.
 
     For pattern matching, the inner command is what matters (e.g. ``$(echo rm)``
-    should be treated as containing ``rm``). We append the inner payload to
-    the command so patterns can match it.
+    should be treated as containing ``rm``). We replace the substitution with
+    its inner payload inline so that constructs like ``$(echo rm) -rf /`` become
+    ``rm -rf /`` for pattern matching.
     """
-    payloads: list[str] = []
-    for m in _BACKTICK_RE.finditer(cmd):
-        payloads.append(m.group(1))
-    for m in _DOLLAR_PAREN_RE.finditer(cmd):
-        payloads.append(m.group(1))
-    if payloads:
-        return cmd + " " + " ".join(payloads)
-    return cmd
+    # Replace $() with inner content
+    result = _DOLLAR_PAREN_RE.sub(lambda m: m.group(1), cmd)
+    # Replace backticks with inner content
+    result = _BACKTICK_RE.sub(lambda m: m.group(1), result)
+    return result
 
 
 def _expand_env_vars(cmd: str) -> str:

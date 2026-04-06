@@ -1,16 +1,50 @@
-User-agent: *
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
 Allow: /
 
 User-agent: GPTBot
 Allow: /
 
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
 User-agent: ClaudeBot
 Allow: /
+Crawl-delay: 1
 
 User-agent: PerplexityBot
 Allow: /
 
-User-agent: OAI-SearchBot
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: Applebot-Extended
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: meta-externalagent
+Disallow: /
+
+User-agent: *
 Allow: /
 
 Sitemap: https://chernistry.github.io/bernstein/sitemap.xml

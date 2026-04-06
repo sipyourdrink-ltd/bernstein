@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bernstein vs GitHub Agent HQ — AI Agent Orchestration Comparison</title>
+  <meta name="description" content="Compare Bernstein and GitHub Agent HQ for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/compare/bernstein-vs-github-agent-hq.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="Bernstein vs GitHub Agent HQ — AI Agent Orchestration Comparison" />
+  <meta property="og:description" content="Compare Bernstein and GitHub Agent HQ for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/compare/bernstein-vs-github-agent-hq.html" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Bernstein vs GitHub Agent HQ — AI Agent Orchestration Comparison" />
+  <meta name="twitter:description" content="Compare Bernstein and GitHub Agent HQ for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="author" href="https://alexchernysh.com" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Bernstein vs GitHub Agent HQ — AI Agent Orchestration Comparison",
+    "description": "GitHub Agent HQ is a proprietary multi-agent system inside GitHub. Bernstein is the open-source alternative: model-agnostic, CLI-native, runs anywhere.",
+    "author": { "@type": "Person", "name": "Alex Chernysh", "url": "https://alexchernysh.com" },
+    "datePublished": "2026-03-28",
+    "dateModified": "2026-04-06",
+    "publisher": { "@type": "Organization", "name": "Bernstein", "url": "https://chernistry.github.io/bernstein/" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "Bernstein vs GitHub Agent HQ Feature Comparison",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Bernstein", "description": "Open-source, model-agnostic, CLI-native orchestrator with 18+ agents, self-evolution, and cost optimization" },
+      { "@type": "ListItem", "position": 2, "name": "GitHub Agent HQ", "description": "Proprietary GitHub-integrated multi-agent system with native issue-to-PR workflow" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Is Bernstein an open-source alternative to GitHub Agent HQ?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. Bernstein provides the same multi-agent coding orchestration pattern as GitHub Agent HQ -- parallel agents, task decomposition, verification before merge -- but runs locally, supports any git host, works with 18+ CLI agents, and is Apache 2.0 licensed." }
+      },
+      {
+        "@type": "Question",
+        "name": "Can Bernstein work outside of GitHub?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. Bernstein works with any git repository on any host: GitHub, GitLab, Bitbucket, self-hosted Gitea, or a plain git remote. GitHub Agent HQ requires GitHub." }
+      },
+      {
+        "@type": "Question",
+        "name": "Is GitHub Agent HQ or Bernstein cheaper for multi-agent coding?",
+        "acceptedAnswer": { "@type": "Answer", "text": "It depends on your existing subscriptions. If you already pay for Copilot Enterprise ($39/user/month), Agent HQ's incremental cost is near zero. If you are not on Copilot Enterprise, Bernstein costs only model API tokens -- typically $0.15-0.20 per task with mixed-model routing." }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="../style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="../script.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="../index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="../getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="../concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="../adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="../api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="../leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="index.html" class="nav-link" data-page="compare/index.html">Compare</a>
+      <a href="../docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+      <a href="../blog.html" class="nav-link" data-page="blog.html">Blog</a>
+      <a href="../limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</nav>
+
+<div class="page-hero">
+  <div class="container">
+    <h1>Bernstein vs GitHub Agent HQ</h1>
+    <p>Open-source multi-agent orchestration vs GitHub's proprietary multi-agent coding system.</p>
+  </div>
+</div>
+
+<div class="doc-layout">
+
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#feature-comparison">Feature comparison</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#cost">Cost model</a></li>
+      <li><a href="#where-agent-hq-better">Where Agent HQ is better</a></li>
+      <li><a href="#when-agent-hq">When to use Agent HQ</a></li>
+      <li><a href="#when-bernstein">When to use Bernstein</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+  </aside>
+
+  <main class="doc-content">
+
+    <p>GitHub Agent HQ is a proprietary multi-agent coding system built into GitHub that runs Claude, Codex, and Copilot simultaneously on tasks within the GitHub ecosystem. Bernstein is the open-source alternative: it runs locally or in CI, supports 18+ CLI agents across any git host, uses deterministic Python scheduling that costs zero tokens on coordination, and gives you full ownership of the orchestrator code under Apache 2.0.</p>
+
+    <h2 id="overview">What each tool is</h2>
+
+    <p><strong>GitHub Agent HQ</strong> is a multi-agent coding system built into GitHub. It runs inside GitHub's infrastructure, uses GitHub's AI models, and integrates tightly with pull requests, issues, code review, and GitHub Actions. The orchestrator logic is GitHub's proprietary code.</p>
+
+    <p><strong>Bernstein</strong> is an open-source orchestrator for CLI coding agents. It runs on your machine (or in CI), wraps whichever CLI tools you have installed, and stores state in plain files. The orchestrator is ~800 lines of deterministic Python with no LLM calls on coordination. You can read, modify, and extend all of it.</p>
+
+    <h2 id="feature-comparison">Feature comparison</h2>
+
+    <table>
+      <thead>
+        <tr><th>Feature</th><th>Bernstein</th><th>GitHub Agent HQ</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Open source</strong></td><td>Yes -- Apache 2.0</td><td>No -- proprietary</td></tr>
+        <tr><td><strong>Model flexibility</strong></td><td>Any CLI agent (18+ adapters)</td><td>Claude, Codex, Copilot (GitHub-managed)</td></tr>
+        <tr><td><strong>Provider lock-in</strong></td><td>None</td><td>GitHub + Microsoft/Anthropic/OpenAI</td></tr>
+        <tr><td><strong>Runs outside GitHub</strong></td><td>Yes -- any git repo, any host</td><td>No -- GitHub-only</td></tr>
+        <tr><td><strong>CLI-native</strong></td><td>Yes -- terminal, SSH, CI</td><td>No -- GitHub web UI + API</td></tr>
+        <tr><td><strong>Self-evolution</strong></td><td>Yes</td><td>No</td></tr>
+        <tr><td><strong>Cost optimization</strong></td><td>Bandit routing, model cascade</td><td>Fixed to GitHub pricing tiers</td></tr>
+        <tr><td><strong>Headless / overnight</strong></td><td>Yes</td><td>Limited (GitHub Actions only)</td></tr>
+        <tr><td><strong>Agent isolation</strong></td><td>Git worktree per agent, process isolation</td><td>GitHub-managed (details not public)</td></tr>
+        <tr><td><strong>Result verification</strong></td><td>External janitor (tests, linter, files)</td><td>GitHub CI + code review</td></tr>
+        <tr><td><strong>Self-hostable</strong></td><td>Yes -- runs anywhere Python runs</td><td>No</td></tr>
+        <tr><td><strong>Enterprise pricing</strong></td><td>None (pay for model tokens only)</td><td>Copilot Enterprise pricing</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="architecture">Architecture comparison</h2>
+
+    <p><strong>GitHub Agent HQ</strong> runs in GitHub's cloud with native access to your repo, issues, and PR history.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">GitHub issue / PR / comment
+    |
+    v
+Agent HQ coordinator (GitHub infrastructure)
+    |
+    +-- Agent 1 (Claude)   -- GitHub-managed execution
+    +-- Agent 2 (Codex)    -- GitHub-managed execution
+    +-- Agent 3 (Copilot)  -- GitHub-managed execution
+         |
+         v
+    PR created, CI triggered, code review requested</code></pre>
+    </div>
+
+    <p><strong>Bernstein</strong> runs on your hardware with isolated git worktrees and external janitor verification.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">bernstein -g "goal"  (terminal, CI, SSH)
+    |
+    v
+Task server (local FastAPI, deterministic Python)
+    |
+    +-- Task A -> claude  (isolated worktree) -> janitor -> merge
+    +-- Task B -> codex   (isolated worktree) -> janitor -> merge
+    +-- Task C -> gemini  (isolated worktree) -> janitor -> merge
+
+State: .sdd/ files (backlog, runtime, metrics, config)</code></pre>
+    </div>
+
+    <h2 id="cost">Cost model</h2>
+
+    <p>GitHub Agent HQ cost is bundled into Copilot Enterprise ($39/user/month) or charged as additional compute. For teams already on Copilot Enterprise, Agent HQ feels "free" -- it is included in the seat cost.</p>
+
+    <p>Bernstein cost = model API tokens only. No seat license, no subscription. A typical medium-complexity task using mixed-model routing costs $0.15-0.20 in API tokens. A 10-task session costs roughly $1.50-2.00.</p>
+
+    <p><strong>When Agent HQ is cheaper:</strong> If your team already pays for Copilot Enterprise and runs fewer than ~200 Agent HQ tasks per user per month.</p>
+
+    <p><strong>When Bernstein is cheaper:</strong> If you are not on Copilot Enterprise, if you run high task volumes, or if you route tasks aggressively to Haiku/Gemini.</p>
+
+    <h2 id="where-agent-hq-better">Where Agent HQ is genuinely better</h2>
+
+    <ul>
+      <li><strong>GitHub integration.</strong> Agent HQ turning a GitHub issue into a pull request, with CI triggered and reviewers requested, requires zero configuration.</li>
+      <li><strong>No local setup.</strong> No installation, no Python environment, no API key wiring.</li>
+      <li><strong>Multi-model coordination within a task.</strong> Agent HQ can have Claude review Codex's output within the same task execution.</li>
+      <li><strong>Enterprise support.</strong> GitHub sells SLAs, security reviews, and compliance documentation.</li>
+    </ul>
+
+    <h2 id="when-agent-hq">When to use Agent HQ</h2>
+
+    <ul>
+      <li><strong>Your workflow is entirely GitHub-native.</strong> Issue tracking, code review, CI -- all on GitHub.</li>
+      <li><strong>Your team already pays for Copilot Enterprise.</strong> Incremental cost is near zero.</li>
+      <li><strong>You want zero local setup.</strong> No Python, no API keys, no terminal.</li>
+      <li><strong>You need enterprise SLAs and vendor support.</strong></li>
+    </ul>
+
+    <h2 id="when-bernstein">When to use Bernstein</h2>
+
+    <ul>
+      <li><strong>You host code outside GitHub.</strong> GitLab, Bitbucket, self-hosted Gitea, or a plain git remote.</li>
+      <li><strong>You want model flexibility.</strong> Mix Claude, Codex, Gemini, and Qwen in the same session.</li>
+      <li><strong>You want to own the orchestrator.</strong> 800 lines of Python you can read, modify, fork, and audit.</li>
+      <li><strong>You want cost transparency and optimization.</strong> Per-task cost logging with bandit routing.</li>
+      <li><strong>You want self-evolution.</strong> <code>bernstein --evolve</code> improves prompts, routing, and templates over time.</li>
+      <li><strong>You want headless, overnight, or CI operation.</strong> <code>bernstein --headless</code> runs until complete.</li>
+      <li><strong>You are not on GitHub.</strong></li>
+    </ul>
+
+    <h2 id="faq">Frequently asked questions</h2>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Is Bernstein an open-source alternative to GitHub Agent HQ?</strong></p>
+        <p>Yes. Bernstein provides the same multi-agent coding orchestration pattern -- parallel agents, task decomposition, verification before merge -- but runs locally, supports any git host, works with 18+ CLI agents, and is Apache 2.0 licensed.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Can Bernstein work outside of GitHub?</strong></p>
+        <p>Yes. Bernstein works with any git repository on any host: GitHub, GitLab, Bitbucket, self-hosted Gitea, or a plain git remote.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Is GitHub Agent HQ or Bernstein cheaper for multi-agent coding?</strong></p>
+        <p>It depends on your existing subscriptions. If you already pay for Copilot Enterprise ($39/user/month), Agent HQ's incremental cost is near zero. If you are not on Copilot Enterprise, Bernstein costs only model API tokens -- typically $0.15-0.20 per task with mixed-model routing.</p>
+      </div>
+    </div>
+
+    <p style="margin-top:2rem;"><a href="index.html">&larr; Back to all comparisons</a></p>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; Created by <a href="https://alexchernysh.com" target="_blank" rel="noopener author">Alex Chernysh</a> &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</body>
+</html>

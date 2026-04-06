@@ -1,0 +1,21 @@
+# Bernstein
+
+> Bernstein is an open-source multi-agent orchestration platform for AI coding agents.
+> Deterministic scheduling, 18+ CLI adapters, zero vendor lock-in. Apache 2.0 licensed.
+
+## Core Documentation
+- [Getting Started](https://chernistry.github.io/bernstein/getting-started.html): Install, configure, run first orchestration in 60 seconds
+- [Architecture & Concepts](https://chernistry.github.io/bernstein/concepts.html): Task server, agent spawner, janitor verification, worktree isolation
+- [Adapter Reference](https://chernistry.github.io/bernstein/adapters.html): 18+ supported agents — Claude Code, Codex, Gemini CLI, Cursor, Aider, and more
+- [API Reference](https://chernistry.github.io/bernstein/api.html): 120+ REST endpoints for tasks, agents, cost tracking, quality gates
+
+## Guides
+- [Benchmarks](https://chernistry.github.io/bernstein/leaderboard.html): SWE-Bench Lite results — solo agents vs orchestrated multi-agent
+- [Comparisons](https://chernistry.github.io/bernstein/compare/index.html): Bernstein vs CrewAI, AutoGen, LangGraph, and 8 other frameworks
+- [Known Limitations](https://chernistry.github.io/bernstein/limitations.html): Honest constraints and workarounds
+
+## Resources
+- [GitHub Repository](https://github.com/chernistry/bernstein): Source code, issues, discussions
+- [PyPI Package](https://pypi.org/project/bernstein/): pip install bernstein
+- [Blog](https://chernistry.github.io/bernstein/blog.html): Engineering articles on multi-agent orchestration patterns
+- [Author](https://alexchernysh.com): Built by Alex Chernysh

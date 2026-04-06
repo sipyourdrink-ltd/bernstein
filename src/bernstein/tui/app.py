@@ -223,7 +223,7 @@ class BernsteinApp(App[None]):
     # -- actions --------------------------------------------------------------
 
     def action_refresh(self) -> None:
-        """Poll the server for fresh status and update UI."""
+        """Poll the server for fresh status and cost data, then update UI."""
         raw = _get("/status")
         if raw is None or not isinstance(raw, dict):
             self.query_one(StatusBar).set_summary(server_online=False)
@@ -234,11 +234,26 @@ class BernsteinApp(App[None]):
         transition_reasons: dict[str, dict[str, float]] | None = None
         if isinstance(transition_reasons_raw, dict):
             transition_reasons = cast("dict[str, dict[str, float]]", transition_reasons_raw)
+
+        # Fetch real-time cost from /costs/current endpoint (COST-003).
+        cost_usd = 0.0
+        cost_history: list[float] | None = None
+        cost_raw = _get("/costs/current")
+        if isinstance(cost_raw, dict):
+            cost_usd = float(cost_raw.get("spent_usd", 0.0))
+            if not hasattr(self, "_cost_history"):
+                self._cost_history: list[float] = []
+            self._cost_history.append(cost_usd)
+            cost_history = self._cost_history[-20:]
+
         self.query_one(StatusBar).set_summary(
             agents_active=int(data.get("active_agents", 0)),
             tasks_done=int(data.get("completed", 0)),
             tasks_total=int(data.get("total", 0)),
             tasks_failed=int(data.get("failed", 0)),
+            cost_usd=cost_usd,
+            cost_history=cost_history,
+            elapsed_seconds=time.time() - self._start_ts,
             server_online=True,
             transition_reasons=transition_reasons,
         )

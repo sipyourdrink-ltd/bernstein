@@ -22,6 +22,9 @@
   <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"TechArticle","headline":"Bernstein Adapter Reference — 18+ AI Coding Agents","description":"Feature matrix and configuration for Claude Code, Codex, Gemini, Cursor, and 14 more CLI coding agents","datePublished":"2025-03-01","dateModified":"2026-04-06","author":{"@type":"Person","name":"Alex Chernysh","url":"https://alexchernysh.com"}}
 </script>
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Can I use Claude Code with Bernstein?","acceptedAnswer":{"@type":"Answer","text":"Yes. Bernstein has a native Claude Code adapter supporting Opus 4, Sonnet 4, and Haiku models. Install Claude Code globally, then Bernstein auto-discovers it."}},{"@type":"Question","name":"How do I add a custom AI agent to Bernstein?","acceptedAnswer":{"@type":"Answer","text":"Use the generic adapter: any CLI tool that accepts a --prompt flag works with Bernstein. Configure it in bernstein.yaml."}},{"@type":"Question","name":"Can I mix cheap and expensive AI models?","acceptedAnswer":{"@type":"Answer","text":"Yes. Bernstein's model routing assigns cheap local models (Ollama) to boilerplate tasks and expensive cloud models (Opus, GPT-5) to architecture decisions."}}]}
+</script>
   <link rel="stylesheet" href="style.css" />
   <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -40,6 +43,7 @@
       <a href="adapters.html" class="nav-link active" data-page="adapters.html">Adapters</a>
       <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
       <a href="leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="compare/index.html" class="nav-link" data-page="compare/index.html">Compare</a>
       <a href="blog.html" class="nav-link" data-page="blog.html">Blog</a>
       <a href="limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
     </div>
@@ -59,7 +63,7 @@
 <div class="page-hero">
   <div class="container">
     <h1>Adapters</h1>
-    <p>Bernstein is model-agnostic. Use Aider, Amp, Claude Code, Codex, Cursor, Gemini CLI, Kilo, Kiro, OpenCode, Qwen, Roo Code - or any CLI agent - without changing your orchestration. Switch providers without rewriting anything.</p>
+    <p>Bernstein adapters let you orchestrate 18+ AI coding agents from a single interface. Each adapter wraps an installed CLI tool -- Claude Code, Codex, Gemini CLI, Cursor, Aider, Amp, Roo Code, and more -- as a thin subprocess, so you can mix providers in one run and switch models without rewriting orchestration code.</p>
   </div>
 </div>
 
