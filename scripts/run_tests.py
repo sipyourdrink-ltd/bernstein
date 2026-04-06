@@ -89,10 +89,11 @@ def run_sequential(files: list[Path], extra_args: list[str], fail_fast: bool) ->
         else:
             failed += 1
             print(f"  FAIL {label} ({duration:.1f}s)")
-            # Show failure details
-            for line in output.strip().split("\n"):
-                if line.strip():
-                    print(f"       {line}")
+            # Show pytest summary (last 50 lines) — not the entire output
+            # which can be massive with -s (no capture).
+            lines = [ln for ln in output.strip().split("\n") if ln.strip()]
+            for line in lines[-50:]:
+                print(f"       {line}")
             if fail_fast:
                 break
 
@@ -146,9 +147,9 @@ def run_parallel(files: list[Path], extra_args: list[str], workers: int, fail_fa
             else:
                 failed += 1
                 print(f"  FAIL [{done}/{total}] {fpath.name} ({duration:.1f}s)")
-                for line in output.strip().split("\n")[-5:]:
-                    if line.strip():
-                        print(f"       {line}")
+                lines = [ln for ln in output.strip().split("\n") if ln.strip()]
+                for line in lines[-50:]:
+                    print(f"       {line}")
                 if fail_fast:
                     abort = True
                     for f in futures:
