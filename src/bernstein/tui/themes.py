@@ -19,6 +19,9 @@ class ThemeMode(Enum):
     DARK = "dark"
     LIGHT = "light"
     HIGH_CONTRAST = "high_contrast"
+    RETRO_AMBER = "retro_amber"
+    RETRO_GREEN = "retro_green"
+    RETRO_COOL = "retro_cool"
     AUTO = "auto"
 
 
@@ -114,10 +117,64 @@ HIGH_CONTRAST_THEME = ThemeColors(
 )
 
 
+RETRO_AMBER_THEME = ThemeColors(
+    background="#0a0800",
+    foreground="#ffaa00",
+    primary="#ffcc33",
+    secondary="#ff8800",
+    success="#ffcc00",
+    warning="#ff6600",
+    error="#ff3300",
+    muted="#664400",
+    border="#332200",
+    selection="#1a1100",
+    status_running="#ffcc00",
+    status_done="#ffcc00",
+    status_failed="#ff3300",
+    status_pending="#ffaa00",
+)
+
+RETRO_GREEN_THEME = ThemeColors(
+    background="#000a00",
+    foreground="#33ff33",
+    primary="#00ffaa",
+    secondary="#00cc66",
+    success="#33ff33",
+    warning="#aaff00",
+    error="#ff3333",
+    muted="#1a5c1a",
+    border="#0a3a0a",
+    selection="#0a2a0a",
+    status_running="#33ff33",
+    status_done="#33ff33",
+    status_failed="#ff3333",
+    status_pending="#33ff33",
+)
+
+RETRO_COOL_THEME = ThemeColors(
+    background="#0a0a14",
+    foreground="#ccddff",
+    primary="#aaccff",
+    secondary="#88aadd",
+    success="#aaddff",
+    warning="#ddddaa",
+    error="#ffaaaa",
+    muted="#445566",
+    border="#223344",
+    selection="#1a2a3a",
+    status_running="#aaddff",
+    status_done="#aaddff",
+    status_failed="#ffaaaa",
+    status_pending="#ccddff",
+)
+
 THEMES: dict[ThemeMode, ThemeColors] = {
     ThemeMode.DARK: DARK_THEME,
     ThemeMode.LIGHT: LIGHT_THEME,
     ThemeMode.HIGH_CONTRAST: HIGH_CONTRAST_THEME,
+    ThemeMode.RETRO_AMBER: RETRO_AMBER_THEME,
+    ThemeMode.RETRO_GREEN: RETRO_GREEN_THEME,
+    ThemeMode.RETRO_COOL: RETRO_COOL_THEME,
 }
 
 
@@ -140,6 +197,12 @@ def detect_terminal_theme() -> ThemeMode:
         return ThemeMode.DARK
     if explicit in ("high_contrast", "highcontrast", "hc"):
         return ThemeMode.HIGH_CONTRAST
+    if explicit in ("retro_amber", "amber"):
+        return ThemeMode.RETRO_AMBER
+    if explicit in ("retro_green", "green"):
+        return ThemeMode.RETRO_GREEN
+    if explicit in ("retro_cool", "cool", "cool_white"):
+        return ThemeMode.RETRO_COOL
 
     # COLORFGBG: "fg;bg" — if bg is a bright value, it's a light terminal
     colorfgbg = os.environ.get("COLORFGBG", "")
@@ -176,7 +239,7 @@ def get_theme(mode: ThemeMode | None = None) -> ThemeColors:
 def cycle_theme(current: ThemeMode) -> ThemeMode:
     """Cycle to the next theme mode.
 
-    Order: DARK -> LIGHT -> HIGH_CONTRAST -> DARK
+    Order: DARK -> LIGHT -> HIGH_CONTRAST -> RETRO_AMBER -> RETRO_GREEN -> RETRO_COOL -> DARK
 
     Args:
         current: Current theme mode.
@@ -184,7 +247,14 @@ def cycle_theme(current: ThemeMode) -> ThemeMode:
     Returns:
         Next theme mode.
     """
-    cycle_order = [ThemeMode.DARK, ThemeMode.LIGHT, ThemeMode.HIGH_CONTRAST]
+    cycle_order = [
+        ThemeMode.DARK,
+        ThemeMode.LIGHT,
+        ThemeMode.HIGH_CONTRAST,
+        ThemeMode.RETRO_AMBER,
+        ThemeMode.RETRO_GREEN,
+        ThemeMode.RETRO_COOL,
+    ]
     if current == ThemeMode.AUTO:
         current = detect_terminal_theme()
     try:
