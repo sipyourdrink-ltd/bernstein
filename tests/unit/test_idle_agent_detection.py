@@ -77,6 +77,13 @@ def _tick_transport(extra_posts: list[dict] | None = None) -> httpx.MockTranspor
             return httpx.Response(200, json=[])
         if method == "GET" and path.endswith("/tasks"):
             return httpx.Response(200, json=[])
+        if method == "POST" and path.endswith("/tasks/batch"):
+            body = json.loads(request.content)
+            results = []
+            for task in body.get("tasks", []):
+                posts.append(task)
+                results.append({"id": f"ingested-{len(posts)}"})
+            return httpx.Response(200, json={"created": results})
         if method == "POST" and path.endswith("/tasks"):
             body = json.loads(request.content)
             posts.append(body)
