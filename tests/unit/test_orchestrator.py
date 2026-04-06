@@ -5474,6 +5474,7 @@ class TestAdaptivePollingBackoff:
             return TickResult()  # idle: no spawned, no verified
 
         monkeypatch.setattr(orch, "tick", fake_tick)
+        monkeypatch.setattr(orch, "_has_active_agents", lambda: False)
         orch.run()
 
         # After each idle tick, sleep doubles: 6, 12, 24, 30 (cap), 30 (cap)
@@ -5503,6 +5504,8 @@ class TestAdaptivePollingBackoff:
             return r
 
         monkeypatch.setattr(orch, "tick", fake_tick)
+        # Prevent drain loop: run() continues while _has_active_agents() is True
+        monkeypatch.setattr(orch, "_has_active_agents", lambda: False)
         orch.run()
 
         # tick 1 (idle) → sleep 6, tick 2 (idle) → sleep 12,
