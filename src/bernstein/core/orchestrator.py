@@ -141,6 +141,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from bernstein.core.backlog_parser import ParsedBacklogTask
     from bernstein.core.container import ContainerConfig
     from bernstein.core.permission_mode import PermissionMode
     from bernstein.core.quality_gates import QualityGatesConfig
@@ -3151,44 +3152,93 @@ class Orchestrator:
         existing_titles = self._ingested_titles
 
         claimed_dir.mkdir(parents=True, exist_ok=True)
-        count = 0
+
+        from bernstein.core.backlog_parser import parse_backlog_text
+
+        # Phase 1: Collect — parse files, pre-filter known dupes, build batch
+        batch_files: list[tuple[Path, ParsedBacklogTask]] = []
         for backlog_file in backlog_files:
-            if count >= _MAX_INGEST_PER_TICK:
+            if len(batch_files) >= _MAX_INGEST_PER_TICK:
                 break
 
             if (claimed_dir / backlog_file.name).exists():
                 continue
 
             content = backlog_file.read_text(encoding="utf-8")
-            from bernstein.core.backlog_parser import parse_backlog_text
-
             parsed_task = parse_backlog_text(backlog_file.name, content)
             if parsed_task is None:
                 logger.warning("ingest_backlog: could not parse %s — skipping", backlog_file.name)
-                # Move unparseable files to claimed/ so we don't retry every tick
                 backlog_file.rename(claimed_dir / backlog_file.name)
                 continue
-            payload = parsed_task.to_task_payload()
 
-            # Dedup: skip if title already exists on server
-            title_key = str(payload.get("title", "")).lower().strip()
+            title_key = parsed_task.title.lower().strip()
             if title_key in existing_titles:
-                # Move to claimed/ without POSTing — task already exists
                 backlog_file.rename(claimed_dir / backlog_file.name)
                 continue
 
-            try:
-                resp = self._client.post(f"{self._config.server_url}/tasks", json=payload)
-                resp.raise_for_status()
-            except httpx.HTTPError as exc:
-                logger.warning("ingest_backlog: POST /tasks failed for %s: %s", backlog_file.name, exc)
-                continue
+            batch_files.append((backlog_file, parsed_task))
 
+        if not batch_files:
+            return 0
+
+        # Phase 2: POST batch — single HTTP call for all collected tasks
+        payloads = [parsed.to_task_payload() for _, parsed in batch_files]
+        try:
+            resp = self._client.post(
+                f"{self._config.server_url}/tasks/batch",
+                json={"tasks": payloads},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                # Server doesn't support batch yet — fall back to one-by-one
+                return self._ingest_backlog_one_by_one(batch_files, claimed_dir)
+            logger.warning("ingest_backlog: batch POST failed: %s", exc)
+            return 0  # Move NONE on failure
+        except httpx.HTTPError as exc:
+            logger.warning("ingest_backlog: batch POST failed: %s", exc)
+            return 0
+
+        # Phase 3: Move ALL files — only on success
+        count = 0
+        for backlog_file, parsed in batch_files:
+            title_key = parsed.title.lower().strip()
             existing_titles.add(title_key)
-            backlog_file.rename(claimed_dir / backlog_file.name)
+            with contextlib.suppress(OSError):
+                backlog_file.rename(claimed_dir / backlog_file.name)
             count += 1
             logger.info("Ingested backlog file: %s", backlog_file.name)
 
+        return count
+
+    def _ingest_backlog_one_by_one(
+        self,
+        batch_files: list[tuple[Path, ParsedBacklogTask]],
+        claimed_dir: Path,
+    ) -> int:
+        """Fallback: ingest files one-by-one when server lacks batch endpoint."""
+        count = 0
+        for backlog_file, parsed in batch_files:
+            payload = parsed.to_task_payload()
+            try:
+                resp = self._client.post(
+                    f"{self._config.server_url}/tasks",
+                    json=payload,
+                )
+                resp.raise_for_status()
+            except httpx.HTTPError as exc:
+                logger.warning(
+                    "ingest_backlog: POST failed for %s: %s",
+                    backlog_file.name,
+                    exc,
+                )
+                continue  # Skip this file, try next
+
+            self._ingested_titles.add(parsed.title.lower().strip())
+            with contextlib.suppress(OSError):
+                backlog_file.rename(claimed_dir / backlog_file.name)
+            count += 1
+            logger.info("Ingested backlog file (one-by-one): %s", backlog_file.name)
         return count
 
     @staticmethod
