@@ -751,6 +751,9 @@ def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContex
 def _finalize_run_output(*, quiet: bool) -> None:
     """Render either the interactive dashboard or the final summary.
 
+    Uses terminal capability detection (TUI-003) to choose between the
+    full Textual TUI and a Rich-based fallback for unsupported terminals.
+
     Args:
         quiet: When True, wait for quiescence and print only the terminal summary.
     """
@@ -759,7 +762,11 @@ def _finalize_run_output(*, quiet: bool) -> None:
         _show_run_summary()
         return
 
-    if sys.stdout.isatty():
+    from bernstein.cli.terminal_caps import detect_capabilities
+
+    caps = detect_capabilities()
+
+    if caps.supports_textual:
         try:
             from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
@@ -770,8 +777,25 @@ def _finalize_run_output(*, quiet: bool) -> None:
             if getattr(app, "_restart_on_exit", False):
                 os.execv(sys.executable, [sys.executable, "-m", "bernstein.cli.main", "live"])
         except Exception:
-            _show_run_summary()
+            # Textual failed at runtime -- fall through to fallback
+            _try_fallback_display()
+    elif caps.is_tty:
+        # TTY but Textual not supported -- use Rich fallback (TUI-003)
+        _try_fallback_display()
     else:
+        _show_run_summary()
+
+
+def _try_fallback_display() -> None:
+    """Attempt to run the Rich-based fallback display (TUI-003).
+
+    Falls back to the static summary if even Rich Live fails.
+    """
+    try:
+        from bernstein.tui.fallback import FallbackDisplay
+
+        FallbackDisplay().run()
+    except Exception:
         _show_run_summary()
 
 
