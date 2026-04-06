@@ -39,10 +39,6 @@ from textual.worker import Worker, WorkerState
 
 from bernstein.cli.icons import get_agent_icon, get_icons, get_status_icon
 from bernstein.cli.visual_theme import PALETTE, budget_color, model_color, role_color, sample_gradient, status_color
-from bernstein.tui.crt_shader import CRTMode, CRTShader
-from bernstein.tui.oscilloscope import OscilloscopeWidget
-from bernstein.tui.plasma import PlasmaCanvas
-from bernstein.tui.tracker_view import TrackerView
 
 logger = logging.getLogger(__name__)
 
@@ -1371,23 +1367,6 @@ class BernsteinApp(App[None]):
         overflow-y: auto;
         border-right: heavy $border;
     }
-
-    #retro-bar {
-        height: auto;
-        max-height: 20;
-    }
-
-    #plasma-canvas {
-        height: 12;
-    }
-
-    #tracker-view {
-        height: 16;
-    }
-
-    #oscilloscope {
-        height: 16;
-    }
     """
 
     #: Resize debounce delay in seconds (TUI-001).
@@ -1406,10 +1385,6 @@ class BernsteinApp(App[None]):
         Binding("d", "compare_task", "Diff"),
         Binding("v", "compare_task", "Diff", show=False),
         Binding("i", "inspect_task", "Open", show=False),
-        Binding("C", "toggle_crt", "CRT"),
-        Binding("P", "toggle_plasma", "Plasma"),
-        Binding("T", "toggle_tracker", "Tracker"),
-        Binding("O", "toggle_scope", "Scope"),
     ]
 
     def __init__(self, **kw: Any) -> None:
@@ -1428,7 +1403,6 @@ class BernsteinApp(App[None]):
         self._last_activity: list[str] = []
         self._compare_mark: str | None = None  # first task ID for compare
         self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
-        self._crt_shader = CRTShader(CRTMode.OFF)
 
     def compose(self) -> ComposeResult:
         yield DashboardHeader(id="header-bar")
@@ -1442,10 +1416,6 @@ class BernsteinApp(App[None]):
         with Vertical(id="activity-bar"):
             yield Static("ACTIVITY", classes="col-header")
             yield RichLog(id="activity-log", wrap=True, markup=True, auto_scroll=True)
-        with Vertical(id="retro-bar"):
-            yield PlasmaCanvas(id="plasma-canvas")
-            yield TrackerView(id="tracker-view")
-            yield OscilloscopeWidget(id="oscilloscope")
         with Horizontal(id="expert-row"):
             yield ExpertCostPanel(id="expert-cost")
             yield ExpertBanditPanel(id="expert-bandit")
@@ -1507,9 +1477,6 @@ class BernsteinApp(App[None]):
             except Exception as exc:
                 logger.warning("Failed to read evolve.json: %s", exc)
 
-        # Retro-demoscene widgets hidden by default (toggled via keybindings)
-        self.query_one("#retro-bar").display = False
-
         # Write startup messages to activity log
         log = self.query_one("#activity-log", RichLog)
         log.write(_format_activity_line("system", "Bernstein starting..."))
@@ -1562,7 +1529,6 @@ class BernsteinApp(App[None]):
                         costs: dict[str, Any] = {}
                         self._update_agents(agents, costs)
                         self._update_activity(agents)
-                        self._update_retro_widgets(agents)
             except Exception:
                 pass
 
@@ -1678,7 +1644,6 @@ class BernsteinApp(App[None]):
         }
         self._update_stats(data.get("status"), tasks, data.get("agents", []), costs, monitoring)
         self._update_activity(data.get("agents", []))
-        self._update_retro_widgets(data.get("agents", []))
 
     # -- Agents --
 
@@ -1786,7 +1751,7 @@ class BernsteinApp(App[None]):
                     # Truncate module prefix for readability.
                     if ": " in msg:
                         msg = msg.split(": ", 1)[1]
-                    msg = msg[:80].replace("[", r"\[")
+                    msg = msg[:80]
                     # Color by level.
                     if level == "ERROR":
                         lines.append(f"[red]{time_part}[/] [bold red]ERR[/]  {msg}")
@@ -2257,66 +2222,6 @@ class BernsteinApp(App[None]):
             self.notify("Expert mode  [e] to toggle off", severity="information", timeout=3)
         else:
             self.notify("Novice mode  [e] to toggle on", severity="information", timeout=3)
-
-    def action_toggle_crt(self) -> None:
-        """Cycle CRT phosphor shader mode."""
-        mode = self._crt_shader.cycle_mode()
-        self.notify(f"CRT: {mode.value}", timeout=2)
-
-    def action_toggle_plasma(self) -> None:
-        """Show/hide the demoscene plasma canvas."""
-        retro = self.query_one("#retro-bar")
-        plasma = self.query_one("#plasma-canvas", PlasmaCanvas)
-        plasma.display = not plasma.display
-        # Show retro bar if any retro widget is visible
-        retro.display = (
-            plasma.display
-            or self.query_one("#tracker-view", TrackerView).display
-            or self.query_one("#oscilloscope", OscilloscopeWidget).display
-        )
-
-    def action_toggle_tracker(self) -> None:
-        """Show/hide the tracker-style task monitor."""
-        retro = self.query_one("#retro-bar")
-        tracker = self.query_one("#tracker-view", TrackerView)
-        tracker.display = not tracker.display
-        retro.display = (
-            self.query_one("#plasma-canvas", PlasmaCanvas).display
-            or tracker.display
-            or self.query_one("#oscilloscope", OscilloscopeWidget).display
-        )
-
-    def action_toggle_scope(self) -> None:
-        """Show/hide the braille oscilloscope."""
-        retro = self.query_one("#retro-bar")
-        scope = self.query_one("#oscilloscope", OscilloscopeWidget)
-        scope.display = not scope.display
-        retro.display = (
-            self.query_one("#plasma-canvas", PlasmaCanvas).display
-            or self.query_one("#tracker-view", TrackerView).display
-            or scope.display
-        )
-
-    def _update_retro_widgets(self, agents: list[dict[str, Any]]) -> None:
-        """Feed agent data to retro-demoscene widgets."""
-        plasma = self.query_one("#plasma-canvas", PlasmaCanvas)
-        if plasma.display:
-            plasma.update_activity(len(agents))
-
-        tracker = self.query_one("#tracker-view", TrackerView)
-        if tracker.display:
-            tracker.update_agents(agents)
-
-        scope = self.query_one("#oscilloscope", OscilloscopeWidget)
-        if scope.display:
-            scope.update_agents(agents)
-            samples: dict[str, float] = {}
-            for a in agents:
-                sid = a.get("session_id", a.get("id", ""))
-                if sid:
-                    samples[sid] = a.get("tokens_per_sec", 0.0)
-            if samples:
-                scope.add_samples(samples)
 
     def action_stop_bernstein(self) -> None:
         """Backward-compatible stop -- delegates to drain."""
