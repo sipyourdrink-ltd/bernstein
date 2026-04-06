@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-
 class TestStatusColors:
     """Tests for status-to-colour mapping."""
 

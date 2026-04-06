@@ -59,8 +59,12 @@ def measure_coverage(module: str, threshold: int) -> CoverageResult:
 
     if not src_path.exists():
         return CoverageResult(
-            module=module, covered=0, total=0, percent=0.0,
-            threshold=threshold, passed=False,
+            module=module,
+            covered=0,
+            total=0,
+            percent=0.0,
+            threshold=threshold,
+            passed=False,
         )
 
     # Find matching test files heuristically
@@ -77,17 +81,24 @@ def measure_coverage(module: str, threshold: int) -> CoverageResult:
 
     if not test_files:
         return CoverageResult(
-            module=module, covered=0, total=0, percent=0.0,
-            threshold=threshold, passed=False,
+            module=module,
+            covered=0,
+            total=0,
+            percent=0.0,
+            threshold=threshold,
+            passed=False,
         )
 
     cmd = [
-        sys.executable, "-m", "pytest",
+        sys.executable,
+        "-m",
+        "pytest",
         *test_files[:5],  # Limit to avoid running too many files
         f"--cov=src/{module_path.replace('.py', '').replace('/', '.')}",
         "--cov-report=json",
         "--cov-report=term",
-        "-x", "-q",
+        "-x",
+        "-q",
         "--no-header",
         "--override-ini=addopts=",
     ]
@@ -110,8 +121,11 @@ def measure_coverage(module: str, threshold: int) -> CoverageResult:
             total = totals.get("num_statements", 0)
             cov_json.unlink(missing_ok=True)
             return CoverageResult(
-                module=module, covered=covered, total=total,
-                percent=percent, threshold=threshold,
+                module=module,
+                covered=covered,
+                total=total,
+                percent=percent,
+                threshold=threshold,
                 passed=percent >= threshold,
             )
         except (json.JSONDecodeError, KeyError):
@@ -120,8 +134,12 @@ def measure_coverage(module: str, threshold: int) -> CoverageResult:
             cov_json.unlink(missing_ok=True)
 
     return CoverageResult(
-        module=module, covered=0, total=0, percent=0.0,
-        threshold=threshold, passed=False,
+        module=module,
+        covered=0,
+        total=0,
+        percent=0.0,
+        threshold=threshold,
+        passed=False,
     )
 
 
@@ -144,17 +162,22 @@ def main() -> int:
         results.append(result)
 
     if args.as_json:
-        print(json.dumps([
-            {
-                "module": r.module,
-                "covered": r.covered,
-                "total": r.total,
-                "percent": round(r.percent, 1),
-                "threshold": r.threshold,
-                "passed": r.passed,
-            }
-            for r in results
-        ], indent=2))
+        print(
+            json.dumps(
+                [
+                    {
+                        "module": r.module,
+                        "covered": r.covered,
+                        "total": r.total,
+                        "percent": round(r.percent, 1),
+                        "threshold": r.threshold,
+                        "passed": r.passed,
+                    }
+                    for r in results
+                ],
+                indent=2,
+            )
+        )
     else:
         print("\n--- Coverage Threshold Report ---\n")
         for r in results:

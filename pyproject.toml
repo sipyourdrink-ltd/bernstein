@@ -90,6 +90,11 @@ exclude = [
 target-version = "py312"
 line-length = 120
 src = ["src"]
+extend-exclude = [
+    "scripts/gen_tickets_*.py",
+    "scripts/gen_roadmap_*.py",
+    "scripts/convert_tickets_*.py",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "RUF"]
