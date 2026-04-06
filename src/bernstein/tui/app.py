@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -30,6 +31,8 @@ from bernstein.tui.widgets import (
     WaterfallWidget,
     classify_role,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -133,6 +136,9 @@ class BernsteinApp(App[None]):
         Binding("?", "show_help", "Help", show=True),
     ]
 
+    #: Resize debounce delay in seconds (TUI-001).
+    RESIZE_DEBOUNCE_S: ClassVar[float] = 0.2
+
     def __init__(self, poll_interval: float = _POLL_INTERVAL) -> None:
         """Initialise the application.
 
@@ -145,6 +151,7 @@ class BernsteinApp(App[None]):
         self._action_bar_visible = False
         self._current_rows: list[TaskRow] = []
         self._log_offsets: dict[str, int] = {}  # session_id → last-read byte offset
+        self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
 
     # -- layout ---------------------------------------------------------------
 
@@ -176,6 +183,40 @@ class BernsteinApp(App[None]):
 
         self._load_historical_logs()
         self.set_interval(self._poll_interval, self.action_refresh)
+
+    # -- resize debounce (TUI-001) -------------------------------------------
+
+    def on_resize(self, event: object) -> None:
+        """Debounce terminal resize events to avoid layout crashes (TUI-001).
+
+        Textual can raise layout calculation errors when rapid resize events
+        arrive faster than the layout engine can settle.  We cancel any
+        pending debounce timer and schedule a single relayout after
+        :attr:`RESIZE_DEBOUNCE_S` seconds of quiet.
+
+        Args:
+            event: The Textual Resize event (typed loosely to avoid import
+                coupling with the events module).
+        """
+        if self._resize_timer is not None:
+            # Cancel the previous pending debounce callback.
+            self._resize_timer.stop()  # type: ignore[union-attr]
+        self._resize_timer = self.set_timer(
+            self.RESIZE_DEBOUNCE_S,
+            self._apply_resize,
+        )
+
+    def _apply_resize(self) -> None:
+        """Apply the debounced resize by refreshing the layout (TUI-001).
+
+        Layout calculation errors during resize are caught and logged so
+        the app stays alive rather than crashing.
+        """
+        self._resize_timer = None
+        try:
+            self.refresh(layout=True)
+        except Exception:
+            logger.debug("Layout calculation error during resize (ignored)", exc_info=True)
 
     # -- historical log loading -----------------------------------------------
 
@@ -223,7 +264,7 @@ class BernsteinApp(App[None]):
     # -- actions --------------------------------------------------------------
 
     def action_refresh(self) -> None:
-        """Poll the server for fresh status and cost data, then update UI."""
+        """Poll the server for fresh status and update UI."""
         raw = _get("/status")
         if raw is None or not isinstance(raw, dict):
             self.query_one(StatusBar).set_summary(server_online=False)
@@ -234,26 +275,11 @@ class BernsteinApp(App[None]):
         transition_reasons: dict[str, dict[str, float]] | None = None
         if isinstance(transition_reasons_raw, dict):
             transition_reasons = cast("dict[str, dict[str, float]]", transition_reasons_raw)
-
-        # Fetch real-time cost from /costs/current endpoint (COST-003).
-        cost_usd = 0.0
-        cost_history: list[float] | None = None
-        cost_raw = _get("/costs/current")
-        if isinstance(cost_raw, dict):
-            cost_usd = float(cost_raw.get("spent_usd", 0.0))
-            if not hasattr(self, "_cost_history"):
-                self._cost_history: list[float] = []
-            self._cost_history.append(cost_usd)
-            cost_history = self._cost_history[-20:]
-
         self.query_one(StatusBar).set_summary(
             agents_active=int(data.get("active_agents", 0)),
             tasks_done=int(data.get("completed", 0)),
             tasks_total=int(data.get("total", 0)),
             tasks_failed=int(data.get("failed", 0)),
-            cost_usd=cost_usd,
-            cost_history=cost_history,
-            elapsed_seconds=time.time() - self._start_ts,
             server_online=True,
             transition_reasons=transition_reasons,
         )

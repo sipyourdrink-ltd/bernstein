@@ -168,6 +168,29 @@ class TerminalCaps:
             term_height=24,
         )
 
+    # ── Textual TUI support detection (TUI-003) ─────────────────────────
+
+    @property
+    def supports_textual(self) -> bool:
+        """Whether the terminal supports Textual's interactive TUI (TUI-003).
+
+        Returns False for environments where Textual typically fails or
+        produces rendering artifacts:
+        - Non-TTY (pipes, CI, redirected output)
+        - ``TERM=dumb`` terminals
+        - Explicitly disabled via ``BERNSTEIN_NO_TUI=1``
+        - ``screen`` sessions without 256color support
+        """
+        if not self.is_tty:
+            return False
+        term = os.environ.get("TERM", "")
+        if term == "dumb":
+            return False
+        if os.environ.get("BERNSTEIN_NO_TUI", "") == "1":
+            return False
+        # screen/tmux without color support is unreliable for Textual
+        return not (term == "screen" and not self.supports_256color)
+
     # ── Protocol selection ─────────────────────────────────────────────────
 
     @property

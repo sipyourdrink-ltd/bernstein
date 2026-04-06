@@ -486,6 +486,148 @@ class DashboardHeader(Static):
         return grid
 
 
+# ---------------------------------------------------------------------------
+# TUI-002: Agent list viewport clipping
+# ---------------------------------------------------------------------------
+
+#: Maximum number of agent widgets rendered at once.  When the agent count
+#: exceeds this limit, only the visible window is rendered and a scroll-
+#: overflow indicator is shown.  This prevents rendering artifacts caused by
+#: partially-visible widgets outside the physical viewport.
+_MAX_VISIBLE_AGENTS: int = 50
+
+#: Height in rows reserved for each agent widget (including border/padding).
+_AGENT_WIDGET_HEIGHT: int = 14
+
+
+class AgentListContainer(Vertical):
+    """Viewport-clipped container for agent widgets (TUI-002).
+
+    Manages a scroll buffer so that only the agents visible in the current
+    viewport are mounted.  When agents exceed the viewport capacity the
+    container displays a count indicator and supports scrolling through
+    the full list without rendering artifacts.
+    """
+
+    can_focus = True
+
+    DEFAULT_CSS = """
+    AgentListContainer {
+        overflow-y: auto;
+        scrollbar-size: 1 1;
+        height: 1fr;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._all_agents: list[dict[str, Any]] = []
+        self._scroll_offset: int = 0
+        self._task_titles: dict[str, str] = {}
+        self._task_progress: dict[str, int] = {}
+        self._per_agent_cost: dict[str, float] = {}
+        self._activity_summaries: dict[str, str] = {}
+
+    @property
+    def viewport_capacity(self) -> int:
+        """Number of agent widgets that fit in the visible area."""
+        try:
+            h = self.content_region.height
+        except Exception:
+            h = 24
+        capacity = max(1, h // _AGENT_WIDGET_HEIGHT) if h > 0 else 3
+        return min(capacity, _MAX_VISIBLE_AGENTS)
+
+    def update_agents(
+        self,
+        agents: list[dict[str, Any]],
+        task_titles: dict[str, str],
+        task_progress: dict[str, int],
+        per_agent_cost: dict[str, float],
+        activity_summaries: dict[str, str],
+    ) -> None:
+        """Replace the agent list and rebuild visible widgets.
+
+        Only the agents in the current viewport window are mounted.
+        Previously mounted widgets are reused when possible to prevent
+        flicker and preserve scroll position.
+
+        Args:
+            agents: Full list of alive agent dicts.
+            task_titles: Mapping of task_id to title.
+            task_progress: Mapping of task_id to progress percent.
+            per_agent_cost: Mapping of agent_id to cost.
+            activity_summaries: Mapping of agent_id to activity summary.
+        """
+        self._all_agents = agents
+        self._task_titles = task_titles
+        self._task_progress = task_progress
+        self._per_agent_cost = per_agent_cost
+        self._activity_summaries = activity_summaries
+
+        # Clamp scroll offset
+        total = len(agents)
+        capacity = self.viewport_capacity
+        max_offset = max(0, total - capacity)
+        self._scroll_offset = min(self._scroll_offset, max_offset)
+
+        # Determine the visible window
+        visible = agents[self._scroll_offset : self._scroll_offset + capacity]
+        visible_ids = {a.get("id", "") for a in visible}
+
+        # Remove widgets for agents no longer in the visible window
+        existing_ids: set[str] = set()
+        for child in list(self.children):
+            if isinstance(child, AgentWidget):
+                aid = child.agent_data.get("id", "")
+                if aid in visible_ids:
+                    existing_ids.add(aid)
+                    matching = [a for a in visible if a.get("id") == aid]
+                    if matching:
+                        child.agent_data = matching[0]
+                        child.task_titles = task_titles
+                        child.task_progress = task_progress
+                        child.agent_cost = per_agent_cost.get(aid, 0.0)
+                        child.activity_summary = activity_summaries.get(aid, "")
+                        child.refresh()
+                else:
+                    child.remove()
+            elif isinstance(child, Static) and child.id == "agent-overflow":
+                child.remove()
+
+        # Mount new visible agents
+        for a in visible:
+            aid = a.get("id", "")
+            if aid not in existing_ids:
+                widget = AgentWidget(
+                    a,
+                    task_titles,
+                    task_progress,
+                    activity_summary=activity_summaries.get(aid, ""),
+                )
+                widget.agent_cost = per_agent_cost.get(aid, 0.0)
+                self.mount(widget)
+
+        # Show overflow indicator when agents exceed viewport
+        hidden_count = total - len(visible)
+        if hidden_count > 0:
+            indicator = Static(
+                f"[dim]+{hidden_count} more agent{'s' if hidden_count != 1 else ''} (scroll to see all)[/dim]",
+                id="agent-overflow",
+            )
+            self.mount(indicator)
+
+    @property
+    def total_agents(self) -> int:
+        """Total number of agents in the buffer."""
+        return len(self._all_agents)
+
+    @property
+    def scroll_offset(self) -> int:
+        """Current scroll offset into the agent list."""
+        return self._scroll_offset
+
+
 class AgentWidget(Static):
     """Single agent: header + live log tail."""
 
@@ -1227,6 +1369,9 @@ class BernsteinApp(App[None]):
     }
     """
 
+    #: Resize debounce delay in seconds (TUI-001).
+    RESIZE_DEBOUNCE_S: ClassVar[float] = 0.2
+
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "graceful_quit", "Drain"),
         Binding("r", "hot_restart", "Restart"),
@@ -1257,6 +1402,7 @@ class BernsteinApp(App[None]):
         self._activity_summaries: dict[str, str] = {}
         self._last_activity: list[str] = []
         self._compare_mark: str | None = None  # first task ID for compare
+        self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
 
     def compose(self) -> ComposeResult:
         yield DashboardHeader(id="header-bar")
@@ -1294,6 +1440,27 @@ class BernsteinApp(App[None]):
             # Let the Input handle everything except its own bindings
             return
         # When NOT in input: single-char bindings work normally via BINDINGS
+
+    def on_resize(self, event: object) -> None:
+        """Debounce terminal resize events to avoid layout crashes (TUI-001).
+
+        Args:
+            event: The Textual Resize event.
+        """
+        if self._resize_timer is not None:
+            self._resize_timer.stop()  # type: ignore[union-attr]
+        self._resize_timer = self.set_timer(
+            self.RESIZE_DEBOUNCE_S,
+            self._apply_resize,
+        )
+
+    def _apply_resize(self) -> None:
+        """Apply debounced resize with error protection (TUI-001)."""
+        self._resize_timer = None
+        try:
+            self.refresh(layout=True)
+        except Exception:
+            logger.debug("Layout calculation error during resize (ignored)", exc_info=True)
 
     def on_mount(self) -> None:
         t: DataTable[Any] = self.query_one("#tasks-table", DataTable)  # pyright: ignore[reportUnknownVariableType]
