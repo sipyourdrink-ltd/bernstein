@@ -289,6 +289,7 @@ def _check_forbidden_pattern(rule: RuleSpec, diff: str) -> RuleViolation | None:
     if not violations_by_file:
         return None
 
+    files_list = list(violations_by_file.keys())
     sample = "; ".join(f"{fp}: {lines[0]!r}" for fp, lines in list(violations_by_file.items())[:3])
     detail = f"[{rule.id}] forbidden pattern in {len(violations_by_file)} file(s): {sample}"
     fix_hint = rule.message or f"Remove additions matching '{rule.pattern}' from: {', '.join(files_list[:3])}"
