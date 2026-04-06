@@ -54,7 +54,7 @@ class RuleSpec:
     severity: str = "error"  # "error" | "warning"
     pattern: str | None = None
     files: str | None = None
-    exclude: list[str] = field(default_factory=list)
+    exclude: list[str] = field(default_factory=list[str])
     path: str | None = None
     command: str | None = None
     message: str | None = None
@@ -71,7 +71,7 @@ class RulesConfig:
     """
 
     version: int = 1
-    rules: list[RuleSpec] = field(default_factory=list)
+    rules: list[RuleSpec] = field(default_factory=list[RuleSpec])
     enabled: bool = True
 
 
@@ -97,7 +97,7 @@ class RuleViolation:
     description: str
     blocked: bool
     detail: str
-    files: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list[str])
     fix_hint: str = ""
 
 
@@ -113,7 +113,7 @@ class RuleEnforcerResult:
 
     task_id: str
     passed: bool
-    violations: list[RuleViolation] = field(default_factory=list)
+    violations: list[RuleViolation] = field(default_factory=list[RuleViolation])
 
 
 # ---------------------------------------------------------------------------

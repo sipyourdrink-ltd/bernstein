@@ -82,7 +82,7 @@ class FastPathStats:
     tasks_bypassed: int = 0
     total_time_saved_s: float = 0.0
     estimated_cost_saved_usd: float = 0.0
-    actions: dict[str, int] = field(default_factory=dict)
+    actions: dict[str, int] = field(default_factory=dict[str, int])
 
     def record(self, result: FastPathResult, estimated_llm_cost: float = 0.15) -> None:
         """Record a completed fast-path execution."""

@@ -110,7 +110,7 @@ class AgentInfo:
     role: str = ""
     model: str = ""
     status: str = "idle"
-    task_ids: list[str] = field(default_factory=list)
+    task_ids: list[str] = field(default_factory=list[str])
     runtime_s: float = 0.0
     abort_reason: str = ""
     abort_detail: str = ""
@@ -186,7 +186,7 @@ class RunStats:
     """Statistics for a completed (or in-progress) run."""
 
     summary: TaskSummary = field(default_factory=TaskSummary)
-    agents: list[AgentInfo] = field(default_factory=list)
+    agents: list[AgentInfo] = field(default_factory=list[AgentInfo])
     elapsed_seconds: float = 0.0
     total_cost_usd: float = 0.0
 

@@ -26,9 +26,9 @@ class DocEntry:
 class Documentation:
     """Generated documentation collection."""
 
-    modules: list[DocEntry] = field(default_factory=list)
-    classes: list[DocEntry] = field(default_factory=list)
-    functions: list[DocEntry] = field(default_factory=list)
+    modules: list[DocEntry] = field(default_factory=list[DocEntry])
+    classes: list[DocEntry] = field(default_factory=list[DocEntry])
+    functions: list[DocEntry] = field(default_factory=list[DocEntry])
 
     def to_markdown(self) -> str:
         """Convert documentation to Markdown format."""

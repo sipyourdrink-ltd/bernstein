@@ -30,7 +30,7 @@ class RateLimitConfig:
 class RateLimitState:
     """Current rate limit state for a client."""
 
-    requests: list[float] = field(default_factory=list)
+    requests: list[float] = field(default_factory=list[float])
     burst_remaining: int = 20
 
 

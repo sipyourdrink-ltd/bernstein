@@ -176,7 +176,7 @@ class CacheManifest:
         total_cached_requests: Total spawn calls using cached prefixes.
     """
 
-    entries: dict[str, CacheEntry] = field(default_factory=dict)
+    entries: dict[str, CacheEntry] = field(default_factory=dict[str, CacheEntry])
     total_cached_tokens: int = 0
     total_cached_requests: int = 0
 

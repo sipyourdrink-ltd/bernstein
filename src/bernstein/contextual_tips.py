@@ -77,7 +77,7 @@ class TipState:
         last_seen: Mapping of tip text to the Unix timestamp it was last shown.
     """
 
-    last_seen: dict[str, float] = field(default_factory=dict)
+    last_seen: dict[str, float] = field(default_factory=dict[str, float])
 
     def to_dict(self) -> dict[str, dict[str, float]]:
         """Serialise to a JSON-safe dict."""

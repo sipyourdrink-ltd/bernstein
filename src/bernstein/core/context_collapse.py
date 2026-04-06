@@ -169,7 +169,7 @@ class CollapseResult:
     sections: list[tuple[str, str]]
     original_tokens: int
     compressed_tokens: int
-    steps: list[CollapseStep] = field(default_factory=list)
+    steps: list[CollapseStep] = field(default_factory=list[CollapseStep])
     within_budget: bool = True
 
 

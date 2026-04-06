@@ -27,7 +27,7 @@ class BulletinMessage:
     message_type: MessageType
     content: str
     timestamp: float
-    tags: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list[str])
     expires_at: float | None = None
 
     def to_dict(self) -> dict[str, Any]:

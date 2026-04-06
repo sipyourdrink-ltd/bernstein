@@ -34,11 +34,11 @@ class NotificationConfig:
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_from: str | None = None
-    smtp_to: list[str] = field(default_factory=list)
+    smtp_to: list[str] = field(default_factory=list[str])
     desktop_enabled: bool = False
     quiet_start: str = "22:00"
     quiet_end: str = "08:00"
-    events: list[NotificationEvent] = field(default_factory=list)
+    events: list[NotificationEvent] = field(default_factory=list[NotificationEvent])
 
 
 @dataclass
@@ -50,7 +50,7 @@ class Notification:
     message: str
     task_id: str | None = None
     cost_usd: float | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
 
 class NotificationSender:

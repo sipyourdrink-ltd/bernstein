@@ -20,12 +20,12 @@ class SessionCheckpoint:
 
     session_id: str
     timestamp: float
-    task_queue: list[str] = field(default_factory=list)
-    agent_state: dict[str, Any] = field(default_factory=dict)
-    git_state: dict[str, Any] = field(default_factory=dict)
+    task_queue: list[str] = field(default_factory=list[str])
+    agent_state: dict[str, Any] = field(default_factory=dict[str, Any])
+    git_state: dict[str, Any] = field(default_factory=dict[str, Any])
     cost_so_far: float = 0.0
-    completed_tasks: list[str] = field(default_factory=list)
-    failed_tasks: list[str] = field(default_factory=list)
+    completed_tasks: list[str] = field(default_factory=list[str])
+    failed_tasks: list[str] = field(default_factory=list[str])
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""

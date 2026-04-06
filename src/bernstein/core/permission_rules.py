@@ -121,7 +121,7 @@ class PermissionRuleEngine:
     patterns all match the tool call determines the outcome.
     """
 
-    rules: list[PermissionRule] = field(default_factory=list)
+    rules: list[PermissionRule] = field(default_factory=list[PermissionRule])
 
     def evaluate(
         self,

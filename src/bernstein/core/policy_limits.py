@@ -60,7 +60,7 @@ class PolicyLimitEntry:
 
     feature: str
     enabled: bool
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dict."""
@@ -81,7 +81,7 @@ class PolicyLimitEntry:
 class PolicyLimitsSnapshot:
     """The full set of policy limits at a point in time."""
 
-    limits: dict[str, PolicyLimitEntry] = field(default_factory=dict)
+    limits: dict[str, PolicyLimitEntry] = field(default_factory=dict[str, PolicyLimitEntry])
     etag: str | None = None
     fetched_at: datetime | None = None
 

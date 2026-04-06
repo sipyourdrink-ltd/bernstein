@@ -33,7 +33,7 @@ class WebhookEvent:
     sender: str
     """GitHub username that triggered the event."""
 
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict[str, Any])
     """Raw JSON payload from GitHub."""
 
 
