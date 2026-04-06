@@ -58,7 +58,9 @@ def _set_cli(cli_group: Any) -> None:  # type: ignore[reportUnusedFunction]
     show_default=True,
 )
 @click.option("--depends-on", multiple=True, metavar="TASK_ID", help="Task IDs this depends on.")
-@click.option("--dry-run", is_flag=True, help="Print the JSON payload that would be sent without actually calling the API.")
+@click.option(
+    "--dry-run", is_flag=True, help="Print the JSON payload that would be sent without actually calling the API."
+)
 @click.pass_context
 def add_task(
     ctx: click.Context,
