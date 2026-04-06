@@ -33,7 +33,7 @@ ALIASES: dict[str, str] = {
 }
 
 # Track which aliases are user-defined (populated at load time)
-_USER_ALIASES: dict[str, str] = {}
+_user_aliases: dict[str, str] = {}
 
 _USER_ALIASES_PATH = Path.home() / ".bernstein" / "aliases.yaml"
 
@@ -62,8 +62,8 @@ def _load_user_aliases() -> dict[str, str]:
     try:
         with open(_USER_ALIASES_PATH) as f:
             raw: object = yaml.safe_load(f) or {}
-        data: dict[str, object] = raw if isinstance(raw, dict) else {}
-        return {str(k): str(v) for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+        data = raw if isinstance(raw, dict) else {}
+        return {k: str(v) for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
     except Exception:
         logger.debug("Failed to load user aliases from %s", _USER_ALIASES_PATH, exc_info=True)
         return {}
@@ -71,9 +71,9 @@ def _load_user_aliases() -> dict[str, str]:
 
 def _merge_aliases() -> None:
     """Merge user aliases into the global registry (user overrides built-in)."""
-    global _USER_ALIASES
-    _USER_ALIASES = _load_user_aliases()
-    ALIASES.update(_USER_ALIASES)
+    global _user_aliases  # noqa: PLW0603
+    _user_aliases = _load_user_aliases()
+    ALIASES.update(_user_aliases)
 
 
 # Call at module load time
@@ -145,7 +145,7 @@ def aliases_cmd() -> None:
 
     for alias, command in sorted(ALIASES.items()):
         desc = _descriptions.get(alias, "")
-        source = "[cyan]user[/cyan]" if alias in _USER_ALIASES else "[dim]built-in[/dim]"
+        source = "[cyan]user[/cyan]" if alias in _user_aliases else "[dim]built-in[/dim]"
         table.add_row(alias, command, source, desc)
 
     console.print(table)
