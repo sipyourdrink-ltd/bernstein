@@ -16,11 +16,11 @@ from rich.style import Style
 from rich.text import Text
 from textual.widgets import Static
 
+from bernstein.cli.terminal_caps import TerminalCaps, detect_capabilities
 from bernstein.tui.accessibility import (
     AccessibilityConfig,
     detect_accessibility,
 )
-from bernstein.cli.terminal_caps import TerminalCaps, detect_capabilities
 
 # ── Braille dot-bit lookup ────────────────────────────────────────────────
 #

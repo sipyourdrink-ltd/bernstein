@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from collections import deque
-
 from bernstein.cli.terminal_caps import TerminalCaps
 from bernstein.tui.accessibility import AccessibilityConfig, AccessibilityLevel
 from bernstein.tui.oscilloscope import (
+    _DOT_BITS,
+    _SPARKLINE_CHARS,
     BrailleCanvas,
     OscilloscopeWidget,
     ScopeChannel,
-    _DOT_BITS,
-    _SPARKLINE_CHARS,
     _color_for_agent,
 )
-
 
 # ── BrailleCanvas ────────────────────────────────────────────────────────
 
