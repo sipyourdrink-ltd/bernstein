@@ -161,3 +161,5 @@ If Bernstein saves you time: [GitHub Sponsors](https://github.com/sponsors/chern
 ## License
 
 [Apache License 2.0](LICENSE)
+
+<!-- mcp-name: io.github.chernistry/bernstein -->

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.chernistry/bernstein",
+  "title": "Bernstein",
+  "description": "Multi-agent orchestrator for CLI coding agents. Runs Claude Code, Codex, Gemini CLI, Aider and others in parallel with git worktree isolation and automatic verification.",
+  "repository": {
+    "url": "https://github.com/chernistry/bernstein",
+    "source": "github"
+  },
+  "version": "1.4.16",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "bernstein",
+      "version": "1.4.16",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
