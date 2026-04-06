@@ -68,12 +68,12 @@ class TestElicitationRequest:
 
 class TestAutoResolvePolicy:
     def test_matches_pattern(self) -> None:
-        policy = AutoResolvePolicy(name="test", pattern="confirm.*delet", response="yes")
+        policy = AutoResolvePolicy(name="test", pattern="confirm.*delete", response="yes")
         req = ElicitationRequest(message="Confirm delete branch?", request_type="confirmation")
         assert policy.matches(req) is True
 
     def test_no_match(self) -> None:
-        policy = AutoResolvePolicy(name="test", pattern="confirm.*delet", response="yes")
+        policy = AutoResolvePolicy(name="test", pattern="confirm.*delete", response="yes")
         req = ElicitationRequest(message="Enter name:", request_type="input")
         assert policy.matches(req) is False
 
@@ -111,7 +111,7 @@ class TestHandlerAutoResolve:
     def test_auto_resolve_matching_policy(
         self, handler: ElicitationHandler, confirm_request: ElicitationRequest
     ) -> None:
-        handler.add_auto_policy("confirm_delete", pattern="confirm.*delet", response="yes")
+        handler.add_auto_policy("confirm_delete", pattern="confirm.*delete", response="yes")
         result = handler.handle(confirm_request)
         assert result.status == ElicitationStatus.AUTO_RESOLVED
         assert result.response == "yes"
@@ -120,7 +120,7 @@ class TestHandlerAutoResolve:
     def test_no_matching_policy_queues_pending(
         self, handler: ElicitationHandler, input_request: ElicitationRequest
     ) -> None:
-        handler.add_auto_policy("confirm_delete", pattern="confirm.*delet", response="yes")
+        handler.add_auto_policy("confirm_delete", pattern="confirm.*delete", response="yes")
         result = handler.handle(input_request)
         assert result.status == ElicitationStatus.PENDING
         assert len(handler.get_pending()) == 1
