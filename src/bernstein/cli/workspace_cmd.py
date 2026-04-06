@@ -245,6 +245,14 @@ def config_list(project_dir: str) -> None:
     console.print(table)
 
 
+@config_group.command("diff")
+def config_diff() -> None:
+    """Show settings that differ from defaults."""
+    from bernstein.cli.config_diff_cli import config_diff_cmd as _diff_cmd
+
+    _diff_cmd()
+
+
 @config_group.command("validate")
 def config_validate() -> None:
     """Validate project configuration (model policy, providers, etc.).
