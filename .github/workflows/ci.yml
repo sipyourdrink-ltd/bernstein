@@ -4,21 +4,102 @@ on:
   push:
     branches: [main]
     paths-ignore:
+      # Documentation & prose
       - "docs/**"
       - "*.md"
       - "!README.md"
+      - "LICENSE"
+      - "CONTRIBUTORS.md"
+      # Runtime state (never committed)
       - ".sdd/**"
+      # Non-Python packages & SDKs
+      - "sdk/typescript/**"
+      - "packages/vscode/**"
+      - "packages/cursor-plugin/**"
+      - "packaging/**"
+      - "Formula/**"
+      # Deployment & infra configs
+      - "deploy/**"
+      - "docker/**"
+      - "docker-compose.yaml"
+      - "Dockerfile"
+      - "action.yml"
+      - "action/**"
+      # CI tool configs (don't re-run tests for codecov/sonar tweaks)
+      - "codecov.yml"
+      - "sonar-project.properties"
+      # GitHub meta (templates, labels, funding — not ci.yml)
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/FUNDING.yml"
+      - ".github/CODEOWNERS"
+      - ".github/pull_request_template.md"
+      - ".github/dependabot.yml"
+      - ".github/labeler.yml"
+      - ".github/release-drafter.yml"
+      - ".github/copilot-instructions.md"
+      - ".github/codeql/**"
+      # Non-code project files
       - "marketing/**"
-      - "scripts/gen_tickets_*.py"
       - "benchmarks/**"
       - "examples/**"
+      - "plans/**"
+      - "agents/**"
+      - "commands/**"
+      - "rules/**"
+      - ".bernstein/**"
+      - ".plugin/**"
+      - "scripts/gen_tickets_*.py"
+      - "scripts/gen_roadmap_*.py"
+      - "scripts/generate_benchmark_docs.py"
   pull_request:
     paths-ignore:
+      # Documentation & prose
       - "docs/**"
       - "*.md"
       - "!README.md"
+      - "LICENSE"
+      - "CONTRIBUTORS.md"
+      # Runtime state (never committed)
       - ".sdd/**"
+      # Non-Python packages & SDKs
+      - "sdk/typescript/**"
+      - "packages/vscode/**"
+      - "packages/cursor-plugin/**"
+      - "packaging/**"
+      - "Formula/**"
+      # Deployment & infra configs
+      - "deploy/**"
+      - "docker/**"
+      - "docker-compose.yaml"
+      - "Dockerfile"
+      - "action.yml"
+      - "action/**"
+      # CI tool configs
+      - "codecov.yml"
+      - "sonar-project.properties"
+      # GitHub meta
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/FUNDING.yml"
+      - ".github/CODEOWNERS"
+      - ".github/pull_request_template.md"
+      - ".github/dependabot.yml"
+      - ".github/labeler.yml"
+      - ".github/release-drafter.yml"
+      - ".github/copilot-instructions.md"
+      - ".github/codeql/**"
+      # Non-code project files
       - "marketing/**"
+      - "benchmarks/**"
+      - "examples/**"
+      - "plans/**"
+      - "agents/**"
+      - "commands/**"
+      - "rules/**"
+      - ".bernstein/**"
+      - ".plugin/**"
+      - "scripts/gen_tickets_*.py"
+      - "scripts/gen_roadmap_*.py"
+      - "scripts/generate_benchmark_docs.py"
 
 permissions:
   contents: read
@@ -184,7 +265,7 @@ jobs:
               cmd = [
                   sys.executable, '-m', 'coverage', 'run',
                   '--source=src/bernstein', '--parallel-mode',
-                  '-m', 'pytest', str(f), '-x', '-q', '--tb=no', '--timeout=120',
+                  '-m', 'pytest', str(f), '-x', '-q', '--tb=no', '--timeout=120', '-s', '-p', 'no:cacheprovider',
               ]
               r = subprocess.run(cmd, capture_output=True, timeout=180)
               if r.returncode != 0:

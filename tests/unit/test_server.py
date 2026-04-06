@@ -10,7 +10,21 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from bernstein.core.server import TaskStore, create_app
+from bernstein.core.bulletin import BulletinBoard, MessageBoard
+from bernstein.core.server import SSEBus, TaskStore, create_app
+
+
+@pytest.fixture(scope="module")
+def _module_app(tmp_path_factory: pytest.TempPathFactory):
+    """Single FastAPI app shared across all tests in this module.
+
+    ``create_app()`` is expensive (imports 15+ route modules, registers
+    middleware stacks). Creating one per test exhausted the 2 GB
+    RLIMIT_AS on CI runners.  Reusing a single instance keeps memory
+    flat.
+    """
+    jsonl_path = tmp_path_factory.mktemp("server") / "tasks.jsonl"
+    return create_app(jsonl_path=jsonl_path)
 
 
 @pytest.fixture()
@@ -19,10 +33,25 @@ def jsonl_path(tmp_path: Path) -> Path:
     return tmp_path / "tasks.jsonl"
 
 
+def _reset_app_state(app, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    """Swap in fresh per-test state objects on a shared app instance."""
+    jsonl_path = tmp_path / "tasks.jsonl"
+    app.state.store = TaskStore(jsonl_path)
+    app.state.bulletin = BulletinBoard()
+    app.state.message_board = MessageBoard()
+    app.state.sse_bus = SSEBus()
+    app.state.draining = False
+    app.state.sdd_dir = tmp_path
+    app.state.runtime_dir = tmp_path
+    # Force middleware stack rebuild so rate limiters reset
+    app.middleware_stack = None  # type: ignore[assignment]
+
+
 @pytest.fixture()
-def app(jsonl_path: Path):
-    """Create a fresh FastAPI app per test."""
-    return create_app(jsonl_path=jsonl_path)
+def app(_module_app, tmp_path: Path):  # type: ignore[no-untyped-def]
+    """Per-test fixture: reuses the shared app but swaps in fresh state."""
+    _reset_app_state(_module_app, tmp_path)
+    return _module_app
 
 
 @pytest.fixture()
@@ -1908,13 +1937,22 @@ async def test_jsonl_write_buffering(tmp_path: Path) -> None:
 from bernstein.core.models import ClusterConfig
 
 
-@pytest.fixture()
-def cluster_app(tmp_path: Path):
-    """FastAPI app with cluster mode enabled."""
+@pytest.fixture(scope="module")
+def _module_cluster_app(tmp_path_factory: pytest.TempPathFactory):
+    """Single cluster-mode app shared across cluster tests."""
+    jsonl_path = tmp_path_factory.mktemp("cluster") / "tasks.jsonl"
     return create_app(
-        jsonl_path=tmp_path / "tasks.jsonl",
+        jsonl_path=jsonl_path,
         cluster_config=ClusterConfig(enabled=True),
     )
+
+
+@pytest.fixture()
+def cluster_app(_module_cluster_app, tmp_path: Path):  # type: ignore[no-untyped-def]
+    """Per-test: fresh store for cluster app."""
+    _reset_app_state(_module_cluster_app, tmp_path)
+    _module_cluster_app.state.node_registry._nodes.clear()
+    return _module_cluster_app
 
 
 @pytest.fixture()
@@ -2059,13 +2097,21 @@ async def test_list_nodes_invalid_status(cluster_client: AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def auth_app(tmp_path: Path):
-    """App with bearer token auth enabled."""
+@pytest.fixture(scope="module")
+def _module_auth_app(tmp_path_factory: pytest.TempPathFactory):
+    """Single auth-mode app shared across auth tests."""
+    jsonl_path = tmp_path_factory.mktemp("auth") / "tasks.jsonl"
     return create_app(
-        jsonl_path=tmp_path / "tasks.jsonl",
+        jsonl_path=jsonl_path,
         auth_token="secret-token-123",
     )
+
+
+@pytest.fixture()
+def auth_app(_module_auth_app, tmp_path: Path):  # type: ignore[no-untyped-def]
+    """Per-test: fresh store for auth app."""
+    _reset_app_state(_module_auth_app, tmp_path)
+    return _module_auth_app
 
 
 @pytest.fixture()
@@ -2121,13 +2167,22 @@ async def test_auth_agent_json_bypass(auth_client: AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
-def readonly_app(tmp_path: Path):
-    """App with readonly mode enabled (demo deployment)."""
+@pytest.fixture(scope="module")
+def _module_readonly_app(tmp_path_factory: pytest.TempPathFactory):
+    """Single readonly-mode app shared across readonly tests."""
+    jsonl_path = tmp_path_factory.mktemp("readonly") / "tasks.jsonl"
     return create_app(
-        jsonl_path=tmp_path / "tasks.jsonl",
+        jsonl_path=jsonl_path,
         readonly=True,
     )
+
+
+@pytest.fixture()
+def readonly_app(_module_readonly_app, tmp_path: Path):  # type: ignore[no-untyped-def]
+    """Per-test: fresh store for readonly app."""
+    _reset_app_state(_module_readonly_app, tmp_path)
+    _module_readonly_app.state.readonly = True
+    return _module_readonly_app
 
 
 @pytest.fixture()

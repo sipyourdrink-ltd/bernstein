@@ -1,9 +1,17 @@
 name: Semgrep SAST
 
 on:
-  pull_request: {}
+  pull_request:
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
   workflow_dispatch: {}
 
 concurrency:

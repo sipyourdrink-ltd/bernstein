@@ -3,7 +3,15 @@ name: License Compliance
 on:
   push:
     branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements*.txt"
   pull_request:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements*.txt"
   schedule:
     - cron: "0 5 * * 1"
 
