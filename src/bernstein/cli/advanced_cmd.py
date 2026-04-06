@@ -78,6 +78,16 @@ def live(interval: float, classic: bool, no_splash: bool) -> None:
 
             render_startup_splash(console, config=visual_cfg, **_build_live_splash_context(seed_path, seed_cfg))
 
+        if not no_splash:
+            import asyncio as _asyncio
+
+            from rich.console import Console as _BootConsole
+
+            from bernstein.tui.boot_sequence import play_boot_sequence
+
+            _boot_console = _BootConsole()
+            _asyncio.run(play_boot_sequence(_boot_console, no_splash=False, project_dir=Path(".")))
+
         from bernstein.cli.dashboard import BernsteinApp as DashboardApp
 
         app = DashboardApp()
