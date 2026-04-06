@@ -1,0 +1,11 @@
+{
+  "agent_count": 3,
+  "components": {},
+  "is_readonly": false,
+  "memory_mb": 128.0,
+  "restart_count": 0,
+  "status": "ok",
+  "task_count": 10,
+  "task_queue_depth": 5,
+  "uptime_s": 3600.0
+}

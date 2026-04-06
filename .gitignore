@@ -58,3 +58,7 @@ marketing/*
 
 # Runtime-local MCP config (localhost server, not for sharing)
 .claude/mcp.json
+.hypothesis/
+.mcpregistry_github_token
+.mcpregistry_registry_token
+*token*

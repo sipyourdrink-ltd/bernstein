@@ -1,0 +1,26 @@
+{
+  "claimed": 1,
+  "done": 1,
+  "failed": 1,
+  "open": 2,
+  "per_role": [
+    {
+      "claimed": 1,
+      "cost_usd": 0.0,
+      "done": 0,
+      "failed": 1,
+      "open": 1,
+      "role": "backend"
+    },
+    {
+      "claimed": 0,
+      "cost_usd": 0.0,
+      "done": 1,
+      "failed": 0,
+      "open": 1,
+      "role": "qa"
+    }
+  ],
+  "total": 5,
+  "total_cost_usd": 1.23
+}
