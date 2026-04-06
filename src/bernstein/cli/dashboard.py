@@ -1786,7 +1786,7 @@ class BernsteinApp(App[None]):
                     # Truncate module prefix for readability.
                     if ": " in msg:
                         msg = msg.split(": ", 1)[1]
-                    msg = msg[:80]
+                    msg = msg[:80].replace("[", r"\[")
                     # Color by level.
                     if level == "ERROR":
                         lines.append(f"[red]{time_part}[/] [bold red]ERR[/]  {msg}")
