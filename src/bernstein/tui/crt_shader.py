@@ -69,7 +69,7 @@ def _rgb_from_style(style: Style) -> tuple[int, int, int] | None:
         return None
     try:
         triplet = style.color.get_truecolor()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     return (triplet.red, triplet.green, triplet.blue)
 
@@ -87,7 +87,7 @@ def _bg_rgb_from_style(style: Style) -> tuple[int, int, int] | None:
         return None
     try:
         triplet = style.bgcolor.get_truecolor()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     return (triplet.red, triplet.green, triplet.blue)
 
@@ -309,10 +309,7 @@ class CRTShader:
         )
 
         existing_bg = _bg_rgb_from_style(base_style)
-        if existing_bg is not None:
-            final_bg = _blend_rgb(existing_bg, glow, 0.5)
-        else:
-            final_bg = glow
+        final_bg = _blend_rgb(existing_bg, glow, 0.5) if existing_bg is not None else glow
 
         return Style(
             color=base_style.color,
