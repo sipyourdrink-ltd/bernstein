@@ -13,7 +13,7 @@ import os
 import select
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from rich.style import Style
 from rich.text import Text
@@ -51,11 +51,11 @@ def _count_agents(project_dir: Path) -> int:
     """
     agents_file = project_dir / ".sdd" / "runtime" / "agents.json"
     try:
-        data = json.loads(agents_file.read_text(encoding="utf-8"))
+        data = cast("object", json.loads(agents_file.read_text(encoding="utf-8")))
         if isinstance(data, list):
-            return len(data)
+            return len(cast("list[object]", data))
         if isinstance(data, dict):
-            return len(data)
+            return len(cast("dict[str, object]", data))
         return 0
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return 0
