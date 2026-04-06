@@ -1190,21 +1190,20 @@ def create_app(
     # IP allowlist — reads allowed_ips from app.state.seed_config.network dynamically.
     application.add_middleware(IPAllowlistMiddleware)
 
-    # Parse seed file once for middleware config (CORS, dashboard auth)
+    # CORS middleware — configured from bernstein.yaml or defaults to localhost:*
     from bernstein.core.seed import CORSConfig
 
+    cors_config = CORSConfig()  # default; overridden after seed_config loads
     seed_path = workdir / "bernstein.yaml"
-    _early_seed = None  # type: ignore[assignment]
     if seed_path.exists():
         try:
-            from bernstein.core.seed import parse_seed as _parse_seed_early
+            from bernstein.core.seed import parse_seed
 
-            _early_seed = _parse_seed_early(seed_path)
+            _temp_seed = parse_seed(seed_path)
+            if _temp_seed.cors is not None:
+                cors_config = _temp_seed.cors
         except Exception:
             pass  # Use defaults on seed parse failure
-
-    # CORS middleware — configured from bernstein.yaml or defaults to localhost:*
-    cors_config = _early_seed.cors if (_early_seed and _early_seed.cors) else CORSConfig()
 
     from starlette.middleware.cors import CORSMiddleware
 
@@ -1216,28 +1215,6 @@ def create_app(
         allow_credentials=cors_config.allow_credentials,
         max_age=cors_config.max_age,
     )
-
-    # Dashboard session auth — reads password from seed config or env var
-    from bernstein.core.dashboard_auth import DashboardAuthMiddleware, DashboardSessionStore
-
-    _dashboard_password = os.environ.get("BERNSTEIN_DASHBOARD_PASSWORD", "")
-    _dashboard_timeout = 3600
-    if _early_seed is not None and _early_seed.dashboard_auth is not None:
-        _dashboard_password = _early_seed.dashboard_auth.password or _dashboard_password
-        _dashboard_timeout = _early_seed.dashboard_auth.session_timeout_seconds
-
-    _dashboard_session_store = DashboardSessionStore(timeout_seconds=_dashboard_timeout)
-    _dashboard_auth_mw = DashboardAuthMiddleware(
-        application,
-        session_store=_dashboard_session_store,
-        password=_dashboard_password,
-    )
-    if _dashboard_password:
-        application.add_middleware(
-            DashboardAuthMiddleware,
-            session_store=_dashboard_session_store,
-            password=_dashboard_password,
-        )
 
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()
@@ -1260,7 +1237,6 @@ def create_app(
     application.state.reload_seed_config = _reload_seed_config  # type: ignore[attr-defined]
     application.state.draining = False  # type: ignore[attr-defined]
     application.state.readonly = readonly  # type: ignore[attr-defined]
-    application.state.dashboard_auth_middleware = _dashboard_auth_mw  # type: ignore[attr-defined]
 
     # Config drift watcher — snapshot current config file checksums
     from bernstein.core.config_watcher import ConfigWatcher

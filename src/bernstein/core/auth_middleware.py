@@ -43,9 +43,6 @@ AUTH_PUBLIC_PATHS = frozenset(
         "/dashboard",
         "/dashboard/data",
         "/dashboard/file_locks",
-        "/dashboard/auth/login",
-        "/dashboard/auth/logout",
-        "/dashboard/auth/status",
         "/events",
         # Auth flow endpoints (must be public for login to work)
         "/auth/login",

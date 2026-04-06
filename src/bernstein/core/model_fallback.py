@@ -43,7 +43,7 @@ class FallbackChainConfig:
     trigger_codes: frozenset[int] = DEFAULT_FALLBACK_STATUS_CODES
     include_timeouts: bool = True
     strike_limit: int = DEFAULT_529_STRIKE_LIMIT
-    fallback_chain: list[str] = field(default_factory=list[str])
+    fallback_chain: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -63,7 +63,7 @@ class FallbackState:
     fallback_model: str | None = None
     is_fallback: bool = False
     total_529_count: int = 0
-    fallback_chain: list[str] = field(default_factory=list[str])
+    fallback_chain: list[str] = field(default_factory=list)
     fallback_chain_index: int = 0
 
 

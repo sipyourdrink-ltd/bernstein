@@ -74,59 +74,28 @@ def resolve_and_validate_path(
         Tuple of (normalized_relative_path, is_safe).  ``is_safe`` is
         ``False`` when the resolved path escapes the project root.
     """
-    # Resolve the root fully (following symlinks) for consistent comparison
-    root = Path.cwd().resolve() if project_root is None else Path(project_root).resolve()
-    # Also get the realpath to handle macOS /var -> /private/var etc.
-    root_real = Path(os.path.realpath(root))
+    root = Path.cwd() if project_root is None else Path(project_root).resolve()
 
     # Strip leading ./ for normalization
-    cleaned = filepath
-    while cleaned.startswith("./"):
-        cleaned = cleaned[2:]
+    cleaned = filepath.lstrip("./")
 
-    # Build absolute path: first normpath to resolve .., then realpath to resolve symlinks
-    if os.path.isabs(cleaned):
-        norm_path = Path(os.path.normpath(cleaned))
-    else:
-        norm_path = Path(os.path.normpath(root_real / cleaned))
+    # Build absolute path
+    abs_path = Path(os.path.realpath(cleaned)) if os.path.isabs(cleaned) else Path(os.path.realpath(root / cleaned))
 
-    # Use realpath to follow symlinks (catches symlink escapes)
-    real_path = Path(os.path.realpath(norm_path))
+    # Check containment: resolved path must be under root
+    try:
+        rel = abs_path.relative_to(root)
+    except ValueError:
+        # Path escapes the project root
+        logger.warning(
+            "Path traversal blocked: %r resolves to %s (outside %s)",
+            filepath,
+            abs_path,
+            root,
+        )
+        return filepath, False
 
-    # Check containment of the REAL (symlink-resolved) path against root
-    for check_root in (root, root_real):
-        try:
-            rel = real_path.relative_to(check_root)
-            return str(rel), True
-        except ValueError:
-            continue
-
-    # Also check normpath (non-symlink-resolved) for non-existent paths
-    for check_root in (root, root_real):
-        try:
-            rel = norm_path.relative_to(check_root)
-            # Path is within root by normpath but not by realpath —
-            # this means a symlink escapes. Block it.
-            if real_path != norm_path:
-                logger.warning(
-                    "Symlink escape blocked: %r -> %s (outside %s)",
-                    filepath,
-                    real_path,
-                    check_root,
-                )
-                return filepath, False
-            return str(rel), True
-        except ValueError:
-            continue
-
-    # Path escapes the project root
-    logger.warning(
-        "Path traversal blocked: %r resolves to %s (outside %s)",
-        filepath,
-        real_path,
-        root_real,
-    )
-    return filepath, False
+    return str(rel), True
 
 
 def has_path_traversal(filepath: str) -> bool:
