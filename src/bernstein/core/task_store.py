@@ -782,6 +782,146 @@ class TaskStore:
 
         return task
 
+    async def create_batch(
+        self,
+        requests: list[TaskCreateRequest],
+        *,
+        dedup_by_title: bool = True,
+    ) -> tuple[list[Task], list[str]]:
+        """Atomically create multiple tasks, deduplicating by title.
+
+        All insertions happen under a single lock acquisition so the batch
+        is visible atomically to other callers.  Dependency validation
+        errors skip the individual task rather than aborting the batch.
+
+        Args:
+            requests: Task creation requests to process.
+            dedup_by_title: When True, skip requests whose normalised title
+                (lowered + stripped) already exists in the store or earlier
+                in the same batch.
+
+        Returns:
+            A tuple of (created_tasks, skipped_titles).
+        """
+        from bernstein.core.lifecycle import _content_hash, get_audit_log
+        from bernstein.core.models import Complexity, Scope
+
+        created_tasks: list[Task] = []
+        skipped_titles: list[str] = []
+
+        async with self._lock:
+            existing_titles: set[str] = set()
+            if dedup_by_title:
+                existing_titles = {t.title.lower().strip() for t in self._tasks.values()}
+
+            for req in requests:
+                normalised = req.title.lower().strip()
+                if dedup_by_title and normalised in existing_titles:
+                    skipped_titles.append(req.title)
+                    continue
+
+                # -- build task (mirrors create() logic) --
+                batch_eligible: bool = getattr(req, "batch_eligible", False)
+                complexity_val = Complexity(req.complexity)
+                if not batch_eligible and req.priority != 1:
+                    from bernstein.core.fast_path import TaskLevel, classify_task
+
+                    _probe = Task(
+                        id="__probe__",
+                        title=req.title,
+                        description=req.description,
+                        role=req.role,
+                        priority=req.priority,
+                        scope=Scope(req.scope),
+                        complexity=complexity_val,
+                        model=req.model,
+                    )
+                    _cls = classify_task(_probe)
+                    batch_eligible = _cls.level in (TaskLevel.L0, TaskLevel.L1)
+
+                task = Task(
+                    id=uuid.uuid4().hex[:12],
+                    title=req.title,
+                    description=req.description,
+                    role=req.role,
+                    priority=req.priority,
+                    scope=Scope(req.scope),
+                    complexity=complexity_val,
+                    estimated_minutes=req.estimated_minutes,
+                    depends_on=req.depends_on,
+                    parent_task_id=getattr(req, "parent_task_id", None),
+                    owned_files=req.owned_files,
+                    tenant_id=normalize_tenant_id(getattr(req, "tenant_id", "default")),
+                    cell_id=req.cell_id,
+                    repo=getattr(req, "repo", None),
+                    depends_on_repo=getattr(req, "depends_on_repo", None),
+                    task_type=TaskType(req.task_type),
+                    upgrade_details=_parse_upgrade_dict(req.upgrade_details),
+                    model=req.model,
+                    effort=req.effort,
+                    batch_eligible=batch_eligible,
+                    eu_ai_act_risk=getattr(req, "eu_ai_act_risk", "minimal"),
+                    approval_required=bool(getattr(req, "approval_required", False)),
+                    risk_level=getattr(req, "risk_level", "low"),
+                    completion_signals=[CompletionSignal(type=s.type, value=s.value) for s in req.completion_signals],
+                    slack_context=req.slack_context,
+                    metadata=getattr(req, "metadata", None) or {},
+                    parent_session_id=getattr(req, "parent_session_id", None),
+                )
+
+                # -- dependency validation (skip on error, don't abort batch) --
+                if task.depends_on:
+                    missing = [dep for dep in task.depends_on if dep not in self._tasks]
+                    if missing:
+                        logger.warning(
+                            "create_batch: skipping %r — depends_on references non-existent task(s): %s",
+                            task.title,
+                            ", ".join(missing),
+                        )
+                        skipped_titles.append(req.title)
+                        continue
+                    cycle = self._detect_cycle(self._tasks, task)
+                    if cycle is not None:
+                        logger.warning(
+                            "create_batch: skipping %r — circular dependency: %s",
+                            task.title,
+                            " -> ".join(cycle),
+                        )
+                        skipped_titles.append(req.title)
+                        continue
+
+                self._tasks[task.id] = task
+                self._index_add(task)
+                await self._append_jsonl(self._task_to_record(task))
+
+                if dedup_by_title:
+                    existing_titles.add(normalised)
+
+                created_tasks.append(task)
+
+        # Fire audit log entries outside the lock (non-critical I/O)
+        audit = get_audit_log()
+        if audit is not None:
+            for task in created_tasks:
+                input_data = {"title": task.title, "role": task.role, "priority": task.priority}
+                output_data = {"task_id": task.id, "status": task.status.value}
+                audit.log(
+                    event_type="task.created",
+                    actor="task_store",
+                    resource_type="task",
+                    resource_id=task.id,
+                    details={
+                        "action": "create_batch",
+                        "title": task.title,
+                        "role": task.role,
+                        "priority": task.priority,
+                        "input_hash": _content_hash(input_data),
+                        "output_hash": _content_hash(output_data),
+                    },
+                )
+
+        return created_tasks, skipped_titles
+
     async def claim_next(
         self,
         role: str,
