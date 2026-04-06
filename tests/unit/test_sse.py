@@ -21,7 +21,7 @@ class TestSSEBus:
         bus = SSEBus()
         queue = bus.subscribe()
         assert isinstance(queue, asyncio.Queue)
-        assert queue.maxsize == 64
+        assert queue.maxsize == 256
 
     def test_multiple_subscribers_get_separate_queues(self) -> None:
         bus = SSEBus()
