@@ -156,7 +156,7 @@ class MCPRegistry:
                 keywords=tuple(str(k) for k in keywords_raw),
                 env_required=tuple(str(e) for e in env_req_raw),
                 command=str(entry_dict.get("command", "npx")),
-                args=tuple(str(a) for a in list(entry_dict["args"])) if "args" in entry_dict else None,
+                args=tuple(str(a) for a in entry_dict["args"]) if "args" in entry_dict else None,
             )
             self._servers.append(entry)
 

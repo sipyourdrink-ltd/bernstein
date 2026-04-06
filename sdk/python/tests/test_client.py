@@ -103,7 +103,7 @@ class TestBernsteinClientSync:
         with BernsteinClient(BASE) as client:
             summary = client.get_status()
         assert summary.total == 5
-        assert summary.cost_usd == 0.12
+        assert summary.cost_usd == pytest.approx(0.12)
 
     @respx.mock
     def test_health_true(self) -> None:

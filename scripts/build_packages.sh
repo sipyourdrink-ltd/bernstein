@@ -19,7 +19,7 @@ cd "$ROOT_DIR"
 
 # ── Version ─────────────────────────────────────────────────────────────────
 VERSION="${1:-}"
-if [ -z "$VERSION" ]; then
+if [[ -z "$VERSION" ]]; then
   VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
 fi
 echo "==> Building packages for bernstein v${VERSION}"
@@ -99,7 +99,7 @@ RPM=$(ls build/packages/bernstein-*.rpm | head -1)
 echo "    Built: $RPM"
 
 # ── GPG signing ──────────────────────────────────────────────────────────────
-if [ -n "${GPG_KEY_ID:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
+if [[ -n "${GPG_KEY_ID:-}" ]] && [[ -n "${GPG_PASSPHRASE:-}" ]]; then
   echo "==> Signing packages (GPG key: $GPG_KEY_ID)"
 
   echo "$GPG_PASSPHRASE" > /tmp/_gpg_pass_$$
@@ -162,7 +162,7 @@ bzip2 -kc  "$APTREPO/dists/stable/main/binary-amd64/Packages" \
   done
 } > "$APTREPO/dists/stable/Release"
 
-if [ -n "${GPG_KEY_ID:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
+if [[ -n "${GPG_KEY_ID:-}" ]] && [[ -n "${GPG_PASSPHRASE:-}" ]]; then
   echo "$GPG_PASSPHRASE" | gpg --batch --passphrase-fd 0 --pinentry-mode loopback \
     --armor --detach-sign -o "$APTREPO/dists/stable/Release.gpg" "$APTREPO/dists/stable/Release"
   echo "$GPG_PASSPHRASE" | gpg --batch --passphrase-fd 0 --pinentry-mode loopback \
@@ -177,7 +177,7 @@ mkdir -p "$RPMREPO/packages"
 cp "$RPM" "$RPMREPO/packages/"
 createrepo_c "$RPMREPO"
 
-if [ -n "${GPG_KEY_ID:-}" ] && [ -n "${GPG_PASSPHRASE:-}" ]; then
+if [[ -n "${GPG_KEY_ID:-}" ]] && [[ -n "${GPG_PASSPHRASE:-}" ]]; then
   echo "$GPG_PASSPHRASE" | gpg --batch --passphrase-fd 0 --pinentry-mode loopback \
     --armor --detach-sign "$RPMREPO/repodata/repomd.xml"
   echo "    repomd.xml signed"

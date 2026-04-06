@@ -100,7 +100,7 @@ class GatewayReplay:
                     )
                     self._index[key] = entry.output
         except FileNotFoundError:
-            pass
+            pass  # No cache file yet; start with empty index
 
     @staticmethod
     def _make_key(method: str, tool_name: str) -> str:
@@ -374,7 +374,7 @@ def create_gateway_sse_app(gateway: MCPGateway, *, run_id: str) -> Any:
     _sessions: dict[str, asyncio.Queue[str | None]] = {}
 
     @app.get("/sse")
-    async def sse_endpoint(request: Request) -> StreamingResponse:  # type: ignore[misc]
+    def sse_endpoint(request: Request) -> StreamingResponse:  # type: ignore[misc]
         """Open an SSE stream and receive an endpoint URL for sending requests."""
         session_id = uuid.uuid4().hex
         queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -421,7 +421,7 @@ def create_gateway_sse_app(gateway: MCPGateway, *, run_id: str) -> Any:
         return JSONResponse({"status": "accepted"})
 
     @app.get("/gateway/metrics")
-    async def metrics_endpoint(request: Request) -> JSONResponse:  # type: ignore[misc]
+    def metrics_endpoint(request: Request) -> JSONResponse:  # type: ignore[misc]
         """Return current per-tool metrics for this gateway session."""
         return JSONResponse(
             {

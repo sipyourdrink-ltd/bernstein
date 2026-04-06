@@ -7,6 +7,8 @@ import time
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import pytest
+
 from bernstein.core.evolution import (
     AgentMetrics,
     AnalysisEngine,
@@ -109,7 +111,7 @@ class TestFileMetricsCollector:
         collector.record_task_metrics(metrics)
 
         assert len(collector._task_metrics) == 1
-        assert collector._task_metrics[0].cost_usd == 0.01
+        assert collector._task_metrics[0].cost_usd == pytest.approx(0.01)
 
     def test_record_task_metrics_appends_to_file(self, tmp_path: Path) -> None:
         collector = FileMetricsCollector(tmp_path)
@@ -126,8 +128,8 @@ class TestFileMetricsCollector:
 
         data1 = json.loads(lines[0])
         data2 = json.loads(lines[1])
-        assert data1["cost_usd"] == 0.01
-        assert data2["cost_usd"] == 0.02
+        assert data1["cost_usd"] == pytest.approx(0.01)
+        assert data2["cost_usd"] == pytest.approx(0.02)
 
     def test_record_agent_metrics(self, tmp_path: Path) -> None:
         collector = FileMetricsCollector(tmp_path)
@@ -155,7 +157,7 @@ class TestFileMetricsCollector:
         collector.record_cost_metrics(metrics)
 
         assert len(collector._cost_metrics) == 1
-        assert collector._cost_metrics[0].cost_usd == 0.05
+        assert collector._cost_metrics[0].cost_usd == pytest.approx(0.05)
 
     def test_record_quality_metrics(self, tmp_path: Path) -> None:
         collector = FileMetricsCollector(tmp_path)
@@ -168,7 +170,7 @@ class TestFileMetricsCollector:
         collector.record_quality_metrics(metrics)
 
         assert len(collector._quality_metrics) == 1
-        assert collector._quality_metrics[0].janitor_pass_rate == 0.95
+        assert collector._quality_metrics[0].janitor_pass_rate == pytest.approx(0.95)
 
     def test_get_recent_task_metrics_filters_by_time(self, tmp_path: Path) -> None:
         collector = FileMetricsCollector(tmp_path)
@@ -184,7 +186,7 @@ class TestFileMetricsCollector:
         recent = collector.get_recent_task_metrics(hours=1)
 
         assert len(recent) == 1
-        assert recent[0].cost_usd == 0.01
+        assert recent[0].cost_usd == pytest.approx(0.01)
 
     def test_load_from_files(self, tmp_path: Path) -> None:
         collector = FileMetricsCollector(tmp_path)
@@ -782,7 +784,7 @@ class TestEvolutionCoordinator:
         metrics = coordinator.collector.get_recent_task_metrics(hours=1)
         assert len(metrics) == 1
         assert metrics[0].duration_seconds == 120
-        assert metrics[0].cost_usd == 0.05
+        assert metrics[0].cost_usd == pytest.approx(0.05)
 
     def test_init_loads_historical_metrics_from_files(self, tmp_path: Path) -> None:
         """EvolutionCoordinator loads persisted metrics on init for cross-session trend analysis."""
@@ -806,7 +808,7 @@ class TestEvolutionCoordinator:
             "EvolutionCoordinator must load historical metrics on init so "
             "run_analysis_cycle() has data from previous sessions"
         )
-        assert any(m.duration_seconds == 45.0 for m in metrics)
+        assert any(m.duration_seconds == pytest.approx(45.0) for m in metrics)
 
 
 # --- UpgradeProposal ---
@@ -994,7 +996,7 @@ class TestRecordAgentLifetime:
         record = json.loads(lines[0])
         assert record["agent_id"] == "agent-1"
         assert record["role"] == "backend"
-        assert record["lifetime_seconds"] == 120.5
+        assert record["lifetime_seconds"] == pytest.approx(120.5)
         assert record["tasks_completed"] == 2
 
     def test_record_is_queryable_via_collector(self, tmp_path: Path) -> None:

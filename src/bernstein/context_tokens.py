@@ -108,7 +108,7 @@ def count_tokens(text: str) -> int:
         enc = tiktoken.get_encoding("cl100k_base")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         return len(enc.encode(text))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
     except (ImportError, RuntimeError):
-        pass
+        pass  # tiktoken unavailable; fall through to heuristic
 
     # Fallback: word-based heuristic
     words = len(text.split())

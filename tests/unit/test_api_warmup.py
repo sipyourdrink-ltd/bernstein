@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +21,7 @@ from bernstein.api_warmup import (
 
 
 @pytest.fixture(autouse=True)
-def clean_cache() -> None:
+def clean_cache() -> Generator[None, None, None]:
     """Reset the warmup cache before and after each test."""
     clear_cache()
     yield
@@ -34,7 +35,7 @@ class TestWarmupResult:
     def test_dataclass_fields(self) -> None:
         result = WarmupResult(provider="openrouter", latency_ms=12.3, success=True)
         assert result.provider == "openrouter"
-        assert result.latency_ms == 12.3
+        assert result.latency_ms == pytest.approx(12.3)
         assert result.success is True
 
     def test_is_frozen(self) -> None:
@@ -146,7 +147,7 @@ class TestWarmupProvider:
             result = await warmup_provider("openrouter")
             assert result.success is False
             assert result.provider == "openrouter"
-            assert result.latency_ms == 0.0
+            assert result.latency_ms == pytest.approx(0.0)
 
     @pytest.mark.asyncio
     async def test_local_endpoint_skips_network(self) -> None:
@@ -162,7 +163,7 @@ class TestWarmupProvider:
         ):
             result = await warmup_provider("openai")
             assert result.success is True
-            assert result.latency_ms == 0.0
+            assert result.latency_ms == pytest.approx(0.0)
 
     @pytest.mark.asyncio
     async def test_successful_warmup_caches_result(self) -> None:
@@ -299,7 +300,7 @@ class TestCheckWarmupStatus:
         status = check_warmup_status()
         assert "together" in status
         entry = status["together"]
-        assert entry["latency_ms"] == 50.0
+        assert entry["latency_ms"] == pytest.approx(50.0)
         assert entry["success"] is True
         assert entry["is_fresh"] is True
         assert entry["ttl_remaining_seconds"] > 0
@@ -312,7 +313,7 @@ class TestCheckWarmupStatus:
         )
         status = check_warmup_status()
         assert status["g4f"]["is_fresh"] is False
-        assert status["g4f"]["ttl_remaining_seconds"] == 0.0
+        assert status["g4f"]["ttl_remaining_seconds"] == pytest.approx(0.0)
 
     def test_multiple_providers(self) -> None:
         now = __import__("time").monotonic()

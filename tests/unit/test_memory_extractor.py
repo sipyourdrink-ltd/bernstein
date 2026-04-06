@@ -7,7 +7,6 @@ from pathlib import Path
 
 from bernstein.core.memory_extractor import AgentMemory, MemoryExtractor
 
-
 # ---------------------------------------------------------------------------
 # Fixtures: sample log content
 # ---------------------------------------------------------------------------

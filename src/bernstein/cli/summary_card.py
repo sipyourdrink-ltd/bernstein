@@ -114,7 +114,12 @@ def build_summary_card(data: RunSummaryData) -> Table:
 
     if data.quality_score is not None:
         pct = data.quality_score * 100
-        q_color = "green" if pct >= 80 else ("yellow" if pct >= 50 else "red")
+        if pct >= 80:
+            q_color = "green"
+        elif pct >= 50:
+            q_color = "yellow"
+        else:
+            q_color = "red"
         table.add_row("Quality score", f"[{q_color}]{pct:.0f}%[/{q_color}]")
 
     return table

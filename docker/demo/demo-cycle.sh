@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Demo cycle — seeds tasks, runs real agents, resets every N minutes.
 #
 # Runs inside the bernstein-demo container.  Requires:
@@ -96,7 +96,7 @@ seed_tasks() {
 ensure_git_repo() {
     # Initialize a git repo with an initial commit so reset_project can
     # restore the project to a clean state across cycles.
-    if [ ! -d "${PROJECT_DIR}/.git" ]; then
+    if [[ ! -d "${PROJECT_DIR}/.git" ]]; then
         log "Initializing git repo for demo project..."
         git -C "${PROJECT_DIR}" init -b main
         git -C "${PROJECT_DIR}" config user.email "demo@bernstein.dev"
@@ -108,7 +108,7 @@ ensure_git_repo() {
 
 reset_project() {
     log "Resetting demo project..."
-    if [ -d "${PROJECT_DIR}/.git" ]; then
+    if [[ -d "${PROJECT_DIR}/.git" ]]; then
         git -C "${PROJECT_DIR}" checkout -- . 2>/dev/null || true
         git -C "${PROJECT_DIR}" clean -fd 2>/dev/null || true
     fi
@@ -122,7 +122,7 @@ ensure_git_repo
 CONDUCTOR_PID=""
 
 cleanup() {
-    if [ -n "${CONDUCTOR_PID}" ]; then
+    if [[ -n "${CONDUCTOR_PID}" ]]; then
         log "Stopping orchestrator (PID ${CONDUCTOR_PID})..."
         kill "${CONDUCTOR_PID}" 2>/dev/null || true
         wait "${CONDUCTOR_PID}" 2>/dev/null || true

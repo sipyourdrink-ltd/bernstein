@@ -41,7 +41,7 @@ class TestWithInitTimeout:
     @pytest.mark.asyncio
     async def test_default_timeout_is_30_seconds(self) -> None:
         """Default timeout parameter is 30 seconds."""
-        assert INIT_TIMEOUT_SECONDS == 30.0
+        assert INIT_TIMEOUT_SECONDS == pytest.approx(30.0)
 
     @pytest.mark.asyncio
     async def test_does_not_intercept_non_timeout_errors(self) -> None:

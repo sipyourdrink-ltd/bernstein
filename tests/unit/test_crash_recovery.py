@@ -81,7 +81,7 @@ def _task_as_dict(task: Task) -> dict:
     }
 
 
-def _mock_adapter(pid: int = 42) -> CLIAdapter:
+def _mock_adapter(pid: int = 42) -> MagicMock:
     adapter = MagicMock(spec=CLIAdapter)
     adapter.spawn.return_value = SpawnResult(pid=pid, proc=None, log_path=None)
     adapter.is_alive.return_value = True

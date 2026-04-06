@@ -38,6 +38,8 @@ from bernstein.core.server import (
 )
 from bernstein.core.worktree import WorktreeManager
 
+_SDD_NOT_CONFIGURED = "sdd_dir not configured"
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
@@ -263,7 +265,7 @@ def _health_components(request: Request, store: TaskStore) -> dict[str, dict[str
         else:
             spawner_detail = "no pid file"
     else:
-        spawner_detail = "sdd_dir not configured"
+        spawner_detail = _SDD_NOT_CONFIGURED
 
     database_status = "unavailable"
     database_detail = ""
@@ -307,7 +309,7 @@ def _readiness(request: Request) -> tuple[bool, str]:
 
 
 @router.get("/status")
-async def status_dashboard(request: Request) -> JSONResponse:
+def status_dashboard(request: Request) -> JSONResponse:
     """Dashboard summary of task counts."""
     from bernstein.core.dependency_scan import read_latest_dependency_scan
 
@@ -361,7 +363,7 @@ async def status_dashboard(request: Request) -> JSONResponse:
 
 
 @router.get("/status/duration-predictions")
-async def duration_predictions(request: Request) -> JSONResponse:
+def duration_predictions(request: Request) -> JSONResponse:
     """Return ML-predicted duration estimates for all open/claimed tasks.
 
     Uses the local GradientBoosting duration predictor.  Falls back to the
@@ -444,7 +446,7 @@ async def duration_predictions(request: Request) -> JSONResponse:
 
 
 @router.get("/routing/bandit")
-async def bandit_routing_stats(request: Request) -> JSONResponse:
+def bandit_routing_stats(request: Request) -> JSONResponse:
     """Return contextual bandit routing statistics.
 
     Reads persisted state from ``.sdd/routing/``.  Returns an empty dict
@@ -483,8 +485,8 @@ async def bandit_routing_stats(request: Request) -> JSONResponse:
         )
 
 
-@router.get("/health")
-async def health_check(request: Request) -> HealthResponse:
+@router.get("/health", response_model=HealthResponse)
+def health_check(request: Request) -> HealthResponse:
     """Liveness check with component-level status."""
     store = _get_store(request)
     is_readonly: bool = getattr(request.app.state, "readonly", False)
@@ -511,7 +513,7 @@ async def health_check(request: Request) -> HealthResponse:
 
 
 @router.get("/health/ready")
-async def ready_check(request: Request) -> JSONResponse:
+def ready_check(request: Request) -> JSONResponse:
     """Readiness check for load balancers."""
     ready, reason = _readiness(request)
     status_code = 200 if ready else 503
@@ -521,21 +523,21 @@ async def ready_check(request: Request) -> JSONResponse:
 
 
 @router.get("/ready")
-async def ready_alias(request: Request) -> JSONResponse:
+def ready_alias(request: Request) -> JSONResponse:
     """Alias for /health/ready."""
-    return await ready_check(request)
+    return ready_check(request)
 
 
 @router.get("/health/live")
-async def live_check() -> JSONResponse:
+def live_check() -> JSONResponse:
     """Liveness check for process monitoring."""
     return JSONResponse(content={"status": "alive"})
 
 
 @router.get("/alive")
-async def live_alias() -> JSONResponse:
+def live_alias() -> JSONResponse:
     """Alias for /health/live."""
-    return await live_check()
+    return live_check()
 
 
 @router.post("/shutdown")
@@ -571,7 +573,7 @@ async def shutdown_server(request: Request) -> JSONResponse:
 
 
 @router.get("/cache-stats")
-async def cache_stats(request: Request) -> JSONResponse:
+def cache_stats(request: Request) -> JSONResponse:
     """Return prompt caching statistics from the manifest.
 
     Reads `.sdd/caching/manifest.jsonl` and returns aggregated counts,
@@ -587,7 +589,7 @@ async def cache_stats(request: Request) -> JSONResponse:
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
     if sdd_dir is None:
         return JSONResponse(
-            content={"error": "sdd_dir not configured"},
+            content={"error": _SDD_NOT_CONFIGURED},
             status_code=500,
         )
 
@@ -619,7 +621,7 @@ async def cache_stats(request: Request) -> JSONResponse:
 
 
 @router.get("/metrics")
-async def metrics_endpoint(request: Request) -> PlainTextResponse:
+def metrics_endpoint(request: Request) -> PlainTextResponse:
     """Prometheus metrics scrape endpoint.
 
     Updates all gauges from the current task store state, then
@@ -645,7 +647,7 @@ async def metrics_endpoint(request: Request) -> PlainTextResponse:
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_page() -> HTMLResponse:
+def dashboard_page() -> HTMLResponse:
     """Serve the single-page web dashboard."""
     from bernstein.dashboard import TEMPLATE_DIR
 
@@ -655,7 +657,7 @@ async def dashboard_page() -> HTMLResponse:
 
 
 @router.get("/dashboard/data")
-async def dashboard_data(request: Request) -> JSONResponse:
+def dashboard_data(request: Request) -> JSONResponse:
     """Return all mission control dashboard data as JSON.
 
     Includes stats, tasks with timeline data, agent details with costs,
@@ -696,7 +698,7 @@ async def dashboard_data(request: Request) -> JSONResponse:
             )
             agents[session.id] = session
 
-    all_agents = list(agents.values())
+    all_agents = agents.values()
     alive_agents = [a for a in all_agents if a.status != "dead"]
     cost_by_role = store.cost_by_role()
     total_cost = sum(cost_by_role.values())
@@ -1079,7 +1081,7 @@ def _read_merge_queue(request: Request) -> dict[str, Any]:
 
 
 @router.get("/memory/audit")
-async def memory_audit(request: Request) -> JSONResponse:
+def memory_audit(request: Request) -> JSONResponse:
     """Audit the lesson memory provenance chain (OWASP ASI06 2026).
 
     Returns chain integrity status and a per-entry provenance trail.
@@ -1089,7 +1091,7 @@ async def memory_audit(request: Request) -> JSONResponse:
 
     sdd_dir: Path | None = getattr(request.app.state, "sdd_dir", None)
     if sdd_dir is None:
-        return JSONResponse(content={"error": "sdd_dir not configured"}, status_code=500)
+        return JSONResponse(content={"error": _SDD_NOT_CONFIGURED}, status_code=500)
 
     lessons_path = sdd_dir / "memory" / "lessons.jsonl"
 
@@ -1154,7 +1156,7 @@ async def broadcast_command(request: Request) -> JSONResponse:
 
     sdd_dir: Path | None = getattr(request.app.state, "sdd_dir", None)
     if sdd_dir is None:
-        return JSONResponse(content={"error": "sdd_dir not configured"}, status_code=500)
+        return JSONResponse(content={"error": _SDD_NOT_CONFIGURED}, status_code=500)
 
     workdir = sdd_dir.parent
     results = broadcast_message(message, workdir=workdir)
@@ -1178,17 +1180,32 @@ async def broadcast_command(request: Request) -> JSONResponse:
 
 
 @router.get("/events")
-async def sse_events(request: Request) -> StreamingResponse:
-    """Server-Sent Events stream for real-time dashboard updates."""
+def sse_events(request: Request) -> StreamingResponse:
+    """Server-Sent Events stream for real-time dashboard updates.
+
+    Includes disconnect detection via heartbeat pings and connection
+    timeout handling to prevent leaked subscriber queues.
+    """
     sse_bus = _get_sse_bus(request)
     queue = sse_bus.subscribe()
+
+    # Timeout for individual queue.get() calls — if no message arrives
+    # within this window (including heartbeats), the connection is dead.
+    _READ_TIMEOUT_S = 60.0
 
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
             # Send initial connection event
             yield 'event: heartbeat\ndata: {"connected": true}\n\n'
+            sse_bus.mark_read(queue)
             while True:
-                message = await queue.get()
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=_READ_TIMEOUT_S)
+                except TimeoutError:
+                    # No message (not even a heartbeat) in _READ_TIMEOUT_S — client likely disconnected
+                    logger.debug("SSE client timed out after %.0fs, closing", _READ_TIMEOUT_S)
+                    break
+                sse_bus.mark_read(queue)
                 yield message
         except asyncio.CancelledError:
             raise
@@ -1207,7 +1224,7 @@ async def sse_events(request: Request) -> StreamingResponse:
 
 
 @router.get("/badge.json")
-async def get_badge(request: Request) -> JSONResponse:
+def get_badge(request: Request) -> JSONResponse:
     """Return dynamic badge data for GitHub shields.io integration.
 
     Shows tasks completed, total cost, and quality score.
@@ -1221,7 +1238,7 @@ async def get_badge(request: Request) -> JSONResponse:
     sdd_dir = workdir / ".sdd"
 
     # Task counts
-    tasks = list(store.list_tasks())
+    tasks = store.list_tasks()
     completed = sum(1 for t in tasks if t.status == TaskStatus.DONE)
     failed = sum(1 for t in tasks if t.status == TaskStatus.FAILED)
 
@@ -1246,7 +1263,7 @@ async def get_badge(request: Request) -> JSONResponse:
                     data = json.loads(line)
                     if "total" in data:
                         scores.append(int(data["total"]))
-                except (json.JSONDecodeError, ValueError):
+                except ValueError:
                     pass
         if scores:
             quality_score = sum(scores) / len(scores)
@@ -1255,7 +1272,14 @@ async def get_badge(request: Request) -> JSONResponse:
     total = completed + failed
     if total > 0:
         rate = completed / total
-        color = "brightgreen" if rate >= 0.9 else "yellowgreen" if rate >= 0.7 else "yellow" if rate >= 0.5 else "red"
+        if rate >= 0.9:
+            color = "brightgreen"
+        elif rate >= 0.7:
+            color = "yellowgreen"
+        elif rate >= 0.5:
+            color = "yellow"
+        else:
+            color = "red"
     else:
         color = "lightgrey"
 

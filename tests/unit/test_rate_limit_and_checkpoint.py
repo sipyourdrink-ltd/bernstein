@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.bulletin_board import BulletinBoard, BulletinMessage
 from bernstein.core.rate_limiter import RateLimitConfig
 from bernstein.core.session_checkpoint import (
@@ -53,7 +55,7 @@ class TestSessionCheckpoint:
 
         assert checkpoint.session_id == "session-123"
         assert len(checkpoint.task_queue) == 2
-        assert checkpoint.cost_so_far == 1.50
+        assert checkpoint.cost_so_far == pytest.approx(1.50)
 
     def test_checkpoint_to_dict(self) -> None:
         """Test checkpoint serialization."""
@@ -66,7 +68,7 @@ class TestSessionCheckpoint:
         data = checkpoint.to_dict()
 
         assert data["session_id"] == "session-123"
-        assert data["timestamp"] == 1234567890.0
+        assert data["timestamp"] == pytest.approx(1234567890.0)
 
     def test_checkpoint_from_dict(self) -> None:
         """Test checkpoint deserialization."""
@@ -127,7 +129,7 @@ class TestSessionCheckpoint:
         )
 
         assert checkpoint.session_id == "session-789"
-        assert checkpoint.cost_so_far == 1.0
+        assert checkpoint.cost_so_far == pytest.approx(1.0)
 
 
 class TestBulletinBoard:

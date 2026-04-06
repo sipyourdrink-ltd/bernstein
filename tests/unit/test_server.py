@@ -1119,7 +1119,7 @@ async def test_status_cost_zero_when_no_metrics(client_with_metrics: AsyncClient
     assert resp.status_code == 200
     data = resp.json()
     assert "total_cost_usd" in data
-    assert data["total_cost_usd"] == 0.0
+    assert data["total_cost_usd"] == pytest.approx(0.0)
 
 
 @pytest.mark.anyio

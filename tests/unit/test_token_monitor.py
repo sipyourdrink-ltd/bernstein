@@ -7,6 +7,8 @@ import time
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import pytest
+
 from bernstein.core.token_monitor import (
     TokenGrowthMonitor,
     TokenSample,
@@ -223,7 +225,7 @@ class TestCheckTokenGrowth:
         check_token_growth(orch)
         assert sess.tokens_used == 1100
         assert sess.context_window_tokens == 200_000
-        assert sess.context_utilization_pct == 0.55
+        assert sess.context_utilization_pct == pytest.approx(0.55)
         assert sess.context_utilization_alert is False
 
     def test_marks_context_window_alert_above_threshold(self, tmp_path: Path) -> None:
@@ -242,7 +244,7 @@ class TestCheckTokenGrowth:
         check_token_growth(orch)
 
         assert sess.context_window_tokens == 200_000
-        assert sess.context_utilization_pct == 85.0
+        assert sess.context_utilization_pct == pytest.approx(85.0)
         assert sess.context_utilization_alert is True
 
     def test_kills_runaway_agent(self, tmp_path: Path) -> None:

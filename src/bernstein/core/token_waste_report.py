@@ -147,7 +147,7 @@ def _parse_token_records(raw: str) -> list[TokenRecord]:
                     output_tokens=int(obj.get("out", 0)),
                 )
             )
-        except (json.JSONDecodeError, ValueError, TypeError):
+        except (ValueError, TypeError):
             continue
     return records
 

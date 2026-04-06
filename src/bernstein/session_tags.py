@@ -23,7 +23,7 @@ _TAG_FILE = Path(".sdd") / "runtime" / "session_tags.json"
 class SessionTags:
     """Mutable container for session tags, persisted to disk."""
 
-    tags: set[str] = field(default_factory=lambda: set[str]())
+    tags: set[str] = field(default_factory=set)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def add(self, tag: str) -> None:

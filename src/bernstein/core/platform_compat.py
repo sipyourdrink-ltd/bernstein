@@ -223,7 +223,7 @@ def _win_taskkill(pid: int, *, force: bool = False, tree: bool = False) -> bool:
             timeout=10,
         )
         return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError) as exc:
         logger.debug("taskkill failed for PID %d: %s", pid, exc)
         return False
 

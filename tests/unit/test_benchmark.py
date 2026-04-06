@@ -200,7 +200,7 @@ def test_load_benchmarks_uses_defaults_for_optional_fields(benchmarks_dir: Path)
         {"id": "minimal", "goal": "Minimal spec", "expected_signals": []},
     )
     specs = load_benchmarks(benchmarks_dir, "smoke")
-    assert specs[0].max_cost_usd == 0.0
+    assert specs[0].max_cost_usd == pytest.approx(0.0)
     assert specs[0].max_duration_seconds == 60
 
 

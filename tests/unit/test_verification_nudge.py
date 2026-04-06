@@ -98,7 +98,7 @@ class TestVerificationRecord:
         rec = VerificationRecord.from_dict({})
         assert rec.task_id == ""
         assert rec.session_id == ""
-        assert rec.timestamp == 0.0
+        assert rec.timestamp == pytest.approx(0.0)
         assert rec.tests_run is False
         assert rec.quality_gates_run is False
         assert rec.verified is False
@@ -156,7 +156,7 @@ class TestVerificationNudgeTracker:
         assert summary.total_completions == 0
         assert summary.verified_count == 0
         assert summary.unverified_count == 0
-        assert summary.unverified_ratio == 0.0
+        assert summary.unverified_ratio == pytest.approx(0.0)
         assert summary.threshold_exceeded is False
         assert summary.recent_unverified == []
 
@@ -168,7 +168,7 @@ class TestVerificationNudgeTracker:
         assert summary.total_completions == 5
         assert summary.verified_count == 5
         assert summary.unverified_count == 0
-        assert summary.unverified_ratio == 0.0
+        assert summary.unverified_ratio == pytest.approx(0.0)
         assert summary.threshold_exceeded is False
 
     def test_summary_all_unverified(self, tmp_path: Path) -> None:
@@ -179,7 +179,7 @@ class TestVerificationNudgeTracker:
         assert summary.total_completions == 5
         assert summary.verified_count == 0
         assert summary.unverified_count == 5
-        assert summary.unverified_ratio == 1.0
+        assert summary.unverified_ratio == pytest.approx(1.0)
         assert summary.threshold_exceeded is True
 
     def test_summary_mixed(self, tmp_path: Path) -> None:
@@ -202,7 +202,7 @@ class TestVerificationNudgeTracker:
         # 1 unverified out of 1 total (100%), but below min completions
         tracker.record(task_id="t1", session_id="s1")
         summary = tracker.summary()
-        assert summary.unverified_ratio == 1.0
+        assert summary.unverified_ratio == pytest.approx(1.0)
         assert summary.threshold_exceeded is False  # below min completions
 
     def test_threshold_not_exceeded_at_boundary(self, tmp_path: Path) -> None:
@@ -344,7 +344,7 @@ class TestNudgeSummary:
         assert d["total_completions"] == 10
         assert d["verified_count"] == 7
         assert d["unverified_count"] == 3
-        assert d["unverified_ratio"] == 0.3
+        assert d["unverified_ratio"] == pytest.approx(0.3)
         assert d["threshold_exceeded"] is False
         assert d["recent_unverified"] == ["t1", "t2", "t3"]
 
@@ -359,7 +359,7 @@ class TestNudgeSummary:
             recent_unverified=["t1"],
         )
         d = summary.to_dict()
-        assert d["unverified_ratio"] == 0.333
+        assert d["unverified_ratio"] == pytest.approx(0.333)
 
 
 # ---------------------------------------------------------------------------

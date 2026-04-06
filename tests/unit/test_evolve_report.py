@@ -127,7 +127,7 @@ class TestCycleRecord:
                 "tasks_failed": 0,
             }
         )
-        assert rec.success_rate == 0.0
+        assert rec.success_rate == pytest.approx(0.0)
 
     def test_test_pass_rate(self) -> None:
         rec = CycleRecord.from_dict(SAMPLE_CYCLES[0])
@@ -142,7 +142,7 @@ class TestCycleRecord:
                 "tests_failed": 0,
             }
         )
-        assert rec.test_pass_rate == 0.0
+        assert rec.test_pass_rate == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

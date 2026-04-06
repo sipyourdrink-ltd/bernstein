@@ -1,19 +1,49 @@
-"""Model fallback tracker — three consecutive HTTP 529 errors trigger model switch (T444).
+"""Model fallback tracker — consecutive provider errors trigger model switch (T444, AGENT-004).
 
-After three consecutive HTTP 529 (overloaded) responses from a provider,
+After consecutive error responses (529, 429, 503, timeouts) from a provider,
 the tracker signals that the agent should switch to a configured fallback
 model.  Counters are scoped per session to avoid cross-talk between agents.
+
+AGENT-004 extends the original 529-only tracker to handle all common error
+types with a configurable fallback chain.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-#: Default number of consecutive 529 errors before fallback is triggered.
+#: Default number of consecutive errors before fallback is triggered.
 DEFAULT_529_STRIKE_LIMIT: int = 3
+
+#: HTTP status codes that count toward fallback strikes.
+DEFAULT_FALLBACK_STATUS_CODES: frozenset[int] = frozenset({429, 503, 529})
+
+#: Sentinel for timeout errors (not a real HTTP code).
+TIMEOUT_STATUS_CODE: int = 0
+
+
+@dataclass
+class FallbackChainConfig:
+    """Configuration for a model fallback chain (AGENT-004).
+
+    Defines which status codes trigger fallback, the strike limit, and
+    an ordered list of fallback models to try in sequence.
+
+    Attributes:
+        trigger_codes: HTTP status codes that count as strikes.
+        include_timeouts: Whether timeout errors (status_code=0) count.
+        strike_limit: Consecutive errors before fallback triggers.
+        fallback_chain: Ordered list of fallback models.  The tracker
+            advances through this list on each successive fallback.
+    """
+
+    trigger_codes: frozenset[int] = DEFAULT_FALLBACK_STATUS_CODES
+    include_timeouts: bool = True
+    strike_limit: int = DEFAULT_529_STRIKE_LIMIT
+    fallback_chain: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -21,16 +51,20 @@ class FallbackState:
     """Per-session fallback tracking state.
 
     Attributes:
-        consecutive_529_errors: Number of consecutive 529 errors observed.
+        consecutive_529_errors: Number of consecutive fallback-triggering errors.
         fallback_model: Model to switch to when strike limit is reached.
         is_fallback: Whether the session is currently in fallback mode.
-        total_529_count: Total 529 errors ever seen for this session.
+        total_529_count: Total fallback-triggering errors ever seen.
+        fallback_chain: Ordered list of fallback models for this session.
+        fallback_chain_index: Current position in the fallback chain.
     """
 
     consecutive_529_errors: int = 0
     fallback_model: str | None = None
     is_fallback: bool = False
     total_529_count: int = 0
+    fallback_chain: list[str] = field(default_factory=list)
+    fallback_chain_index: int = 0
 
 
 @dataclass
@@ -39,37 +73,76 @@ class FallbackResult:
 
     Attributes:
         should_fallback: True when the session should switch to fallback model.
-        strike_count: Current consecutive 529 error count.
+        strike_count: Current consecutive error count.
         strike_limit: Threshold at which fallback triggers.
         status_code: Raw HTTP status code that was recorded.
+        error_type: Human-readable error type (e.g. "rate_limit", "overloaded").
     """
 
     should_fallback: bool
     strike_count: int
     strike_limit: int
     status_code: int
+    error_type: str = ""
+
+
+def _classify_error_type(status_code: int) -> str:
+    """Classify an HTTP status code into a human-readable error type.
+
+    Args:
+        status_code: HTTP status code or TIMEOUT_STATUS_CODE (0).
+
+    Returns:
+        Human-readable error type string.
+    """
+    if status_code == 0:
+        return "timeout"
+    if status_code == 429:
+        return "rate_limit"
+    if status_code == 503:
+        return "service_unavailable"
+    if status_code == 529:
+        return "overloaded"
+    return f"http_{status_code}"
 
 
 class ModelFallbackTracker:
-    """Track consecutive 529 errors per session and signal fallback (T444).
+    """Track consecutive provider errors per session and signal fallback (T444, AGENT-004).
 
-    When a session hits the configured number of consecutive 529 (overloaded)
-    responses, ``record_response()`` returns a ``FallbackResult`` with
-    ``should_fallback=True``.  The spawner should use the session's
-    ``fallback_model`` instead of the primary model.
+    When a session hits the configured number of consecutive error responses
+    (429, 503, 529, or timeouts), ``record_response()`` returns a
+    ``FallbackResult`` with ``should_fallback=True``.  The spawner should
+    use the session's fallback model instead of the primary model.
 
-    A successful (non-529) response resets the consecutive counter.
+    The fallback chain is configurable: when the first fallback model also
+    fails, the tracker advances to the next model in the chain.
+
+    A successful (non-error) response resets the consecutive counter.
     Manually calling ``reset()`` also resets the counter and clears fallback
     mode.
 
     Args:
-        strike_limit: Number of consecutive 529s before fallback triggers.
+        strike_limit: Number of consecutive errors before fallback triggers.
             Defaults to 3.
+        chain_config: Optional configuration for which status codes trigger
+            fallback and the default fallback chain.
     """
 
-    def __init__(self, strike_limit: int = DEFAULT_529_STRIKE_LIMIT) -> None:
+    def __init__(
+        self,
+        strike_limit: int = DEFAULT_529_STRIKE_LIMIT,
+        chain_config: FallbackChainConfig | None = None,
+    ) -> None:
         self._strike_limit = strike_limit
         self._sessions: dict[str, FallbackState] = {}
+        self._chain_config = chain_config or FallbackChainConfig(strike_limit=strike_limit)
+        self._trigger_codes = self._chain_config.trigger_codes
+        self._include_timeouts = self._chain_config.include_timeouts
+
+    @property
+    def trigger_codes(self) -> frozenset[int]:
+        """HTTP status codes that count toward fallback strikes."""
+        return self._trigger_codes
 
     # ------------------------------------------------------------------
     # Public API
@@ -79,29 +152,55 @@ class ModelFallbackTracker:
         self,
         session_id: str,
         fallback_model: str | None = None,
+        fallback_chain: list[str] | None = None,
     ) -> None:
         """Register or update tracking state for a session.
 
         Args:
             session_id: Agent session identifier.
             fallback_model: Optional fallback model to use on strike limit.
+            fallback_chain: Optional ordered list of fallback models.  When
+                provided, overrides fallback_model — the first entry becomes
+                the initial fallback target.
         """
-        state = FallbackState(fallback_model=fallback_model)
+        chain = list(fallback_chain) if fallback_chain else list(self._chain_config.fallback_chain)
+        effective_fallback = fallback_model
+        if chain and not effective_fallback:
+            effective_fallback = chain[0]
+        state = FallbackState(
+            fallback_model=effective_fallback,
+            fallback_chain=chain,
+        )
         self._sessions[session_id] = state
 
     def session_exists(self, session_id: str) -> bool:
         """Check if a session has been registered."""
         return session_id in self._sessions
 
+    def _is_trigger_code(self, status_code: int) -> bool:
+        """Return True if the status code should count as a fallback strike.
+
+        Args:
+            status_code: HTTP status code (or TIMEOUT_STATUS_CODE for timeouts).
+
+        Returns:
+            True if this code triggers strike counting.
+        """
+        if status_code == TIMEOUT_STATUS_CODE and self._include_timeouts:
+            return True
+        return status_code in self._trigger_codes
+
     def record_response(self, session_id: str, status_code: int) -> FallbackResult:
         """Record an HTTP response for a session's fallback tracking.
 
-        A 529 increments the consecutive error counter. Any other status
-        code resets the consecutive counter to zero.
+        Status codes in the trigger set (429, 503, 529, and optionally
+        timeouts via status_code=0) increment the consecutive counter.
+        Any other status code resets the counter.
 
         Args:
             session_id: Agent session identifier.
             status_code: HTTP status code from the provider response.
+                Use ``TIMEOUT_STATUS_CODE`` (0) for timeout errors.
 
         Returns:
             FallbackResult with decision on whether to fallback.
@@ -111,13 +210,13 @@ class ModelFallbackTracker:
 
         state = self._sessions[session_id]
 
-        if status_code == 529:
+        if self._is_trigger_code(status_code):
             state.consecutive_529_errors += 1
             state.total_529_count += 1
         else:
-            # Any non-529 response resets the counter
+            # Any non-error response resets the counter
             state.consecutive_529_errors = 0
-            if state.is_fallback and status_code >= 200 and status_code < 300:
+            if state.is_fallback and 200 <= status_code < 300:
                 state.is_fallback = False
 
         return FallbackResult(
@@ -125,13 +224,15 @@ class ModelFallbackTracker:
             strike_count=state.consecutive_529_errors,
             strike_limit=self._strike_limit,
             status_code=status_code,
+            error_type=_classify_error_type(status_code) if self._is_trigger_code(status_code) else "",
         )
 
     def activate_fallback(self, session_id: str) -> str | None:
         """Mark a session as being in fallback mode.
 
         After calling this, ``get_active_model()`` will return the fallback
-        model instead of the primary.
+        model instead of the primary.  If a fallback chain is configured,
+        advances to the next model in the chain on each successive activation.
 
         Args:
             session_id: Agent session identifier.
@@ -144,14 +245,36 @@ class ModelFallbackTracker:
             return None
         state.is_fallback = True
         state.consecutive_529_errors = 0
+
+        # Advance the fallback chain if one is configured
+        if state.fallback_chain and state.fallback_chain_index < len(state.fallback_chain):
+            state.fallback_model = state.fallback_chain[state.fallback_chain_index]
+            state.fallback_chain_index += 1
+
         if state.fallback_model:
             logger.warning(
-                "Session %s activated fallback mode: %s (after %d consecutive 529s)",
+                "Session %s activated fallback mode: %s (after %d consecutive errors, chain pos %d/%d)",
                 session_id,
                 state.fallback_model,
                 state.total_529_count,
+                state.fallback_chain_index,
+                len(state.fallback_chain),
             )
         return state.fallback_model
+
+    def has_more_fallbacks(self, session_id: str) -> bool:
+        """Check if the session has more models in its fallback chain.
+
+        Args:
+            session_id: Agent session identifier.
+
+        Returns:
+            True when there are more fallback models available.
+        """
+        state = self._sessions.get(session_id)
+        if state is None:
+            return False
+        return state.fallback_chain_index < len(state.fallback_chain)
 
     def get_active_model(self, session_id: str, primary: str) -> str:
         """Return the model to use for a session (fallback if active).

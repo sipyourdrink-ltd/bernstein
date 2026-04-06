@@ -107,7 +107,7 @@ def _drain_input() -> None:
         while select.select([sys.stdin], [], [], 0.0)[0]:
             sys.stdin.read(1)
     except (OSError, ValueError):
-        pass
+        pass  # stdin not readable; skip buffer drain
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ def _memory_gb() -> int:
         elif sys.platform == "linux":
             return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // (1024**3)  # type: ignore[operator]
     except (OSError, ValueError, subprocess.TimeoutExpired):
-        pass
+        pass  # Memory detection failed; use fallback
     return 16  # fallback
 
 
@@ -153,7 +153,7 @@ def _os_label() -> str:
                     if line.startswith("PRETTY_NAME="):
                         return line.split("=", 1)[1].strip().strip('"')[:30]
         except OSError:
-            pass
+            pass  # Cannot read /etc/os-release
         return "Linux"
     return system
 

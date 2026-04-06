@@ -181,11 +181,11 @@ def test_positional_to_keyword_only_is_breaking() -> None:
 
 def test_keyword_only_to_positional_only_is_breaking() -> None:
     """Turning a keyword-accessible param into positional-only breaks keyword callers."""
-    from bernstein.core.api_compat import ChangeKind, compare_signatures
-
     # Python doesn't allow direct declaration like this in a simple def,
     # so we use inspect.Parameter directly to build synthetic signatures.
     import inspect
+
+    from bernstein.core.api_compat import ChangeKind, compare_signatures
 
     # before: def f(a: int, b: str) — b is POSITIONAL_OR_KEYWORD
     before_params = [

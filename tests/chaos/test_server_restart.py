@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -67,7 +67,7 @@ async def test_server_restart_resilience(test_client: TestClient, orchestrator_f
         for i in range(3):
             orch.tick()
             print(f"Outage tick {i} done")
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
 
         # 4. Recover and finish
         print("Server back online")
@@ -82,7 +82,7 @@ async def test_server_restart_resilience(test_client: TestClient, orchestrator_f
                 marker.unlink()
 
             orch.tick()
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             resp = test_client.get(f"/tasks/{task_id}")
             status = resp.json()["status"]
             print(f"Recovery tick {i}: status={status}")

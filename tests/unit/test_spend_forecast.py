@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.spend_forecast import (
     SpendForecast,
     forecast_monthly_spend,
@@ -29,8 +31,8 @@ class TestSpendForecast:
             confidence_level="medium",
         )
 
-        assert forecast.current_spend_usd == 50.0
-        assert forecast.projected_monthly_usd == 150.0
+        assert forecast.current_spend_usd == pytest.approx(50.0)
+        assert forecast.projected_monthly_usd == pytest.approx(150.0)
 
 
 class TestForecastMonthlySpend:
@@ -40,8 +42,8 @@ class TestForecastMonthlySpend:
         """Test forecasting with no metrics data."""
         forecast = forecast_monthly_spend(tmp_path)
 
-        assert forecast.current_spend_usd == 0.0
-        assert forecast.projected_monthly_usd == 0.0
+        assert forecast.current_spend_usd == pytest.approx(0.0)
+        assert forecast.projected_monthly_usd == pytest.approx(0.0)
         assert forecast.confidence_level == "low"
 
     def test_forecast_with_data(self, tmp_path: Path) -> None:
@@ -67,7 +69,7 @@ class TestForecastMonthlySpend:
 
         forecast = forecast_monthly_spend(tmp_path, current_day=10)
 
-        assert forecast.current_spend_usd == 100.0
+        assert forecast.current_spend_usd == pytest.approx(100.0)
         assert forecast.tasks_completed == 3
         assert forecast.avg_cost_per_task > 0
 

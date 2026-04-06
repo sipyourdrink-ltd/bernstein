@@ -70,7 +70,7 @@ def load_mcp_config(
                 if isinstance(servers, dict):
                     merged.update(cast("dict[str, Any]", servers))
         except (OSError, json.JSONDecodeError):
-            pass
+            pass  # Global MCP config unreadable; skip
 
     # 2. Merge project-level config (overrides global)
     if project_servers:
@@ -157,7 +157,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                 text=True,
                 timeout=15,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        except (subprocess.TimeoutExpired, OSError) as exc:
             _logger.debug("Rate-limit probe failed: %s", exc)
             self._rate_limit_checked_at = now
             return False
@@ -492,7 +492,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                 if isinstance(raw, dict):
                     existing = cast("dict[str, Any]", raw)
             except (json.JSONDecodeError, OSError):
-                pass
+                pass  # Settings file missing or corrupt; start fresh
 
         existing["hooks"] = hooks_config
         try:

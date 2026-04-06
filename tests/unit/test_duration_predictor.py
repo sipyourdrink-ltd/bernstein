@@ -111,19 +111,19 @@ class TestTaskFeatureExtractor:
 
     def test_model_tier_haiku(self) -> None:
         features = self.extractor.extract(_make_task(model="haiku"))
-        assert features[8] == 0.0
+        assert features[8] == pytest.approx(0.0)
 
     def test_model_tier_sonnet(self) -> None:
         features = self.extractor.extract(_make_task(model="sonnet"))
-        assert features[8] == 1.0
+        assert features[8] == pytest.approx(1.0)
 
     def test_model_tier_opus(self) -> None:
         features = self.extractor.extract(_make_task(model="opus"))
-        assert features[8] == 2.0
+        assert features[8] == pytest.approx(2.0)
 
     def test_model_tier_fast_path(self) -> None:
         features = self.extractor.extract(_make_task(model="fast-path"))
-        assert features[8] == 0.0
+        assert features[8] == pytest.approx(0.0)
 
     def test_description_length_in_features(self) -> None:
         short = self.extractor.extract(_make_task(description="hi"))
@@ -153,9 +153,9 @@ class TestTaskFeatureExtractor:
         )
         features = self.extractor.extract_from_record(rec)
         assert len(features) == 9
-        assert features[0] == 2.0  # high complexity
-        assert features[1] == 2.0  # large scope
-        assert features[8] == 2.0  # opus tier
+        assert features[0] == pytest.approx(2.0)  # high complexity
+        assert features[1] == pytest.approx(2.0)  # large scope
+        assert features[8] == pytest.approx(2.0)  # opus tier
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +176,7 @@ class TestDurationPredictorColdStart:
         est = predictor.predict(task)
         assert isinstance(est, DurationEstimate)
         assert est.is_cold_start is True
-        assert est.confidence == 0.3
+        assert est.confidence == pytest.approx(0.3)
         assert est.p50_seconds > 0
         assert est.p90_seconds > est.p50_seconds
 
@@ -214,7 +214,7 @@ class TestDurationPredictorRecording:
         lines = training_path.read_text().strip().splitlines()
         assert len(lines) == 1
         record = json.loads(lines[0])
-        assert record["actual_duration_seconds"] == 300.0
+        assert record["actual_duration_seconds"] == pytest.approx(300.0)
         assert record["role"] == "backend"
         assert record["complexity"] == "medium"
         assert record["scope"] == "medium"

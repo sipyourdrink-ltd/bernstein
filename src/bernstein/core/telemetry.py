@@ -47,6 +47,11 @@ DEFAULT_OTLP_GRPC_ENDPOINT = "http://localhost:4317"
 #: Default transport protocol for OTLP export.
 DEFAULT_PROTOCOL: Protocol = "grpc"
 
+#: HTTP/protobuf protocol identifier.
+_HTTP_PROTOBUF: Protocol = "http/protobuf"
+
+_OTEL_NOT_INSTALLED = "opentelemetry packages not installed \u2014 telemetry disabled"
+
 #: Default service name used for OpenTelemetry resource attributes, tracers, and meters.
 SERVICE_NAME = "bernstein"
 
@@ -101,14 +106,14 @@ BUILTIN_PRESETS: dict[str, ExporterPreset] = {
     "zipkin": ExporterPreset(
         name="zipkin",
         endpoint="http://localhost:9411/api/v2/spans",
-        protocol="http/protobuf",
+        protocol=_HTTP_PROTOBUF,
         insecure=True,
         description="Zipkin HTTP endpoint (port 9411)",
     ),
     "prometheus": ExporterPreset(
         name="prometheus",
         endpoint="http://localhost:9091/metrics/job/bernstein",
-        protocol="http/protobuf",
+        protocol=_HTTP_PROTOBUF,
         insecure=True,
         description="Prometheus Pushgateway HTTP endpoint (port 9091)",
     ),
@@ -122,7 +127,7 @@ BUILTIN_PRESETS: dict[str, ExporterPreset] = {
     "otlp-http": ExporterPreset(
         name="otlp-http",
         endpoint="http://localhost:4318",
-        protocol="http/protobuf",
+        protocol=_HTTP_PROTOBUF,
         insecure=True,
         description="Generic OTLP/HTTP collector on port 4318",
     ),
@@ -198,7 +203,7 @@ def init_telemetry(otlp_endpoint: str | None = None, *, insecure: bool = True) -
         _enabled = True
         logger.info("OpenTelemetry telemetry enabled (endpoint=%s)", otlp_endpoint)
     except ImportError:
-        logger.warning("opentelemetry packages not installed — telemetry disabled")
+        logger.warning(_OTEL_NOT_INSTALLED)
         _enabled = False
     except Exception as exc:
         logger.warning("OpenTelemetry initialisation failed: %s", exc)
@@ -235,7 +240,7 @@ def _init_console_telemetry(service_name: str = SERVICE_NAME) -> None:
         _enabled = True
         logger.info("OpenTelemetry console exporter enabled")
     except ImportError:
-        logger.warning("opentelemetry packages not installed — telemetry disabled")
+        logger.warning(_OTEL_NOT_INSTALLED)
         _enabled = False
     except Exception as exc:
         logger.warning("OpenTelemetry console initialisation failed: %s", exc)
@@ -288,7 +293,7 @@ def _init_http_telemetry(
         _enabled = True
         logger.info("OpenTelemetry HTTP telemetry enabled (endpoint=%s)", endpoint)
     except ImportError:
-        logger.warning("opentelemetry packages not installed — telemetry disabled")
+        logger.warning(_OTEL_NOT_INSTALLED)
         _enabled = False
     except Exception as exc:
         logger.warning("OpenTelemetry HTTP initialisation failed: %s", exc)
@@ -329,7 +334,7 @@ def init_telemetry_from_preset(
         _init_console_telemetry(service_name=preset.service_name)
         return
 
-    if preset.protocol == "http/protobuf":
+    if preset.protocol == _HTTP_PROTOBUF:
         _init_http_telemetry(endpoint, headers, service_name=preset.service_name)
         return
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -85,7 +85,7 @@ async def test_multi_agent_merge(test_client: TestClient, orchestrator_factory, 
             for sid in dead_ids:
                 del orch._agents[sid]
 
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
             resp = test_client.get("/tasks")
             if all(t["status"] == "done" for t in resp.json()):

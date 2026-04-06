@@ -4,6 +4,7 @@ import asyncio
 import shutil
 import time
 from pathlib import Path
+from typing import Any, cast
 from types import SimpleNamespace
 
 from bernstein.core.task_store import TaskStore
@@ -25,7 +26,7 @@ async def run_benchmark():
     # 1. Benchmark Creation
     start_time = time.perf_counter()
     for i in range(num_tasks):
-        req = SimpleNamespace(
+        req: Any = SimpleNamespace(
             title=f"Task {i}",
             description="Benchmark task",
             role="backend",

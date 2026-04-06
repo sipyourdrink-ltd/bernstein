@@ -246,7 +246,7 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
                 response = await call_next(request)
                 return response
         except ValueError:
-            pass
+            pass  # Invalid IP address format; deny request
 
         return JSONResponse(
             status_code=403,
@@ -296,7 +296,7 @@ class TaskCreate(BaseModel):
     model: str | None = None  # Manager hint: "opus", "sonnet", "haiku"
     effort: str | None = None  # Manager hint: "max", "high", "medium", "low"
     batch_eligible: bool = False  # Non-urgent: eligible for provider batch APIs at ~50% cost
-    completion_signals: list[CompletionSignalSchema] = Field(default_factory=lambda: list[CompletionSignalSchema]())
+    completion_signals: list[CompletionSignalSchema] = Field(default_factory=list)
     slack_context: dict[str, Any] | None = None  # Slack slash command metadata
     metadata: dict[str, Any] = Field(default_factory=dict)  # Trigger-source metadata (e.g. issue_number)
     deadline: float | None = None  # Epoch timestamp when task must be complete
@@ -363,7 +363,7 @@ class TaskResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: float
     deadline: float | None = None
-    progress_log: list[ProgressEntry] = Field(default_factory=lambda: list[ProgressEntry]())
+    progress_log: list[ProgressEntry] = Field(default_factory=list)
     version: int = 1
     parent_session_id: str | None = None  # Coordinator session that owns this task
 
@@ -848,21 +848,42 @@ class SSEBus:
 
     Each connected client gets its own asyncio.Queue.  Publishing an event
     pushes it to every queue.  Disconnected clients are cleaned up lazily.
+
+    Features:
+    - Queue buffer size limit prevents unbounded memory growth.
+    - Heartbeat pings enable disconnect detection.
+    - Stale subscriber cleanup prevents leaked queue references.
     """
 
-    def __init__(self) -> None:
+    # Maximum events buffered per subscriber before dropping
+    MAX_BUFFER_SIZE: int = 256
+    # Seconds after which a subscriber with no reads is considered stale
+    STALE_TIMEOUT_S: float = 120.0
+    # Heartbeat interval for SSE keep-alive pings
+    HEARTBEAT_INTERVAL_S: float = 15.0
+
+    def __init__(self, *, max_buffer: int = 256, stale_timeout_s: float = 120.0) -> None:
         self._subscribers: list[asyncio.Queue[str]] = []
+        self._subscriber_last_read: dict[int, float] = {}
+        self._max_buffer = max_buffer
+        self._stale_timeout_s = stale_timeout_s
 
     def subscribe(self) -> asyncio.Queue[str]:
         """Create a new subscriber queue."""
-        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=64)
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._max_buffer)
         self._subscribers.append(queue)
+        self._subscriber_last_read[id(queue)] = time.time()
         return queue
 
     def unsubscribe(self, queue: asyncio.Queue[str]) -> None:
         """Remove a subscriber queue."""
         with contextlib.suppress(ValueError):
             self._subscribers.remove(queue)
+        self._subscriber_last_read.pop(id(queue), None)
+
+    def mark_read(self, queue: asyncio.Queue[str]) -> None:
+        """Update the last-read timestamp for a subscriber."""
+        self._subscriber_last_read[id(queue)] = time.time()
 
     @property
     def subscriber_count(self) -> int:
@@ -870,11 +891,31 @@ class SSEBus:
         return len(self._subscribers)
 
     def publish(self, event_type: str, data: str = "{}") -> None:
-        """Push an event to all subscribers (non-blocking)."""
+        """Push an event to all subscribers (non-blocking).
+
+        If a subscriber's queue is full, the event is dropped for that
+        subscriber to prevent unbounded memory growth.
+        """
         message = f"event: {event_type}\ndata: {data}\n\n"
         for queue in list(self._subscribers):
             with contextlib.suppress(asyncio.QueueFull):
                 queue.put_nowait(message)
+
+    def cleanup_stale(self) -> int:
+        """Remove subscribers that haven't read in ``stale_timeout_s``.
+
+        Returns:
+            Number of stale subscribers removed.
+        """
+        now = time.time()
+        stale: list[asyncio.Queue[str]] = []
+        for queue in list(self._subscribers):
+            last_read = self._subscriber_last_read.get(id(queue), 0.0)
+            if (now - last_read) > self._stale_timeout_s:
+                stale.append(queue)
+        for queue in stale:
+            self.unsubscribe(queue)
+        return len(stale)
 
 
 # ---------------------------------------------------------------------------
@@ -897,10 +938,20 @@ async def _node_reaper_loop(node_reg: NodeRegistry, interval_s: float = 15.0) ->
 
 
 async def _sse_heartbeat_loop(bus: SSEBus, interval_s: float = 15.0) -> None:
-    """Send periodic heartbeat events to keep SSE connections alive."""
+    """Send periodic heartbeat events to keep SSE connections alive.
+
+    Also cleans up stale subscribers that haven't consumed messages.
+    """
+    cleanup_counter = 0
     while True:
         await asyncio.sleep(interval_s)
         bus.publish("heartbeat", json.dumps({"ts": time.time()}))
+        # Run stale subscriber cleanup every 4th heartbeat (~60s)
+        cleanup_counter += 1
+        if cleanup_counter % 4 == 0:
+            removed = bus.cleanup_stale()
+            if removed > 0:
+                logger.info("SSE bus: cleaned up %d stale subscribers", removed)
 
 
 # ---------------------------------------------------------------------------
@@ -1139,6 +1190,32 @@ def create_app(
     # IP allowlist — reads allowed_ips from app.state.seed_config.network dynamically.
     application.add_middleware(IPAllowlistMiddleware)
 
+    # CORS middleware — configured from bernstein.yaml or defaults to localhost:*
+    from bernstein.core.seed import CORSConfig
+
+    cors_config = CORSConfig()  # default; overridden after seed_config loads
+    seed_path = workdir / "bernstein.yaml"
+    if seed_path.exists():
+        try:
+            from bernstein.core.seed import parse_seed
+
+            _temp_seed = parse_seed(seed_path)
+            if _temp_seed.cors is not None:
+                cors_config = _temp_seed.cors
+        except Exception:
+            pass  # Use defaults on seed parse failure
+
+    from starlette.middleware.cors import CORSMiddleware
+
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(cors_config.allowed_origins),
+        allow_methods=list(cors_config.allow_methods),
+        allow_headers=list(cors_config.allow_headers),
+        allow_credentials=cors_config.allow_credentials,
+        max_age=cors_config.max_age,
+    )
+
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()
     message_board = MessageBoard()
@@ -1181,7 +1258,7 @@ def create_app(
 
     # Root redirect → /status
     @application.get("/")
-    async def root() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
+    def root() -> dict[str, str]:  # pyright: ignore[reportUnusedFunction]
         return {"name": "Bernstein Task Server", "status": "running", "docs": "/docs"}
 
     # Mount routers

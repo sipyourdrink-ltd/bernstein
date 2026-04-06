@@ -367,6 +367,13 @@ class _RichGroup(click.Group):
 @click.version_option(package_name="bernstein")
 @click.option("--goal", "-g", default=None, help="Inline goal (no seed file needed).")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output in JSON format.")
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["json", "text"]),
+    default=None,
+    help="Output format: json for machine-readable, text for Rich (default).",
+)
 @click.option("--evolve", "-e", is_flag=True, default=False, hidden=True, help="Continuous self-improvement mode.")
 @click.option("--max-cycles", default=0, hidden=True, help="Stop after N evolve cycles (0=unlimited).")
 @click.option("--budget", default=0.0, help="Cost cap in USD; stop spawning agents when reached (0=unlimited).")
@@ -428,6 +435,7 @@ def cli(
     ctx: click.Context,
     goal: str | None,
     output_json: bool,
+    output_format: str | None,
     evolve: bool,
     max_cycles: int,
     budget: float,
@@ -449,7 +457,8 @@ def cli(
     """Declarative agent orchestration for engineering teams."""
     setup_json_logging()
     ctx.ensure_object(dict)
-    ctx.obj["JSON"] = output_json
+    # --json flag or --output json both enable JSON output mode
+    ctx.obj["JSON"] = output_json or (output_format == "json")
 
     if ctx.invoked_subcommand is not None:
         return

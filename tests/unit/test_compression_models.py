@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+import pytest
+
 from bernstein.core.compression_models import CompressionMetrics, CompressionResult
 
 
@@ -31,7 +33,7 @@ def test_compression_result_round_trip_to_dict() -> None:
     )
 
     payload = asdict(result)
-    assert payload["compression_ratio"] == 0.6
+    assert payload["compression_ratio"] == pytest.approx(0.6)
     assert payload["metrics"]["semantic_matches"] == 3
 
 

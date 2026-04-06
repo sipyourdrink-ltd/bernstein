@@ -37,6 +37,8 @@ from bernstein.core.tick_pipeline import (
 )
 from bernstein.evolution.types import MetricsRecord
 
+_ORPHAN_COMPLETE_ERROR = "Failed to complete orphaned task %s: %s"
+
 if TYPE_CHECKING:
     from bernstein.core.abort_chain import AbortChain, AbortPolicy
 
@@ -936,7 +938,7 @@ def handle_orphaned_task(
                     session.id,
                 )
             except httpx.HTTPError as exc:
-                logger.error("Failed to complete orphaned task %s: %s", task_id, exc)
+                logger.error(_ORPHAN_COMPLETE_ERROR, task_id, exc)
                 error_type = "complete_failed"
         else:
             try:
@@ -994,7 +996,7 @@ def handle_orphaned_task(
                     session.id,
                 )
             except httpx.HTTPError as exc:
-                logger.error("Failed to complete orphaned task %s: %s", task_id, exc)
+                logger.error(_ORPHAN_COMPLETE_ERROR, task_id, exc)
                 error_type = "complete_failed"
         elif has_commits:
             # Agent made git commits on its branch — work was done even
@@ -1013,7 +1015,7 @@ def handle_orphaned_task(
                     session.id,
                 )
             except httpx.HTTPError as exc:
-                logger.error("Failed to complete orphaned task %s: %s", task_id, exc)
+                logger.error(_ORPHAN_COMPLETE_ERROR, task_id, exc)
                 error_type = "complete_failed"
         elif clean_exit:
             # Agent exited with code 0 but produced no diff — treat as
@@ -1035,7 +1037,7 @@ def handle_orphaned_task(
                     session.id,
                 )
             except httpx.HTTPError as exc:
-                logger.error("Failed to complete orphaned task %s: %s", task_id, exc)
+                logger.error(_ORPHAN_COMPLETE_ERROR, task_id, exc)
                 error_type = "complete_failed"
         else:
             runtime = int(time.time() - start_ts)

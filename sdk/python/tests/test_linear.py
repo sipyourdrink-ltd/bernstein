@@ -37,7 +37,7 @@ class TestLinearIssueRef:
         assert ref.state_name == "In Progress"
         assert ref.state_type == "started"
         assert ref.priority == 1
-        assert ref.estimate == 3.0
+        assert ref.estimate == pytest.approx(3.0)
         assert ref.labels == ["backend"]
         assert ref.assignee_email == "dev@example.com"
         assert ref.team_id == "team-uuid"

@@ -87,7 +87,7 @@ class SWEInstance:
                         plst = cast("list[Any]", parsed)
                         return [str(v) for v in plst]
                 except json.JSONDecodeError:
-                    pass
+                    pass  # Not a JSON list; treat as plain string
                 return [value] if value else []
             return []
 
@@ -553,7 +553,7 @@ class SWEBenchRunner:
                 try:
                     record = json.loads(line)
                     total += float(record.get("cost_usd", 0.0))
-                except (json.JSONDecodeError, TypeError, ValueError):
+                except (TypeError, ValueError):
                     continue
         return total
 

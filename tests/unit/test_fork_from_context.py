@@ -11,8 +11,8 @@ import pytest
 
 from bernstein.core.models import Complexity, Scope, Task
 from bernstein.core.quality_gates import (
-    IntentVerificationConfig,
     _FORK_CONTEXT_MAX_CHARS,
+    IntentVerificationConfig,
     _verify_intent_async,
 )
 

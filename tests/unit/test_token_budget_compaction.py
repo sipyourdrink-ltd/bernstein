@@ -13,8 +13,11 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from bernstein.core.token_budget import (
     DEFAULT_TOKEN_BUDGETS,
@@ -106,11 +109,11 @@ class TestLogicalSpend:
     def test_utilization_pct_reflects_total_logical_spend(self) -> None:
         budget = TokenBudget(task_id="T1", budget_tokens=10_000, used_tokens=2_000)
         budget.pre_compact_used = 3_000
-        assert budget.utilization_pct() == 50.0
+        assert budget.utilization_pct() == pytest.approx(50.0)
 
     def test_utilization_pct_zero_budget_no_div_error(self) -> None:
         budget = TokenBudget(task_id="T1", budget_tokens=0)
-        assert budget.utilization_pct() == 0.0
+        assert budget.utilization_pct() == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +168,7 @@ class TestTokenBudgetManager:
 # ---------------------------------------------------------------------------
 
 
-def _make_task_for_budget(task_id: str = "BT-1") -> object:
+def _make_task_for_budget(task_id: str = "BT-1") -> tuple[Any, Any]:
     from bernstein.core.models import (
         AgentSession,
         Complexity,

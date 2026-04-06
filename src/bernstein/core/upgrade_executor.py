@@ -323,7 +323,7 @@ class UpgradeExecutor:
             transaction.status = UpgradeStatus.REVIEW_APPROVED
             logger.info("Upgrade %s approved by reviewer", transaction.id)
             # Auto-execute if approved
-            await self._execute_upgrade(transaction)
+            self._execute_upgrade(transaction)
         elif result.verdict == "reject":
             transaction.status = UpgradeStatus.REVIEW_REJECTED
             transaction.error_message = result.reasoning
@@ -333,7 +333,7 @@ class UpgradeExecutor:
             transaction.error_message = f"Changes requested: {result.feedback}"
             logger.info("Upgrade %s requires changes: %s", transaction.id, result.feedback)
 
-    async def _execute_upgrade(self, transaction: UpgradeTransaction) -> None:
+    def _execute_upgrade(self, transaction: UpgradeTransaction) -> None:
         """Execute an approved upgrade."""
         if transaction.status != UpgradeStatus.REVIEW_APPROVED:
             raise ValueError(f"Upgrade {transaction.id} is not approved")
@@ -344,18 +344,18 @@ class UpgradeExecutor:
 
         try:
             # Create backups
-            await self._create_backups(transaction)
+            self._create_backups(transaction)
 
             # Apply changes
-            await self._apply_changes(transaction)
+            self._apply_changes(transaction)
 
             # Commit to git if enabled
             if self._auto_git:
-                transaction.git_commit = await self._commit_changes(transaction)
+                transaction.git_commit = self._commit_changes(transaction)
                 transaction.rollback_available = True
 
             # Verify changes
-            await self._verify_changes(transaction)
+            self._verify_changes(transaction)
 
             transaction.status = UpgradeStatus.COMPLETED
             transaction.completed_at = time.time()
@@ -371,9 +371,9 @@ class UpgradeExecutor:
 
             # Auto-rollback if git commit was made
             if self._auto_git and transaction.git_commit:
-                await self._rollback_upgrade(transaction)
+                self._rollback_upgrade(transaction)
 
-    async def _create_backups(self, transaction: UpgradeTransaction) -> None:
+    def _create_backups(self, transaction: UpgradeTransaction) -> None:
         """Create backups of files to be modified."""
         backup_subdir = self._backup_dir / transaction.id
         backup_subdir.mkdir(parents=True, exist_ok=True)
@@ -387,7 +387,7 @@ class UpgradeExecutor:
                     change.backup_path = str(backup_path)
                     logger.debug("Backed up %s to %s", change.path, change.backup_path)
 
-    async def _apply_changes(self, transaction: UpgradeTransaction) -> None:
+    def _apply_changes(self, transaction: UpgradeTransaction) -> None:
         """Apply all file changes."""
         for change in transaction.file_changes:
             file_path = self._workdir / change.path
@@ -407,7 +407,7 @@ class UpgradeExecutor:
                     file_path.unlink()
                     logger.debug("Deleted %s", change.path)
 
-    async def _commit_changes(self, transaction: UpgradeTransaction) -> str | None:
+    def _commit_changes(self, transaction: UpgradeTransaction) -> str | None:
         """Commit changes to git via centralized git_ops."""
         try:
             if not is_git_repo(self._workdir):
@@ -436,7 +436,7 @@ class UpgradeExecutor:
             logger.warning("Git commit error: %s", exc)
             return None
 
-    async def _verify_changes(self, transaction: UpgradeTransaction) -> None:
+    def _verify_changes(self, transaction: UpgradeTransaction) -> None:
         """Verify that changes were applied correctly."""
         for change in transaction.file_changes:
             file_path = self._workdir / change.path
@@ -454,7 +454,7 @@ class UpgradeExecutor:
             elif change.operation == "delete" and file_path.exists():
                 raise ValueError(f"Verification failed: {change.path} was not deleted")
 
-    async def _rollback_upgrade(self, transaction: UpgradeTransaction) -> None:
+    def _rollback_upgrade(self, transaction: UpgradeTransaction) -> None:
         """Rollback an upgrade using git or backups."""
         logger.info("Rolling back upgrade %s", transaction.id)
 
@@ -488,7 +488,7 @@ class UpgradeExecutor:
         transaction.rolled_back_at = time.time()
         logger.info("Upgrade %s rolled back from backups", transaction.id)
 
-    async def rollback(self, transaction_id: str) -> bool:
+    def rollback(self, transaction_id: str) -> bool:
         """Manually trigger rollback for a completed upgrade.
 
         Args:
@@ -506,7 +506,7 @@ class UpgradeExecutor:
             logger.warning("Cannot rollback upgrade in status %s", transaction.status)
             return False
 
-        await self._rollback_upgrade(transaction)
+        self._rollback_upgrade(transaction)
         return True
 
     def get_transaction(self, transaction_id: str) -> UpgradeTransaction | None:

@@ -105,6 +105,29 @@ class WebhookConfig:
 
 
 @dataclass(frozen=True)
+class CORSConfig:
+    """CORS middleware configuration.
+
+    Attributes:
+        allowed_origins: Origins allowed for cross-origin requests.
+            Defaults to localhost on any port.
+        allow_methods: HTTP methods allowed for cross-origin requests.
+        allow_headers: Headers allowed in cross-origin requests.
+        allow_credentials: Whether cookies/auth headers are allowed.
+        max_age: Seconds the browser may cache preflight responses.
+    """
+
+    allowed_origins: tuple[str, ...] = (
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+    )
+    allow_methods: tuple[str, ...] = ("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+    allow_headers: tuple[str, ...] = ("*",)
+    allow_credentials: bool = True
+    max_age: int = 600
+
+
+@dataclass(frozen=True)
 class NetworkConfig:
     """Network security configuration.
 
@@ -218,6 +241,8 @@ class SeedConfig:
     webhooks: tuple[WebhookConfig, ...] = ()
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
     smtp: SmtpConfig | None = None
+    cors: CORSConfig | None = None
+    dashboard_auth: DashboardAuthConfig | None = None
     network: NetworkConfig | None = None
     rate_limit: RateLimitConfig | None = None
     tenants: tuple[TenantConfig, ...] = ()
@@ -340,6 +365,103 @@ def _parse_network_config(raw: object) -> NetworkConfig | None:
         except ValueError as exc:
             raise SeedError(f"network.allowed_ips contains invalid CIDR {ip_range!r}") from exc
     return NetworkConfig(allowed_ips=allowed_ips)
+
+
+def _parse_cors_config(raw: object) -> CORSConfig | None:
+    """Parse the optional CORS config block from ``bernstein.yaml``.
+
+    Args:
+        raw: Raw YAML value for the ``cors`` section.
+
+    Returns:
+        Parsed CORS config, or ``None`` when the section is absent.
+
+    Raises:
+        SeedError: If the CORS section is malformed.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return CORSConfig() if raw else None
+    if not isinstance(raw, dict):
+        raise SeedError(f"cors must be a mapping or boolean, got: {type(raw).__name__}")
+
+    cors_dict: dict[str, object] = cast("dict[str, object]", raw)
+
+    origins = _parse_string_list(cors_dict.get("allowed_origins"), "cors.allowed_origins")
+    if not origins:
+        origins = CORSConfig.allowed_origins
+
+    methods = _parse_string_list(cors_dict.get("allow_methods"), "cors.allow_methods")
+    if not methods:
+        methods = CORSConfig.allow_methods
+
+    headers = _parse_string_list(cors_dict.get("allow_headers"), "cors.allow_headers")
+    if not headers:
+        headers = CORSConfig.allow_headers
+
+    credentials_raw = cors_dict.get("allow_credentials", True)
+    if not isinstance(credentials_raw, bool):
+        raise SeedError(f"cors.allow_credentials must be a bool, got: {type(credentials_raw).__name__}")
+
+    max_age_raw = cors_dict.get("max_age", 600)
+    if not isinstance(max_age_raw, int) or max_age_raw < 0:
+        raise SeedError(f"cors.max_age must be a non-negative integer, got: {max_age_raw!r}")
+
+    return CORSConfig(
+        allowed_origins=origins,
+        allow_methods=methods,
+        allow_headers=headers,
+        allow_credentials=credentials_raw,
+        max_age=max_age_raw,
+    )
+
+
+@dataclass(frozen=True)
+class DashboardAuthConfig:
+    """Dashboard session authentication configuration.
+
+    Attributes:
+        password: Password required to access /dashboard routes.
+            Read from ``cors.password`` in bernstein.yaml or the
+            ``BERNSTEIN_DASHBOARD_PASSWORD`` env var.
+        session_timeout_seconds: How long dashboard sessions remain valid.
+    """
+
+    password: str = ""
+    session_timeout_seconds: int = 3600
+
+
+def _parse_dashboard_auth(raw: object) -> DashboardAuthConfig | None:
+    """Parse the optional dashboard_auth config block from ``bernstein.yaml``.
+
+    Args:
+        raw: Raw YAML value for the ``dashboard_auth`` section.
+
+    Returns:
+        Parsed dashboard auth config, or ``None`` when the section is absent.
+
+    Raises:
+        SeedError: If the section is malformed.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError(f"dashboard_auth must be a mapping, got: {type(raw).__name__}")
+
+    da_dict: dict[str, object] = cast("dict[str, object]", raw)
+
+    password_raw = da_dict.get("password", "")
+    if not isinstance(password_raw, str):
+        raise SeedError(f"dashboard_auth.password must be a string, got: {type(password_raw).__name__}")
+    # Support env var references
+    password = str(_expand_env_value(password_raw, "dashboard_auth.password"))
+
+    timeout_raw = da_dict.get("session_timeout_seconds", 3600)
+    if not isinstance(timeout_raw, int) or timeout_raw < 0:
+        raise SeedError(f"dashboard_auth.session_timeout_seconds must be a non-negative integer, got: {timeout_raw!r}")
+
+    return DashboardAuthConfig(password=password, session_timeout_seconds=timeout_raw)
 
 
 _DEFAULT_RATE_LIMIT_PATHS: dict[str, tuple[str, ...]] = {
@@ -1208,6 +1330,8 @@ def parse_seed(path: Path) -> SeedConfig:
 
     bridges = _parse_bridge_settings(data.get("bridges"))
 
+    cors = _parse_cors_config(data.get("cors"))
+    dashboard_auth = _parse_dashboard_auth(data.get("dashboard_auth"))
     network = _parse_network_config(data.get("network"))
     rate_limit = _parse_rate_limit_config(data.get("rate_limit"))
 
@@ -1256,6 +1380,8 @@ def parse_seed(path: Path) -> SeedConfig:
         batch=batch,
         test_agent=test_agent,
         smtp=_parse_smtp(data.get("smtp")),
+        cors=cors,
+        dashboard_auth=dashboard_auth,
         network=network,
         rate_limit=rate_limit,
         tenants=tenants,

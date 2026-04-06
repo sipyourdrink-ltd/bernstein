@@ -142,7 +142,7 @@ def inject_skills(
     skills_dest_dir = workdir / ".claude" / "skills"
     skills_dest_dir.mkdir(parents=True, exist_ok=True)
 
-    templates_to_inject = list(_ALWAYS_INJECT) + ROLE_SKILL_MAP.get(role, [])
+    templates_to_inject = _ALWAYS_INJECT + ROLE_SKILL_MAP.get(role, [])
 
     for template_name in templates_to_inject:
         source_path = skills_source_dir / template_name

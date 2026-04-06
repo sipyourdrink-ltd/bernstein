@@ -20,7 +20,7 @@ def _runtime_dir(request: Request) -> Path:
 
 
 @router.get("/dashboard/file_locks")
-async def file_locks_endpoint(request: Request) -> JSONResponse:
+def file_locks_endpoint(request: Request) -> JSONResponse:
     """Return active file locks grouped by agent for the dashboard.
 
     Reads the persisted lock state from ``.sdd/runtime/file_locks.json`` and
@@ -71,7 +71,7 @@ async def file_locks_endpoint(request: Request) -> JSONResponse:
                         "files": [],
                     }
                 cast("list[str]", locks_by_agent[agent_id]["files"]).append(file_path)
-        except (json.JSONDecodeError, OSError, KeyError, ValueError):
+        except (OSError, KeyError, ValueError):
             pass
 
     return JSONResponse(

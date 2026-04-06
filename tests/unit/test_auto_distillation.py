@@ -143,7 +143,7 @@ class TestDistilledModel:
             batch_id="b1",
             registered_at=1000.0,
         )
-        assert m.success_rate == 0.0
+        assert m.success_rate == pytest.approx(0.0)
 
     def test_success_rate_with_data(self) -> None:
         from bernstein.core.auto_distillation import DistilledModel

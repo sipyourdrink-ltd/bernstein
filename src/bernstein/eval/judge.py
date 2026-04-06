@@ -213,7 +213,7 @@ class EvalJudge:
         raw = await call_llm(prompt, model=self.model, provider=self.provider, temperature=0.1)
         try:
             return _parse_verdict(raw)
-        except (json.JSONDecodeError, ValueError, KeyError):
+        except (ValueError, KeyError):
             logger.debug("Judge parse failed, retrying with strict suffix")
             raw_strict = await call_llm(
                 prompt + _STRICT_SUFFIX,
@@ -270,7 +270,7 @@ class EvalJudge:
                 if attempt < len(self.backoff_schedule) - 1:
                     await self.retry_with_backoff(attempt)
 
-            except (json.JSONDecodeError, ValueError, KeyError):
+            except (ValueError, KeyError):
                 self._consecutive_failures += 1
                 logger.warning(
                     "Judge parse failed on both attempts (attempt %d/%d)",

@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from bernstein.core.approval import ApprovalGate, ApprovalMode
 
 
@@ -116,7 +118,7 @@ def test_approval_gate_reject_on_timeout(tmp_path: Path, make_task: Any) -> None
     # We can inject a mock _poll_decision that verifies reject_on_timeout is True
 
     def _mock_poll(task_id: str, approvals_dir: Path, max_wait_s: float = 0, reject_on_timeout: bool = False) -> str:
-        assert max_wait_s == 0.01
+        assert max_wait_s == pytest.approx(0.01)
         assert reject_on_timeout is True
         return "rejected"
 

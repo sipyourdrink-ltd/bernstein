@@ -245,7 +245,7 @@ def test_rebalancing_graceful_exit_grace_period(tmp_path: Path) -> None:
     assert len(orch._idle_shutdown_ts) == 3  # Still tracked
 
     # Tick 3: advance time beyond grace period, then recycle again
-    for agent_id in list(orch._idle_shutdown_ts.keys()):
+    for agent_id in orch._idle_shutdown_ts:
         orch._idle_shutdown_ts[agent_id] = time.time() - (_IDLE_GRACE_S + 1)
 
     recycle_idle_agents(orch, tasks_snapshot)

@@ -16,6 +16,12 @@
 
 import type { TaskCreate } from '../models.js';
 
+/** Safely extract a string from a Record entry (avoids [object Object] from `String()`). */
+function str(obj: Record<string, unknown>, key: string, fallback = ''): string {
+  const v = obj[key];
+  return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : fallback;
+}
+
 export interface CIRunInfo {
   workflowName: string;
   runId: string;
@@ -57,18 +63,18 @@ export class CITaskFactory {
   taskFromWorkflowWebhook(payload: Record<string, unknown>): TaskCreate | null {
     const run = payload['workflow_run'] as Record<string, unknown> | undefined;
     if (!run) return null;
-    const conclusion = String(run['conclusion'] ?? '');
+    const conclusion = str(run, 'conclusion');
     if (!Object.keys(this.conclusionPriority).includes(conclusion)) return null;
 
     const repo = (payload['repository'] as Record<string, unknown> | undefined) ?? {};
     const runInfo: CIRunInfo = {
-      workflowName: String(run['name'] ?? 'CI'),
-      runId: String(run['id'] ?? ''),
-      repository: String(repo['full_name'] ?? ''),
-      branch: String(run['head_branch'] ?? ''),
-      commitSha: String(run['head_sha'] ?? ''),
+      workflowName: str(run, 'name', 'CI'),
+      runId: str(run, 'id'),
+      repository: str(repo, 'full_name'),
+      branch: str(run, 'head_branch'),
+      commitSha: str(run, 'head_sha'),
       conclusion,
-      runUrl: String(run['html_url'] ?? ''),
+      runUrl: str(run, 'html_url'),
     };
     return this.taskFromRun(runInfo);
   }
@@ -80,19 +86,19 @@ export class CITaskFactory {
   taskFromCheckRunWebhook(payload: Record<string, unknown>): TaskCreate | null {
     const checkRun = payload['check_run'] as Record<string, unknown> | undefined;
     if (!checkRun) return null;
-    const conclusion = String(checkRun['conclusion'] ?? '');
+    const conclusion = str(checkRun, 'conclusion');
     if (!Object.keys(this.conclusionPriority).includes(conclusion)) return null;
 
     const repo = (payload['repository'] as Record<string, unknown> | undefined) ?? {};
     const suite = (checkRun['check_suite'] as Record<string, unknown> | undefined) ?? {};
     const runInfo: CIRunInfo = {
-      workflowName: String(checkRun['name'] ?? 'check'),
-      runId: String(checkRun['id'] ?? ''),
-      repository: String(repo['full_name'] ?? ''),
-      branch: String(suite['head_branch'] ?? ''),
-      commitSha: String(checkRun['head_sha'] ?? ''),
+      workflowName: str(checkRun, 'name', 'check'),
+      runId: str(checkRun, 'id'),
+      repository: str(repo, 'full_name'),
+      branch: str(suite, 'head_branch'),
+      commitSha: str(checkRun, 'head_sha'),
       conclusion,
-      runUrl: String(checkRun['html_url'] ?? ''),
+      runUrl: str(checkRun, 'html_url'),
     };
     return this.taskFromRun(runInfo);
   }

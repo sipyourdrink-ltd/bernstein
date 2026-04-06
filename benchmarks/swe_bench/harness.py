@@ -175,7 +175,7 @@ class HarnessConfig:
     # Path to ``claude`` binary; None = resolve from PATH
     claude_bin: str | None = None
     # Additional env vars forwarded to agent subprocesses
-    extra_env: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    extra_env: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +264,7 @@ class AgentRunner:
                 output_text = data.get("result", "") or data.get("content", "")
                 tokens_used = int(data.get("total_tokens", data.get("tokens", 0)))
                 cost_usd = float(data.get("cost_usd", 0.0))
-            except (json.JSONDecodeError, TypeError, ValueError):
+            except (TypeError, ValueError):
                 # Fall back to raw stdout as text
                 output_text = proc.stdout
 
@@ -346,7 +346,7 @@ class AgentRunner:
                 output_text = data.get("result", "") or data.get("content", "")
                 tokens_used = int(data.get("total_tokens", data.get("tokens", 0)))
                 cost_usd = float(data.get("cost_usd", 0.0))
-            except (json.JSONDecodeError, TypeError, ValueError):
+            except (TypeError, ValueError):
                 output_text = proc.stdout
         else:
             output_text = proc.stdout + proc.stderr

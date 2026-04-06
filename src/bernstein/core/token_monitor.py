@@ -329,7 +329,7 @@ class TokenGrowthMonitor:
             try:
                 rec: dict[str, Any] = json.loads(line)
                 current += int(rec.get("in", 0)) + int(rec.get("out", 0))
-            except (json.JSONDecodeError, ValueError):
+            except ValueError:
                 continue
 
         # Append a sample if enough time has passed since the last one

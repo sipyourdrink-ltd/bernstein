@@ -158,7 +158,7 @@ class PKCETokens:
     refresh_token: str | None = None
     id_token: str | None = None
     scope: str | None = None
-    raw: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
+    raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_response(cls, data: dict[str, Any]) -> PKCETokens:

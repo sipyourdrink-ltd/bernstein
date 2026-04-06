@@ -75,7 +75,7 @@ def _drain_stdin() -> None:
         while select.select([sys.stdin], [], [], 0.0)[0]:
             sys.stdin.read(1)
     except (OSError, ValueError):
-        pass
+        pass  # stdin not readable; skip buffer drain
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ def logo_reveal(
             when the TTE API supports it; ignored silently otherwise.
     """
     if colors is None:
-        colors = list(DEFAULT_COLORS)
+        colors = DEFAULT_COLORS
 
     if not _is_tty() or not _tte_available():
         print(text)

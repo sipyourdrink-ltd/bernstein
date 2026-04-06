@@ -46,7 +46,7 @@ class TestEstimateCost:
 
     def test_zero_tokens(self) -> None:
         cost = estimate_cost("sonnet", input_tokens=0, output_tokens=0)
-        assert cost == 0.0
+        assert cost == pytest.approx(0.0)
 
     def test_case_insensitive(self) -> None:
         cost = estimate_cost("Claude-Sonnet-3.5", input_tokens=1000, output_tokens=0)
@@ -78,7 +78,7 @@ class TestTokenUsage:
         assert restored.cost_usd == pytest.approx(0.001)
         assert restored.agent_id == "agent-abc"
         assert restored.task_id == "task-1"
-        assert restored.timestamp == 1000.0
+        assert restored.timestamp == pytest.approx(1000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -99,10 +99,10 @@ class TestBudgetStatus:
         )
         d = status.to_dict()
         assert d["run_id"] == "run-1"
-        assert d["budget_usd"] == 10.0
-        assert d["spent_usd"] == 5.0
-        assert d["remaining_usd"] == 5.0
-        assert d["percentage_used"] == 0.5
+        assert d["budget_usd"] == pytest.approx(10.0)
+        assert d["spent_usd"] == pytest.approx(5.0)
+        assert d["remaining_usd"] == pytest.approx(5.0)
+        assert d["percentage_used"] == pytest.approx(0.5)
         assert d["should_warn"] is False
         assert d["should_stop"] is False
 
@@ -170,7 +170,7 @@ class TestCostTrackerRecording:
             total_cost_usd=0.9,
         )
         assert first > 0.0
-        assert second == 0.0
+        assert second == pytest.approx(0.0)
         assert len(tracker.usages) == 1
 
     def test_spent_helpers_track_agent_and_model(self) -> None:
@@ -197,7 +197,7 @@ class TestCostTrackerUnlimited:
         assert status.should_warn is False
         assert status.should_stop is False
         assert status.remaining_usd == float("inf")
-        assert status.percentage_used == 0.0
+        assert status.percentage_used == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +245,7 @@ class TestCostTrackerThresholds:
             agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=15.0
         )
         assert status.should_stop is True
-        assert status.remaining_usd == 0.0
+        assert status.remaining_usd == pytest.approx(0.0)
         assert status.percentage_used == pytest.approx(1.5)
 
     def test_custom_thresholds(self) -> None:
@@ -345,7 +345,7 @@ class TestCostTrackerPersistence:
         path = tracker.save(tmp_path)
         data = json.loads(path.read_text())
         assert data["run_id"] == "struct-test"
-        assert data["budget_usd"] == 10.0
+        assert data["budget_usd"] == pytest.approx(10.0)
         assert len(data["usages"]) == 1
         assert data["usages"][0]["agent_id"] == "a1"
         assert data["usages"][0]["model"] == "haiku"
@@ -375,9 +375,9 @@ class TestCostTrackerBudgetReport:
     def test_fresh_tracker_status(self) -> None:
         tracker = CostTracker(run_id="run-1", budget_usd=10.0)
         status = tracker.status()
-        assert status.spent_usd == 0.0
+        assert status.spent_usd == pytest.approx(0.0)
         assert status.remaining_usd == pytest.approx(10.0)
-        assert status.percentage_used == 0.0
+        assert status.percentage_used == pytest.approx(0.0)
         assert status.should_warn is False
         assert status.should_stop is False
 
@@ -392,5 +392,5 @@ class TestCostTrackerBudgetReport:
         tracker = CostTracker(run_id="run-1", budget_usd=5.0)
         tracker.record(agent_id="a1", task_id="t1", model="sonnet", input_tokens=0, output_tokens=0, cost_usd=8.0)
         status = tracker.status()
-        assert status.remaining_usd == 0.0
+        assert status.remaining_usd == pytest.approx(0.0)
         assert status.percentage_used == pytest.approx(1.6)

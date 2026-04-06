@@ -81,7 +81,7 @@ def _stop_processes(project_dir: Path) -> None:
         try:
             pid = int(pid_file.read_text().strip())
             os.kill(pid, signal.SIGTERM)
-        except (ValueError, OSError, ProcessLookupError):
+        except (ValueError, OSError):
             pass
         pid_file.unlink(missing_ok=True)
 

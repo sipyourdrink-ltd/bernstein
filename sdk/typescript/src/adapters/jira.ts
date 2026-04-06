@@ -21,6 +21,12 @@
 import type { TaskCreate, TaskStatus } from '../models.js';
 import { jiraToBernstein, bernsteinToJira } from '../state-map.js';
 
+/** Safely extract a string from a Record entry (avoids [object Object] from `String()`). */
+function str(obj: Record<string, unknown>, key: string, fallback = ''): string {
+  const v = obj[key];
+  return typeof v === 'string' ? v : typeof v === 'number' ? String(v) : fallback;
+}
+
 export interface JiraIssueRef {
   key: string;           // e.g. "PROJ-42"
   summary: string;
@@ -116,7 +122,7 @@ function extractIssue(payload: Record<string, unknown>): JiraIssueRef | null {
   const issue = payload['issue'];
   if (!issue || typeof issue !== 'object') return null;
   const issueObj = issue as Record<string, unknown>;
-  const key = String(issueObj['key'] ?? '');
+  const key = str(issueObj, 'key');
   const fields = (issueObj['fields'] ?? {}) as Record<string, unknown>;
 
   const statusObj = (fields['status'] ?? {}) as Record<string, unknown>;
@@ -132,10 +138,10 @@ function extractIssue(payload: Record<string, unknown>): JiraIssueRef | null {
 
   return {
     key,
-    summary: String(fields['summary'] ?? ''),
+    summary: str(fields, 'summary'),
     description,
-    status: String(statusObj['name'] ?? 'open'),
-    priority: String((priorityObj['name'] ?? 'medium')),
+    status: str(statusObj, 'name', 'open'),
+    priority: str(priorityObj, 'name', 'medium'),
     storyPoints:
       typeof fields['story_points'] === 'number'
         ? fields['story_points']

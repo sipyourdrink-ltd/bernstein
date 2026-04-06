@@ -81,7 +81,7 @@ def _bandit_with_data(
 class TestBanditArm:
     def test_success_rate_optimistic_when_no_observations(self) -> None:
         arm = BanditArm(role="backend", model="haiku")
-        assert arm.success_rate == 1.0
+        assert arm.success_rate == pytest.approx(1.0)
 
     def test_success_rate_after_observations(self) -> None:
         arm = BanditArm(role="backend", model="haiku")
@@ -336,7 +336,7 @@ class TestGetCascadeModel:
 
 class TestComputeSavingsVsOpus:
     def test_no_savings_when_no_records(self) -> None:
-        assert compute_savings_vs_opus([]) == 0.0
+        assert compute_savings_vs_opus([]) == pytest.approx(0.0)
 
     def test_savings_for_haiku_task(self) -> None:
         # 1000 tokens at haiku cost — opus would have cost much more
@@ -362,12 +362,12 @@ class TestComputeSavingsVsOpus:
             }
         ]
         savings = compute_savings_vs_opus(records)
-        assert savings == 0.0
+        assert savings == pytest.approx(0.0)
 
     def test_no_savings_for_fast_path_task(self) -> None:
         records = [{"model": "fast-path", "tokens_prompt": 0, "tokens_completion": 0, "cost_usd": 0.0}]
         savings = compute_savings_vs_opus(records)
-        assert savings == 0.0
+        assert savings == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +411,7 @@ class TestComputeDailyCost:
 
 class TestProjectMonthlyCost:
     def test_zero_when_no_records(self) -> None:
-        assert project_monthly_cost([]) == 0.0
+        assert project_monthly_cost([]) == pytest.approx(0.0)
 
     def test_projects_based_on_daily_average(self) -> None:
         # 7 days of $1/day should project $30/month
@@ -449,8 +449,8 @@ class TestEstimateRunCost:
 
     def test_zero_tasks_returns_zero(self) -> None:
         low, high = estimate_run_cost(0)
-        assert low == 0.0
-        assert high == 0.0
+        assert low == pytest.approx(0.0)
+        assert high == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -463,8 +463,8 @@ class TestComputeSavingsVsManual:
         from bernstein.core.cost import compute_savings_vs_manual
 
         res = compute_savings_vs_manual([])
-        assert res["savings_usd"] == 0.0
-        assert res["manual_hours"] == 0.0
+        assert res["savings_usd"] == pytest.approx(0.0)
+        assert res["manual_hours"] == pytest.approx(0.0)
 
     def test_savings_with_explicit_hours(self) -> None:
         from bernstein.core.cost import compute_savings_vs_manual
@@ -473,10 +473,10 @@ class TestComputeSavingsVsManual:
             {"cost_usd": 1.0, "estimated_manual_hours": 2.0},
         ]
         res = compute_savings_vs_manual(records, hourly_rate=50.0)
-        assert res["manual_hours"] == 2.0
-        assert res["manual_cost_usd"] == 100.0
-        assert res["api_cost_usd"] == 1.0
-        assert res["savings_usd"] == 99.0
+        assert res["manual_hours"] == pytest.approx(2.0)
+        assert res["manual_cost_usd"] == pytest.approx(100.0)
+        assert res["api_cost_usd"] == pytest.approx(1.0)
+        assert res["savings_usd"] == pytest.approx(99.0)
 
     def test_savings_with_implicit_scope(self) -> None:
         from bernstein.core.cost import compute_savings_vs_manual
@@ -489,7 +489,7 @@ class TestComputeSavingsVsManual:
         ]
         res = compute_savings_vs_manual(records, hourly_rate=100.0)
         # total hours = 0.5 + 1.5 + 4.0 + 1.5 = 7.5
-        assert res["manual_hours"] == 7.5
-        assert res["manual_cost_usd"] == 750.0
-        assert res["api_cost_usd"] == 4.0
-        assert res["savings_usd"] == 746.0
+        assert res["manual_hours"] == pytest.approx(7.5)
+        assert res["manual_cost_usd"] == pytest.approx(750.0)
+        assert res["api_cost_usd"] == pytest.approx(4.0)
+        assert res["savings_usd"] == pytest.approx(746.0)

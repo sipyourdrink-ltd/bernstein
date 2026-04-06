@@ -19,13 +19,12 @@ from bernstein.benchmark.comparative import BenchmarkTask, load_benchmark_tasks
 from bernstein.benchmark.reproducible import (
     BenchmarkConfig,
     BenchmarkRun,
-    ReproducibleBenchmark,
-    ThroughputMetrics,
     CostMetrics,
     QualityMetrics,
+    ReproducibleBenchmark,
+    ThroughputMetrics,
 )
 from bernstein.cli.eval_benchmark_cmd import benchmark_simulate
-
 
 # ---------------------------------------------------------------------------
 # Helpers

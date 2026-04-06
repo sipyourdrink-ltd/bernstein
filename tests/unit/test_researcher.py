@@ -31,7 +31,7 @@ class TestResearchResult:
         r = ResearchResult(query="test query", content="some results", timestamp=1000.0)
         assert r.query == "test query"
         assert r.content == "some results"
-        assert r.timestamp == 1000.0
+        assert r.timestamp == pytest.approx(1000.0)
 
 
 # ---------------------------------------------------------------------------

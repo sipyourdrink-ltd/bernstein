@@ -489,4 +489,4 @@ def test_http_timeout_constant() -> None:
     """Verify the timeout constant is set to a reasonable value."""
     from bernstein.mcp.server import _HTTP_TIMEOUT
 
-    assert _HTTP_TIMEOUT == 5.0
+    assert _HTTP_TIMEOUT == pytest.approx(5.0)

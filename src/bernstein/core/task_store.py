@@ -78,6 +78,7 @@ class TaskRecord(TypedDict):
     closed_at: float | None
     claimed_by_session: str | None
     parent_session_id: str | None
+    subtask_wait_started_at: float | None
 
 
 class ArchiveRecord(TypedDict):
@@ -605,6 +606,7 @@ class TaskStore:
             "closed_at": task.closed_at,
             "claimed_by_session": task.claimed_by_session,
             "parent_session_id": task.parent_session_id,
+            "subtask_wait_started_at": task.subtask_wait_started_at,
         }
 
     # -- public API ---------------------------------------------------------
@@ -825,6 +827,12 @@ class TaskStore:
                 if not self._dependencies_satisfied(candidate):
                     blocked_entries.append((priority, task_id))
                     continue
+                # TASK-003: file ownership overlap check
+                overlap_msg = self._check_file_ownership_overlap(candidate)
+                if overlap_msg is not None:
+                    logger.info("claim_next: skipping %s — %s", task_id, overlap_msg)
+                    blocked_entries.append((priority, task_id))
+                    continue
                 task = candidate
                 break
             for entry in blocked_entries:
@@ -885,6 +893,10 @@ class TaskStore:
             if task.status == TaskStatus.OPEN:
                 if not self._dependencies_satisfied(task):
                     raise ValueError(f"task {task_id} has unresolved dependencies")
+                # TASK-003: file ownership overlap check
+                overlap_msg = self._check_file_ownership_overlap(task)
+                if overlap_msg is not None:
+                    raise ValueError(overlap_msg)
                 self._index_remove(task)
                 transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_by_id")
                 task.claimed_by_session = claimed_by_session
@@ -926,6 +938,10 @@ class TaskStore:
                 if agent_role is not None and task.role != agent_role:
                     failed.append(task_id)
                     continue
+                # TASK-003: file ownership overlap check
+                if self._check_file_ownership_overlap(task) is not None:
+                    failed.append(task_id)
+                    continue
                 self._index_remove(task)
                 transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason=f"claim_batch by {agent_id}")
                 task.assigned_agent = agent_id
@@ -941,14 +957,21 @@ class TaskStore:
 
         Args:
             task_id: Task identifier.
-            result_summary: Human-readable summary of what was done.
+            result_summary: Non-empty summary of what was done (diff or log reference).
 
         Returns:
             The updated Task.
 
         Raises:
             KeyError: If task_id does not exist.
+            ValueError: If *result_summary* is empty (TASK-004).
         """
+        # TASK-004: guard — completion requires non-empty data
+        if not result_summary or not result_summary.strip():
+            raise ValueError(
+                f"Cannot complete task {task_id!r}: "
+                "result_summary must be non-empty (provide diff or log reference)"
+            )
         async with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
@@ -1005,6 +1028,7 @@ class TaskStore:
                 reason=f"split into {subtask_count} subtasks",
             )
             task.result_summary = f"Split into {subtask_count} subtasks"
+            task.subtask_wait_started_at = time.time()
             task.version += 1
             self._index_add(task)
             await self._append_jsonl(self._task_to_record(task))
@@ -1171,7 +1195,15 @@ class TaskStore:
             task = self._tasks.get(task_id)
             if task is None:
                 raise KeyError(task_id)
-            if task.status not in (TaskStatus.OPEN, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
+            _cancellable = {
+                TaskStatus.OPEN,
+                TaskStatus.CLAIMED,
+                TaskStatus.IN_PROGRESS,
+                TaskStatus.BLOCKED,
+                TaskStatus.WAITING_FOR_SUBTASKS,
+                TaskStatus.PLANNED,
+            }
+            if task.status not in _cancellable:
                 raise ValueError(f"Task '{task_id}' cannot be cancelled from status '{task.status.value}'")
             self._index_remove(task)
             transition_task(task, TaskStatus.CANCELLED, actor="task_store", reason=reason)
@@ -1183,6 +1215,150 @@ class TaskStore:
             await self._append_jsonl(self._task_to_record(task))
             await self._append_archive(task, completed_at)
             return task
+
+    # -- TASK-002: WAITING_FOR_SUBTASKS timeout with escalation ---------------
+
+    # Default timeout: 30 minutes
+    SUBTASK_WAIT_TIMEOUT_S: float = 30 * 60
+
+    async def check_subtask_timeouts(
+        self,
+        timeout_s: float | None = None,
+    ) -> list[Task]:
+        """Find WAITING_FOR_SUBTASKS tasks that have exceeded their timeout.
+
+        Timed-out tasks are transitioned to BLOCKED and tagged for escalation
+        (``result_summary`` is set to an escalation message).
+
+        Args:
+            timeout_s: Override for the default timeout in seconds.
+
+        Returns:
+            List of tasks that were escalated due to timeout.
+        """
+        threshold = timeout_s if timeout_s is not None else self.SUBTASK_WAIT_TIMEOUT_S
+        now = time.time()
+        escalated: list[Task] = []
+
+        async with self._lock:
+            waiting = list(self._by_status.get(TaskStatus.WAITING_FOR_SUBTASKS, {}).values())
+            for task in waiting:
+                wait_start = task.subtask_wait_started_at or task.created_at
+                if now - wait_start < threshold:
+                    continue
+                self._index_remove(task)
+                transition_task(
+                    task,
+                    TaskStatus.BLOCKED,
+                    actor="task_store",
+                    reason=f"subtask wait timeout after {threshold:.0f}s",
+                )
+                task.result_summary = (
+                    f"ESCALATION: subtask wait exceeded {threshold:.0f}s — "
+                    "requires manager review or human intervention"
+                )
+                task.version += 1
+                self._index_add(task)
+                await self._append_jsonl(self._task_to_record(task))
+                escalated.append(task)
+
+        return escalated
+
+    # -- TASK-003: File ownership validation before claim -------------------
+
+    def _check_file_ownership_overlap(
+        self,
+        task: Task,
+    ) -> str | None:
+        """Check if a task's owned_files overlap with any active (claimed/in-progress) task.
+
+        Args:
+            task: Task about to be claimed.
+
+        Returns:
+            Error message describing the conflict, or None if no overlap.
+        """
+        if not task.owned_files:
+            return None
+
+        task_files = set(task.owned_files)
+        for active_status in (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
+            for other in self._by_status.get(active_status, {}).values():
+                if other.id == task.id:
+                    continue
+                other_files = set(other.owned_files)
+                overlap = task_files & other_files
+                if overlap:
+                    return (
+                        f"File ownership conflict: {', '.join(sorted(overlap))} "
+                        f"already claimed by task {other.id!r}"
+                    )
+        return None
+
+    # -- TASK-005: Cascading cancellation for subtasks ----------------------
+
+    async def cancel_cascade(self, task_id: str, reason: str) -> list[Task]:
+        """Cancel a task and all of its descendant subtasks.
+
+        Walks the subtask tree (``parent_task_id`` references) and cancels
+        every non-terminal descendant.  The root task itself is also cancelled.
+
+        Args:
+            task_id: Root task identifier.
+            reason: Why the tree is being cancelled.
+
+        Returns:
+            List of all tasks that were cancelled (root + descendants).
+
+        Raises:
+            KeyError: If *task_id* does not exist.
+        """
+        cancelled: list[Task] = []
+        async with self._lock:
+            root = self._tasks.get(task_id)
+            if root is None:
+                raise KeyError(task_id)
+
+            # Collect all descendants via BFS
+            to_cancel: list[str] = [task_id]
+            idx = 0
+            while idx < len(to_cancel):
+                parent_id = to_cancel[idx]
+                idx += 1
+                for t in self._tasks.values():
+                    if t.parent_task_id == parent_id and t.id not in to_cancel:
+                        to_cancel.append(t.id)
+
+            # Cancel each in BFS order (parent before children)
+            cancellable = {
+                TaskStatus.OPEN,
+                TaskStatus.CLAIMED,
+                TaskStatus.IN_PROGRESS,
+                TaskStatus.BLOCKED,
+                TaskStatus.WAITING_FOR_SUBTASKS,
+                TaskStatus.PLANNED,
+            }
+            for tid in to_cancel:
+                task = self._tasks.get(tid)
+                if task is None or task.status not in cancellable:
+                    continue
+                self._index_remove(task)
+                transition_task(
+                    task,
+                    TaskStatus.CANCELLED,
+                    actor="task_store",
+                    reason=reason if tid == task_id else f"parent {task_id} cancelled: {reason}",
+                )
+                task.result_summary = reason if tid == task_id else f"Cascade: parent {task_id} cancelled"
+                task.completed_at = time.time()
+                task.version += 1
+                self._index_add(task)
+                completed_at = task.completed_at
+                await self._append_jsonl(self._task_to_record(task))
+                await self._append_archive(task, completed_at)
+                cancelled.append(task)
+
+        return cancelled
 
     async def update(
         self,

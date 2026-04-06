@@ -89,28 +89,28 @@ class TestUnattendedRetryPolicyShouldRetry:
 class TestUnattendedRetryPolicyNextDelay:
     def test_first_attempt(self) -> None:
         policy = UnattendedRetryPolicy(base_delay=5.0, max_delay=300.0)
-        assert policy.next_delay(1) == 5.0
+        assert policy.next_delay(1) == pytest.approx(5.0)
 
     def test_exponential_backoff(self) -> None:
         policy = UnattendedRetryPolicy(base_delay=5.0, max_delay=300.0)
-        assert policy.next_delay(1) == 5.0
-        assert policy.next_delay(2) == 10.0
-        assert policy.next_delay(3) == 20.0
-        assert policy.next_delay(4) == 40.0
+        assert policy.next_delay(1) == pytest.approx(5.0)
+        assert policy.next_delay(2) == pytest.approx(10.0)
+        assert policy.next_delay(3) == pytest.approx(20.0)
+        assert policy.next_delay(4) == pytest.approx(40.0)
 
     def test_capped_at_max_delay(self) -> None:
         policy = UnattendedRetryPolicy(base_delay=5.0, max_delay=30.0)
-        assert policy.next_delay(1) == 5.0
-        assert policy.next_delay(2) == 10.0
-        assert policy.next_delay(3) == 20.0
-        assert policy.next_delay(4) == 30.0  # would be 40, capped
-        assert policy.next_delay(5) == 30.0
+        assert policy.next_delay(1) == pytest.approx(5.0)
+        assert policy.next_delay(2) == pytest.approx(10.0)
+        assert policy.next_delay(3) == pytest.approx(20.0)
+        assert policy.next_delay(4) == pytest.approx(30.0)  # would be 40, capped
+        assert policy.next_delay(5) == pytest.approx(30.0)
 
     def test_custom_delays(self) -> None:
         policy = UnattendedRetryPolicy(base_delay=10.0, max_delay=1000.0)
-        assert policy.next_delay(1) == 10.0
-        assert policy.next_delay(2) == 20.0
-        assert policy.next_delay(3) == 40.0
+        assert policy.next_delay(1) == pytest.approx(10.0)
+        assert policy.next_delay(2) == pytest.approx(20.0)
+        assert policy.next_delay(3) == pytest.approx(40.0)
 
 
 class TestUnattendedRetryPolicyEmitHeartbeat:

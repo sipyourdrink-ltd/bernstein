@@ -84,11 +84,11 @@ class TestStageMetrics:
 
     def test_success_rate_no_tasks(self) -> None:
         m = StageMetrics(stage=GraduationStage.SANDBOX)
-        assert m.success_rate == 0.0
+        assert m.success_rate == pytest.approx(0.0)
 
     def test_success_rate_all_pass(self) -> None:
         m = StageMetrics(stage=GraduationStage.SANDBOX, tasks_completed=5, tasks_failed=0)
-        assert m.success_rate == 1.0
+        assert m.success_rate == pytest.approx(1.0)
 
     def test_success_rate_mixed(self) -> None:
         m = StageMetrics(stage=GraduationStage.SANDBOX, tasks_completed=8, tasks_failed=2)
@@ -96,7 +96,7 @@ class TestStageMetrics:
 
     def test_avg_duration_no_tasks(self) -> None:
         m = StageMetrics(stage=GraduationStage.SANDBOX)
-        assert m.avg_duration_s == 0.0
+        assert m.avg_duration_s == pytest.approx(0.0)
 
     def test_avg_duration_computed(self) -> None:
         m = StageMetrics(
@@ -105,7 +105,7 @@ class TestStageMetrics:
             tasks_failed=0,
             total_duration_s=120.0,
         )
-        assert m.avg_duration_s == 60.0
+        assert m.avg_duration_s == pytest.approx(60.0)
 
     def test_roundtrip_serialisation(self) -> None:
         m = StageMetrics(

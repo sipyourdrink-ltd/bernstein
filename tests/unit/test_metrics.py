@@ -91,7 +91,7 @@ class TestStartTask:
         assert m.end_time is None
         assert m.success is False
         assert m.tokens_used == 0
-        assert m.cost_usd == 0.0
+        assert m.cost_usd == pytest.approx(0.0)
         assert m.retry_count == 0
 
 
@@ -113,7 +113,7 @@ class TestCompleteTask:
         assert m is not None
         assert m.success is True
         assert m.tokens_used == 500
-        assert m.cost_usd == 0.01
+        assert m.cost_usd == pytest.approx(0.01)
 
     def test_records_failure(self, collector: MetricsCollector) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")
@@ -267,7 +267,7 @@ class TestProviderHealth:
         h = collector.get_provider_health("claude")
         assert h.status == ProviderStatus.RATE_LIMITED
         assert h.rate_limit_remaining == 10
-        assert h.rate_limit_reset == 9999.0
+        assert h.rate_limit_reset == pytest.approx(9999.0)
 
     def test_mark_healthy(self, collector: MetricsCollector) -> None:
         h = collector.get_provider_health("claude")
@@ -334,7 +334,7 @@ class TestQualityAndErrors:
         f = collector._metrics_dir / f"agent_success_{today}.jsonl"
         assert f.exists()
         data = json.loads(f.read_text().strip().splitlines()[0])
-        assert data["value"] == 1.0
+        assert data["value"] == pytest.approx(1.0)
         assert data["labels"]["verification"] == "janitor"
 
     def test_record_janitor_result_updates_task_metrics(self, collector: MetricsCollector) -> None:
@@ -391,7 +391,7 @@ class TestJsonlFileWriting:
         data = json.loads(f.read_text().strip())
         assert "timestamp" in data
         assert data["metric_type"] == "error_rate"
-        assert data["value"] == 1.0
+        assert data["value"] == pytest.approx(1.0)
         assert data["labels"] == {"key": "val"}
 
     def test_multiple_points_appended(self, collector: MetricsCollector) -> None:
@@ -465,7 +465,7 @@ class TestRecordApiCall:
 
 class TestQueryMethods:
     def test_get_agent_success_rate_no_agents(self, collector: MetricsCollector) -> None:
-        assert collector.get_agent_success_rate() == 1.0
+        assert collector.get_agent_success_rate() == pytest.approx(1.0)
 
     def test_get_agent_success_rate_mixed(self, collector: MetricsCollector) -> None:
         collector.start_agent("a1", "backend", "sonnet", "claude")
@@ -484,7 +484,7 @@ class TestQueryMethods:
         assert rate == pytest.approx(0.0)
 
     def test_get_avg_completion_time_no_tasks(self, collector: MetricsCollector) -> None:
-        assert collector.get_avg_completion_time() == 0.0
+        assert collector.get_avg_completion_time() == pytest.approx(0.0)
 
     def test_get_avg_completion_time(self, collector: MetricsCollector) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")
@@ -525,7 +525,7 @@ class TestMetricsSummary:
     def test_empty_summary(self, collector: MetricsCollector) -> None:
         s = collector.get_metrics_summary()
         assert s["total_tasks"] == 0
-        assert s["success_rate"] == 1.0
+        assert s["success_rate"] == pytest.approx(1.0)
 
     def test_summary_counts(self, collector: MetricsCollector) -> None:
         collector.start_task("t1", "backend", "sonnet", "claude")

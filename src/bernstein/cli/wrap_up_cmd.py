@@ -29,7 +29,7 @@ def _get_git_diff_stat(start_sha: str) -> str:
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
         except FileNotFoundError:
-            pass
+            pass  # git not available
     # Fallback: uncommitted changes vs last commit
     try:
         result = subprocess.run(
@@ -41,7 +41,7 @@ def _get_git_diff_stat(start_sha: str) -> str:
         if result.returncode == 0:
             return result.stdout.strip() or "(no uncommitted changes)"
     except FileNotFoundError:
-        pass
+        pass  # git not available
     return ""
 
 
@@ -78,7 +78,7 @@ def _find_session_start_sha(saved_at: float) -> str:
         if parent_result.returncode == 0:
             return parent_result.stdout.strip()
     except (FileNotFoundError, ValueError):
-        pass
+        pass  # git not available or invalid ref
     return ""
 
 
@@ -90,7 +90,7 @@ def _load_session_saved_at() -> float:
     try:
         data = json.loads(session_path.read_text())
         return float(data.get("saved_at", 0.0))
-    except (json.JSONDecodeError, ValueError, OSError):
+    except (ValueError, OSError):
         return 0.0
 
 

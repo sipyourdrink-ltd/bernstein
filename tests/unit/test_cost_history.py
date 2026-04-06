@@ -6,6 +6,8 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.cost_history import (
     DailyCostSnapshot,
     append_daily_snapshot,
@@ -47,7 +49,7 @@ def test_load_history_skips_malformed_lines(tmp_path: Path) -> None:
     snapshots = load_history(sdd_dir)
 
     assert len(snapshots) == 1
-    assert snapshots[0].spent_usd == 2.0
+    assert snapshots[0].spent_usd == pytest.approx(2.0)
 
 
 def test_upsert_replaces_same_date_and_prunes_old_history(tmp_path: Path) -> None:
@@ -64,7 +66,7 @@ def test_upsert_replaces_same_date_and_prunes_old_history(tmp_path: Path) -> Non
     snapshots = load_history(sdd_dir)
     assert all(snapshot.date_str != old_day.isoformat() for snapshot in snapshots)
     today_snapshot = next(snapshot for snapshot in snapshots if snapshot.date_str == date.today().isoformat())
-    assert today_snapshot.spent_usd == 5.5
+    assert today_snapshot.spent_usd == pytest.approx(5.5)
     assert today_snapshot.run_count == 4
 
 

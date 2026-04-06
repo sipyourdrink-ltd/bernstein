@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -30,7 +31,7 @@ def _reset_singleton() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_singleton() -> None:
+def _cleanup_singleton() -> Generator[None, None, None]:
     """Reset module-level singleton before and after each test."""
     _reset_singleton()
     yield

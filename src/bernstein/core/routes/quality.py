@@ -308,7 +308,7 @@ def _load_budget_from_seed(sdd_dir: Path) -> float:
 
 
 @router.get("/quality")
-async def get_quality_metrics(request: Request) -> JSONResponse:
+def get_quality_metrics(request: Request) -> JSONResponse:
     """Return aggregated internal quality metrics (last 7 days).
 
     Reads from ``.sdd/metrics/`` JSONL files to compute:
@@ -373,7 +373,7 @@ async def get_quality_metrics(request: Request) -> JSONResponse:
 
 
 @router.get("/quality/budget-forecast")
-async def get_budget_forecast(request: Request) -> JSONResponse:
+def get_budget_forecast(request: Request) -> JSONResponse:
     """Return projected spend for the active planned backlog."""
     sdd_dir = _get_sdd_dir(request)
     store = _get_store(request)
@@ -390,7 +390,7 @@ async def get_budget_forecast(request: Request) -> JSONResponse:
 
 
 @router.get("/quality/models")
-async def get_quality_by_model(request: Request) -> JSONResponse:
+def get_quality_by_model(request: Request) -> JSONResponse:
     """Return per-model quality breakdown (last 30 days).
 
     Extended view of model performance for routing configuration and cost

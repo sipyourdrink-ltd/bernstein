@@ -91,8 +91,8 @@ def test_ewma_first_observation_initializes_state(tmp_path: Path) -> None:
     state = agg.update_ewma("cost", 1.0)
 
     assert state.metric_name == "cost"
-    assert state.current_value == 1.0
-    assert state.center_line == 1.0
+    assert state.current_value == pytest.approx(1.0)
+    assert state.center_line == pytest.approx(1.0)
     assert state.n_observations == 1
     assert state.in_control is True
 
@@ -155,7 +155,7 @@ def test_cusum_first_observation_sets_target(tmp_path: Path) -> None:
     state = agg.update_cusum("cost", 5.0)
 
     assert state.metric_name == "cost"
-    assert state.target == 5.0
+    assert state.target == pytest.approx(5.0)
     assert state.n_observations == 1
     assert state.shift_detected is False
 
@@ -200,8 +200,8 @@ def test_cusum_reset_clears_accumulators(tmp_path: Path) -> None:
     agg.reset_cusum("cost")
     state = agg.get_cusum_state("cost")
     assert state is not None
-    assert state.s_high == 0.0
-    assert state.s_low == 0.0
+    assert state.s_high == pytest.approx(0.0)
+    assert state.s_low == pytest.approx(0.0)
     assert state.shift_detected is False
     assert state.shift_direction == "none"
 
@@ -295,8 +295,8 @@ def test_mann_kendall_no_trend_on_constant_data(tmp_path: Path) -> None:
     result = agg.mann_kendall_test(values)
     assert result is not None
     s, p = result
-    assert s == 0.0
-    assert p == 1.0  # no trend at all
+    assert s == pytest.approx(0.0)
+    assert p == pytest.approx(1.0)  # no trend at all
 
 
 def test_mann_kendall_returns_none_for_insufficient_data(tmp_path: Path) -> None:
@@ -402,9 +402,9 @@ def test_nig_first_observation_sets_mu(tmp_path: Path) -> None:
     assert posterior.metric_name == "cost"
     assert posterior.mu == pytest.approx(3.5)
     assert posterior.n_observations == 1
-    assert posterior.kappa == 1.0
-    assert posterior.alpha == 1.0
-    assert posterior.beta == 1.0
+    assert posterior.kappa == pytest.approx(1.0)
+    assert posterior.alpha == pytest.approx(1.0)
+    assert posterior.beta == pytest.approx(1.0)
 
 
 def test_nig_multiple_updates_shift_mu(tmp_path: Path) -> None:
@@ -916,7 +916,7 @@ def test_norm_cdf_known_values() -> None:
 
 
 def test_std_single_value() -> None:
-    assert _std([5.0]) == 0.0
+    assert _std([5.0]) == pytest.approx(0.0)
 
 
 def test_std_known_values() -> None:

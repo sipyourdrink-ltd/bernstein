@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -82,7 +82,7 @@ async def test_worktree_locked(test_client: TestClient, orchestrator_factory, in
             resp = test_client.get("/tasks")
             if any(t["status"] == "done" for t in resp.json()):
                 break
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
 
         # 3. Verify
         # The task should be done on server, but changes NOT on main because merge failed

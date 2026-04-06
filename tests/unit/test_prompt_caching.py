@@ -83,7 +83,7 @@ def test_cache_manifest_round_trip() -> None:
     assert restored.total_cached_requests == 5
     assert "key1" in restored.entries
     assert restored.entries["key1"].hit_count == 3
-    assert restored.entries["key1"].last_used_at == 2000.0
+    assert restored.entries["key1"].last_used_at == pytest.approx(2000.0)
 
 
 # ---------------------------------------------------------------------------

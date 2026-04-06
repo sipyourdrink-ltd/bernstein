@@ -60,10 +60,10 @@ async def test_recap_empty(client: AsyncClient) -> None:
     assert data["summary"]["total"] == 0
     assert data["summary"]["completed"] == 0
     assert data["summary"]["failed"] == 0
-    assert data["summary"]["success_rate"] == 0.0
+    assert data["summary"]["success_rate"] == pytest.approx(0.0)
     assert data["diff_stats"]["files_changed"] == 0
     assert data["quality_scores"]["average_score"] == 0
-    assert data["cost_breakdown"]["total_cost_usd"] == 0.0
+    assert data["cost_breakdown"]["total_cost_usd"] == pytest.approx(0.0)
 
 
 @pytest.mark.anyio
@@ -88,7 +88,7 @@ async def test_recap_with_tasks(client: AsyncClient) -> None:
     # All tasks start as open, so completed and failed will be 0
     assert data["summary"]["completed"] == 0
     assert data["summary"]["failed"] == 0
-    assert data["summary"]["success_rate"] == 0.0
+    assert data["summary"]["success_rate"] == pytest.approx(0.0)
 
 
 @pytest.mark.anyio

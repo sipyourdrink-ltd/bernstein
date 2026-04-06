@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import signal
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -65,8 +66,8 @@ class TestTimeoutTimerSet:
         ],
         ids=["codex", "gemini", "generic"],
     )
-    def test_timer_is_set(self, adapter_factory: object, popen_path: str, tmp_path: Path) -> None:
-        adapter = adapter_factory()  # type: ignore[operator]
+    def test_timer_is_set(self, adapter_factory: Callable[[], CLIAdapter], popen_path: str, tmp_path: Path) -> None:
+        adapter = adapter_factory()
         result = _spawn_with_timeout(adapter, tmp_path, timeout=1800, popen_path=popen_path)
         assert result.timeout_timer is not None
         assert isinstance(result.timeout_timer, threading.Timer)
@@ -84,8 +85,8 @@ class TestTimeoutTimerSet:
         ],
         ids=["codex", "gemini", "generic"],
     )
-    def test_timer_not_set_when_zero(self, adapter_factory: object, popen_path: str, tmp_path: Path) -> None:
-        adapter = adapter_factory()  # type: ignore[operator]
+    def test_timer_not_set_when_zero(self, adapter_factory: Callable[[], CLIAdapter], popen_path: str, tmp_path: Path) -> None:
+        adapter = adapter_factory()
         result = _spawn_with_timeout(adapter, tmp_path, timeout=0, popen_path=popen_path)
         assert result.timeout_timer is None
 

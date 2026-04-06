@@ -109,7 +109,7 @@ def load_session(
     try:
         data = json.loads(session_path.read_text())
         state = SessionState.from_dict(data)
-    except (json.JSONDecodeError, KeyError, ValueError):
+    except (KeyError, ValueError):
         return None
     if state.is_stale(stale_minutes):
         return None
@@ -273,7 +273,7 @@ def load_checkpoint(path: Path) -> CheckpointState | None:
     try:
         data = json.loads(path.read_text())
         return CheckpointState.from_dict(data)
-    except (json.JSONDecodeError, KeyError, ValueError):
+    except (KeyError, ValueError):
         return None
 
 
@@ -310,7 +310,7 @@ def load_wrapup(path: Path) -> WrapUpBrief | None:
     try:
         data = json.loads(path.read_text())
         return WrapUpBrief.from_dict(data)
-    except (json.JSONDecodeError, KeyError, ValueError):
+    except (KeyError, ValueError):
         return None
 
 

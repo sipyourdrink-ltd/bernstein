@@ -136,7 +136,7 @@ class TestFromPreset:
 
 class TestFromDict:
     def test_from_string(self) -> None:
-        cfg = ComplianceConfig.from_dict("standard")  # type: ignore[arg-type]
+        cfg = ComplianceConfig.from_dict("standard")
         assert cfg.preset == CompliancePreset.STANDARD
         assert cfg.governed_workflow is True
 

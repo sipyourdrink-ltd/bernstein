@@ -199,7 +199,7 @@ def test_failure_rate_by_model_none_model(tmp_path: Path) -> None:
 
     rates = analyzer.get_failure_rate_by_model(hours=24)
     assert "unknown" in rates
-    assert rates["unknown"] == 1.0
+    assert rates["unknown"] == pytest.approx(1.0)
 
 
 def test_analyzer_loads_from_file(tmp_path: Path) -> None:
@@ -233,7 +233,7 @@ def test_failure_rate_time_window(tmp_path: Path) -> None:
     rates = analyzer.get_failure_rate_by_role(hours=24)
     assert "backend" not in rates
     assert "qa" in rates
-    assert rates["qa"] == 1.0
+    assert rates["qa"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

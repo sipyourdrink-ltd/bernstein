@@ -202,7 +202,7 @@ class TestAppInstantiation:
 
     def test_app_custom_interval(self) -> None:
         app = BernsteinApp(poll_interval=5.0)
-        assert app._poll_interval == 5.0
+        assert app._poll_interval == pytest.approx(5.0)
 
     def test_app_has_bindings(self) -> None:
         app = BernsteinApp()

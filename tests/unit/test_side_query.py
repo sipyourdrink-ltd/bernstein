@@ -48,7 +48,7 @@ class TestSideQuery:
         assert q.id  # auto-generated
         assert q.status == "open"
         assert q.answer == ""
-        assert q.answered_at == 0.0
+        assert q.answered_at == pytest.approx(0.0)
         assert q.created_at > 0
 
     def test_id_is_12_hex(self) -> None:
@@ -146,7 +146,7 @@ class TestSkipSideQuery:
         assert resolved is not None
         assert resolved.status == "skipped"
         assert resolved.answer == ""
-        assert resolved.answered_at == 0.0
+        assert resolved.answered_at == pytest.approx(0.0)
 
     def test_false_for_missing_query(self, store_dir: Path) -> None:
         assert skip_side_query(store_dir, "nonexistent") is False

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from bernstein.adapters.base import RateLimitError, SpawnError
 from bernstein.core.container import ContainerError
 from bernstein.core.spawn_analyzer import SpawnAnalyzer, SpawnFailureAnalysis
@@ -27,7 +29,7 @@ def test_worktree_error(make_task: Any) -> None:
     analysis = SpawnAnalyzer().analyze(WorktreeError("lock held"), make_task())
 
     assert analysis.error_type == "worktree_error"
-    assert analysis.recommended_delay_s == 10.0
+    assert analysis.recommended_delay_s == pytest.approx(10.0)
 
 
 def test_container_error(make_task: Any) -> None:
@@ -41,7 +43,7 @@ def test_generic_exception(make_task: Any) -> None:
     analysis = SpawnAnalyzer().analyze(RuntimeError("network down"), make_task(role="qa"))
 
     assert analysis.error_type == "network_error"
-    assert analysis.recommended_delay_s == 30.0
+    assert analysis.recommended_delay_s == pytest.approx(30.0)
 
 
 def test_should_retry_all_transient() -> None:
@@ -53,7 +55,7 @@ def test_should_retry_all_transient() -> None:
     )
 
     assert should_retry is True
-    assert delay == 60.0
+    assert delay == pytest.approx(60.0)
 
 
 def test_should_retry_has_permanent() -> None:
@@ -65,7 +67,7 @@ def test_should_retry_has_permanent() -> None:
     )
 
     assert should_retry is False
-    assert delay == 0.0
+    assert delay == pytest.approx(0.0)
 
 
 def test_should_retry_repeated_transient() -> None:
@@ -74,4 +76,4 @@ def test_should_retry_repeated_transient() -> None:
     )
 
     assert should_retry is False
-    assert delay == 60.0
+    assert delay == pytest.approx(60.0)

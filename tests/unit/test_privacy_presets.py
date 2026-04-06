@@ -107,7 +107,7 @@ def test_privacy_minimal_zeros_cost_in_summary(tmp_path: Path) -> None:
     collector.end_agent("A-1")
 
     summary = collector.get_metrics_summary()
-    assert summary["total_cost_usd"] == 0.0
+    assert summary["total_cost_usd"] == pytest.approx(0.0)
 
 
 def test_privacy_minimal_suppresses_cost_metric_writes(tmp_path: Path) -> None:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.router import ModelConfig, ProviderConfig, Tier, TierAwareRouter
 
 
@@ -27,7 +29,7 @@ def test_routing_weights_persistence(tmp_path: Path) -> None:
 
     # Verify file content
     data = json.loads(weights_file.read_text())
-    assert data["p1"] == 1.5
+    assert data["p1"] == pytest.approx(1.5)
 
     # Load into a new router instance
     router2 = TierAwareRouter()
@@ -41,4 +43,4 @@ def test_routing_weights_persistence(tmp_path: Path) -> None:
     router2.register_provider(p1_new)
 
     router2.load_weights(tmp_path)
-    assert router2.state.providers["p1"].routing_weight == 1.5
+    assert router2.state.providers["p1"].routing_weight == pytest.approx(1.5)

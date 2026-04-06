@@ -388,7 +388,7 @@ class TestUpgradeExecutorCreateBackups:
         target.write_text("original content")
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="target.py", operation="modify", new_content="new")])
-        asyncio.run(executor._create_backups(txn))
+        executor._create_backups(txn)
         assert txn.file_changes[0].backup_path is not None
         assert Path(txn.file_changes[0].backup_path).read_text() == "original content"
 
@@ -397,19 +397,19 @@ class TestUpgradeExecutorCreateBackups:
         target.write_text("to be deleted")
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="delete_me.py", operation="delete")])
-        asyncio.run(executor._create_backups(txn))
+        executor._create_backups(txn)
         assert txn.file_changes[0].backup_path is not None
 
     def test_no_backup_for_create(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="new_file.py", operation="create", new_content="x")])
-        asyncio.run(executor._create_backups(txn))
+        executor._create_backups(txn)
         assert txn.file_changes[0].backup_path is None
 
     def test_backup_skipped_when_file_missing(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="nonexistent.py", operation="modify", new_content="x")])
-        asyncio.run(executor._create_backups(txn))
+        executor._create_backups(txn)
         # No backup since the source file doesn't exist
         assert txn.file_changes[0].backup_path is None
 
@@ -420,13 +420,13 @@ class TestUpgradeExecutorApplyChanges:
     def test_create_writes_new_file(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="sub/new.py", operation="create", new_content="hello")])
-        asyncio.run(executor._apply_changes(txn))
+        executor._apply_changes(txn)
         assert (tmp_path / "sub" / "new.py").read_text() == "hello"
 
     def test_create_with_empty_content(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="empty.py", operation="create")])
-        asyncio.run(executor._apply_changes(txn))
+        executor._apply_changes(txn)
         assert (tmp_path / "empty.py").exists()
         assert (tmp_path / "empty.py").read_text() == ""
 
@@ -435,7 +435,7 @@ class TestUpgradeExecutorApplyChanges:
         target.write_text("old content")
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="mod.py", operation="modify", new_content="new content")])
-        asyncio.run(executor._apply_changes(txn))
+        executor._apply_changes(txn)
         assert target.read_text() == "new content"
 
     def test_modify_with_none_content_skips_write(self, tmp_path: Path) -> None:
@@ -443,7 +443,7 @@ class TestUpgradeExecutorApplyChanges:
         target.write_text("original")
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="unchanged.py", operation="modify", new_content=None)])
-        asyncio.run(executor._apply_changes(txn))
+        executor._apply_changes(txn)
         assert target.read_text() == "original"
 
     def test_delete_removes_file(self, tmp_path: Path) -> None:
@@ -451,13 +451,13 @@ class TestUpgradeExecutorApplyChanges:
         target.write_text("goodbye")
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="bye.py", operation="delete")])
-        asyncio.run(executor._apply_changes(txn))
+        executor._apply_changes(txn)
         assert not target.exists()
 
     def test_delete_nonexistent_file_is_noop(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="ghost.py", operation="delete")])
-        asyncio.run(executor._apply_changes(txn))  # Should not raise
+        executor._apply_changes(txn)  # Should not raise
 
 
 class TestUpgradeExecutorVerifyChanges:
@@ -468,13 +468,13 @@ class TestUpgradeExecutorVerifyChanges:
         target.write_text("x")
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="created.py", operation="create", new_content="x")])
-        asyncio.run(executor._verify_changes(txn))  # Should not raise
+        executor._verify_changes(txn)  # Should not raise
 
     def test_verify_create_raises_when_file_missing(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="missing.py", operation="create", new_content="x")])
         with pytest.raises(ValueError, match="missing.py"):
-            asyncio.run(executor._verify_changes(txn))
+            executor._verify_changes(txn)
 
     def test_verify_modify_raises_on_content_mismatch(self, tmp_path: Path) -> None:
         target = tmp_path / "mod.py"
@@ -482,7 +482,7 @@ class TestUpgradeExecutorVerifyChanges:
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="mod.py", operation="modify", new_content="expected")])
         with pytest.raises(ValueError, match="content mismatch"):
-            asyncio.run(executor._verify_changes(txn))
+            executor._verify_changes(txn)
 
     def test_verify_delete_raises_when_file_still_exists(self, tmp_path: Path) -> None:
         target = tmp_path / "zombie.py"
@@ -490,7 +490,7 @@ class TestUpgradeExecutorVerifyChanges:
         executor = _make_executor(tmp_path)
         txn = _make_transaction(file_changes=[FileChange(path="zombie.py", operation="delete")])
         with pytest.raises(ValueError, match="zombie.py"):
-            asyncio.run(executor._verify_changes(txn))
+            executor._verify_changes(txn)
 
 
 class TestUpgradeExecutorRollbackFromBackups:
@@ -507,7 +507,7 @@ class TestUpgradeExecutorRollbackFromBackups:
         backup.write_text("original content")
         txn.file_changes[0].backup_path = str(backup)
 
-        asyncio.run(executor._rollback_upgrade(txn))
+        executor._rollback_upgrade(txn)
 
         assert txn.status == ExecutorUpgradeStatus.ROLLED_BACK
         assert txn.rolled_back_at is not None
@@ -516,7 +516,7 @@ class TestUpgradeExecutorRollbackFromBackups:
     def test_rollback_sets_status_even_without_backups(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
         txn = _make_transaction()
-        asyncio.run(executor._rollback_upgrade(txn))
+        executor._rollback_upgrade(txn)
         assert txn.status == ExecutorUpgradeStatus.ROLLED_BACK
 
 
@@ -714,15 +714,12 @@ class TestErrorHandlingAutoRollback:
             file_changes=[fc],
         )
 
-        async def run() -> None:
-            # Monkey-patch _apply_changes to raise
-            async def bad_apply(t: UpgradeTransaction) -> None:
-                raise OSError("disk full")
+        # Monkey-patch _apply_changes to raise
+        def bad_apply(t: UpgradeTransaction) -> None:
+            raise OSError("disk full")
 
-            executor._apply_changes = bad_apply  # type: ignore[method-assign]
-            await executor._execute_upgrade(txn)
-
-        asyncio.run(run())
+        executor._apply_changes = bad_apply  # type: ignore[method-assign]
+        executor._execute_upgrade(txn)
         assert txn.status == ExecutorUpgradeStatus.FAILED
         assert "disk full" in txn.error_message
 
@@ -740,7 +737,7 @@ class TestUpgradeExecutorHelpers:
 
     def test_rollback_returns_false_for_unknown_transaction(self, tmp_path: Path) -> None:
         executor = _make_executor(tmp_path)
-        result = asyncio.run(executor.rollback("no-such-id"))
+        result = executor.rollback("no-such-id")
         assert result is False
 
     def test_rollback_returns_false_for_pending_transaction(self, tmp_path: Path) -> None:
@@ -748,7 +745,7 @@ class TestUpgradeExecutorHelpers:
         txn = _make_transaction()
         executor._transactions[txn.id] = txn
         # PENDING_REVIEW is not rollback-eligible
-        result = asyncio.run(executor.rollback(txn.id))
+        result = executor.rollback(txn.id)
         assert result is False
 
     def test_export_history_writes_json_file(self, tmp_path: Path) -> None:

@@ -33,7 +33,7 @@ if command -v qwen &>/dev/null; then
     AGENTS+=("qwen (Qwen / Alibaba / OpenRouter)")
 fi
 
-if [ ${#AGENTS[@]} -eq 0 ]; then
+if [[ ${#AGENTS[@]} -eq 0 ]]; then
     echo "No supported CLI agents found. Install at least one:"
     echo "  npm install -g @anthropic-ai/claude-code   # Claude Code"
     echo "  npm install -g @openai/codex               # Codex"

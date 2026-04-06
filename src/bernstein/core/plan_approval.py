@@ -216,7 +216,7 @@ class PlanStore:
                 data = json.loads(f.read_text())
                 plan = TaskPlan.from_dict(data)
                 self._plans[plan.id] = plan
-            except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            except (KeyError, ValueError) as exc:
                 logger.warning("Failed to load plan %s: %s", f.name, exc)
 
     def _save(self, plan: TaskPlan) -> None:

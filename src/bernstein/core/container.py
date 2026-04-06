@@ -196,7 +196,7 @@ class ContainerConfig:
     security: SecurityProfile = field(default_factory=SecurityProfile)
     network_mode: NetworkMode = NetworkMode.HOST
     extra_mounts: tuple[MountSpec, ...] = ()
-    labels: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    labels: dict[str, str] = field(default_factory=dict)
     env_allowlist: tuple[str, ...] = ()
     extra_hosts: tuple[str, ...] = ()
     two_phase_sandbox: TwoPhaseSandboxConfig | None = None

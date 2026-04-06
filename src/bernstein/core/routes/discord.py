@@ -134,7 +134,7 @@ async def discord_interactions(request: Request) -> JSONResponse:
     elif effective_command == "stop":
         return _handle_stop(request, payload)
     elif effective_command == "cost":
-        return await _handle_cost(request, payload)
+        return _handle_cost(request, payload)
     else:
         return _ephemeral(f"Unknown command: `{effective_command}`. Try `/bernstein run`, `status`, `stop`, or `cost`.")
 
@@ -233,7 +233,7 @@ def _handle_stop(request: Request, payload: dict[str, Any]) -> JSONResponse:
     return _ephemeral("Graceful shutdown requested. Bernstein will finish in-flight tasks and exit.")
 
 
-async def _handle_cost(request: Request, payload: dict[str, Any]) -> JSONResponse:
+def _handle_cost(request: Request, payload: dict[str, Any]) -> JSONResponse:
     """Handle ``/bernstein cost`` — show cumulative spend report.
 
     Reads cost data from the task store metrics and returns a summary.

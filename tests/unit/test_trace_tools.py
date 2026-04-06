@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.traces import (
     build_crash_bundle,
     preview_edit_conflict,
@@ -14,7 +16,7 @@ from bernstein.core.traces import (
 class TestScorePatchMatch:
     def test_identical_content_returns_confidence_one(self) -> None:
         result = score_patch_match("hello world", "hello world", "test.py")
-        assert result.confidence == 1.0
+        assert result.confidence == pytest.approx(1.0)
         assert result.matched is True
         assert result.diff_lines == 0
 

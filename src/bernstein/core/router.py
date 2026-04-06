@@ -327,7 +327,7 @@ class ResidencyAttestation:
 class RouterState:
     """Current state of available providers and tiers."""
 
-    providers: dict[str, ProviderConfig] = field(default_factory=lambda: dict[str, ProviderConfig]())
+    providers: dict[str, ProviderConfig] = field(default_factory=dict)
     preferred_tier: Tier = Tier.FREE
     fallback_enabled: bool = True
 
@@ -835,7 +835,7 @@ class TierAwareRouter:
                 if name in self.state.providers:
                     self.state.providers[name].routing_weight = float(weight)
             logger.debug("Router: loaded weights from %s", path)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError) as exc:
             logger.warning("Router: failed to load weights from %s: %s", path, exc)
 
     def validate_policy(self) -> list[str]:

@@ -8,6 +8,8 @@ import time
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from bernstein.adapters.aider import AiderAdapter
 from bernstein.adapters.amp import AmpAdapter
 from bernstein.adapters.codex import CodexAdapter
@@ -258,5 +260,5 @@ class TestDefaultTimeout:
 
         assert result.timeout_timer is not None
         assert isinstance(result.timeout_timer, threading.Timer)
-        assert result.timeout_timer.interval == 1800.0
+        assert result.timeout_timer.interval == pytest.approx(1800.0)
         result.timeout_timer.cancel()

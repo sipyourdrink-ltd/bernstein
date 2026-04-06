@@ -136,7 +136,7 @@ class AuditLog:
                 if isinstance(entry, dict) and "hmac" in entry:
                     return str(entry["hmac"])
             except (json.JSONDecodeError, KeyError):
-                pass
+                pass  # Malformed audit line; continue scanning
         return _GENESIS_HMAC
 
     # -- write --------------------------------------------------------------

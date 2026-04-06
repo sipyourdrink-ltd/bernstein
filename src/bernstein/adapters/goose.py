@@ -120,7 +120,7 @@ class GooseAdapter(CLIAdapter):
             if result.returncode == 0:
                 return result.stdout.strip()
         except Exception:
-            pass
+            pass  # Version detection failed; treat as unavailable
         return None
 
     def is_available(self) -> bool:

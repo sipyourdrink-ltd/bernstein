@@ -275,6 +275,7 @@ class Task:
     max_retries: int = 3  # Maximum retries before permanent failure
     retry_delay_s: float = 0.0  # Delay between retries (exponential backoff base)
     terminal_reason: str | None = None  # Why the previous attempt ended (from Claude Code)
+    subtask_wait_started_at: float | None = None  # Epoch when task entered WAITING_FOR_SUBTASKS
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Task:
@@ -361,6 +362,7 @@ class Task:
             max_retries=raw.get("max_retries", 3),
             retry_delay_s=raw.get("retry_delay_s", 0.0),
             terminal_reason=raw.get("terminal_reason"),
+            subtask_wait_started_at=raw.get("subtask_wait_started_at"),
         )
 
 
@@ -450,6 +452,8 @@ class ModelCostBreakdown:
         total_cost_usd: Sum of all costs incurred using this model.
         total_tokens: Total input + output + cached tokens consumed by this model.
         invocation_count: Number of times this model was invoked.
+        input_tokens: Total input (prompt) tokens consumed by this model.
+        output_tokens: Total output (completion) tokens consumed by this model.
         cache_read_tokens: Total tokens served from prompt cache (read).
         cache_write_tokens: Total tokens written to prompt cache (creation).
     """
@@ -458,6 +462,8 @@ class ModelCostBreakdown:
     total_cost_usd: float
     total_tokens: int
     invocation_count: int
+    input_tokens: int = 0
+    output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
 
@@ -468,6 +474,8 @@ class ModelCostBreakdown:
             "total_cost_usd": self.total_cost_usd,
             "total_tokens": self.total_tokens,
             "invocation_count": self.invocation_count,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
             "cache_read_tokens": self.cache_read_tokens,
             "cache_write_tokens": self.cache_write_tokens,
         }
@@ -480,6 +488,8 @@ class ModelCostBreakdown:
             total_cost_usd=float(d["total_cost_usd"]),
             total_tokens=int(d["total_tokens"]),
             invocation_count=int(d["invocation_count"]),
+            input_tokens=int(d.get("input_tokens", 0)),
+            output_tokens=int(d.get("output_tokens", 0)),
             cache_read_tokens=int(d.get("cache_read_tokens", 0)),
             cache_write_tokens=int(d.get("cache_write_tokens", 0)),
         )

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.cost import forecast_planned_backlog
 from bernstein.core.cost_tracker import CostTracker
 from bernstein.core.models import Complexity, Scope, Task, TaskStatus
@@ -38,9 +40,9 @@ def test_cost_tracker_per_model_breakdown() -> None:
     # Should be sorted by cost descending: opus (0.005) then sonnet (0.003)
     assert len(breakdown) == 2
     assert breakdown[0].model == "opus"
-    assert round(breakdown[0].total_cost_usd, 6) == 0.005
+    assert round(breakdown[0].total_cost_usd, 6) == pytest.approx(0.005)
     assert breakdown[1].model == "sonnet"
-    assert round(breakdown[1].total_cost_usd, 6) == 0.003
+    assert round(breakdown[1].total_cost_usd, 6) == pytest.approx(0.003)
 
 
 def test_cost_tracker_budget_check() -> None:
@@ -74,9 +76,9 @@ def test_cost_tracker_agent_summaries() -> None:
     # Sorted by cost descending: agent-B (0.005) then agent-A (0.0045)
     assert len(summaries) == 2
     assert summaries[0].agent_id == "agent-B"
-    assert round(summaries[0].total_cost_usd, 6) == 0.005
+    assert round(summaries[0].total_cost_usd, 6) == pytest.approx(0.005)
     assert summaries[1].agent_id == "agent-A"
-    assert round(summaries[1].total_cost_usd, 6) == 0.0045
+    assert round(summaries[1].total_cost_usd, 6) == pytest.approx(0.0045)
     assert summaries[1].task_count == 2
 
 
@@ -92,7 +94,7 @@ def test_cost_tracker_persistence(tmp_path: Path) -> None:
     loaded = CostTracker.load(tmp_path, "run-123")
     assert loaded is not None
     assert loaded.run_id == "run-123"
-    assert loaded.budget_usd == 5.0
+    assert loaded.budget_usd == pytest.approx(5.0)
     assert round(loaded.spent_usd, 6) == round(tracker.spent_usd, 6)
     assert len(loaded.usages) == 1
     assert loaded.usages[0].agent_id == "a1"
@@ -117,7 +119,7 @@ def test_cost_tracker_projection() -> None:
     # Projected total = 0.015 + (0.015 * 10) = 0.015 + 0.15 = 0.165
     proj2 = tracker.project(tasks_done=1, tasks_remaining=10)
     assert proj2.within_budget is False
-    assert proj2.confidence == 0.2  # 1/5
+    assert proj2.confidence == pytest.approx(0.2)  # 1/5
 
 
 def test_forecast_planned_backlog_uses_non_terminal_tasks_only(tmp_path: Path) -> None:
@@ -145,7 +147,7 @@ def test_forecast_planned_backlog_uses_non_terminal_tasks_only(tmp_path: Path) -
     forecast = forecast_planned_backlog(tasks, metrics_dir=tmp_path, current_spend_usd=0.5, budget_usd=2.0)
 
     assert forecast.task_count == 1
-    assert forecast.current_spend_usd == 0.5
+    assert forecast.current_spend_usd == pytest.approx(0.5)
     assert forecast.projected_total_cost_usd > 0.5
     assert forecast.within_budget is True
 

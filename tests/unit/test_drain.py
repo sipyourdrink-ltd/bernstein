@@ -29,7 +29,7 @@ def test_drain_phase_lifecycle_fields() -> None:
     assert phase.name == "freeze"
     assert phase.status == "running"
     assert phase.detail == "working"
-    assert phase.finished_at == 1.0
+    assert phase.finished_at == pytest.approx(1.0)
 
 
 def test_drain_report_defaults() -> None:

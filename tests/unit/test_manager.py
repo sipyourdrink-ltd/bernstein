@@ -402,7 +402,7 @@ class TestParseUpgradeDetails:
         assert details.risk_assessment.breaking_changes is True
         assert details.rollback_plan.steps == ["Step 1", "Step 2"]
         assert details.rollback_plan.revert_commit == "abc123"
-        assert details.cost_estimate_usd == 1.50
+        assert details.cost_estimate_usd == pytest.approx(1.50)
 
     def test_minimal_upgrade_details(self) -> None:
         """Empty dict should produce default upgrade details."""

@@ -28,7 +28,7 @@ def test_record_call_updates_session_summary_and_persists(tmp_path: Path) -> Non
     summary = tracker.session_summary("agent-1")
     assert summary["calls"] == 1
     assert summary["total_tokens"] == 150
-    assert summary["total_cost_usd"] == 0.42
+    assert summary["total_cost_usd"] == pytest.approx(0.42)
 
     calls_path = tmp_path / "api_calls.jsonl"
     summary_path = tmp_path / "summary.json"
@@ -48,9 +48,9 @@ def test_record_tier_usage_and_budget_checks(tmp_path: Path) -> None:
 
     tier = tracker.tier_summary()["fast"]
     assert tier.task_count == 2
-    assert tier.total_cost_usd == 2.0
-    assert tier.avg_cost_per_task == 1.0
-    assert tracker.monthly_budget_remaining(10.0) == 8.0
+    assert tier.total_cost_usd == pytest.approx(2.0)
+    assert tier.avg_cost_per_task == pytest.approx(1.0)
+    assert tracker.monthly_budget_remaining(10.0) == pytest.approx(8.0)
     assert tracker.is_over_budget(1.0) is True
 
 

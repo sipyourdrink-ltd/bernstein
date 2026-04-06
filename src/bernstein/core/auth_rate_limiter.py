@@ -116,41 +116,115 @@ class RequestRateLimiter:
             del self._hits[key]
 
 
-class RequestRateLimitMiddleware(BaseHTTPMiddleware):
-    """Enforce configured per-endpoint request limits from ``bernstein.yaml``."""
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-    def __init__(self, app: ASGIApp, limiter: RequestRateLimiter | None = None) -> None:
+# Default rate limits per HTTP method group (per minute)
+DEFAULT_WRITE_RPM = 30
+DEFAULT_READ_RPM = 300
+DEFAULT_SSE_MAX_CONCURRENT = 10
+
+
+class RequestRateLimitMiddleware(BaseHTTPMiddleware):
+    """Enforce configured per-endpoint request limits from ``bernstein.yaml``.
+
+    When no seed_config bucket matches, applies sensible defaults:
+    - POST/PUT/DELETE: 30 requests/minute per client
+    - GET: 300 requests/minute per client
+    - /events SSE: max 10 concurrent connections
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        limiter: RequestRateLimiter | None = None,
+        *,
+        write_rpm: int = DEFAULT_WRITE_RPM,
+        read_rpm: int = DEFAULT_READ_RPM,
+        sse_max_concurrent: int = DEFAULT_SSE_MAX_CONCURRENT,
+    ) -> None:
         super().__init__(app)
         self._limiter = limiter or RequestRateLimiter()
+        self._write_rpm = write_rpm
+        self._read_rpm = read_rpm
+        self._sse_max_concurrent = sse_max_concurrent
+        self._sse_connections: int = 0
+
+    @property
+    def sse_connections(self) -> int:
+        """Current number of active SSE connections."""
+        return self._sse_connections
 
     async def dispatch(
         self,
         request: Request,
         call_next: Callable[[Request], Awaitable[StarletteResponse]],
     ) -> StarletteResponse:
+        path = request.url.path
+        method = request.method.upper()
+
+        # SSE concurrency limit for /events endpoints
+        if path in ("/events", "/events/cost") and method == "GET":
+            if self._sse_connections >= self._sse_max_concurrent:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "detail": "Too many concurrent SSE connections",
+                        "bucket": "sse",
+                        "max_concurrent": self._sse_max_concurrent,
+                    },
+                    headers={"Retry-After": "5"},
+                )
+            self._sse_connections += 1
+            try:
+                return await call_next(request)
+            finally:
+                self._sse_connections = max(0, self._sse_connections - 1)
+
+        # Try seed_config buckets first
         seed_config = getattr(request.app.state, "seed_config", None)
         rate_limit = getattr(seed_config, "rate_limit", None)
-        if rate_limit is None or not hasattr(rate_limit, "match_request"):
-            return await call_next(request)
+        if rate_limit is not None and hasattr(rate_limit, "match_request"):
+            bucket = rate_limit.match_request(path, method)
+            if bucket is not None:
+                client_id = _request_client_id(request)
+                retry_after = self._limiter.check(bucket.name, client_id, bucket.requests, bucket.window_seconds)
+                if retry_after is not None:
+                    retry_after_header = str(math.ceil(retry_after))
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "detail": f"Rate limit exceeded for bucket '{bucket.name}'",
+                            "bucket": bucket.name,
+                        },
+                        headers={"Retry-After": retry_after_header},
+                    )
+                return await call_next(request)
 
-        bucket = rate_limit.match_request(request.url.path, request.method)
-        if bucket is None:
-            return await call_next(request)
-
+        # Default method-based rate limits
         client_id = _request_client_id(request)
-        retry_after = self._limiter.check(bucket.name, client_id, bucket.requests, bucket.window_seconds)
-        if retry_after is None:
+        if method in _WRITE_METHODS:
+            bucket_name = "default_write"
+            rpm = self._write_rpm
+        elif method in _READ_METHODS:
+            bucket_name = "default_read"
+            rpm = self._read_rpm
+        else:
             return await call_next(request)
 
-        retry_after_header = str(math.ceil(retry_after))
-        return JSONResponse(
-            status_code=429,
-            content={
-                "detail": f"Rate limit exceeded for bucket '{bucket.name}'",
-                "bucket": bucket.name,
-            },
-            headers={"Retry-After": retry_after_header},
-        )
+        retry_after = self._limiter.check(bucket_name, client_id, rpm, 60)
+        if retry_after is not None:
+            retry_after_header = str(math.ceil(retry_after))
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": f"Rate limit exceeded for bucket '{bucket_name}'",
+                    "bucket": bucket_name,
+                },
+                headers={"Retry-After": retry_after_header},
+            )
+
+        return await call_next(request)
 
 
 def _request_client_id(request: Request) -> str:

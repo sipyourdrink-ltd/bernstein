@@ -145,7 +145,7 @@ def _get_current_user(request: Request) -> Any:
 
 
 @router.get("/providers")
-async def auth_providers(request: Request) -> AuthProvidersResponse:
+def auth_providers(request: Request) -> AuthProvidersResponse:
     """List available authentication providers."""
     svc = getattr(request.app.state, "auth_service", None)
     legacy = getattr(request.app.state, "legacy_auth_token", None)
@@ -309,7 +309,7 @@ window.location.href = '/dashboard';
 
 
 @router.get("/saml/metadata", responses={503: {"description": "SSO authentication not configured"}})
-async def saml_metadata(request: Request) -> Response:
+def saml_metadata(request: Request) -> Response:
     """SAML SP metadata endpoint for IdP configuration."""
     svc = _get_auth_service(request)
     metadata = svc.get_saml_sp_metadata()
@@ -325,7 +325,7 @@ async def saml_metadata(request: Request) -> Response:
     "/cli/device",
     responses={503: {"description": "SSO authentication not configured"}},
 )
-async def device_code_request(request: Request, body: DeviceCodeRequest) -> DeviceCodeResponse:
+def device_code_request(request: Request, body: DeviceCodeRequest) -> DeviceCodeResponse:
     """Initiate device authorization flow for CLI login.
 
     The CLI calls this to get a device_code and user_code.
@@ -349,7 +349,7 @@ async def device_code_request(request: Request, body: DeviceCodeRequest) -> Devi
     "/cli/token",
     responses={503: {"description": "SSO authentication not configured"}},
 )
-async def device_token_poll(request: Request, body: DevicePollRequest) -> DevicePollResponse:
+def device_token_poll(request: Request, body: DevicePollRequest) -> DevicePollResponse:
     """Poll for device authorization status.
 
     Returns the access token once the user has authorized the device code.
@@ -380,7 +380,7 @@ async def device_token_poll(request: Request, body: DevicePollRequest) -> Device
         503: {"description": "SSO authentication not configured"},
     },
 )
-async def device_authorize(request: Request, body: DeviceAuthorizeRequest) -> JSONResponse:
+def device_authorize(request: Request, body: DeviceAuthorizeRequest) -> JSONResponse:
     """Authorize a device code (called from web dashboard after SSO login).
 
     Requires an authenticated user session.
@@ -403,12 +403,12 @@ async def device_authorize(request: Request, body: DeviceAuthorizeRequest) -> JS
 
 
 @router.get("/me", responses={401: {"description": "Authentication required"}})
-async def get_profile(request: Request) -> UserProfileResponse:
+def get_profile(request: Request) -> UserProfileResponse:
     """Get the current authenticated user's profile."""
     user = _get_current_user(request)
     from bernstein.core.auth import _ROLE_PERMISSIONS
 
-    permissions = list(_ROLE_PERMISSIONS.get(user.role, frozenset()))
+    permissions = _ROLE_PERMISSIONS.get(user.role, frozenset())
 
     return UserProfileResponse(
         id=user.id,
@@ -422,7 +422,7 @@ async def get_profile(request: Request) -> UserProfileResponse:
 
 
 @router.post("/logout", responses={503: {"description": "SSO authentication not configured"}})
-async def logout(request: Request) -> JSONResponse:
+def logout(request: Request) -> JSONResponse:
     """Logout and revoke the current session."""
     claims = getattr(request.state, "auth_claims", {})
     session_id = claims.get("session_id", "")
@@ -444,7 +444,7 @@ async def logout(request: Request) -> JSONResponse:
     "/group-mappings",
     responses={503: {"description": "SSO authentication not configured"}},
 )
-async def get_group_mappings(request: Request) -> GroupMappingsResponse:
+def get_group_mappings(request: Request) -> GroupMappingsResponse:
     """Get current SSO group → role mappings."""
     svc = _get_auth_service(request)
     mappings = svc.group_role_map
@@ -460,7 +460,7 @@ async def get_group_mappings(request: Request) -> GroupMappingsResponse:
         503: {"description": "SSO authentication not configured"},
     },
 )
-async def update_group_mappings(request: Request, body: GroupMappingsUpdateRequest) -> JSONResponse:
+def update_group_mappings(request: Request, body: GroupMappingsUpdateRequest) -> JSONResponse:
     """Update SSO group → role mappings (admin only)."""
     user = _get_current_user(request)
     if not user.has_permission("auth:manage"):
@@ -504,7 +504,7 @@ async def update_group_mappings(request: Request, body: GroupMappingsUpdateReque
         503: {"description": "SSO authentication not configured"},
     },
 )
-async def list_users(request: Request) -> JSONResponse:
+def list_users(request: Request) -> JSONResponse:
     """List all users (admin only)."""
     user = _get_current_user(request)
     if not user.has_permission("auth:manage"):

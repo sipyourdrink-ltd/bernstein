@@ -96,7 +96,12 @@ def _print_rich_tables(analysis: TokenAnalysis) -> None:
 
         for ts in analysis.top_5_hungry:
             short = ts.title[:40] + ("..." if len(ts.title) > 40 else "")
-            ratio_style = "red" if ts.io_ratio >= 10.0 else ("yellow" if ts.io_ratio >= 3.0 else "green")
+            if ts.io_ratio >= 10.0:
+                ratio_style = "red"
+            elif ts.io_ratio >= 3.0:
+                ratio_style = "yellow"
+            else:
+                ratio_style = "green"
             table.add_row(
                 short,
                 ts.model,

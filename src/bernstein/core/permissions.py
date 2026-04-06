@@ -3,13 +3,19 @@
 Defines a permission matrix that controls which file paths each agent role
 may modify and which shell commands are allowed or blocked.  The guardrails
 system uses these permissions to hard-block diffs that violate role boundaries.
+
+Path traversal hardening: all file paths are resolved to absolute paths and
+verified to reside within the project root or worktree before permission
+checks are applied.  Paths resolving outside the allowed root are rejected.
 """
 
 from __future__ import annotations
 
 import fnmatch
 import logging
+import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from bernstein.core.policy_engine import DecisionType, PermissionDecision
 
@@ -42,6 +48,92 @@ class AgentPermissions:
     denied_paths: tuple[str, ...] = ()
     allowed_commands: tuple[str, ...] = ()
     denied_commands: tuple[str, ...] = ()
+
+
+# ---------------------------------------------------------------------------
+# Path traversal hardening
+# ---------------------------------------------------------------------------
+
+
+def resolve_and_validate_path(
+    filepath: str,
+    project_root: str | Path | None = None,
+) -> tuple[str, bool]:
+    """Resolve a file path to a safe relative path and validate containment.
+
+    Resolves ``..``, symlinks (via ``os.path.realpath``), and ensures the
+    resulting path does not escape the project root.  Returns the normalized
+    relative path and a boolean indicating whether the path is safe.
+
+    Args:
+        filepath: Raw file path (may be relative or absolute).
+        project_root: Absolute path of the project root directory.
+            When ``None``, uses the current working directory.
+
+    Returns:
+        Tuple of (normalized_relative_path, is_safe).  ``is_safe`` is
+        ``False`` when the resolved path escapes the project root.
+    """
+    if project_root is None:
+        root = Path.cwd()
+    else:
+        root = Path(project_root).resolve()
+
+    # Strip leading ./ for normalization
+    cleaned = filepath.lstrip("./")
+
+    # Build absolute path
+    if os.path.isabs(cleaned):
+        abs_path = Path(os.path.realpath(cleaned))
+    else:
+        abs_path = Path(os.path.realpath(root / cleaned))
+
+    # Check containment: resolved path must be under root
+    try:
+        rel = abs_path.relative_to(root)
+    except ValueError:
+        # Path escapes the project root
+        logger.warning(
+            "Path traversal blocked: %r resolves to %s (outside %s)",
+            filepath,
+            abs_path,
+            root,
+        )
+        return filepath, False
+
+    return str(rel), True
+
+
+def has_path_traversal(filepath: str) -> bool:
+    """Quick check for obvious path traversal patterns.
+
+    Detects ``..`` components, absolute paths, null bytes, and other
+    traversal indicators without requiring a project root for resolution.
+
+    Args:
+        filepath: The file path to check.
+
+    Returns:
+        True if the path contains suspicious traversal patterns.
+    """
+    # Null byte injection
+    if "\x00" in filepath:
+        return True
+
+    # Normalise path separators
+    normalized = filepath.replace("\\", "/")
+
+    # Direct .. traversal (including encoded variants)
+    segments = normalized.split("/")
+    if ".." in segments:
+        return True
+
+    # URL-encoded traversal (%2e%2e or %2f)
+    lower = filepath.lower()
+    if "%2e%2e" in lower or "%2f" in lower:
+        return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -144,8 +236,15 @@ def path_matches_any(filepath: str, patterns: tuple[str, ...]) -> bool:
     return False
 
 
-def is_path_allowed(filepath: str, permissions: AgentPermissions) -> bool:
+def is_path_allowed(
+    filepath: str,
+    permissions: AgentPermissions,
+    project_root: str | Path | None = None,
+) -> bool:
     """Check whether a single file path is allowed by the permission set.
+
+    Applies path traversal hardening: rejects paths with ``..`` traversal,
+    null bytes, or paths resolving outside the project root.
 
     Denied paths are checked first and always win.  If ``allowed_paths`` is
     empty the path is allowed (unless denied).
@@ -153,10 +252,22 @@ def is_path_allowed(filepath: str, permissions: AgentPermissions) -> bool:
     Args:
         filepath: Relative file path.
         permissions: Permission rules to apply.
+        project_root: Absolute path of the project root (optional).
 
     Returns:
         True if the path is permitted.
     """
+    # Path traversal quick-check
+    if has_path_traversal(filepath):
+        logger.warning("Path traversal detected in %r — denied", filepath)
+        return False
+
+    # Resolve and validate containment when a project root is available
+    if project_root is not None:
+        filepath, is_safe = resolve_and_validate_path(filepath, project_root)
+        if not is_safe:
+            return False
+
     # Denied paths always win
     if permissions.denied_paths and path_matches_any(filepath, permissions.denied_paths):
         return False

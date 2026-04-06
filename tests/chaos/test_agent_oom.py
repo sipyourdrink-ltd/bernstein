@@ -189,7 +189,7 @@ async def test_oom_agent_worktree_preserved(
         assert session_id is not None, "Agent session not found"
 
         # Capture the worktree path before it dies
-        worktree_path = orch._spawner.get_worktree_path(session_id)
+        _worktree_path = orch._spawner.get_worktree_path(session_id)
 
         # Wait for OOM exit
         await asyncio.sleep(2)

@@ -102,6 +102,6 @@ def rename_session(new_name: str, workdir: Path) -> bool:
         raw["name"] = new_name
         session_path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
     except (OSError, json.JSONDecodeError):
-        pass
+        pass  # Session file update is best-effort
 
     return True

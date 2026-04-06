@@ -161,7 +161,7 @@ class EvolveMixin:
         )
 
         # Step 4: PLAN
-        focus_areas: list[str] = list(self._EVOLVE_FOCUS_AREAS)
+        focus_areas: list[str] = self._EVOLVE_FOCUS_AREAS
         focus_idx: int = cycle_count % len(focus_areas)
         focus: str = str(focus_areas[focus_idx])
         self._evolve_spawn_manager(

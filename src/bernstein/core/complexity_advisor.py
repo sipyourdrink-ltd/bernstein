@@ -240,7 +240,7 @@ def _cross_file_dep_score(owned_files: list[str], workdir: Path) -> float:
     # Build a set of module stems we're interested in
     module_stems = {p.stem for p in paths}
     # Also include dotted package paths relative to workdir
-    module_dotted = set[str]()
+    module_dotted: set[str] = set()
     for p in paths:
         try:
             rel = p.relative_to(workdir)

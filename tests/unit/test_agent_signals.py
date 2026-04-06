@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 class TestAgentHeartbeat:
     def test_default_fields(self) -> None:
         hb = AgentHeartbeat(timestamp=1000.0)
-        assert hb.timestamp == 1000.0
+        assert hb.timestamp == pytest.approx(1000.0)
         assert hb.files_changed == 0
         assert hb.status == "working"
         assert hb.current_file == ""

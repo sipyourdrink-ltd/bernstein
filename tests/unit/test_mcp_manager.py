@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -583,8 +584,8 @@ class TestSpawnerMCPManagerIntegration:
         self,
         mock_popen: MagicMock,
         tmp_path: Path,
-        make_task: object,
-        mock_adapter_factory: object,
+        make_task: Callable,
+        mock_adapter_factory: Callable,
     ) -> None:
         from bernstein.core.spawner import AgentSpawner
 
@@ -597,7 +598,7 @@ class TestSpawnerMCPManagerIntegration:
         mgr = MCPManager([cfg])
         mgr.start_all()
 
-        adapter = mock_adapter_factory()  # type: ignore[operator]
+        adapter = mock_adapter_factory()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
 
@@ -608,7 +609,7 @@ class TestSpawnerMCPManagerIntegration:
             mcp_manager=mgr,
         )
 
-        task = make_task(mcp_servers=["github"])  # type: ignore[operator]
+        task = make_task(mcp_servers=["github"])
         spawner.spawn_for_tasks([task])
 
         call_kwargs = adapter.spawn.call_args.kwargs
@@ -621,8 +622,8 @@ class TestSpawnerMCPManagerIntegration:
         self,
         mock_popen: MagicMock,
         tmp_path: Path,
-        make_task: object,
-        mock_adapter_factory: object,
+        make_task: Callable,
+        mock_adapter_factory: Callable,
     ) -> None:
         from bernstein.core.spawner import AgentSpawner
 
@@ -638,7 +639,7 @@ class TestSpawnerMCPManagerIntegration:
         mgr = MCPManager(configs)
         mgr.start_all()
 
-        adapter = mock_adapter_factory()  # type: ignore[operator]
+        adapter = mock_adapter_factory()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
 
@@ -649,7 +650,7 @@ class TestSpawnerMCPManagerIntegration:
             mcp_manager=mgr,
         )
 
-        task = make_task()  # type: ignore[operator]
+        task = make_task()
         spawner.spawn_for_tasks([task])
 
         call_kwargs = adapter.spawn.call_args.kwargs

@@ -76,14 +76,14 @@ class TestTokenBreakdown:
     def test_percentages_zero_total(self) -> None:
         bd = TokenBreakdown()
         pcts = bd.percentages()
-        assert pcts["total"] == 0.0
+        assert pcts["total"] == pytest.approx(0.0)
 
     def test_percentages(self) -> None:
         bd = TokenBreakdown(system_prompt=100, task_description=200, other=200, total=500)
         pcts = bd.percentages()
-        assert pcts["system_prompt"] == 20.0
-        assert pcts["task_description"] == 40.0
-        assert pcts["other"] == 40.0
+        assert pcts["system_prompt"] == pytest.approx(20.0)
+        assert pcts["task_description"] == pytest.approx(40.0)
+        assert pcts["other"] == pytest.approx(40.0)
 
     def test_category_names(self) -> None:
         bd = TokenBreakdown(system_prompt=100, context_files=50, other=0, total=150)

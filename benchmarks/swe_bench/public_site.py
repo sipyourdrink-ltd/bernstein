@@ -306,19 +306,28 @@ def render_public_html(context: PublicBenchmarkContext) -> str:
   </section>
 """
     else:
-        preview_rows = "\n".join(
-            (
+        _preview_parts: list[str] = []
+        for name in PUBLIC_SCENARIO_ORDER:
+            summary = context.summaries.get(name)
+            source_type = escape(summary.source_type if summary is not None else "missing")
+            verified = "Yes" if summary is not None and summary.verified else "No"
+            if summary is not None and summary.sample_size:
+                sample_count = summary.sample_size
+            elif summary is not None:
+                sample_count = summary.total_instances
+            else:
+                sample_count = 0
+            notes = escape(summary.notes if summary is not None and summary.notes else "Awaiting artifact")
+            _preview_parts.append(
                 "<tr>"
                 f"<td>{escape(SCENARIO_LABELS.get(name, name))}</td>"
-                f"<td>{escape(summary.source_type if summary is not None else 'missing')}</td>"
-                f"<td>{'Yes' if summary is not None and summary.verified else 'No'}</td>"
-                f"<td>{(summary.sample_size if summary is not None and summary.sample_size else (summary.total_instances if summary is not None else 0))}</td>"
-                f"<td>{escape(summary.notes if summary is not None and summary.notes else 'Awaiting artifact')}</td>"
+                f"<td>{source_type}</td>"
+                f"<td>{verified}</td>"
+                f"<td>{sample_count}</td>"
+                f"<td>{notes}</td>"
                 "</tr>"
             )
-            for name in PUBLIC_SCENARIO_ORDER
-            for summary in [context.summaries.get(name)]
-        )
+        preview_rows = "\n".join(_preview_parts)
         blocker_html = "".join(f"<li>{escape(blocker)}</li>" for blocker in context.blockers)
         results_section = f"""
   <section id="artifact-state" style="padding: 0; margin-bottom: var(--space-16);">

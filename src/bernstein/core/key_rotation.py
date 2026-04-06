@@ -449,7 +449,7 @@ class KeyRotationManager:
                     if isinstance(kdata, dict):
                         self._keys[kid] = ManagedKey.from_dict(kdata)
             logger.info("Loaded %d key(s) from %s", len(self._keys), self._state_path)
-        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+        except (KeyError, ValueError) as exc:
             logger.warning("Failed to load key rotation state: %s", exc)
 
 

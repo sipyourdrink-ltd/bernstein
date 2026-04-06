@@ -54,7 +54,7 @@ def test_slo_tracker_update_from_collector() -> None:
 
     tracker.update_from_collector(collector)
 
-    assert tracker.targets["task_success"].current == 0.5
-    assert tracker.targets["merge_success"].current == 0.5
+    assert tracker.targets["task_success"].current == pytest.approx(0.5)
+    assert tracker.targets["merge_success"].current == pytest.approx(0.5)
     assert tracker.error_budget.total_tasks == 2
     assert tracker.error_budget.failed_tasks == 1

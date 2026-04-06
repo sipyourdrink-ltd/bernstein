@@ -17,7 +17,7 @@ def test_session_state_to_from_dict() -> None:
         cost_spent=1.5,
     )
     data = state.to_dict()
-    assert data["saved_at"] == 123456789.0
+    assert data["saved_at"] == pytest.approx(123456789.0)
     assert data["goal"] == "test goal"
 
     new_state = SessionState.from_dict(data)
@@ -58,7 +58,7 @@ def test_save_and_load_session_round_trip(tmp_path: Path) -> None:
     assert loaded.goal == "persistent goal"
     assert loaded.completed_task_ids == ["A"]
     assert loaded.pending_task_ids == ["B"]
-    assert loaded.cost_spent == 2.0
+    assert loaded.cost_spent == pytest.approx(2.0)
 
 
 def test_load_session_missing_file(tmp_path: Path) -> None:

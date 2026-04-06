@@ -18,9 +18,9 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.context_fallback import (
-    CompactionResult,
     _CODE_BLOCK_MAX_LINES,
     _FILE_LISTING_MAX_ENTRIES,
+    CompactionResult,
     _remove_duplicate_sections,
     _strip_verbose_tracebacks,
     _truncate_file_listings,
@@ -29,7 +29,6 @@ from bernstein.core.context_fallback import (
     should_compact,
 )
 from bernstein.core.rate_limit_tracker import RateLimitTracker
-
 
 # ---------------------------------------------------------------------------
 # compact_prompt: overall size reduction

@@ -402,7 +402,7 @@ def test_model_tier_entry_has_required_fields() -> None:
         total_usd_per_1m=9.0,
     )
     assert entry.model == "sonnet"
-    assert entry.total_usd_per_1m == 9.0
+    assert entry.total_usd_per_1m == pytest.approx(9.0)
 
 
 def test_model_tier_cache_info_configured() -> None:
@@ -523,9 +523,9 @@ class TestGroupTraceStepsIntoBatches:
         ]
         batches = group_trace_steps_into_batches(steps)
 
-        assert batches[0].start_ts == 1000.0
+        assert batches[0].start_ts == pytest.approx(1000.0)
         assert batches[0].end_ts == pytest.approx(1000.5)
-        assert batches[1].start_ts == 1002.0
+        assert batches[1].start_ts == pytest.approx(1002.0)
         assert batches[1].end_ts == pytest.approx(1002.3)
 
     def test_fail_step_produces_abort_batch(self) -> None:

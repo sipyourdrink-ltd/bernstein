@@ -506,7 +506,7 @@ class TestParseJudgeResponse:
         raw = '{"verdict": "accept", "confidence": 0.95, "feedback": "Looks good."}'
         v = _parse_judge_response(raw)
         assert v.verdict == "accept"
-        assert v.confidence == 0.95
+        assert v.confidence == pytest.approx(0.95)
         assert v.feedback == "Looks good."
         assert v.flagged_for_review is False
 
@@ -514,7 +514,7 @@ class TestParseJudgeResponse:
         raw = '{"verdict": "retry", "confidence": 0.8, "feedback": "Missing tests."}'
         v = _parse_judge_response(raw)
         assert v.verdict == "retry"
-        assert v.confidence == 0.8
+        assert v.confidence == pytest.approx(0.8)
         assert v.feedback == "Missing tests."
         assert v.flagged_for_review is False
 
@@ -522,14 +522,14 @@ class TestParseJudgeResponse:
         raw = '{"verdict": "accept", "confidence": 0.5, "feedback": "Unsure."}'
         v = _parse_judge_response(raw)
         assert v.verdict == "accept"
-        assert v.confidence == 0.5
+        assert v.confidence == pytest.approx(0.5)
         assert v.flagged_for_review is True
 
     def test_handles_markdown_fences(self) -> None:
         raw = '```json\n{"verdict": "accept", "confidence": 0.9, "feedback": "OK"}\n```'
         v = _parse_judge_response(raw)
         assert v.verdict == "accept"
-        assert v.confidence == 0.9
+        assert v.confidence == pytest.approx(0.9)
 
     def test_extracts_json_from_surrounding_text(self) -> None:
         raw = 'Here is my response: {"verdict": "retry", "confidence": 0.6, "feedback": "Fix X"} done.'
@@ -541,17 +541,17 @@ class TestParseJudgeResponse:
         raw = "This is not JSON at all"
         v = _parse_judge_response(raw)
         assert v.verdict == "retry"
-        assert v.confidence == 0.0
+        assert v.confidence == pytest.approx(0.0)
         assert v.flagged_for_review is True
 
     def test_clamps_confidence_to_bounds(self) -> None:
         raw = '{"verdict": "accept", "confidence": 1.5, "feedback": ""}'
         v = _parse_judge_response(raw)
-        assert v.confidence == 1.0
+        assert v.confidence == pytest.approx(1.0)
 
         raw2 = '{"verdict": "accept", "confidence": -0.3, "feedback": ""}'
         v2 = _parse_judge_response(raw2)
-        assert v2.confidence == 0.0
+        assert v2.confidence == pytest.approx(0.0)
 
     def test_normalizes_unknown_verdict_to_retry(self) -> None:
         raw = '{"verdict": "maybe", "confidence": 0.8, "feedback": "Not sure."}'
@@ -605,7 +605,7 @@ class TestJudgeTask:
             verdict = await judge_task(task, tmp_path, "Check correctness")
 
         assert verdict.verdict == "accept"
-        assert verdict.confidence == 0.95
+        assert verdict.confidence == pytest.approx(0.95)
         assert verdict.flagged_for_review is False
 
     @pytest.mark.asyncio
@@ -655,7 +655,7 @@ class TestJudgeTask:
             verdict = await judge_task(task, tmp_path, "Check something")
 
         assert verdict.verdict == "accept"
-        assert verdict.confidence == 0.4
+        assert verdict.confidence == pytest.approx(0.4)
         assert verdict.flagged_for_review is True
 
     @pytest.mark.asyncio
@@ -679,7 +679,7 @@ class TestJudgeTask:
             verdict = await judge_task(task, tmp_path, "Check something")
 
         assert verdict.verdict == "retry"
-        assert verdict.confidence == 0.0
+        assert verdict.confidence == pytest.approx(0.0)
         assert verdict.flagged_for_review is True
         assert "API error" in verdict.feedback
 
@@ -704,7 +704,7 @@ class TestJudgeTask:
             verdict = await judge_task(task, tmp_path, "Check something")
 
         assert verdict.verdict == "retry"
-        assert verdict.confidence == 0.0
+        assert verdict.confidence == pytest.approx(0.0)
         assert verdict.flagged_for_review is True
 
 

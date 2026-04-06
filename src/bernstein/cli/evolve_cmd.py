@@ -175,13 +175,14 @@ def evolve_run(
             )
             github_sync = False
 
+    github_line = "  GitHub:     enabled\n" if github_sync else ""
     console.print(
         f"[bold]Evolution loop starting[/bold]\n"
         f"  Window:     {window} ({window_seconds}s)\n"
         f"  Max props:  {max_proposals}\n"
         f"  Cycle:      {cycle}s\n"
         f"  State dir:  {state_dir}\n"
-        + (f"  GitHub:     {'enabled' if github_sync else 'disabled'}\n" if github_sync else "")
+        + github_line
     )
 
     loop = EvolutionLoop(

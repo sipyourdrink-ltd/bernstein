@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+
 from bernstein.core.memory_sanitizer import (
     TRUST_THRESHOLD,
     MemoryFirewall,
@@ -104,7 +106,7 @@ class TestCleanContentAccepted:
 
     def test_trust_score_is_1(self, tmp_path: Path) -> None:
         result = _clean_scan(_fw(tmp_path))
-        assert result.trust_score == 1.0
+        assert result.trust_score == pytest.approx(1.0)
 
     def test_no_quarantine_file_written(self, tmp_path: Path) -> None:
         fw = _fw(tmp_path)

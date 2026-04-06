@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.tui.widgets import QualityGateResult
 
 
@@ -19,7 +21,7 @@ class TestQualityGateResult:
 
         assert result.gate == "lint"
         assert result.status == "pass"
-        assert result.duration_ms == 150.5
+        assert result.duration_ms == pytest.approx(150.5)
         assert result.details == "No issues found"
 
     def test_fail_result(self) -> None:
@@ -33,7 +35,7 @@ class TestQualityGateResult:
 
         assert result.gate == "tests"
         assert result.status == "fail"
-        assert result.duration_ms == 2500.0
+        assert result.duration_ms == pytest.approx(2500.0)
 
 
 class TestQualityGatePanel:

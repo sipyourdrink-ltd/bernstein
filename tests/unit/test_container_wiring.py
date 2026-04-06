@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.container import (
     ContainerConfig,
     ContainerRuntime,
@@ -89,7 +91,7 @@ class TestBuildContainerConfigEnabled:
         iso = ContainerIsolationConfig(enabled=True, cpu_cores=4.0)
         cfg = _build_container_config(iso)
         assert cfg is not None
-        assert cfg.resource_limits.cpu_cores == 4.0
+        assert cfg.resource_limits.cpu_cores == pytest.approx(4.0)
 
     def test_resource_limits_memory(self) -> None:
         iso = ContainerIsolationConfig(enabled=True, memory_mb=2048)

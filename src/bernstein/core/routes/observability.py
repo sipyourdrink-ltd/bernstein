@@ -65,7 +65,7 @@ def _overall_trend(scores: list[int]) -> str:
 
 
 @router.get("/observability/agents")
-async def observability_agents(request: Request) -> dict[str, Any]:
+def observability_agents(request: Request) -> dict[str, Any]:
     """Return runtime heartbeat, stall-profile, and log-summary data per agent."""
     workdir = _get_workdir(request)
     store = _get_store(request)
@@ -133,7 +133,7 @@ async def observability_agents(request: Request) -> dict[str, Any]:
 
 
 @router.get("/observability/effectiveness")
-async def observability_effectiveness(request: Request) -> dict[str, Any]:
+def observability_effectiveness(request: Request) -> dict[str, Any]:
     """Return recent effectiveness data, role trends, and best configs."""
     workdir = _get_workdir(request)
     scorer = EffectivenessScorer(workdir)
@@ -164,7 +164,7 @@ async def observability_effectiveness(request: Request) -> dict[str, Any]:
 
 
 @router.get("/observability/recommendations")
-async def observability_recommendations(request: Request) -> dict[str, Any]:
+def observability_recommendations(request: Request) -> dict[str, Any]:
     """Return the current recommendation set and delivery hit counts."""
     workdir = _get_workdir(request)
     engine = RecommendationEngine(workdir)
@@ -179,7 +179,7 @@ async def observability_recommendations(request: Request) -> dict[str, Any]:
 
 
 @router.get("/observability/budget")
-async def observability_budget(request: Request) -> dict[str, Any]:
+def observability_budget(request: Request) -> dict[str, Any]:
     """Return completion-budget status per lineage."""
     workdir = _get_workdir(request)
     budget = CompletionBudget(workdir)
@@ -189,7 +189,7 @@ async def observability_budget(request: Request) -> dict[str, Any]:
 
 
 @router.get("/observability/deps")
-async def observability_deps(request: Request) -> dict[str, Any]:
+def observability_deps(request: Request) -> dict[str, Any]:
     """Return dependency-graph validation status for current tasks."""
     store = _get_store(request)
     tasks = store.list_tasks()
@@ -210,7 +210,7 @@ async def observability_deps(request: Request) -> dict[str, Any]:
 
 
 @router.get("/recap")
-async def recap(request: Request) -> dict[str, Any]:
+def recap(request: Request) -> dict[str, Any]:
     """Return post-run summary with diff stats, quality scores, and cost breakdown.
 
     Reads completed tasks from the archive and computes:
@@ -223,7 +223,7 @@ async def recap(request: Request) -> dict[str, Any]:
     store = _get_store(request)
 
     # Get all tasks from the store
-    all_tasks = list(store.list_tasks())
+    all_tasks = store.list_tasks()
 
     # Compute basic stats
     total = len(all_tasks)
@@ -492,7 +492,7 @@ def _get_cost_breakdown(workdir: Path) -> dict[str, Any]:
 
 
 @router.get("/observability/token-histogram")
-async def token_histogram(request: Request) -> dict[str, Any]:
+def token_histogram(request: Request) -> dict[str, Any]:
     """Return histogram of token usage by task complexity.
 
     Shows average tokens consumed for small, medium, large tasks.
@@ -523,7 +523,7 @@ async def token_histogram(request: Request) -> dict[str, Any]:
 
                 if complexity in complexity_tokens:
                     complexity_tokens[cast("str", complexity)].append(total_tokens)
-            except (json.JSONDecodeError, OSError, ValueError):
+            except (OSError, ValueError):
                 continue
 
     # Calculate statistics
@@ -557,7 +557,7 @@ async def token_histogram(request: Request) -> dict[str, Any]:
 
 
 @router.get("/observability/queue-depth")
-async def get_queue_depth(request: Request, limit: int = 100) -> dict[str, Any]:
+def get_queue_depth(request: Request, limit: int = 100) -> dict[str, Any]:
     """Return task queue depth over time.
 
     Returns last N records of queue depth snapshots.
@@ -599,7 +599,7 @@ async def get_queue_depth(request: Request, limit: int = 100) -> dict[str, Any]:
 
 
 @router.get("/observability/timeline")
-async def get_timeline(request: Request) -> dict[str, Any]:
+def get_timeline(request: Request) -> dict[str, Any]:
     """Return task timing data for timeline visualization.
 
     Returns start and end times for all tasks tracked in metrics.
@@ -611,13 +611,19 @@ async def get_timeline(request: Request) -> dict[str, Any]:
 
     entries: list[dict[str, Any]] = []
     for tid, m in task_metrics.items():
+        if m.success:
+            task_status = "done"
+        elif m.end_time:
+            task_status = "failed"
+        else:
+            task_status = "in_progress"
         entries.append(
             {
                 "task_id": tid,
                 "title": tid[:8],  # titles aren't in metrics usually, but IDs are
                 "start_time": m.start_time,
                 "end_time": m.end_time,
-                "status": "done" if m.success else ("failed" if m.end_time else "in_progress"),
+                "status": task_status,
             }
         )
 
@@ -625,7 +631,7 @@ async def get_timeline(request: Request) -> dict[str, Any]:
 
 
 @router.get("/changelog")
-async def get_changelog(request: Request, days: int = 30) -> dict[str, Any]:
+def get_changelog(request: Request, days: int = 30) -> dict[str, Any]:
     """Generate changelog from completed tasks.
 
     Groups completed tasks by type (Features, Fixes, etc.) and
@@ -647,7 +653,7 @@ async def get_changelog(request: Request, days: int = 30) -> dict[str, Any]:
 
 
 @router.get("/observability/incidents")
-async def list_incidents(request: Request) -> dict[str, Any]:
+def list_incidents(request: Request) -> dict[str, Any]:
     """List all known incidents.
 
     Returns:
@@ -660,7 +666,7 @@ async def list_incidents(request: Request) -> dict[str, Any]:
 
 
 @router.get("/observability/incident-timeline/{incident_id}")
-async def get_incident_timeline(
+def get_incident_timeline(
     request: Request,
     incident_id: str,
     window_before: int = 600,

@@ -104,7 +104,7 @@ def _tasks_response(url: httpx.URL, tasks: list[dict]) -> httpx.Response:
     return httpx.Response(200, json=tasks)
 
 
-def _mock_adapter(pid: int = 42) -> CLIAdapter:
+def _mock_adapter(pid: int = 42) -> MagicMock:
     adapter = MagicMock(spec=CLIAdapter)
     adapter.spawn.return_value = SpawnResult(pid=pid, log_path=Path("/tmp/test.log"))
     adapter.is_alive.return_value = True
@@ -2225,7 +2225,7 @@ class TestTierAwareRouterWiring:
         )
 
         provider = router.state.providers["test_provider"]
-        assert provider.cost_tracker.total_cost_usd == 0.05
+        assert provider.cost_tracker.total_cost_usd == pytest.approx(0.05)
         assert provider.cost_tracker.total_tokens == 1000
 
     def test_no_router_is_noop(self, tmp_path: Path) -> None:
@@ -2954,7 +2954,7 @@ class TestEvolutionMetricsRecording:
 class TestOrphanEvolutionMetrics:
     """Orphaned task handling feeds the evolution coordinator via record_task_completion."""
 
-    def _build_with_evolution(self, tmp_path: Path) -> tuple[Orchestrator, MagicMock]:
+    def _build_with_evolution(self, tmp_path: Path) -> MagicMock:
         from bernstein.core.evolution import EvolutionCoordinator
 
         evolution = MagicMock(spec=EvolutionCoordinator)
@@ -3721,7 +3721,7 @@ class TestReplenishBacklog:
         def handler(request: httpx.Request) -> httpx.Response:
             url = request.url
             if request.method == "GET" and url.path == "/tasks":
-                return _tasks_response(url, list(open_tasks_json) + list(done_tasks_json))
+                return _tasks_response(url, open_tasks_json + done_tasks_json)
             if request.method == "POST" and url.path == "/tasks":
                 body = json.loads(request.content)
                 posted.append(body)
@@ -4903,7 +4903,7 @@ class TestComputeTotalSpentCache:
         metrics_dir.mkdir(parents=True)
         _total_spent_cache.clear()
 
-        assert _compute_total_spent(tmp_path) == 0.0
+        assert _compute_total_spent(tmp_path) == pytest.approx(0.0)
 
 
 # --- Metrics wiring ---
@@ -5477,11 +5477,11 @@ class TestAdaptivePollingBackoff:
         orch.run()
 
         # After each idle tick, sleep doubles: 6, 12, 24, 30 (cap), 30 (cap)
-        assert sleep_calls[0] == 6.0
-        assert sleep_calls[1] == 12.0
-        assert sleep_calls[2] == 24.0
-        assert sleep_calls[3] == 30.0
-        assert sleep_calls[4] == 30.0
+        assert sleep_calls[0] == pytest.approx(6.0)
+        assert sleep_calls[1] == pytest.approx(12.0)
+        assert sleep_calls[2] == pytest.approx(24.0)
+        assert sleep_calls[3] == pytest.approx(30.0)
+        assert sleep_calls[4] == pytest.approx(30.0)
 
     def test_active_tick_resets_sleep_to_poll_interval(self, tmp_path: Path, monkeypatch: object) -> None:
         orch = self._make_orch(tmp_path, poll_interval_s=3)

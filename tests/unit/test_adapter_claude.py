@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -36,11 +37,11 @@ def _make_popen_mock(pid: int) -> MagicMock:
 
 
 @pytest.fixture(autouse=True)
-def clean_adapter_state() -> None:
+def clean_adapter_state() -> Generator[None, None, None]:
     """Clear class-level proc dicts before and after every test."""
     ClaudeCodeAdapter._procs.clear()
     ClaudeCodeAdapter._wrapper_pids.clear()
-    yield  # type: ignore[misc]
+    yield
     ClaudeCodeAdapter._procs.clear()
     ClaudeCodeAdapter._wrapper_pids.clear()
 

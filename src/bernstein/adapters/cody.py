@@ -143,7 +143,7 @@ class CodyAdapter(CLIAdapter):
                 proc.stdin.write(prompt.encode("utf-8"))
                 proc.stdin.close()
             except OSError:
-                pass
+                pass  # stdin may already be closed by the process
 
         result = SpawnResult(pid=proc.pid, log_path=log_path)
         if timeout_seconds > 0:

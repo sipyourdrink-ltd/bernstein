@@ -6,6 +6,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 from bernstein.benchmark.head_to_head import (
     BERNSTEIN_MIXED_METRICS,
     BERNSTEIN_PROFILE,
@@ -30,7 +32,7 @@ from bernstein.benchmark.head_to_head import (
 
 
 def test_bernstein_profile_has_zero_scheduling_overhead() -> None:
-    assert BERNSTEIN_PROFILE.scheduling_overhead_pct == 0.0
+    assert BERNSTEIN_PROFILE.scheduling_overhead_pct == pytest.approx(0.0)
 
 
 def test_bernstein_profile_scheduling_label_says_none() -> None:
@@ -94,8 +96,8 @@ def test_bernstein_mixed_is_cheaper_than_bernstein_sonnet() -> None:
 
 
 def test_bernstein_scheduling_cost_is_zero() -> None:
-    assert BERNSTEIN_SONNET_METRICS.scheduling_cost_per_issue_usd == 0.0
-    assert BERNSTEIN_MIXED_METRICS.scheduling_cost_per_issue_usd == 0.0
+    assert BERNSTEIN_SONNET_METRICS.scheduling_cost_per_issue_usd == pytest.approx(0.0)
+    assert BERNSTEIN_MIXED_METRICS.scheduling_cost_per_issue_usd == pytest.approx(0.0)
 
 
 def test_crewai_has_positive_scheduling_cost() -> None:

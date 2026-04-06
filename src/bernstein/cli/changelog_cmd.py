@@ -266,7 +266,12 @@ def _render_to_console(entries: list[CommitEntry], version: str, since_ref: str 
         if not type_entries:
             continue
         label = _TYPE_LABELS.get(ctype, ctype.capitalize())
-        color = "green" if ctype == "feat" else ("yellow" if ctype == "fix" else "blue")
+        if ctype == "feat":
+            color = "green"
+        elif ctype == "fix":
+            color = "yellow"
+        else:
+            color = "blue"
         console.print(f"\n[bold {color}]{label}[/bold {color}]")
         for e in type_entries:
             scope_prefix = f"[cyan]{e.scope}:[/cyan] " if e.scope else ""

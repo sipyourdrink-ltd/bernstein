@@ -2314,6 +2314,16 @@ def main() -> None:
         tags_map = {"backend": "platform", "qa": "quality", "security": "security"}
         tag = tags_map.get(role, "feature")
 
+        if scope == "large":
+            complexity = "high"
+            est_minutes = 90
+        elif scope == "medium":
+            complexity = "medium"
+            est_minutes = 45
+        else:
+            complexity = "low"
+            est_minutes = 20
+
         content = f"""---
 id: "{tid}"
 title: "{title}"
@@ -2321,11 +2331,11 @@ status: open
 type: feature
 priority: {pri}
 scope: {scope}
-complexity: {"high" if scope == "large" else "medium" if scope == "medium" else "low"}
+complexity: {complexity}
 role: {role}
 model: {model}
 effort: normal
-estimated_minutes: {90 if scope == "large" else 45 if scope == "medium" else 20}
+estimated_minutes: {est_minutes}
 depends_on: []
 blocks: []
 tags: ["{tag}"]

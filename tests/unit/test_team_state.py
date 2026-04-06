@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.team_state import TeamMember, TeamStateStore
 
 # ---------------------------------------------------------------------------
@@ -24,8 +26,8 @@ class TestTeamMember:
         assert m.status == "starting"
         assert m.is_active is True
         assert m.task_ids == []
-        assert m.spawned_at == 0.0
-        assert m.finished_at == 0.0
+        assert m.spawned_at == pytest.approx(0.0)
+        assert m.finished_at == pytest.approx(0.0)
         assert m.provider == ""
 
     def test_to_dict_round_trip(self) -> None:

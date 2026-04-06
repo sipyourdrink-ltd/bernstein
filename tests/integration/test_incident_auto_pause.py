@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -77,7 +77,7 @@ async def test_incident_auto_pause(test_client: TestClient, orchestrator_factory
             print(f"Tick {tick_idx}: pause={orch._incident_manager.should_pause}")
             if orch._incident_manager.should_pause:
                 break
-            time.sleep(0.2)
+            await asyncio.sleep(0.2)
 
         # 3. Verify
         assert orch._incident_manager.should_pause

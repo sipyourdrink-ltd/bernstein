@@ -81,7 +81,7 @@ def get_worktree_status(worktree_path: Path) -> WorktreeStatus | None:
             behind=behind,
         )
 
-    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+    except (subprocess.TimeoutExpired, OSError):
         return None
 
 

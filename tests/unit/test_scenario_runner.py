@@ -421,8 +421,8 @@ class TestScenarioBatchResult:
 
     def test_mean_cost_empty(self) -> None:
         batch = ScenarioBatchResult(scenario_id="x", tier="smoke")
-        assert batch.mean_cost_usd == 0.0
-        assert batch.mean_duration_s == 0.0
+        assert batch.mean_cost_usd == pytest.approx(0.0)
+        assert batch.mean_duration_s == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

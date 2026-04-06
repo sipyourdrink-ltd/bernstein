@@ -8,6 +8,7 @@ import platform
 import resource
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -88,7 +89,7 @@ def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> 
 
 
 @pytest.fixture
-def make_task():
+def make_task() -> Callable[..., Task]:
     """Factory fixture for Task objects with sensible defaults.
 
     Supports all common Task fields; tests override only what they care about.
@@ -126,10 +127,10 @@ def make_task():
 
 
 @pytest.fixture
-def mock_adapter_factory():
+def mock_adapter_factory() -> Callable[..., MagicMock]:
     """Factory fixture for CLIAdapter mocks with configurable PID."""
 
-    def _factory(pid: int = 42) -> CLIAdapter:
+    def _factory(pid: int = 42) -> MagicMock:
         adapter = MagicMock(spec=CLIAdapter)
         adapter.spawn.return_value = SpawnResult(pid=pid, log_path=Path("/tmp/test.log"))
         adapter.is_alive.return_value = True

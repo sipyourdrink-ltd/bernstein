@@ -99,7 +99,7 @@ class TestBernsteinStatus:
         text = await lab.call_tool("bernstein_status", {})
         data = json.loads(text)
         assert data["total"] == 0
-        assert data["total_cost_usd"] == 0.0
+        assert data["total_cost_usd"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

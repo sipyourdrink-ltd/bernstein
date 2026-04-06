@@ -202,7 +202,12 @@ def prompts_compare(name: str, v1: int, v2: int, as_json: bool) -> None:
     def _delta(a: float, b: float, fmt: str = ".4f", pct: bool = False) -> str:
         diff = b - a
         sign = "+" if diff >= 0 else ""
-        color = "green" if diff > 0 else ("red" if diff < 0 else "dim")
+        if diff > 0:
+            color = "green"
+        elif diff < 0:
+            color = "red"
+        else:
+            color = "dim"
         if pct:
             return f"[{color}]{sign}{diff:.1%}[/{color}]"
         return f"[{color}]{sign}{diff:{fmt}}[/{color}]"

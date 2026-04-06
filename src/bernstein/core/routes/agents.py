@@ -34,7 +34,7 @@ def _runtime_dir(request: Request) -> Path:
 
 
 @router.get("/agents/{session_id}/logs", responses={404: {"description": "No log for session"}})
-async def agent_logs(
+def agent_logs(
     request: Request,
     session_id: str,
     tail_bytes: int = 0,
@@ -76,7 +76,7 @@ async def agent_logs(
 
 
 @router.post("/agents/{session_id}/kill")
-async def agent_kill(request: Request, session_id: str) -> JSONResponse:
+def agent_kill(request: Request, session_id: str) -> JSONResponse:
     """Request termination of an agent by writing a ``.kill`` signal file.
 
     The orchestrator polls for these files on each tick and calls
@@ -100,7 +100,7 @@ async def agent_kill(request: Request, session_id: str) -> JSONResponse:
 
 
 @router.get("/agents/{session_id}/stream")
-async def agent_stream(request: Request, session_id: str) -> StreamingResponse:
+def agent_stream(request: Request, session_id: str) -> StreamingResponse:
     """Server-Sent Events stream of agent output for the given session.
 
     Replays all existing log content first, then tails the file for new

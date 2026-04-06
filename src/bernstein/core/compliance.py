@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_ISO_TIMESTAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
+_MANIFEST_JSON = "manifest.json"
+
 
 class CompliancePreset(Enum):
     """Named compliance tiers with escalating requirements."""
@@ -130,7 +133,7 @@ class ComplianceConfig:
         )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ComplianceConfig:
+    def from_dict(cls, data: dict[str, Any] | str) -> ComplianceConfig:
         """Parse compliance config from a YAML/dict mapping.
 
         Accepts either ``compliance: standard`` (string -> preset) or a
@@ -314,7 +317,7 @@ def generate_sbom(
         "serialNumber": f"urn:uuid:{run_id}",
         "version": 1,
         "metadata": {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "timestamp": time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
             "tools": [{"vendor": "Bernstein", "name": "bernstein", "version": "1.0.0"}],
         },
         "components": [
@@ -384,10 +387,10 @@ def export_evidence_bundle(
     # Write bundle manifest
     manifest = {
         "run_id": run_id,
-        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "exported_at": time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
         "artifacts": manifest_entries,
     }
-    (bundle_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (bundle_dir / _MANIFEST_JSON).write_text(json.dumps(manifest, indent=2))
     logger.info("Evidence bundle exported: %s (%d artifacts)", bundle_dir, len(manifest_entries))
     return bundle_dir
 
@@ -528,7 +531,7 @@ def export_soc2_package(
             verification["hmac_chain"] = {
                 "valid": valid,
                 "errors": errors,
-                "verified_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "verified_at": time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
             }
         except Exception as exc:
             verification["hmac_chain"] = {"valid": False, "errors": [str(exc)]}
@@ -609,7 +612,7 @@ def export_soc2_package(
     # --- 8. Compute package checksum ---------------------------------------
     file_checksums: dict[str, str] = {}
     for path in sorted(bundle_dir.rglob("*")):
-        if path.is_file() and path.name != "manifest.json":
+        if path.is_file() and path.name != _MANIFEST_JSON:
             digest = hashlib.sha256(path.read_bytes()).hexdigest()
             file_checksums[str(path.relative_to(bundle_dir))] = digest
 
@@ -619,12 +622,12 @@ def export_soc2_package(
         "period": period,
         "period_start": start_date,
         "period_end": end_date,
-        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "exported_at": time.strftime(_ISO_TIMESTAMP_FMT, time.gmtime()),
         "artifacts": artifacts_collected,
         "verification": verification,
         "file_checksums": file_checksums,
     }
-    (bundle_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    (bundle_dir / _MANIFEST_JSON).write_text(json.dumps(manifest, indent=2))
 
     # --- 10. Optionally zip ------------------------------------------------
     if fmt == "zip":
@@ -672,6 +675,6 @@ def load_compliance_config(sdd_dir: Path) -> ComplianceConfig | None:
     try:
         data = json.loads(path.read_text())
         return ComplianceConfig.from_dict(data)
-    except (json.JSONDecodeError, ValueError, KeyError):
+    except (ValueError, KeyError):
         logger.warning("Failed to load compliance config from %s", path)
         return None

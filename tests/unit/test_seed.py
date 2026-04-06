@@ -70,7 +70,7 @@ class TestParseSeedValid:
         seed_file.write_text(FULL_YAML)
         cfg = parse_seed(seed_file)
         assert cfg.goal == "Build a REST API"
-        assert cfg.budget_usd == 20.0
+        assert cfg.budget_usd == pytest.approx(20.0)
         assert cfg.team == ["backend", "qa", "devops"]
         assert cfg.cli == "codex"
         assert cfg.max_agents == 4
@@ -84,7 +84,7 @@ class TestParseSeedValid:
     def test_bare_numeric_budget(self, seed_file: Path) -> None:
         seed_file.write_text(BARE_BUDGET_YAML)
         cfg = parse_seed(seed_file)
-        assert cfg.budget_usd == 35.0
+        assert cfg.budget_usd == pytest.approx(35.0)
 
     def test_budget_as_float(self, seed_file: Path) -> None:
         seed_file.write_text('goal: "T"\nbudget: 9.99\n')

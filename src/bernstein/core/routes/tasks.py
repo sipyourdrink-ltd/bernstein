@@ -73,6 +73,8 @@ from bernstein.core.telemetry import start_span
 from bernstein.core.tenanting import request_tenant_id, resolve_tenant_scope
 from bernstein.plugins.manager import HookBlockingError, get_plugin_manager
 
+_DRAINING_DETAIL = "Server is draining -- no new claims accepted"
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
     from pathlib import Path
@@ -149,6 +151,7 @@ def _require_task_access(task: Task, request: Request, requested_tenant: str | N
 @router.post(
     "/tasks",
     status_code=201,
+    response_model=TaskResponse,
     responses={400: {"description": "Blocked by pre-create hook"}},
 )
 async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
@@ -201,6 +204,7 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
 @router.post(
     "/tasks/self-create",
     status_code=201,
+    response_model=TaskResponse,
     responses={404: {"description": "Parent task not found"}},
 )
 async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskResponse:
@@ -260,6 +264,7 @@ async def self_create_subtask(body: TaskSelfCreate, request: Request) -> TaskRes
 
 @router.get(
     "/tasks/next/{role}",
+    response_model=TaskResponse,
     responses={404: {"description": "No open tasks for role"}, 503: {"description": "Server is draining"}},
 )
 async def next_task(
@@ -279,9 +284,9 @@ async def next_task(
     to avoid stealing tasks from other namespaces.
     """
     if request.app.state.draining:  # type: ignore[attr-defined]
-        return JSONResponse(  # type: ignore[return-value]
-            {"error": "Server is draining -- no new claims accepted"},
+        raise HTTPException(
             status_code=503,
+            detail=_DRAINING_DETAIL,
         )
     store = _get_store(request)
     task = await store.claim_next(
@@ -295,13 +300,13 @@ async def next_task(
     return task_to_response(task)
 
 
-@router.post("/tasks/claim-batch", responses={503: {"description": "Server is draining"}})
+@router.post("/tasks/claim-batch", response_model=BatchClaimResponse, responses={503: {"description": "Server is draining"}})
 async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimResponse:
     """Atomically claim multiple tasks by ID for an agent."""
     if request.app.state.draining:  # type: ignore[attr-defined]
-        return JSONResponse(  # type: ignore[return-value]
-            {"error": "Server is draining -- no new claims accepted"},
+        raise HTTPException(
             status_code=503,
+            detail=_DRAINING_DETAIL,
         )
     with start_span("task.claim_batch", {"agent_id": body.agent_id, "task_count": len(body.task_ids)}):
         store = _get_store(request)
@@ -325,6 +330,7 @@ async def claim_batch(body: BatchClaimRequest, request: Request) -> BatchClaimRe
 
 @router.post(
     "/tasks/{task_id}/claim",
+    response_model=TaskResponse,
     responses={
         404: {"description": "Task not found"},
         409: {"description": "Version conflict or invalid state"},
@@ -346,9 +352,9 @@ async def claim_task(
     session owns this claim.
     """
     if request.app.state.draining:  # type: ignore[attr-defined]
-        return JSONResponse(  # type: ignore[return-value]
-            {"error": "Server is draining -- no new claims accepted"},
+        raise HTTPException(
             status_code=503,
+            detail=_DRAINING_DETAIL,
         )
     with start_span("task.claim", {"task.id": task_id}):
         store = _get_store(request)
@@ -373,6 +379,7 @@ async def claim_task(
 
 @router.post(
     "/tasks/{task_id}/complete",
+    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def complete_task(task_id: str, body: TaskCompleteRequest, request: Request) -> TaskResponse:
@@ -401,6 +408,7 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
 
 @router.post(
     "/tasks/{task_id}/wait-for-subtasks",
+    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def wait_for_subtasks(task_id: str, body: TaskWaitForSubtasksRequest, request: Request) -> TaskResponse:
@@ -423,6 +431,7 @@ async def wait_for_subtasks(task_id: str, body: TaskWaitForSubtasksRequest, requ
 
 @router.post(
     "/tasks/{task_id}/fail",
+    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> TaskResponse:
@@ -449,6 +458,7 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
 
 @router.post(
     "/tasks/{task_id}/close",
+    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def close_task(task_id: str, request: Request) -> TaskResponse:
@@ -471,6 +481,7 @@ async def close_task(task_id: str, request: Request) -> TaskResponse:
 
 @router.post(
     "/tasks/{task_id}/cancel",
+    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -> TaskResponse:
@@ -491,6 +502,7 @@ async def cancel_task(task_id: str, body: TaskCancelRequest, request: Request) -
 
 @router.post(
     "/tasks/{task_id}/block",
+    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Invalid state transition"}},
 )
 async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> TaskResponse:
@@ -511,7 +523,7 @@ async def block_task(task_id: str, body: TaskBlockRequest, request: Request) -> 
     return task_to_response(task)
 
 
-@router.post("/tasks/{task_id}/progress", responses={404: {"description": "Task not found"}})
+@router.post("/tasks/{task_id}/progress", response_model=TaskResponse, responses={404: {"description": "Task not found"}})
 async def progress_task(task_id: str, body: TaskProgressRequest, request: Request) -> TaskResponse:
     """Append an intermediate progress update to a task.
 
@@ -545,7 +557,7 @@ async def progress_task(task_id: str, body: TaskProgressRequest, request: Reques
 
 
 @router.get("/tasks/{task_id}/snapshots", responses={404: {"description": "Task not found"}})
-async def get_task_snapshots(task_id: str, request: Request) -> list[SnapshotEntry]:
+def get_task_snapshots(task_id: str, request: Request) -> list[SnapshotEntry]:
     """Return stored progress snapshots for a task (oldest-first, up to 10)."""
     store = _get_store(request)
     task = store.get_task(task_id)
@@ -566,7 +578,7 @@ async def get_task_snapshots(task_id: str, request: Request) -> list[SnapshotEnt
 
 
 @router.get("/tasks")
-async def list_tasks(
+def list_tasks(
     request: Request,
     status: str | None = None,
     cell_id: str | None = None,
@@ -624,8 +636,8 @@ async def list_tasks(
     return [task_to_response(t) for t in all_tasks]
 
 
-@router.get("/tasks/counts")
-async def task_counts(
+@router.get("/tasks/counts", response_model=TaskCountsResponse)
+def task_counts(
     request: Request,
     tenant: str | None = None,
 ) -> TaskCountsResponse:
@@ -649,14 +661,14 @@ async def task_counts(
 
 
 @router.get("/tasks/archive")
-async def get_archive(request: Request, limit: int = 50, tenant: str | None = None) -> list[ArchiveRecord]:
+def get_archive(request: Request, limit: int = 50, tenant: str | None = None) -> list[ArchiveRecord]:
     """Return the last N archived (done/failed) task records."""
     store = _get_store(request)
     return store.read_archive(limit=limit, tenant_id=_resolve_request_tenant_scope(request, tenant))
 
 
 @router.get("/tasks/graph")
-async def get_task_graph(request: Request) -> JSONResponse:
+def get_task_graph(request: Request) -> JSONResponse:
     """Return the task dependency graph as JSON (nodes + edges + critical path).
 
     Builds a DAG from all current tasks and returns:
@@ -680,8 +692,8 @@ async def get_task_graph(request: Request) -> JSONResponse:
     return JSONResponse(content=data)
 
 
-@router.get("/tasks/{task_id}", responses={404: {"description": "Task not found"}})
-async def get_task(task_id: str, request: Request) -> TaskResponse:
+@router.get("/tasks/{task_id}", response_model=TaskResponse, responses={404: {"description": "Task not found"}})
+def get_task(task_id: str, request: Request) -> TaskResponse:
     """Get a single task by ID."""
     store = _get_store(request)
     task = store.get_task(task_id)
@@ -695,7 +707,7 @@ async def get_task(task_id: str, request: Request) -> TaskResponse:
     "/tasks/{task_id}/gates",
     responses={404: {"description": "Task or gate report not found"}, 500: {"description": "Gate report unreadable"}},
 )
-async def get_task_gates(task_id: str, request: Request) -> JSONResponse:
+def get_task_gates(task_id: str, request: Request) -> JSONResponse:
     """Return the persisted quality-gate report for a task."""
     store = _get_store(request)
     task = store.get_task(task_id)
@@ -783,8 +795,8 @@ async def force_claim_task(task_id: str, request: Request) -> TaskResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/agents/{agent_id}/heartbeat")
-async def agent_heartbeat(agent_id: str, body: HeartbeatRequest, request: Request) -> HeartbeatResponse:
+@router.post("/agents/{agent_id}/heartbeat", response_model=HeartbeatResponse)
+def agent_heartbeat(agent_id: str, body: HeartbeatRequest, request: Request) -> HeartbeatResponse:
     """Register an agent heartbeat."""
     store = _get_store(request)
     sse_bus = _get_sse_bus(request)
@@ -794,7 +806,7 @@ async def agent_heartbeat(agent_id: str, body: HeartbeatRequest, request: Reques
 
 
 @router.get("/agents/{session_id}/logs", responses={404: {"description": "No log file for session"}})
-async def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> JSONResponse:
+def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> JSONResponse:
     """Return log file content for a session.
 
     Args:
@@ -818,7 +830,7 @@ async def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> 
 
 
 @router.post("/agents/{session_id}/kill")
-async def agent_kill(session_id: str, request: Request) -> JSONResponse:
+def agent_kill(session_id: str, request: Request) -> JSONResponse:
     """Request that an agent session be killed.
 
     Writes a ``.kill`` signal file that the orchestrator picks up on
@@ -842,7 +854,7 @@ async def agent_kill(session_id: str, request: Request) -> JSONResponse:
 
 
 @router.get("/agents/{session_id}/stream")
-async def agent_stream(session_id: str, request: Request) -> StreamingResponse:
+def agent_stream(session_id: str, request: Request) -> StreamingResponse:
     """SSE stream of live log output for a session."""
     runtime_dir = _get_runtime_dir(request)
     log_path = runtime_dir / f"{session_id}.log"
@@ -897,7 +909,7 @@ async def agent_stream(session_id: str, request: Request) -> StreamingResponse:
 
 
 @router.post("/bulletin", status_code=201)
-async def post_bulletin(body: BulletinPostRequest, request: Request) -> BulletinMessageResponse:
+def post_bulletin(body: BulletinPostRequest, request: Request) -> BulletinMessageResponse:
     """Append a message to the bulletin board."""
     bulletin = _get_bulletin(request)
     msg = BulletinMessage(
@@ -933,7 +945,7 @@ async def post_bulletin(body: BulletinPostRequest, request: Request) -> Bulletin
 
 
 @router.get("/bulletin")
-async def get_bulletin(request: Request, since: float = 0.0) -> list[BulletinMessageResponse]:
+def get_bulletin(request: Request, since: float = 0.0) -> list[BulletinMessageResponse]:
     """Get bulletin messages since a given timestamp."""
     bulletin = _get_bulletin(request)
     messages = bulletin.read_since(since)
@@ -955,7 +967,7 @@ async def get_bulletin(request: Request, since: float = 0.0) -> list[BulletinMes
 
 
 @router.get("/.well-known/agent.json")
-async def agent_card(request: Request) -> A2AAgentCardResponse:
+def agent_card(request: Request) -> A2AAgentCardResponse:
     """Publish the Bernstein orchestrator Agent Card (A2A spec)."""
     a2a_handler = _get_a2a_handler(request)
     card = a2a_handler.orchestrator_card()
@@ -964,10 +976,10 @@ async def agent_card(request: Request) -> A2AAgentCardResponse:
 
 
 @router.get("/a2a/agents")
-async def list_a2a_agents(request: Request) -> A2AAgentCardResponse:
+def list_a2a_agents(request: Request) -> A2AAgentCardResponse:
     """Return Bernstein's A2A agent card via the task API namespace."""
 
-    return await agent_card(request)
+    return agent_card(request)
 
 
 @router.post(
@@ -1038,7 +1050,7 @@ async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskRe
 
 
 @router.get("/a2a/tasks/{a2a_task_id}", responses={404: {"description": "A2A task not found"}})
-async def a2a_get_task(a2a_task_id: str, request: Request) -> A2ATaskResponse:
+def a2a_get_task(a2a_task_id: str, request: Request) -> A2ATaskResponse:
     """Get an A2A task by ID, syncing status from the Bernstein task."""
     store = _get_store(request)
     a2a_handler = _get_a2a_handler(request)
@@ -1058,7 +1070,7 @@ async def a2a_get_task(a2a_task_id: str, request: Request) -> A2ATaskResponse:
     status_code=201,
     responses={404: {"description": "A2A task not found"}},
 )
-async def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest, request: Request) -> A2AArtifactResponse:
+def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest, request: Request) -> A2AArtifactResponse:
     """Attach an artifact to an A2A task."""
     a2a_handler = _get_a2a_handler(request)
     try:
@@ -1084,7 +1096,7 @@ async def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest, request: 
 
 
 @router.post("/cluster/nodes", status_code=201)
-async def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
+def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
     """Register a new node in the cluster."""
     node_registry = _get_node_registry(request)
     capacity = NodeCapacity(
@@ -1109,7 +1121,7 @@ async def register_node(body: NodeRegisterRequest, request: Request) -> NodeResp
     "/cluster/nodes/{node_id}/heartbeat",
     responses={404: {"description": "Node not registered"}},
 )
-async def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -> NodeResponse:
+def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -> NodeResponse:
     """Record a heartbeat from a cluster node."""
     node_registry = _get_node_registry(request)
     capacity: NodeCapacity | None = None
@@ -1128,7 +1140,7 @@ async def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Requ
 
 
 @router.delete("/cluster/nodes/{node_id}", status_code=204, responses={404: {"description": "Node not found"}})
-async def unregister_node(node_id: str, request: Request) -> Response:
+def unregister_node(node_id: str, request: Request) -> Response:
     """Remove a node from the cluster."""
     node_registry = _get_node_registry(request)
     if not node_registry.unregister(node_id):
@@ -1137,7 +1149,7 @@ async def unregister_node(node_id: str, request: Request) -> Response:
 
 
 @router.post("/cluster/nodes/{node_id}/cordon")
-async def cordon_node(node_id: str, request: Request) -> dict[str, str]:
+def cordon_node(node_id: str, request: Request) -> dict[str, str]:
     """Cordon a node -- exclude from scheduling."""
     registry = _get_node_registry(request)
     node = registry.cordon(node_id)
@@ -1147,7 +1159,7 @@ async def cordon_node(node_id: str, request: Request) -> dict[str, str]:
 
 
 @router.post("/cluster/nodes/{node_id}/uncordon")
-async def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
+def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
     """Uncordon a node -- resume accepting tasks."""
     registry = _get_node_registry(request)
     node = registry.uncordon(node_id)
@@ -1157,7 +1169,7 @@ async def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
 
 
 @router.post("/cluster/nodes/{node_id}/drain")
-async def drain_node(node_id: str, request: Request) -> dict[str, str]:
+def drain_node(node_id: str, request: Request) -> dict[str, str]:
     """Start draining a node -- cordon + signal agents to finish."""
     registry = _get_node_registry(request)
     node = registry.start_drain(node_id)
@@ -1167,7 +1179,7 @@ async def drain_node(node_id: str, request: Request) -> dict[str, str]:
 
 
 @router.get("/cluster/nodes", responses={400: {"description": "Invalid node status"}})
-async def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse]:
+def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse]:
     """List all cluster nodes, optionally filtered by status."""
     node_registry = _get_node_registry(request)
     node_status: NodeStatus | None = None
@@ -1179,8 +1191,8 @@ async def list_nodes(request: Request, status: str | None = None) -> list[NodeRe
     return [node_to_response(n) for n in node_registry.list_nodes(node_status)]
 
 
-@router.get("/cluster/status")
-async def cluster_status(request: Request) -> ClusterStatusResponse:
+@router.get("/cluster/status", response_model=ClusterStatusResponse)
+def cluster_status(request: Request) -> ClusterStatusResponse:
     """Get cluster status summary."""
     node_registry = _get_node_registry(request)
     summary = node_registry.cluster_summary()

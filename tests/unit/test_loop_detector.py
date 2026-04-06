@@ -127,7 +127,7 @@ class TestDetectLoops:
         for i in range(4):
             detector.record_edit("a1", "src/foo.py", now - i)
         loops = detector.detect_loops(window_seconds=300.0)
-        assert loops[0].window_seconds == 300.0
+        assert loops[0].window_seconds == pytest.approx(300.0)
 
     def test_custom_threshold(self) -> None:
         detector = LoopDetector()

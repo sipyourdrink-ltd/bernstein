@@ -54,7 +54,7 @@ class RuleSpec:
     severity: str = "error"  # "error" | "warning"
     pattern: str | None = None
     files: str | None = None
-    exclude: list[str] = field(default_factory=lambda: list[str]())
+    exclude: list[str] = field(default_factory=list)
     path: str | None = None
     command: str | None = None
     message: str | None = None
@@ -71,7 +71,7 @@ class RulesConfig:
     """
 
     version: int = 1
-    rules: list[RuleSpec] = field(default_factory=lambda: list[RuleSpec]())
+    rules: list[RuleSpec] = field(default_factory=list)
     enabled: bool = True
 
 
@@ -97,7 +97,7 @@ class RuleViolation:
     description: str
     blocked: bool
     detail: str
-    files: list[str] = field(default_factory=lambda: list[str]())
+    files: list[str] = field(default_factory=list)
     fix_hint: str = ""
 
 
@@ -113,7 +113,7 @@ class RuleEnforcerResult:
 
     task_id: str
     passed: bool
-    violations: list[RuleViolation] = field(default_factory=lambda: list[RuleViolation]())
+    violations: list[RuleViolation] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -289,9 +289,8 @@ def _check_forbidden_pattern(rule: RuleSpec, diff: str) -> RuleViolation | None:
     if not violations_by_file:
         return None
 
-    files_list = list(violations_by_file.keys())
     sample = "; ".join(f"{fp}: {lines[0]!r}" for fp, lines in list(violations_by_file.items())[:3])
-    detail = f"[{rule.id}] forbidden pattern in {len(files_list)} file(s): {sample}"
+    detail = f"[{rule.id}] forbidden pattern in {len(violations_by_file)} file(s): {sample}"
     fix_hint = rule.message or f"Remove additions matching '{rule.pattern}' from: {', '.join(files_list[:3])}"
     return RuleViolation(
         rule_id=rule.id,

@@ -16,6 +16,8 @@ import click
 
 from bernstein.cli.helpers import console
 
+_NO_CHANGES = "(no changes)"
+
 # ---------------------------------------------------------------------------
 # Diff resolution helpers
 # ---------------------------------------------------------------------------
@@ -318,8 +320,8 @@ def _render_compare(left: ResolvedDiff, right: ResolvedDiff, left_name: str, rig
         stat_table.add_column(ratio=1)
         stat_table.add_column(ratio=1)
         stat_table.add_row(
-            Text(left.stat_text or "(no changes)", style="dim"),
-            Text(right.stat_text or "(no changes)", style="dim"),
+            Text(left.stat_text or _NO_CHANGES, style="dim"),
+            Text(right.stat_text or _NO_CHANGES, style="dim"),
         )
         console.print(stat_table)
         console.print()
@@ -358,8 +360,8 @@ def _render_compare(left: ResolvedDiff, right: ResolvedDiff, left_name: str, rig
 
     # Per-file side-by-side diffs
     for f in all_files:
-        left_content = "\n".join(left_files.get(f, ["(no changes)"]))
-        right_content = "\n".join(right_files.get(f, ["(no changes)"]))
+        left_content = "\n".join(left_files.get(f, [_NO_CHANGES]))
+        right_content = "\n".join(right_files.get(f, [_NO_CHANGES]))
 
         left_panel = Panel(
             Syntax(left_content, "diff", theme="monokai", line_numbers=False),
@@ -498,8 +500,8 @@ def diff_cmd(
             t.add_column(left_id, style="cyan")
             t.add_column(right_id, style="magenta")
             t.add_row(
-                left.stat_text or "(no changes)",
-                right.stat_text or "(no changes)",
+                left.stat_text or _NO_CHANGES,
+                right.stat_text or _NO_CHANGES,
             )
             console.print(t)
             return

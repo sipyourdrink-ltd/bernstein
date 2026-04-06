@@ -266,7 +266,7 @@ def prioritize_starving_roles(
         return batches
     return sorted(
         batches,
-        key=lambda b: (0 if alive_per_role.get(b[0].role, 0) == 0 else 1) if b else 1,
+        key=lambda b: 1 if not b else (0 if alive_per_role.get(b[0].role, 0) == 0 else 1),
     )
 
 

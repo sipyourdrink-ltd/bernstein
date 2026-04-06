@@ -104,7 +104,7 @@ def _gemini_has_gcloud_auth() -> bool:
         for line in result.stdout.strip().splitlines():
             if "ACTIVE" in line.upper():
                 return True
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         pass
     return False
 
@@ -167,7 +167,7 @@ def _codex_has_login() -> bool:
         )
         combined = (result.stdout + result.stderr).lower()
         return "logged in" in combined and "not logged in" not in combined and result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError):
         return False
 
 
@@ -310,7 +310,7 @@ def _check_port_free(port: int) -> None:
                 kill_process(pid, sig=9)
                 killed = True
                 logger.info("Killed stale Bernstein process %d on port %d", pid, port)
-        except (ProcessLookupError, PermissionError, OSError):
+        except OSError:
             continue
 
     if killed:

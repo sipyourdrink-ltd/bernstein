@@ -390,7 +390,7 @@ def test_nerd_font_icons_are_immutable() -> None:
     import pytest
 
     nf = NerdFontIcons()
-    assert dataclasses.fields(nf)  # is a dataclass
+    assert dataclasses.fields(NerdFontIcons)  # is a dataclass
     with pytest.raises(dataclasses.FrozenInstanceError):
         nf.status_done = "x"  # type: ignore[misc]
 

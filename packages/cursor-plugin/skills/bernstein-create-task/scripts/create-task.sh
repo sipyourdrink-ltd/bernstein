@@ -13,11 +13,11 @@ SCOPE="${4:-small}"
 REQUIRE_REVIEW=false
 
 for arg in "$@"; do
-  [ "$arg" = "--require-review" ] && REQUIRE_REVIEW=true
+  [[ "$arg" = "--require-review" ]] && REQUIRE_REVIEW=true
 done
 
 HEADERS=(-H "Content-Type: application/json")
-if [ -n "$TOKEN" ]; then
+if [[ -n "$TOKEN" ]]; then
   HEADERS+=(-H "Authorization: Bearer $TOKEN")
 fi
 

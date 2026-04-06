@@ -114,7 +114,7 @@ def _task_as_dict(task: Task) -> dict[str, object]:
     return result
 
 
-def _mock_adapter(pid: int = 42) -> CLIAdapter:
+def _mock_adapter(pid: int = 42) -> MagicMock:
     adapter = MagicMock(spec=CLIAdapter)
     adapter.spawn.return_value = SpawnResult(pid=pid, log_path=Path("/tmp/test.log"))
     adapter.is_alive.return_value = True
@@ -564,7 +564,7 @@ class TestCostTrackerBudgetEnforcement:
         loaded = CostTracker.load(tmp_path, "test-persist")
         assert loaded is not None
         assert abs(loaded.spent_usd - 6.5) < 0.001
-        assert loaded.budget_usd == 20.0
+        assert loaded.budget_usd == pytest.approx(20.0)
         assert len(loaded.usages) == 2
 
     def test_cost_estimation(self) -> None:

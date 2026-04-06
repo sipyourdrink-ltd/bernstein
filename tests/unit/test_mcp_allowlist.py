@@ -18,7 +18,6 @@ from bernstein.core.mcp_manager import (
 )
 from bernstein.core.seed import SeedError, parse_seed
 
-
 # ---------------------------------------------------------------------------
 # MCPRunAllowlist unit tests
 # ---------------------------------------------------------------------------

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.cost_tracker import CostTracker, estimate_cost
 
 
@@ -17,7 +19,7 @@ def test_estimate_cost_with_cache_breakdown():
     # (100k/1M * 3) + (50k/1M * 15) + (200k/1M * 0.3) + (10k/1M * 3.75)
     # 0.3 + 0.75 + 0.06 + 0.0375 = 1.1475
     cost = estimate_cost(model, in_tokens, out_tokens, read_tokens, write_tokens)
-    assert round(cost, 6) == 1.1475
+    assert round(cost, 6) == pytest.approx(1.1475)
 
 
 def test_estimate_cost_fallback_to_input_rate():
@@ -31,7 +33,7 @@ def test_estimate_cost_fallback_to_input_rate():
     # Expected: (100k/1M * 2.5) + (50k/1M * 15) + (200k/1M * 2.5)
     # 0.25 + 0.75 + 0.5 = 1.5
     cost = estimate_cost(model, in_tokens, out_tokens, cache_read_tokens=read_tokens)
-    assert round(cost, 6) == 1.5
+    assert round(cost, 6) == pytest.approx(1.5)
 
 
 def test_cost_tracker_accumulates_cache_breakdown():

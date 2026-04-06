@@ -72,7 +72,7 @@ class TestToolMetrics:
         assert d["tool_name"] == "write_file"
         assert d["total_calls"] == 5
         assert d["error_count"] == 0
-        assert d["error_rate"] == 0.0
+        assert d["error_rate"] == pytest.approx(0.0)
         assert "latency_p50_ms" in d
         assert "latency_p90_ms" in d
         assert "latency_p99_ms" in d
@@ -83,13 +83,13 @@ class TestToolMetrics:
         m.record(5.0)
         m.record(5.0)
         m.record(5.0, error=True)
-        assert m.to_dict()["error_rate"] == 0.5
+        assert m.to_dict()["error_rate"] == pytest.approx(0.5)
 
     def test_empty_metrics_zero_latencies(self) -> None:
         m = ToolMetrics(tool_name="t")
         d = m.to_dict()
-        assert d["latency_p50_ms"] == 0.0
-        assert d["error_rate"] == 0.0
+        assert d["latency_p50_ms"] == pytest.approx(0.0)
+        assert d["error_rate"] == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

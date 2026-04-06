@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+
 from bernstein.eval.golden import GoldenTask
 from bernstein.eval.harness import (
     EvalHarness,
@@ -50,13 +52,13 @@ class TestTaskEvalResult:
         assert r.telemetry is None
         assert r.judge_verdict is None
         assert r.failure is None
-        assert r.duration_s == 0.0
-        assert r.cost_usd == 0.0
+        assert r.duration_s == pytest.approx(0.0)
+        assert r.cost_usd == pytest.approx(0.0)
 
     def test_passed_result(self) -> None:
         r = TaskEvalResult(task_id="t2", tier="standard", passed=True, cost_usd=0.12)
         assert r.passed is True
-        assert r.cost_usd == 0.12
+        assert r.cost_usd == pytest.approx(0.12)
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +69,7 @@ class TestTaskEvalResult:
 class TestEvalResult:
     def test_default_result(self) -> None:
         r = EvalResult(score=0.75)
-        assert r.score == 0.75
+        assert r.score == pytest.approx(0.75)
         assert r.tier == "smoke"
         assert r.tasks_evaluated == 0
         assert r.multiplicative_components is None
@@ -78,7 +80,7 @@ class TestEvalResult:
     def test_to_dict_minimal(self) -> None:
         r = EvalResult(score=0.5, tier="standard", tasks_evaluated=10)
         d = r.to_dict()
-        assert d["score"] == 0.5
+        assert d["score"] == pytest.approx(0.5)
         assert d["tier"] == "standard"
         assert d["tasks_evaluated"] == 10
         assert "multiplicative_components" not in d
@@ -101,15 +103,15 @@ class TestEvalResult:
         )
         d = r.to_dict()
         assert "multiplicative_components" in d
-        assert d["multiplicative_components"]["task_success"] == 0.85
-        assert d["multiplicative_components"]["reliability"] == 1.0
+        assert d["multiplicative_components"]["task_success"] == pytest.approx(0.85)
+        assert d["multiplicative_components"]["reliability"] == pytest.approx(1.0)
 
     def test_to_dict_with_per_tier(self) -> None:
         pt = TierScores(smoke=1.0, standard=0.8, stretch=0.6, adversarial=0.4)
         r = EvalResult(score=0.7, per_tier=pt)
         d = r.to_dict()
-        assert d["per_tier"]["smoke"] == 1.0
-        assert d["per_tier"]["adversarial"] == 0.4
+        assert d["per_tier"]["smoke"] == pytest.approx(1.0)
+        assert d["per_tier"]["adversarial"] == pytest.approx(0.4)
 
     def test_to_dict_with_failures(self) -> None:
         failures = [
@@ -128,7 +130,7 @@ class TestEvalResult:
     def test_to_dict_with_cost(self) -> None:
         r = EvalResult(score=0.8, cost_total=2.34)
         d = r.to_dict()
-        assert d["cost_total"] == 2.34
+        assert d["cost_total"] == pytest.approx(2.34)
 
     def test_to_dict_zero_cost_omitted(self) -> None:
         r = EvalResult(score=0.8, cost_total=0.0)
@@ -362,9 +364,9 @@ class TestMultiplicativeScoring:
         run = h.compute_multiplicative_score(results)
         assert run.score > 0
         assert run.multiplicative_components is not None
-        assert run.multiplicative_components.task_success == 1.0
-        assert run.multiplicative_components.reliability == 1.0
-        assert run.multiplicative_components.safety == 1.0
+        assert run.multiplicative_components.task_success == pytest.approx(1.0)
+        assert run.multiplicative_components.reliability == pytest.approx(1.0)
+        assert run.multiplicative_components.safety == pytest.approx(1.0)
         assert run.tasks_evaluated == 5
 
     def test_empty_results(self, tmp_path: Path) -> None:
@@ -372,7 +374,7 @@ class TestMultiplicativeScoring:
         state_dir.mkdir()
         h = EvalHarness(state_dir)
         run = h.compute_multiplicative_score([])
-        assert run.score == 0.0
+        assert run.score == pytest.approx(0.0)
         assert run.tasks_evaluated == 0
 
     def test_mixed_pass_fail(self, tmp_path: Path) -> None:
@@ -385,7 +387,7 @@ class TestMultiplicativeScoring:
         ]
         run = h.compute_multiplicative_score(results)
         assert run.multiplicative_components is not None
-        assert run.multiplicative_components.task_success == 0.5
+        assert run.multiplicative_components.task_success == pytest.approx(0.5)
 
     def test_crashes_degrade_reliability(self, tmp_path: Path) -> None:
         state_dir = tmp_path / ".sdd"
@@ -417,8 +419,8 @@ class TestMultiplicativeScoring:
         results = [self._make_passing_result(), failing]
         run = h.compute_multiplicative_score(results)
         assert run.multiplicative_components is not None
-        assert run.multiplicative_components.safety == 0.0
-        assert run.score == 0.0
+        assert run.multiplicative_components.safety == pytest.approx(0.0)
+        assert run.score == pytest.approx(0.0)
 
     def test_per_tier_scores(self, tmp_path: Path) -> None:
         state_dir = tmp_path / ".sdd"
@@ -431,8 +433,8 @@ class TestMultiplicativeScoring:
         ]
         run = h.compute_multiplicative_score(results)
         assert run.per_tier is not None
-        assert run.per_tier.smoke == 1.0
-        assert run.per_tier.standard == 0.0
+        assert run.per_tier.smoke == pytest.approx(1.0)
+        assert run.per_tier.standard == pytest.approx(0.0)
 
     def test_cost_total(self, tmp_path: Path) -> None:
         state_dir = tmp_path / ".sdd"
@@ -480,7 +482,7 @@ class TestPersistence:
         data = json.loads(path.read_text())
         assert data["tasks_evaluated"] == 20
         assert "multiplicative_components" in data
-        assert data["per_tier"]["smoke"] == 1.0
+        assert data["per_tier"]["smoke"] == pytest.approx(1.0)
 
     def test_load_previous_run(self, tmp_path: Path) -> None:
         state_dir = tmp_path / ".sdd"
@@ -492,7 +494,7 @@ class TestPersistence:
 
         prev = h.load_previous_run()
         assert prev is not None
-        assert prev.score == 0.72
+        assert prev.score == pytest.approx(0.72)
         assert prev.tasks_evaluated == 15
 
     def test_load_previous_run_empty(self, tmp_path: Path) -> None:
@@ -527,9 +529,9 @@ class TestPersistence:
         prev = h.load_previous_run()
         assert prev is not None
         assert prev.multiplicative_components is not None
-        assert prev.multiplicative_components.task_success == 0.85
+        assert prev.multiplicative_components.task_success == pytest.approx(0.85)
         assert prev.per_tier is not None
-        assert prev.per_tier.smoke == 1.0
+        assert prev.per_tier.smoke == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

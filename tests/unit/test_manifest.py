@@ -72,7 +72,7 @@ class TestRunManifest:
         assert m.run_id == "20240101-000000"
         assert m.workflow_definition_hash == ""
         assert m.workflow_name == ""
-        assert m.budget_ceiling_usd == 0.0
+        assert m.budget_ceiling_usd == pytest.approx(0.0)
         assert m.manifest_hash == ""
 
     def test_frozen(self) -> None:
@@ -183,7 +183,7 @@ class TestBuildManifest:
         assert m.agent_adapter.cli == "claude"
         assert m.agent_adapter.model == "sonnet"
         assert m.agent_adapter.max_agents == 4
-        assert m.budget_ceiling_usd == 15.0
+        assert m.budget_ceiling_usd == pytest.approx(15.0)
         assert m.approval_gates.mode == "review"
         assert m.approval_gates.plan_mode is True
         assert m.manifest_hash != ""

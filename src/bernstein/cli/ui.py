@@ -110,7 +110,7 @@ class AgentInfo:
     role: str = ""
     model: str = ""
     status: str = "idle"
-    task_ids: list[str] = field(default_factory=lambda: list[str]())
+    task_ids: list[str] = field(default_factory=list)
     runtime_s: float = 0.0
     abort_reason: str = ""
     abort_detail: str = ""
@@ -186,7 +186,7 @@ class RunStats:
     """Statistics for a completed (or in-progress) run."""
 
     summary: TaskSummary = field(default_factory=TaskSummary)
-    agents: list[AgentInfo] = field(default_factory=lambda: list[AgentInfo]())
+    agents: list[AgentInfo] = field(default_factory=list)
     elapsed_seconds: float = 0.0
     total_cost_usd: float = 0.0
 
@@ -291,7 +291,12 @@ class CostBurnPanel:
         # Color-code based on budget usage
         if budget_usd > 0:
             pct = total_cost_usd / budget_usd
-            cost_style = "bold red" if pct >= 0.95 else ("bold yellow" if pct >= 0.80 else "bold green")
+            if pct >= 0.95:
+                cost_style = "bold red"
+            elif pct >= 0.80:
+                cost_style = "bold yellow"
+            else:
+                cost_style = "bold green"
         else:
             cost_style = "bold green"
 
@@ -302,7 +307,12 @@ class CostBurnPanel:
             pct_int = min(int(total_cost_usd / budget_usd * 100), 100)
             bar_w = 20
             filled = min(int(total_cost_usd / budget_usd * bar_w), bar_w)
-            bar_style = "bold red" if pct_int >= 95 else ("bold yellow" if pct_int >= 80 else "bold green")
+            if pct_int >= 95:
+                bar_style = "bold red"
+            elif pct_int >= 80:
+                bar_style = "bold yellow"
+            else:
+                bar_style = "bold green"
             text.append(f"  [{pct_int}%]  ", style=bar_style)
             text.append("\u2590", style="dim")
             for i in range(bar_w):

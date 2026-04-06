@@ -409,5 +409,5 @@ class VcrFixture:
                 mappings_applied=0,
                 hypothetical_cost_bytes=len(json.dumps(hydrated_obj).encode("utf-8")),
             )
-        except (json.JSONDecodeError, ValueError):
+        except ValueError:
             return self.hydrate(content)

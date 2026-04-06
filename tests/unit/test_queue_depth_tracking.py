@@ -7,6 +7,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.metric_collector import MetricsCollector, MetricType
 
 
@@ -56,7 +58,7 @@ class TestQueueDepthTracking:
 
         record = json.loads(lines[0])
         assert record["metric_type"] == "queue_depth"
-        assert record["value"] == 17.0  # 10 + 5 + 2
+        assert record["value"] == pytest.approx(17.0)  # 10 + 5 + 2
         assert record["labels"]["open"] == "10"
         assert record["labels"]["claimed"] == "5"
         assert record["labels"]["failed"] == "2"
@@ -127,7 +129,7 @@ class TestQueueDepthTracking:
         content = queue_depth_file.read_text(encoding="utf-8")
         record = json.loads(content.strip().splitlines()[0])
 
-        assert record["value"] == 0.0
+        assert record["value"] == pytest.approx(0.0)
         assert record["labels"]["open"] == "0"
 
     def test_queue_depth_large_values(self, tmp_path: Path) -> None:
@@ -148,4 +150,4 @@ class TestQueueDepthTracking:
         content = queue_depth_file.read_text(encoding="utf-8")
         record = json.loads(content.strip().splitlines()[0])
 
-        assert record["value"] == 1600.0
+        assert record["value"] == pytest.approx(1600.0)

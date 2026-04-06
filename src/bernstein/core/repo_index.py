@@ -255,7 +255,7 @@ def _git_file_owners(workdir: Path, files: list[str]) -> dict[str, str]:
                 parts = line.strip().split("\t", 1)
                 if len(parts) == 2:
                     owners[fpath] = parts[1].strip()
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        except (subprocess.TimeoutExpired, OSError):
             pass
     return owners
 

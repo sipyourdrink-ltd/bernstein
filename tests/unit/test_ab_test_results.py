@@ -15,7 +15,6 @@ from bernstein.core.ab_test_results import (
     record_ab_outcome,
 )
 
-
 # ---------------------------------------------------------------------------
 # model_for_task — deterministic 50/50 routing
 # ---------------------------------------------------------------------------

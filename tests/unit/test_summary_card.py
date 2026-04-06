@@ -54,7 +54,7 @@ def test_estimated_time_saved_is_double() -> None:
         total_cost_usd=0.0,
         quality_score=None,
     )
-    assert data.estimated_time_saved_seconds == 600.0
+    assert data.estimated_time_saved_seconds == pytest.approx(600.0)
 
 
 def test_to_dict_includes_estimated_time_saved() -> None:
@@ -68,7 +68,7 @@ def test_to_dict_includes_estimated_time_saved() -> None:
         quality_score=0.5,
     )
     d = data.to_dict()
-    assert d["estimated_time_saved_seconds"] == 120.0
+    assert d["estimated_time_saved_seconds"] == pytest.approx(120.0)
     assert d["tasks_completed"] == 2
     assert d["tasks_failed"] == 2
     assert d["total_cost_usd"] == pytest.approx(0.05)
