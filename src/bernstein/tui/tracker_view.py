@@ -22,7 +22,18 @@ from bernstein.tui.accessibility import (
 
 # Musical note names for task-id-to-note mapping.
 NOTE_NAMES: list[str] = [
-    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    "C",
+    "C#",
+    "D",
+    "D#",
+    "E",
+    "F",
+    "F#",
+    "G",
+    "G#",
+    "A",
+    "A#",
+    "B",
 ]
 
 # VU meter block characters, low to high.
@@ -218,9 +229,7 @@ class TrackerView(Static):
         self._update_seq += 1
 
         # Index existing channels by agent_id.
-        chan_map: dict[str, TrackerChannel] = {
-            ch.agent_id: ch for ch in self._channels
-        }
+        chan_map: dict[str, TrackerChannel] = {ch.agent_id: ch for ch in self._channels}
 
         seen_ids: set[str] = set()
 
@@ -249,22 +258,26 @@ class TrackerView(Static):
             # Normalize tokens_per_sec to 0-1 (assume 100 tps = max).
             vu = min(tps / 100.0, 1.0) if tps > 0 else 0.0
 
-            ch.rows.append(TrackerRow(
-                row_num=self._row_counter & 0xFF,
-                note=note,
-                effect=effect,
-                vu_level=vu,
-            ))
+            ch.rows.append(
+                TrackerRow(
+                    row_num=self._row_counter & 0xFF,
+                    note=note,
+                    effect=effect,
+                    vu_level=vu,
+                )
+            )
 
         # Append idle rows for channels not in this update.
         for sid, ch in chan_map.items():
             if sid not in seen_ids:
-                ch.rows.append(TrackerRow(
-                    row_num=self._row_counter & 0xFF,
-                    note="---",
-                    effect="\u00b7\u00b7\u00b7",
-                    vu_level=0.0,
-                ))
+                ch.rows.append(
+                    TrackerRow(
+                        row_num=self._row_counter & 0xFF,
+                        note="---",
+                        effect="\u00b7\u00b7\u00b7",
+                        vu_level=0.0,
+                    )
+                )
 
         # Advance row counter (wraps at 0xFF).
         self._row_counter = (self._row_counter + 1) & 0xFF
@@ -318,7 +331,11 @@ class TrackerView(Static):
                     is_current = False
 
                 self._render_cell(
-                    text, row, is_current, ch_width - 1, ascii_mode,
+                    text,
+                    row,
+                    is_current,
+                    ch_width - 1,
+                    ascii_mode,
                 )
             sep = "|" if ascii_mode else "\u2502"
             text.append(sep + "\n", style=border_style)
