@@ -266,9 +266,7 @@ class PlasmaCanvas(Static):
             return self._render_halfblock(width, height, use_truecolor)
         return self._render_shade(width, height)
 
-    def _render_halfblock(
-        self, width: int, height: int, truecolor: bool
-    ) -> Text:
+    def _render_halfblock(self, width: int, height: int, truecolor: bool) -> Text:
         """Render using half-block characters with fg/bg colors.
 
         Each terminal row encodes two pixel rows via the upper-half block.
