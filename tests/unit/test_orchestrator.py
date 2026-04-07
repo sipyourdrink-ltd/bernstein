@@ -5475,6 +5475,8 @@ class TestAdaptivePollingBackoff:
 
         monkeypatch.setattr(orch, "tick", fake_tick)
         monkeypatch.setattr(orch, "_has_active_agents", lambda: False)
+        monkeypatch.setattr(orch, "_drain_before_cleanup", lambda: None)
+        monkeypatch.setattr(orch, "_cleanup", lambda: None)
         orch.run()
 
         # After each idle tick, sleep doubles: 6, 12, 24, 30 (cap), 30 (cap)
@@ -5504,8 +5506,12 @@ class TestAdaptivePollingBackoff:
             return r
 
         monkeypatch.setattr(orch, "tick", fake_tick)
-        # Prevent drain loop: run() continues while _has_active_agents() is True
+        # Prevent drain loop and post-loop cleanup from generating extra sleeps.
+        # run() has: while _running or _has_active_agents(), then
+        # _drain_before_cleanup() and _cleanup() which also call time.sleep.
         monkeypatch.setattr(orch, "_has_active_agents", lambda: False)
+        monkeypatch.setattr(orch, "_drain_before_cleanup", lambda: None)
+        monkeypatch.setattr(orch, "_cleanup", lambda: None)
         orch.run()
 
         # tick 1 (idle) → sleep 6, tick 2 (idle) → sleep 12,
