@@ -71,7 +71,7 @@ def detect_cves() -> list[CVE]:
         in_table = False
         for line in lines:
             # Start parsing after the header row
-            if "---" in line and "---" in line:
+            if "---" in line:
                 in_table = True
                 continue
             if in_table:

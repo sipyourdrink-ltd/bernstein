@@ -23,7 +23,8 @@ def _import_harness():  # type: ignore[return]
     mod = importlib.util.module_from_spec(spec)
     # Register in sys.modules so dataclass field type resolution works
     sys.modules["run_benchmark"] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
     return mod
 
 

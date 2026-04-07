@@ -80,7 +80,7 @@ class TestGitLabCIParserParse:
         failures = parser.parse(_SAMPLE_CLEAN_LOG)
         # Fallback parser always runs parse_failures which produces at least
         # one UNKNOWN entry for non-empty input.
-        assert len(failures) >= 0  # May be empty or UNKNOWN
+        assert isinstance(failures, list)  # May be empty or UNKNOWN
 
     def test_no_sections_fallback(self, parser: GitLabCIParser) -> None:
         """When no section markers exist, parse the whole log."""
@@ -95,7 +95,7 @@ class TestGitLabCIParserParse:
     def test_empty_log(self, parser: GitLabCIParser) -> None:
         """Empty log falls back to parse_failures which returns one UNKNOWN."""
         failures = parser.parse("")
-        assert len(failures) >= 0
+        assert isinstance(failures, list)
 
     def test_job_name_in_failure(self, parser: GitLabCIParser) -> None:
         failures = parser.parse(_SAMPLE_RUFF_LOG)

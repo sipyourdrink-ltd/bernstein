@@ -357,7 +357,8 @@ def _load_run_cli():  # type: ignore[return]
         pytest.skip("could not load benchmarks/swe_bench/run.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules["swe_bench_run"] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
     return mod
 
 

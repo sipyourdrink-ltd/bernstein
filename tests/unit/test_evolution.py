@@ -577,7 +577,7 @@ class TestEvolutionCoordinator:
         coordinator.run_analysis_cycle()
 
         # Should have generated some proposals
-        assert len(coordinator._pending_upgrades) >= 0  # May vary based on analysis
+        assert isinstance(coordinator._pending_upgrades, list)  # May vary based on analysis
 
     def test_create_proposal(self, tmp_path: Path) -> None:
         coordinator = EvolutionCoordinator(tmp_path)
@@ -900,7 +900,7 @@ class TestEvolutionIntegration:
         coordinator.run_analysis_cycle()
 
         # Should have generated proposals
-        assert len(coordinator._pending_upgrades) >= 0
+        assert isinstance(coordinator._pending_upgrades, list)
 
         # Auto-approve some for testing
         for proposal in coordinator._pending_upgrades:
