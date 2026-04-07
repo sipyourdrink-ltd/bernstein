@@ -5480,6 +5480,7 @@ class TestAdaptivePollingBackoff:
         orch.run()
 
         # After each idle tick, sleep doubles: 6, 12, 24, 30 (cap), 30 (cap)
+        assert len(sleep_calls) > 0
         assert sleep_calls[0] == pytest.approx(6.0)
         assert sleep_calls[1] == pytest.approx(12.0)
         assert sleep_calls[2] == pytest.approx(24.0)

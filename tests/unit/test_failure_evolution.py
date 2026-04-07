@@ -171,7 +171,7 @@ def test_failure_rate_by_role(tmp_path: Path) -> None:
     rates = analyzer.get_failure_rate_by_role(hours=24)
     assert pytest.approx(rates["backend"], abs=1e-9) == 2 / 3
     assert pytest.approx(rates["qa"], abs=1e-9) == 1 / 3
-    assert pytest.approx(sum(rates.values()), abs=1e-9) == 1.0
+    assert sum(rates.values()) == pytest.approx(1.0, abs=1e-9)
 
 
 def test_failure_rate_by_role_empty(tmp_path: Path) -> None:
@@ -343,8 +343,8 @@ def test_analyze_failure_patterns_at_threshold(tmp_path: Path) -> None:
     assert r["role"] == "backend"
     assert r["failure_count"] == 3
     assert r["total_count"] == 3
-    assert pytest.approx(r["failure_rate"], abs=1e-9) == 1.0
-    assert pytest.approx(r["avg_cost_of_failures"], abs=1e-9) == 0.10
+    assert r["failure_rate"] == pytest.approx(1.0, abs=1e-9)
+    assert r["avg_cost_of_failures"] == pytest.approx(0.10, abs=1e-9)
 
 
 def test_analyze_failure_patterns_multiple_roles(tmp_path: Path) -> None:

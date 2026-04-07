@@ -261,23 +261,27 @@ class TestBrailleRenderer:
         """All-white image → all 8 braille dots set → U+28FF (⣿)."""
         img = Image.new("L", (4, 8), color=255)
         output = BrailleRenderer().render(img, width=2, height=2)
+        assert output is not None
         assert "\u28ff" in output
 
     def test_black_image_no_dots(self) -> None:
         """All-black image → no dots set → U+2800 (empty braille)."""
         img = Image.new("L", (4, 8), color=0)
         output = BrailleRenderer().render(img, width=2, height=2)
+        assert output is not None
         assert "\u2800" in output
 
     def test_correct_row_count(self) -> None:
         img = Image.new("L", (8, 16), color=200)
         output = BrailleRenderer().render(img, width=4, height=4)
+        assert output is not None
         lines = output.split("\n")
         assert len(lines) == 4
 
     def test_correct_col_count(self) -> None:
         img = Image.new("L", (8, 16), color=200)
         output = BrailleRenderer().render(img, width=4, height=4)
+        assert output is not None
         for line in output.split("\n"):
             assert len(line) == 4
 
@@ -285,6 +289,7 @@ class TestBrailleRenderer:
         """Pixels at exactly the threshold (128) are treated as lit."""
         img = Image.new("L", (2, 4), color=128)
         output = BrailleRenderer().render(img, width=1, height=1)
+        assert output is not None
         # All pixels at threshold → lit → all bits set → U+28FF
         assert "\u28ff" in output
 
@@ -292,6 +297,7 @@ class TestBrailleRenderer:
         """Pixels just below threshold (127) are dark."""
         img = Image.new("L", (2, 4), color=127)
         output = BrailleRenderer().render(img, width=1, height=1)
+        assert output is not None
         assert "\u2800" in output
 
 

@@ -80,6 +80,7 @@ def test_post_task_to_server_boosts_upgrade_priority_and_sets_planned_status() -
     created_id = asyncio.run(planner._post_task_to_server(cast("Any", client), "http://server", task, plan_mode=True))
 
     assert created_id == "server-task-1"
+    assert len(client.posts) > 0
     body = cast("dict[str, object]", client.posts[0]["json"])
     assert body["priority"] == 2
     assert body["status"] == "planned"

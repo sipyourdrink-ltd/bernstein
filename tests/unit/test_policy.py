@@ -903,7 +903,7 @@ class TestPolicyEngineIntegration:
         decision = engine.evaluate(context["task"], context["provider"])
 
         # Should prefer free tier
-        assert decision.get("require_free_tier") is True or len(decision["fallback"]) >= 0
+        assert decision.get("require_free_tier") is True or len(decision["fallback"]) > 0
 
     def test_complex_task_premium_scenario(self) -> None:
         """Test that complex tasks get premium models."""
@@ -920,7 +920,7 @@ class TestPolicyEngineIntegration:
         decision = engine.evaluate(context["task"])
 
         # Should set max effort for complex tasks
-        assert decision.get("effort") == "max" or len(decision["fallback"]) >= 0
+        assert decision.get("effort") == "max" or len(decision["fallback"]) > 0
 
     def test_urgent_task_fast_provider_scenario(self) -> None:
         """Test that urgent tasks get fastest provider."""
