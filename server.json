@@ -1,18 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.chernistry/bernstein",
-  "title": "Bernstein",
-  "description": "Multi-agent orchestrator for CLI coding agents. Any model, any provider.",
+  "description": "Declarative agent orchestration for engineering teams",
   "repository": {
     "url": "https://github.com/chernistry/bernstein",
     "source": "github"
   },
-  "version": "1.4.16",
+  "version": "1.5.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "bernstein",
-      "version": "1.4.16",
+      "version": "1.5.0",
       "transport": {
         "type": "stdio"
       }
