@@ -134,16 +134,18 @@ def check_config_paths(seed: SeedConfig, workdir: Path) -> None:
     Raises:
         SystemExit: If any config-referenced paths are missing or invalid.
     """
-    from bernstein.cli.errors import BernsteinError
+    from bernstein.cli.errors import BernsteinError, ExitCode, handle_cli_error
 
     result = validate_config_paths(seed, workdir)
     if not result.ok:
-        BernsteinError(
-            what="Config references missing paths",
-            why=f"The following paths in bernstein.yaml do not exist:\n{result.format_errors()}",
-            fix="Create the missing files/directories or update bernstein.yaml to reference valid paths",
-        ).print()
-        raise SystemExit(1)
+        raise handle_cli_error(
+            BernsteinError(
+                what="Config references invalid paths",
+                why=f"The following paths in bernstein.yaml are missing or incorrect:\n{result.format_errors()}",
+                fix="Create the missing files/directories or update bernstein.yaml to reference valid paths",
+                exit_code=ExitCode.CONFIG,
+            )
+        )
 
     # Log success for debugging
     validated_count = len(seed.context_files) + (1 if seed.agent_catalog else 0)

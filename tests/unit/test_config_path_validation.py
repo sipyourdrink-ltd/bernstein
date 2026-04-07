@@ -246,9 +246,10 @@ class TestCheckConfigPaths:
     """Tests for check_config_paths entry point."""
 
     def test_exits_on_missing_path(self, workdir: Path) -> None:
-        """SystemExit raised when validation fails."""
+        """SystemExit raised with CONFIG exit code when validation fails."""
         cfg = SeedConfig(goal="Test", context_files=("missing.md",))
         error_mock = MagicMock()
+        error_mock.exit_code = 3  # ExitCode.CONFIG
 
         with (
             patch("bernstein.cli.errors.BernsteinError", return_value=error_mock),
@@ -256,7 +257,7 @@ class TestCheckConfigPaths:
         ):
             check_config_paths(cfg, workdir)
 
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 3  # ExitCode.CONFIG
         error_mock.print.assert_called_once()
 
     def test_passes_when_all_valid(self, workdir: Path) -> None:
