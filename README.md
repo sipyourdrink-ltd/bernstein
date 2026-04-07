@@ -107,8 +107,8 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)
 
 ## How it compares
 
-|  | Bernstein | CrewAI | AutoGen | LangGraph |
-|---|---|---|---|---|
+| Feature | Bernstein | CrewAI | AutoGen | LangGraph |
+|---------|-----------|--------|---------|-----------|
 | Orchestrator | Deterministic code | LLM-driven | LLM-driven | Graph + LLM |
 | Works with | Any CLI agent (18+) | Python SDK classes | Python agents | LangChain nodes |
 | Git isolation | Worktrees per agent | No | No | No |
@@ -116,8 +116,15 @@ Full feature matrix: [FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md)
 | Cost tracking | Built-in | No | No | No |
 | State model | File-based (.sdd/) | In-memory | In-memory | Checkpointer |
 | Self-evolution | Built-in | No | No | No |
+| Declarative plans (YAML) | Yes | Partial | No | Yes |
+| Model routing per task | Yes | No | No | Manual |
+| MCP support | Yes | No | No | No |
+| Agent-to-agent chat | No | Yes | Yes | No |
+| Web UI | No | Yes | Yes | Partial |
+| Cloud hosted option | No | Yes | No | Yes |
+| Built-in RAG/retrieval | No | Yes | Yes | Yes |
 
-[Full comparison pages](docs/compare/README.md) with detailed feature matrices.
+*Last verified: 2026-04-07. See [full comparison pages](docs/compare/README.md) for detailed feature matrices.*
 
 ## Monitoring
 
