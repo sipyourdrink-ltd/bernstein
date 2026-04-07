@@ -13,6 +13,7 @@ concurrency:
 
 permissions:
   contents: write
+  packages: write
   id-token: write
   attestations: write
 
@@ -106,3 +107,38 @@ jobs:
             --notes "Patch release. Changes since previous version:
 
           $NOTES"
+
+      # --- npm wrapper ---
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: Publish npm wrapper
+        continue-on-error: true
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd packaging/npm
+          npm version "${{ steps.final.outputs.version }}" --no-git-tag-version
+          npm publish --access public
+
+      # --- Docker / OCI ---
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push Docker image
+        continue-on-error: true
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/chernistry/bernstein:latest
+            ghcr.io/chernistry/bernstein:${{ steps.final.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

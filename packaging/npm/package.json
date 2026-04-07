@@ -35,5 +35,6 @@
     "index.js",
     "install.js",
     "README.md"
-  ]
+  ],
+  "mcpName": "io.github.chernistry/bernstein"
 }
