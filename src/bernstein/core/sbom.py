@@ -125,9 +125,7 @@ class SBOMDocument:
         """Serialise to CycloneDX 1.5 JSON-compatible dict."""
         import datetime
 
-        ts = datetime.datetime.fromtimestamp(self.generated_at, tz=datetime.UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        ts = datetime.datetime.fromtimestamp(self.generated_at, tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         return {
             "bomFormat": "CycloneDX",
             "specVersion": _CYCLONEDX_SPEC_VERSION,
@@ -145,9 +143,7 @@ class SBOMDocument:
         """Serialise to a minimal SPDX 2.3 JSON-compatible dict."""
         import datetime
 
-        ts = datetime.datetime.fromtimestamp(self.generated_at, tz=datetime.UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        ts = datetime.datetime.fromtimestamp(self.generated_at, tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         packages = []
         for comp in self.components:
             pkg: dict[str, Any] = {

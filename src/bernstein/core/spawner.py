@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.adapters.base import RateLimitError, SpawnError, SpawnResult
 from bernstein.adapters.registry import get_adapter
-from bernstein.core.resource_limits import ResourceLimits
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
@@ -57,6 +56,7 @@ if TYPE_CHECKING:
     from bernstein.core.graph import TaskGraph
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
+    from bernstein.core.resource_limits import ResourceLimits
     from bernstein.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------

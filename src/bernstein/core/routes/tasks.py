@@ -190,7 +190,7 @@ def _evict_realtime_session(request: Request, session_id: str | None) -> None:
 
         if isinstance(monitor, RealtimeBehaviorMonitor):
             monitor.evict_session(session_id)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
 
@@ -234,7 +234,7 @@ def _try_check_realtime_anomaly(
                 signal.task_id,
                 signal.message,
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.debug("Realtime behavior check failed for task %s", task_id, exc_info=True)
 
 

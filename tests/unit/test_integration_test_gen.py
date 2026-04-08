@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path  # noqa: TC003
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from bernstein.core.integration_test_gen import (
@@ -19,6 +19,7 @@ from bernstein.core.integration_test_gen import (
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def _make_task(
     *,
@@ -167,9 +168,7 @@ class TestGenerateAndRun:
         config = IntegTestGenConfig(enabled=True)
         (tmp_path / "tests" / "integration").mkdir(parents=True)
 
-        with patch(
-            "bernstein.core.integration_test_gen._get_diff", return_value=""
-        ):
+        with patch("bernstein.core.integration_test_gen._get_diff", return_value=""):
             result = asyncio.run(generate_and_run(task, tmp_path, config))
 
         assert result.passed
@@ -296,9 +295,7 @@ class TestGenerateAndRun:
         ):
             mock_proc = AsyncMock()
             mock_proc.returncode = 1
-            mock_proc.communicate = AsyncMock(
-                return_value=(b"FAILED test_integration_widget", b"")
-            )
+            mock_proc.communicate = AsyncMock(return_value=(b"FAILED test_integration_widget", b""))
 
             with patch(
                 "asyncio.create_subprocess_exec",

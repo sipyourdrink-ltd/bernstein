@@ -145,9 +145,7 @@ class MinHash:
         if self._num_perm != other._num_perm:
             msg = "Cannot compare MinHash signatures with different num_perm"
             raise ValueError(msg)
-        matches = sum(
-            1 for a, b in zip(self._hashvalues, other._hashvalues, strict=True) if a == b
-        )
+        matches = sum(1 for a, b in zip(self._hashvalues, other._hashvalues, strict=True) if a == b)
         return matches / self._num_perm
 
 

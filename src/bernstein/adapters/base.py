@@ -127,7 +127,7 @@ class CLIAdapter(ABC):
         """
         self._resource_limits = limits
 
-    def _get_preexec_fn(self) -> "Callable[[], None] | None":
+    def _get_preexec_fn(self) -> Callable[[], None] | None:
         """Return a preexec_fn for subprocess.Popen based on configured limits.
 
         Returns:

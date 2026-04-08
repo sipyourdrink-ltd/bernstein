@@ -18,6 +18,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run live adapter conformance tests against real installed binaries.",
     )
+
+
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
