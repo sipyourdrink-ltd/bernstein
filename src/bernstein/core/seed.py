@@ -178,6 +178,68 @@ class RateLimitConfig:
 
 
 @dataclass(frozen=True)
+class ModelFallbackSeedConfig:
+    """Model fallback chain configuration from bernstein.yaml (AGENT-004).
+
+    Attributes:
+        fallback_chain: Ordered list of model names to try in sequence.
+        strike_limit: Consecutive errors before switching to next model.
+        include_timeouts: Whether connection timeouts count as strikes.
+        trigger_codes: HTTP status codes that count as strikes.
+    """
+
+    fallback_chain: list[str] = field(default_factory=list)
+    strike_limit: int = 3
+    include_timeouts: bool = True
+    trigger_codes: list[int] = field(default_factory=lambda: [429, 503, 529])
+
+
+def _parse_model_fallback(raw: object) -> ModelFallbackSeedConfig | None:
+    """Parse the optional model_fallback section from bernstein.yaml.
+
+    Args:
+        raw: Raw YAML value for the ``model_fallback`` section.
+
+    Returns:
+        Parsed ModelFallbackSeedConfig, or None when the section is absent.
+
+    Raises:
+        SeedError: If the section is malformed.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise SeedError(f"model_fallback must be a mapping, got: {type(raw).__name__}")
+    mf: dict[str, object] = cast("dict[str, object]", raw)
+
+    chain_raw = mf.get("fallback_chain")
+    chain: list[str] = []
+    if chain_raw is not None:
+        if not isinstance(chain_raw, list) or not all(isinstance(m, str) for m in chain_raw):
+            raise SeedError("model_fallback.fallback_chain must be a list of strings")
+        chain = [str(m) for m in chain_raw]
+
+    strike_raw = mf.get("strike_limit", 3)
+    if not isinstance(strike_raw, int) or strike_raw < 1:
+        raise SeedError(f"model_fallback.strike_limit must be a positive integer, got: {strike_raw!r}")
+
+    include_timeouts_raw = mf.get("include_timeouts", True)
+    if not isinstance(include_timeouts_raw, bool):
+        raise SeedError(f"model_fallback.include_timeouts must be a bool, got: {type(include_timeouts_raw).__name__}")
+
+    codes_raw = mf.get("trigger_codes", [429, 503, 529])
+    if not isinstance(codes_raw, list) or not all(isinstance(c, int) for c in codes_raw):
+        raise SeedError("model_fallback.trigger_codes must be a list of integers")
+
+    return ModelFallbackSeedConfig(
+        fallback_chain=chain,
+        strike_limit=int(strike_raw),
+        include_timeouts=include_timeouts_raw,
+        trigger_codes=[int(c) for c in codes_raw],
+    )
+
+
+@dataclass(frozen=True)
 class SeedConfig:
     """Validated configuration from bernstein.yaml.
 
@@ -248,6 +310,7 @@ class SeedConfig:
     tenants: tuple[TenantConfig, ...] = ()
     internal_llm_provider: str = "openrouter_free"
     internal_llm_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    model_fallback: ModelFallbackSeedConfig | None = None
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -1345,6 +1408,8 @@ def parse_seed(path: Path) -> SeedConfig:
     if not isinstance(internal_llm_model_raw, str):
         raise SeedError(f"internal_llm_model must be a string, got: {type(internal_llm_model_raw).__name__}")
 
+    model_fallback = _parse_model_fallback(data.get("model_fallback"))
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -1387,6 +1452,7 @@ def parse_seed(path: Path) -> SeedConfig:
         tenants=tenants,
         internal_llm_provider=internal_llm_provider_raw,
         internal_llm_model=internal_llm_model_raw,
+        model_fallback=model_fallback,
     )
 
 

@@ -11,6 +11,7 @@ types with a configurable fallback chain.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,35 @@ DEFAULT_FALLBACK_STATUS_CODES: frozenset[int] = frozenset({429, 503, 529})
 
 #: Sentinel for timeout errors (not a real HTTP code).
 TIMEOUT_STATUS_CODE: int = 0
+
+#: Sentinel status code used when a "model not available" error is detected
+#: in the response body (not via HTTP status code).
+MODEL_UNAVAILABLE_STATUS_CODE: int = -1
+
+#: Regex patterns that indicate a "model not available" API error.
+#: Matched case-insensitively against the response error text/body.
+_MODEL_UNAVAILABLE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"model.{0,20}not.{0,10}(available|found|exist)", re.IGNORECASE),
+    re.compile(r"(invalid|unknown|unsupported).{0,10}model", re.IGNORECASE),
+    re.compile(r"model.{0,10}(does not exist|unavailable)", re.IGNORECASE),
+    re.compile(r"no such model", re.IGNORECASE),
+]
+
+
+def is_model_unavailable_error(text: str) -> bool:
+    """Check whether an error message indicates a "model not available" failure.
+
+    Matches common API error patterns from Anthropic, OpenAI, and compatible
+    providers.  Used to trigger model fallback on 400/404 responses whose body
+    indicates the specific model is unavailable rather than a request problem.
+
+    Args:
+        text: Error text or JSON body from the provider response.
+
+    Returns:
+        True if the text matches a known "model not available" pattern.
+    """
+    return any(pat.search(text) for pat in _MODEL_UNAVAILABLE_PATTERNS)
 
 
 @dataclass
@@ -90,11 +120,14 @@ def _classify_error_type(status_code: int) -> str:
     """Classify an HTTP status code into a human-readable error type.
 
     Args:
-        status_code: HTTP status code or TIMEOUT_STATUS_CODE (0).
+        status_code: HTTP status code, TIMEOUT_STATUS_CODE (0), or
+            MODEL_UNAVAILABLE_STATUS_CODE (-1).
 
     Returns:
         Human-readable error type string.
     """
+    if status_code == MODEL_UNAVAILABLE_STATUS_CODE:
+        return "model_unavailable"
     if status_code == 0:
         return "timeout"
     if status_code == 429:
@@ -181,14 +214,33 @@ class ModelFallbackTracker:
         """Return True if the status code should count as a fallback strike.
 
         Args:
-            status_code: HTTP status code (or TIMEOUT_STATUS_CODE for timeouts).
+            status_code: HTTP status code, TIMEOUT_STATUS_CODE (0) for
+                timeouts, or MODEL_UNAVAILABLE_STATUS_CODE (-1) for model
+                not available errors.
 
         Returns:
             True if this code triggers strike counting.
         """
         if status_code == TIMEOUT_STATUS_CODE and self._include_timeouts:
             return True
+        if status_code == MODEL_UNAVAILABLE_STATUS_CODE:
+            return True
         return status_code in self._trigger_codes
+
+    def record_model_unavailable(self, session_id: str) -> FallbackResult:
+        """Record a "model not available" error for fallback tracking.
+
+        Use when the provider returns a response indicating the requested
+        model does not exist or is unavailable (typically detected by parsing
+        the response body rather than the HTTP status code).
+
+        Args:
+            session_id: Agent session identifier.
+
+        Returns:
+            FallbackResult with decision on whether to fallback.
+        """
+        return self.record_response(session_id, MODEL_UNAVAILABLE_STATUS_CODE)
 
     def record_response(self, session_id: str, status_code: int) -> FallbackResult:
         """Record an HTTP response for a session's fallback tracking.
