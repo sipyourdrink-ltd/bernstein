@@ -77,7 +77,7 @@
       <div class="flex items-center gap-1.5">
         <span class="inline-block w-1.5 h-1.5 rounded-full"
               :class="connected ? 'bg-green-500 pulse' : 'bg-red-500'"></span>
-        <span class="text-muted tabular" x-text="connected ? 'SSE Live' : (polling ? 'Polling' : 'Offline')"></span>
+        <span class="text-muted tabular" x-text="connected ? (wsActive ? 'WS Live' : 'SSE Live') : (polling ? 'Polling' : 'Offline')"></span>
       </div>
       <span class="text-muted tabular font-mono" x-text="elapsed"></span>
       <span class="text-muted/50 text-[10px]" x-text="lastUpdate"></span>
@@ -726,7 +726,10 @@
         // Connection state
         connected: false,
         polling: false,
+        wsActive: false,
         eventSource: null,
+        wsSocket: null,
+        _wsReconnectTimer: null,
         pollTimer: null,
         lastUpdate: '',
 
@@ -977,7 +980,7 @@
         init() {
           this.fetchData();
           this.fetchWorkers();
-          this.connectSSE();
+          this.connectWS();
           this.startTimer();
           // Refresh workers every 30s
           setInterval(() => this.fetchWorkers(), 30000);
@@ -1051,7 +1054,60 @@
           this.activityLog = [{ time, type, message }, ...this.activityLog].slice(0, 100);
         },
 
-        // ---- SSE connection ----
+        // ---- WebSocket connection (primary; falls back to SSE then polling) ----
+        connectWS() {
+          try {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(proto + '//' + location.host + '/ws');
+            this.wsSocket = ws;
+
+            ws.onopen = () => {
+              this.connected = true;
+              this.wsActive = true;
+              this.polling = false;
+              if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+              if (this.eventSource) { this.eventSource.close(); this.eventSource = null; }
+            };
+
+            ws.onmessage = (e) => {
+              try {
+                const msg = JSON.parse(e.data);
+                if (msg.event === 'ping') {
+                  this.connected = true;
+                } else if (msg.event === 'task_update' || msg.event === 'task_progress' ||
+                           msg.event === 'agent_update' || msg.event === 'cost_update') {
+                  this.fetchData();
+                } else if (msg.event === 'heartbeat') {
+                  this.connected = true;
+                }
+              } catch (_) {}
+            };
+
+            ws.onerror = () => {
+              this.wsActive = false;
+              this.connected = false;
+            };
+
+            ws.onclose = () => {
+              this.wsActive = false;
+              this.wsSocket = null;
+              if (!this.eventSource) {
+                this.connectSSE();
+              }
+              // Attempt to reconnect WebSocket after 10s
+              if (this._wsReconnectTimer) clearTimeout(this._wsReconnectTimer);
+              this._wsReconnectTimer = setTimeout(() => {
+                this._wsReconnectTimer = null;
+                if (!this.wsSocket) this.connectWS();
+              }, 10000);
+            };
+          } catch (e) {
+            this.wsActive = false;
+            this.connectSSE();
+          }
+        },
+
+        // ---- SSE connection (fallback) ----
         connectSSE() {
           try {
             this.eventSource = new EventSource('/events');
