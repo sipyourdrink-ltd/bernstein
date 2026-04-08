@@ -611,6 +611,18 @@ def _render_prompt(
         sections.append(f"\n{rich_context}\n")
     if file_scope_context:
         sections.append(deduplicate_section(f"\n## File-scope context\n{file_scope_context}\n"))
+    # Parent context inheritance (AGENT-012): inject parent's context summary
+    # when a task was created from decomposing a larger parent task.
+    parent_ctx_parts: list[str] = []
+    for t in tasks:
+        if t.parent_context:
+            parent_ctx_parts.append(t.parent_context)
+    if parent_ctx_parts:
+        sections.append(
+            "\n## Parent context (inherited)\n"
+            "This task was decomposed from a parent task. The parent agent gathered "
+            "the following context:\n" + "\n".join(parent_ctx_parts) + "\n"
+        )
     predecessor_ctx = _render_predecessor_context(tasks, task_graph)
     if predecessor_ctx:
         sections.append(predecessor_ctx)

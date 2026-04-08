@@ -48,6 +48,46 @@ class ResourceLimits:
     open_files: int = 0
     disk_write_mb: int = 0
 
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> ResourceLimits:
+        """Parse a config dict into ResourceLimits.
+
+        Args:
+            data: Dict with optional keys ``memory_mb``, ``cpu_seconds``,
+                ``open_files``, ``disk_write_mb``.
+
+        Returns:
+            Parsed ResourceLimits.
+        """
+        return cls(
+            memory_mb=int(data.get("memory_mb", 0) or 0),
+            cpu_seconds=int(data.get("cpu_seconds", 0) or 0),
+            open_files=int(data.get("open_files", 0) or 0),
+            disk_write_mb=int(data.get("disk_write_mb", 0) or 0),
+        )
+
+    def has_any_limit(self) -> bool:
+        """Return True if any limit is set (non-zero).
+
+        Returns:
+            True if at least one limit is configured.
+        """
+        return bool(self.memory_mb or self.cpu_seconds or self.open_files or self.disk_write_mb)
+
+
+# ---------------------------------------------------------------------------
+# Default limits for non-sandboxed agents
+# ---------------------------------------------------------------------------
+
+#: Reasonable defaults to prevent a single agent from consuming all resources.
+#: 4 GB memory, 30 min CPU, 4096 file descriptors.
+DEFAULT_AGENT_LIMITS = ResourceLimits(
+    memory_mb=4096,
+    cpu_seconds=1800,
+    open_files=4096,
+    disk_write_mb=0,  # No disk write limit by default
+)
+
 
 # ---------------------------------------------------------------------------
 # Enforcement result

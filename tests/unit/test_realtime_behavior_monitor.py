@@ -122,15 +122,11 @@ def test_monitor_kills_agent_on_output_size_explosion(tmp_path: Path) -> None:
     monitor = RealtimeBehaviorMonitor(tmp_path, max_output_bytes=100)
 
     # First update: under limit
-    signals = monitor.record_progress(
-        "session-3", "task-3", files_changed=0, last_file="", message="x" * 50
-    )
+    signals = monitor.record_progress("session-3", "task-3", files_changed=0, last_file="", message="x" * 50)
     assert signals == []
 
     # Second update: pushes cumulative total over 100 bytes
-    signals = monitor.record_progress(
-        "session-3", "task-3", files_changed=0, last_file="", message="x" * 60
-    )
+    signals = monitor.record_progress("session-3", "task-3", files_changed=0, last_file="", message="x" * 60)
     assert len(signals) == 1
     assert signals[0].rule == "output_size_explosion"
     assert signals[0].action == BehaviorAnomalyAction.KILL_AGENT.value
@@ -221,9 +217,7 @@ def test_monitor_accumulates_output_across_multiple_updates(tmp_path: Path) -> N
 
     # Three small updates each 20 bytes — third one pushes past limit
     for i in range(3):
-        signals = monitor.record_progress(
-            "session-acc", "task-acc", files_changed=0, last_file="", message="x" * 20
-        )
+        signals = monitor.record_progress("session-acc", "task-acc", files_changed=0, last_file="", message="x" * 20)
         if i < 2:
             assert all(s.rule != "output_size_explosion" for s in signals)
         else:

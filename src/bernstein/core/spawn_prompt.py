@@ -690,6 +690,20 @@ def _render_prompt(
         named_sections.append(("lessons", f"\n{lesson_context}\n"))
     if rich_context:
         named_sections.append(("context", f"\n{rich_context}\n"))
+    # Parent context inheritance (AGENT-012): inject parent's context summary
+    parent_ctx_parts: list[str] = []
+    for t in tasks:
+        if t.parent_context:
+            parent_ctx_parts.append(t.parent_context)
+    if parent_ctx_parts:
+        named_sections.append(
+            (
+                "parent_context",
+                "\n## Parent context (inherited)\n"
+                "This task was decomposed from a parent task. The parent agent gathered "
+                "the following context:\n" + "\n".join(parent_ctx_parts) + "\n",
+            )
+        )
     predecessor_ctx = _render_predecessor_context(tasks, task_graph)
     if predecessor_ctx:
         named_sections.append(("predecessor", predecessor_ctx))

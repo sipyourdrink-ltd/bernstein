@@ -138,6 +138,7 @@ def build_subagent_context(
     task_ids: list[str],
     owned_files: list[str],
     server_url: str = "http://127.0.0.1:8052",
+    context_summary: str = "",
 ) -> str:
     """Build context instructions that subagents should inherit.
 
@@ -147,6 +148,8 @@ def build_subagent_context(
         task_ids: IDs of tasks assigned to the parent agent.
         owned_files: File paths the parent agent is allowed to modify.
         server_url: Bernstein task server URL.
+        context_summary: Parent agent's context summary (key decisions,
+            architectural context, files explored).
 
     Returns:
         Markdown-formatted context block for subagent CLAUDE.md.
@@ -158,6 +161,12 @@ def build_subagent_context(
         f"Task server: `{server_url}`",
         "",
     ]
+
+    if context_summary:
+        lines.append("### Parent context summary")
+        lines.append("The parent agent gathered this context before delegating to you:")
+        lines.append(context_summary)
+        lines.append("")
 
     if task_ids:
         lines.append("### Parent task IDs")

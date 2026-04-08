@@ -3872,6 +3872,19 @@ if __name__ == "__main__":
                 workdir=workdir,
             )
 
+        # Parse agent resource limits from config (AGENT-013)
+        from bernstein.core.resource_limits import DEFAULT_AGENT_LIMITS
+        from bernstein.core.resource_limits import ResourceLimits as _ResourceLimits
+
+        agent_rlimits: _ResourceLimits | None = None
+        if seed and seed.agent_resource_limits is not None:
+            if isinstance(seed.agent_resource_limits, dict):
+                agent_rlimits = _ResourceLimits.from_dict(seed.agent_resource_limits)
+            elif isinstance(seed.agent_resource_limits, _ResourceLimits):
+                agent_rlimits = seed.agent_resource_limits
+        if agent_rlimits is None:
+            agent_rlimits = DEFAULT_AGENT_LIMITS
+
         spawner = AgentSpawner(
             adapter=adapter_inst,
             templates_dir=get_templates_dir(workdir),
@@ -3889,6 +3902,7 @@ if __name__ == "__main__":
             sandbox=sandbox_config,
             role_model_policy=seed.role_model_policy if seed else None,
             runtime_bridge=runtime_bridge,
+            resource_limits=agent_rlimits,
         )
         budget_usd = 0.0
         dry_run = False

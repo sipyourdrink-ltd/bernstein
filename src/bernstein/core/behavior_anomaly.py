@@ -546,9 +546,7 @@ def _is_suspicious_file(path: str) -> bool:
     normalized = path.replace("\\", "/")
 
     for safe in _SAFE_FILE_ALLOWLIST:
-        if fnmatch.fnmatch(normalized, safe) or re.search(
-            re.escape(safe.lstrip("*")), normalized
-        ):
+        if fnmatch.fnmatch(normalized, safe) or re.search(re.escape(safe.lstrip("*")), normalized):
             return False
 
     for pattern in _SUSPICIOUS_FILE_PATTERNS:
