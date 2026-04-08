@@ -14,6 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 
+from bernstein.tui.keybinding_config import resolve_all_bindings as _resolve_all_bindings
 from bernstein.tui.timeline import TaskTimeline, TimelineEntry
 from bernstein.tui.widgets import (
     ActionBar,
@@ -31,6 +32,19 @@ from bernstein.tui.widgets import (
     WaterfallWidget,
     classify_role,
 )
+
+
+def _build_app_bindings() -> list[BindingType]:
+    """Build BINDINGS from the keybinding_config system (TUI-004).
+
+    Resolved at module load time so Textual can see them as a class variable.
+    User overrides from ~/.bernstein/keybindings.yaml and keybindings.json
+    are applied automatically.
+    """
+    return [
+        Binding(e.key, e.action, e.description, show=e.show, priority=e.priority)
+        for e in _resolve_all_bindings()
+    ]
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -115,29 +129,7 @@ class BernsteinApp(App[None]):
     #: Resize debounce delay in seconds (TUI-001).
     RESIZE_DEBOUNCE_S: ClassVar[float] = 0.2
 
-    BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("q", "quit", "Quit", show=False),
-        Binding("r", "refresh", "Refresh", show=False),
-        Binding("S", "hard_stop", "Hard stop", show=False, priority=True),
-        Binding("enter", "toggle_action_bar", "Actions", show=False),
-        Binding("s", "spawn_now", "Spawn now", show=False),
-        Binding("p", "prioritize", "Prioritize", show=False),
-        Binding("k", "kill_agent", "Kill agent", show=False),
-        Binding("x", "cancel_task", "Cancel task", show=False),
-        Binding("t", "retry_task", "Retry task", show=False),
-        Binding("v", "toggle_timeline", "Timeline", show=True),
-        Binding("f", "toggle_waterfall", "Waterfall", show=True),
-        Binding("c", "toggle_scratchpad", "Scratchpad", show=True),
-        Binding("w", "toggle_coordinator", "Coordinator", show=True),
-        Binding("a", "toggle_approvals", "Approvals", show=True),
-        Binding("l", "toggle_tool_observer", "Tool calls", show=True),
-        Binding("/", "scratchpad_filter", "Filter scratchpad", show=False),
-        Binding("escape", "close_action_bar", "Close", show=False),
-        Binding("up", "cursor_up", "Up", show=False),
-        Binding("down", "cursor_down", "Down", show=False),
-        Binding("j", "cursor_down", "Down", show=False),
-        Binding("?", "show_help", "Help", show=True),
-    ]
+    BINDINGS: ClassVar[list[BindingType]] = _build_app_bindings()
 
     def __init__(self, poll_interval: float = _POLL_INTERVAL) -> None:
         """Initialise the application.

@@ -48,24 +48,12 @@ class HelpScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         """Populate the help table on mount."""
+        from bernstein.tui.keybinding_config import resolve_all_bindings
+
         table = cast("DataTable[str]", self.query_one("#help-table", DataTable))
         table.add_columns("Key", "Action")
 
-        shortcuts: list[tuple[str, str]] = [
-            ("q", "Quit"),
-            ("r", "Refresh"),
-            ("S", "Hard stop"),
-            ("H", "Help"),
-            ("↑/↓", "Navigate"),
-            ("Enter", "Select/Detail"),
-            ("/", "Search"),
-            ("Escape", "Clear search/Close"),
-            ("s", "Spawn now"),
-            ("p", "Prioritize"),
-            ("k", "Kill agent"),
-            ("x", "Cancel task"),
-            ("t", "Retry task"),
-        ]
-
-        for key, action in shortcuts:
-            table.add_row(key, action)
+        entries = resolve_all_bindings()
+        for entry in entries:
+            key_display = entry.key.replace("ctrl+", "Ctrl+").replace("escape", "Escape")
+            table.add_row(key_display, entry.description)
