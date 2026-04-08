@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path  # noqa: TC003
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -1042,3 +1043,199 @@ class ComplianceEngine:
                 "No conformity assessment or CE marking required.",
             ]
         return ["No mandatory action required. Consider voluntary code of conduct adherence."]
+
+    def export_evidence_package(
+        self,
+        descriptor: SystemDescriptor,
+        output_dir: Path,
+        doc_version: str = "1.0.0",
+    ) -> Path:
+        """Run the full compliance workflow and write the evidence package to disk.
+
+        Writes three files to *output_dir*:
+          - ``classification.json`` — Annex III classification result
+          - ``tech_doc.json`` — Annex IV technical documentation (high-risk only)
+          - ``conformity.json`` — conformity assessment results
+          - ``evidence_package.json`` — combined package for audit submission
+
+        Args:
+            descriptor: AI system descriptor.
+            output_dir: Directory where evidence files are written.
+            doc_version: Annex IV document version string.
+
+        Returns:
+            Path to the combined ``evidence_package.json`` file.
+        """
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        report = self.run(descriptor, doc_version=doc_version, include_tech_doc=True)
+
+        # Write individual artefacts
+        _write_json(output_dir / "classification.json", report["classification"])
+        if "tech_doc" in report:
+            _write_json(output_dir / "tech_doc.json", report["tech_doc"])
+        _write_json(output_dir / "conformity.json", report["conformity"])
+
+        # Combined evidence package with metadata envelope
+        package = {
+            "schema_version": "1.0",
+            "generated_at": datetime.now(tz=UTC).isoformat(),
+            "regulation": "EU AI Act (Regulation (EU) 2024/1689)",
+            "system_name": descriptor.name,
+            "system_version": descriptor.version,
+            "report": report,
+        }
+        package_path = output_dir / "evidence_package.json"
+        _write_json(package_path, package)
+        logger.info(
+            "EU AI Act evidence package written: system=%s path=%s",
+            descriptor.name,
+            package_path,
+        )
+        return package_path
+
+
+def _write_json(path: Path, data: Any) -> None:
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Bernstein system descriptor factory
+# ---------------------------------------------------------------------------
+
+
+def bernstein_descriptor(
+    version: str = "1.0.0",
+    *,
+    deployment_context: str = "Self-hosted multi-agent orchestration platform",
+    metadata: dict[str, Any] | None = None,
+) -> SystemDescriptor:
+    """Return a pre-configured SystemDescriptor for the Bernstein orchestration system.
+
+    Bernstein is an orchestration platform for short-lived CLI coding agents.
+    It is not itself a decision-making AI in an Annex III high-risk domain, but
+    it may orchestrate agents that perform high-risk tasks.  The descriptor
+    captures those nuances so operators can generate a meaningful evidence package.
+
+    Args:
+        version: Bernstein release version.
+        deployment_context: Where/how Bernstein is deployed.
+        metadata: Optional extra metadata to merge into the descriptor.
+
+    Returns:
+        SystemDescriptor configured for Bernstein.
+    """
+    base_metadata: dict[str, Any] = {
+        "provider": "Bernstein open-source project (chernistry/bernstein)",
+        "model_architecture": (
+            "Multi-agent orchestration layer; underlying LLMs are third-party "
+            "(Anthropic Claude, OpenAI Codex, Google Gemini, etc.)"
+        ),
+        "training_data": "Not applicable — Bernstein is orchestration software, not a trained model",
+        "training_process": "Not applicable",
+        "validation_methodology": "Automated test suite (pytest), ruff lint, Pyright strict type checking",
+        "performance_metrics": "Task throughput, agent success rate, wall-clock time per task",
+        "known_limitations": (
+            "LLM agent outputs are non-deterministic; Bernstein does not validate semantic "
+            "correctness of agent-generated code.  Human review is required."
+        ),
+        "human_oversight": (
+            "Operators review task results via the Bernstein dashboard; all agent actions are "
+            "logged to .sdd/runtime/; agents can be paused or killed via SHUTDOWN signal files."
+        ),
+        "override_capability": "SHUTDOWN signal file immediately terminates any running agent process",
+        "monitoring_procedures": "Heartbeat files updated every 15 s; orchestrator monitors agent liveness",
+        "logging_capabilities": (
+            "Structured JSONL logs: access.jsonl, task store persistence, agent heartbeats, "
+            "EU AI Act assessment log (eu_ai_act_assessments.jsonl)"
+        ),
+        "audit_trail": "All task state transitions persisted in .sdd/runtime/tasks.jsonl",
+        "robustness_testing": "Unit and integration tests covering core orchestration paths",
+        "security_measures": (
+            "JWT cluster authentication, tenant isolation, rate limiting, "
+            "secrets manager integration (Vault / AWS / 1Password)"
+        ),
+        "accuracy_metrics": "Not applicable — Bernstein orchestrates; accuracy is assessed per-agent",
+        "bias_assessment": "Not applicable — orchestration layer; bias risk is in the underlying LLM agents",
+        "bias_mitigation": "Not applicable",
+        "adversarial_testing": "Pending; planned for post-v1.0 security audit",
+        "training_data_sources": "Not applicable",
+        "data_preprocessing": "Not applicable",
+        "data_quality_measures": "Not applicable",
+        "personal_data_handling": (
+            "Bernstein logs task metadata only. API keys are managed via secrets vault integration "
+            "(not stored in plaintext). No PII is intentionally collected."
+        ),
+        "data_retention": "Task logs retained until manual purge; no automatic expiry by default",
+        "third_party_data": "None collected",
+        "instructions_for_use": (
+            "See README.md and CLAUDE.md.  Bernstein is not intended for use in "
+            "EU AI Act Annex III high-risk domains without additional compliance measures."
+        ),
+        "capability_limitations": (
+            "Bernstein relies on third-party LLMs; outputs are not validated for correctness, "
+            "safety, or legal compliance.  Human review is mandatory for high-stakes decisions."
+        ),
+        "monitoring_plan": "Heartbeat monitoring + orchestrator watchdog; metrics exposed at /status",
+        "incident_reporting": "Log incidents to GitHub Issues; serious incidents reported per Article 73",
+        "market_surveillance_authority": "Determined by operator's EU member state",
+        "feedback_loop": "GitHub Issues and community contributions",
+        "risk_management_system": (
+            "EU AI Act compliance engine (this module) classifies tasks and generates "
+            "conformity evidence packages.  Human operators review high-risk findings."
+        ),
+        "data_governance_practices": (
+            "Bernstein does not train models; it only routes tasks.  "
+            "Data governance obligations fall to the underlying LLM providers."
+        ),
+        "technical_documentation_reference": (
+            "Generated by Bernstein compliance engine — see evidence_package.json"
+        ),
+        "disclosure_mechanism": "Not applicable — Bernstein is a developer tool, not a consumer-facing AI",
+        "harmonised_standards": "Pending adoption of harmonised EU AI Act standards (CEN/CENELEC)",
+        "notified_body": "Not yet engaged",
+        "ce_marking_status": "Not applicable for current risk category",
+        "eu_db_registration": "Not required for current risk category",
+        "declaration_of_conformity": "Not required for current risk category",
+        "output_interpretability": (
+            "Agent outputs are plain text / code diffs; all intermediate steps logged to .sdd/"
+        ),
+    }
+    if metadata:
+        base_metadata.update(metadata)
+
+    return SystemDescriptor(
+        name="Bernstein",
+        version=version,
+        description=(
+            "Multi-agent orchestration platform for CLI coding agents (Claude Code, Codex, Gemini CLI, etc.). "
+            "Bernstein spawns short-lived agents, assigns tasks from a shared backlog, "
+            "and merges results back into a git repository.  "
+            "It is orchestration middleware, not a decision-making AI system."
+        ),
+        intended_use=(
+            "Software development automation: code generation, refactoring, testing, "
+            "documentation, and security review — under human developer supervision."
+        ),
+        deployment_context=deployment_context,
+        # Bernstein itself is not in any Annex III high-risk domain
+        processes_biometrics=False,
+        interacts_with_critical_infrastructure=False,
+        used_in_education=False,
+        used_in_employment=False,
+        used_in_essential_services=False,
+        used_in_law_enforcement=False,
+        used_in_migration=False,
+        used_in_justice=False,
+        # Not Article 5 prohibited
+        real_time_biometric_public=False,
+        subliminal_techniques=False,
+        exploits_vulnerabilities=False,
+        social_scoring_public=False,
+        manipulates_behavior=False,
+        # Article 50 transparency
+        is_chatbot_or_conversational=False,
+        generates_synthetic_media=False,
+        uses_emotion_recognition=False,
+        metadata=base_metadata,
+    )
