@@ -312,8 +312,7 @@ class WorktreeManager:
         if not isolation_result.passed:
             self.cleanup(session_id)
             raise WorktreeError(
-                f"Worktree isolation violated for session '{session_id}': "
-                + "; ".join(isolation_result.violations)
+                f"Worktree isolation violated for session '{session_id}': " + "; ".join(isolation_result.violations)
             )
 
         return worktree_path
