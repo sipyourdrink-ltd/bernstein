@@ -17,6 +17,10 @@ import logging
 import os
 import platform
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +162,32 @@ def apply_limits(limits: ResourceLimits) -> EnforcementResult:
             result.open_files_enforced = False
 
     return result
+
+
+def make_preexec_fn(limits: ResourceLimits) -> "Callable[[], None] | None":
+    """Return a ``preexec_fn`` callable suitable for ``subprocess.Popen``.
+
+    Returns ``None`` when no limits are set or the platform does not support
+    ``preexec_fn`` (non-POSIX).  The returned callable calls :func:`apply_limits`
+    inside the child process immediately after ``fork()``.
+
+    Args:
+        limits: Resource limits to apply in the child process.
+
+    Returns:
+        A zero-argument callable, or ``None`` if limits cannot be enforced.
+    """
+    if not _IS_POSIX:
+        return None
+    if limits.memory_mb == 0 and limits.cpu_seconds == 0 and limits.open_files == 0:
+        return None
+
+    _limits = limits  # capture for closure
+
+    def _preexec() -> None:
+        apply_limits(_limits)
+
+    return _preexec
 
 
 def check_usage(pid: int, limits: ResourceLimits) -> ResourceUsage:

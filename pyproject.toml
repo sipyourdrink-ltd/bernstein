@@ -219,6 +219,15 @@ exclude = [
     "src/bernstein/adapters/conformance.py",
     "src/bernstein/core/token_waste_report.py",
     "src/bernstein/core/workflow_importer.py",
+    "src/bernstein/core/sbom.py",
+    "src/bernstein/core/sigstore_attestation.py",
+    "src/bernstein/core/review_rubric.py",
+    "src/bernstein/core/output_fingerprint.py",
+    "src/bernstein/core/hipaa.py",
+    "src/bernstein/core/output_normalizer.py",
+    "src/bernstein/core/integration_test_gen.py",
+    "src/bernstein/core/compliance.py",
+    "src/bernstein/core/adapter_health.py",
 ]
 
 [tool.pytest.ini_options]

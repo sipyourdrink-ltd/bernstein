@@ -61,6 +61,7 @@ class ManagerAdapter(CLIAdapter):
             model=model_config.model,
         )
 
+        preexec_fn = self._get_preexec_fn()
         with log_path.open("w") as log_file:
             proc = subprocess.Popen(
                 wrapped_cmd,
@@ -69,6 +70,7 @@ class ManagerAdapter(CLIAdapter):
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                preexec_fn=preexec_fn,
             )
 
         result = SpawnResult(pid=proc.pid, log_path=log_path)
