@@ -421,6 +421,10 @@ class TaskProgressRequest(BaseModel):
     tests_passing: int | None = None
     errors: int | None = None
     last_file: str = ""
+    # Last shell command executed by the agent — used for real-time anomaly detection.
+    # Agents report this so the orchestrator can detect dangerous commands (exfiltration,
+    # reverse shells, privilege escalation) before the task completes.
+    last_command: str = ""
 
 
 class TaskWaitForSubtasksRequest(BaseModel):

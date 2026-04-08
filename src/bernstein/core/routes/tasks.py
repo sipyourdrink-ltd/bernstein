@@ -201,6 +201,7 @@ def _try_check_realtime_anomaly(
     *,
     files_changed: int,
     last_file: str,
+    last_command: str,
     message: str,
 ) -> None:
     """Run real-time anomaly detection on a progress update (best-effort).
@@ -224,6 +225,7 @@ def _try_check_realtime_anomaly(
             task_id,
             files_changed=files_changed,
             last_file=last_file,
+            last_command=last_command,
             message=message,
         )
         for signal in signals:
@@ -836,15 +838,16 @@ async def progress_task(task_id: str, body: TaskProgressRequest, request: Reques
             last_file=body.last_file,
         )
 
-    # Real-time behavior anomaly detection — checks file access, output size,
-    # and file-change velocity against learned baselines.  Kill signals are
-    # written automatically for KILL_AGENT severity detections.
+    # Real-time behavior anomaly detection — checks file access, commands,
+    # network endpoints, output size, and file-change velocity against learned
+    # baselines.  Kill signals are written automatically for KILL_AGENT severity.
     _try_check_realtime_anomaly(
         request,
         task_id,
         task.claimed_by_session,
         files_changed=body.files_changed or 0,
         last_file=body.last_file,
+        last_command=body.last_command,
         message=body.message or "",
     )
 

@@ -8,6 +8,15 @@ Two detection modes:
    command-velocity anomalies.  On KILL_AGENT severity it writes a structured kill signal
    (``.sdd/runtime/{session_id}.kill``) so the orchestrator terminates the agent on its
    next tick — identical to the ``enforce_kill_signal`` mechanism in ``circuit_breaker.py``.
+
+Detection dimensions (real-time):
+- **Suspicious file access**: Credential/key/system-file path patterns → KILL_AGENT
+- **Dangerous command execution**: Network exfiltration, privilege escalation, or
+  lateral movement commands reported via ``last_command`` → KILL_AGENT
+- **Suspicious network endpoints**: URLs/IPs for cloud metadata, C2 callbacks, or
+  internal SSRF targets detected in progress messages → KILL_AGENT
+- **Output-size explosion**: Cumulative output exceeding the configured limit → KILL_AGENT
+- **File-change velocity**: Statistical outlier vs. learned baseline → LOG
 """
 
 from __future__ import annotations
@@ -20,7 +29,7 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 from bernstein.core.cost_anomaly import AnomalySignal
 
@@ -76,6 +85,100 @@ _SAFE_FILE_ALLOWLIST: list[str] = [
     "test/*",
     "docs/*",
 ]
+
+# ---------------------------------------------------------------------------
+# Dangerous command patterns — commands that suggest a compromised agent is
+# attempting network exfiltration, C2 callback, or privilege escalation.
+# Matched against the ``last_command`` field in progress updates.
+# ---------------------------------------------------------------------------
+
+_DANGEROUS_COMMAND_PREFIXES: Final[tuple[str, ...]] = (
+    # Network exfiltration / C2 callback tools
+    "curl ",
+    "wget ",
+    "nc ",
+    "ncat ",
+    "netcat ",
+    # Reverse shell stagers
+    "bash -i",
+    "sh -i",
+    "/bin/bash -i",
+    "/bin/sh -i",
+    # Python / Perl one-liners used in reverse shells
+    "python -c",
+    "python3 -c",
+    "perl -e",
+    "ruby -e",
+    # Privilege escalation
+    "sudo ",
+    "su -",
+    "chmod 777",
+    "chown root",
+    # Credential harvesting
+    "cat /etc/passwd",
+    "cat /etc/shadow",
+    "dump ",
+    "mimikatz",
+    # Lateral movement
+    "ssh ",
+    "scp ",
+    "rsync ",
+    "ftp ",
+    "sftp ",
+    # DNS exfiltration
+    "nslookup ",
+    "dig ",
+    "host ",
+)
+
+_DANGEROUS_COMMAND_SUBSTRINGS: Final[tuple[str, ...]] = (
+    # Any use of /etc/shadow or /etc/passwd in commands
+    "/etc/shadow",
+    "/etc/passwd",
+    # Reverse shell patterns (bash tcp/udp)
+    "/dev/tcp/",
+    "/dev/udp/",
+    # Command substitution exfiltration
+    "$(cat /etc",
+    "$(base64",
+    # Disabling security controls
+    "iptables -F",
+    "ufw disable",
+    "setenforce 0",
+    "apparmor_parser -R",
+)
+
+# ---------------------------------------------------------------------------
+# Suspicious network endpoint patterns — URLs/IPs detected in progress
+# messages that indicate C2 callbacks, SSRF probes, or data exfiltration.
+# ---------------------------------------------------------------------------
+
+# Cloud metadata endpoints (SSRF targets)
+_CLOUD_METADATA_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"169\.254\.169\.254"  # AWS/GCP/Azure metadata
+    r"|metadata\.google\.internal"
+    r"|169\.254\.170\.2"  # ECS task metadata
+)
+
+# Suspicious URL schemes or internal targets in outbound calls
+_SUSPICIOUS_URL_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?i)"
+    r"(?:https?|ftp|gopher|file|smb)://"  # any URL scheme
+    r"(?:"
+    r"169\.254\.169\.254"  # AWS/GCP/Azure metadata
+    r"|127\.\d+\.\d+\.\d+"  # loopback
+    r"|::1"  # IPv6 loopback
+    r"|10\.\d+\.\d+\.\d+"  # RFC-1918 10.x
+    r"|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+"  # RFC-1918 172.16-31.x
+    r"|192\.168\.\d+\.\d+"  # RFC-1918 192.168.x
+    r"|localhost"
+    r")"
+)
+
+# External callback indicators (domain names used in C2/exfil payloads)
+_C2_CALLBACK_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?i)(?:ngrok\.io|\.ngrok\.io|burpcollaborator\.net|requestbin\.com|webhook\.site|pipedream\.net)"
+)
 
 
 class BehaviorAnomalyAction(StrEnum):
@@ -297,6 +400,8 @@ class SessionAnomalyState:
         files_changed_peak: Highest ``files_changed`` count seen so far.
         output_size_bytes: Cumulative output size (message bytes) seen so far.
         suspicious_file_hits: Files that matched a suspicious pattern.
+        dangerous_commands: Commands that matched a dangerous pattern.
+        suspicious_network_hits: Network endpoints detected in progress messages.
         created_at: UNIX timestamp when the state record was created.
         last_updated: UNIX timestamp of the most recent update.
     """
@@ -306,6 +411,8 @@ class SessionAnomalyState:
     files_changed_peak: int = 0
     output_size_bytes: int = 0
     suspicious_file_hits: list[str] = field(default_factory=list)
+    dangerous_commands: list[str] = field(default_factory=list)
+    suspicious_network_hits: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     last_updated: float = field(default_factory=time.time)
 
@@ -319,11 +426,15 @@ class RealtimeBehaviorMonitor:
 
     Detection dimensions:
     - **Suspicious file access**: Any ``last_file`` matching credential,
-      key, or system-file patterns is flagged immediately (always high severity).
+      key, or system-file patterns is flagged immediately (KILL_AGENT).
+    - **Dangerous command execution**: Any ``last_command`` matching network
+      exfiltration, reverse-shell, or privilege-escalation patterns (KILL_AGENT).
+    - **Suspicious network endpoints**: Internal/metadata/C2 URLs detected in
+      progress messages (KILL_AGENT).
     - **Output-size explosion**: ``output_size_bytes`` growing beyond
-      ``max_output_bytes`` suggests bulk data read-back / exfiltration.
+      ``max_output_bytes`` suggests bulk data read-back / exfiltration (KILL_AGENT).
     - **File-change velocity**: ``files_changed`` growing faster than the
-      learned baseline is flagged as a statistical outlier.
+      learned baseline is flagged as a statistical outlier (LOG).
 
     Args:
         workdir: Project root directory (used to resolve the runtime dir for
@@ -360,6 +471,7 @@ class RealtimeBehaviorMonitor:
         *,
         files_changed: int = 0,
         last_file: str = "",
+        last_command: str = "",
         message: str = "",
     ) -> list[AnomalySignal]:
         """Update session state from a progress report and detect anomalies.
@@ -369,7 +481,8 @@ class RealtimeBehaviorMonitor:
             task_id: Current task identifier.
             files_changed: Cumulative number of files changed in this session.
             last_file: Last file path the agent reported editing.
-            message: Progress message text (used for output-size tracking).
+            last_command: Last shell command the agent executed (if any).
+            message: Progress message text (used for output-size and network tracking).
 
         Returns:
             List of ``AnomalySignal`` values detected in this update.  Empty
@@ -404,7 +517,52 @@ class RealtimeBehaviorMonitor:
                 )
             )
 
-        # 2. Output-size explosion
+        # 2. Dangerous command execution check
+        if last_command:
+            matched_pattern = _match_dangerous_command(last_command)
+            if matched_pattern is not None:
+                state.dangerous_commands.append(last_command)
+                signals.append(
+                    self._make_signal(
+                        rule="dangerous_command_execution",
+                        severity="critical",
+                        action=BehaviorAnomalyAction.KILL_AGENT,
+                        session_id=session_id,
+                        task_id=task_id,
+                        message=(
+                            f"Agent {session_id} executed dangerous command"
+                            f" (pattern={matched_pattern!r}): {last_command[:200]}"
+                        ),
+                        details={
+                            "last_command": last_command,
+                            "matched_pattern": matched_pattern,
+                            "all_dangerous_commands": state.dangerous_commands,
+                        },
+                    )
+                )
+
+        # 3. Suspicious network endpoint detection in progress messages
+        if message:
+            network_hits = _extract_suspicious_network_endpoints(message)
+            for endpoint in network_hits:
+                if endpoint not in state.suspicious_network_hits:
+                    state.suspicious_network_hits.append(endpoint)
+                    signals.append(
+                        self._make_signal(
+                            rule="suspicious_network_endpoint",
+                            severity="critical",
+                            action=BehaviorAnomalyAction.KILL_AGENT,
+                            session_id=session_id,
+                            task_id=task_id,
+                            message=f"Agent {session_id} referenced suspicious network endpoint: {endpoint}",
+                            details={
+                                "endpoint": endpoint,
+                                "all_network_hits": state.suspicious_network_hits,
+                            },
+                        )
+                    )
+
+        # 4. Output-size explosion
         if state.output_size_bytes > self._max_output_bytes:
             signals.append(
                 self._make_signal(
@@ -424,7 +582,7 @@ class RealtimeBehaviorMonitor:
                 )
             )
 
-        # 3. Statistical file-change velocity check (if baseline available)
+        # 5. Statistical file-change velocity check (if baseline available)
         baseline = self._load_baseline()
         if baseline is not None and files_changed > 0:
             detector = BehaviorAnomalyDetector(
@@ -559,3 +717,63 @@ def _is_suspicious_file(path: str) -> bool:
                 return True
 
     return False
+
+
+def _match_dangerous_command(command: str) -> str | None:
+    """Return the first matching dangerous-command pattern, or None if the command is safe.
+
+    Matches both prefix patterns (e.g., ``curl ``) and substring patterns
+    (e.g., ``/dev/tcp/``) against the lowercased command string.
+
+    Args:
+        command: The raw command string reported by the agent.
+
+    Returns:
+        The matched pattern string when the command is dangerous, or ``None``
+        when the command looks benign.
+    """
+    lowered = command.lower().strip()
+    for prefix in _DANGEROUS_COMMAND_PREFIXES:
+        if lowered.startswith(prefix.lower()):
+            return prefix
+    for substring in _DANGEROUS_COMMAND_SUBSTRINGS:
+        if substring.lower() in lowered:
+            return substring
+    return None
+
+
+def _extract_suspicious_network_endpoints(text: str) -> list[str]:
+    """Scan *text* for suspicious network endpoints and return all matches.
+
+    Detects:
+    - Cloud instance metadata service URLs (169.254.169.254 etc.)
+    - Internal RFC-1918 / loopback HTTP URLs
+    - Known C2/callback domains (ngrok, Burp Collaborator, etc.)
+
+    Args:
+        text: Any progress message or free-form text to scan.
+
+    Returns:
+        Deduplicated list of suspicious endpoint strings found in *text*.
+        If two matches overlap (e.g., bare IP and full URL containing that IP),
+        only the longer (more informative) match is returned.
+    """
+    raw: list[str] = []
+
+    for pattern in (_CLOUD_METADATA_PATTERN, _SUSPICIOUS_URL_PATTERN, _C2_CALLBACK_PATTERN):
+        for match in pattern.finditer(text):
+            raw.append(match.group(0))
+
+    # Deduplicate: drop any match that is a strict substring of another match
+    # (e.g., bare IP "169.254.169.254" when the full URL is also present).
+    hits: list[str] = []
+    seen: set[str] = set()
+    for candidate in sorted(raw, key=len, reverse=True):  # longest first
+        # Skip if already represented by a longer match
+        if any(candidate in longer for longer in hits):
+            continue
+        if candidate not in seen:
+            seen.add(candidate)
+            hits.append(candidate)
+
+    return hits
