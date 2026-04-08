@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -34,6 +35,8 @@ from bernstein.tui.widgets import (
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
 
 SERVER_URL = os.environ.get("BERNSTEIN_SERVER_URL", "http://localhost:8052")
 _POLL_INTERVAL: float = 2.0
@@ -109,6 +112,9 @@ class BernsteinApp(App[None]):
     TITLE = "Bernstein"
     CSS_PATH: ClassVar[str] = "styles.tcss"  # type: ignore[assignment]
 
+    #: Resize debounce delay in seconds (TUI-001).
+    RESIZE_DEBOUNCE_S: ClassVar[float] = 0.2
+
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit", show=False),
         Binding("r", "refresh", "Refresh", show=False),
@@ -145,6 +151,7 @@ class BernsteinApp(App[None]):
         self._action_bar_visible = False
         self._current_rows: list[TaskRow] = []
         self._log_offsets: dict[str, int] = {}  # session_id → last-read byte offset
+        self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
 
     # -- layout ---------------------------------------------------------------
 
@@ -176,6 +183,27 @@ class BernsteinApp(App[None]):
 
         self._load_historical_logs()
         self.set_interval(self._poll_interval, self.action_refresh)
+
+    def on_resize(self, event: object) -> None:
+        """Debounce terminal resize events to avoid layout crashes (TUI-001).
+
+        Args:
+            event: The Textual Resize event.
+        """
+        if self._resize_timer is not None:
+            self._resize_timer.stop()  # type: ignore[union-attr]
+        self._resize_timer = self.set_timer(
+            self.RESIZE_DEBOUNCE_S,
+            self._apply_resize,
+        )
+
+    def _apply_resize(self) -> None:
+        """Apply debounced resize with error protection (TUI-001)."""
+        self._resize_timer = None
+        try:
+            self.refresh(layout=True)
+        except Exception:
+            logger.debug("Layout calculation error during resize (ignored)", exc_info=True)
 
     # -- historical log loading -----------------------------------------------
 
