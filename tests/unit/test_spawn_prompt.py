@@ -434,3 +434,71 @@ def test_file_ownership_none_produces_no_section(tmp_path: Path, make_task: Any)
         )
 
     assert "## Files currently being edited" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# AGENT-012: Parent context inheritance
+# ---------------------------------------------------------------------------
+
+
+def test_render_prompt_includes_parent_context_when_set(tmp_path: Path, make_task: Any) -> None:
+    """_render_prompt injects the parent_context section when a task carries it."""
+    _lesson_cache.clear()
+    task = make_task(id="sub-1", role="backend", title="Implement auth parser", description="Parse tokens.")
+    task.parent_context = (
+        "- **Parent goal**: Add authentication to the API\n"
+        "- **Files in scope**: src/auth.py, src/models.py\n"
+        "- **Parent progress**:\n  - Designed the JWT schema\n"
+    )
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    with (
+        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
+
+    assert "## Parent context (inherited)" in prompt
+    assert "Parent goal" in prompt
+    assert "src/auth.py" in prompt
+    assert "Designed the JWT schema" in prompt
+
+
+def test_render_prompt_omits_parent_context_when_not_set(tmp_path: Path, make_task: Any) -> None:
+    """_render_prompt omits the parent context section when parent_context is None."""
+    _lesson_cache.clear()
+    task = make_task(id="T-1", role="backend", title="Standalone task", description="No parent.")
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    with (
+        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt([task], templates_dir=templates_dir, workdir=tmp_path)
+
+    assert "## Parent context (inherited)" not in prompt
+
+
+def test_render_prompt_merges_parent_context_from_multiple_tasks(tmp_path: Path, make_task: Any) -> None:
+    """When a batch of tasks all carry parent_context, each is included once."""
+    _lesson_cache.clear()
+    task_a = make_task(id="sub-1", role="backend", title="Task A", description="A.")
+    task_a.parent_context = "- Parent context for A"
+    task_b = make_task(id="sub-2", role="backend", title="Task B", description="B.")
+    task_b.parent_context = "- Parent context for B"
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir()
+
+    with (
+        patch("bernstein.core.spawn_prompt.render_role_prompt", return_value="You are a backend specialist."),
+        patch("bernstein.core.spawn_prompt.gather_lessons_for_context", return_value=""),
+        patch("bernstein.core.spawn_prompt._list_subdirs_cached", return_value=["backend"]),
+    ):
+        prompt = _render_prompt([task_a, task_b], templates_dir=templates_dir, workdir=tmp_path)
+
+    assert "Parent context for A" in prompt
+    assert "Parent context for B" in prompt
