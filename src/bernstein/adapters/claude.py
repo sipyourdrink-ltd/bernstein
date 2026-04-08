@@ -245,7 +245,6 @@ class ClaudeCodeAdapter(CLIAdapter):
             "--output-format",
             "stream-json",
             "--verbose",
-            "--bare",
             "--include-hook-events",
             "--no-session-persistence",
         ]

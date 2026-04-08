@@ -112,7 +112,17 @@
     <!-- Active Agents -->
     <div class="bg-surface border border-border rounded-lg p-3">
       <div class="text-[10px] text-muted uppercase tracking-wider mb-1">Active Agents</div>
-      <div class="text-2xl font-mono font-semibold tabular text-accent-light" x-text="stats.agents"></div>
+      <div class="flex items-center gap-2">
+        <button @click="adjustAgents(-1)"
+                class="w-6 h-6 rounded bg-border hover:bg-accent/30 text-muted hover:text-fg flex items-center justify-center text-sm font-bold transition-colors"
+                :disabled="stats.max_agents <= 1">-</button>
+        <div class="text-2xl font-mono font-semibold tabular text-accent-light">
+          <span x-text="stats.agents"></span><span class="text-sm text-muted">/<span x-text="stats.max_agents || '?'"></span></span>
+        </div>
+        <button @click="adjustAgents(1)"
+                class="w-6 h-6 rounded bg-border hover:bg-accent/30 text-muted hover:text-fg flex items-center justify-center text-sm font-bold transition-colors"
+                :disabled="stats.max_agents >= 50">+</button>
+      </div>
       <div class="flex items-center gap-1 mt-1">
         <div class="flex-1 h-1 bg-border rounded-full overflow-hidden">
           <div class="h-full bg-accent rounded-full transition-all duration-500"

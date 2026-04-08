@@ -3112,25 +3112,37 @@ class Orchestrator:
         logger.info("Synced backlog: %s -> closed/", best_match)
 
     def ingest_backlog(self) -> int:
-        """Scan .sdd/backlog/open/ and POST any new files to the task server.
+        """Scan .sdd/backlog/open/ and .sdd/backlog/issues/ for new task files.
 
-        Supports both ``.md`` (markdown) and ``.yaml`` (YAML frontmatter)
-        backlog file formats.
+        Both directories are scanned so that GitHub-synced P0/P1 tickets
+        (in ``issues/``) are ingested alongside internal backlog (``open/``).
+        Candidates are sorted by priority so P0 tasks are ingested first.
+
+        - ``open/`` files are **moved** to ``claimed/`` after ingestion.
+        - ``issues/`` files stay in place; a marker is created in ``claimed/``
+          to prevent re-ingestion.
 
         Returns:
             Number of files ingested this call.
         """
         open_dir = self._workdir / ".sdd" / "backlog" / "open"
-        if not open_dir.exists():
-            return 0
-
+        issues_dir = self._workdir / ".sdd" / "backlog" / "issues"
         claimed_dir = self._workdir / ".sdd" / "backlog" / "claimed"
 
-        # Collect both .md and .yaml files
-        backlog_files = sorted([*open_dir.glob("*.md"), *open_dir.glob("*.yaml"), *open_dir.glob("*.yml")])
+        # Collect .md, .yaml, .yml from both directories
+        backlog_files: list[Path] = []
+        for src_dir in (open_dir, issues_dir):
+            if src_dir.exists():
+                backlog_files.extend(src_dir.glob("*.md"))
+                backlog_files.extend(src_dir.glob("*.yaml"))
+                backlog_files.extend(src_dir.glob("*.yml"))
+        backlog_files.sort()
+
+        if not backlog_files:
+            return 0
 
         # Rate-limit ingestion: max 10 files per tick to prevent server overload.
-        # With 300+ backlog files, posting them all in one tick crashes the server.
+        # With 700+ backlog files, posting them all in one tick crashes the server.
         _MAX_INGEST_PER_TICK = 10
 
         # Build title dedup set from existing server tasks (if available).
@@ -3155,12 +3167,9 @@ class Orchestrator:
 
         from bernstein.core.backlog_parser import parse_backlog_text
 
-        # Phase 1: Collect — parse files, pre-filter known dupes, build batch
-        batch_files: list[tuple[Path, ParsedBacklogTask]] = []
+        # Phase 1: Parse all candidates, filter dupes, sort by priority
+        candidates: list[tuple[Path, ParsedBacklogTask]] = []
         for backlog_file in backlog_files:
-            if len(batch_files) >= _MAX_INGEST_PER_TICK:
-                break
-
             if (claimed_dir / backlog_file.name).exists():
                 continue
 
@@ -3168,15 +3177,19 @@ class Orchestrator:
             parsed_task = parse_backlog_text(backlog_file.name, content)
             if parsed_task is None:
                 logger.warning("ingest_backlog: could not parse %s — skipping", backlog_file.name)
-                backlog_file.rename(claimed_dir / backlog_file.name)
+                self._claim_backlog_file(backlog_file, open_dir, claimed_dir)
                 continue
 
             title_key = parsed_task.title.lower().strip()
             if title_key in existing_titles:
-                backlog_file.rename(claimed_dir / backlog_file.name)
+                self._claim_backlog_file(backlog_file, open_dir, claimed_dir)
                 continue
 
-            batch_files.append((backlog_file, parsed_task))
+            candidates.append((backlog_file, parsed_task))
+
+        # Sort by priority (lower = more critical) so P0 tasks are ingested first
+        candidates.sort(key=lambda t: t[1].priority)
+        batch_files = candidates[:_MAX_INGEST_PER_TICK]
 
         if not batch_files:
             return 0
@@ -3192,28 +3205,41 @@ class Orchestrator:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 # Server doesn't support batch yet — fall back to one-by-one
-                return self._ingest_backlog_one_by_one(batch_files, claimed_dir)
+                return self._ingest_backlog_one_by_one(batch_files, open_dir, claimed_dir)
             logger.warning("ingest_backlog: batch POST failed: %s", exc)
             return 0  # Move NONE on failure
         except httpx.HTTPError as exc:
             logger.warning("ingest_backlog: batch POST failed: %s", exc)
             return 0
 
-        # Phase 3: Move ALL files — only on success
+        # Phase 3: Mark files as claimed — only on success
         count = 0
         for backlog_file, parsed in batch_files:
             title_key = parsed.title.lower().strip()
             existing_titles.add(title_key)
-            with contextlib.suppress(OSError):
-                backlog_file.rename(claimed_dir / backlog_file.name)
+            self._claim_backlog_file(backlog_file, open_dir, claimed_dir)
             count += 1
-            logger.info("Ingested backlog file: %s", backlog_file.name)
+            logger.info("Ingested backlog file: %s (from %s/)", backlog_file.name, backlog_file.parent.name)
 
         return count
+
+    def _claim_backlog_file(self, backlog_file: Path, open_dir: Path, claimed_dir: Path) -> None:
+        """Mark a backlog file as claimed.
+
+        Files from ``open/`` are moved into ``claimed/``.
+        Files from ``issues/`` stay in place — only a marker is created in
+        ``claimed/`` so they are not re-ingested.
+        """
+        with contextlib.suppress(OSError):
+            if backlog_file.parent == open_dir:
+                backlog_file.rename(claimed_dir / backlog_file.name)
+            else:
+                (claimed_dir / backlog_file.name).touch()
 
     def _ingest_backlog_one_by_one(
         self,
         batch_files: list[tuple[Path, ParsedBacklogTask]],
+        open_dir: Path,
         claimed_dir: Path,
     ) -> int:
         """Fallback: ingest files one-by-one when server lacks batch endpoint."""
@@ -3235,8 +3261,7 @@ class Orchestrator:
                 continue  # Skip this file, try next
 
             self._ingested_titles.add(parsed.title.lower().strip())
-            with contextlib.suppress(OSError):
-                backlog_file.rename(claimed_dir / backlog_file.name)
+            self._claim_backlog_file(backlog_file, open_dir, claimed_dir)
             count += 1
             logger.info("Ingested backlog file (one-by-one): %s", backlog_file.name)
         return count

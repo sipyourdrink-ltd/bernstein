@@ -457,6 +457,8 @@ class DashboardHeader(Static):
     budget_usd = reactive(0.0)
     elapsed = reactive(0)
     cost_trend = reactive("")
+    max_agents = reactive(6)
+    active_agents = reactive(0)
 
     def render(self) -> Table:
         left = Text()
@@ -465,6 +467,11 @@ class DashboardHeader(Static):
         left.append("  Agent Orchestra", style=f"bold {PALETTE.text_dim}")
 
         right = Text()
+        # Agent count control: [-] N/Max [+]
+        right.append("[-]", style=f"bold {PALETTE.text_dim}")
+        right.append(f" Agents {self.active_agents}/{self.max_agents} ", style=f"bold {PALETTE.glow}")
+        right.append("[+]", style=f"bold {PALETTE.text_dim}")
+        right.append("  ", style="")
         if self.git_branch:
             right.append(self.git_branch, style=f"bold {PALETTE.glow}")
             right.append("  ", style="")
@@ -1385,6 +1392,9 @@ class BernsteinApp(App[None]):
         Binding("d", "compare_task", "Diff"),
         Binding("v", "compare_task", "Diff", show=False),
         Binding("i", "inspect_task", "Open", show=False),
+        Binding("plus_sign", "agents_up", "+Agent", key_display="+"),
+        Binding("equals_sign", "agents_up", "+Agent", show=False),
+        Binding("hyphen_minus", "agents_down", "-Agent", key_display="-"),
     ]
 
     def __init__(self, **kw: Any) -> None:
@@ -1752,6 +1762,9 @@ class BernsteinApp(App[None]):
                     if ": " in msg:
                         msg = msg.split(": ", 1)[1]
                     msg = msg[:80]
+                    # Escape Rich markup in log messages (e.g. WAL entries
+                    # contain "[run=... seq=...]" which Rich misparses).
+                    msg = msg.replace("[", r"\[")
                     # Color by level.
                     if level == "ERROR":
                         lines.append(f"[red]{time_part}[/] [bold red]ERR[/]  {msg}")
@@ -1956,6 +1969,11 @@ class BernsteinApp(App[None]):
         header.budget_usd = bar.budget_usd
         header.elapsed = bar.elapsed
         header.cost_trend = _mini_cost_sparkline(list(self._cost_history))
+        # Update agent count from status data
+        if isinstance(status, dict):
+            prov = status.get("runtime", {}).get("config_provenance", {})
+            header.max_agents = prov.get("max_agents", {}).get("value", header.max_agents)
+        header.active_agents = bar.alive
 
         spark = self.query_one("#spark", Sparkline)
         spark.data = list(self._history) if self._history else [0.0]
@@ -2234,6 +2252,31 @@ class BernsteinApp(App[None]):
         """Hot restart: exit TUI cleanly, then re-exec into `bernstein live`."""
         self._restart_on_exit = True
         self.exit(message="Restarting...")
+
+    def action_agents_up(self) -> None:
+        """Increase max_agents by 1 via the config API."""
+        header = self.query_one("#header-bar", DashboardHeader)
+        new_val = header.max_agents + 1
+        try:
+            _post("/config", {"max_agents": new_val})
+            header.max_agents = new_val
+            self.notify(f"Max agents: {new_val}", severity="information", timeout=3)
+        except Exception as exc:
+            self.notify(f"Failed: {exc}", severity="error", timeout=5)
+
+    def action_agents_down(self) -> None:
+        """Decrease max_agents by 1 (min 1). Running agents finish gracefully."""
+        header = self.query_one("#header-bar", DashboardHeader)
+        new_val = max(1, header.max_agents - 1)
+        if new_val == header.max_agents:
+            self.notify("Already at minimum (1)", severity="warning", timeout=3)
+            return
+        try:
+            _post("/config", {"max_agents": new_val})
+            header.max_agents = new_val
+            self.notify(f"Max agents: {new_val} (running agents finish gracefully)", severity="information", timeout=3)
+        except Exception as exc:
+            self.notify(f"Failed: {exc}", severity="error", timeout=5)
 
     def action_graceful_quit(self) -> None:
         """Start graceful drain with progress overlay."""
