@@ -1073,6 +1073,16 @@ def create_app(
         _nodes_persist = _runtime_dir / "nodes.json"
     node_registry = NodeRegistry(effective_cluster, persist_path=_nodes_persist)
 
+    # Cluster JWT authentication (ENT-002)
+    from bernstein.core.cluster_auth import ClusterAuthConfig, ClusterAuthenticator
+
+    _cluster_auth_secret = effective_cluster.auth_token or ""
+    cluster_authenticator: ClusterAuthenticator | None = None
+    if effective_cluster.enabled and _cluster_auth_secret:
+        cluster_authenticator = ClusterAuthenticator(
+            ClusterAuthConfig(secret=_cluster_auth_secret, require_auth=True),
+        )
+
     store = TaskStore(jsonl_path, metrics_jsonl_path=metrics_jsonl_path)
     sse_bus = SSEBus()
     workdir = (
@@ -1249,12 +1259,20 @@ def create_app(
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
     application.state.acp_handler = acp_handler  # type: ignore[attr-defined]
     application.state.node_registry = node_registry  # type: ignore[attr-defined]
+    application.state.cluster_authenticator = cluster_authenticator  # type: ignore[attr-defined]
     application.state.sse_bus = sse_bus  # type: ignore[attr-defined]
     application.state.runtime_dir = jsonl_path.parent  # type: ignore[attr-defined]  # .sdd/runtime/
     application.state.sdd_dir = sdd_dir  # type: ignore[attr-defined]  # .sdd/
     application.state.workdir = workdir  # type: ignore[attr-defined]
     application.state.seed_config = None  # type: ignore[attr-defined]
     application.state.tenant_registry = None  # type: ignore[attr-defined]
+
+    # ENT-001: Multi-tenant task isolation manager
+    from bernstein.core.tenant_isolation import TenantIsolationManager
+
+    tenant_isolation_mgr = TenantIsolationManager(sdd_dir)
+    tenant_isolation_mgr.load_state()
+    application.state.tenant_isolation_manager = tenant_isolation_mgr  # type: ignore[attr-defined]
     application.state.reload_seed_config = _reload_seed_config  # type: ignore[attr-defined]
     application.state.draining = False  # type: ignore[attr-defined]
     application.state.readonly = readonly  # type: ignore[attr-defined]
