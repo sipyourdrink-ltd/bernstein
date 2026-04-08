@@ -1,5 +1,5 @@
 # WORKFLOW: Cluster Node Registration Auth Hardening (ENT-002)
-**Version**: 1.0
+**Version**: 1.1
 **Date**: 2026-04-08
 **Author**: Workflow Architect
 **Status**: Review
@@ -313,6 +313,8 @@ Cluster node registration hardening adds JWT-based authentication to the node re
 | RC-4 | `NodeHeartbeatClient._register()` returns the node response but does NOT extract or store a new JWT token from the response | Medium | Workflow A | The client uses `auth_token` from constructor. If the server issues a new token on registration (as AuthenticatedNodeRegistry.register does), the client doesn't capture it. This is only relevant if `AuthenticatedNodeRegistry` is used server-side (currently it isn't — see RC-2). |
 | RC-5 | Heartbeat identity check (`payload.user_id != node_id`) has a bypass: if `payload.user_id` is None (which the JWT allows), the check is skipped | Low | Step B2 | `cluster_auth.py:262`: `if payload.user_id and payload.user_id != node_id` — falsy user_id skips check. Issued tokens always set user_id to node_id, so this only applies to hand-crafted tokens. |
 | RC-6 | `_verify_cluster_auth` silently returns if no authenticator is configured (`getattr(request.app.state, "cluster_authenticator", None)`) — deployments that forget to configure auth get no protection | Medium | All workflows | Auth is opt-in, not opt-out. If `ClusterAuthConfig` is not provided, all cluster endpoints are open. Should log a warning on startup. |
+| RC-7 | `NodeInfo.id` uses `uuid.uuid4().hex[:12]` as default (models.py:1232), so the registration route in tasks.py:1371-1378 creates nodes with auto-generated unique IDs. Verified: no empty-ID collision risk. | Info | Step A1 | Confirmed correct behavior. |
+| RC-8 | Registration endpoint (`register_node` at tasks.py:1357-1379) uses `_verify_cluster_auth` + `_get_node_registry` separately — it does NOT use `AuthenticatedNodeRegistry.register()` which would also issue a token in the response. Current route returns `NodeResponse` without a token field, so clients have no way to receive a server-issued session token after registration. | Medium | Step A2 | Token issuance on registration exists in `AuthenticatedNodeRegistry` (cluster_auth.py:220-238) but is unused by the routes. Clients must use a pre-shared token for the lifetime of their session. |
 
 ---
 
@@ -369,3 +371,4 @@ Cluster node registration hardening adds JWT-based authentication to the node re
 | 2026-04-08 | AuthenticatedNodeRegistry wrapper is dead code — routes use separate auth + registry pattern (RC-2) | Documented |
 | 2026-04-08 | Revocation list is in-memory only (RC-1) | Documented as high-severity gap |
 | 2026-04-08 | Auth is opt-in — no warning when unconfigured (RC-6) | Documented |
+| 2026-04-08 | Verification pass: confirmed NodeInfo.id auto-generation (RC-7). Added RC-8: routes don't use AuthenticatedNodeRegistry, so no token issuance on registration — clients must use pre-shared tokens. Bumped to v1.1. | Spec updated |
