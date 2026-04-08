@@ -1273,6 +1273,12 @@ def create_app(
     application.state.runtime_dir = jsonl_path.parent  # type: ignore[attr-defined]  # .sdd/runtime/
     application.state.sdd_dir = sdd_dir  # type: ignore[attr-defined]  # .sdd/
     application.state.workdir = workdir  # type: ignore[attr-defined]
+
+    # Real-time behavior anomaly monitor — checks file access and output-size on
+    # every progress update and writes kill signals for compromised sessions.
+    from bernstein.core.behavior_anomaly import RealtimeBehaviorMonitor
+
+    application.state.realtime_behavior_monitor = RealtimeBehaviorMonitor(workdir)  # type: ignore[attr-defined]
     application.state.seed_config = None  # type: ignore[attr-defined]
     application.state.tenant_registry = None  # type: ignore[attr-defined]
 
