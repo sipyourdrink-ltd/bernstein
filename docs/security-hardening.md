@@ -33,6 +33,9 @@ export BERNSTEIN_PERMISSION_MODE=auto
 When no rule matches a tool call, `default` mode falls back to `ask` (escalate to human).
 All other modes fall back to `allow`.
 
+**Legacy flag migration:** earlier Bernstein versions used `--dangerously-skip-permissions`.
+That flag now maps to `bypass` mode — critical rules are still enforced.
+
 ## Permission rule engine
 
 Rules are loaded from `.bernstein/rules.yaml` under the `permission_rules:` key. The first
@@ -122,6 +125,119 @@ permission_rules:
     severity: low
     tool: Read
     path: "src/**"
+```
+
+## Policy-as-code engine
+
+The permission rule engine controls individual tool calls at runtime. The policy-as-code
+engine is a separate layer that runs at merge time — it evaluates agent-produced diffs
+against YAML or Rego policies before any changes are merged to your branch.
+
+Policies live in `.sdd/policies/`. Bernstein loads all `*.yaml`, `*.yml`, and `*.rego`
+files from that directory automatically. No restart is required; policies are re-read on
+each merge gate evaluation.
+
+### YAML policies
+
+Each YAML file can contain one or more policy rules. A rule has a name, a severity
+(`block` or `warn`), and a rule expression.
+
+```yaml
+# .sdd/policies/no-secrets.yaml
+policies:
+  - name: no-aws-keys
+    severity: block
+    rule: "diff_text !~ /AKIA[0-9A-Z]{16}/"
+
+  - name: no-private-keys
+    severity: block
+    rule: "file_content !~ /-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----/"
+
+  - name: no-env-files
+    severity: block
+    rule: "file_path !~ /\\.env$/"
+```
+
+**Rule expression syntax:**
+
+| Form | Description |
+|------|-------------|
+| `field =~ /pattern/` | Requires the field to match the regex (violation if it does *not*) |
+| `field !~ /pattern/` | Requires the field to *not* match the regex (violation if it does) |
+| `field == value` | Requires exact equality |
+| `field != value` | Requires inequality |
+| `field > value` | Numeric comparison |
+
+**Available fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `file_content` | string | Concatenated content of all changed files |
+| `file_path` | string | Newline-separated list of changed file paths |
+| `diff_text` | string | Full git diff of the agent's changes |
+| `task_title` | string | Title of the task being evaluated |
+| `task_description` | string | Description of the task being evaluated |
+| `task_role` | string | Role assigned to the task (`backend`, `qa`, etc.) |
+| `files_changed` | integer | Number of files changed in the diff |
+
+A `block` severity violation prevents the merge. A `warn` severity violation logs a
+warning and records it to `.sdd/metrics/` but does not block.
+
+### Rego policies (OPA)
+
+For more expressive policies, write Rego rules and place them in `.sdd/policies/`.
+Bernstein invokes the `opa` binary if it is available on `$PATH`; if not, Rego policies
+are skipped with a log warning.
+
+```rego
+# .sdd/policies/test-coverage.rego
+package bernstein.merge
+
+import future.keywords
+
+# Block merges that add source files without corresponding tests.
+deny[msg] {
+    input.files_changed > 0
+    not any_test_file_changed
+    msg := "Source changed without test coverage"
+}
+
+any_test_file_changed if {
+    some file in input.files
+    regex.match(`tests/.*\.py$`, file.path)
+}
+```
+
+The `input` object passed to Rego contains:
+- `input.task.id`, `input.task.title`, `input.task.description`, `input.task.role`
+- `input.diff_text` — full git diff
+- `input.files` — array of `{ "path": "...", "content": "..." }`
+- `input.files_changed` — count of changed files
+
+Install OPA:
+
+```bash
+# macOS
+brew install opa
+
+# Linux
+curl -L -o /usr/local/bin/opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+chmod 755 /usr/local/bin/opa
+```
+
+### View policy violations
+
+Policy violations are written to `.sdd/metrics/` and surfaced in the task recap:
+
+```bash
+bernstein recap                     # Shows violations alongside task results
+bernstein trace <task-id>           # Per-task policy evaluation detail
+```
+
+All violations — block and warn — are included in the compliance report:
+
+```bash
+bernstein admin compliance-report
 ```
 
 ## Role-based file permissions

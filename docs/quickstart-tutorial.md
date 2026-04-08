@@ -64,7 +64,7 @@ You need at least one `✓`. If none are installed:
 
 ```bash
 # Claude Code (Anthropic)
-npm install -g @anthropic/claude-code
+npm install -g @anthropic-ai/claude-code
 
 # Codex (OpenAI)
 npm install -g @openai/codex
@@ -316,8 +316,8 @@ bernstein agents    # See which agents are installed and which are missing
 Install at least one:
 
 ```bash
-npm install -g @anthropic/claude-code    # Claude Code
-npm install -g @openai/codex             # Codex
+npm install -g @anthropic-ai/claude-code    # Claude Code
+npm install -g @openai/codex               # Codex
 ```
 
 ### "Port 8052 already in use"
