@@ -38,6 +38,11 @@ from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
+from bernstein.core.spawn_errors import (
+    CategorizedSpawnError,
+    RetryStrategy,
+    classify_spawn_error,
+)
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
@@ -1440,13 +1445,30 @@ class AgentSpawner:
                                     attempted.remove(attempt_key)
                                     continue
 
-                        logger.warning(
-                            "Agent spawn failed (session=%s provider=%s adapter=%s): %s",
-                            session_id,
-                            provider_name,
-                            adapter_name,
-                            exc,
-                        )
+                        # Classify the exception to determine retry strategy
+                        classified = classify_spawn_error(exc, provider=provider_name or adapter_name)
+                        if isinstance(classified, CategorizedSpawnError):
+                            strategy = classified.retry_strategy
+                            logger.warning(
+                                "Agent spawn failed (session=%s provider=%s adapter=%s strategy=%s): %s",
+                                session_id,
+                                provider_name,
+                                adapter_name,
+                                strategy,
+                                exc,
+                            )
+                            if strategy in (RetryStrategy.NO_RETRY, RetryStrategy.RETRY_AFTER_FIX):
+                                # Permanent failure or needs operator intervention — stop retrying
+                                break
+                            # RETRY_SAME or RETRY_FALLBACK fall through to provider rotation below
+                        else:
+                            logger.warning(
+                                "Agent spawn failed (session=%s provider=%s adapter=%s): %s",
+                                session_id,
+                                provider_name,
+                                adapter_name,
+                                exc,
+                            )
                         if self._router is None or provider_name is None:
                             continue
                         provider_cfg = self._router.state.providers.get(provider_name)

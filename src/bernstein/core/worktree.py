@@ -14,6 +14,7 @@ Usage::
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -26,6 +27,7 @@ from typing import TYPE_CHECKING
 
 from bernstein.core.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
 from bernstein.core.platform_compat import process_alive
+from bernstein.core.worktree_isolation import WorktreeIsolationError, validate_worktree_isolation
 
 if TYPE_CHECKING:
     import threading
@@ -300,6 +302,19 @@ class WorktreeManager:
 
         if self._setup_config is not None:
             setup_worktree_env(self.repo_root, worktree_path, self._setup_config)
+
+        # Verify isolation after setup — fail the spawn before the agent touches anything
+        allowed_dirs = self._setup_config.symlink_dirs if self._setup_config is not None else ()
+        isolation = validate_worktree_isolation(
+            worktree_path,
+            self.repo_root,
+            allowed_symlink_dirs=allowed_dirs,
+        )
+        if not isolation.passed:
+            # Clean up the broken worktree before raising
+            with contextlib.suppress(Exception):
+                self.cleanup(session_id)
+            raise WorktreeIsolationError(isolation.violations)
 
         return worktree_path
 
