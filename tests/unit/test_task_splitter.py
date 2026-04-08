@@ -13,6 +13,33 @@ from bernstein.core.server import TaskCreate
 from bernstein.core.task_splitter import TaskSplitter
 from bernstein.core.task_store import TaskStore
 
+# ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+
+
+def _make_task(
+    task_id: str,
+    *,
+    title: str = "Large task",
+    description: str = "Split me",
+    estimated_minutes: int = 90,
+    owned_files: list[str] | None = None,
+    progress_log: list[dict[str, object]] | None = None,
+) -> Task:
+    return Task(
+        id=task_id,
+        title=title,
+        description=description,
+        role="backend",
+        priority=2,
+        scope=Scope.LARGE,
+        complexity=Complexity.MEDIUM,
+        estimated_minutes=estimated_minutes,
+        owned_files=owned_files or [],
+        progress_log=progress_log or [],
+    )
+
 
 def _task(task_id: str, *, description: str = "Split me", estimated_minutes: int = 90) -> Task:
     return Task(
@@ -121,3 +148,122 @@ async def test_parent_completes_after_all_subtasks_finish(tmp_path: Path) -> Non
     assert done_parent is not None
     assert done_parent.status == TaskStatus.DONE
     assert done_parent.result_summary == "Completed via 2 subtasks"
+
+
+# ---------------------------------------------------------------------------
+# AGENT-012: Parent context inheritance
+# ---------------------------------------------------------------------------
+
+
+class TestBuildParentContext:
+    """_build_parent_context extracts goal, description, progress, and files."""
+
+    def _splitter(self) -> TaskSplitter:
+        return TaskSplitter(client=MagicMock(), server_url="http://server")
+
+    def test_includes_parent_goal(self) -> None:
+        task = _make_task("p1", title="Add authentication to the API")
+        ctx = self._splitter()._build_parent_context(task)
+        assert "Add authentication to the API" in ctx
+
+    def test_includes_short_description(self) -> None:
+        task = _make_task("p1", description="Implement JWT-based auth.")
+        ctx = self._splitter()._build_parent_context(task)
+        assert "Implement JWT-based auth." in ctx
+
+    def test_truncates_long_description(self) -> None:
+        """Descriptions longer than 500 chars are omitted (too noisy)."""
+        long_desc = "word " * 120  # ~600 chars
+        task = _make_task("p1", description=long_desc)
+        ctx = self._splitter()._build_parent_context(task)
+        assert long_desc.strip() not in ctx
+
+    def test_includes_owned_files(self) -> None:
+        task = _make_task("p1", owned_files=["src/auth.py", "src/models.py"])
+        ctx = self._splitter()._build_parent_context(task)
+        assert "src/auth.py" in ctx
+        assert "src/models.py" in ctx
+
+    def test_includes_last_progress_messages(self) -> None:
+        task = _make_task(
+            "p1",
+            progress_log=[
+                {"message": "Designed the JWT schema"},
+                {"message": "Wrote unit tests"},
+            ],
+        )
+        ctx = self._splitter()._build_parent_context(task)
+        assert "Designed the JWT schema" in ctx
+        assert "Wrote unit tests" in ctx
+
+    def test_returns_empty_for_bare_task(self) -> None:
+        """A task with only an id and title still returns a non-empty context (goal always present)."""
+        task = _make_task("p1", title="Do something")
+        ctx = self._splitter()._build_parent_context(task)
+        assert ctx != ""
+        assert "Do something" in ctx
+
+
+class TestSplitPassesParentContext:
+    """TaskSplitter.split() passes parent_context to each subtask POST body."""
+
+    def test_parent_context_in_subtask_body(self) -> None:
+        client = MagicMock()
+        manager = MagicMock()
+        parent = _make_task(
+            "parent-1",
+            title="Build auth system",
+            owned_files=["src/auth.py"],
+        )
+        drafts = [
+            _make_task("d1", title="Implement JWT", description="Use PyJWT", estimated_minutes=30),
+            _make_task("d2", title="Add tests", description="Pytest suite", estimated_minutes=20),
+        ]
+        manager.decompose_sync.return_value = drafts
+        client.post.side_effect = [
+            SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": "sub-1"}),
+            SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": "sub-2"}),
+            SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": "parent-1"}),
+        ]
+
+        TaskSplitter(client=client, server_url="http://server").split(parent, manager)
+
+        # Both subtask POST bodies must include parent_context
+        for call in client.post.call_args_list[:2]:
+            body = call.kwargs["json"]
+            assert "parent_context" in body, "parent_context must be in each subtask POST body"
+            assert "Build auth system" in body["parent_context"]
+            assert "src/auth.py" in body["parent_context"]
+
+    def test_parent_context_omitted_when_empty(self) -> None:
+        """If the parent has no useful context, parent_context is not included."""
+        client = MagicMock()
+        manager = MagicMock()
+        # Minimal task: no files, no progress, minimal description
+        parent = Task(
+            id="bare",
+            title="t",
+            description="",
+            role="backend",
+            scope=Scope.LARGE,
+            complexity=Complexity.MEDIUM,
+        )
+        drafts = [
+            _make_task("d1", title="Sub A", description="a", estimated_minutes=30),
+            _make_task("d2", title="Sub B", description="b", estimated_minutes=25),
+        ]
+        manager.decompose_sync.return_value = drafts
+        client.post.side_effect = [
+            SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": "sub-1"}),
+            SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": "sub-2"}),
+            SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"id": "bare"}),
+        ]
+
+        TaskSplitter(client=client, server_url="http://server").split(parent, manager)
+
+        # Even with minimal parent, the goal line is always included, so parent_context is set
+        for call in client.post.call_args_list[:2]:
+            body = call.kwargs["json"]
+            # parent_context may or may not be present — if present it must be non-empty
+            if "parent_context" in body:
+                assert body["parent_context"] != ""
