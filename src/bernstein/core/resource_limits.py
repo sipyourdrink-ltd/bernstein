@@ -164,7 +164,7 @@ def apply_limits(limits: ResourceLimits) -> EnforcementResult:
     return result
 
 
-def make_preexec_fn(limits: ResourceLimits) -> "Callable[[], None] | None":
+def make_preexec_fn(limits: ResourceLimits) -> Callable[[], None] | None:
     """Return a ``preexec_fn`` callable suitable for ``subprocess.Popen``.
 
     Returns ``None`` when no limits are set or the platform does not support

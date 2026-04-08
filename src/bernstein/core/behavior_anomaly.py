@@ -387,23 +387,22 @@ class RealtimeBehaviorMonitor:
         signals: list[AnomalySignal] = []
 
         # 1. Suspicious file-access check
-        if last_file:
-            if _is_suspicious_file(last_file):
-                state.suspicious_file_hits.append(last_file)
-                signals.append(
-                    self._make_signal(
-                        rule="suspicious_file_access",
-                        severity="critical",
-                        action=BehaviorAnomalyAction.KILL_AGENT,
-                        session_id=session_id,
-                        task_id=task_id,
-                        message=f"Agent {session_id} accessed suspicious file: {last_file}",
-                        details={
-                            "last_file": last_file,
-                            "all_suspicious_hits": state.suspicious_file_hits,
-                        },
-                    )
+        if last_file and _is_suspicious_file(last_file):
+            state.suspicious_file_hits.append(last_file)
+            signals.append(
+                self._make_signal(
+                    rule="suspicious_file_access",
+                    severity="critical",
+                    action=BehaviorAnomalyAction.KILL_AGENT,
+                    session_id=session_id,
+                    task_id=task_id,
+                    message=f"Agent {session_id} accessed suspicious file: {last_file}",
+                    details={
+                        "last_file": last_file,
+                        "all_suspicious_hits": state.suspicious_file_hits,
+                    },
                 )
+            )
 
         # 2. Output-size explosion
         if state.output_size_bytes > self._max_output_bytes:
@@ -438,7 +437,7 @@ class RealtimeBehaviorMonitor:
                 stddev=baseline.files_modified.stddev,
                 sample_count=baseline.files_modified.sample_count,
             )
-            deviation = detector._deviation("files_changed", float(files_changed), metric)  # noqa: SLF001
+            deviation = detector._deviation("files_changed", float(files_changed), metric)
             if deviation is not None:
                 signals.append(
                     self._make_signal(

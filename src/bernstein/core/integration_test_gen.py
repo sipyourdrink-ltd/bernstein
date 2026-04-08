@@ -258,9 +258,7 @@ async def generate_and_run(
             cwd=run_dir,
         )
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=config.test_timeout_s
-            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=config.test_timeout_s)
         except TimeoutError:
             proc.kill()
             await proc.communicate()
@@ -281,10 +279,7 @@ async def generate_and_run(
         if passed:
             detail = f"Generated integration test passed. Slug: test_integration_{slug}"
         else:
-            detail = (
-                f"Generated integration test FAILED (exit {proc.returncode}). "
-                f"Output:\n{full_output[:1000]}"
-            )
+            detail = f"Generated integration test FAILED (exit {proc.returncode}). Output:\n{full_output[:1000]}"
 
         return IntegTestGenResult(
             passed=passed,

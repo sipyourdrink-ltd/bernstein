@@ -52,6 +52,7 @@ class InheritedContext:
     server_url: str = "http://127.0.0.1:8052"
     max_depth: int = 3
     current_depth: int = 0
+    context_summary: str = ""  # Parent's key decisions, architectural context, files explored
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-safe dict.
@@ -69,6 +70,7 @@ class InheritedContext:
             "server_url": self.server_url,
             "max_depth": self.max_depth,
             "current_depth": self.current_depth,
+            "context_summary": self.context_summary,
         }
 
     @classmethod
@@ -91,6 +93,7 @@ class InheritedContext:
             server_url=str(data.get("server_url", "http://127.0.0.1:8052")),
             max_depth=int(data.get("max_depth", 3)),
             current_depth=int(data.get("current_depth", 0)),
+            context_summary=str(data.get("context_summary", "")),
         )
 
     def can_delegate(self) -> bool:
@@ -124,6 +127,7 @@ class InheritedContext:
             server_url=self.server_url,
             max_depth=self.max_depth,
             current_depth=self.current_depth + 1,
+            context_summary=self.context_summary,
         )
 
 

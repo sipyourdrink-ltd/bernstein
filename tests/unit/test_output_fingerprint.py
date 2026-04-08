@@ -247,9 +247,7 @@ class TestCheckFingerprint:
         cfg = FingerprintConfig(enabled=True, threshold=0.9)
         idx = CorpusIndex(cfg)
         idx.add("other.py", "class Foo: x = 1")
-        result = check_fingerprint(
-            "def completely_different_function(): return 42", idx, cfg
-        )
+        result = check_fingerprint("def completely_different_function(): return 42", idx, cfg)
         assert result.passed
 
     def test_blocking_when_configured(self) -> None:
