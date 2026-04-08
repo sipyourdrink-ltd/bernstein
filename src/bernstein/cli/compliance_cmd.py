@@ -120,10 +120,7 @@ def report(evidence_package: Path | None, workdir: Path, as_json: bool) -> None:
     """Print the EU AI Act compliance report from an existing evidence package."""
     pkg_path = evidence_package or (workdir / ".sdd" / "compliance" / "evidence_package.json")
     if not pkg_path.exists():
-        raise click.ClickException(
-            f"Evidence package not found: {pkg_path}\n"
-            "Run `bernstein compliance assess` first."
-        )
+        raise click.ClickException(f"Evidence package not found: {pkg_path}\nRun `bernstein compliance assess` first.")
     package = json.loads(pkg_path.read_text(encoding="utf-8"))
     rep = package.get("report", package)
     _print_report(rep, as_json)

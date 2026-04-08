@@ -19,7 +19,6 @@ from bernstein.core.vault_injector import (
     revoke_agent_credentials,
 )
 
-
 # ---------------------------------------------------------------------------
 # _apply_env_map
 # ---------------------------------------------------------------------------
@@ -60,7 +59,7 @@ class TestInjectionConfig:
         assert config.env_map == {}
 
     def test_invalid_provider_raises_on_init(self) -> None:
-        config = InjectionConfig(provider="vault", path="x")
+        InjectionConfig(provider="vault", path="x")
         # Provider validation happens on VaultInjector, not InjectionConfig
         bad_config = InjectionConfig(provider="invalid", path="x")  # type: ignore[arg-type]
         with pytest.raises(VaultInjectionError, match="Unknown provider"):
@@ -263,7 +262,7 @@ class TestAwsProvider:
 
         with patch.dict("sys.modules", {"boto3": boto3_mock}):
             injector = VaultInjector(config)
-            env_vars, lease = injector.inject()
+            env_vars, _lease = injector.inject()
 
         assert "AWS_ACCESS_KEY_ID" in env_vars
         boto3_mock.client.return_value.assume_role.assert_called_once()
