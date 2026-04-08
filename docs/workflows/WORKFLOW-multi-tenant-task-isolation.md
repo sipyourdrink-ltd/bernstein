@@ -1,5 +1,5 @@
 # WORKFLOW: Multi-Tenant Task Isolation (ENT-001)
-**Version**: 1.0
+**Version**: 1.1
 **Date**: 2026-04-08
 **Author**: Workflow Architect
 **Status**: Review
@@ -75,7 +75,7 @@ Any API request to a tenant-scoped endpoint. Tenant identity is resolved from:
 **Output on SUCCESS**: Effective tenant ID -> GO TO STEP 3
 **Output on FAILURE**:
   - `FAILURE(permission_denied)`: Bound tenant tried to access another tenant's scope -> Return HTTP 403 `"tenant scope '{target}' is not accessible from '{bound}'"`. No cleanup needed.
-  - `FAILURE(unknown_tenant)`: Requested tenant not in registry -> Return HTTP 403 `"unknown tenant '{target}'"`. No cleanup needed.
+  - `FAILURE(unknown_tenant)`: Requested tenant not in registry -> Return HTTP 404 `"unknown tenant '{target}'"`. No cleanup needed.
 
 **Observable states**:
   - Customer sees: 403 error if scope violation
@@ -235,9 +235,11 @@ Note: There is no automated tenant deletion workflow. Tenant cleanup is a manual
 |---|---|---|---|---|
 | RC-1 | TaskStore writes to global JSONL and tenant-scoped JSONL, but WAL is NOT tenant-scoped — `task_store.py` does not write WAL entries to `.sdd/{tenant_id}/runtime/wal/` despite directories being created | High | Step 5 | WAL tenant scoping directories exist but are unused. The WAL path in `tenant_data_paths()` creates the directory but no code writes to it. Flag for implementation. |
 | RC-2 | `_assert_task_tenant()` returns 404 (not 403) for cross-tenant access, which is correct for information-leakage prevention but means operators cannot distinguish "task doesn't exist" from "tenant violation" without checking logs | Low | Step 5 | Intentional design — document for operator awareness |
-| RC-3 | `resolve_tenant_scope` raises `PermissionError` and `LookupError`, but the route handler in `_resolve_request_tenant_scope` catches these as HTTP 403 — the LookupError ("unknown tenant") uses 403 rather than 404, which is inconsistent with REST conventions | Low | Step 2 | Document as known behavior |
+| RC-3 | `resolve_tenant_scope` raises `PermissionError` (-> HTTP 403) and `LookupError` (-> HTTP 404) — this is correctly mapped in `_resolve_request_tenant_scope` (tasks.py:157-160) | Info | Step 2 | Verified correct: PermissionError -> 403, LookupError -> 404 |
 | RC-4 | Tenant quota check (`check_quota`) only checks `max_tasks` — it does not check `max_agents` or `budget_usd` at the route level, only task count | Medium | Step 4 | `max_agents` and `budget_usd` quotas are defined in TenantQuota but not enforced at the API route level. Partially enforced by `TenantRateLimiter` (tenant_rate_limiter.py) separately. |
 | RC-5 | No tenant-scoped audit log entries — `audit_dir` is created but nothing writes audit events there | Medium | Step 3 | Audit directory provisioned but unused. Flag for implementation. |
+| RC-6 | In-memory task store (`_tasks` dict in task_store.py:250) is a single flat dict — not partitioned by tenant. Tenant filtering happens at query time via list comprehension (task_store.py:958-964, 1638-1640). A tenant with many tasks impacts memory and query latency for all tenants. | Medium | Step 5 | No per-tenant memory partitioning. Acceptable for small deployments; may need sharding for large multi-tenant use. |
+| RC-7 | Priority queues (`_priority_queues`, `_by_status`) are global, not tenant-scoped. `claim_next()` scans the global priority queue and filters by tenant after dequeue, causing wasted iterations when tenants have imbalanced workloads. | Low | Step 5 | Performance concern only at scale. Current design is functionally correct. |
 
 ---
 
@@ -288,3 +290,4 @@ Note: There is no automated tenant deletion workflow. Tenant cleanup is a manual
 | 2026-04-08 | Initial spec created from code audit of tenanting.py, tenant_isolation.py, task_store.py, routes/tasks.py | — |
 | 2026-04-08 | WAL and audit directories created but unused (RC-1, RC-5) | Documented as gaps |
 | 2026-04-08 | Quota enforcement partial — only max_tasks checked at route level (RC-4) | Documented; TenantRateLimiter handles other quotas separately |
+| 2026-04-08 | Verification pass: fixed RC-3 (LookupError correctly maps to 404, not 403 as previously claimed). Added RC-6 (flat task dict, no per-tenant partitioning) and RC-7 (global priority queues). Bumped to v1.1. | Spec updated |
