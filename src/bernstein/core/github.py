@@ -855,9 +855,7 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
                 if raw_text.startswith("---"):
                     end = raw_text.find("\n---", 3)
                     if end != -1:
-                        fm_parsed: dict[str, object] = dict(
-                            _yaml.safe_load(raw_text[3:end]) or {}
-                        )
+                        fm_parsed: dict[str, object] = dict(_yaml.safe_load(raw_text[3:end]) or {})
                         title_val = fm_parsed.get("title")
                         if title_val:
                             # Strip common prefixes like "[GH#123] " for matching
