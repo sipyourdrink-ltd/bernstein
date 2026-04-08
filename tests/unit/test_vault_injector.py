@@ -26,19 +26,19 @@ from bernstein.core.vault_injector import (
 
 class TestApplyEnvMap:
     def test_empty_map_returns_raw(self) -> None:
-        raw = {"username": "alice", "password": "s3cr3t"}
+        raw = {"username": "alice", "password": "fake-test-value"}  # Test fixture - not a real credential
         result = _apply_env_map(raw, {})
         assert result == raw
 
     def test_renames_fields(self) -> None:
-        raw = {"username": "alice", "password": "s3cr3t"}
+        raw = {"username": "alice", "password": "fake-test-value"}  # Test fixture - not a real credential
         env_map = {"username": "DB_USER", "password": "DB_PASS"}
         result = _apply_env_map(raw, env_map)
-        assert result == {"DB_USER": "alice", "DB_PASS": "s3cr3t"}
+        assert result == {"DB_USER": "alice", "DB_PASS": "fake-test-value"}
 
     def test_missing_field_skipped(self) -> None:
         raw = {"username": "alice"}
-        env_map = {"username": "DB_USER", "password": "DB_PASS"}
+        env_map = {"username": "DB_USER", "password": "DB_PASS"}  # Test fixture - not a real credential
         result = _apply_env_map(raw, env_map)
         assert result == {"DB_USER": "alice"}
         assert "DB_PASS" not in result
@@ -102,11 +102,13 @@ class TestVaultProvider:
             provider="vault",
             path="database/creds",
             vault_role="agent-role",
-            env_map={"username": "DB_USER", "password": "DB_PASS"},
+            env_map={"username": "DB_USER", "password": "DB_PASS"},  # Test fixture - not a real credential
             ttl=300,
         )
         mock_response = MagicMock()
-        mock_response.read.return_value = self._make_vault_response({"username": "alice", "password": "secret"})
+        mock_response.read.return_value = self._make_vault_response(
+            {"username": "alice", "password": "fake-test-value"}
+        )  # Test fixture - not a real credential
         mock_response.__enter__ = lambda self: self
         mock_response.__exit__ = MagicMock(return_value=False)
 
@@ -116,7 +118,7 @@ class TestVaultProvider:
                 env_vars, lease = injector.inject()
 
         assert env_vars["DB_USER"] == "alice"
-        assert env_vars["DB_PASS"] == "secret"
+        assert env_vars["DB_PASS"] == "fake-test-value"
         assert lease.provider == "vault"
         assert lease.lease_id == "vault-lease-xyz"
         assert lease.revocable is True
@@ -192,11 +194,13 @@ class TestVaultProvider:
             provider="vault",
             path="database/creds",
             vault_role="role",
-            env_map={"username": "U", "password": "P"},
+            env_map={"username": "U", "password": "P"},  # Test fixture - not a real credential
         )
 
         inject_response = MagicMock()
-        inject_response.read.return_value = self._make_vault_response({"username": "bob", "password": "pass"})
+        inject_response.read.return_value = self._make_vault_response(
+            {"username": "bob", "password": "fake-test-value"}
+        )  # Test fixture - not a real credential
         inject_response.__enter__ = lambda self: self
         inject_response.__exit__ = MagicMock(return_value=False)
 

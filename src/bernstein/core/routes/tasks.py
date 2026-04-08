@@ -235,7 +235,9 @@ def _try_check_realtime_anomaly(
                 signal.message,
             )
     except Exception:
-        logger.debug("Realtime behavior check failed for task %s", task_id, exc_info=True)
+        from bernstein.core.sanitize import sanitize_log
+
+        logger.debug("Realtime behavior check failed for task %s", sanitize_log(str(task_id)), exc_info=True)
 
 
 # ---------------------------------------------------------------------------

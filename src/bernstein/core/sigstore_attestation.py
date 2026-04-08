@@ -444,7 +444,12 @@ def verify_local_attestation(bundle_path: Path, attestation_dir: Path) -> bool:
         msg = "Not a local Ed25519 attestation bundle"
         raise ValueError(msg)
 
-    pub_key_file = attestation_dir / bundle["public_key_file"]
+    # Sanitize public_key_file to prevent path traversal attacks
+    raw_key_name = bundle["public_key_file"]
+    pub_key_file = (attestation_dir / raw_key_name).resolve()
+    if not str(pub_key_file).startswith(str(attestation_dir.resolve())):
+        msg = f"Path traversal detected in public_key_file: {raw_key_name!r}"
+        raise ValueError(msg)
     public_key = serialization.load_pem_public_key(pub_key_file.read_bytes())
 
     payload_obj = AttestationPayload(**bundle["payload"])

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.output_fingerprint import (
     CorpusIndex,
     FingerprintConfig,
@@ -114,7 +116,7 @@ class TestMinHash:
         shingles = {"a b c", "b c d", "c d e", "d e f"}
         mh1.update(shingles)
         mh2.update(shingles)
-        assert mh1.jaccard(mh2) == 1.0
+        assert mh1.jaccard(mh2) == pytest.approx(1.0)
 
     def test_disjoint_sets_low_similarity(self) -> None:
         mh1 = MinHash(num_perm=128)
@@ -142,7 +144,6 @@ class TestMinHash:
         mh2 = MinHash(num_perm=128)
         mh1.update({"a"})
         mh2.update({"a"})
-        import pytest
 
         with pytest.raises(ValueError, match="different num_perm"):
             mh1.jaccard(mh2)
@@ -172,7 +173,7 @@ class TestComputeMinHash:
     def test_identical_code_same_hash(self) -> None:
         mh1 = compute_minhash("def foo(): return 1")
         mh2 = compute_minhash("def foo(): return 1")
-        assert mh1.jaccard(mh2) == 1.0
+        assert mh1.jaccard(mh2) == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +279,7 @@ class TestFingerprintConfig:
     def test_defaults(self) -> None:
         cfg = FingerprintConfig()
         assert cfg.enabled is False
-        assert cfg.threshold == 0.7
+        assert cfg.threshold == pytest.approx(0.7)
         assert cfg.num_perm == 128
         assert cfg.ngram_size == 5
         assert cfg.block_on_match is False
@@ -291,7 +292,7 @@ class TestFingerprintConfig:
             ngram_size=3,
             block_on_match=True,
         )
-        assert cfg.threshold == 0.8
+        assert cfg.threshold == pytest.approx(0.8)
         assert cfg.num_perm == 256
 
 
@@ -334,7 +335,7 @@ class TestDataclasses:
     def test_fingerprint_match(self) -> None:
         m = FingerprintMatch(source_label="lib.py", similarity=0.85, flagged=True)
         assert m.source_label == "lib.py"
-        assert m.similarity == 0.85
+        assert m.similarity == pytest.approx(0.85)
         assert m.flagged
 
     def test_fingerprint_result_defaults(self) -> None:

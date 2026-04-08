@@ -29,7 +29,7 @@ def test_compute_composite_all_tens() -> None:
         "security": 10,
         "maintainability": 10,
     }
-    assert _compute_composite(scores) == 10.0
+    assert _compute_composite(scores) == pytest.approx(10.0)
 
 
 def test_compute_composite_all_zeros() -> None:
@@ -40,7 +40,7 @@ def test_compute_composite_all_zeros() -> None:
         "security": 0,
         "maintainability": 0,
     }
-    assert _compute_composite(scores) == 0.0
+    assert _compute_composite(scores) == pytest.approx(0.0)
 
 
 def test_compute_composite_mixed() -> None:
@@ -58,7 +58,7 @@ def test_compute_composite_mixed() -> None:
 
 
 def test_compute_composite_empty_scores() -> None:
-    assert _compute_composite({}) == 0.0
+    assert _compute_composite({}) == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
