@@ -14,6 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 
+from bernstein.tui.accessibility import AccessibilityConfig, detect_accessibility
 from bernstein.tui.keybinding_config import resolve_all_bindings as _resolve_all_bindings
 from bernstein.tui.timeline import TaskTimeline, TimelineEntry
 from bernstein.tui.widgets import (
@@ -142,6 +143,8 @@ class BernsteinApp(App[None]):
         self._current_rows: list[TaskRow] = []
         self._log_offsets: dict[str, int] = {}  # session_id → last-read byte offset
         self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
+        # TUI-013: detect accessibility mode from environment
+        self.accessibility: AccessibilityConfig = AccessibilityConfig.from_level(detect_accessibility())
 
     # -- layout ---------------------------------------------------------------
 
@@ -170,6 +173,12 @@ class BernsteinApp(App[None]):
         self.query_one("#coordinator-dashboard", CoordinatorDashboard).display = False
         self.query_one(_APPROVAL_PANEL_SELECTOR, ApprovalPanel).display = False
         self.query_one("#tool-observer", ToolObserverWidget).display = False
+
+        # TUI-013: apply accessibility CSS class when enabled
+        if self.accessibility.no_animations:
+            self.add_class("no-animations")
+        if self.accessibility.high_contrast:
+            self.add_class("high-contrast")
 
         self._load_historical_logs()
         self.set_interval(self._poll_interval, self.action_refresh)
