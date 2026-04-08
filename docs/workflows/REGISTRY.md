@@ -24,8 +24,8 @@ Last updated: 2026-04-08
 | Permission mode hierarchy | `WORKFLOW-permission-mode-hierarchy.md` | Shipped | bypass→plan→auto→default mode hierarchy with severity relaxation + hook resolution |
 | Verification nudge | `WORKFLOW-verification-nudge.md` | Shipped | Tracks unverified task completions and alerts when threshold exceeded |
 | Event-sourced task transitions (CQRS) | `WORKFLOW-event-sourced-task-transitions.md` | Draft | Append-only event log per task; state derived by replaying events, not mutable status field |
-| Multi-tenant task isolation (ENT-001) | `WORKFLOW-multi-tenant-task-isolation.md` | Review | Tenant-scoped task CRUD, backlog, metrics, quotas — WAL/audit dirs provisioned but unused |
-| Cluster node auth hardening (ENT-002) | `WORKFLOW-cluster-node-auth.md` | Review | JWT-based auth for node registration/heartbeats — revocation is in-memory only |
+| Multi-tenant task isolation (ENT-001) | `WORKFLOW-multi-tenant-task-isolation.md` | Approved | v1.2 — tenant-scoped CRUD, backlog, metrics. Implementation guidance for WAL scoping, tenant audit, quota wiring. Open Qs resolved. |
+| Cluster node auth hardening (ENT-002) | `WORKFLOW-cluster-node-auth.md` | Approved | v1.2 — JWT auth for node reg/heartbeats. Implementation guidance for persistent revocation, user_id bypass fix, dead code cleanup, auth failure rate limiting. Open Qs resolved. |
 | Cluster task stealing (ENT-007) | `WORKFLOW-cluster-task-stealing.md` | Draft | Pull-based task stealing with CAS locking — missing assigned_node/pinned_node fields, cooldown not persisted |
 | Per-tenant rate limiting & quotas (ENT-008) | `WORKFLOW-tenant-rate-limiting-quota.md` | Draft | API rate limits, task/hour, agent concurrency, cost budget — TenantRateLimiter exists but not wired to middleware |
 

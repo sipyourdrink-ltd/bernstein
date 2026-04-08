@@ -1,8 +1,8 @@
 # WORKFLOW: Multi-Tenant Task Isolation (ENT-001)
-**Version**: 1.1
+**Version**: 1.2
 **Date**: 2026-04-08
 **Author**: Workflow Architect
-**Status**: Review
+**Status**: Approved
 **Implements**: ENT-001 (plans/strategic-300.yaml)
 
 ---
@@ -274,12 +274,89 @@ Note: There is no automated tenant deletion workflow. Tenant cleanup is a manual
 
 ---
 
-## Open Questions
+## Open Questions — Resolved
 
-- **Q1**: Should there be a tenant deletion/offboarding workflow? Currently no way to clean up a tenant's data programmatically.
-- **Q2**: Should the WAL be tenant-scoped? Directories are created but nothing writes there. Is this intentional (WAL is global) or a gap?
-- **Q3**: Should audit events be written to `.sdd/{tenant_id}/audit/`? Directory exists but is unused.
-- **Q4**: Should `X-Tenant-Id` be validated against a signed token or auth session to prevent header spoofing?
+- **Q1**: Should there be a tenant deletion/offboarding workflow?
+  **Resolution**: Deferred. Not required for ENT-001 scope. Add as a follow-up task when multi-tenant GA is planned. For now, document `rm -rf .sdd/{tenant_id}/` as the manual procedure, with a warning to stop the server first.
+
+- **Q2**: Should the WAL be tenant-scoped?
+  **Resolution**: YES. The WAL MUST be tenant-scoped. Directories are already provisioned by `ensure_tenant_data_layout()` but `WALWriter.__init__` hardcodes the global path `.sdd/runtime/wal/`. The fix is to pass the tenant-scoped `sdd_dir` (i.e., `.sdd/{tenant_id}/`) to `WALWriter` instead of the global `.sdd/`. This preserves the WAL's existing path convention (`sdd_dir / "runtime" / "wal" / ...`) while scoping it to the tenant. See **Implementation Guidance** below.
+
+- **Q3**: Should audit events be written to `.sdd/{tenant_id}/audit/`?
+  **Resolution**: YES, for tenant-visible audit events (task created, claimed, completed, failed). Global audit events (server start, config change) remain in `.sdd/audit/`. The `_append_audit()` pattern in `agent_identity.py` can be reused — append JSONL to `.sdd/{tenant_id}/audit/task_events.jsonl`. See **Implementation Guidance** below.
+
+- **Q4**: Should `X-Tenant-Id` be validated against a signed token or auth session?
+  **Resolution**: YES, when auth middleware is active. The `SSOAuthMiddleware` already sets `request.state.tenant_id` from JWT claims. The `request_tenant_id()` function correctly prefers `request.state.tenant_id` over the raw header. The remaining gap is: when auth is disabled (development mode), the raw `X-Tenant-Id` header is trusted without validation. This is acceptable for dev but MUST be documented as unsafe for shared deployments. No code change needed — the priority order in `request_tenant_id()` is correct.
+
+---
+
+## Implementation Guidance
+
+### Gap 1: Tenant-Scoped WAL (RC-1)
+
+**Problem**: `WALWriter` hardcodes `sdd_dir / "runtime" / "wal" / f"{run_id}.wal.jsonl"`. In multi-tenant mode, all tenants share one WAL directory.
+
+**Required change**: When the orchestrator creates a `WALWriter` for a tenant-scoped run, pass the tenant's root as `sdd_dir`:
+
+```python
+# Before (global WAL):
+wal = WALWriter(run_id=run_id, sdd_dir=sdd_dir)
+# Path: .sdd/runtime/wal/{run_id}.wal.jsonl
+
+# After (tenant-scoped WAL):
+tenant_root = tenant_data_paths(sdd_dir, tenant_id).root
+wal = WALWriter(run_id=run_id, sdd_dir=tenant_root)
+# Path: .sdd/{tenant_id}/runtime/wal/{run_id}.wal.jsonl
+```
+
+**No changes to WALWriter itself** — the path convention `sdd_dir / "runtime" / "wal"` is correct. The caller passes the tenant-scoped root instead of the global root.
+
+**WALRecovery.scan_all_uncommitted** must also scan tenant-scoped WAL directories:
+
+```python
+# Scan global + all tenant WAL dirs:
+for tenant_dir in sdd_dir.iterdir():
+    if tenant_dir.is_dir() and (tenant_dir / "runtime" / "wal").exists():
+        results.extend(WALRecovery.scan_all_uncommitted(tenant_dir, ...))
+```
+
+**Files to modify**: Orchestrator/spawner code that instantiates `WALWriter` (pass tenant root). `WALRecovery.scan_all_uncommitted` (scan tenant dirs).
+
+### Gap 2: Tenant-Scoped Audit Events (RC-5)
+
+**Problem**: `.sdd/{tenant_id}/audit/` directories are created but no code writes to them.
+
+**Required change**: Add a `TenantAuditWriter` (or extend existing audit append pattern) that writes task lifecycle events to `.sdd/{tenant_id}/audit/task_events.jsonl`. Call it from `TaskStore` on create/claim/complete/fail.
+
+```python
+@dataclass(frozen=True)
+class TenantAuditEntry:
+    timestamp: float
+    event_type: str  # "task_created", "task_claimed", "task_completed", "task_failed"
+    task_id: str
+    tenant_id: str
+    actor: str
+    details: dict[str, Any]
+
+def append_tenant_audit(sdd_dir: Path, tenant_id: str, entry: TenantAuditEntry) -> None:
+    audit_path = tenant_data_paths(sdd_dir, tenant_id).audit_dir / "task_events.jsonl"
+    with audit_path.open("a") as f:
+        f.write(json.dumps(entry.__dict__) + "\n")
+```
+
+**Files to modify**: New utility in `tenant_isolation.py` or `audit.py`. TaskStore task mutation methods (create, claim, complete, fail) to call it.
+
+### Gap 3: Quota Enforcement Completeness (RC-4)
+
+**Problem**: Only `max_tasks` is checked at route level. `max_agents` and `budget_usd` are defined but not enforced in task creation routes.
+
+**Resolution**: `TenantRateLimiter` (tenant_rate_limiter.py) already implements `check_task_quota()` and `check_agent_concurrency()`. The gap is that these are not called from the task creation route. Wire `TenantRateLimiter.check_task_quota()` into `POST /tasks` alongside the existing `TenantIsolationManager.check_quota()` call.
+
+**Files to modify**: `src/bernstein/core/routes/tasks.py` — add `TenantRateLimiter` check in task creation handler.
+
+### Gap 4: Flat Task Dict Performance (RC-6, RC-7)
+
+**Resolution**: Acceptable for current scale. No change required for ENT-001. If per-tenant task counts exceed ~10,000, consider partitioning `_tasks` dict by tenant_id as a follow-up optimization. Document as a known scaling limitation.
 
 ---
 
@@ -291,3 +368,4 @@ Note: There is no automated tenant deletion workflow. Tenant cleanup is a manual
 | 2026-04-08 | WAL and audit directories created but unused (RC-1, RC-5) | Documented as gaps |
 | 2026-04-08 | Quota enforcement partial — only max_tasks checked at route level (RC-4) | Documented; TenantRateLimiter handles other quotas separately |
 | 2026-04-08 | Verification pass: fixed RC-3 (LookupError correctly maps to 404, not 403 as previously claimed). Added RC-6 (flat task dict, no per-tenant partitioning) and RC-7 (global priority queues). Bumped to v1.1. | Spec updated |
+| 2026-04-08 | Resolved all open questions (Q1-Q4). Added implementation guidance for WAL scoping (Gap 1), tenant audit events (Gap 2), quota wiring (Gap 3). Confirmed flat-dict performance acceptable at current scale (Gap 4). Bumped to v1.2, status Approved. | Spec updated, status changed to Approved |

@@ -1,8 +1,8 @@
 # WORKFLOW: Cluster Node Registration Auth Hardening (ENT-002)
-**Version**: 1.1
+**Version**: 1.2
 **Date**: 2026-04-08
 **Author**: Workflow Architect
-**Status**: Review
+**Status**: Approved
 **Implements**: ENT-002 (plans/strategic-300.yaml)
 
 ---
@@ -353,13 +353,135 @@ Cluster node registration hardening adds JWT-based authentication to the node re
 
 ---
 
-## Open Questions
+## Open Questions — Resolved
 
 - **Q1**: Should token revocation be persisted to disk or an external store to survive server restarts?
+  **Resolution**: YES. Persist revocation set to `.sdd/runtime/cluster_revoked_tokens.json` on every revocation and load on startup. This is a small file (token hashes only) and eliminates the window where revoked tokens become valid again after restart. See **Implementation Guidance**, Gap 1.
+
 - **Q2**: Should there be a bootstrap enrollment workflow (e.g., one-time registration codes) instead of pre-shared tokens?
-- **Q3**: Should the `AuthenticatedNodeRegistry` wrapper be used in routes (replacing separate auth + registry calls), or should it be removed as dead code?
+  **Resolution**: Deferred. The current pre-shared secret model is sufficient for the ENT-002 scope. One-time registration codes would be a follow-up for environments where the shared secret cannot be distributed safely. Document the current bootstrap model as: operator sets `BERNSTEIN_CLUSTER_AUTH_SECRET` env var or `ClusterAuthConfig.secret` on both server and workers.
+
+- **Q3**: Should the `AuthenticatedNodeRegistry` wrapper be used in routes, or removed as dead code?
+  **Resolution**: REMOVE IT. The routes use `_verify_cluster_auth()` + `_get_node_registry()` separately, which is the correct pattern (separation of concerns). The `AuthenticatedNodeRegistry` wrapper in `cluster_auth.py:205-285` is dead code — it duplicates auth logic and adds a token issuance step that the routes don't use. Remove the class and its tests. See **Implementation Guidance**, Gap 3.
+
 - **Q4**: Should failed auth attempts be rate-limited or trigger alerts?
+  **Resolution**: YES, both. Add a per-IP counter for failed cluster auth attempts. After 10 failures in 60 seconds, temporarily block the IP for 5 minutes. Log every failure at WARNING level with source IP and attempted scope. The existing `RequestRateLimitMiddleware` does not cover cluster auth failures specifically — add a dedicated counter in `_verify_cluster_auth()`. See **Implementation Guidance**, Gap 4.
+
 - **Q5**: Should the system support mTLS as an alternative/addition to JWT for node authentication?
+  **Resolution**: Deferred. mTLS provides stronger guarantees (mutual certificate verification, no shared secret) but requires PKI infrastructure. Not in scope for ENT-002. Document as a future enhancement for deployments that require certificate-based node identity.
+
+---
+
+## Implementation Guidance
+
+### Gap 1: Persistent Token Revocation (RC-1)
+
+**Problem**: `ClusterAuthenticator._revoked_tokens` is an in-memory `set[str]`. Server restart clears it, making revoked tokens valid again until TTL expires.
+
+**Required change**: Persist the revocation set to disk on every `revoke_token()` / `revoke_node()` call. Load on `ClusterAuthenticator.__init__`.
+
+```python
+# In ClusterAuthenticator:
+def __init__(self, config: ClusterAuthConfig, persist_dir: Path | None = None) -> None:
+    ...
+    self._persist_path = persist_dir / "cluster_revoked_tokens.json" if persist_dir else None
+    self._load_revoked()
+
+def _load_revoked(self) -> None:
+    if self._persist_path and self._persist_path.exists():
+        data = json.loads(self._persist_path.read_text())
+        self._revoked_tokens = set(data.get("tokens", []))
+
+def _save_revoked(self) -> None:
+    if self._persist_path:
+        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+        self._persist_path.write_text(json.dumps({"tokens": sorted(self._revoked_tokens)}))
+
+def revoke_token(self, token: str) -> None:
+    self._revoked_tokens.add(token)
+    self._save_revoked()  # <-- add this line
+```
+
+**Cleanup**: Prune expired tokens from the revocation set on load (check JWT expiry claims). This prevents unbounded growth.
+
+**Files to modify**: `src/bernstein/core/cluster_auth.py` — add `persist_dir` param, `_load_revoked`, `_save_revoked`, prune on load. `src/bernstein/core/server.py` — pass `.sdd/runtime/` as `persist_dir`.
+
+### Gap 2: user_id Bypass in Identity Check (RC-5)
+
+**Problem**: `cluster_auth.py:262`: `if payload.user_id and payload.user_id != node_id` — a falsy `user_id` (None or empty string) skips the identity check entirely, allowing any valid token to heartbeat for any node.
+
+**Required change**: Invert the check to fail-closed:
+
+```python
+# Before (fail-open):
+if payload.user_id and payload.user_id != node_id:
+    raise ClusterAuthError(...)
+
+# After (fail-closed):
+if not payload.user_id or payload.user_id != node_id:
+    raise ClusterAuthError(
+        f"Token identity mismatch or missing: token for '{payload.user_id}', "
+        f"heartbeat for '{node_id}'"
+    )
+```
+
+**Files to modify**: `src/bernstein/core/cluster_auth.py` — line ~262.
+
+### Gap 3: Remove Dead AuthenticatedNodeRegistry (RC-2, RC-8)
+
+**Problem**: `AuthenticatedNodeRegistry` (cluster_auth.py:205-285) is never used by routes. It duplicates auth verification and adds unused token issuance logic.
+
+**Required change**: Delete the `AuthenticatedNodeRegistry` class. Remove any test code that only tests this wrapper. The separation of `_verify_cluster_auth()` (auth) + `NodeRegistry` (state) in routes is the correct, maintained pattern.
+
+**Files to modify**: `src/bernstein/core/cluster_auth.py` — remove class. Tests that import `AuthenticatedNodeRegistry`.
+
+### Gap 4: Auth Failure Rate Limiting (RC-3)
+
+**Problem**: No throttling on repeated failed auth attempts. A brute-force attacker can try unlimited tokens.
+
+**Required change**: Add a per-IP failure counter in `_verify_cluster_auth()`:
+
+```python
+# In routes/tasks.py, module-level:
+_cluster_auth_failures: dict[str, list[float]] = {}  # IP -> list of failure timestamps
+CLUSTER_AUTH_FAILURE_LIMIT = 10
+CLUSTER_AUTH_FAILURE_WINDOW_S = 60
+CLUSTER_AUTH_BLOCK_DURATION_S = 300
+
+def _check_cluster_auth_rate(request: Request) -> None:
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    failures = _cluster_auth_failures.get(ip, [])
+    # Prune old entries
+    failures = [t for t in failures if now - t < CLUSTER_AUTH_BLOCK_DURATION_S]
+    recent = [t for t in failures if now - t < CLUSTER_AUTH_FAILURE_WINDOW_S]
+    if len(recent) >= CLUSTER_AUTH_FAILURE_LIMIT:
+        raise HTTPException(status_code=429, detail="Too many auth failures")
+    _cluster_auth_failures[ip] = failures
+```
+
+Call `_check_cluster_auth_rate(request)` at the top of `_verify_cluster_auth()`. On auth failure, append `time.time()` to the IP's list.
+
+**Files to modify**: `src/bernstein/core/routes/tasks.py` — in `_verify_cluster_auth()`.
+
+### Gap 5: Auth-Unconfigured Warning (RC-6)
+
+**Problem**: When `ClusterAuthConfig` is not provided, `_verify_cluster_auth()` silently returns. Deployments that forget to configure auth get no protection and no warning.
+
+**Required change**: Log a WARNING on server startup when cluster endpoints are enabled but auth is not configured:
+
+```python
+# In server.py, during app setup:
+if node_registry is not None and cluster_authenticator is None:
+    logger.warning(
+        "SECURITY: Cluster endpoints are enabled but cluster_authenticator is not configured. "
+        "All cluster operations are unauthenticated. Set BERNSTEIN_CLUSTER_AUTH_SECRET to enable auth."
+    )
+```
+
+Also log at WARNING level on each unauthenticated cluster request (once per server lifecycle, not per request) to avoid log spam.
+
+**Files to modify**: `src/bernstein/core/server.py` — startup warning. `src/bernstein/core/routes/tasks.py` — `_verify_cluster_auth()` log-once warning.
 
 ---
 
@@ -372,3 +494,4 @@ Cluster node registration hardening adds JWT-based authentication to the node re
 | 2026-04-08 | Revocation list is in-memory only (RC-1) | Documented as high-severity gap |
 | 2026-04-08 | Auth is opt-in — no warning when unconfigured (RC-6) | Documented |
 | 2026-04-08 | Verification pass: confirmed NodeInfo.id auto-generation (RC-7). Added RC-8: routes don't use AuthenticatedNodeRegistry, so no token issuance on registration — clients must use pre-shared tokens. Bumped to v1.1. | Spec updated |
+| 2026-04-08 | Resolved all open questions (Q1-Q5). Added implementation guidance for persistent revocation (Gap 1), user_id bypass fix (Gap 2), dead code removal (Gap 3), auth failure rate limiting (Gap 4), auth-unconfigured warning (Gap 5). Bumped to v1.2, status Approved. | Spec updated, status changed to Approved |
