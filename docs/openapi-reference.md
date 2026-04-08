@@ -4,18 +4,24 @@ Bernstein exposes a task-server HTTP API on `http://127.0.0.1:8052` by default. 
 
 ## Generating the spec
 
-```bash
-# Start the server and fetch the spec
-bernstein run &
-curl -s http://127.0.0.1:8052/openapi.json > openapi.json
+Use the included script to regenerate `docs/openapi.json` from the FastAPI app
+definition without starting the server:
 
-# Or generate from code without starting the server
-uv run python -c "
-from bernstein.core.server import create_app
-import json, sys
-app = create_app()
-json.dump(app.openapi(), sys.stdout, indent=2)
-" > openapi.json
+```bash
+uv run python scripts/generate_openapi.py
+# Written docs/openapi.json  (216 paths, 87 schemas)
+```
+
+Run this after adding or modifying any API route, Pydantic model, or response
+schema, then commit the updated `docs/openapi.json`. The hosted
+`docs/api-reference.html` page (Redoc) reads the spec at load time, so the
+reference updates automatically once the JSON is committed.
+
+**Alternative — fetch from a running server:**
+
+```bash
+bernstein run &
+curl -s http://127.0.0.1:8052/openapi.json > docs/openapi.json
 ```
 
 ## Core endpoints
