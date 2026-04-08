@@ -101,6 +101,11 @@ class GatewayReplay:
                     self._index[key] = entry.output
         except FileNotFoundError:
             pass  # No cache file yet; start with empty index
+        except Exception:
+            # Malformed or partially-written WAL — load what was indexed so far
+            # and continue without crashing.  This is intentionally broad: any
+            # corruption in the WAL file must not take down the gateway process.
+            pass
 
     @staticmethod
     def _make_key(method: str, tool_name: str) -> str:
