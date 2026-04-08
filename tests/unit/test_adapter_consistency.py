@@ -30,18 +30,18 @@ from bernstein.core.models import ApiTierInfo, ModelConfig
 
 
 def _all_adapter_names() -> list[str]:
-    """Return names of all registered adapters."""
-    return sorted(_ADAPTERS.keys())
+    """Return names of all registered adapters (including generic)."""
+    return sorted([*_ADAPTERS.keys(), "generic"])
 
 
 def _instantiate_adapter(name: str) -> CLIAdapter:
     """Instantiate an adapter by name, handling special cases."""
+    # GenericAdapter is not in _ADAPTERS but is a valid adapter
+    if name == "generic":
+        return get_adapter("generic")
     entry = _ADAPTERS[name]
     if isinstance(entry, CLIAdapter):
         return entry
-    # For classes, instantiate. GenericAdapter needs special args.
-    if name == "generic":
-        return get_adapter("generic")
     return entry()
 
 
