@@ -26,10 +26,17 @@ jobs:
       name: pypi
       url: https://pypi.org/p/bernstein
     steps:
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: 3262738
+          private-key: ${{ secrets.BERNSTEIN_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -61,8 +68,8 @@ jobs:
           NEW="${MAJOR}.${MINOR}.$((PATCH + 1))"
           sed -i "s/^version = \"${{ steps.ver.outputs.current }}\"/version = \"${NEW}\"/" pyproject.toml
           echo "version=$NEW" >> "$GITHUB_OUTPUT"
-          git config user.name "bernstein[bot]"
-          git config user.email "bernstein-bot@users.noreply.github.com"
+          git config user.name "bernstein-orchestrator[bot]"
+          git config user.email "3262738+bernstein-orchestrator[bot]@users.noreply.github.com"
           git add pyproject.toml
           git commit -m "chore: auto-bump to v${NEW}"
           git push
@@ -93,7 +100,7 @@ jobs:
 
       - name: GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           # Build notes from recent commit messages since last tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
