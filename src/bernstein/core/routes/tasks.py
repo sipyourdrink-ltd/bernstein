@@ -208,7 +208,9 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
         from bernstein.core.tenant_isolation import TenantIsolationManager  # noqa: TC001
 
         tenant_mgr: TenantIsolationManager | None = getattr(
-            request.app.state, "tenant_isolation_manager", None,
+            request.app.state,
+            "tenant_isolation_manager",
+            None,
         )
         if tenant_mgr is not None:
             effective_tenant = request_tenant_id(request)
