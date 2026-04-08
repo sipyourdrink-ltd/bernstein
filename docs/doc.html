@@ -170,9 +170,33 @@
 
       // Re-run highlight.js on any code blocks marked missed
       if (typeof hljs !== 'undefined') {
-        document.querySelectorAll('#doc-content pre code:not(.hljs)').forEach(function (block) {
+        document.querySelectorAll('#doc-content pre code:not(.hljs):not(.language-mermaid)').forEach(function (block) {
           hljs.highlightElement(block);
         });
+      }
+
+      // Render Mermaid diagrams (language-mermaid code blocks)
+      var mermaidBlocks = document.querySelectorAll('#doc-content pre code.language-mermaid');
+      if (mermaidBlocks.length > 0) {
+        var script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+        script.onload = function () {
+          mermaid.initialize({ startOnLoad: false, theme: 'default' });
+          mermaidBlocks.forEach(function (block, i) {
+            var id = 'mermaid-diagram-' + i;
+            var code = block.textContent;
+            var container = document.createElement('div');
+            container.className = 'mermaid';
+            container.id = id;
+            block.parentNode.replaceWith(container);
+            mermaid.render(id + '-svg', code).then(function (result) {
+              container.innerHTML = result.svg;
+            }).catch(function (err) {
+              container.textContent = 'Diagram render error: ' + err.message;
+            });
+          });
+        };
+        document.head.appendChild(script);
       }
 
       // Re-init Lucide icons if any were in the markdown
