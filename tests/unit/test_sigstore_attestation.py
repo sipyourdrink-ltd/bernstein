@@ -238,14 +238,14 @@ class TestFallbackAttestation:
                 attestation_dir=attest_dir,
             )
 
-        # Tamper with the payload — resolve path and verify it stays within attest_dir
-        bundle_path = Path(record.bundle_path).resolve()
-        assert str(bundle_path).startswith(str(attest_dir.resolve())), "Path traversal detected"
-        bundle = json.loads(bundle_path.read_text())
+        # Tamper with the payload — use a known-safe path derived from attest_dir
+        safe_bundle = attest_dir / Path(record.bundle_path).name
+        assert safe_bundle.exists(), f"Bundle not found at {safe_bundle}"
+        bundle = json.loads(safe_bundle.read_text())
         bundle["payload"]["task_id"] = "TAMPERED"
-        bundle_path.write_text(json.dumps(bundle))
+        safe_bundle.write_text(json.dumps(bundle))
 
-        assert verify_local_attestation(bundle_path, attest_dir) is False
+        assert verify_local_attestation(safe_bundle, attest_dir) is False
 
     def test_verify_non_local_bundle_raises(self, attest_dir: Path) -> None:
         """verify_local_attestation raises ValueError for non-local bundles."""
