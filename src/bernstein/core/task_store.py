@@ -79,6 +79,7 @@ class TaskRecord(TypedDict):
     claimed_by_session: str | None
     parent_session_id: str | None
     subtask_wait_started_at: float | None
+    parent_context: str | None
 
 
 class ArchiveRecord(TypedDict):
@@ -167,6 +168,7 @@ class TaskCreateRequest(Protocol):
     def slack_context(self) -> Mapping[str, Any] | None: ...
 
     parent_session_id: str | None
+    parent_context: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -723,6 +725,7 @@ class TaskStore:
             slack_context=req.slack_context,
             metadata=getattr(req, "metadata", None) or {},
             parent_session_id=getattr(req, "parent_session_id", None),
+            parent_context=getattr(req, "parent_context", None),
         )
         async with self._lock:
             if task.depends_on:

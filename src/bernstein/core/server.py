@@ -304,6 +304,7 @@ class TaskCreate(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)  # Trigger-source metadata (e.g. issue_number)
     deadline: float | None = None  # Epoch timestamp when task must be complete
     parent_session_id: str | None = None  # Coordinator session that owns this task (namespace scope)
+    parent_context: str | None = None  # Parent agent's context summary for subtask agents (AGENT-012)
 
 
 class TaskSelfCreate(BaseModel):
