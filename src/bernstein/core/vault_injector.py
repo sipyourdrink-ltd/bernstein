@@ -392,9 +392,7 @@ class VaultInjector:
 
     def __init__(self, config: InjectionConfig) -> None:
         if config.provider not in _VALID_PROVIDERS:
-            raise VaultInjectionError(
-                f"Unknown provider {config.provider!r}. Valid: {sorted(_VALID_PROVIDERS)}"
-            )
+            raise VaultInjectionError(f"Unknown provider {config.provider!r}. Valid: {sorted(_VALID_PROVIDERS)}")
         self._config = config
         cls = _PROVIDER_CLASSES[config.provider]
         self._provider: _VaultInjector | _AwsInjector | _OnePasswordInjector = cls()

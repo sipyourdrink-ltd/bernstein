@@ -179,8 +179,7 @@ class TestAdapterDetectTier:
     ) -> None:
         result = adapter.detect_tier()
         assert result is None or isinstance(result, ApiTierInfo), (
-            f"{adapter_name}: detect_tier() returned {type(result).__name__}, "
-            "expected ApiTierInfo or None"
+            f"{adapter_name}: detect_tier() returned {type(result).__name__}, expected ApiTierInfo or None"
         )
 
 
@@ -255,9 +254,7 @@ class TestAdapterBuildCommand:
             # verify the method exists and is callable, which we already did.
             return
 
-        assert isinstance(result, list), (
-            f"{adapter_name}: {fn_name}() returned {type(result).__name__}, expected list"
-        )
+        assert isinstance(result, list), f"{adapter_name}: {fn_name}() returned {type(result).__name__}, expected list"
         assert all(isinstance(item, str) for item in result), (
             f"{adapter_name}: {fn_name}() returned non-string items in list"
         )

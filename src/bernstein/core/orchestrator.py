@@ -3720,7 +3720,7 @@ if __name__ == "__main__":
         # Configure model fallback tracker from bernstein.yaml (AGENT-004).
         # Reads model_fallback: section and wires the configurable chain into
         # the process-global singleton before any agents are spawned.
-        if seed and seed.model_fallback:
+        if seed and getattr(seed, "model_fallback", None):
             from bernstein.core.model_fallback import initialize_fallback_tracker
 
             mf = seed.model_fallback
@@ -3879,7 +3879,7 @@ if __name__ == "__main__":
         from bernstein.core.resource_limits import ResourceLimits as _ResourceLimits
 
         agent_rlimits: _ResourceLimits | None = None
-        if seed and seed.agent_resource_limits is not None:
+        if seed and getattr(seed, "agent_resource_limits", None) is not None:
             if isinstance(seed.agent_resource_limits, dict):
                 agent_rlimits = _ResourceLimits.from_dict(seed.agent_resource_limits)
             elif isinstance(seed.agent_resource_limits, _ResourceLimits):
