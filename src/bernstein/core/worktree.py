@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from bernstein.core.git_ops import branch_delete, worktree_add, worktree_list, worktree_remove
 from bernstein.core.platform_compat import process_alive
+from bernstein.core.worktree_isolation import validate_worktree_isolation
 
 if TYPE_CHECKING:
     import threading
@@ -298,8 +299,22 @@ class WorktreeManager:
         worker_pid = os.getpid()
         write_worktree_lock(self.repo_root, session_id, pid=worker_pid)
 
+        allowed_symlinks: tuple[str, ...] = ()
         if self._setup_config is not None:
             setup_worktree_env(self.repo_root, worktree_path, self._setup_config)
+            allowed_symlinks = self._setup_config.symlink_dirs
+
+        isolation_result = validate_worktree_isolation(
+            worktree_path,
+            self.repo_root,
+            allowed_symlink_dirs=allowed_symlinks,
+        )
+        if not isolation_result.passed:
+            self.cleanup(session_id)
+            raise WorktreeError(
+                f"Worktree isolation violated for session '{session_id}': "
+                + "; ".join(isolation_result.violations)
+            )
 
         return worktree_path
 
