@@ -147,6 +147,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           BERNSTEIN_LOG_JSON: "true"
+          BERNSTEIN_NO_TUI: "true"    # disable interactive TUI in CI
 
       - name: Upload state artifacts
         if: always()
@@ -221,6 +222,7 @@ bernstein:
   variables:
     ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY   # set in GitLab CI/CD settings
     BERNSTEIN_LOG_JSON: "true"
+    BERNSTEIN_NO_TUI: "true"    # disable interactive TUI in CI
 
   artifacts:
     paths:
@@ -251,6 +253,7 @@ bernstein:
 
   variables:
     ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+    BERNSTEIN_NO_TUI: "true"
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
 ```
 
@@ -323,6 +326,7 @@ VOLUME ["/workspace/.sdd"]
 
 ENV BERNSTEIN_BIND_HOST=0.0.0.0
 ENV BERNSTEIN_PORT=8052
+ENV BERNSTEIN_NO_TUI=true
 
 EXPOSE 8052
 
