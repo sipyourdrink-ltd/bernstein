@@ -111,6 +111,12 @@ class PermissionDeniedError(CategorizedSpawnError):
     retry_strategy = RetryStrategy.RETRY_AFTER_FIX
 
 
+class RateLimitError(CategorizedSpawnError):
+    """Provider rate limit hit — try a different provider."""
+
+    retry_strategy = RetryStrategy.RETRY_FALLBACK
+
+
 class ResourceExhaustedError(CategorizedSpawnError):
     """System resources are exhausted (disk, memory, file descriptors, etc.).
 
@@ -167,6 +173,13 @@ def classify_spawn_error(
     if "worktree" in msg or "git worktree" in msg:
         return WorktreeCreationError(
             f"Worktree creation failed: {exc}",
+            provider=provider,
+            detail=str(exc),
+        )
+
+    if "rate limit" in msg or "ratelimit" in msg or "too many requests" in msg or "429" in msg:
+        return RateLimitError(
+            f"Rate limit exceeded: {exc}",
             provider=provider,
             detail=str(exc),
         )

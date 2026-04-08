@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -374,6 +375,10 @@ class TestSpawnerWithRouter:
     def test_spawn_retries_with_alternate_provider_after_spawn_failure(
         self, tmp_path: Path, make_task, mock_adapter_factory
     ) -> None:
+        subprocess.run(["git", "init", str(tmp_path)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@test.local"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"], capture_output=True, check=True)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
 

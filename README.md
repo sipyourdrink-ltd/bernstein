@@ -18,6 +18,7 @@
 
 [![CI](https://github.com/chernistry/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/chernistry/bernstein/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/chernistry/bernstein/graph/badge.svg)](https://codecov.io/gh/chernistry/bernstein)
+[![GitHub stars](https://img.shields.io/github/stars/chernistry/bernstein?style=social)](https://github.com/chernistry/bernstein/stargazers)
 [![PyPI](https://img.shields.io/pypi/v/bernstein)](https://pypi.org/project/bernstein/)
 [![npm](https://img.shields.io/npm/v/bernstein-orchestrator)](https://www.npmjs.com/package/bernstein-orchestrator)
 [![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/alex-chernysh.bernstein)](https://marketplace.visualstudio.com/items?itemName=alex-chernysh.bernstein)
@@ -25,6 +26,7 @@
 [![License](https://img.shields.io/github/license/chernistry/bernstein)](LICENSE)
 [![MCP Compatible](https://img.shields.io/badge/MCP-1.0%2C%201.1-blue)](docs/compatibility.md)
 [![A2A Compatible](https://img.shields.io/badge/A2A-0.2%2C%200.3-blue)](docs/compatibility.md)
+[![Share on X](https://img.shields.io/badge/share-on%20X-black?logo=x&logoColor=white)](https://x.com/intent/tweet?text=Bernstein%20%E2%80%94%20orchestrate%20parallel%20AI%20coding%20agents.%20Any%20model.%20One%20command.&url=https%3A%2F%2Fgithub.com%2Fchernistry%2Fbernstein&hashtags=ai,opensource,devtools)
 
 [Documentation](https://chernistry.github.io/bernstein/) &middot; [Getting Started](docs/GETTING_STARTED.md) &middot; [Glossary](docs/GLOSSARY.md) &middot; [Limitations](docs/KNOWN_LIMITATIONS.md)
 
