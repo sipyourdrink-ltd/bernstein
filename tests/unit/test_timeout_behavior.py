@@ -334,3 +334,186 @@ class TestCommandTimeout:
             timeout_s=10,
         )
         assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# TEST-004g: Agent discovery probe timeout
+# ---------------------------------------------------------------------------
+
+
+class TestAgentDiscoveryProbeTimeout:
+    """_run_probe returns None on timeout and cleans up gracefully."""
+
+    def test_probe_timeout_returns_none(self) -> None:
+        """A probe that runs longer than the timeout returns None."""
+        from bernstein.core.agent_discovery import _run_probe
+
+        # "sleep 5" far exceeds a 0.1s timeout
+        result = _run_probe(["sleep", "5"], timeout=0.1)
+        assert result is None
+
+    def test_probe_fast_command_succeeds(self) -> None:
+        """A fast probe returns a CompletedProcess with returncode."""
+        from bernstein.core.agent_discovery import _run_probe
+
+        result = _run_probe(["echo", "ok"], timeout=5.0)
+        assert result is not None
+        assert result.returncode == 0
+        assert "ok" in result.stdout
+
+    def test_probe_nonexistent_binary_returns_none(self) -> None:
+        """A probe for a missing binary returns None (no exception escapes)."""
+        from bernstein.core.agent_discovery import _run_probe
+
+        result = _run_probe(["_definitely_not_a_real_binary_xyz_12345"], timeout=5.0)
+        assert result is None
+
+    def test_probe_timeout_does_not_leave_zombie(self) -> None:
+        """After a timeout, no subprocess state leaks into the calling process."""
+
+        from bernstein.core.agent_discovery import _run_probe
+
+        result = _run_probe(["sleep", "10"], timeout=0.05)
+        assert result is None
+        # After timeout, calling process should be able to start a new probe
+        follow_up = _run_probe(["echo", "alive"], timeout=5.0)
+        assert follow_up is not None
+        assert follow_up.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# TEST-004h: Config watcher drift detection timing
+# ---------------------------------------------------------------------------
+
+
+class TestConfigWatcherDriftTiming:
+    """ConfigWatcher detects file changes within a single check cycle.
+
+    ConfigWatcher.snapshot(workdir) uses discover_config_paths() which
+    checks files like workdir/bernstein.yaml. We create that file in
+    tmp_path so the watcher tracks it.
+    """
+
+    def test_unmodified_file_reports_no_drift(self, tmp_path: Path) -> None:
+        from bernstein.core.config_watcher import ConfigWatcher
+
+        cfg = tmp_path / "bernstein.yaml"
+        cfg.write_text("team:\n  - role: backend\n")
+        watcher = ConfigWatcher.snapshot(tmp_path)
+        report = watcher.check()
+        assert report.drifted is False
+        assert report.events == []
+
+    def test_modified_file_is_detected_immediately(self, tmp_path: Path) -> None:
+        from bernstein.core.config_watcher import ConfigWatcher
+
+        cfg = tmp_path / "bernstein.yaml"
+        cfg.write_text("team:\n  - role: backend\n")
+        watcher = ConfigWatcher.snapshot(tmp_path)
+
+        # Modify the file after snapshot
+        cfg.write_text("team:\n  - role: backend\n  - role: qa\n")
+        report = watcher.check()
+        assert report.drifted is True
+        assert any(e.label == "project" for e in report.events)
+
+    def test_deleted_file_is_detected_as_drift(self, tmp_path: Path) -> None:
+        from bernstein.core.config_watcher import ConfigWatcher
+
+        cfg = tmp_path / "bernstein.yaml"
+        cfg.write_text("key: value\n")
+        watcher = ConfigWatcher.snapshot(tmp_path)
+
+        cfg.unlink()
+        report = watcher.check()
+        assert report.drifted is True
+        assert any(e.kind == "deleted" for e in report.events)
+
+    def test_acknowledge_clears_drift(self, tmp_path: Path) -> None:
+        from bernstein.core.config_watcher import ConfigWatcher
+
+        cfg = tmp_path / "bernstein.yaml"
+        cfg.write_text("original: true\n")
+        watcher = ConfigWatcher.snapshot(tmp_path)
+
+        cfg.write_text("modified: true\n")
+        report = watcher.check()
+        assert report.drifted is True
+
+        # Acknowledge and re-snapshot — next check should be clean
+        watcher.acknowledge_report(report)
+        watcher.re_snapshot()
+        report2 = watcher.check()
+        assert report2.drifted is False
+
+    def test_newly_created_file_is_detected(self, tmp_path: Path) -> None:
+        from bernstein.core.config_watcher import ConfigWatcher
+
+        # Snapshot with no bernstein.yaml present
+        watcher = ConfigWatcher.snapshot(tmp_path)
+
+        # Create the file after snapshot
+        cfg = tmp_path / "bernstein.yaml"
+        cfg.write_text("appeared: true\n")
+        report = watcher.check()
+        assert report.drifted is True
+        assert any(e.kind == "created" for e in report.events)
+
+
+# ---------------------------------------------------------------------------
+# TEST-004i: Spawn timeout graceful degradation
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnTimeoutGracefulDegradation:
+    """Spawn timeout watchdog terminates and cleans up without side effects."""
+
+    def test_watchdog_can_be_cancelled_before_firing(self) -> None:
+        """Watchdog timer cancelled before expiry causes no action."""
+        from bernstein.adapters.base import CLIAdapter
+
+        class _DummyAdapter(CLIAdapter):
+            def spawn(self, **kwargs: Any) -> SpawnResult:  # type: ignore[override]
+                raise NotImplementedError
+
+            def name(self) -> str:
+                return "dummy"
+
+        adapter = _DummyAdapter()
+        timer = adapter._start_timeout_watchdog(
+            pid=0,  # non-existent PID; watchdog will silently skip kill
+            timeout_seconds=999,
+            session_id="cancel-test",
+        )
+        assert timer.is_alive()
+        timer.cancel()
+        timer.join(timeout=1.0)
+        assert not timer.is_alive()
+
+    def test_multiple_watchdogs_independent(self) -> None:
+        """Multiple watchdog timers can coexist without interference."""
+        from bernstein.adapters.base import CLIAdapter
+
+        class _DummyAdapter(CLIAdapter):
+            def spawn(self, **kwargs: Any) -> SpawnResult:  # type: ignore[override]
+                raise NotImplementedError
+
+            def name(self) -> str:
+                return "dummy"
+
+        adapter = _DummyAdapter()
+        timers = [
+            adapter._start_timeout_watchdog(
+                pid=0,
+                timeout_seconds=999,
+                session_id=f"sess-{i}",
+            )
+            for i in range(3)
+        ]
+        for t in timers:
+            assert t.is_alive()
+        for t in timers:
+            t.cancel()
+        for t in timers:
+            t.join(timeout=1.0)
+        assert all(not t.is_alive() for t in timers)
