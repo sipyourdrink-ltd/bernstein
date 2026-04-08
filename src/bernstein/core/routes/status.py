@@ -576,7 +576,7 @@ async def update_config(request: Request) -> JSONResponse:
         yaml_path.write_text(_yaml.dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8")
     except Exception as exc:
         logger.error("Failed to update bernstein.yaml: %s", exc)
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        return JSONResponse(status_code=500, content={"error": "config update failed"})
 
     logger.info("Config updated via API: max_agents=%d", new_max)
     return JSONResponse(content={"max_agents": new_max, "status": "updated"})

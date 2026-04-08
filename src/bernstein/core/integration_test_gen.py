@@ -231,17 +231,20 @@ async def generate_and_run(
         test_path_str = str(test_file)
         logger.info("Persisted generated integration test: %s", test_file)
 
-    # 5. Run the test in a temp file
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".py",
-        prefix=f"test_integ_{slug}_",
-        dir=run_dir / "tests" / "integration",
-        delete=False,
-        encoding="utf-8",
-    ) as tmp:
-        tmp.write(test_code)
-        tmp_path = Path(tmp.name)
+    # 5. Run the test in a temp file (wrapped for async context)
+    def _write_temp_file() -> Path:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".py",
+            prefix=f"test_integ_{slug}_",
+            dir=run_dir / "tests" / "integration",
+            delete=False,
+            encoding="utf-8",
+        ) as tmp:
+            tmp.write(test_code)
+            return Path(tmp.name)
+
+    tmp_path = await asyncio.to_thread(_write_temp_file)
 
     try:
         proc = await asyncio.create_subprocess_exec(

@@ -17,8 +17,10 @@ feedback from an LLM reviewer.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -181,7 +183,7 @@ class RubricResult:
 def _compute_composite(scores: dict[str, int]) -> float:
     """Compute a weighted composite score from per-dimension integer scores."""
     weight_sum = sum(_DIMENSION_WEIGHTS.get(dim, 0.0) for dim in scores)
-    if weight_sum == 0.0:
+    if math.isclose(weight_sum, 0.0, abs_tol=1e-9):
         return 0.0
     weighted = sum(scores.get(dim, 0) * w for dim, w in _DIMENSION_WEIGHTS.items() if dim in scores)
     return round(weighted / weight_sum, 2)
@@ -249,29 +251,35 @@ async def score_diff(
 
     errors: list[str] = []
 
-    # 1. Get the diff if not provided
+    # 1. Get the diff if not provided (async subprocess for async context)
     if diff is None:
-        import subprocess
-
         try:
-            proc = subprocess.run(
-                ["git", "diff", "HEAD~1", "--", "*.py"],
-                capture_output=True,
-                text=True,
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "diff",
+                "HEAD~1",
+                "--",
+                "*.py",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=run_dir,
-                timeout=30,
             )
-            diff = proc.stdout or ""
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+            diff = stdout.decode() if stdout else ""
             if not diff.strip():
                 # Try staged diff
-                proc = subprocess.run(
-                    ["git", "diff", "--cached", "--", "*.py"],
-                    capture_output=True,
-                    text=True,
+                proc = await asyncio.create_subprocess_exec(
+                    "git",
+                    "diff",
+                    "--cached",
+                    "--",
+                    "*.py",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                     cwd=run_dir,
-                    timeout=30,
                 )
-                diff = proc.stdout or ""
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+                diff = stdout.decode() if stdout else ""
         except Exception as exc:
             errors.append(f"Failed to get diff: {exc}")
             diff = ""
