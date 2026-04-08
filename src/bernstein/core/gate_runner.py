@@ -50,6 +50,8 @@ VALID_GATE_NAMES = frozenset(
         "dep_audit",
         "migration_reversibility",
         "large_file",
+        "integration_test_gen",
+        "review_rubric",
     }
 )
 VALID_GATE_CONDITIONS = frozenset({"always", "python_changed", "tests_changed", "any_changed", "deps_changed"})
@@ -224,6 +226,10 @@ def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]
         pipeline.append(GatePipelineStep(name="migration_reversibility", required=True, condition="any_changed"))
     if config.large_file_check:
         pipeline.append(GatePipelineStep(name="large_file", required=False, condition="any_changed"))
+    if config.integration_test_gen:
+        pipeline.append(GatePipelineStep(name="integration_test_gen", required=True, condition="python_changed"))
+    if config.review_rubric:
+        pipeline.append(GatePipelineStep(name="review_rubric", required=True, condition="python_changed"))
     return pipeline
 
 
@@ -491,6 +497,12 @@ class GateRunner:
 
         if step.name == "large_file":
             return await asyncio.to_thread(self._run_large_file_gate_sync, step, run_dir, changed_files)
+
+        if step.name == "integration_test_gen":
+            return await self._run_integration_test_gen_gate(step, task, run_dir)
+
+        if step.name == "review_rubric":
+            return await self._run_review_rubric_gate(step, task, run_dir)
 
         plugin = self._plugin_registry().get(step.name)
         if plugin is not None:
@@ -1005,6 +1017,67 @@ class GateRunner:
             duration_ms=0,
             details=detail,
             metadata={"threshold": threshold, "oversized_files": len(oversized)},
+        )
+
+    async def _run_integration_test_gen_gate(
+        self,
+        step: GatePipelineStep,
+        task: Task,
+        run_dir: Path,
+    ) -> GateResult:
+        """Run the integration test generation gate."""
+        from bernstein.core.integration_test_gen import IntegTestGenConfig, generate_and_run
+
+        cfg = IntegTestGenConfig(
+            enabled=True,
+            block_on_fail=step.required,
+        )
+        result = await generate_and_run(task, run_dir, cfg)
+        metadata: dict[str, Any] = {}
+        if result.test_path:
+            metadata["test_path"] = result.test_path
+        if result.errors:
+            metadata["errors"] = result.errors[:3]
+        return GateResult(
+            name=step.name,
+            status="pass" if result.passed else "fail",
+            required=step.required,
+            blocked=result.blocked,
+            cached=False,
+            duration_ms=0,
+            details=result.detail,
+            metadata=metadata,
+        )
+
+    async def _run_review_rubric_gate(
+        self,
+        step: GatePipelineStep,
+        task: Task,
+        run_dir: Path,
+    ) -> GateResult:
+        """Run the multi-dimensional code review rubric gate."""
+        from bernstein.core.review_rubric import ReviewRubricConfig, RubricHistoryWriter, score_diff
+
+        cfg = ReviewRubricConfig(
+            enabled=True,
+            block_below_threshold=step.required,
+        )
+        result = await score_diff(task, run_dir, cfg)
+        RubricHistoryWriter(run_dir).record(task.id, result)
+        metadata: dict[str, Any] = {"composite": result.composite}
+        for dim in result.dimensions:
+            metadata[dim.name] = dim.score
+        if result.errors:
+            metadata["errors"] = result.errors[:3]
+        return GateResult(
+            name=step.name,
+            status="pass" if result.passed else ("warn" if not step.required else "fail"),
+            required=step.required,
+            blocked=result.blocked,
+            cached=False,
+            duration_ms=0,
+            details=result.detail,
+            metadata=metadata,
         )
 
     def _run_merge_conflict_gate_sync(
