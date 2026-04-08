@@ -602,9 +602,14 @@ def _estimate_run_preview(
         except Exception:
             est_task_count = 5
     elif goal is None:
-        backlog_dir = workdir / ".sdd" / "backlog" / "open"
-        if backlog_dir.exists():
-            est_task_count = max(1, len(list(backlog_dir.glob("*.md"))))
+        count = 0
+        for subdir in ("open", "issues"):
+            backlog_dir = workdir / ".sdd" / "backlog" / subdir
+            if backlog_dir.exists():
+                count += len(list(backlog_dir.glob("*.md")))
+                count += len(list(backlog_dir.glob("*.yaml")))
+                count += len(list(backlog_dir.glob("*.yml")))
+        est_task_count = max(1, count)
 
     est_model = model_override or "sonnet"
     seed_path = Path(seed_file) if seed_file is not None else find_seed_file()

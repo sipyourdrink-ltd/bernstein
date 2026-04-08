@@ -279,15 +279,15 @@ def sync_backlog_to_server(
     *,
     client: httpx.Client | None = None,
 ) -> SyncResult:
-    """Sync ``.sdd/backlog/open/*.yaml`` files with the running task server.
+    """Sync ``.sdd/backlog/open/`` and ``issues/`` files with the task server.
 
     Steps:
-    1. Scan ``backlog/open/`` for ``.yaml`` and ``.md`` files.
+    1. Scan ``backlog/open/`` and ``backlog/issues/`` for ``.yaml`` / ``.md``.
     2. For each file, create a task on the server if one with the same title
        does not already exist (fuzzy-matched via slug normalisation).
        The source filename is embedded in the description for traceability.
     3. For each ``done`` task on the server, move the matching backlog file
-       from ``backlog/open/`` to ``backlog/closed/``.
+       from ``backlog/open/`` to ``backlog/closed/`` (issues/ files stay).
 
     Args:
         workdir: Project root directory (parent of ``.sdd/``).
@@ -299,9 +299,10 @@ def sync_backlog_to_server(
     """
     result = SyncResult()
     backlog_open = workdir / ".sdd" / "backlog" / "open"
+    backlog_issues = workdir / ".sdd" / "backlog" / "issues"
     backlog_done = workdir / ".sdd" / "backlog" / "done"
 
-    if not backlog_open.exists():
+    if not backlog_open.exists() and not backlog_issues.exists():
         return result
 
     backlog_done.mkdir(parents=True, exist_ok=True)
@@ -317,7 +318,13 @@ def sync_backlog_to_server(
             result.errors.append("Cannot connect to task server — is it running?")
             return result
 
-        md_files = sorted([*backlog_open.glob("*.yaml"), *backlog_open.glob("*.md")])
+        # Collect files from both open/ and issues/
+        md_files: list[Path] = []
+        for src_dir in (backlog_open, backlog_issues):
+            if src_dir.exists():
+                md_files.extend(src_dir.glob("*.yaml"))
+                md_files.extend(src_dir.glob("*.md"))
+        md_files.sort()
 
         # --- Step 1: create new tasks (batched) ---
         batch_payloads: list[dict[str, Any]] = []

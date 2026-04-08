@@ -540,6 +540,48 @@ def live_alias() -> JSONResponse:
     return live_check()
 
 
+@router.post("/config")
+async def update_config(request: Request) -> JSONResponse:
+    """Update mutable config fields at runtime.
+
+    Accepts JSON body with ``{"max_agents": N}``.  Writes the change to
+    ``bernstein.yaml`` so the orchestrator's hot-reload picks it up on
+    the next tick (~30s).  Returns the new effective value.
+    """
+    logger = logging.getLogger("bernstein.server")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "invalid JSON"})
+
+    if not isinstance(body, dict):
+        return JSONResponse(status_code=400, content={"error": "expected JSON object"})
+
+    new_max = body.get("max_agents")
+    if new_max is None:
+        return JSONResponse(status_code=400, content={"error": "missing max_agents"})
+    new_max = max(1, min(int(new_max), 50))  # clamp to sane range
+
+    # Update bernstein.yaml — the orchestrator watches mtime and hot-reloads
+    yaml_path = Path.cwd() / "bernstein.yaml"
+    if not yaml_path.exists():
+        return JSONResponse(status_code=404, content={"error": "bernstein.yaml not found"})
+
+    try:
+        import yaml as _yaml
+
+        raw = yaml_path.read_text(encoding="utf-8")
+        data = _yaml.safe_load(raw) or {}
+        data["max_agents"] = new_max
+        yaml_path.write_text(_yaml.dump(data, default_flow_style=False, sort_keys=False), encoding="utf-8")
+    except Exception as exc:
+        logger.error("Failed to update bernstein.yaml: %s", exc)
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+    logger.info("Config updated via API: max_agents=%d", new_max)
+    return JSONResponse(content={"max_agents": new_max, "status": "updated"})
+
+
 @router.post("/shutdown")
 async def shutdown_server(request: Request) -> JSONResponse:
     """Initiate graceful server shutdown.
@@ -813,6 +855,7 @@ def dashboard_data(request: Request) -> JSONResponse:
                 "failed": summary["failed"],
                 "agents": agent_count,
                 "cost_usd": round(live_spent, 4),
+                "max_agents": runtime.get("config_provenance", {}).get("max_agents", {}).get("value", 6),
             },
             "tasks": task_timeline,
             "agents": agent_details,
