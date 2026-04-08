@@ -169,6 +169,54 @@ def _require_task_access(task: Task, request: Request, requested_tenant: str | N
 
 
 # ---------------------------------------------------------------------------
+# Sigstore attestation helper
+# ---------------------------------------------------------------------------
+
+
+def _try_attest_task_completion(
+    request: Request,
+    task_id: str,
+    agent_id: str,
+    result_summary: str,
+) -> None:
+    """Best-effort Sigstore/Ed25519 attestation for a completed task.
+
+    Non-blocking — logs a warning and continues if attestation fails.
+    """
+    import hashlib
+
+    sdd_dir: Path | None = getattr(request.app.state, "sdd_dir", None)
+    if sdd_dir is None:
+        return
+
+    try:
+        from bernstein.core.sigstore_attestation import (
+            AttestationConfig,
+            attest_task_completion,
+        )
+
+        diff_sha256 = hashlib.sha256(result_summary.encode()).hexdigest()
+        attestation_dir = sdd_dir / "attestations"
+        config = AttestationConfig(attestation_dir=attestation_dir)
+        record = attest_task_completion(
+            task_id=task_id,
+            agent_id=agent_id,
+            diff_sha256=diff_sha256,
+            event_hmac="",
+            config=config,
+        )
+        method = "Ed25519 fallback" if record.fallback_used else "Sigstore/Rekor"
+        logger.info(
+            "Task %s attested via %s: bundle=%s",
+            task_id,
+            method,
+            record.bundle_path,
+        )
+    except Exception:
+        logger.warning("Attestation failed for task %s (non-fatal)", task_id, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Task CRUD
 # ---------------------------------------------------------------------------
 
@@ -520,6 +568,10 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
             raise HTTPException(status_code=409, detail=str(exc)) from None
         sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "done"}))
         get_plugin_manager().fire_task_completed(task_id=task.id, role=task.role, result_summary=body.result_summary)
+
+        # Sigstore/Ed25519 attestation for the task completion (fire-and-forget)
+        _try_attest_task_completion(request, task.id, task.role, body.result_summary)
+
         return task_to_response(task)
 
 
