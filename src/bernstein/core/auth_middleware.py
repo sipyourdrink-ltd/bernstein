@@ -250,7 +250,7 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         token: str,
     ) -> StarletteResponse | None:
         """Attempt agent identity JWT validation. Returns response or None on miss."""
-        assert self._agent_identity_store is not None  # noqa: S101 — caller ensures this
+        assert self._agent_identity_store is not None
         agent_identity = self._agent_identity_store.authenticate(token)
         if agent_identity is None:
             return None
@@ -309,8 +309,5 @@ def _check_agent_task_scope(path: str, allowed_task_ids: list[str]) -> str | Non
         return None
     task_id = m.group(1)
     if task_id not in allowed_task_ids:
-        return (
-            f"Task {task_id!r} is not in this agent's task scope "
-            f"(allowed: {allowed_task_ids})"
-        )
+        return f"Task {task_id!r} is not in this agent's task scope (allowed: {allowed_task_ids})"
     return None

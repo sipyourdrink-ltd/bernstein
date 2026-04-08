@@ -735,7 +735,7 @@
         elapsed: '00:00:00',
 
         // Data from /dashboard/data
-        stats: { total: 0, open: 0, claimed: 0, done: 0, failed: 0, agents: 0, cost_usd: 0 },
+        stats: { total: 0, open: 0, claimed: 0, done: 0, failed: 0, agents: 0, cost_usd: 0, max_agents: 6 },
         tasks: [],
         agents: [],
         costByRole: {},
@@ -1215,6 +1215,20 @@
               body: '{}'
             });
             await this.fetchData();
+          } catch (e) { /* ignore */ }
+        },
+
+        async adjustAgents(delta) {
+          const newVal = Math.max(1, Math.min(50, (this.stats.max_agents || 6) + delta));
+          try {
+            const resp = await fetch('/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ max_agents: newVal })
+            });
+            if (resp.ok) {
+              this.stats.max_agents = newVal;
+            }
           } catch (e) { /* ignore */ }
         },
 

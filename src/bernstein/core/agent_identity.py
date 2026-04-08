@@ -629,10 +629,14 @@ class AgentIdentityStore:
         # (prevents claim-substitution attacks where an attacker tampers with
         # the token payload to expand their scope).
         claim_task_ids = claims.get("task_ids", [])
-        if not isinstance(claim_task_ids, list) or sorted(map(str, claim_task_ids)) != sorted(identity.credential.task_ids):
+        if not isinstance(claim_task_ids, list) or sorted(map(str, claim_task_ids)) != sorted(
+            identity.credential.task_ids
+        ):
             return None
         claim_files = claims.get("allowed_files", [])
-        if not isinstance(claim_files, list) or sorted(map(str, claim_files)) != sorted(identity.credential.allowed_files):
+        if not isinstance(claim_files, list) or sorted(map(str, claim_files)) != sorted(
+            identity.credential.allowed_files
+        ):
             return None
 
         if not identity.is_active:

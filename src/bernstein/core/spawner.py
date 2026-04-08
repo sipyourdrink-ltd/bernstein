@@ -160,10 +160,10 @@ def _render_auth_section(token_path: Path) -> str:
         "```\n"
         "Example — marking a task complete:\n"
         "```bash\n"
-        f'curl -s -X POST http://127.0.0.1:8052/tasks/<TASK_ID>/complete \\\n'
+        f"curl -s -X POST http://127.0.0.1:8052/tasks/<TASK_ID>/complete \\\n"
         f'  -H "Authorization: Bearer $(cat {token_path})" \\\n'
         '  -H "Content-Type: application/json" \\\n'
-        "  -d '{\"result_summary\": \"Done\"}'\n"
+        '  -d \'{"result_summary": "Done"}\'\n'
         "```\n"
     )
 

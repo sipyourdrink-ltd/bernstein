@@ -1970,9 +1970,10 @@ class BernsteinApp(App[None]):
         header.elapsed = bar.elapsed
         header.cost_trend = _mini_cost_sparkline(list(self._cost_history))
         # Update agent count from status data
-        if isinstance(status, dict):
-            prov = status.get("runtime", {}).get("config_provenance", {})
-            header.max_agents = prov.get("max_agents", {}).get("value", header.max_agents)
+        if isinstance(sd, dict):
+            prov = sd.get("runtime", {}).get("config_provenance", {})
+            if isinstance(prov, dict):
+                header.max_agents = prov.get("max_agents", {}).get("value", header.max_agents)
         header.active_agents = bar.alive
 
         spark = self.query_one("#spark", Sparkline)

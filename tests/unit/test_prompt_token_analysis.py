@@ -8,8 +8,6 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.prompt_token_analysis import (
-    PromptTokenReport,
-    SectionTokens,
     _section_category,
     analyse_prompt_sections,
     save_prompt_token_report,

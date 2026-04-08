@@ -159,9 +159,7 @@ class TestVerifyWithConsensus:
     async def test_one_reject_returns_request_changes(self, tmp_path: Path) -> None:
         task = _make_task()
         approve_json = json.dumps({"verdict": "approve", "feedback": "OK", "confidence": 0.9})
-        reject_json = json.dumps(
-            {"verdict": "request_changes", "feedback": "SQL injection risk", "confidence": 0.85}
-        )
+        reject_json = json.dumps({"verdict": "request_changes", "feedback": "SQL injection risk", "confidence": 0.85})
         diff_result = MagicMock(stdout="+bad code\n")
 
         call_count = 0
@@ -209,9 +207,7 @@ class TestVerifyWithConsensus:
     async def test_two_reject_one_approve_with_n3(self, tmp_path: Path) -> None:
         task = _make_task()
         approve_json = json.dumps({"verdict": "approve", "feedback": "OK", "confidence": 0.9})
-        reject_json = json.dumps(
-            {"verdict": "request_changes", "feedback": "Bug found", "confidence": 0.9}
-        )
+        reject_json = json.dumps({"verdict": "request_changes", "feedback": "Bug found", "confidence": 0.9})
         diff_result = MagicMock(stdout="+x\n")
         cfg = ConsensusVerifierConfig(n_verifiers=3)
 

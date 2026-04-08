@@ -217,13 +217,9 @@ def _build_signature(
     args_obj = node.args
 
     # Collect all positional args, skipping self/cls
-    all_args: list[ast.arg] = [
-        a for a in args_obj.args if not _is_self_or_cls(a.arg)
-    ]
+    all_args: list[ast.arg] = [a for a in args_obj.args if not _is_self_or_cls(a.arg)]
     # Include posonlyargs (Python 3.8+)
-    all_args = [
-        a for a in args_obj.posonlyargs if not _is_self_or_cls(a.arg)
-    ] + all_args
+    all_args = [a for a in args_obj.posonlyargs if not _is_self_or_cls(a.arg)] + all_args
 
     arg_names = [a.arg for a in all_args]
     arg_annotations = {a.arg: _annotation_str(a.annotation) for a in all_args}
@@ -279,15 +275,11 @@ def _check_arg_compat(
         common = [a for a in before.args if a in after_args]
         reordered = [a for a in after.args if a in before_args]
         if common != reordered:
-            issues.append(
-                f"argument order changed: {before.args} → {after.args}"
-            )
+            issues.append(f"argument order changed: {before.args} → {after.args}")
 
     # Return type change
     if before.return_annotation != after.return_annotation:
-        issues.append(
-            f"return type changed: '{before.return_annotation}' → '{after.return_annotation}'"
-        )
+        issues.append(f"return type changed: '{before.return_annotation}' → '{after.return_annotation}'")
 
     return issues
 

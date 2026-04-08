@@ -176,11 +176,14 @@ def generate_suggestions(ticket: dict[str, str]) -> list[str]:
         ],
     }
 
-    suggestions = category_suggestions.get(prefix, [
-        "Review relevant source files for integration points",
-        "Add comprehensive tests for the new functionality",
-        "Update documentation to reflect the changes",
-    ])
+    suggestions = category_suggestions.get(
+        prefix,
+        [
+            "Review relevant source files for integration points",
+            "Add comprehensive tests for the new functionality",
+            "Update documentation to reflect the changes",
+        ],
+    )
 
     # Add description-specific suggestions
     if "error" in desc or "failure" in desc or "fix" in desc:
@@ -209,17 +212,17 @@ def build_issue_body(ticket: dict[str, str]) -> str:
 
     body = f"""## Description
 
-{ticket['description']}
+{ticket["description"]}
 
 ## Metadata
 
 | Field | Value |
 |-------|-------|
 | Priority | P0 |
-| Scope | {ticket.get('scope', 'N/A')} |
-| Complexity | {ticket.get('complexity', 'N/A')} |
-| Role | {ticket.get('role', 'N/A')} |
-| Tags | {ticket.get('tags', 'N/A')} |
+| Scope | {ticket.get("scope", "N/A")} |
+| Complexity | {ticket.get("complexity", "N/A")} |
+| Role | {ticket.get("role", "N/A")} |
+| Tags | {ticket.get("tags", "N/A")} |
 
 ## Implementation Suggestions
 
@@ -230,7 +233,7 @@ def build_issue_body(ticket: dict[str, str]) -> str:
 {files_md}
 
 ---
-*Backlog: `{ticket['filename']}`*"""
+*Backlog: `{ticket["filename"]}`*"""
 
     return body
 
@@ -246,11 +249,17 @@ def create_issue(ticket: dict[str, str]) -> tuple[bool, str]:
 
     # Use subprocess with stdin to avoid shell escaping issues
     cmd = [
-        "gh", "issue", "create",
-        "--repo", REPO,
-        "--title", title,
-        "--label", labels_str,
-        "--body", body,
+        "gh",
+        "issue",
+        "create",
+        "--repo",
+        REPO,
+        "--title",
+        title,
+        "--label",
+        labels_str,
+        "--body",
+        body,
     ]
 
     try:

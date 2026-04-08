@@ -9,7 +9,6 @@ import pytest
 
 from bernstein.core.token_waste_report import (
     TokenRecord,
-    TokenWasteReport,
     _detect_loops,
     _detect_oversized_contexts,
     _detect_retries,

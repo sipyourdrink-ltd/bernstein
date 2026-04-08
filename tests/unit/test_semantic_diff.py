@@ -5,21 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from bernstein.core.semantic_diff import (
     CallSiteMismatch,
     FunctionSignature,
     SemanticDiffReport,
-    SignatureChange,
-    _annotation_str,
     analyze_semantic_diff,
     detect_signature_changes,
     extract_signatures_from_source,
     find_call_sites,
     format_report,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

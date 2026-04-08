@@ -8,8 +8,6 @@ from typing import Any
 import pytest
 
 from bernstein.core.token_analyzer import (
-    HIGH_RATIO_THRESHOLD,
-    MINIMAL_OUTPUT_THRESHOLD,
     TokenAnalysis,
     TokenUsageAnalyzer,
     to_markdown,
