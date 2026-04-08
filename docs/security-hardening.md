@@ -2,26 +2,427 @@
 
 How to lock down a Bernstein deployment for production use.
 
-## Authentication
+## Permission modes
 
-### Enable API authentication
+Bernstein enforces rules at four severity levels (critical, high, medium, low). The active
+permission mode determines which levels are enforced:
 
-By default, the task server has no authentication. Enable it for any non-local deployment:
+| Mode      | critical | high | medium | low | Default for                      |
+|-----------|:--------:|:----:|:------:|:---:|----------------------------------|
+| `default` | ✓        | ✓    | ✓      | ✓   | Interactive CLI / TUI sessions   |
+| `auto`    | ✓        | ✓    | ✓      | ✗   | Orchestrator (normal operation)  |
+| `plan`    | ✓        | ✓    | ✗      | ✗   | Human-reviewed plan runs         |
+| `bypass`  | ✓        | ✗    | ✗      | ✗   | Trusted CI / headless pipelines  |
+
+✓ = rule enforced (deny/ask applies) · ✗ = rule relaxed (overridden to allow)
+
+**Critical rules are always enforced, regardless of mode.** `bypass` does not disable
+safety guardrails — it only relaxes medium and high severity rules for non-interactive runs.
+
+Set the mode in config or via environment variable:
+
+```yaml
+# bernstein.yaml
+permission_mode: auto   # bypass | plan | auto | default
+```
+
+```bash
+export BERNSTEIN_PERMISSION_MODE=auto
+```
+
+When no rule matches a tool call, `default` mode falls back to `ask` (escalate to human).
+All other modes fall back to `allow`.
+
+## Permission rule engine
+
+Rules are loaded from `.bernstein/rules.yaml` under the `permission_rules:` key. The first
+matching rule wins. If no rule matches, the fallback is determined by the active permission
+mode (see above).
+
+### Rule schema
+
+```yaml
+# .bernstein/rules.yaml
+permission_rules:
+  - id: deny-force-push           # Unique identifier (required)
+    action: deny                  # deny | ask | allow
+    severity: critical            # critical | high | medium | low
+    tool: Bash                    # Glob matched against tool name (case-insensitive)
+    command: "git push *--force*" # Glob matched against command string
+    description: "Block force pushes to any remote"
+
+  - id: allow-read-src
+    action: allow
+    severity: low
+    tool: Read
+    path: "src/**"                # Glob matched against file_path / path arguments
+
+  - id: ask-write-config
+    action: ask
+    severity: high
+    tool: Write
+    path: "*.yaml"
+    description: "Require approval before writing YAML files"
+```
+
+**Field reference:**
+
+| Field         | Required | Default    | Description                                              |
+|---------------|----------|------------|----------------------------------------------------------|
+| `id`          | yes      | —          | Unique rule identifier for logging and audit             |
+| `action`      | yes      | —          | `deny`, `ask`, or `allow`                                |
+| `severity`    | no       | `medium`   | Controls which permission modes enforce this rule        |
+| `tool`        | no       | `*`        | Glob matched against tool name (case-insensitive)        |
+| `path`        | no       | (any)      | Glob matched against `file_path`/`path` in tool input    |
+| `command`     | no       | (any)      | Glob matched against `command` in tool input (Bash tool) |
+| `description` | no       | `""`       | Human-readable purpose, shown in approval prompts        |
+
+Path patterns support `**` for deep matching: `src/**` matches `src/foo/bar.py`.
+All unspecified patterns act as wildcards (match anything).
+
+### Example rule set
+
+```yaml
+# .bernstein/rules.yaml
+permission_rules:
+  # Always block destructive git operations
+  - id: deny-force-push
+    action: deny
+    severity: critical
+    tool: Bash
+    command: "git push *--force*"
+    description: "Block force pushes"
+
+  - id: deny-reset-hard
+    action: deny
+    severity: critical
+    tool: Bash
+    command: "git reset --hard*"
+    description: "Block hard resets"
+
+  # Block agents writing to CI configuration
+  - id: deny-write-ci
+    action: deny
+    severity: high
+    tool: Write
+    path: ".github/**"
+    description: "Agents must not modify CI configuration"
+
+  # Require approval for dependency changes
+  - id: ask-write-lockfile
+    action: ask
+    severity: high
+    tool: Write
+    path: "*.lock"
+    description: "Dependency lockfile changes require human review"
+
+  # Allow agents to read freely within src/
+  - id: allow-read-src
+    action: allow
+    severity: low
+    tool: Read
+    path: "src/**"
+```
+
+## Role-based file permissions
+
+Each agent role has a built-in permission matrix defining which paths it may modify.
+Denied paths always override allowed paths.
+
+### Default role matrix
+
+| Role        | Allowed paths                                               | Denied paths                             |
+|-------------|-------------------------------------------------------------|------------------------------------------|
+| `backend`   | `src/*`, `tests/*`, `docs/*`, `pyproject.toml`, `scripts/*` | `.github/*`, `.sdd/*`, `templates/roles/*` |
+| `frontend`  | `src/*`, `tests/*`, `docs/*`, `public/*`, `static/*`, `package.json` | `.github/*`, `.sdd/*`, `templates/roles/*` |
+| `qa`        | `tests/*`, `src/*`, `docs/*`, `scripts/*`                   | `.github/*`, `.sdd/*`, `templates/roles/*` |
+| `security`  | `src/*`, `tests/*`, `.github/workflows/*`, `docs/*`, `scripts/*` | `.sdd/*`, `templates/roles/*`          |
+| `devops`    | `.github/*`, `Dockerfile`, `docker-compose.yml`, `scripts/*`, `Makefile` | `.sdd/*`, `src/*`, `templates/roles/*` |
+| `docs`      | `docs/*`, `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`   | `.github/*`, `.sdd/*`, `src/*`, `tests/*`, `templates/roles/*` |
+| `manager`   | `docs/*`, `.sdd/backlog/*`, `plans/*`                       | `src/*`, `tests/*`, `.github/*`          |
+| `architect` | `src/*`, `tests/*`, `docs/*`, `scripts/*`                   | `.github/*`, `.sdd/*`, `templates/roles/*` |
+
+Path traversal is enforced at the filesystem level: paths containing `..`, null bytes,
+URL-encoded traversal sequences (`%2e%2e`, `%2f`), or symlinks that escape the project root
+are blocked unconditionally, regardless of role permissions.
+
+### Override role permissions
+
+Add a `roles:` section to `bernstein.yaml` to replace the defaults for specific roles:
+
+```yaml
+# bernstein.yaml
+roles:
+  backend:
+    allowed_paths:
+      - "src/**"
+      - "tests/**"
+    denied_paths:
+      - ".env"
+      - "secrets/**"
+      - "*.pem"
+      - "*.key"
+  docs:
+    allowed_paths:
+      - "docs/**"
+      - "README.md"
+    denied_paths: []
+```
+
+## Sandbox setup
+
+### File system restrictions
+
+Restrict which directories all agents can access globally, in addition to role-specific limits:
+
+```yaml
+# bernstein.yaml
+sandbox:
+  allowed_paths:
+    - "src/"
+    - "tests/"
+    - "docs/"
+  denied_paths:
+    - ".env"
+    - ".env.*"
+    - ".sdd/config/"
+    - "credentials/"
+    - "*.pem"
+    - "*.key"
+    - "secrets/**"
+```
+
+### Command restrictions
+
+Control which shell commands agents can execute:
+
+```yaml
+# bernstein.yaml
+command_policy:
+  allowed:
+    - "git *"
+    - "npm *"
+    - "python *"
+    - "pytest *"
+    - "uv *"
+  denied:
+    - "rm -rf *"
+    - "curl * | sh"
+    - "wget * | sh"
+    - "sudo *"
+    - "chmod 777 *"
+    - "* > /dev/null 2>&1 &"
+```
+
+### Git worktree isolation
+
+By default, each agent runs in an isolated git worktree under `.sdd/worktrees/`. This means:
+- Agents cannot access each other's in-progress changes
+- A failing agent cannot corrupt the main branch
+- Merge to main only happens after the janitor verifies the output
+
+To inspect an agent's worktree before merge:
+
+```bash
+bernstein diff <task-id>    # Show the agent's git diff
+bernstein trace <task-id>   # Show decision trace
+```
+
+## Audit mode
+
+### Enable the audit log
+
+The audit log records all task lifecycle events with HMAC-chained entries for tamper evidence.
+It is enabled by default:
+
+```yaml
+# bernstein.yaml
+audit:
+  enabled: true
+  retention_days: 90
+  archive_compressed: true
+```
+
+Each entry in `.sdd/metrics/audit.jsonl` contains a chain hash linking it to the previous
+entry. Any insertion, deletion, or modification breaks the chain.
+
+### Verify audit log integrity
+
+```bash
+# Verify the full HMAC chain is intact
+bernstein admin verify-audit-log
+
+# Check a specific date range
+bernstein admin verify-audit-log --from 2026-01-01 --to 2026-03-31
+```
+
+### Export to SIEM
+
+Forward audit logs to your security information and event management system:
+
+```yaml
+# bernstein.yaml
+audit_export:
+  target: "splunk"  # splunk | elasticsearch | cloudwatch
+  splunk:
+    endpoint: "https://splunk.yourcompany.com:8088"
+    token: "${SPLUNK_HEC_TOKEN}"
+    index: "bernstein-audit"
+  elasticsearch:
+    endpoint: "https://es.yourcompany.com:9200"
+    index: "bernstein-audit"
+    api_key: "${ES_API_KEY}"
+```
+
+### Security pattern scanning
+
+Bernstein automatically scans agent-produced diffs for security issues before merge.
+The scanner runs without LLM calls, using static regex patterns:
+
+- Hardcoded secrets (AWS keys, API tokens, passwords in source)
+- Private key blocks (RSA, EC, DSA, OpenSSH)
+- Unsafe `eval`/`exec` usage
+- Shell injection risks (unsanitized inputs to subprocess)
+- Weak cryptographic algorithms (MD5, SHA1 for security purposes)
+- Path traversal patterns in code
+- SQL injection vectors
+
+Run a manual security review on any diff:
+
+```bash
+bernstein review --security <task-id>
+```
+
+## Secret management
+
+### Use environment variables, never config files
+
+```bash
+export BERNSTEIN_JWT_SECRET="$(openssl rand -hex 32)"
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
+export OIDC_CLIENT_SECRET="..."
+```
+
+Reference environment variables in `bernstein.yaml` with `${VAR_NAME}`:
+
+```yaml
+auth:
+  jwt_secret: "${BERNSTEIN_JWT_SECRET}"   # Not the literal value
+```
+
+### Rotate secrets
+
+Rotate the JWT signing secret and audit log HMAC key periodically:
+
+```bash
+# Generate a new JWT secret
+export BERNSTEIN_JWT_SECRET="$(openssl rand -hex 32)"
+bernstein stop && bernstein run   # Restart to pick up new secret
+
+# Rotate the audit log HMAC key
+cp .sdd/config/audit-key .sdd/config/audit-key.bak
+bernstein admin rotate-audit-key
+```
+
+### PII detection
+
+Enable the PII gate to scan agent outputs before they are written to disk:
+
+```yaml
+# bernstein.yaml
+pii_gate:
+  enabled: true
+  patterns:
+    - "\\b\\d{3}-\\d{2}-\\d{4}\\b"                              # SSN
+    - "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b"           # Email
+    - "\\b4[0-9]{12}(?:[0-9]{3})?\\b"                           # Visa card number
+  action: "redact"   # redact | block | warn
+```
+
+## Network isolation
+
+### Agent outbound access
+
+Prevent agents from making unauthorized network calls:
+
+```yaml
+# bernstein.yaml
+agent_network:
+  allow_outbound: false          # Block all outbound traffic by default
+  allowed_hosts:
+    - "api.anthropic.com"        # Required for Claude agents
+    - "api.openai.com"           # Required for Codex agents
+    - "generativelanguage.googleapis.com"  # Required for Gemini agents
+```
+
+### Isolation levels
+
+The network isolation validator checks agent connectivity against a policy:
+
+| Level        | Description                                      |
+|--------------|--------------------------------------------------|
+| `none`       | No network access permitted                      |
+| `local_only` | Only localhost/loopback (127.0.0.1, ::1)         |
+| `restricted` | Only explicitly listed endpoints are reachable   |
+| `full`       | Unrestricted (development only)                  |
+
+```yaml
+# bernstein.yaml
+agent_network:
+  isolation_level: restricted    # none | local_only | restricted | full
+  allowed_endpoints:
+    - host: "api.anthropic.com"
+      port: 443
+    - host: "api.openai.com"
+      port: 443
+```
+
+### IP allowlisting for the task server
+
+Restrict which IPs can reach the Bernstein task server:
+
+```yaml
+# bernstein.yaml
+network:
+  allowed_ips:
+    - "10.0.0.0/8"          # Internal network
+    - "172.16.0.0/12"       # VPN
+    - "203.0.113.0/24"      # Office network
+```
+
+Localhost (127.0.0.1, ::1) is always allowed. Health check endpoints (`/healthz`) are
+exempt from IP restrictions.
+
+## API authentication
+
+### JWT authentication (recommended for single-tenant)
 
 ```yaml
 # bernstein.yaml
 auth:
   enabled: true
-  method: "jwt"  # jwt | oidc | bearer
-  jwt_secret: "${BERNSTEIN_JWT_SECRET}"  # Use env var, never hardcode
+  method: "jwt"
+  jwt_secret: "${BERNSTEIN_JWT_SECRET}"
   token_expiry_s: 3600
 ```
 
-### SSO/OIDC integration
+Generate a token for API access:
 
-For enterprise deployments, use OIDC with your identity provider:
+```bash
+bernstein auth token --expiry 24h
+```
+
+Include the token in API requests:
+
+```bash
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8052/status
+```
+
+### OIDC / SSO (recommended for multi-user or enterprise)
 
 ```yaml
+# bernstein.yaml
 auth:
   enabled: true
   method: "oidc"
@@ -37,30 +438,41 @@ auth:
       default: "viewer"
 ```
 
+### Cluster node authentication
+
+In multi-node deployments, worker nodes authenticate to the task server using
+scoped JWT tokens. Tokens have three scopes:
+
+| Scope             | Used for                              |
+|-------------------|---------------------------------------|
+| `node:register`   | Node registration on startup          |
+| `node:heartbeat`  | Periodic heartbeat pings              |
+| `node:admin`      | Administrative operations             |
+
+```yaml
+# bernstein.yaml
+cluster:
+  auth:
+    enabled: true
+    secret: "${BERNSTEIN_CLUSTER_SECRET}"
+    token_expiry_hours: 24
+```
+
+Revoke a node token to immediately deny a compromised worker:
+
+```bash
+bernstein admin revoke-node <node-id>
+```
+
 ### Dashboard authentication
 
 ```yaml
+# bernstein.yaml
 dashboard_auth:
   enabled: true
   password: "${BERNSTEIN_DASHBOARD_PASSWORD}"
   session_timeout_s: 1800
 ```
-
-## Network security
-
-### IP allowlisting
-
-Restrict API access to known networks:
-
-```yaml
-network:
-  allowed_ips:
-    - "10.0.0.0/8"         # Internal network
-    - "172.16.0.0/12"      # VPN
-    - "203.0.113.0/24"     # Office
-```
-
-Localhost (127.0.0.1, ::1) is always allowed. Health endpoints are exempt from IP checks.
 
 ### TLS termination
 
@@ -72,16 +484,16 @@ server {
     listen 443 ssl;
     server_name bernstein.yourcompany.com;
 
-    ssl_certificate /etc/ssl/certs/bernstein.crt;
+    ssl_certificate     /etc/ssl/certs/bernstein.crt;
     ssl_certificate_key /etc/ssl/private/bernstein.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
 
     location / {
         proxy_pass http://127.0.0.1:8052;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
@@ -89,9 +501,8 @@ server {
 
 ### Rate limiting
 
-Per-endpoint rate limiting prevents abuse:
-
 ```yaml
+# bernstein.yaml
 rate_limits:
   "/tasks":
     requests_per_minute: 100
@@ -101,124 +512,66 @@ rate_limits:
     burst: 10
 ```
 
-For multi-tenant deployments, use per-tenant rate limiting (see ENT-008).
+## Compliance reporting
 
-## Secrets management
+### Built-in compliance checks
 
-### Environment variables
-
-Never store secrets in configuration files. Use environment variables:
+Run a full security posture check against your current configuration:
 
 ```bash
-export BERNSTEIN_JWT_SECRET="$(openssl rand -hex 32)"
-export OIDC_CLIENT_SECRET="your-oidc-secret"
-export ANTHROPIC_API_KEY="sk-ant-..."
+bernstein doctor --security
 ```
 
-### Secret rotation
+Output includes:
+- Authentication status (enabled/disabled)
+- TLS configuration check
+- Audit log integrity status
+- Agent sandbox configuration
+- Permission mode in effect
+- PII detection status
+- Dependency vulnerability summary
 
-Rotate the audit log HMAC key periodically:
+### Generate a compliance report
 
 ```bash
-# Back up the old key
-cp .sdd/config/audit-key .sdd/config/audit-key.bak
+# Structured JSON output for ingestion into compliance tooling
+bernstein admin compliance-report --format json > compliance-$(date +%Y%m%d).json
 
-# Generate new key (Bernstein handles the transition)
-bernstein admin rotate-audit-key
+# Human-readable summary
+bernstein admin compliance-report
 ```
 
-## Audit logging
+The report covers:
+- **Authentication**: auth method, token expiry, MFA presence
+- **Audit**: log enabled, chain integrity, retention policy, SIEM export
+- **Network**: isolation level, IP allowlist, TLS status
+- **Data**: PII gate, encryption at rest, data residency policy
+- **Dependencies**: vulnerability scan results, license compliance
+- **Access control**: permission mode, rule count, role coverage
 
-### Enable immutable audit log
+### Dependency scanning
 
-The audit log is enabled by default and uses HMAC-chained entries for tamper evidence:
+Scan agent-introduced dependencies for known vulnerabilities and license issues:
 
 ```yaml
-audit:
+# bernstein.yaml
+dependency_scan:
   enabled: true
-  retention_days: 90
-  archive_compressed: true
+  block_on_critical: true
+  allowed_licenses:
+    - "MIT"
+    - "Apache-2.0"
+    - "BSD-2-Clause"
+    - "BSD-3-Clause"
+    - "ISC"
 ```
-
-### Export to SIEM
-
-Forward audit logs to your SIEM for centralized monitoring:
-
-```yaml
-audit_export:
-  target: "splunk"  # splunk | elasticsearch | cloudwatch
-  splunk:
-    endpoint: "https://splunk.yourcompany.com:8088"
-    token: "${SPLUNK_HEC_TOKEN}"
-    index: "bernstein-audit"
-```
-
-### Audit log integrity verification
-
-```bash
-# Verify the HMAC chain is intact
-bernstein admin verify-audit-log
-
-# Check a specific date range
-bernstein admin verify-audit-log --from 2026-01-01 --to 2026-03-31
-```
-
-## Agent sandboxing
-
-### File system restrictions
-
-Limit which directories agents can read and write:
-
-```yaml
-sandbox:
-  allowed_paths:
-    - "src/"
-    - "tests/"
-    - "docs/"
-  denied_paths:
-    - ".env"
-    - ".sdd/config/"
-    - "credentials/"
-    - "*.pem"
-    - "*.key"
-```
-
-### Command restrictions
-
-Control which shell commands agents can execute:
-
-```yaml
-command_policy:
-  allowed:
-    - "git *"
-    - "npm *"
-    - "python *"
-    - "pytest *"
-  denied:
-    - "rm -rf /"
-    - "curl * | sh"
-    - "sudo *"
-```
-
-### Network restrictions
-
-Prevent agents from making unauthorized network calls:
-
-```yaml
-agent_network:
-  allow_outbound: false  # Agents cannot make HTTP requests
-  allowed_hosts:
-    - "api.anthropic.com"
-    - "api.openai.com"
-```
-
-## Data protection
 
 ### Data residency
 
-Ensure data stays in configured regions:
+Restrict agent operations to specific regions in multi-region deployments:
 
 ```yaml
+# bernstein.yaml
 data_residency:
   tenant_policies:
     eu-tenant:
@@ -228,61 +581,49 @@ data_residency:
 
 ### Encryption at rest
 
-Encrypt the `.sdd` state directory:
+Encrypt the `.sdd/` state directory:
 
 ```bash
-# Linux: use LUKS for the volume
+# Linux: LUKS full-disk encryption
 cryptsetup luksFormat /dev/sdb1
 cryptsetup open /dev/sdb1 bernstein-state
 mkfs.ext4 /dev/mapper/bernstein-state
 mount /dev/mapper/bernstein-state /var/lib/bernstein
 
-# macOS: use encrypted APFS volume
+# macOS: encrypted APFS volume
 diskutil apfs addVolume disk1 APFS bernstein-state -passphrase
 ```
 
-### PII detection
+## Production checklist
 
-Enable the PII output gate to scan agent outputs:
+Before deploying Bernstein in a production environment:
 
-```yaml
-pii_gate:
-  enabled: true
-  patterns:
-    - "\\b\\d{3}-\\d{2}-\\d{4}\\b"    # SSN
-    - "\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b"  # Email
-  action: "redact"  # redact | block | warn
-```
-
-## Dependency scanning
-
-Scan agent-introduced dependencies for known vulnerabilities:
-
-```yaml
-dependency_scan:
-  enabled: true
-  block_on_critical: true
-  allowed_licenses:
-    - "MIT"
-    - "Apache-2.0"
-    - "BSD-2-Clause"
-    - "BSD-3-Clause"
-```
-
-## Checklist
-
-Before going to production:
-
-- [ ] Authentication enabled (JWT, OIDC, or bearer)
-- [ ] TLS termination via reverse proxy
-- [ ] IP allowlisting configured
-- [ ] Rate limiting enabled
-- [ ] Audit logging active and exported to SIEM
-- [ ] Agent sandboxing configured (file paths, commands)
-- [ ] Secrets in environment variables, not config files
-- [ ] `.sdd` directory on encrypted volume
-- [ ] Backup and restore tested
-- [ ] PII detection enabled
-- [ ] Dependency scanning enabled
+**Authentication & access**
+- [ ] API authentication enabled (`jwt`, `oidc`, or `bearer`)
 - [ ] Dashboard password set
-- [ ] Health checks configured in load balancer
+- [ ] TLS termination configured via reverse proxy
+- [ ] IP allowlisting configured for task server
+- [ ] Rate limiting enabled per endpoint
+- [ ] Cluster node auth enabled (multi-node deployments)
+
+**Agent sandboxing**
+- [ ] Permission mode set to `auto` or stricter
+- [ ] Role-based file permissions reviewed and tightened
+- [ ] `.bernstein/rules.yaml` rules configured for your project
+- [ ] Command policy (allow/deny lists) configured
+- [ ] Network isolation level set (`restricted` minimum)
+
+**Secrets & data**
+- [ ] All secrets in environment variables, not config files
+- [ ] JWT secret rotated (not default/empty)
+- [ ] `.sdd/` directory on encrypted volume
+- [ ] PII detection enabled
+- [ ] Backup and restore tested
+
+**Audit & compliance**
+- [ ] Audit logging active and HMAC chain verified
+- [ ] Audit log exported to SIEM
+- [ ] Retention policy configured
+- [ ] Dependency scanning enabled
+- [ ] `bernstein doctor --security` passes clean
+- [ ] `bernstein admin compliance-report` reviewed and archived
