@@ -404,18 +404,26 @@ class KubernetesHPABackend(ScalingBackend):
         Returns 0 if the cluster is unreachable, allowing the autoscaler
         to trigger a scale-up to minimum.
         """
-        import subprocess  # noqa: PLC0415
+        import subprocess
 
         cmd = [
-            "kubectl", "get", "hpa", self._hpa_name,
-            "-n", self._namespace,
-            "-o", "jsonpath={.status.currentReplicas}",
+            "kubectl",
+            "get",
+            "hpa",
+            self._hpa_name,
+            "-n",
+            self._namespace,
+            "-o",
+            "jsonpath={.status.currentReplicas}",
         ]
         if self._kubeconfig_path:
             cmd.extend(["--kubeconfig", self._kubeconfig_path])
         try:
-            result = subprocess.run(  # noqa: S603
-                cmd, capture_output=True, text=True, timeout=10,
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
                 count = int(result.stdout.strip())
@@ -434,25 +442,37 @@ class KubernetesHPABackend(ScalingBackend):
         Returns:
             ScaleResult with outcome.
         """
-        import subprocess  # noqa: PLC0415
+        import subprocess
 
         previous = self.current_node_count()
         patch = f'{{"spec":{{"minReplicas":{target_count}}}}}'
         cmd = [
-            "kubectl", "patch", "hpa", self._hpa_name,
-            "-n", self._namespace,
-            "--type=merge", "-p", patch,
+            "kubectl",
+            "patch",
+            "hpa",
+            self._hpa_name,
+            "-n",
+            self._namespace,
+            "--type=merge",
+            "-p",
+            patch,
         ]
         if self._kubeconfig_path:
             cmd.extend(["--kubeconfig", self._kubeconfig_path])
         try:
-            result = subprocess.run(  # noqa: S603
-                cmd, capture_output=True, text=True, timeout=15,
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             if result.returncode == 0:
                 logger.info(
                     "Scaled HPA %s/%s: %d -> %d",
-                    self._namespace, self._hpa_name, previous, target_count,
+                    self._namespace,
+                    self._hpa_name,
+                    previous,
+                    target_count,
                 )
                 self._last_known_count = target_count
                 return ScaleResult(

@@ -94,9 +94,7 @@ def fingerprint_build_cmd(
         return
 
     index.save(output_path)
-    console.print(
-        f"[green]Indexed {indexed} file(s) → {output_path}[/green]"
-    )
+    console.print(f"[green]Indexed {indexed} file(s) → {output_path}[/green]")
 
 
 @fingerprint_group.command("check")
@@ -120,7 +118,7 @@ def fingerprint_build_cmd(
     default=_DEFAULT_THRESHOLD,
     show_default=True,
     type=float,
-    help="Minimum Jaccard similarity to flag (0.0–1.0).",
+    help="Minimum Jaccard similarity to flag (0.0-1.0).",
 )
 @click.option(
     "--block",
@@ -170,9 +168,7 @@ def fingerprint_check_cmd(
     if index:
         try:
             corpus_index = CorpusIndex.load(Path(index), config)
-            console.print(
-                f"[dim]Loaded index: {index} ({corpus_index.size} entries)[/dim]"
-            )
+            console.print(f"[dim]Loaded index: {index} ({corpus_index.size} entries)[/dim]")
         except Exception as exc:
             console.print(f"[red]Failed to load index {index}: {exc}[/red]")
             raise SystemExit(1) from exc
@@ -185,19 +181,12 @@ def fingerprint_check_cmd(
         if _DEFAULT_INDEX.exists():
             try:
                 corpus_index = CorpusIndex.load(_DEFAULT_INDEX, config)
-                console.print(
-                    f"[dim]Using default index: {_DEFAULT_INDEX} "
-                    f"({corpus_index.size} entries)[/dim]"
-                )
+                console.print(f"[dim]Using default index: {_DEFAULT_INDEX} ({corpus_index.size} entries)[/dim]")
             except Exception as exc:
-                console.print(
-                    f"[yellow]Default index unreadable: {exc}. No corpus to compare against.[/yellow]"
-                )
+                console.print(f"[yellow]Default index unreadable: {exc}. No corpus to compare against.[/yellow]")
                 return
         else:
-            console.print(
-                "[yellow]No corpus index found. Use --index or --corpus-dir to specify one.[/yellow]"
-            )
+            console.print("[yellow]No corpus index found. Use --index or --corpus-dir to specify one.[/yellow]")
             return
 
     if corpus_index.size == 0:
@@ -220,7 +209,7 @@ def fingerprint_check_cmd(
         return
 
     any_flagged = False
-    all_results: list[dict] = []
+    all_results: list[dict[str, object]] = []
 
     for fp in paths_to_check:
         try:
@@ -273,9 +262,7 @@ def fingerprint_check_cmd(
         console.print(_json.dumps(all_results, indent=2))
 
     if block and any_flagged:
-        console.print(
-            "\n[bold red]Fingerprint check FAILED — matches above threshold detected[/bold red]"
-        )
+        console.print("\n[bold red]Fingerprint check FAILED — matches above threshold detected[/bold red]")
         raise SystemExit(1)
 
     if not output_json and not any_flagged:

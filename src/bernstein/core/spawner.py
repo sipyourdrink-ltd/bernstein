@@ -42,7 +42,6 @@ from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.spawn_errors import RetryStrategy, classify_spawn_error
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
-from bernstein.core.warm_pool import WarmPool, WarmPoolEntry
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
 from bernstein.plugins.manager import get_plugin_manager
 from bernstein.templates.renderer import TemplateError, render_role_prompt
@@ -59,6 +58,7 @@ if TYPE_CHECKING:
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.resource_limits import ResourceLimits
+    from bernstein.core.warm_pool import WarmPool, WarmPoolEntry
     from bernstein.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------

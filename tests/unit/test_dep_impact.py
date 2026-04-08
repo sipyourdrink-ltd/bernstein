@@ -5,8 +5,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.api_compat_checker import BreakingChange, ChangeType, CompatReport
 from bernstein.core.dep_impact import (
     CallSiteImpact,
@@ -17,7 +15,6 @@ from bernstein.core.dep_impact import (
     _rel_path_to_module,
     find_call_site_impacts,
 )
-
 
 # ---------------------------------------------------------------------------
 # _rel_path_to_module
@@ -113,9 +110,7 @@ def _make_removed_func_bc(name: str, file: str = "mod.py") -> BreakingChange:
     )
 
 
-def _make_removed_param_bc(
-    func: str, param: str, file: str = "mod.py"
-) -> BreakingChange:
+def _make_removed_param_bc(func: str, param: str, file: str = "mod.py") -> BreakingChange:
     return BreakingChange(
         file=file,
         name=func,
@@ -266,9 +261,7 @@ class TestFindCallSiteImpacts:
 
         # Create a caller that imports and uses the changed function
         caller = tmp_path / "caller.py"
-        caller.write_text(
-            "from mypkg.api import greet\n\nresult = greet(name='Alice')\n"
-        )
+        caller.write_text("from mypkg.api import greet\n\nresult = greet(name='Alice')\n")
 
         bc = BreakingChange(
             file="mypkg/api.py",
@@ -290,10 +283,7 @@ class TestFindCallSiteImpacts:
         (pkg / "__init__.py").write_text("")
         # The changed file itself calls the function internally
         changed = pkg / "api.py"
-        changed.write_text(
-            "def greet(name: str) -> str: ...\n"
-            "from mypkg.api import greet\ngreet(name='hi')\n"
-        )
+        changed.write_text("def greet(name: str) -> str: ...\nfrom mypkg.api import greet\ngreet(name='hi')\n")
         bc = BreakingChange(
             file="mypkg/api.py",
             name="greet",

@@ -1274,6 +1274,44 @@ def claim_and_spawn_batches(
                     continue
 
         batch_timeout_s = _batch_timeout_seconds(batch)
+        _shadow_bandit_decision: Any | None = None
+        _routing_bandit: Any = getattr(orch, "_bandit_router", None)
+        _bandit_mode = str(getattr(orch, "_bandit_routing_mode", "static"))
+        if len(batch) == 1 and _routing_bandit is not None:
+            _bandit_task = batch[0]
+            if not _bandit_task.model and not _bandit_task.effort:
+                try:
+                    _bandit_decision = _routing_bandit.select(_bandit_task)
+                    if _bandit_mode == "bandit":
+                        _bandit_task.model = _bandit_decision.model
+                        _bandit_task.effort = _bandit_decision.effort
+                        logger.info(
+                            "Bandit routing selected %s/%s for task %s: %s",
+                            _bandit_decision.model,
+                            _bandit_decision.effort,
+                            _bandit_task.id,
+                            _bandit_decision.reason,
+                        )
+                    elif _bandit_mode == "bandit-shadow":
+                        _shadow_bandit_decision = _bandit_decision
+                        logger.info(
+                            "Bandit shadow routing would select %s/%s for task %s: %s",
+                            _bandit_decision.model,
+                            _bandit_decision.effort,
+                            _bandit_task.id,
+                            _bandit_decision.reason,
+                        )
+                except Exception as _bandit_exc:
+                    logger.warning(
+                        "Bandit routing failed for task %s; using static routing: %s",
+                        _bandit_task.id,
+                        _bandit_exc,
+                    )
+        elif len(batch) > 1 and _routing_bandit is not None:
+            logger.debug(
+                "Bandit routing skipped for multi-task batch %s; static batch escalation keeps attribution clear",
+                [task.id for task in batch],
+            )
 
         try:
             # Check if any task in this batch has a preserved worktree for resume
@@ -1298,6 +1336,15 @@ def claim_and_spawn_batches(
                 )
             else:
                 session = orch._spawner.spawn_for_tasks(batch)
+
+            if _shadow_bandit_decision is not None and _routing_bandit is not None:
+                _session_config = session.model_config
+                _routing_bandit.record_shadow_decision(
+                    task=batch[0],
+                    decision=_shadow_bandit_decision,
+                    executed_model=_session_config.model,
+                    executed_effort=_session_config.effort,
+                )
 
             # --- A/B Testing ---
             # When A/B test mode is enabled, deterministically route each task to one

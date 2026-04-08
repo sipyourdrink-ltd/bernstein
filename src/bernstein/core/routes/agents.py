@@ -8,7 +8,6 @@ import time
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
 from bernstein.core.server import AgentKillResponse, AgentLogsResponse, read_log_tail

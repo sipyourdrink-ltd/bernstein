@@ -67,7 +67,10 @@ class TestLintGateRegressions:
     def test_clean_python_passes_lint(self, tmp_path: Path) -> None:
         """A clean Python file passes the lint gate — baseline control test."""
         clean_py = tmp_path / "clean_code.py"
-        clean_py.write_text('"""Clean module."""\n\n\ndef add(a: int, b: int) -> int:\n    """Add two numbers."""\n    return a + b\n', encoding="utf-8")
+        clean_py.write_text(
+            '"""Clean module."""\n\n\ndef add(a: int, b: int) -> int:\n    """Add two numbers."""\n    return a + b\n',
+            encoding="utf-8",
+        )
 
         ok, _output = _run_command(f"ruff check {clean_py}", tmp_path, timeout_s=30)
         assert ok, "Expected clean Python to pass ruff check"
@@ -133,7 +136,6 @@ class TestPiiGateRegressions:
             type_check=False,
             tests=False,
         )
-        task = _make_task(id="T-pii-aws")
         result = _run_pii_gate(config, tmp_path)
 
         assert result.blocked, f"PII gate should block AWS key. Detail: {result.detail}"
@@ -323,13 +325,13 @@ class TestMutationScoreRegressions:
         [
             # mutmut format: killed/total
             ("🎉 10/100  🤔 0  🙁 90  🔇 0", 0.50, False),  # 10% < 50% threshold → fail
-            ("🎉 90/100  🤔 0  🙁 10  🔇 0", 0.50, True),   # 90% >= 50% threshold → pass
-            ("🎉 50/100  🤔 0  🙁 50  🔇 0", 0.50, True),   # 50% == 50% threshold → pass (>=)
+            ("🎉 90/100  🤔 0  🙁 10  🔇 0", 0.50, True),  # 90% >= 50% threshold → pass
+            ("🎉 50/100  🤔 0  🙁 50  🔇 0", 0.50, True),  # 50% == 50% threshold → pass (>=)
             ("🎉 49/100  🤔 0  🙁 51  🔇 0", 0.50, False),  # 49% < 50% threshold → fail
             # mutatest format: keyword based
-            ("Killed: 30\nSurvived: 70", 0.50, False),       # 30% < 50% → fail
-            ("Killed: 80\nSurvived: 20", 0.75, True),        # 80% >= 75% → pass
-            ("Killed: 74\nSurvived: 26", 0.75, False),       # 74% < 75% → fail
+            ("Killed: 30\nSurvived: 70", 0.50, False),  # 30% < 50% → fail
+            ("Killed: 80\nSurvived: 20", 0.75, True),  # 80% >= 75% → pass
+            ("Killed: 74\nSurvived: 26", 0.75, False),  # 74% < 75% → fail
         ],
         ids=[
             "mutmut_10pct_below_50_fails",

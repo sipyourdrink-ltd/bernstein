@@ -60,7 +60,6 @@ from bernstein.cli.cost import cost_cmd, estimate_cmd
 from bernstein.cli.dep_impact_cmd import dep_impact_cmd
 from bernstein.cli.diff_cmd import diff_cmd
 from bernstein.cli.disaster_recovery_cmd import dr_group
-from bernstein.cli.fingerprint_cmd import fingerprint_group
 from bernstein.cli.dry_run_cmd import dry_run_cmd
 from bernstein.cli.eval_benchmark_cmd import (
     benchmark_group,
@@ -68,6 +67,7 @@ from bernstein.cli.eval_benchmark_cmd import (
 )
 from bernstein.cli.evolve_cmd import evolve
 from bernstein.cli.explain_help_cmd import explain_help_cmd
+from bernstein.cli.fingerprint_cmd import fingerprint_group
 from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.graph_cmd import graph_group
 from bernstein.cli.incident_cmd import incident_cmd

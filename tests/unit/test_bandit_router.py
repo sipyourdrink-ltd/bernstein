@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bernstein.core.models import Complexity, Scope, Task
+from bernstein.core.models import Complexity, Scope, Task, TaskType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,6 +32,8 @@ def _task(
     effort: str | None = None,
     owned_files: list[str] | None = None,
     estimated_minutes: int = 30,
+    task_type: TaskType = TaskType.STANDARD,
+    metadata: dict[str, object] | None = None,
 ) -> Task:
     return Task(
         id="t1",
@@ -45,6 +47,8 @@ def _task(
         effort=effort,
         owned_files=owned_files or [],
         estimated_minutes=estimated_minutes,
+        task_type=task_type,
+        metadata=metadata or {},
     )
 
 
@@ -82,11 +86,29 @@ class TestTaskContext:
         assert TaskContext.from_task(_task(priority=2)).priority_norm == pytest.approx(0.5)
         assert TaskContext.from_task(_task(priority=3)).priority_norm == pytest.approx(1.0)
 
-    def test_file_count_from_owned_files(self) -> None:
+    def test_repo_size_falls_back_to_owned_file_count(self) -> None:
         from bernstein.core.bandit_router import TaskContext
 
         ctx = TaskContext.from_task(_task(owned_files=["a.py", "b.py", "c.py"]))
-        assert ctx.file_count == 3
+        assert ctx.repo_size == 3
+
+    def test_repo_size_uses_metadata_when_available(self) -> None:
+        from bernstein.core.bandit_router import TaskContext
+
+        ctx = TaskContext.from_task(_task(owned_files=["a.py"], metadata={"repo_size": 1234}))
+        assert ctx.repo_size == 1234
+
+    def test_language_inferred_from_owned_files(self) -> None:
+        from bernstein.core.bandit_router import TaskContext
+
+        ctx = TaskContext.from_task(_task(owned_files=["src/app.py", "tests/test_app.py", "README.md"]))
+        assert ctx.language == "python"
+
+    def test_task_type_included_in_context(self) -> None:
+        from bernstein.core.bandit_router import TaskContext
+
+        ctx = TaskContext.from_task(_task(task_type=TaskType.FIX))
+        assert ctx.task_type == TaskType.FIX.value
 
     def test_estimated_tokens_scales_with_minutes(self) -> None:
         from bernstein.core.bandit_router import TaskContext
@@ -125,6 +147,12 @@ class TestTaskContext:
 
 
 class TestBanditPolicy:
+    def test_default_alpha_is_conservative(self) -> None:
+        from bernstein.core.bandit_router import BanditPolicy
+
+        policy = BanditPolicy(arms=["haiku", "sonnet"])
+        assert policy.alpha == pytest.approx(0.3)
+
     def test_selects_arm_from_candidates(self) -> None:
         from bernstein.core.bandit_router import BanditPolicy, TaskContext
 
@@ -172,6 +200,15 @@ class TestBanditPolicy:
         selections = [policy.select(ctx) for _ in range(30)]
         assert selections.count("haiku") > selections.count("opus")
 
+    def test_score_breakdown_contains_exploit_explore_and_total(self) -> None:
+        from bernstein.core.bandit_router import BanditPolicy, TaskContext
+
+        policy = BanditPolicy(arms=["haiku", "sonnet"])
+        ctx = TaskContext.from_task(_task())
+        scores = policy.score(ctx)
+        assert scores[0].arm in {"haiku", "sonnet"}
+        assert scores[0].total == pytest.approx(scores[0].exploit + scores[0].explore)
+
     def test_save_creates_file(self, tmp_path: Path) -> None:
         from bernstein.core.bandit_router import BanditPolicy, TaskContext
 
@@ -201,6 +238,29 @@ class TestBanditPolicy:
         loaded = BanditPolicy.load(tmp_path / "nonexistent.json", arms=["haiku"])
         assert loaded.total_updates == 0
         assert loaded.arms == ["haiku"]
+
+    def test_load_resets_incompatible_feature_schema(self, tmp_path: Path) -> None:
+        import json
+
+        from bernstein.core.bandit_router import BanditPolicy
+
+        policy_file = tmp_path / "policy.json"
+        policy_file.write_text(
+            json.dumps(
+                {
+                    "arms": ["haiku"],
+                    "alpha": 1.0,
+                    "feature_schema_version": -1,
+                    "feature_dim": 1,
+                    "total_updates": 10,
+                    "A": {"haiku": [[1.0]]},
+                    "b": {"haiku": [1.0]},
+                }
+            )
+        )
+        loaded = BanditPolicy.load(policy_file, arms=["haiku"])
+        assert loaded.total_updates == 0
+        assert loaded.alpha == pytest.approx(0.3)
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +388,37 @@ class TestBanditRouter:
         for role in ("manager", "architect", "security"):
             decision = router.select(_task(role=role))
             assert decision.model != "haiku", f"role={role} got haiku"
+
+    def test_high_stakes_guardrail_applies_after_warmup(self) -> None:
+        """Bandit mode must still keep high-stakes tasks off haiku."""
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=1)
+        normal_task = _task()
+        router.record_outcome(task=normal_task, model="haiku", effort="low", cost_usd=0.0, quality_score=1.0)
+        decision = router.select(_task(priority=1))
+        assert decision.model != "haiku"
+        assert decision.from_bandit is False
+
+    def test_bandit_reason_includes_score_breakdown(self) -> None:
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=1)
+        task = _task()
+        router.record_outcome(task=task, model="sonnet", effort="high", cost_usd=0.0, quality_score=1.0)
+        decision = router.select(task)
+        assert "exploit=" in decision.reason
+        assert "explore=" in decision.reason
+        assert "total=" in decision.reason
+
+    def test_bandit_selection_is_deterministic_after_warmup(self) -> None:
+        from bernstein.core.bandit_router import BanditRouter
+
+        router = BanditRouter(warmup_min=1)
+        task = _task()
+        router.record_outcome(task=task, model="sonnet", effort="high", cost_usd=0.0, quality_score=1.0)
+        selections = [router.select(task).model for _ in range(5)]
+        assert len(set(selections)) == 1
 
     def test_budget_ceiling_affects_reward(self) -> None:
         """Passing different budget ceilings should produce different rewards."""

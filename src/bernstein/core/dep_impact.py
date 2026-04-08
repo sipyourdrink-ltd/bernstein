@@ -23,7 +23,6 @@ import ast
 import logging
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bernstein.core.api_compat_checker import (
@@ -34,7 +33,7 @@ from bernstein.core.api_compat_checker import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +61,16 @@ class CallSiteImpact:
     reason: str
 
 
+def _empty_breaking_changes() -> list[BreakingChange]:
+    """Return a typed empty list for dataclass default_factory."""
+    return []
+
+
+def _empty_call_site_impacts() -> list[CallSiteImpact]:
+    """Return a typed empty list for dataclass default_factory."""
+    return []
+
+
 @dataclass
 class DepImpactReport:
     """Full result of a dependency impact analysis run.
@@ -73,8 +82,8 @@ class DepImpactReport:
         blocks_merge: True when the analysis found any incompatibility.
     """
 
-    api_breaking: list[BreakingChange] = field(default_factory=list)
-    call_site_impacts: list[CallSiteImpact] = field(default_factory=list)
+    api_breaking: list[BreakingChange] = field(default_factory=_empty_breaking_changes)
+    call_site_impacts: list[CallSiteImpact] = field(default_factory=_empty_call_site_impacts)
 
     @property
     def blocks_merge(self) -> bool:
@@ -264,10 +273,7 @@ def _find_call_impacts(
                 # We cannot reliably track method receivers without type info;
                 # flag the call if the method name matches any attribute access.
                 method_name = bc.name.split(".")[-1]
-                if (
-                    isinstance(func_node, ast.Attribute)
-                    and func_node.attr == method_name
-                ):
+                if isinstance(func_node, ast.Attribute) and func_node.attr == method_name:
                     impacts.append(
                         CallSiteImpact(
                             caller_file=caller_file,
@@ -301,10 +307,7 @@ def _find_call_impacts(
                             caller_file=caller_file,
                             caller_line=call_line,
                             callee_qualified=bc.name,
-                            reason=(
-                                f"uses positional args that may break due to "
-                                f"reordered parameters in '{bc.name}'"
-                            ),
+                            reason=(f"uses positional args that may break due to reordered parameters in '{bc.name}'"),
                         )
                     )
 
@@ -355,9 +358,7 @@ def find_call_site_impacts(
         breaks_by_file.setdefault(bc.file, []).append(bc)
 
     # Pre-compute module paths for changed files.
-    module_for_file: dict[str, str] = {
-        rel: _rel_path_to_module(rel) for rel in breaks_by_file
-    }
+    module_for_file: dict[str, str] = {rel: _rel_path_to_module(rel) for rel in breaks_by_file}
 
     # Pre-compute the set of all broken symbol names per changed module.
     broken_symbols_per_module: dict[str, set[str]] = {}
@@ -432,7 +433,7 @@ def analyze_dep_impact(
     Returns:
         :class:`DepImpactReport` containing all findings.
     """
-    from bernstein.core.api_compat_checker import _git_diff_files  # noqa: PLC2701
+    from bernstein.core.api_compat_checker import _git_diff_files  # pyright: ignore[reportPrivateUsage]
 
     compat = check_git_diff(workdir, base_ref=base_ref)
 

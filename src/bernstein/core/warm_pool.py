@@ -17,6 +17,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import subprocess
 import time
@@ -208,10 +209,8 @@ class WarmPool:
         Args:
             entry: The entry that was acquired and is now done.
         """
-        try:
+        with contextlib.suppress(ValueError):
             self._entries.remove(entry)
-        except ValueError:
-            pass  # Already evicted (e.g. by TTL expiry)
         self._cleanup_worktree(entry)
         logger.debug("Warm pool: consumed and cleaned entry %s", entry.entry_id)
 
@@ -303,9 +302,8 @@ class WarmPool:
                 self._try_git_worktree_remove(wt, entry.entry_id)
             return
 
-        if entry.git_worktree:
-            if self._try_git_worktree_remove(wt, entry.entry_id):
-                return  # git removed directory and branch
+        if entry.git_worktree and self._try_git_worktree_remove(wt, entry.entry_id):
+            return  # git removed directory and branch
         # Fallback: plain directory removal
         try:
             shutil.rmtree(wt)

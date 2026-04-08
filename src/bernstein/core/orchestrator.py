@@ -419,13 +419,17 @@ class Orchestrator:
         if self._quota_poller is not None:
             self._quota_poller.poll_once()
 
-        # Contextual bandit router: active when BERNSTEIN_ROUTING=bandit.
+        # Contextual bandit router: active when BERNSTEIN_ROUTING=bandit
+        # or bandit-shadow.
         # Persists policy to .sdd/routing/ so learning accumulates across runs.
         import os as _os
 
         _routing_mode = _os.environ.get("BERNSTEIN_ROUTING", "static").lower()
+        self._bandit_routing_mode = _routing_mode
         self._bandit_router: BanditRouter | None = (
-            BanditRouter(policy_dir=workdir / ".sdd" / "routing") if _routing_mode == "bandit" else None
+            BanditRouter(policy_dir=workdir / ".sdd" / "routing")
+            if _routing_mode in {"bandit", "bandit-shadow"}
+            else None
         )
 
         # Adaptive polling backoff: multiplied by 2 each idle tick, reset on work.
@@ -1470,8 +1474,7 @@ class Orchestrator:
             _integrity = verify_on_startup(self._workdir / ".sdd")
             if not _integrity.valid:
                 logger.warning(
-                    "Audit integrity check found %d error(s) — review with "
-                    "'bernstein audit verify'",
+                    "Audit integrity check found %d error(s) — review with 'bernstein audit verify'",
                     len(_integrity.errors),
                 )
             elif _integrity.entries_checked > 0:

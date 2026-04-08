@@ -169,7 +169,7 @@ def test_scoped_token_rejects_claim_substitution(tmp_path: Path, monkeypatch: py
     store = AgentIdentityStore(tmp_path)
 
     # Create a scoped token for task-A
-    identity_a, token_a = store.create_identity("worker-3", "backend", task_ids=["task-A"])
+    _identity_a, token_a = store.create_identity("worker-3", "backend", task_ids=["task-A"])
 
     # Authenticate with the correct token — must succeed
     authed = store.authenticate(token_a)
@@ -178,7 +178,7 @@ def test_scoped_token_rejects_claim_substitution(tmp_path: Path, monkeypatch: py
 
     # Now tamper: create a second identity with task-B scope. Its token
     # must NOT authenticate as worker-3's identity.
-    identity_b, token_b = store.create_identity("worker-4", "backend", task_ids=["task-B"])
+    _identity_b, token_b = store.create_identity("worker-4", "backend", task_ids=["task-B"])
 
     # token_b should authenticate as worker-4, not worker-3
     authed_b = store.authenticate(token_b)

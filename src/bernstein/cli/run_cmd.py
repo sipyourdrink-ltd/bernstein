@@ -906,10 +906,11 @@ def _configure_quality_gate_bypass(
 @click.option(
     "--routing",
     default=None,
-    type=click.Choice(["static", "bandit"], case_sensitive=False),
+    type=click.Choice(["static", "bandit", "bandit-shadow"], case_sensitive=False),
     help=(
         "Model routing strategy: 'static' = fixed cascade heuristics (default), "
-        "'bandit' = contextual LinUCB bandit that learns cost-quality tradeoffs."
+        "'bandit' = contextual LinUCB bandit that learns cost-quality tradeoffs, "
+        "'bandit-shadow' = log bandit decisions without changing live routing."
     ),
 )
 @click.option(
@@ -1056,6 +1057,7 @@ def run(
       bernstein conduct --model opus           # force Opus model
       bernstein conduct --workflow governed    # governed workflow mode
       bernstein conduct --routing bandit       # contextual bandit routing (learns over time)
+      bernstein conduct --routing bandit-shadow  # log bandit decisions without changing live routing
       bernstein conduct --compliance standard  # compliance mode (development/standard/regulated)
       bernstein conduct --container            # run agents in containers
       bernstein conduct --sandbox docker       # run agents in Docker sandbox

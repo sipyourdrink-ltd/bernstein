@@ -45,6 +45,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _empty_defaults() -> frozenset[str]:
+    """Return a typed empty defaults set for signature records."""
+    return frozenset()
+
+
 @dataclass(frozen=True)
 class FunctionSignature:
     """Extracted signature of a Python function or method.
@@ -70,8 +75,7 @@ class FunctionSignature:
     has_kwargs: bool
     file: str
     lineno: int
-    defaults: frozenset[str] = frozenset()
-    defaults: set[str] = field(default_factory=set)
+    defaults: frozenset[str] = field(default_factory=_empty_defaults)
 
 
 @dataclass(frozen=True)

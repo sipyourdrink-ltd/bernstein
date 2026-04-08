@@ -1050,7 +1050,11 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
     return task_to_response(task)
 
 
-@router.post("/tasks/{task_id}/prioritize", response_model=TaskResponse, responses={404: {"description": "Task not found"}})
+@router.post(
+    "/tasks/{task_id}/prioritize",
+    response_model=TaskResponse,
+    responses={404: {"description": "Task not found"}},
+)
 async def prioritize_task(task_id: str, request: Request) -> TaskResponse:
     """Bump a task to priority 0 so the orchestrator picks it up next."""
     store = _get_store(request)
@@ -1351,7 +1355,11 @@ async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskRe
     return a2a_task_to_response(a2a_task)
 
 
-@router.get("/a2a/tasks/{a2a_task_id}", response_model=A2ATaskResponse, responses={404: {"description": "A2A task not found"}})
+@router.get(
+    "/a2a/tasks/{a2a_task_id}",
+    response_model=A2ATaskResponse,
+    responses={404: {"description": "A2A task not found"}},
+)
 def a2a_get_task(a2a_task_id: str, request: Request) -> A2ATaskResponse:
     """Get an A2A task by ID, syncing status from the Bernstein task."""
     store = _get_store(request)
@@ -1500,7 +1508,11 @@ def drain_node(node_id: str, request: Request) -> dict[str, str]:
     return {"status": "draining", "node_id": node_id}
 
 
-@router.get("/cluster/nodes", response_model=list[NodeResponse], responses={400: {"description": "Invalid node status"}})
+@router.get(
+    "/cluster/nodes",
+    response_model=list[NodeResponse],
+    responses={400: {"description": "Invalid node status"}},
+)
 def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse]:
     """List all cluster nodes, optionally filtered by status."""
     node_registry = _get_node_registry(request)

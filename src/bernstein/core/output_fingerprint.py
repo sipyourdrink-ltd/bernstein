@@ -27,8 +27,10 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -261,10 +263,7 @@ class CorpusIndex:
             "num_perm": self._config.num_perm,
             "ngram_size": self._config.ngram_size,
             "shingle_type": self._config.shingle_type,
-            "entries": [
-                {"label": label, "sig": mh.signature}
-                for label, mh in self._entries
-            ],
+            "entries": [{"label": label, "sig": mh.signature} for label, mh in self._entries],
         }
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
@@ -287,9 +286,7 @@ class CorpusIndex:
         """
         raw: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         if raw.get("version") != 1:
-            raise ValueError(
-                f"Unsupported fingerprint index version: {raw.get('version')}"
-            )
+            raise ValueError(f"Unsupported fingerprint index version: {raw.get('version')}")
         # Merge stored encoding params into the caller-supplied config.
         merged = FingerprintConfig(
             enabled=config.enabled,
@@ -303,7 +300,7 @@ class CorpusIndex:
         index = cls(merged)
         for entry in raw.get("entries", []):
             mh = MinHash.from_signature(list(entry["sig"]))
-            index._entries.append((entry["label"], mh))  # noqa: SLF001
+            index._entries.append((entry["label"], mh))
         return index
 
     def query(self, text: str) -> list[FingerprintMatch]:

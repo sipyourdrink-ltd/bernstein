@@ -16,14 +16,13 @@ GET /sbom/artifacts
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    pass
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +142,6 @@ async def generate_sbom(body: SBOMGenerateRequest, request: Request) -> SBOMGene
     """
     from bernstein.core.sbom import (
         SBOMFormat,
-        SBOMGateError,
         SBOMGenerator,
         SBOMVulnerabilityGate,
         SBOMVulnSeverity,
@@ -168,9 +166,7 @@ async def generate_sbom(body: SBOMGenerateRequest, request: Request) -> SBOMGene
     scan_response: SBOMScanResultResponse | None = None
     if body.run_scan:
         scan_result = generator.scan(sbom)
-        gate = SBOMVulnerabilityGate(
-            block_on=[SBOMVulnSeverity.CRITICAL] if body.block_on_critical else []
-        )
+        gate = SBOMVulnerabilityGate(block_on=[SBOMVulnSeverity.CRITICAL] if body.block_on_critical else [])
         passed = gate.passes(scan_result)
 
         scan_response = SBOMScanResultResponse(

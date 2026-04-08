@@ -356,6 +356,64 @@ def test_claim_and_spawn_batches_allowed_when_converged(tmp_path: Path, make_tas
     assert result.spawned == [session.id]
 
 
+def test_claim_and_spawn_batches_applies_bandit_route_before_spawn(tmp_path: Path, make_task: Any) -> None:
+    """Bandit mode writes the selected model/effort onto the task before spawning."""
+    orch = _claim_orch(tmp_path)
+    orch._bandit_routing_mode = "bandit"
+    orch._bandit_router = MagicMock()
+    orch._bandit_router.select.return_value = SimpleNamespace(
+        model="sonnet",
+        effort="high",
+        reason="bandit: LinUCB selected 'sonnet'",
+    )
+    task = make_task(id="T-bandit", role="backend", complexity=Complexity.HIGH)
+    session = AgentSession(
+        id="A-bandit", role="backend", task_ids=[task.id], model_config=ModelConfig("sonnet", "high")
+    )
+    orch._spawner.spawn_for_tasks.return_value = session
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    orch._bandit_router.select.assert_called_once_with(task)
+    orch._spawner.spawn_for_tasks.assert_called_once()
+    assert task.model == "sonnet"
+    assert task.effort == "high"
+    assert result.spawned == [session.id]
+
+
+def test_claim_and_spawn_batches_records_bandit_shadow_without_overriding(tmp_path: Path, make_task: Any) -> None:
+    """Shadow mode records what the bandit would pick while preserving live static routing."""
+    orch = _claim_orch(tmp_path)
+    orch._bandit_routing_mode = "bandit-shadow"
+    orch._bandit_router = MagicMock()
+    decision = SimpleNamespace(
+        model="haiku",
+        effort="low",
+        reason="bandit: LinUCB selected 'haiku'",
+    )
+    orch._bandit_router.select.return_value = decision
+    task = make_task(id="T-shadow", role="backend", complexity=Complexity.HIGH)
+    session = AgentSession(
+        id="A-shadow", role="backend", task_ids=[task.id], model_config=ModelConfig("sonnet", "high")
+    )
+    orch._spawner.spawn_for_tasks.return_value = session
+    result = TickResult()
+
+    claim_and_spawn_batches(orch, [[task]], alive_count=0, assigned_task_ids=set(), done_ids=set(), result=result)
+
+    orch._bandit_router.select.assert_called_once_with(task)
+    orch._bandit_router.record_shadow_decision.assert_called_once_with(
+        task=task,
+        decision=decision,
+        executed_model="sonnet",
+        executed_effort="high",
+    )
+    assert task.model is None
+    assert task.effort is None
+    assert result.spawned == [session.id]
+
+
 def test_process_completed_tasks_moves_ticket_and_caches_verified_result(tmp_path: Path, make_task: Any) -> None:
     """process_completed_tasks closes the backlog ticket and writes a verified cache entry after a clean reap."""
     worktree = tmp_path / "agent-worktree"

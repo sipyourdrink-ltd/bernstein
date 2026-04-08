@@ -7,8 +7,9 @@ warm-up, the LinUCB policy takes over, using the task's feature vector to
 select the model that maximises the composite quality-cost reward.
 
 Feature vector (``TaskContext.to_vector()``):
-    [complexity_norm, scope_norm, priority_norm, log_file_count,
-     log_est_tokens, bias_term, role_embedding_0, …, role_embedding_7]
+    [complexity_norm, scope_norm, priority_norm, log_repo_size,
+     log_est_tokens, bias_term, task_type_one_hot..., language_one_hot...,
+     role_embedding_0, ..., role_embedding_7]
 
 Reward signal:
     ``quality_score * (1 - normalized_cost)``
@@ -27,10 +28,12 @@ import logging
 import math
 import random
 import time
+from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from hashlib import sha256
+from typing import TYPE_CHECKING, Any, TypeGuard, cast
 
-from bernstein.core.models import Complexity, Scope, Task
+from bernstein.core.models import Complexity, Scope, Task, TaskType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,15 +45,50 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _ROLE_HASH_DIM: int = 8
-# 6 numeric features + role embedding
-FEATURE_DIM: int = 6 + _ROLE_HASH_DIM
+# 6 numeric features + task type one-hot + language one-hot + role embedding
+_TASK_TYPE_VALUES: tuple[str, ...] = tuple(t.value for t in TaskType)
+_LANGUAGE_VALUES: tuple[str, ...] = (
+    "python",
+    "javascript",
+    "typescript",
+    "markdown",
+    "yaml",
+    "json",
+    "shell",
+    "go",
+    "rust",
+    "other",
+)
+FEATURE_SCHEMA_VERSION: int = 2
+FEATURE_DIM: int = 6 + len(_TASK_TYPE_VALUES) + len(_LANGUAGE_VALUES) + _ROLE_HASH_DIM
 
 _DEFAULT_ARMS: list[str] = ["haiku", "sonnet", "opus"]
-_DEFAULT_ALPHA: float = 1.0
+_DEFAULT_ALPHA: float = 0.3
 _DEFAULT_WARMUP_MIN: int = 50
 
 # High-stakes roles never start at haiku (mirrors cascade_router logic)
 _HIGH_STAKES_ROLES: frozenset[str] = frozenset({"manager", "architect", "security"})
+_LANGUAGE_BY_SUFFIX: dict[str, str] = {
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".md": "markdown",
+    ".mdx": "markdown",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".json": "json",
+    ".jsonl": "json",
+    ".sh": "shell",
+    ".bash": "shell",
+    ".zsh": "shell",
+    ".go": "go",
+    ".rs": "rust",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -64,18 +102,22 @@ class TaskContext:
 
     Attributes:
         role: Task role string (e.g. ``"backend"``).
+        task_type: Fixed task taxonomy value.
         complexity_tier: Integer encoding of complexity (0=LOW, 1=MEDIUM, 2=HIGH).
         scope_tier: Integer encoding of scope (0=SMALL, 1=MEDIUM, 2=LARGE).
         priority_norm: Normalised priority in [0, 1] (0 = critical, 1 = nice-to-have).
-        file_count: Number of owned files declared for this task.
+        language: Primary language inferred from owned files.
+        repo_size: Repository size signal from metadata, falling back to owned file count.
         estimated_tokens: Rough token estimate (``estimated_minutes * 1000``).
     """
 
     role: str
+    task_type: str
     complexity_tier: int
     scope_tier: int
     priority_norm: float
-    file_count: int
+    language: str
+    repo_size: int
     estimated_tokens: float
 
     @classmethod
@@ -93,10 +135,12 @@ class TaskContext:
         priority_norm = max(0.0, min(1.0, (task.priority - 1) / 2.0))
         return cls(
             role=task.role,
+            task_type=task.task_type.value,
             complexity_tier=complexity_map.get(task.complexity, 1),
             scope_tier=scope_map.get(task.scope, 1),
             priority_norm=priority_norm,
-            file_count=len(task.owned_files),
+            language=_infer_primary_language(task.owned_files),
+            repo_size=_repo_size_signal(task),
             estimated_tokens=float(task.estimated_minutes * 1_000),
         )
 
@@ -110,12 +154,50 @@ class TaskContext:
             self.complexity_tier / 2.0,  # [0] complexity
             self.scope_tier / 2.0,  # [1] scope
             self.priority_norm,  # [2] priority
-            math.log1p(self.file_count) / 5.0,  # [3] file count (log-scaled)
+            math.log10(self.repo_size + 1.0) / 6.0,  # [3] repo size (log-scaled)
             math.log1p(self.estimated_tokens) / 15.0,  # [4] token estimate (log-scaled)
             1.0,  # [5] bias term
         ]
-        role_embed = _hash_role(self.role, _ROLE_HASH_DIM)  # [6..13]
-        return numeric + role_embed
+        task_type = _one_hot(self.task_type, _TASK_TYPE_VALUES, fallback=TaskType.STANDARD.value)
+        language = _one_hot(self.language, _LANGUAGE_VALUES, fallback="other")
+        role_embed = _hash_role(self.role, _ROLE_HASH_DIM)
+        return numeric + task_type + language + role_embed
+
+
+def _one_hot(value: str, choices: tuple[str, ...], fallback: str) -> list[float]:
+    """Encode ``value`` as one-hot over ``choices`` with a deterministic fallback."""
+    selected = value if value in choices else fallback
+    return [1.0 if choice == selected else 0.0 for choice in choices]
+
+
+def _infer_primary_language(owned_files: list[str]) -> str:
+    """Infer the dominant language from owned file extensions."""
+    counts: Counter[str] = Counter()
+    for raw_path in owned_files:
+        lower_path = raw_path.lower()
+        language = "other"
+        for suffix, candidate in _LANGUAGE_BY_SUFFIX.items():
+            if lower_path.endswith(suffix):
+                language = candidate
+                break
+        counts[language] += 1
+
+    if not counts:
+        return "other"
+    return max(_LANGUAGE_VALUES, key=lambda language: (counts.get(language, 0), -_LANGUAGE_VALUES.index(language)))
+
+
+def _repo_size_signal(task: Task) -> int:
+    """Return a non-negative repo-size signal from task metadata or owned files."""
+    for key in ("repo_size", "repo_file_count", "repository_file_count"):
+        raw_value = task.metadata.get(key)
+        if isinstance(raw_value, bool):
+            continue
+        if isinstance(raw_value, int | float):
+            return max(0, int(raw_value))
+        if isinstance(raw_value, str) and raw_value.isdecimal():
+            return int(raw_value)
+    return len(task.owned_files)
 
 
 def _hash_role(role: str, dim: int) -> list[float]:
@@ -130,7 +212,7 @@ def _hash_role(role: str, dim: int) -> list[float]:
     Returns:
         List of ``dim`` floats in ``[-1, 1]``.
     """
-    seed = hash(role) & 0x7FFF_FFFF
+    seed = int.from_bytes(sha256(role.encode("utf-8")).digest()[:8], "big")
     rng = random.Random(seed)
     return [rng.uniform(-1.0, 1.0) for _ in range(dim)]
 
@@ -192,9 +274,44 @@ def _inv(A: list[list[float]]) -> list[list[float]]:
     return [[aug[i][n + j] for j in range(n)] for i in range(n)]
 
 
+def _load_arms(value: object, fallback: list[str]) -> list[str]:
+    """Load model arms from JSON, falling back when the payload is invalid."""
+    if not isinstance(value, list):
+        return list(fallback)
+    raw_items = cast("list[object]", value)
+    arms = [item for item in raw_items if isinstance(item, str) and item]
+    return arms or list(fallback)
+
+
+def _is_vector(value: object, dim: int) -> TypeGuard[list[float]]:
+    """Return whether ``value`` is a numeric vector of length ``dim``."""
+    if not isinstance(value, list):
+        return False
+    raw_items = cast("list[object]", value)
+    return len(raw_items) == dim and all(isinstance(item, int | float) for item in raw_items)
+
+
+def _is_matrix(value: object, dim: int) -> TypeGuard[list[list[float]]]:
+    """Return whether ``value`` is a numeric ``dim`` x ``dim`` matrix."""
+    if not isinstance(value, list):
+        return False
+    raw_rows = cast("list[object]", value)
+    return len(raw_rows) == dim and all(_is_vector(row, dim) for row in raw_rows)
+
+
 # ---------------------------------------------------------------------------
 # BanditPolicy (LinUCB)
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ArmScore:
+    """LinUCB score components for a candidate model arm."""
+
+    arm: str
+    exploit: float
+    explore: float
+    total: float
 
 
 class BanditPolicy:
@@ -239,9 +356,19 @@ class BanditPolicy:
         Returns:
             Model name of the selected arm.
         """
+        return self.score(context)[0].arm
+
+    def score(self, context: TaskContext) -> list[ArmScore]:
+        """Return LinUCB score components for each arm, best first.
+
+        Args:
+            context: Feature vector for the current task.
+
+        Returns:
+            Candidate arm scores sorted by total score descending.
+        """
         x = context.to_vector()
-        best_arm = self.arms[0]
-        best_score = float("-inf")
+        scores: list[ArmScore] = []
 
         for arm in self.arms:
             A_inv = _inv(self._A[arm])
@@ -249,12 +376,9 @@ class BanditPolicy:
             exploit = _dot(theta, x)
             variance = _dot(x, _matmul_vec(A_inv, x))
             explore = self.alpha * math.sqrt(max(0.0, variance))
-            score = exploit + explore
-            if score > best_score:
-                best_score = score
-                best_arm = arm
+            scores.append(ArmScore(arm=arm, exploit=exploit, explore=explore, total=exploit + explore))
 
-        return best_arm
+        return sorted(scores, key=lambda score: score.total, reverse=True)
 
     def update(self, arm: str, context: TaskContext, reward: float) -> None:
         """Update the arm's matrices with an observed reward.
@@ -268,6 +392,7 @@ class BanditPolicy:
         # Lazily initialise arms not present at construction time
         if arm not in self._A:
             d = FEATURE_DIM
+            self.arms.append(arm)
             self._A[arm] = _identity(d)
             self._b[arm] = [0.0] * d
 
@@ -296,6 +421,8 @@ class BanditPolicy:
         data: dict[str, Any] = {
             "arms": self.arms,
             "alpha": self.alpha,
+            "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            "feature_dim": FEATURE_DIM,
             "total_updates": self.total_updates,
             "A": self._A,
             "b": self._b,
@@ -320,15 +447,49 @@ class BanditPolicy:
             return cls(arms=default_arms)
         try:
             data = json.loads(path.read_text())
+            if not isinstance(data, dict):
+                return cls(arms=default_arms)
+            raw_data = cast("dict[str, object]", data)
+            stored_schema_version = raw_data.get("feature_schema_version")
+            stored_feature_dim = raw_data.get("feature_dim")
+            if stored_schema_version != FEATURE_SCHEMA_VERSION or stored_feature_dim != FEATURE_DIM:
+                logger.info(
+                    "BanditPolicy: resetting %s because feature schema changed (stored=%s/%s current=%s/%s)",
+                    path,
+                    stored_schema_version,
+                    stored_feature_dim,
+                    FEATURE_SCHEMA_VERSION,
+                    FEATURE_DIM,
+                )
+                return cls(arms=default_arms)
+            raw_alpha = raw_data.get("alpha", _DEFAULT_ALPHA)
+            raw_total_updates = raw_data.get("total_updates", 0)
             policy = cls(
-                arms=data.get("arms", default_arms),
-                alpha=float(data.get("alpha", _DEFAULT_ALPHA)),
+                arms=_load_arms(raw_data.get("arms"), default_arms),
+                alpha=float(raw_alpha) if isinstance(raw_alpha, int | float | str) else _DEFAULT_ALPHA,
             )
-            policy.total_updates = int(data.get("total_updates", 0))
-            for arm, A in data.get("A", {}).items():
-                policy._A[arm] = A
-            for arm, b in data.get("b", {}).items():
-                policy._b[arm] = b
+            policy.total_updates = int(raw_total_updates) if isinstance(raw_total_updates, int | float | str) else 0
+            raw_A = raw_data.get("A", {})
+            raw_b = raw_data.get("b", {})
+            if not isinstance(raw_A, dict) or not isinstance(raw_b, dict):
+                logger.info("BanditPolicy: resetting %s because policy matrices are invalid", path)
+                return cls(arms=default_arms)
+            raw_A_by_arm = cast("dict[str, object]", raw_A)
+            raw_b_by_arm = cast("dict[str, object]", raw_b)
+            loaded_A: dict[str, list[list[float]]] = {}
+            loaded_b: dict[str, list[float]] = {}
+            for arm in policy.arms:
+                raw_matrix = raw_A_by_arm.get(arm)
+                raw_vector = raw_b_by_arm.get(arm)
+                if not _is_matrix(raw_matrix, FEATURE_DIM) or not _is_vector(raw_vector, FEATURE_DIM):
+                    logger.info("BanditPolicy: resetting %s because arm %s has incompatible dimensions", path, arm)
+                    return cls(arms=default_arms)
+                loaded_A[arm] = [[float(value) for value in row] for row in raw_matrix]
+                loaded_b[arm] = [float(value) for value in raw_vector]
+            policy._A.clear()
+            policy._A.update(loaded_A)
+            policy._b.clear()
+            policy._b.update(loaded_b)
             return policy
         except Exception as exc:
             logger.warning("BanditPolicy: could not load from %s: %s — starting fresh", path, exc)
@@ -466,27 +627,33 @@ class BanditRouter:
         self._ensure_loaded()
         ctx = TaskContext.from_task(task)
 
-        if not self.is_warmed_up:
+        if not self.is_warmed_up or _is_high_stakes(task):
             model, static_reason = _static_select(task)
             effort = _effort_for_task(model, task)
+            mode = "guardrail" if self.is_warmed_up else "cold-start"
             decision = BanditRoutingDecision(
                 model=model,
                 effort=effort,
                 from_bandit=False,
-                reason=(f"cold-start ({self._total_completions}/{self._warmup_min} completions): {static_reason}"),
+                reason=(f"{mode} ({self._total_completions}/{self._warmup_min} completions): {static_reason}"),
             )
         else:
             assert self._policy is not None
-            model = self._policy.select(ctx)
+            scores = self._policy.score(ctx)
+            best_score = scores[0]
+            runner_up = scores[1] if len(scores) > 1 else None
+            model = best_score.arm
             effort = _effort_for_task(model, task)
+            runner_reason = f"; runner_up={runner_up.arm} total={runner_up.total:.3f}" if runner_up is not None else ""
             decision = BanditRoutingDecision(
                 model=model,
                 effort=effort,
                 from_bandit=True,
                 reason=(
                     f"bandit: LinUCB selected {model!r} "
-                    f"(completions={self._total_completions}, "
-                    f"explore={self.exploration_rate:.4f})"
+                    f"(exploit={best_score.exploit:.3f}, explore={best_score.explore:.3f}, "
+                    f"total={best_score.total:.3f}{runner_reason}, "
+                    f"completions={self._total_completions})"
                 ),
             )
 
@@ -567,6 +734,43 @@ class BanditRouter:
         except OSError as exc:
             logger.warning("BanditRouter: could not save state to %s: %s", state_path, exc)
 
+    def record_shadow_decision(
+        self,
+        task: Task,
+        decision: BanditRoutingDecision,
+        executed_model: str,
+        executed_effort: str,
+    ) -> None:
+        """Append a shadow-routing decision without changing live routing.
+
+        Args:
+            task: Task evaluated by the bandit.
+            decision: Bandit decision that would have been used.
+            executed_model: Model that the static live route actually used.
+            executed_effort: Effort that the static live route actually used.
+        """
+        if self._policy_dir is None:
+            return
+        payload = {
+            "timestamp": time.time(),
+            "task_id": task.id,
+            "role": task.role,
+            "task_type": task.task_type.value,
+            "selected_model": decision.model,
+            "selected_effort": decision.effort,
+            "executed_model": executed_model,
+            "executed_effort": executed_effort,
+            "from_bandit": decision.from_bandit,
+            "reason": decision.reason,
+        }
+        shadow_path = self._policy_dir / "shadow_decisions.jsonl"
+        try:
+            self._policy_dir.mkdir(parents=True, exist_ok=True)
+            with shadow_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload) + "\n")
+        except OSError as exc:
+            logger.warning("BanditRouter: could not record shadow decision to %s: %s", shadow_path, exc)
+
     def summary(self) -> dict[str, Any]:
         """Return a dict suitable for dashboard display.
 
@@ -643,6 +847,16 @@ def compute_reward(quality_score: float, cost_usd: float, budget_ceiling: float)
 # ---------------------------------------------------------------------------
 
 
+def _is_high_stakes(task: Task) -> bool:
+    """Return whether static guardrails should override learned routing."""
+    return (
+        task.role in _HIGH_STAKES_ROLES
+        or task.complexity == Complexity.HIGH
+        or task.scope == Scope.LARGE
+        or task.priority == 1
+    )
+
+
 def _static_select(task: Task) -> tuple[str, str]:
     """Static initial model selection (mirrors ``CascadeRouter._select_initial_model``).
 
@@ -653,12 +867,7 @@ def _static_select(task: Task) -> tuple[str, str]:
         Tuple of ``(model_name, reason_string)``.
     """
     # High-stakes: start at sonnet (never haiku)
-    if (
-        task.role in _HIGH_STAKES_ROLES
-        or task.complexity == Complexity.HIGH
-        or task.scope == Scope.LARGE
-        or task.priority == 1
-    ):
+    if _is_high_stakes(task):
         return "sonnet", f"high-stakes (role={task.role!r})"
 
     # Manager-specified model override
