@@ -1974,7 +1974,7 @@ class BernsteinApp(App[None]):
             prov = sd.get("runtime", {}).get("config_provenance", {})
             if isinstance(prov, dict):
                 header.max_agents = prov.get("max_agents", {}).get("value", header.max_agents)
-        header.active_agents = bar.alive
+        header.active_agents = bar.agents
 
         spark = self.query_one("#spark", Sparkline)
         spark.data = list(self._history) if self._history else [0.0]

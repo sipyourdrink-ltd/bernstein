@@ -1411,9 +1411,7 @@ class AgentSpawner:
                             )
                         spawn_duration = time.perf_counter() - spawn_start
                         agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)
-                        self._adapter_health.record_success(
-                            adapter_name, latency_ms=spawn_duration * 1000
-                        )
+                        self._adapter_health.record_success(adapter_name, latency_ms=spawn_duration * 1000)
                         session.provider = (
                             provider_name
                             if provider_name is not None

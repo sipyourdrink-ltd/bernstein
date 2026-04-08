@@ -197,7 +197,7 @@ def greet(new_prefix: str, name: str, loud: bool = False) -> str:
         after = self._sigs(_ADDED_ARG)  # added optional prefix arg
         changes = detect_signature_changes(before, after)
         # The new arg IS flagged conservatively (we can't check defaults from AST alone)
-        assert len(changes) >= 0  # Just ensure it doesn't error
+        assert isinstance(changes, list)  # Just ensure it doesn't error
 
 
 # ---------------------------------------------------------------------------
