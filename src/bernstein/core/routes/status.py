@@ -1242,6 +1242,9 @@ def sse_events(request: Request) -> StreamingResponse:
             yield 'event: heartbeat\ndata: {"connected": true}\n\n'
             sse_bus.mark_read(queue)
             while True:
+                if await request.is_disconnected():
+                    logger.debug("SSE client disconnected, closing stream")
+                    break
                 try:
                     message = await asyncio.wait_for(queue.get(), timeout=_READ_TIMEOUT_S)
                 except TimeoutError:

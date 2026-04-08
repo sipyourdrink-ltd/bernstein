@@ -37,6 +37,8 @@ from bernstein.core.server import (
     A2AMessageResponse,
     A2ATaskResponse,
     A2ATaskSendRequest,
+    AgentKillResponse,
+    AgentLogsResponse,
     BatchClaimRequest,
     BatchClaimResponse,
     BatchCreateRequest,
@@ -879,7 +881,7 @@ def get_task_snapshots(task_id: str, request: Request) -> list[SnapshotEntry]:
     ]
 
 
-@router.get("/tasks")
+@router.get("/tasks", response_model=PaginatedTasksResponse | list[TaskResponse])
 def list_tasks(
     request: Request,
     status: str | None = None,
@@ -1027,7 +1029,7 @@ def get_task_gates(task_id: str, request: Request) -> JSONResponse:
     return JSONResponse(content=payload)
 
 
-@router.patch("/tasks/{task_id}", responses={404: {"description": "Task not found"}})
+@router.patch("/tasks/{task_id}", response_model=TaskResponse, responses={404: {"description": "Task not found"}})
 async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> TaskResponse:
     """Update mutable task fields (role, priority, model) — manager corrections.
 
@@ -1048,7 +1050,7 @@ async def patch_task(task_id: str, body: TaskPatchRequest, request: Request) -> 
     return task_to_response(task)
 
 
-@router.post("/tasks/{task_id}/prioritize", responses={404: {"description": "Task not found"}})
+@router.post("/tasks/{task_id}/prioritize", response_model=TaskResponse, responses={404: {"description": "Task not found"}})
 async def prioritize_task(task_id: str, request: Request) -> TaskResponse:
     """Bump a task to priority 0 so the orchestrator picks it up next."""
     store = _get_store(request)
@@ -1067,6 +1069,7 @@ async def prioritize_task(task_id: str, request: Request) -> TaskResponse:
 
 @router.post(
     "/tasks/{task_id}/force-claim",
+    response_model=TaskResponse,
     responses={404: {"description": "Task not found"}, 409: {"description": "Cannot force-claim terminal task"}},
 )
 async def force_claim_task(task_id: str, request: Request) -> TaskResponse:
@@ -1107,8 +1110,12 @@ def agent_heartbeat(agent_id: str, body: HeartbeatRequest, request: Request) -> 
     return HeartbeatResponse(agent_id=agent_id, acknowledged=True, server_ts=ts)
 
 
-@router.get("/agents/{session_id}/logs", responses={404: {"description": "No log file for session"}})
-def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> JSONResponse:
+@router.get(
+    "/agents/{session_id}/logs",
+    response_model=AgentLogsResponse,
+    responses={404: {"description": "No log file for session"}},
+)
+def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> AgentLogsResponse:
     """Return log file content for a session.
 
     Args:
@@ -1122,17 +1129,11 @@ def agent_logs(session_id: str, request: Request, tail_bytes: int = 0) -> JSONRe
     size = log_path.stat().st_size
     offset = max(0, size - tail_bytes) if tail_bytes > 0 else 0
     content = read_log_tail(log_path, offset)
-    return JSONResponse(
-        content={
-            "session_id": session_id,
-            "content": content,
-            "size": size,
-        }
-    )
+    return AgentLogsResponse(session_id=session_id, content=content, size=size)
 
 
-@router.post("/agents/{session_id}/kill")
-def agent_kill(session_id: str, request: Request) -> JSONResponse:
+@router.post("/agents/{session_id}/kill", response_model=AgentKillResponse)
+def agent_kill(session_id: str, request: Request) -> AgentKillResponse:
     """Request that an agent session be killed.
 
     Writes a ``.kill`` signal file that the orchestrator picks up on
@@ -1147,12 +1148,7 @@ def agent_kill(session_id: str, request: Request) -> JSONResponse:
         "session_kill",
         json.dumps({"session_id": session_id}),
     )
-    return JSONResponse(
-        content={
-            "session_id": session_id,
-            "kill_requested": True,
-        }
-    )
+    return AgentKillResponse(session_id=session_id, kill_requested=True)
 
 
 @router.get("/agents/{session_id}/stream")
@@ -1170,6 +1166,9 @@ def agent_stream(session_id: str, request: Request) -> StreamingResponse:
         max_idle = 60  # stop after ~30s of no file
 
         while True:
+            if await request.is_disconnected():
+                return
+
             if not log_path.exists():
                 idle_ticks += 1
                 if idle_ticks >= max_idle:
@@ -1210,7 +1209,7 @@ def agent_stream(session_id: str, request: Request) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/bulletin", status_code=201)
+@router.post("/bulletin", status_code=201, response_model=BulletinMessageResponse)
 def post_bulletin(body: BulletinPostRequest, request: Request) -> BulletinMessageResponse:
     """Append a message to the bulletin board."""
     bulletin = _get_bulletin(request)
@@ -1246,7 +1245,7 @@ def post_bulletin(body: BulletinPostRequest, request: Request) -> BulletinMessag
     )
 
 
-@router.get("/bulletin")
+@router.get("/bulletin", response_model=list[BulletinMessageResponse])
 def get_bulletin(request: Request, since: float = 0.0) -> list[BulletinMessageResponse]:
     """Get bulletin messages since a given timestamp."""
     bulletin = _get_bulletin(request)
@@ -1268,7 +1267,7 @@ def get_bulletin(request: Request, since: float = 0.0) -> list[BulletinMessageRe
 # ---------------------------------------------------------------------------
 
 
-@router.get("/.well-known/agent.json")
+@router.get("/.well-known/agent.json", response_model=A2AAgentCardResponse)
 def agent_card(request: Request) -> A2AAgentCardResponse:
     """Publish the Bernstein orchestrator Agent Card (A2A spec)."""
     a2a_handler = _get_a2a_handler(request)
@@ -1277,7 +1276,7 @@ def agent_card(request: Request) -> A2AAgentCardResponse:
     return A2AAgentCardResponse(**d)
 
 
-@router.get("/a2a/agents")
+@router.get("/a2a/agents", response_model=A2AAgentCardResponse)
 def list_a2a_agents(request: Request) -> A2AAgentCardResponse:
     """Return Bernstein's A2A agent card via the task API namespace."""
 
@@ -1287,6 +1286,7 @@ def list_a2a_agents(request: Request) -> A2AAgentCardResponse:
 @router.post(
     "/a2a/message",
     status_code=201,
+    response_model=A2AMessageResponse,
     responses={404: {"description": "Task not found"}},
 )
 async def a2a_message(body: A2AMessageRequest, request: Request) -> A2AMessageResponse:
@@ -1323,7 +1323,7 @@ async def a2a_message(body: A2AMessageRequest, request: Request) -> A2AMessageRe
     return a2a_message_to_response(message)
 
 
-@router.post("/a2a/tasks/send", status_code=201)
+@router.post("/a2a/tasks/send", status_code=201, response_model=A2ATaskResponse)
 async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskResponse:
     """Receive a task from an external A2A agent.
 
@@ -1351,7 +1351,7 @@ async def a2a_send_task(body: A2ATaskSendRequest, request: Request) -> A2ATaskRe
     return a2a_task_to_response(a2a_task)
 
 
-@router.get("/a2a/tasks/{a2a_task_id}", responses={404: {"description": "A2A task not found"}})
+@router.get("/a2a/tasks/{a2a_task_id}", response_model=A2ATaskResponse, responses={404: {"description": "A2A task not found"}})
 def a2a_get_task(a2a_task_id: str, request: Request) -> A2ATaskResponse:
     """Get an A2A task by ID, syncing status from the Bernstein task."""
     store = _get_store(request)
@@ -1370,6 +1370,7 @@ def a2a_get_task(a2a_task_id: str, request: Request) -> A2ATaskResponse:
 @router.post(
     "/a2a/tasks/{a2a_task_id}/artifacts",
     status_code=201,
+    response_model=A2AArtifactResponse,
     responses={404: {"description": "A2A task not found"}},
 )
 def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest, request: Request) -> A2AArtifactResponse:
@@ -1397,7 +1398,7 @@ def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest, request: Reques
 # ---------------------------------------------------------------------------
 
 
-@router.post("/cluster/nodes", status_code=201)
+@router.post("/cluster/nodes", status_code=201, response_model=NodeResponse)
 def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
     """Register a new node in the cluster."""
     from bernstein.core.cluster_auth import SCOPE_NODE_REGISTER
@@ -1424,6 +1425,7 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
 
 @router.post(
     "/cluster/nodes/{node_id}/heartbeat",
+    response_model=NodeResponse,
     responses={404: {"description": "Node not registered"}},
 )
 def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -> NodeResponse:
@@ -1498,7 +1500,7 @@ def drain_node(node_id: str, request: Request) -> dict[str, str]:
     return {"status": "draining", "node_id": node_id}
 
 
-@router.get("/cluster/nodes", responses={400: {"description": "Invalid node status"}})
+@router.get("/cluster/nodes", response_model=list[NodeResponse], responses={400: {"description": "Invalid node status"}})
 def list_nodes(request: Request, status: str | None = None) -> list[NodeResponse]:
     """List all cluster nodes, optionally filtered by status."""
     node_registry = _get_node_registry(request)
@@ -1528,7 +1530,7 @@ def cluster_status(request: Request) -> ClusterStatusResponse:
     )
 
 
-@router.post("/cluster/steal")
+@router.post("/cluster/steal", response_model=TaskStealResponse)
 async def steal_tasks(body: TaskStealRequest, request: Request) -> TaskStealResponse:
     """Evaluate task stealing policy and reassign claimed tasks between nodes.
 

@@ -637,6 +637,21 @@ class BulletinMessageResponse(BaseModel):
     cell_id: str | None
 
 
+class AgentLogsResponse(BaseModel):
+    """Response for GET /agents/{session_id}/logs."""
+
+    session_id: str
+    content: str
+    size: int
+
+
+class AgentKillResponse(BaseModel):
+    """Response for POST /agents/{session_id}/kill."""
+
+    session_id: str
+    kill_requested: bool
+
+
 # -- Delegation schemas ----------------------------------------------------
 
 

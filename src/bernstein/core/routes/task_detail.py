@@ -124,6 +124,9 @@ async def task_log_stream(request: Request, task_id: str) -> StreamingResponse:
         session_id = task.assigned_agent or ""
 
         while idle_ticks < _MAX_IDLE_TICKS:
+            if await request.is_disconnected():
+                return
+
             # Re-read task status to detect completion
             current_task = store.get_task(task_id)
             if current_task is not None and current_task.status.value in ("done", "failed", "cancelled"):

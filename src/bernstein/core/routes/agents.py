@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.responses import StreamingResponse
 
-from bernstein.core.server import read_log_tail
+from bernstein.core.server import AgentKillResponse, AgentLogsResponse, read_log_tail
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -33,12 +33,16 @@ def _runtime_dir(request: Request) -> Path:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/agents/{session_id}/logs", responses={404: {"description": "No log for session"}})
+@router.get(
+    "/agents/{session_id}/logs",
+    response_model=AgentLogsResponse,
+    responses={404: {"description": "No log for session"}},
+)
 def agent_logs(
     request: Request,
     session_id: str,
     tail_bytes: int = 0,
-) -> JSONResponse:
+) -> AgentLogsResponse:
     """Return the log content for a running or finished agent session.
 
     Args:
@@ -61,13 +65,7 @@ def agent_logs(
     offset = max(0, size - tail_bytes) if tail_bytes > 0 else 0
     content = read_log_tail(log_path, offset)
 
-    return JSONResponse(
-        {
-            "session_id": session_id,
-            "content": content,
-            "size": size,
-        }
-    )
+    return AgentLogsResponse(session_id=session_id, content=content, size=size)
 
 
 # ---------------------------------------------------------------------------
@@ -75,8 +73,8 @@ def agent_logs(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/agents/{session_id}/kill")
-def agent_kill(request: Request, session_id: str) -> JSONResponse:
+@router.post("/agents/{session_id}/kill", response_model=AgentKillResponse)
+def agent_kill(request: Request, session_id: str) -> AgentKillResponse:
     """Request termination of an agent by writing a ``.kill`` signal file.
 
     The orchestrator polls for these files on each tick and calls
@@ -91,7 +89,7 @@ def agent_kill(request: Request, session_id: str) -> JSONResponse:
     runtime_dir = _runtime_dir(request)
     kill_file = runtime_dir / f"{session_id}.kill"
     kill_file.write_text(str(time.time()), encoding="utf-8")
-    return JSONResponse({"session_id": session_id, "kill_requested": True})
+    return AgentKillResponse(session_id=session_id, kill_requested=True)
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +127,9 @@ def agent_stream(request: Request, session_id: str) -> StreamingResponse:
         idle_ticks = 0
 
         while idle_ticks < _MAX_IDLE_TICKS:
+            if await request.is_disconnected():
+                break
+
             if not log_path.exists():
                 await asyncio.sleep(_POLL_INTERVAL)
                 idle_ticks += 1
