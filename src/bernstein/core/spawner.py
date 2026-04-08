@@ -1301,6 +1301,19 @@ class AgentSpawner:
                 task_mcp_servers=requested,
                 base_config=effective_mcp,
             )
+            # Validate that MCP servers are ready before spawning the agent.
+            # A non-ready server is logged as a warning but does not block spawn
+            # so that a single failing optional server does not halt all work.
+            try:
+                from bernstein.core.mcp_readiness import validate_mcp_readiness
+
+                validate_mcp_readiness(
+                    self._mcp_manager,
+                    server_names=unique_names if unique_names else None,
+                    fail_on_error=False,
+                )
+            except Exception:
+                logger.warning("MCP readiness probe raised unexpectedly (non-fatal)", exc_info=True)
 
         log_dir = spawn_cwd / ".sdd" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
