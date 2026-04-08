@@ -169,6 +169,76 @@ def _require_task_access(task: Task, request: Request, requested_tenant: str | N
 
 
 # ---------------------------------------------------------------------------
+# Real-time behavior monitor helper
+# ---------------------------------------------------------------------------
+
+
+def _get_realtime_monitor(request: Request) -> object | None:
+    """Return the ``RealtimeBehaviorMonitor`` from app state, if present."""
+    return getattr(request.app.state, "realtime_behavior_monitor", None)
+
+
+def _evict_realtime_session(request: Request, session_id: str | None) -> None:
+    """Remove session state from the real-time monitor after task completion."""
+    if not session_id:
+        return
+    monitor = _get_realtime_monitor(request)
+    if monitor is None:
+        return
+    try:
+        from bernstein.core.behavior_anomaly import RealtimeBehaviorMonitor
+
+        if isinstance(monitor, RealtimeBehaviorMonitor):
+            monitor.evict_session(session_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _try_check_realtime_anomaly(
+    request: Request,
+    task_id: str,
+    session_id: str | None,
+    *,
+    files_changed: int,
+    last_file: str,
+    message: str,
+) -> None:
+    """Run real-time anomaly detection on a progress update (best-effort).
+
+    Writes a kill-signal file automatically when KILL_AGENT severity is
+    detected; logs warnings for lower-severity signals.  Non-blocking —
+    any exception is caught and logged so the progress route always succeeds.
+    """
+    if not session_id:
+        return
+    monitor = _get_realtime_monitor(request)
+    if monitor is None:
+        return
+    try:
+        from bernstein.core.behavior_anomaly import RealtimeBehaviorMonitor
+
+        if not isinstance(monitor, RealtimeBehaviorMonitor):
+            return
+        signals = monitor.record_progress(
+            session_id,
+            task_id,
+            files_changed=files_changed,
+            last_file=last_file,
+            message=message,
+        )
+        for signal in signals:
+            logger.warning(
+                "Realtime anomaly [%s] agent=%s task=%s: %s",
+                signal.rule,
+                signal.agent_id,
+                signal.task_id,
+                signal.message,
+            )
+    except Exception:  # noqa: BLE001
+        logger.debug("Realtime behavior check failed for task %s", task_id, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
 # Sigstore attestation helper
 # ---------------------------------------------------------------------------
 
@@ -572,6 +642,9 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
         # Sigstore/Ed25519 attestation for the task completion (fire-and-forget)
         _try_attest_task_completion(request, task.id, task.role, body.result_summary)
 
+        # Evict session from the real-time monitor to free memory
+        _evict_realtime_session(request, task.claimed_by_session)
+
         return task_to_response(task)
 
 
@@ -720,6 +793,19 @@ async def progress_task(task_id: str, body: TaskProgressRequest, request: Reques
             errors=body.errors if body.errors is not None else 0,
             last_file=body.last_file,
         )
+
+    # Real-time behavior anomaly detection — checks file access, output size,
+    # and file-change velocity against learned baselines.  Kill signals are
+    # written automatically for KILL_AGENT severity detections.
+    _try_check_realtime_anomaly(
+        request,
+        task_id,
+        task.claimed_by_session,
+        files_changed=body.files_changed or 0,
+        last_file=body.last_file,
+        message=body.message or "",
+    )
+
     sse_bus.publish(
         "task_progress",
         json.dumps({"id": task.id, "message": body.message, "percent": body.percent}),
