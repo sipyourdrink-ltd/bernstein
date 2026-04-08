@@ -9,7 +9,7 @@ definition without starting the server:
 
 ```bash
 uv run python scripts/generate_openapi.py
-# Written docs/openapi.json  (216 paths, 87 schemas)
+# Written docs/openapi.json  (216 paths, 72 schemas)
 ```
 
 Run this after adding or modifying any API route, Pydantic model, or response

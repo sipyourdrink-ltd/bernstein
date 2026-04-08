@@ -1190,7 +1190,35 @@ def create_app(
             signal.signal(signal.SIGHUP, previous_sighup)
         await store.flush_buffer()
 
-    application = FastAPI(title="Bernstein Task Server", version="0.1.0", lifespan=lifespan)
+    application = FastAPI(
+        title="Bernstein Task Server",
+        version="1.0.0",
+        description=(
+            "Bernstein REST API — multi-agent orchestration for CLI coding agents.\n\n"
+            "## Authentication\n\n"
+            "When auth is enabled (`BERNSTEIN_AUTH_ENABLED=true`), include a Bearer token "
+            "in all requests:\n\n"
+            "```\nAuthorization: Bearer <token>\n```\n\n"
+            "Public endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, "
+            "`/.well-known/agent.json`, `/docs`, `/openapi.json`.\n\n"
+            "## Base URL\n\n"
+            "Default: `http://127.0.0.1:8052`. Override with env vars `BERNSTEIN_HOST` and "
+            "`BERNSTEIN_PORT`.\n\n"
+            "## Error Format\n\n"
+            "All errors return JSON with a `detail` field:\n\n"
+            "```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n"
+            "| Status | Meaning |\n"
+            "|--------|---------|\n"
+            "| 400 | Bad request (validation error) |\n"
+            "| 401 | Unauthorized (missing/invalid token) |\n"
+            "| 403 | Forbidden (IP not in allowlist) |\n"
+            "| 404 | Resource not found |\n"
+            "| 409 | Conflict (task already in terminal state) |\n"
+            "| 429 | Rate limited — respect the `Retry-After` header |\n"
+            "| 500 | Internal server error |\n"
+        ),
+        lifespan=lifespan,
+    )
 
     # Crash guard — outermost middleware, catches unhandled exceptions
     application.add_middleware(CrashGuardMiddleware)

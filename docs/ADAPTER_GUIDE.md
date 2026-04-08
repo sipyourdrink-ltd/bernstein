@@ -9,6 +9,10 @@ timeout watchdog with SIGTERM-then-SIGKILL cleanup.
 
 Source of truth: `src/bernstein/adapters/registry.py`, individual adapter files.
 
+> **Quick pick**: Need the strongest results? → `claude` with `model: opus`.
+> Free tier? → `gemini` or `qwen`. Air-gapped? → `ollama` or `tabby`.
+> Multi-provider resilience? → combine `claude` + `codex` + `gemini`.
+
 ---
 
 ## Comparison Matrix
@@ -47,6 +51,11 @@ Actual costs depend on task complexity, token usage, and provider pricing.
 
 The primary adapter. Deepest integration with Bernstein.
 
+**Install:**
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
 **Unique features:**
 - Role-scoped tool allowlists (qa agents get read-only tools, docs agents get write-only, etc.)
 - Structured output via `--json-schema` enforcing `{status, summary, files_changed, exit_reason}`
@@ -74,6 +83,11 @@ The primary adapter. Deepest integration with Bernstein.
 
 ### codex (OpenAI Codex CLI)
 
+**Install:**
+```bash
+npm install -g @openai/codex
+```
+
 **Unique features:**
 - Full-auto mode (`--full-auto`)
 - JSON output with `--json`
@@ -90,6 +104,11 @@ The primary adapter. Deepest integration with Bernstein.
 
 ### gemini (Google Gemini CLI)
 
+**Install:**
+```bash
+npm install -g @google/gemini-cli
+```
+
 **Unique features:**
 - YOLO mode (`--yolo`) for autonomous execution
 - JSON output format
@@ -105,6 +124,13 @@ The primary adapter. Deepest integration with Bernstein.
 ---
 
 ### aider
+
+**Install:**
+```bash
+pip install aider-chat
+# or
+pipx install aider-chat
+```
 
 **Unique features:**
 - Non-interactive mode via `--message` + `--yes`
@@ -130,6 +156,11 @@ The primary adapter. Deepest integration with Bernstein.
 
 ### amp (Sourcegraph Amp)
 
+**Install:**
+```bash
+npm install -g @sourcegraph/amp
+```
+
 **Unique features:**
 - Headless mode (`--headless`)
 - Supports both Anthropic and OpenAI models with provider-prefixed IDs
@@ -149,6 +180,12 @@ The primary adapter. Deepest integration with Bernstein.
 ---
 
 ### qwen
+
+**Install:** No separate CLI install required — Qwen uses OpenAI-compatible APIs via env vars.
+Optionally install the web search extension:
+```bash
+pip install tavily-python  # for web search support
+```
 
 **Unique features:**
 - OpenAI-compatible endpoint routing with multiple free/cheap providers
@@ -172,6 +209,18 @@ The primary adapter. Deepest integration with Bernstein.
 ---
 
 ### ollama (Local LLMs)
+
+**Install:**
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+# Pull a model
+ollama pull qwen2.5-coder:7b      # fast, low VRAM
+ollama pull qwen2.5-coder:32b     # best quality
+ollama pull deepseek-r1:70b       # strongest reasoning (requires 40+ GB VRAM)
+# Install aider as the coding frontend
+pip install aider-chat
+```
 
 **Unique features:**
 - Zero cloud API cost
@@ -199,96 +248,160 @@ The primary adapter. Deepest integration with Bernstein.
 
 ### cody (Sourcegraph Cody)
 
+**Install:**
+```bash
+npm install -g @sourcegraph/cody
+```
+
 **Model mapping:** Uses `provider::version::model` format (e.g., `anthropic::2024-10-22::claude-sonnet-4-5`).
 
-**Env vars:** `SRC_ACCESS_TOKEN`, `SRC_ENDPOINT` (default: `https://sourcegraph.com`).
+**Env vars:** `SRC_ACCESS_TOKEN` (required), `SRC_ENDPOINT` (default: `https://sourcegraph.com`).
 
-**Best for:** Sourcegraph-integrated workflows with codebase-level context.
+**Best for:** Sourcegraph-integrated workflows with codebase-level context. Cody's indexing gives agents repo-wide semantic search without manual context injection.
 
 ---
 
 ### cursor
+
+**Install:** Download from [cursor.com](https://cursor.com). The `cursor` CLI is bundled with the desktop app.
 
 **Unique features:**
 - Session isolation via separate `--user-data-dir` per agent
 - MCP config injection via `--add-mcp`
 - Auth via OAuth session in `~/.cursor/` (no env vars needed)
 
-**Best for:** Teams with Cursor subscriptions who want to leverage Cursor's model routing.
+**Best for:** Teams with Cursor subscriptions who want to leverage Cursor's model routing and built-in context features without managing API keys per agent.
 
 ---
 
 ### goose (Block)
 
-**Env vars:** Depends on configured model provider.
+**Install:**
+```bash
+curl -fsSL https://github.com/block/goose/releases/latest/download/install.sh | bash
+# or via Homebrew
+brew install block/tap/goose
+```
 
-**Best for:** Teams already using Block's Goose for autonomous task execution.
+**Unique features:**
+- Session mode (`--session`) for stateful multi-turn execution
+- Provider configured via `~/.config/goose/config.yaml`
+- Supports extensions/plugins via goose's built-in extension system
+
+**Env vars:** Depends on configured model provider (e.g., `ANTHROPIC_API_KEY` for Claude models).
+
+**Best for:** Teams already using Block's Goose for autonomous task execution. Goose's extension ecosystem can be leveraged within Bernstein-orchestrated runs.
 
 ---
 
 ### roo-code
 
+**Install:** Available as a VS Code extension. The `roo-cline` CLI is bundled with the extension.
+```bash
+# Enable headless CLI access from VS Code extension settings
+code --install-extension RooVeterinaryInc.roo-cline
+```
+
 **Unique features:**
 - JSON structured output via `--output-format json`
 - Task passed via `--task` flag
+- Reads VS Code workspace settings for model/provider config
 
-**Best for:** VS Code extension users wanting headless CLI execution.
+**Best for:** VS Code extension users wanting headless CLI execution with their existing Roo Code config. Preserves model routing and custom instructions from VS Code settings.
 
 ---
 
 ### continue
 
+**Install:**
+```bash
+npm install -g @continuedev/continue
+```
+
 **Unique features:**
 - Config-driven model and context setup via `~/.continue/config.yaml`
 - MCP managed via config file (not runtime injection)
+- Supports all major providers via config: Anthropic, OpenAI, Google, Ollama, and more
 
-**Best for:** Teams with existing Continue.dev configurations.
+**Env vars:** Provider-specific keys as configured in `~/.continue/config.yaml`.
+
+**Best for:** Teams with existing Continue.dev configurations. Bernstein reuses your current model setup without duplicating API key management.
 
 ---
 
 ### opencode
 
+**Install:**
+```bash
+curl -fsSL https://opencode.ai/install | bash
+# or via npm
+npm install -g opencode-ai
+```
+
 **Unique features:**
 - Multi-provider support (OpenAI, Anthropic, Google, OpenRouter, xAI)
-- JSON output format
+- JSON output format via `--format json`
 - Auth via `opencode auth login` or env vars
 
-**Best for:** Multi-provider setups wanting a single CLI interface.
+**Env vars:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, or `OPENROUTER_API_KEY` depending on configured provider.
+
+**Best for:** Multi-provider setups wanting a single CLI interface. OpenCode normalizes provider differences so you can switch backends by changing one config value.
 
 ---
 
 ### kiro (AWS)
+
+**Install:** Download from [kiro.dev](https://kiro.dev). The `kiro` CLI is bundled with the desktop app.
 
 **Unique features:**
 - Non-interactive chat mode with `--trust-all-tools`
 - Model selection controlled by Kiro settings (no per-run flag)
 - AWS auth integration (`AWS_PROFILE`, `AWS_REGION`)
 
-**Best for:** AWS-centric teams using AWS-managed AI services.
+**Env vars:** `AWS_PROFILE` (optional), `AWS_REGION` (optional), `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (if not using a profile).
+
+**Best for:** AWS-centric teams using AWS-managed AI services. Kiro's AWS Bedrock integration means billing goes through your existing AWS account.
 
 ---
 
 ### kilo (Stackblitz)
 
+**Install:**
+```bash
+npm install -g kilocode
+```
+
 **Unique features:**
 - ACP/MCP protocol support
 - MCP config injection via `--mcp` flag
 - Auto-approve mode (`--yes`)
+- Provider routing via Stackblitz's model infrastructure
 
-**Best for:** Web development workflows, Stackblitz-integrated teams.
+**Best for:** Web development workflows and Stackblitz-integrated teams. Kilo's ACP support means it can participate in Bernstein's agent-to-agent communication protocols.
 
 ---
 
 ### tabby (Self-hosted)
 
+**Install:**
+```bash
+# Install Tabby server (requires Docker or native binary)
+docker pull tabbyml/tabby
+# or download from https://tabby.tabbyml.com/docs/installation/
+
+# Start the server
+tabby serve --model TabbyML/StarCoder-1B --device cuda
+```
+
 **Unique features:**
 - Requires a running Tabby server (`tabby serve`)
 - Model selection is server-side (not per-invocation)
 - Zero cloud dependency when using local models
+- Supports multiple coding models from the Tabby registry
 
 **Env vars:** `TABBY_SERVER_URL` (default: `http://127.0.0.1:8080`).
 
-**Best for:** Self-hosted, air-gapped, or compliance-restricted environments where you control the entire model stack.
+**Best for:** Self-hosted, air-gapped, or compliance-restricted environments where you control the entire model stack. Tabby supports model fine-tuning on your own codebase for higher-quality completions.
 
 ---
 
