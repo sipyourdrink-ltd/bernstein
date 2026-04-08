@@ -108,9 +108,7 @@ def dep_impact_cmd(
     # ---- API breaking changes ----
     if report.api_breaking:
         console.print()
-        console.print(
-            f"[bold red]API breaking changes ({len(report.api_breaking)}):[/bold red]"
-        )
+        console.print(f"[bold red]API breaking changes ({len(report.api_breaking)}):[/bold red]")
         table = Table(show_header=True, box=None, padding=(0, 2))
         table.add_column("File", style="cyan", no_wrap=True)
         table.add_column("Symbol", style="bold")
@@ -124,9 +122,7 @@ def dep_impact_cmd(
 
     # ---- Call-site impacts ----
     if report.call_site_impacts:
-        console.print(
-            f"[bold yellow]Affected call sites ({len(report.call_site_impacts)}):[/bold yellow]"
-        )
+        console.print(f"[bold yellow]Affected call sites ({len(report.call_site_impacts)}):[/bold yellow]")
         table = Table(show_header=True, box=None, padding=(0, 2))
         table.add_column("Caller", style="cyan", no_wrap=True)
         table.add_column("Callee", style="bold")
@@ -141,8 +137,7 @@ def dep_impact_cmd(
         n_api = len(report.api_breaking)
         n_cs = len(report.call_site_impacts)
         console.print(
-            f"[bold red]Dependency impact check FAILED — "
-            f"{n_api} API break(s), {n_cs} affected call site(s)[/bold red]"
+            f"[bold red]Dependency impact check FAILED — {n_api} API break(s), {n_cs} affected call site(s)[/bold red]"
         )
         raise SystemExit(1)
 

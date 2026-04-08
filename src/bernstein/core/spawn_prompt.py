@@ -1285,6 +1285,7 @@ def render_spawn_prompt(
     Returns:
         A prompt string with task content safely embedded.
     """
+
     # Indent all user-supplied content by 4 spaces so structural directives
     # (e.g. "System:") cannot be injected as top-level prompt elements.
     def _indent(text: str) -> str:

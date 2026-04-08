@@ -536,7 +536,9 @@ class TestTickStarvingRolePriority:
         """
         # Worktree creation requires a git repo with at least one commit.
         subprocess.run(["git", "init", str(tmp_path)], capture_output=True, check=True)
-        subprocess.run(["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"], capture_output=True, check=True
+        )
 
         backend_task = _make_task(id="T-be", role="backend", priority=2)
         qa_task = _make_task(id="T-qa", role="qa", priority=2)

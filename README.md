@@ -141,9 +141,15 @@ bernstein recap      # post-run summary
 bernstein trace <ID> # agent decision trace
 bernstein explain <cmd>  # detailed help with examples
 bernstein dry-run    # preview tasks without executing
+bernstein dep-impact # API breakage + downstream caller impact
 bernstein aliases    # show command shortcuts
 bernstein config-path    # show config file locations
 bernstein init-wizard    # interactive project setup
+```
+
+```bash
+bernstein fingerprint build --corpus-dir ~/oss-corpus  # build local similarity index
+bernstein fingerprint check src/foo.py                 # check generated code against the index
 ```
 
 ## Install

@@ -27,10 +27,7 @@ def main() -> None:
     try:
         from bernstein.core.server import create_app
     except ImportError as exc:
-        sys.exit(
-            f"Cannot import bernstein: {exc}\n"
-            "Run this script with: uv run python scripts/generate_openapi.py"
-        )
+        sys.exit(f"Cannot import bernstein: {exc}\nRun this script with: uv run python scripts/generate_openapi.py")
 
     app = create_app()
     spec = app.openapi()

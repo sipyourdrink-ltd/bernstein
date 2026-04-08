@@ -11,6 +11,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+from bernstein.adapters.base import SpawnError
 from bernstein.core.agency_loader import AgencyAgent
 from bernstein.core.models import (
     AgentSession,
@@ -28,6 +29,7 @@ from bernstein.core.router import (
     Tier,
     TierAwareRouter,
 )
+from bernstein.core.spawn_rate_limiter import SpawnRateLimitConfig, SpawnRateLimiter
 from bernstein.core.spawner import (
     AgentSpawner,
     _load_role_config,
@@ -45,7 +47,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory(pid=100)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
 
         task = make_task()
         session = spawner.spawn_for_tasks([task])
@@ -61,7 +63,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory(pid=200)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
 
         tasks = [
             make_task(id="T-001", role="backend"),
@@ -74,14 +76,14 @@ class TestSpawnForTasks:
 
     def test_rejects_empty_task_list(self, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
-        spawner = AgentSpawner(adapter, tmp_path, tmp_path)
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=False)
 
         with pytest.raises(ValueError, match="empty task list"):
             spawner.spawn_for_tasks([])
 
     def test_rejects_mixed_roles(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
-        spawner = AgentSpawner(adapter, tmp_path, tmp_path)
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=False)
 
         tasks = [
             make_task(id="T-001", role="backend"),
@@ -94,7 +96,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
 
         tasks = [
             make_task(id="T-001", role="backend", complexity=Complexity.LOW),
@@ -116,7 +118,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
 
         task = make_task(role="qa")
         session = spawner.spawn_for_tasks([task])
@@ -127,7 +129,7 @@ class TestSpawnForTasks:
         adapter = mock_adapter_factory()
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
 
         task = make_task()
         spawner.spawn_for_tasks([task])
@@ -155,7 +157,7 @@ class TestSpawnForTasks:
             "whenToUse: Periodically\n---\n{{SESSION_ID}}\n"
         )
 
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=False)
         task = make_task(role="backend")
         spawner.spawn_for_tasks([task])
 
@@ -172,7 +174,7 @@ class TestLifecycle:
     def test_check_alive_true(self, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
         adapter.is_alive.return_value = True
-        spawner = AgentSpawner(adapter, tmp_path, tmp_path)
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=False)
 
         session = AgentSession(id="test-1", role="backend", pid=42)
         assert spawner.check_alive(session) is True
@@ -180,7 +182,7 @@ class TestLifecycle:
 
     def test_check_alive_false_when_no_pid(self, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
-        spawner = AgentSpawner(adapter, tmp_path, tmp_path)
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=False)
 
         session = AgentSession(id="test-1", role="backend", pid=None)
         assert spawner.check_alive(session) is False
@@ -188,14 +190,14 @@ class TestLifecycle:
     def test_check_alive_dead_process(self, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
         adapter.is_alive.return_value = False
-        spawner = AgentSpawner(adapter, tmp_path, tmp_path)
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=False)
 
         session = AgentSession(id="test-1", role="backend", pid=99)
         assert spawner.check_alive(session) is False
 
     def test_kill_sends_kill_and_marks_dead(self, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
-        spawner = AgentSpawner(adapter, tmp_path, tmp_path)
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=False)
 
         session = AgentSession(id="test-1", role="backend", pid=42)
         spawner.kill(session)
@@ -205,7 +207,7 @@ class TestLifecycle:
 
     def test_kill_no_pid_still_marks_dead(self, tmp_path: Path, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory()
-        spawner = AgentSpawner(adapter, tmp_path, tmp_path)
+        spawner = AgentSpawner(adapter, tmp_path, tmp_path, use_worktrees=False)
 
         session = AgentSession(id="test-1", role="backend", pid=None)
         spawner.kill(session)
@@ -337,7 +339,7 @@ class TestSpawnerWithRouter:
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
         router = _make_router()
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
 
         task = make_task(scope=Scope.LARGE, complexity=Complexity.HIGH)
         session = spawner.spawn_for_tasks([task])
@@ -349,7 +351,7 @@ class TestSpawnerWithRouter:
         adapter = mock_adapter_factory(pid=400)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=None)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=None, use_worktrees=False)
 
         task = make_task()
         session = spawner.spawn_for_tasks([task])
@@ -363,7 +365,7 @@ class TestSpawnerWithRouter:
         templates_dir.mkdir(parents=True)
         # Router with no providers will raise RouterError
         router = TierAwareRouter()
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, router=router, use_worktrees=False)
 
         task = make_task()
         session = spawner.spawn_for_tasks([task])
@@ -376,9 +378,13 @@ class TestSpawnerWithRouter:
         self, tmp_path: Path, make_task, mock_adapter_factory
     ) -> None:
         subprocess.run(["git", "init", str(tmp_path)], capture_output=True, check=True)
-        subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@test.local"], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "config", "user.email", "test@test.local"], capture_output=True, check=True
+        )
         subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], capture_output=True, check=True)
-        subprocess.run(["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"], capture_output=True, check=True)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"], capture_output=True, check=True
+        )
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
 
@@ -408,7 +414,13 @@ class TestSpawnerWithRouter:
         backup_adapter = mock_adapter_factory(pid=901)
         backup_adapter.name.return_value = "gemini"
 
-        spawner = AgentSpawner(mock_adapter_factory(pid=123), templates_dir, tmp_path, router=router)
+        spawner = AgentSpawner(
+            mock_adapter_factory(pid=123),
+            templates_dir,
+            tmp_path,
+            router=router,
+            use_worktrees=False,
+        )
         with patch.object(spawner, "_get_adapter_by_name", side_effect=[failing_adapter, backup_adapter]):
             session = spawner.spawn_for_tasks([make_task()])
 
@@ -447,6 +459,7 @@ class TestSpawnerWithRouter:
             tmp_path,
             router=router,
             role_model_policy={"backend": {"provider": "codex", "model": "openai/gpt-5.4-mini"}},
+            use_worktrees=False,
         )
 
         with patch.object(spawner, "_get_adapter_by_name", return_value=pinned_adapter):
@@ -455,6 +468,26 @@ class TestSpawnerWithRouter:
         assert session.provider == "codex"
         assert session.model_config.model == "openai/gpt-5.4-mini"
         assert session.pid == 777
+
+    def test_spawn_rate_limiter_blocks_repeated_spawns(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
+        adapter = mock_adapter_factory(pid=321)
+        adapter.name.return_value = "claude"
+        templates_dir = tmp_path / "templates" / "roles"
+        templates_dir.mkdir(parents=True)
+        limiter = SpawnRateLimiter(SpawnRateLimitConfig(max_spawns=1, window_seconds=60.0))
+        spawner = AgentSpawner(
+            adapter,
+            templates_dir,
+            tmp_path,
+            use_worktrees=False,
+            spawn_rate_limiter=limiter,
+        )
+
+        spawner.spawn_for_tasks([make_task()])
+        with pytest.raises(SpawnError, match="Spawn rate limit exceeded"):
+            spawner.spawn_for_tasks([make_task(id="task-002")])
+
+        assert adapter.spawn.call_count == 1
 
 
 # --- _render_prompt with agency_catalog ---
@@ -725,12 +758,8 @@ class TestWorktreeIntegration:
         spawner = AgentSpawner(adapter, templates_dir, tmp_path, use_worktrees=True)
         with patch.object(spawner._worktree_mgr, "create", side_effect=WorktreeError("git failed")):
             task = make_task()
-            session = spawner.spawn_for_tasks([task])
-
-            # Should fall back to the main workdir
-            call_kwargs = adapter.spawn.call_args.kwargs
-            assert call_kwargs["workdir"] == tmp_path
-            assert session.pid == 300
+            with pytest.raises(SpawnError, match="Cannot create workspace for agent"):
+                spawner.spawn_for_tasks([task])
 
     def test_spawn_without_worktrees_uses_workdir(self, tmp_path: Path, make_task, mock_adapter_factory) -> None:
         adapter = mock_adapter_factory(pid=400)
@@ -994,7 +1023,7 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=700)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
 
         task = make_task(role="backend", description="Implement JWT authentication")
         spawner.spawn_for_tasks([task])
@@ -1017,7 +1046,7 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=701)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
 
         task = make_task(role="backend", description="Review code quality")
         spawner.spawn_for_tasks([task])
@@ -1033,7 +1062,7 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=702)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=None)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=None, use_worktrees=False)
 
         task = make_task(role="backend", description="Write some code")
         spawner.spawn_for_tasks([task])
@@ -1054,7 +1083,7 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=703)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
 
         task = make_task(role="backend", description="Implement JWT auth")
         session = spawner.spawn_for_tasks([task])
@@ -1073,7 +1102,7 @@ class TestSpawnForTasksWithCatalog:
         adapter = mock_adapter_factory(pid=704)
         templates_dir = tmp_path / "templates" / "roles"
         templates_dir.mkdir(parents=True)
-        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog)
+        spawner = AgentSpawner(adapter, templates_dir, tmp_path, catalog=catalog, use_worktrees=False)
 
         task = make_task(role="backend", description="Write some backend code")
         session = spawner.spawn_for_tasks([task])

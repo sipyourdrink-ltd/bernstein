@@ -564,11 +564,7 @@ def _build_soc2_control_mappings(
         List of control mapping dicts with status and evidence references.
     """
     artifact_types = {a["type"] for a in artifacts}
-    hmac_valid = (
-        verification.get("hmac_chain", {}).get("valid", False)
-        if verification.get("hmac_chain")
-        else False
-    )
+    hmac_valid = verification.get("hmac_chain", {}).get("valid", False) if verification.get("hmac_chain") else False
 
     mappings: list[dict[str, Any]] = []
     for control_id, meta in _SOC2_CONTROL_MAP.items():
@@ -577,15 +573,17 @@ def _build_soc2_control_mappings(
         missing = required_types - artifact_types
         satisfied = len(missing) == 0
 
-        mappings.append({
-            "control_id": control_id,
-            "title": meta["title"],
-            "description": meta["description"],
-            "satisfied": satisfied,
-            "evidence_present": sorted(present),
-            "evidence_missing": sorted(missing),
-            "integrity_verified": hmac_valid,
-        })
+        mappings.append(
+            {
+                "control_id": control_id,
+                "title": meta["title"],
+                "description": meta["description"],
+                "satisfied": satisfied,
+                "evidence_present": sorted(present),
+                "evidence_missing": sorted(missing),
+                "integrity_verified": hmac_valid,
+            }
+        )
 
     return mappings
 
@@ -609,13 +607,15 @@ def _build_merkle_attestation(merkle_dir: Path | None) -> dict[str, Any] | None:
     for seal_file in sorted(merkle_dir.glob("*.json")):
         try:
             seal_data = json.loads(seal_file.read_text())
-            seals.append({
-                "file": seal_file.name,
-                "root_hash": seal_data.get("root_hash", ""),
-                "sealed_at": seal_data.get("sealed_at_iso", ""),
-                "leaf_count": seal_data.get("leaf_count", 0),
-                "algorithm": seal_data.get("algorithm", "sha256"),
-            })
+            seals.append(
+                {
+                    "file": seal_file.name,
+                    "root_hash": seal_data.get("root_hash", ""),
+                    "sealed_at": seal_data.get("sealed_at_iso", ""),
+                    "leaf_count": seal_data.get("leaf_count", 0),
+                    "algorithm": seal_data.get("algorithm", "sha256"),
+                }
+            )
         except (json.JSONDecodeError, OSError):
             continue
 
@@ -904,14 +904,17 @@ def export_soc2_package(
     # --- 8. Merkle root attestation ----------------------------------------
     merkle_attestation = _build_merkle_attestation(merkle_dir if merkle_dir.is_dir() else None)
     if merkle_attestation:
-        (bundle_dir / "merkle_attestation.json").write_text(
-            json.dumps(merkle_attestation, indent=2)
-        )
+        (bundle_dir / "merkle_attestation.json").write_text(json.dumps(merkle_attestation, indent=2))
 
     # --- 9. Evidence summary (PDF-ready Markdown) --------------------------
     evidence_summary = _build_evidence_summary(
-        period, start_date, end_date, artifacts_collected, verification,
-        control_mappings, merkle_attestation,
+        period,
+        start_date,
+        end_date,
+        artifacts_collected,
+        verification,
+        control_mappings,
+        merkle_attestation,
     )
     (bundle_dir / "evidence_summary.md").write_text(evidence_summary)
 

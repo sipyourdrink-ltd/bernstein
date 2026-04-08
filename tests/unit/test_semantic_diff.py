@@ -456,15 +456,10 @@ class TestDefaultTracking:
     def test_added_optional_arg_not_breaking(self) -> None:
         """Adding an arg with a default should NOT produce compatibility issues."""
         before = self._sigs(_SIMPLE_FUNC)  # greet(name, loud=False)
-        after = self._sigs(_ADDED_ARG)     # greet(name, loud=False, prefix="")
+        after = self._sigs(_ADDED_ARG)  # greet(name, loud=False, prefix="")
         changes = detect_signature_changes(before, after)
         # 'prefix' has a default — should not appear in compatibility_issues
-        breaking_issues = [
-            issue
-            for c in changes
-            for issue in c.compatibility_issues
-            if "prefix" in issue
-        ]
+        breaking_issues = [issue for c in changes for issue in c.compatibility_issues if "prefix" in issue]
         assert breaking_issues == []
 
     def test_added_required_arg_is_breaking(self) -> None:
@@ -472,12 +467,7 @@ class TestDefaultTracking:
         before = self._sigs("def f(a: int) -> int: return a")
         after = self._sigs("def f(a: int, b: int) -> int: return a + b")
         changes = detect_signature_changes(before, after)
-        breaking_issues = [
-            issue
-            for c in changes
-            for issue in c.compatibility_issues
-            if "b" in issue
-        ]
+        breaking_issues = [issue for c in changes for issue in c.compatibility_issues if "b" in issue]
         assert len(breaking_issues) == 1
         assert "without default" in breaking_issues[0]
 

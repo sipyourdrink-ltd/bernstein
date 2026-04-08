@@ -52,6 +52,32 @@ if TYPE_CHECKING:
 
 _MAX_RSS_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB
 
+_SPAWNER_TMP_REPO_TESTS = {
+    "test_agent_signals.py",
+    "test_approval_gates.py",
+    "test_conflict_resolution.py",
+    "test_coordination.py",
+    "test_crash_recovery.py",
+    "test_evolution_integration.py",
+    "test_evolve_mode.py",
+    "test_failure_reduction.py",
+    "test_idle_agent_detection.py",
+    "test_mcp_config.py",
+    "test_mcp_manager.py",
+    "test_mcp_registry.py",
+    "test_oauth_refresh.py",
+    "test_orchestrator.py",
+    "test_orchestrator_batch_ingest.py",
+    "test_prompt_caching.py",
+    "test_regression_orchestrator.py",
+    "test_spawner.py",
+    "test_spawner_openclaw_bridge.py",
+    "test_spawner_sandbox.py",
+    "test_unattended_retry.py",
+    "test_wal_recovery.py",
+    "test_workspace.py",
+}
+
 if platform.system() != "Windows":
     try:
         _soft, _hard = resource.getrlimit(resource.RLIMIT_AS)
@@ -87,6 +113,34 @@ def _stable_adaptive_parallelism(monkeypatch: pytest.MonkeyPatch) -> None:
     """
 
     monkeypatch.setattr(AdaptiveParallelism, "_get_cpu_percent", lambda self: 0.0)
+
+
+@pytest.fixture(autouse=True)
+def _init_git_repo_for_spawner_tmp_path_tests(request: pytest.FixtureRequest) -> None:
+    """Initialize a minimal git repo for AgentSpawner tests that use ``tmp_path``.
+
+    Bernstein's spawner defaults to git worktree isolation. A subset of unit tests
+    exercises prompt/bulletin/router behavior on ``tmp_path`` without explicitly
+    disabling worktrees, so they need a committed repo root to be valid.
+    """
+
+    if "tmp_path" not in request.fixturenames:
+        return
+
+    test_file = Path(str(request.node.fspath)).name
+    if test_file not in _SPAWNER_TMP_REPO_TESTS:
+        return
+
+    tmp_path = request.getfixturevalue("tmp_path")
+    if (tmp_path / ".git").exists():
+        return
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=str(tmp_path), capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=str(tmp_path), capture_output=True, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(tmp_path), capture_output=True, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=str(tmp_path), capture_output=True, check=True)
 
 
 def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:

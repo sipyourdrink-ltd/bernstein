@@ -79,7 +79,9 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "wrap-up",
         "replay",
         "diff",
+        "dep-impact",
         "changelog",
+        "fingerprint",
         "merge",
         # Infrastructure groups
         "workspace",

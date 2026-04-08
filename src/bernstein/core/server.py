@@ -1225,7 +1225,7 @@ def create_app(
             "`BERNSTEIN_PORT`.\n\n"
             "## Error Format\n\n"
             "All errors return JSON with a `detail` field:\n\n"
-            "```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n"
+            '```json\n{"detail": "Task not found: task-xyz"}\n```\n\n'
             "| Status | Meaning |\n"
             "|--------|---------|\n"
             "| 400 | Bad request (validation error) |\n"

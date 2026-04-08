@@ -40,6 +40,7 @@ from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.spawn_errors import RetryStrategy, classify_spawn_error
+from bernstein.core.spawn_rate_limiter import SpawnRateLimiter, SpawnRateLimitExceeded
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
@@ -758,6 +759,7 @@ class AgentSpawner:
         backend: AgentBackend = AgentBackend.SUBPROCESS,
         resource_limits: ResourceLimits | None = None,
         warm_pool: WarmPool | None = None,
+        spawn_rate_limiter: SpawnRateLimiter | None = None,
     ) -> None:
         self._enable_caching = enable_caching
         self._resource_limits = resource_limits
@@ -824,6 +826,7 @@ class AgentSpawner:
             pid_dir = workdir / ".sdd" / "runtime" / "pids"
             self._in_process = InProcessAgent(adapter, workdir, pid_dir=pid_dir)
             logger.info("In-process agent backend enabled (wrapping %s)", adapter.name())
+        self._spawn_rate_limiter = spawn_rate_limiter or SpawnRateLimiter()
 
         # Zero-trust: lazy agent identity store — loaded on first use.
         # Stored as a cached property so the auth directory is not created
@@ -1135,6 +1138,19 @@ class AgentSpawner:
                     logger.warning("Router failed to select provider, using fallback: %s", exc)
         elif preferred_provider:
             provider_name = preferred_provider
+
+        provider_for_rate_limit = provider_name or self._adapter.name()
+        try:
+            self._spawn_rate_limiter.acquire(provider_for_rate_limit)
+        except SpawnRateLimitExceeded as exc:
+            logger.warning(
+                "Spawn rate limit exceeded for provider '%s' -- retry in %.1fs",
+                exc.provider,
+                exc.retry_after_s,
+            )
+            raise SpawnError(
+                f"Spawn rate limit exceeded for provider '{exc.provider}'. Retry after {exc.retry_after_s:.1f}s."
+            ) from exc
 
         # Check catalog for a specialist agent before building from templates
         role = tasks[0].role
