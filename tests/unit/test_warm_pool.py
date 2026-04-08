@@ -117,3 +117,62 @@ class TestWarmPool:
         pool = WarmPool(tmp_repo, config=config)
         assert pool.config.pool_size == 5
         assert pool.config.adapter_name == "codex"
+
+    def test_use_git_worktrees_defaults_true(self) -> None:
+        config = WarmPoolConfig()
+        assert config.use_git_worktrees is True
+
+    def test_use_git_worktrees_false_creates_directory(self, tmp_repo: Path) -> None:
+        """With use_git_worktrees=False, entries are plain directories."""
+        config = WarmPoolConfig(pool_size=1, use_git_worktrees=False)
+        pool = WarmPool(tmp_repo, config=config)
+        asyncio.run(pool.fill())
+        entry = pool.acquire()
+        assert entry is not None
+        assert entry.worktree_path.is_dir()
+        assert entry.git_worktree is False
+        asyncio.run(pool.shutdown())
+
+    def test_git_worktree_field_false_by_default(self, tmp_repo: Path) -> None:
+        """Entries on a non-git repo have git_worktree=False."""
+        config = WarmPoolConfig(pool_size=1)
+        pool = WarmPool(tmp_repo, config=config)
+        asyncio.run(pool.fill())
+        # tmp_repo is a fake dir — git worktree add fails, falls back to mkdir
+        entry = pool.acquire()
+        assert entry is not None
+        assert not entry.git_worktree
+        asyncio.run(pool.shutdown())
+
+    def test_release_consumed_removes_entry(self, tmp_repo: Path) -> None:
+        """release_consumed removes the entry from the pool."""
+        config = WarmPoolConfig(pool_size=2, use_git_worktrees=False)
+        pool = WarmPool(tmp_repo, config=config)
+        asyncio.run(pool.fill())
+        assert pool.size == 2
+        entry = pool.acquire()
+        assert entry is not None
+        pool.release_consumed(entry)
+        assert pool.size == 1
+
+    def test_release_consumed_cleans_worktree_directory(self, tmp_repo: Path) -> None:
+        """release_consumed deletes the worktree directory."""
+        config = WarmPoolConfig(pool_size=1, use_git_worktrees=False)
+        pool = WarmPool(tmp_repo, config=config)
+        asyncio.run(pool.fill())
+        entry = pool.acquire()
+        assert entry is not None
+        wt_path = entry.worktree_path
+        assert wt_path.exists()
+        pool.release_consumed(entry)
+        assert not wt_path.exists()
+
+    def test_release_consumed_unknown_entry_is_noop(self, tmp_repo: Path) -> None:
+        """release_consumed on an unknown entry does not raise."""
+        pool = WarmPool(tmp_repo)
+        entry = WarmPoolEntry(
+            entry_id="orphan",
+            worktree_path=tmp_repo / "orphan",
+            adapter_name="mock",
+        )
+        pool.release_consumed(entry)  # Should not raise

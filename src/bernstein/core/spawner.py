@@ -42,6 +42,7 @@ from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
 from bernstein.core.spawn_errors import RetryStrategy, classify_spawn_error
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
+from bernstein.core.warm_pool import WarmPool, WarmPoolEntry
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
 from bernstein.plugins.manager import get_plugin_manager
 from bernstein.templates.renderer import TemplateError, render_role_prompt
@@ -756,6 +757,7 @@ class AgentSpawner:
         runtime_bridge: RuntimeBridge | None = None,
         backend: AgentBackend = AgentBackend.SUBPROCESS,
         resource_limits: ResourceLimits | None = None,
+        warm_pool: WarmPool | None = None,
     ) -> None:
         self._enable_caching = enable_caching
         self._resource_limits = resource_limits
@@ -800,6 +802,8 @@ class AgentSpawner:
                 logger.info("Cleaned %d stale worktree(s) from prior run", cleaned)
         self._worktree_paths: dict[str, Path] = {}
         self._worktree_roots: dict[str, Path] = {}
+        self._warm_pool = warm_pool
+        self._warm_pool_entries: dict[str, WarmPoolEntry] = {}
         self._traces: dict[str, AgentTrace] = {}
         self._trace_store = TraceStore(workdir / ".sdd" / "traces")
         self._runtime_bridge = runtime_bridge
@@ -1264,15 +1268,30 @@ class AgentSpawner:
 
         worktree_mgr = self._worktree_manager_for_repo(worktree_repo_root)
         if self._use_worktrees and worktree_mgr is not None:
-            try:
-                spawn_cwd = worktree_mgr.create(session_id)
+            # Try acquiring a pre-provisioned worktree from the warm pool first.
+            # This avoids the 5-15s ``git worktree add`` overhead on hot paths.
+            warm_entry = self._warm_pool.acquire(role) if self._warm_pool is not None else None
+            if warm_entry is not None:
+                spawn_cwd = warm_entry.worktree_path
                 self._worktree_paths[session_id] = spawn_cwd
                 self._worktree_roots[session_id] = worktree_repo_root
-            except WorktreeError as exc:
-                raise SpawnError(
-                    f"Cannot create workspace for agent {session_id}: {exc}. "
-                    "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually"
-                ) from exc
+                self._warm_pool_entries[session_id] = warm_entry
+                logger.info(
+                    "Using warm pool entry %s for session %s (role=%s)",
+                    warm_entry.entry_id,
+                    session_id,
+                    role,
+                )
+            else:
+                try:
+                    spawn_cwd = worktree_mgr.create(session_id)
+                    self._worktree_paths[session_id] = spawn_cwd
+                    self._worktree_roots[session_id] = worktree_repo_root
+                except WorktreeError as exc:
+                    raise SpawnError(
+                        f"Cannot create workspace for agent {session_id}: {exc}. "
+                        "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually"
+                    ) from exc
 
         # Build per-task MCP config: auto-detected servers merged with base config
         effective_mcp = self._mcp_config
@@ -2200,7 +2219,13 @@ class AgentSpawner:
                         logger.info("Pushed merged work from %s to origin/main", session.id)
                     else:
                         logger.warning("Push failed after merge for %s: %s", session.id, push_result.stderr)
-            worktree_mgr.cleanup(session.id)
+            # If the session used a warm pool entry, clean it up via the pool
+            # (branch/path naming differs from normal worktrees).
+            warm_entry = self._warm_pool_entries.pop(session.id, None)
+            if warm_entry is not None and self._warm_pool is not None:
+                self._warm_pool.release_consumed(warm_entry)
+            else:
+                worktree_mgr.cleanup(session.id)
 
         return merge_result
 
