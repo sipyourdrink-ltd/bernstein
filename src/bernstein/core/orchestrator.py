@@ -1463,6 +1463,21 @@ class Orchestrator:
             self._recover_from_wal()
         except Exception:
             logger.exception("WAL recovery failed (non-fatal) — continuing startup")
+        # Zombie cleanup: terminate orphaned agent processes from prior crashed runs.
+        try:
+            from bernstein.core.zombie_cleanup import scan_and_cleanup_zombies
+
+            _zr = scan_and_cleanup_zombies(self._workdir)
+            if _zr.orphans_found:
+                logger.info(
+                    "Zombie cleanup: found=%d killed=%d stale=%d errors=%d",
+                    _zr.orphans_found,
+                    _zr.orphans_killed,
+                    _zr.stale_removed,
+                    len(_zr.errors),
+                )
+        except Exception:
+            logger.exception("Zombie cleanup failed (non-fatal) — continuing startup")
         consecutive_failures = 0
         max_consecutive_failures = 10
         while self._running or self._has_active_agents():
