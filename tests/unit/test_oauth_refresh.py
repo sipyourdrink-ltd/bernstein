@@ -23,6 +23,16 @@ def _make_spawner(tmp_path: Path, adapter: MagicMock) -> AgentSpawner:
     """Create an AgentSpawner with a git-initialized tmp_path."""
     subprocess.run(["git", "init", str(tmp_path)], capture_output=True, check=True)
     subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "test@test.local"],
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "Test"],
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
         ["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"],
         capture_output=True,
         check=True,
