@@ -1259,3 +1259,65 @@ def fork_cache_key(prompt: str) -> str:
 
     prefix = _extract_cache_prefix(prompt)
     return hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+
+
+def render_spawn_prompt(
+    session_id: str,
+    task: Any,
+    workdir: Path,
+    agent_type: str = "claude",
+) -> str:
+    """Render the task-content block of a spawn prompt.
+
+    Returns a string containing the session header, task fields, and git
+    safety protocol — the three sections most susceptible to prompt injection.
+    Task content is indented with four spaces so that any injected directives
+    (e.g. ``System:``) appear as body text rather than structural headers.
+    Intended for use by the pen-test suite to verify injection resistance.
+
+    Args:
+        session_id: The agent session identifier.
+        task: A task-like object with ``id``, ``role``, ``title``, and
+            ``description`` attributes.
+        workdir: The working directory for the agent session.
+        agent_type: The CLI agent type (e.g. "claude", "codex").
+
+    Returns:
+        A prompt string with task content safely embedded.
+    """
+    # Indent all user-supplied content by 4 spaces so structural directives
+    # (e.g. "System:") cannot be injected as top-level prompt elements.
+    def _indent(text: str) -> str:
+        return "\n".join(f"    {line}" for line in str(text).splitlines())
+
+    lines: list[str] = [
+        f"## Session: {session_id}",
+        f"Agent type: {agent_type}",
+        f"Workdir: {workdir}",
+        "",
+        "## Task",
+        f"ID: {getattr(task, 'id', '')}",
+        f"Role: {getattr(task, 'role', '')}",
+        "",
+        "### Title",
+        _indent(getattr(task, "title", "")),
+        "",
+        "### Description",
+        _indent(getattr(task, "description", "")),
+        "",
+        _render_git_safety_protocol(),
+    ]
+    return "\n".join(lines)
+
+
+def build_git_safety_protocol() -> str:
+    """Return the git safety protocol block.
+
+    Public alias for :func:`_render_git_safety_protocol`, used by the
+    pen-test suite to verify that calling this function does not trigger
+    any subprocess calls.
+
+    Returns:
+        Markdown block with git safety rules.
+    """
+    return _render_git_safety_protocol()
