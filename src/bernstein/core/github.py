@@ -799,7 +799,7 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
                 "--json",
                 "number,title,body,labels",
                 "--limit",
-                "100",
+                "500",
             ],
             capture_output=True,
             text=True,
@@ -831,8 +831,8 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
         m = re.match(r"gh-(\d+)-", path.name)
         if m:
             existing_numbers.add(int(m.group(1)))
-    # Also check claimed/ and done/ so we don't re-create finished work
-    for subdir in ("claimed", "done", "closed"):
+    # Also check issues/, claimed/, done/, closed/ so we don't re-create
+    for subdir in ("issues", "claimed", "done", "closed"):
         check_dir = workdir / ".sdd" / "backlog" / subdir
         if not check_dir.is_dir():
             continue
@@ -841,11 +841,40 @@ def sync_github_issues_to_backlog(workdir: Path) -> int:
             if m:
                 existing_numbers.add(int(m.group(1)))
 
+    # Also build a title dedup set from ALL files in issues/ and open/
+    # (many backlog files are named road-*, agent-*, etc. — not gh-NNN-*)
+    existing_titles: set[str] = set()
+    for src_dir in (backlog_open, workdir / ".sdd" / "backlog" / "issues"):
+        if not src_dir.is_dir():
+            continue
+        for path in [*src_dir.glob("*.yaml"), *src_dir.glob("*.md")]:
+            try:
+                import yaml as _yaml
+
+                raw_text = path.read_text(encoding="utf-8")
+                if raw_text.startswith("---"):
+                    end = raw_text.find("\n---", 3)
+                    if end != -1:
+                        fm_parsed: dict[str, object] = dict(
+                            _yaml.safe_load(raw_text[3:end]) or {}
+                        )
+                        title_val = fm_parsed.get("title")
+                        if title_val:
+                            # Strip common prefixes like "[GH#123] " for matching
+                            t = re.sub(r"^\[GH#\d+\]\s*", "", str(title_val))
+                            existing_titles.add(t.lower().strip())
+            except Exception:
+                continue
+
     created = 0
     for issue in issues:
         number: int = issue.get("number", 0)
         if not number or number in existing_numbers:
             continue
+
+        title: str = issue.get("title", "Untitled issue")
+        if title.lower().strip() in existing_titles:
+            continue  # Already covered by an existing backlog file
 
         title: str = issue.get("title", "Untitled issue")
         body: str = (issue.get("body") or "")[:500]
