@@ -20,6 +20,18 @@ Screen {
     height: 1fr;
 }
 
+/* TUI-008: split-pane panes */
+#left-pane {
+    width: 1fr;
+    height: 1fr;
+}
+
+#right-pane {
+    width: 50%;
+    height: 1fr;
+    border-left: solid #333;
+}
+
 #task-list {
     height: 1fr;
     min-height: 6;
@@ -47,7 +59,7 @@ Screen {
 }
 
 #agent-log {
-    height: 8;
+    height: 1fr;
     min-height: 4;
     border-top: solid #333;
     padding: 0 1;
