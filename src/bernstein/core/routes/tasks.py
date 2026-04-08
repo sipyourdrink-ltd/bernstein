@@ -113,6 +113,25 @@ def _get_node_registry(request: Request) -> NodeRegistry:
     return request.app.state.node_registry  # type: ignore[no-any-return]
 
 
+def _verify_cluster_auth(request: Request, required_scope: str) -> None:
+    """Verify cluster JWT authentication if a ClusterAuthenticator is configured.
+
+    Raises HTTPException 401 on auth failure.
+    """
+    from bernstein.core.cluster_auth import (
+        ClusterAuthenticator,
+        ClusterAuthError,
+    )
+
+    authenticator: ClusterAuthenticator | None = getattr(request.app.state, "cluster_authenticator", None)
+    if authenticator is None or not authenticator.require_auth:
+        return
+    try:
+        authenticator.verify_request(request.headers.get("Authorization"), required_scope)
+    except ClusterAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
 def _get_runtime_dir(request: Request) -> Path:
     return request.app.state.runtime_dir  # type: ignore[no-any-return]
 
@@ -185,6 +204,19 @@ async def create_task(body: TaskCreate, request: Request) -> TaskResponse:
     )
 
     with start_span("task.create", {"task.role": effective_body.role, "task.title": effective_body.title}):
+        # ENT-001: Tenant quota enforcement
+        from bernstein.core.tenant_isolation import TenantIsolationManager  # noqa: TC001
+
+        tenant_mgr: TenantIsolationManager | None = getattr(
+            request.app.state, "tenant_isolation_manager", None,
+        )
+        if tenant_mgr is not None:
+            effective_tenant = request_tenant_id(request)
+            current_count = store.count_by_status(tenant_id=effective_tenant).get("total", 0)
+            allowed, reason = tenant_mgr.check_quota(effective_tenant, current_count)
+            if not allowed:
+                raise HTTPException(status_code=429, detail=reason)
+
         # Pre-create hook: may block via HookBlockingError (T719)
         try:
             pm = get_plugin_manager()
@@ -1183,6 +1215,9 @@ def a2a_add_artifact(a2a_task_id: str, body: A2AArtifactRequest, request: Reques
 @router.post("/cluster/nodes", status_code=201)
 def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
     """Register a new node in the cluster."""
+    from bernstein.core.cluster_auth import SCOPE_NODE_REGISTER
+
+    _verify_cluster_auth(request, SCOPE_NODE_REGISTER)
     node_registry = _get_node_registry(request)
     capacity = NodeCapacity(
         max_agents=body.capacity.max_agents,
@@ -1208,6 +1243,9 @@ def register_node(body: NodeRegisterRequest, request: Request) -> NodeResponse:
 )
 def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -> NodeResponse:
     """Record a heartbeat from a cluster node."""
+    from bernstein.core.cluster_auth import SCOPE_NODE_HEARTBEAT
+
+    _verify_cluster_auth(request, SCOPE_NODE_HEARTBEAT)
     node_registry = _get_node_registry(request)
     capacity: NodeCapacity | None = None
     if body.capacity is not None:
@@ -1227,6 +1265,9 @@ def node_heartbeat(node_id: str, body: NodeHeartbeatRequest, request: Request) -
 @router.delete("/cluster/nodes/{node_id}", status_code=204, responses={404: {"description": "Node not found"}})
 def unregister_node(node_id: str, request: Request) -> Response:
     """Remove a node from the cluster."""
+    from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
+
+    _verify_cluster_auth(request, SCOPE_NODE_ADMIN)
     node_registry = _get_node_registry(request)
     if not node_registry.unregister(node_id):
         raise HTTPException(status_code=404, detail=f"Node '{node_id}' not found")
@@ -1236,6 +1277,9 @@ def unregister_node(node_id: str, request: Request) -> Response:
 @router.post("/cluster/nodes/{node_id}/cordon")
 def cordon_node(node_id: str, request: Request) -> dict[str, str]:
     """Cordon a node -- exclude from scheduling."""
+    from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
+
+    _verify_cluster_auth(request, SCOPE_NODE_ADMIN)
     registry = _get_node_registry(request)
     node = registry.cordon(node_id)
     if node is None:
@@ -1246,6 +1290,9 @@ def cordon_node(node_id: str, request: Request) -> dict[str, str]:
 @router.post("/cluster/nodes/{node_id}/uncordon")
 def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
     """Uncordon a node -- resume accepting tasks."""
+    from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
+
+    _verify_cluster_auth(request, SCOPE_NODE_ADMIN)
     registry = _get_node_registry(request)
     node = registry.uncordon(node_id)
     if node is None:
@@ -1256,6 +1303,9 @@ def uncordon_node(node_id: str, request: Request) -> dict[str, str]:
 @router.post("/cluster/nodes/{node_id}/drain")
 def drain_node(node_id: str, request: Request) -> dict[str, str]:
     """Start draining a node -- cordon + signal agents to finish."""
+    from bernstein.core.cluster_auth import SCOPE_NODE_ADMIN
+
+    _verify_cluster_auth(request, SCOPE_NODE_ADMIN)
     registry = _get_node_registry(request)
     node = registry.start_drain(node_id)
     if node is None:
