@@ -155,3 +155,91 @@ class TestRequestRateLimitMiddleware:
         assert providers.status_code == 200
         assert first_post.status_code == 200
         assert second_post.status_code == 429
+
+    @pytest.mark.anyio
+    async def test_default_write_limit_blocks_after_threshold(self) -> None:
+        """Default write bucket enforces 30 req/min for POST/PUT/DELETE."""
+        from bernstein.core.auth_rate_limiter import RequestRateLimiter
+
+        app = FastAPI()
+        limiter = RequestRateLimiter()
+        app.add_middleware(RequestRateLimitMiddleware, limiter=limiter, write_rpm=2, read_rpm=300)
+        app.state.seed_config = None
+
+        @app.post("/data")
+        async def write_data() -> dict[str, str]:
+            return {"status": "ok"}
+
+        transport = ASGITransport(app=app, client=("198.51.100.6", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            first = await client.post("/data")
+            second = await client.post("/data")
+            third = await client.post("/data")
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert third.status_code == 429
+        assert "Retry-After" in third.headers
+        assert third.json()["bucket"] == "default_write"
+
+    @pytest.mark.anyio
+    async def test_default_read_allows_more_than_write(self) -> None:
+        """Default read bucket is more permissive than write bucket."""
+        from bernstein.core.auth_rate_limiter import RequestRateLimiter
+
+        app = FastAPI()
+        limiter = RequestRateLimiter()
+        # Write limit=1, read limit=3 — reads should not be blocked after 2 writes
+        app.add_middleware(RequestRateLimitMiddleware, limiter=limiter, write_rpm=1, read_rpm=3)
+        app.state.seed_config = None
+
+        @app.get("/data")
+        async def read_data() -> dict[str, str]:
+            return {"status": "ok"}
+
+        @app.post("/data")
+        async def write_data() -> dict[str, str]:
+            return {"status": "ok"}
+
+        transport = ASGITransport(app=app, client=("198.51.100.7", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Exhaust write limit
+            await client.post("/data")
+            blocked_write = await client.post("/data")
+            # Reads should still work
+            first_read = await client.get("/data")
+            second_read = await client.get("/data")
+
+        assert blocked_write.status_code == 429
+        assert first_read.status_code == 200
+        assert second_read.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_sse_concurrency_limit_rejects_excess_connections(self) -> None:
+        """SSE /events endpoint enforces max_concurrent connection limit (429 when at cap)."""
+        from bernstein.core.auth_rate_limiter import RequestRateLimiter
+
+        # Setting sse_max_concurrent=0 simulates already-at-cap state
+        app = FastAPI()
+        rl = RequestRateLimiter()
+        app.add_middleware(RequestRateLimitMiddleware, limiter=rl, sse_max_concurrent=0)
+        app.state.seed_config = None
+
+        @app.get("/events")
+        async def events() -> dict[str, str]:
+            return {"status": "ok"}
+
+        @app.get("/events/cost")
+        async def cost_events() -> dict[str, str]:
+            return {"status": "ok"}
+
+        transport = ASGITransport(app=app, client=("198.51.100.8", 123))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp_events = await client.get("/events")
+            resp_cost = await client.get("/events/cost")
+
+        assert resp_events.status_code == 429
+        assert resp_events.json()["bucket"] == "sse"
+        assert "Retry-After" in resp_events.headers
+        assert resp_cost.status_code == 429
+        assert resp_cost.json()["bucket"] == "sse"

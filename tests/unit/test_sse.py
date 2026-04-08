@@ -118,6 +118,56 @@ class TestSSEBus:
         assert q2.qsize() == 1
         assert len(bus._subscribers) == 4  # q1, q2, q_intercept, new_q
 
+    def test_mark_read_updates_timestamp(self) -> None:
+        """mark_read refreshes the subscriber's last-read timestamp."""
+        import time
+
+        bus = SSEBus(stale_timeout_s=0.01)
+        queue = bus.subscribe()
+        # Make it look stale
+        bus._subscriber_last_read[id(queue)] = time.time() - 1.0
+        # After mark_read the timestamp is fresh and cleanup_stale should keep it
+        bus.mark_read(queue)
+        removed = bus.cleanup_stale()
+        assert removed == 0
+        assert bus.subscriber_count == 1
+
+    def test_cleanup_stale_removes_inactive_subscribers(self) -> None:
+        """cleanup_stale evicts subscribers that haven't consumed messages."""
+        bus = SSEBus(stale_timeout_s=0.0)
+        queue = bus.subscribe()
+        # Force last_read into the past so it appears stale
+        bus._subscriber_last_read[id(queue)] = 0.0
+        removed = bus.cleanup_stale()
+        assert removed == 1
+        assert bus.subscriber_count == 0
+
+    def test_cleanup_stale_preserves_fresh_subscribers(self) -> None:
+        """cleanup_stale does not remove recently-active subscribers."""
+        bus = SSEBus(stale_timeout_s=60.0)
+        queue = bus.subscribe()
+        bus.mark_read(queue)
+        removed = bus.cleanup_stale()
+        assert removed == 0
+        assert bus.subscriber_count == 1
+
+    def test_cleanup_stale_mixed_subscribers(self) -> None:
+        """cleanup_stale selectively removes only stale subscribers."""
+        bus = SSEBus(stale_timeout_s=60.0)
+        fresh_queue = bus.subscribe()
+        stale_queue = bus.subscribe()
+
+        bus.mark_read(fresh_queue)
+        # Force stale queue's timestamp into the past
+        bus._subscriber_last_read[id(stale_queue)] = 0.0
+
+        removed = bus.cleanup_stale()
+        assert removed == 1
+        assert bus.subscriber_count == 1
+        # Verify the fresh one survived
+        bus.publish("task_update", "{}")
+        assert fresh_queue.qsize() == 1
+
 
 # --- SSE endpoint integration tests (non-blocking) ---
 

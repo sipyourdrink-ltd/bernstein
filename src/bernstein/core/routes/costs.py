@@ -93,12 +93,22 @@ def cost_events(request: Request) -> StreamingResponse:
     sse_bus = _get_sse_bus(request)
     queue = sse_bus.subscribe()
 
+    # Timeout for individual queue.get() calls — if no message arrives
+    # within this window (including heartbeats), the connection is dead.
+    _READ_TIMEOUT_S = 60.0
+
     async def event_generator() -> AsyncGenerator[str, None]:
         try:
             # Initial status
             yield 'event: heartbeat\ndata: {"connected": true}\n\n'
+            sse_bus.mark_read(queue)
             while True:
-                message = await queue.get()
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=_READ_TIMEOUT_S)
+                except TimeoutError:
+                    # No message (not even a heartbeat) in _READ_TIMEOUT_S — client likely disconnected
+                    break
+                sse_bus.mark_read(queue)
                 # Intercept bulletin events for cost updates
                 if "event: bulletin" in message:
                     try:
