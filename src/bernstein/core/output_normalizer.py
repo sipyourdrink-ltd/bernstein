@@ -24,6 +24,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Pattern to detect file paths mentioned in output (e.g. "src/foo.py", "tests/bar.py")
+_FILE_PATH_PATTERN = re.compile(r"\b([\w./\\-]+\.\w{1,6})\b")
+
 
 # ---------------------------------------------------------------------------
 # Event types
@@ -268,3 +271,73 @@ class OutputNormalizer:
             List of NormalizedEvents.
         """
         return [self.parse_line(line, adapter=adapter, session_id=session_id) for line in lines]
+
+    def extract_completion(
+        self,
+        lines: list[str],
+        *,
+        adapter: str = "",
+        session_id: str = "",
+    ) -> CompletionData:
+        """Extract structured completion data from all output lines.
+
+        Scans all lines to determine overall status, collects a summary
+        from completion/error events, and aggregates file changes.
+
+        Args:
+            lines: Raw output lines from an agent run.
+            adapter: Adapter name that produced the output.
+            session_id: Agent session identifier.
+
+        Returns:
+            CompletionData with status, summary, and files_changed.
+        """
+        events = self.parse_lines(lines, adapter=adapter, session_id=session_id)
+        files_changed: list[str] = []
+        summary_parts: list[str] = []
+        status = "unknown"
+
+        for event in events:
+            if event.event_type == EventType.COMPLETION:
+                status = "done"
+                summary_parts.append(event.message)
+            elif event.event_type == EventType.ERROR and status != "done":
+                status = "failed"
+                summary_parts.append(event.message)
+            elif event.event_type == EventType.FILE_CHANGE:
+                file_path = event.metadata.get("file", "")
+                if file_path and file_path not in files_changed:
+                    files_changed.append(file_path)
+                # Also scan the raw line for additional file paths
+                for m in _FILE_PATH_PATTERN.finditer(event.raw_line):
+                    candidate = m.group(1)
+                    if candidate not in files_changed:
+                        files_changed.append(candidate)
+
+        summary = "; ".join(summary_parts[:3]) if summary_parts else ""
+        return CompletionData(
+            status=status,
+            summary=summary,
+            files_changed=files_changed,
+            adapter=adapter,
+            session_id=session_id,
+        )
+
+
+@dataclass
+class CompletionData:
+    """Structured completion data extracted from agent output.
+
+    Attributes:
+        status: Overall run status — ``"done"``, ``"failed"``, or ``"unknown"``.
+        summary: Human-readable summary (up to 3 key messages joined by ``;``).
+        files_changed: List of file paths mentioned as changed in the output.
+        adapter: Adapter that produced the output.
+        session_id: Agent session identifier.
+    """
+
+    status: str
+    summary: str
+    files_changed: list[str] = field(default_factory=list)
+    adapter: str = ""
+    session_id: str = ""

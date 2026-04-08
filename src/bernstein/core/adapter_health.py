@@ -65,6 +65,7 @@ class AdapterStats:
         disabled: Whether this adapter is currently disabled.
         disabled_at: Monotonic timestamp when the adapter was disabled.
         timestamps: List of (timestamp, success) tuples for windowed tracking.
+        latencies_ms: List of spawn latencies (milliseconds) for successful spawns.
     """
 
     adapter_name: str
@@ -73,6 +74,7 @@ class AdapterStats:
     disabled: bool = False
     disabled_at: float = 0.0
     timestamps: list[tuple[float, bool]] = field(default_factory=list[tuple[float, bool]])
+    latencies_ms: list[float] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -85,6 +87,13 @@ class AdapterStats:
         if self.total == 0:
             return 0.0
         return self.failures / self.total
+
+    @property
+    def avg_latency_ms(self) -> float:
+        """Average spawn latency in milliseconds, or 0.0 if no samples."""
+        if not self.latencies_ms:
+            return 0.0
+        return sum(self.latencies_ms) / len(self.latencies_ms)
 
 
 # ---------------------------------------------------------------------------
@@ -134,21 +143,28 @@ class AdapterHealthMonitor:
         stats.successes = sum(1 for _, ok in stats.timestamps if ok)
         stats.failures = sum(1 for _, ok in stats.timestamps if not ok)
 
-    def record_success(self, adapter_name: str) -> None:
+    def record_success(self, adapter_name: str, latency_ms: float | None = None) -> None:
         """Record a successful spawn for the given adapter.
 
         Args:
             adapter_name: Adapter identifier.
+            latency_ms: Spawn latency in milliseconds, if available.
         """
         stats = self._get_stats(adapter_name)
         stats.timestamps.append((time.monotonic(), True))
+        if latency_ms is not None and latency_ms >= 0:
+            stats.latencies_ms.append(latency_ms)
+            # Keep only the last 100 latency samples to bound memory
+            if len(stats.latencies_ms) > 100:
+                stats.latencies_ms = stats.latencies_ms[-100:]
         self._prune_window(stats)
         logger.debug(
-            "Adapter %s: success (rate=%.0f%%, %d/%d)",
+            "Adapter %s: success (rate=%.0f%%, %d/%d, avg_latency=%.0fms)",
             adapter_name,
             (1 - stats.failure_rate) * 100,
             stats.successes,
             stats.total,
+            stats.avg_latency_ms,
         )
 
     def record_failure(self, adapter_name: str) -> None:
