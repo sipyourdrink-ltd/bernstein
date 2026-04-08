@@ -32,6 +32,9 @@ node_modules/
 # Bernstein workspace state — .sdd must NEVER be committed to git (CI enforced)
 .sdd/
 
+# MkDocs build output
+site/
+
 # Design specs and development plans (private)
 docs/specs/
 docs/plans/
