@@ -8,6 +8,8 @@ from bernstein.tui.agent_states import (
     AGENT_STATE_COLORS,
     AGENT_STATE_INDICATORS,
     AGENT_STATE_LABELS,
+    AGENT_STATE_SPINNER_FRAMES,
+    ANIMATED_STATES,
     AgentState,
     AgentStateThresholds,
     agent_state_color,
@@ -15,7 +17,9 @@ from bernstein.tui.agent_states import (
     agent_state_label,
     classify_agent_state,
     classify_from_api,
+    get_spinner_frame,
     render_agent_state,
+    render_agent_state_animated,
     render_agent_state_compact,
 )
 
@@ -170,3 +174,88 @@ class TestClassifyFromApi:
             "last_heartbeat": now - 600,
         }
         assert classify_from_api(raw, now=now) == AgentState.STALLED
+
+
+class TestMergingAndIdleStates:
+    def test_merging_status_is_merging(self) -> None:
+        result = classify_agent_state(pid=1234, status="merging")
+        assert result == AgentState.MERGING
+
+    def test_committing_status_is_merging(self) -> None:
+        result = classify_agent_state(pid=1234, status="committing")
+        assert result == AgentState.MERGING
+
+    def test_pushing_status_is_merging(self) -> None:
+        result = classify_agent_state(pid=1234, status="pushing")
+        assert result == AgentState.MERGING
+
+    def test_idle_status_is_idle(self) -> None:
+        result = classify_agent_state(status="idle")
+        assert result == AgentState.IDLE
+
+    def test_waiting_status_is_idle(self) -> None:
+        result = classify_agent_state(status="waiting")
+        assert result == AgentState.IDLE
+
+    def test_paused_status_is_idle(self) -> None:
+        result = classify_agent_state(status="paused")
+        assert result == AgentState.IDLE
+
+    def test_merging_color_is_blue(self) -> None:
+        assert agent_state_color(AgentState.MERGING) == "blue"
+
+    def test_idle_color_is_gray(self) -> None:
+        assert agent_state_color(AgentState.IDLE) == "bright_black"
+
+    def test_api_merging(self) -> None:
+        raw = {"pid": 1234, "status": "merging"}
+        assert classify_from_api(raw) == AgentState.MERGING
+
+
+class TestSpinnerFrames:
+    def test_animated_states_have_frames(self) -> None:
+        for state in ANIMATED_STATES:
+            assert state in AGENT_STATE_SPINNER_FRAMES
+            assert len(AGENT_STATE_SPINNER_FRAMES[state]) > 0
+
+    def test_spawning_is_animated(self) -> None:
+        assert AgentState.SPAWNING in ANIMATED_STATES
+
+    def test_running_is_animated(self) -> None:
+        assert AgentState.RUNNING in ANIMATED_STATES
+
+    def test_merging_is_animated(self) -> None:
+        assert AgentState.MERGING in ANIMATED_STATES
+
+    def test_dead_is_not_animated(self) -> None:
+        assert AgentState.DEAD not in ANIMATED_STATES
+
+    def test_spinner_cycles_frames(self) -> None:
+        frames = AGENT_STATE_SPINNER_FRAMES[AgentState.SPAWNING]
+        seen = {get_spinner_frame(AgentState.SPAWNING, i) for i in range(len(frames))}
+        assert len(seen) == len(frames)
+
+    def test_spinner_fallback_for_static_state(self) -> None:
+        frame = get_spinner_frame(AgentState.DEAD, tick=0)
+        assert frame == agent_state_indicator(AgentState.DEAD)
+
+    def test_spinner_frame_is_single_char(self) -> None:
+        for state in ANIMATED_STATES:
+            for tick in range(8):
+                frame = get_spinner_frame(state, tick)
+                assert len(frame) == 1
+
+    def test_render_animated_running(self) -> None:
+        text = render_agent_state_animated(AgentState.RUNNING, tick=0)
+        assert "running" in text.plain
+
+    def test_render_animated_merging(self) -> None:
+        text = render_agent_state_animated(AgentState.MERGING, tick=3)
+        assert "merging" in text.plain
+
+    def test_render_animated_differs_across_ticks(self) -> None:
+        frames = AGENT_STATE_SPINNER_FRAMES[AgentState.SPAWNING]
+        if len(frames) > 1:
+            t0 = render_agent_state_animated(AgentState.SPAWNING, tick=0).plain
+            t1 = render_agent_state_animated(AgentState.SPAWNING, tick=1).plain
+            assert t0 != t1
