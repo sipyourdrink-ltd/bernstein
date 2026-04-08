@@ -494,31 +494,26 @@ task_payload["description"] += f"\n\n<!-- trigger: {trigger_name} source: {sourc
 
 ## State Transitions
 
-```
-[event_received]
-  → (invalid signature/payload)                    → [rejected, no action]
-  → (no matching triggers)                         → [ignored, no action]
-  → (all triggers suppressed by conditions)        → [suppressed, no action]
-  → (all triggers deduplicated)                    → [deduplicated, no action]
-  → (task(s) created)                              → [task:open, awaiting orchestrator]
+```mermaid
+stateDiagram-v2
+    [*] --> event_received
+    event_received --> rejected : invalid signature/payload
+    event_received --> ignored : no matching triggers
+    event_received --> suppressed : all triggers suppressed
+    event_received --> deduplicated : all triggers deduplicated
+    event_received --> task_open : task(s) created
 
-[task:open]
-  → (orchestrator claims)                          → [task:claimed]
+    task_open --> task_claimed : orchestrator claims
+    task_claimed --> task_in_progress : agent spawned
+    task_in_progress --> task_done : agent completes
+    task_in_progress --> task_failed : agent fails
+    task_failed --> task_open : retryable + retries remain
+    task_failed --> [*] : max retries exhausted (terminal)
 
-[task:claimed]
-  → (agent spawned)                                → [task:in_progress]
-
-[task:in_progress]
-  → (agent completes)                              → [task:done]
-  → (agent fails)                                  → [task:failed]
-
-[task:failed]
-  → (retryable + retries remain)                   → [task:open] (via retry logic)
-  → (max retries exhausted)                        → [task:failed] (terminal, quarantine)
-
-[trigger_system_error]
-  → (config parse failure)                         → [trigger_system_disabled]
-  → (operator fixes config)                        → [trigger_system_enabled]
+    state trigger_error {
+        trigger_system_error --> trigger_disabled : config parse failure
+        trigger_disabled --> trigger_enabled : operator fixes config
+    }
 ```
 
 ---

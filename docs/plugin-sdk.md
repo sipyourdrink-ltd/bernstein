@@ -34,13 +34,13 @@ machinery used by pytest.  The orchestrator fires named hooks at key points in
 the task and agent lifecycle.  Any installed plugin that implements a hook
 receives the call automatically.
 
-```
-orchestrator fires hook
-    └─▶ PluginManager._safe_call("on_task_created", ...)
-            └─▶ pluggy calls every registered plugin that has on_task_created
-                    ├─▶ LoggingPlugin.on_task_created(...)
-                    ├─▶ SlackNotifier.on_task_created(...)
-                    └─▶ MetricsPlugin.on_task_created(...)
+```mermaid
+graph LR
+    Orch["Orchestrator fires hook"] --> PM["PluginManager._safe_call\n('on_task_created', ...)"]
+    PM --> Pluggy["pluggy dispatches to\nregistered plugins"]
+    Pluggy --> LP["LoggingPlugin"]
+    Pluggy --> SN["SlackNotifier"]
+    Pluggy --> MP["MetricsPlugin"]
 ```
 
 All hook calls are **fire-and-forget**: exceptions raised by a plugin are

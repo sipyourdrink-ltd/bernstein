@@ -144,31 +144,24 @@ The system is fully integrated into the project's CI/CD pipeline:
 ## How It Works
 
 ### Detection Flow
-```
-pip-audit/safety
-       ↓
-CVE list (package, version, CVE-ID, fix-versions)
-       ↓
-check_dependencies.py
-       ↓
-JSON report (.sdd/dependency-report.json)
-       ↓
-GitHub Actions → Creates issue or triggers fix
+
+```mermaid
+graph TD
+    A["pip-audit / safety"] --> B["CVE list\n(package, version, CVE-ID, fix-versions)"]
+    B --> C["check_dependencies.py"]
+    C --> D["JSON report\n(.sdd/dependency-report.json)"]
+    D --> E["GitHub Actions\nCreates issue or triggers fix"]
 ```
 
 ### Fix Flow
-```
-dependency-report.json
-       ↓
-apply_dependency_fixes.py
-       ↓
-[Update pyproject.toml]
-       ↓
-[uv sync] → update uv.lock
-       ↓
-[Test suite] → validate changes
-       ↓
-[git push] → create PR
+
+```mermaid
+graph TD
+    A["dependency-report.json"] --> B["apply_dependency_fixes.py"]
+    B --> C["Update pyproject.toml"]
+    C --> D["uv sync → update uv.lock"]
+    D --> E["Test suite → validate changes"]
+    E --> F["git push → create PR"]
 ```
 
 ## Testing

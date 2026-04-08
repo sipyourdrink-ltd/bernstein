@@ -30,53 +30,23 @@ Bernstein orchestrates multiple LLM agents working on software development tasks
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    SELF-EVOLUTION FEEDBACK LOOP                         │
-└─────────────────────────────────────────────────────────────────────────┘
-
-    ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-    │   METRICS    │────▶│   ANALYSIS   │────▶│   UPGRADE    │
-    │  COLLECTION  │     │   ENGINE     │     │   DECISION   │
-    └──────────────┘     └──────────────┘     └──────────────┘
-           ▲                                         │
-           │                                         ▼
-           │                              ┌──────────────┐
-           │                              │  EXECUTION   │
-           │                              │   ENGINE     │
-           │                              └──────────────┘
-           │                                         │
-           └─────────────────────────────────────────┘
-                              │
-                              ▼
-                    ┌─────────────────┐
-                    │  STATE STORE    │
-                    │  (.sdd/metrics) │
-                    └─────────────────┘
+```mermaid
+graph LR
+    Metrics["Metrics\nCollection"] --> Analysis["Analysis\nEngine"] --> Upgrade["Upgrade\nDecision"]
+    Upgrade --> Exec["Execution\nEngine"]
+    Exec --> Store["State Store\n(.sdd/metrics)"]
+    Exec --> Metrics
 ```
 
 ### Component 1: Metrics Collection
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    METRICS COLLECTION                        │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │   TASK      │  │   AGENT     │  │   COST      │         │
-│  │   METRICS   │  │   METRICS   │  │   METRICS   │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘         │
-│         │                │                │                 │
-│         ▼                ▼                ▼                 │
-│  ┌─────────────────────────────────────────────────┐       │
-│  │              METRICS AGGREGATOR                  │       │
-│  └─────────────────────────────────────────────────┘       │
-│                         │                                   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────────────┐       │
-│  │           TIME-SERIES STORAGE (.sdd)            │       │
-│  └─────────────────────────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Metrics Collection
+        TM["Task Metrics"] & AM["Agent Metrics"] & CM["Cost Metrics"]
+        TM & AM & CM --> Agg["Metrics Aggregator"]
+        Agg --> TS["Time-Series Storage (.sdd)"]
+    end
 ```
 
 **Task Metrics:**
@@ -116,33 +86,13 @@ Bernstein orchestrates multiple LLM agents working on software development tasks
 
 ### Component 2: Analysis Engine
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     ANALYSIS ENGINE                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌─────────────────┐    ┌─────────────────┐                │
-│  │  TREND DETECTOR │    │  ANOMALY DETECTOR│                │
-│  │  (7-day trends) │    │  (outliers)      │                │
-│  └─────────────────┘    └─────────────────┘                │
-│           │                     │                           │
-│           ▼                     ▼                           │
-│  ┌─────────────────────────────────────────┐               │
-│  │         ROOT CAUSE ANALYZER             │               │
-│  │  - Correlation analysis                 │               │
-│  │  - Bottleneck identification            │               │
-│  │  - Cost driver analysis                 │               │
-│  └─────────────────────────────────────────┘               │
-│                         │                                   │
-│                         ▼                                   │
-│  ┌─────────────────────────────────────────┐               │
-│  │        IMPROVEMENT OPPORTUNITIES        │               │
-│  │  - Model routing optimization           │               │
-│  │  - Provider switching recommendations   │               │
-│  │  - Policy adjustment suggestions        │               │
-│  │  - Role template improvements           │               │
-│  └─────────────────────────────────────────┘               │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Analysis Engine
+        TD_["Trend Detector\n(7-day trends)"] & AD["Anomaly Detector\n(outliers)"]
+        TD_ & AD --> RCA["Root Cause Analyzer\nCorrelation · Bottleneck · Cost drivers"]
+        RCA --> IO["Improvement Opportunities\nRouting · Providers · Policy · Templates"]
+    end
 ```
 
 **Analysis Algorithms:**
@@ -169,44 +119,15 @@ Bernstein orchestrates multiple LLM agents working on software development tasks
 
 ### Component 3: Upgrade Decision Logic
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                  UPGRADE DECISION LOGIC                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────────────────────────────────────┐           │
-│  │           TRIGGER CONDITIONS                  │           │
-│  │  - Cost threshold exceeded                    │           │
-│  │  - Success rate below target                  │           │
-│  │  - Performance degradation detected           │           │
-│  │  - New provider available                     │           │
-│  │  - Scheduled review period                    │           │
-│  └──────────────────────────────────────────────┘           │
-│                         │                                    │
-│                         ▼                                    │
-│  ┌──────────────────────────────────────────────┐           │
-│  │           UPGRADE CATEGORIES                  │           │
-│  │                                               │           │
-│  │  ┌─────────────┐  ┌─────────────┐            │           │
-│  │  │   POLICY    │  │   ROUTING   │            │           │
-│  │  │   UPDATE    │  │   RULES     │            │           │
-│  │  └─────────────┘  └─────────────┘            │           │
-│  │                                               │           │
-│  │  ┌─────────────┐  ┌─────────────┐            │           │
-│  │  │   MODEL     │  │   ROLE      │            │           │
-│  │  │   ROUTING   │  │   TEMPLATES │            │           │
-│  │  └─────────────┘  └─────────────┘            │           │
-│  └──────────────────────────────────────────────┘           │
-│                         │                                    │
-│                         ▼                                    │
-│  ┌──────────────────────────────────────────────┐           │
-│  │           DECISION CRITERIA                   │           │
-│  │  - Expected improvement > threshold           │           │
-│  │  - Risk level acceptable                      │           │
-│  │  - Cost of change < expected savings          │           │
-│  │  - No conflicting upgrades pending            │           │
-│  └──────────────────────────────────────────────┘           │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Upgrade Decision Logic
+        Trig["Trigger Conditions\nCost spike · Success drop · Degradation\nNew provider · Scheduled review"]
+        Trig --> Cat["Upgrade Categories"]
+        Cat --> PU["Policy Update"] & RR["Routing Rules"]
+        Cat --> MR["Model Routing"] & RT["Role Templates"]
+        PU & RR & MR & RT --> DC["Decision Criteria\nImprovement > threshold · Risk acceptable\nCost < savings · No conflicts"]
+    end
 ```
 
 **Trigger Conditions:**
@@ -243,22 +164,12 @@ Bernstein orchestrates multiple LLM agents working on software development tasks
 
 ### Component 4: Execution Engine
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    EXECUTION ENGINE                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-│  │  VALIDATE   │───▶│   APPLY     │───▶│   VERIFY    │     │
-│  │   CHANGE    │    │   CHANGE    │    │   CHANGE    │     │
-│  └─────────────┘    └─────────────┘    └─────────────┘     │
-│         │                  │                  │              │
-│         ▼                  ▼                  ▼              │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-│  │   ROLLBACK  │◀───│   MONITOR   │◀───│   ALERT     │     │
-│  │   IF NEEDED │    │   RESULTS   │    │   IF FAIL   │     │
-│  └─────────────┘    └─────────────┘    └─────────────┘     │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph LR
+    subgraph Execution Engine
+        V["Validate\nChange"] --> A["Apply\nChange"] --> Ve["Verify\nChange"]
+        Ve -->|fail| Al["Alert"] --> Mon["Monitor\nResults"] --> Rb["Rollback\nif needed"]
+    end
 ```
 
 **Execution Flow:**

@@ -180,22 +180,23 @@ This workflow runs during the release process (triggered by git tag `v*`) and de
 
 ## State Transitions
 
-```
-[pending]
-  → (step 1: tests OK, step 2: baselines loaded, step 3: comparison OK, step 4: no breaking changes)
-    → [release_gate_pass] → [publish_succeeds]
+```mermaid
+stateDiagram-v2
+    [*] --> pending
 
-[pending]
-  → (step 4: breaking changes detected, operator acknowledges in release notes)
-    → [release_gate_acknowledged] → [publish_succeeds_with_warning]
+    pending --> release_gate_pass : all steps OK, no breaking changes
+    release_gate_pass --> publish_succeeds
 
-[pending]
-  → (step 4: breaking changes detected, no operator acknowledgment)
-    → [release_gate_fail] → [publish_blocked] → [operator_review_required]
+    pending --> release_gate_acknowledged : breaking changes + operator acknowledges
+    release_gate_acknowledged --> publish_succeeds_with_warning
 
-[pending]
-  → (any step failure — tests, baselines, comparison)
-    → [error_state] → [publish_blocked] → [manual_investigation_required]
+    pending --> release_gate_fail : breaking changes, no acknowledgment
+    release_gate_fail --> publish_blocked
+    publish_blocked --> operator_review_required
+
+    pending --> error_state : step failure (tests/baselines/comparison)
+    error_state --> publish_blocked_2 : publish blocked
+    publish_blocked_2 --> manual_investigation_required
 ```
 
 ---

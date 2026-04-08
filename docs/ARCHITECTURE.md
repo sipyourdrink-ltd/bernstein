@@ -10,71 +10,33 @@ The orchestrator is **deterministic Python** — zero LLM tokens on coordination
 
 ## System diagram
 
-```
-                         ┌──────────────────────────────────────┐
-                         │          User / bernstein.yaml       │
-                         │          (goal, tasks, plan)         │
-                         └──────────────────┬───────────────────┘
-                                            │
-                                            ▼
-                         ┌──────────────────────────────────────┐
-                         │         Task Server (FastAPI)        │
-                         │         REST API on :8052            │
-                         │         /tasks, /status, /metrics    │
-                         └──────────────────┬───────────────────┘
-                                            │
-                         ┌──────────────────▼───────────────────┐
-                         │           Orchestrator               │
-                         │         (tick loop, deterministic)   │
-                         └──┬──────────┬──────────┬─────────────┘
-                            │          │          │
-              ┌─────────────▼──┐ ┌─────▼──────┐ ┌▼──────────────┐
-              │ Tick Pipeline  │ │  Task      │ │ Agent         │
-              │ (fetch, batch) │ │ Lifecycle  │ │ Lifecycle     │
-              │                │ │(claim,     │ │(heartbeat,    │
-              │                │ │ spawn,     │ │ crash, reap)  │
-              │                │ │ complete)  │ │               │
-              └────────────────┘ └────────────┘ └───────────────┘
-                            │          │          │
-                            └──────────┼──────────┘
-                                       │
-                    ┌───────────────────▼───────────────────┐
-                    │              Spawner                   │
-                    │   (build prompt, select adapter,       │
-                    │    launch in git worktree)             │
-                    └───────────────────┬───────────────────┘
-                                        │
-              ┌─────────────────────────┼─────────────────────────┐
-              │                         │                         │
-    ┌─────────▼────────┐    ┌──────────▼──────────┐   ┌─────────▼────────┐
-    │  Claude Adapter  │    │  Codex Adapter      │   │  Gemini Adapter  │
-    │  (and 10 more)   │    │                     │   │                  │
-    └─────────┬────────┘    └──────────┬──────────┘   └─────────┬────────┘
-              │                        │                        │
-              ▼                        ▼                        ▼
-    ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-    │  git worktree   │      │  git worktree   │      │  git worktree   │
-    │  + role prompt  │      │  + role prompt  │      │  + role prompt  │
-    └────────┬────────┘      └────────┬────────┘      └────────┬────────┘
-             │                        │                        │
-             └────────────────────────┼────────────────────────┘
-                                      │
-                                      ▼
-                         ┌──────────────────────────────────────┐
-                         │         Quality Gates                │
-                         │   (lint, type-check, tests, PII)     │
-                         └──────────────────┬───────────────────┘
-                                            │
-                              ┌─────────────▼─────────────┐
-                              │     Janitor + Reviewer    │
-                              │  (verify signals, LLM     │
-                              │   review, mark done/fail) │
-                              └─────────────┬─────────────┘
-                                            │
-                                            ▼
-                         ┌──────────────────────────────────────┐
-                         │         Git (commit / PR / merge)    │
-                         └──────────────────────────────────────┘
+```mermaid
+graph TD
+    User["User / bernstein.yaml\n(goal, tasks, plan)"]
+    TaskServer["Task Server (FastAPI)\nREST API on :8052\n/tasks, /status, /metrics"]
+    Orch["Orchestrator\n(tick loop, deterministic)"]
+    TP["Tick Pipeline\n(fetch, batch)"]
+    TL["Task Lifecycle\n(claim, spawn, complete)"]
+    AL["Agent Lifecycle\n(heartbeat, crash, reap)"]
+    Spawner["Spawner\n(build prompt, select adapter,\nlaunch in git worktree)"]
+    Claude["Claude Adapter\n(and 10 more)"]
+    Codex["Codex Adapter"]
+    Gemini["Gemini Adapter"]
+    WT1["git worktree\n+ role prompt"]
+    WT2["git worktree\n+ role prompt"]
+    WT3["git worktree\n+ role prompt"]
+    QG["Quality Gates\n(lint, type-check, tests, PII)"]
+    Janitor["Janitor + Reviewer\n(verify signals, LLM review,\nmark done/fail)"]
+    Git["Git (commit / PR / merge)"]
+
+    User --> TaskServer --> Orch
+    Orch --> TP & TL & AL
+    TP & TL & AL --> Spawner
+    Spawner --> Claude & Codex & Gemini
+    Claude --> WT1
+    Codex --> WT2
+    Gemini --> WT3
+    WT1 & WT2 & WT3 --> QG --> Janitor --> Git
 ```
 
 ---
