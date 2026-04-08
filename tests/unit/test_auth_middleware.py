@@ -95,3 +95,131 @@ def test_legacy_token_grants_access_when_it_matches() -> None:
 
     assert response.status_code == 200
     assert response.json()["claims"] == {"legacy": True}
+
+
+# ---------------------------------------------------------------------------
+# Zero-trust agent JWT task-scope enforcement
+# ---------------------------------------------------------------------------
+
+
+def _app_with_agent_identity_store(tmp_path: Any) -> tuple[TestClient, Any]:
+    """Build a test app with an AgentIdentityStore for zero-trust JWT tests."""
+    from pathlib import Path
+
+    from bernstein.core.agent_identity import AgentIdentityStore
+
+    auth_dir = Path(str(tmp_path))
+    store = AgentIdentityStore(auth_dir)
+
+    app = FastAPI()
+    app.add_middleware(SSOAuthMiddleware, agent_identity_store=store)
+
+    @app.post("/tasks/{task_id}/complete")
+    async def complete_task(task_id: str, request: Request) -> dict[str, Any]:
+        return {"task_id": task_id, "agent_id": getattr(request.state, "auth_claims", {}).get("agent_id")}
+
+    @app.get("/status")
+    async def get_status(request: Request) -> dict[str, Any]:
+        return {"ok": True}
+
+    return TestClient(app, raise_server_exceptions=False), store
+
+
+def test_agent_jwt_with_task_scope_allows_own_task(tmp_path: Any) -> None:
+    """An agent JWT scoped to task-A allows completing task-A."""
+    client, store = _app_with_agent_identity_store(tmp_path)
+    _, token = store.create_identity("agent-session-1", "backend", task_ids=["task-abc"])
+
+    response = client.post(
+        "/tasks/task-abc/complete",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"result_summary": "done"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["task_id"] == "task-abc"
+    assert data["agent_id"] == "agent-session-1"
+
+
+def test_agent_jwt_with_task_scope_denies_out_of_scope_task(tmp_path: Any) -> None:
+    """An agent JWT scoped to task-A must be denied when it tries to act on task-B."""
+    client, store = _app_with_agent_identity_store(tmp_path)
+    _, token = store.create_identity("agent-session-2", "backend", task_ids=["task-abc"])
+
+    response = client.post(
+        "/tasks/task-xyz/complete",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"result_summary": "done"},
+    )
+
+    assert response.status_code == 403
+    detail = response.json()["detail"]
+    assert "task-xyz" in detail
+    assert "task-abc" in detail
+
+
+def test_agent_jwt_without_task_scope_is_unrestricted(tmp_path: Any) -> None:
+    """An orchestrator/manager agent JWT (task_ids=[]) may act on any task."""
+    client, store = _app_with_agent_identity_store(tmp_path)
+    # No task_ids → unrestricted manager token
+    _, token = store.create_identity("manager-session-1", "manager", task_ids=[])
+
+    response = client.post(
+        "/tasks/any-task-id/complete",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"result_summary": "done"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_agent_jwt_read_requests_not_scope_checked(tmp_path: Any) -> None:
+    """GET requests bypass task-scope enforcement even for scoped agents."""
+    client, store = _app_with_agent_identity_store(tmp_path)
+    _, token = store.create_identity("agent-session-3", "backend", task_ids=["task-abc"])
+
+    response = client.get("/status", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+
+
+def test_invalid_bearer_token_rejected_in_dev_mode(tmp_path: Any) -> None:
+    """In dev mode, an invalid Bearer token (not a valid agent JWT) is rejected."""
+    client, _store = _app_with_agent_identity_store(tmp_path)
+
+    response = client.post(
+        "/tasks/task-abc/complete",
+        headers={"Authorization": "Bearer not-a-valid-token"},
+        json={"result_summary": "done"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_check_agent_task_scope_returns_none_for_non_task_paths() -> None:
+    """Non task-mutating paths (bulletin, status) never trigger scope errors."""
+    from bernstein.core.auth_middleware import _check_agent_task_scope
+
+    assert _check_agent_task_scope("/bulletin", ["task-abc"]) is None
+    assert _check_agent_task_scope("/status", ["task-abc"]) is None
+    assert _check_agent_task_scope("/tasks", ["task-abc"]) is None
+
+
+def test_check_agent_task_scope_allows_scoped_task() -> None:
+    """_check_agent_task_scope allows access when task_id is in the allowed list."""
+    from bernstein.core.auth_middleware import _check_agent_task_scope
+
+    assert _check_agent_task_scope("/tasks/task-abc/complete", ["task-abc", "task-def"]) is None
+    assert _check_agent_task_scope("/tasks/task-def/fail", ["task-abc", "task-def"]) is None
+
+
+def test_check_agent_task_scope_denies_out_of_scope_task() -> None:
+    """_check_agent_task_scope returns error message for out-of-scope task."""
+    from bernstein.core.auth_middleware import _check_agent_task_scope
+
+    error = _check_agent_task_scope("/tasks/task-xyz/complete", ["task-abc"])
+
+    assert error is not None
+    assert "task-xyz" in error
+    assert "task-abc" in error
