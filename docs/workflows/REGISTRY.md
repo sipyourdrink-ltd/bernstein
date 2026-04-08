@@ -26,6 +26,8 @@ Last updated: 2026-04-08
 | Event-sourced task transitions (CQRS) | `WORKFLOW-event-sourced-task-transitions.md` | Draft | Append-only event log per task; state derived by replaying events, not mutable status field |
 | Multi-tenant task isolation (ENT-001) | `WORKFLOW-multi-tenant-task-isolation.md` | Review | Tenant-scoped task CRUD, backlog, metrics, quotas — WAL/audit dirs provisioned but unused |
 | Cluster node auth hardening (ENT-002) | `WORKFLOW-cluster-node-auth.md` | Review | JWT-based auth for node registration/heartbeats — revocation is in-memory only |
+| Cluster task stealing (ENT-007) | `WORKFLOW-cluster-task-stealing.md` | Draft | Pull-based task stealing with CAS locking — missing assigned_node/pinned_node fields, cooldown not persisted |
+| Per-tenant rate limiting & quotas (ENT-008) | `WORKFLOW-tenant-rate-limiting-quota.md` | Draft | API rate limits, task/hour, agent concurrency, cost budget — TenantRateLimiter exists but not wired to middleware |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
@@ -100,6 +102,28 @@ Tenant data path: `.sdd/{tenant_id}/`
 - `src/bernstein/core/routes/tasks.py` (cluster endpoints: /cluster/nodes/*)
 
 Cluster config path: `ClusterAuthConfig` (code-level config, no file)
+
+### Cluster task stealing workflows
+
+- `src/bernstein/core/cluster_task_stealing.py` — TaskStealingEngine, cooldowns, steal history
+- `src/bernstein/core/cluster.py` — TaskStealPolicy (find_steal_pairs), NodeRegistry
+- `src/bernstein/core/routes/tasks.py` — POST /cluster/steal route
+- `src/bernstein/core/task_store.py` — force_claim(), claim_next(), CAS versioning
+- `src/bernstein/cli/worker_cmd.py` — WorkerLoop (claim/spawn cycle)
+
+Config path: `cluster.steal` in `bernstein.yaml` (not yet parsed — hardcoded thresholds in route)
+
+### Tenant rate limiting and quota workflows
+
+- `src/bernstein/core/tenant_rate_limiter.py` — TenantRateLimiter (sliding-window checks, usage snapshots)
+- `src/bernstein/core/tenanting.py` — TenantConfig, TenantRegistry, request_tenant_id()
+- `src/bernstein/core/tenant_isolation.py` — TenantIsolationManager, TenantQuota
+- `src/bernstein/core/rate_limiter.py` — RateLimitBucketConfig, endpoint-scoped limits
+- `src/bernstein/core/auth_rate_limiter.py` — RequestRateLimitMiddleware (per-IP, not per-tenant)
+- `src/bernstein/core/routes/tasks.py` — tenant-scoped task CRUD, quota check in POST /tasks
+- `src/bernstein/core/routes/costs.py` — tenant-scoped cost queries
+
+Config path: `tenants:` and `rate_limit:` sections in `bernstein.yaml`
 
 ### Review and quality workflows
 
