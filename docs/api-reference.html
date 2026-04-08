@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>API Reference — Bernstein Task Server</title>
+  <meta name="description" content="Auto-generated OpenAPI reference for the Bernstein Task Server REST API. 216 endpoints covering tasks, agents, costs, quality gates, webhooks, auth, plans, and cluster management." />
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/api-reference.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="API Reference — Bernstein" />
+  <meta property="og:description" content="Bernstein REST API: 216 endpoints for multi-agent orchestration — tasks, agents, costs, webhooks, auth, plans, cluster." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/api-reference.html" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="API Reference — Bernstein" />
+  <meta name="twitter:description" content="Bernstein REST API: 216 endpoints for multi-agent orchestration." />
+  <link rel="author" href="https://alexchernysh.com" />
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Bernstein","item":"https://chernistry.github.io/bernstein/"},{"@type":"ListItem","position":2,"name":"API Reference","item":"https://chernistry.github.io/bernstein/api-reference.html"}]}
+</script>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="script.js"></script>
+  <style>
+    /* Override body to allow full-height Redoc */
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .api-ref-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Redoc wrapper */
+    #redoc-container {
+      flex: 1;
+    }
+
+    /* Redoc theme overrides for dark mode */
+    [data-theme="dark"] redoc-container,
+    [data-theme="dark"] .redoc-wrap {
+      background: var(--bg, #0f172a);
+    }
+
+    /* Banner above Redoc */
+    .api-ref-banner {
+      background: var(--surface, #1e293b);
+      border-bottom: 1px solid var(--border, #334155);
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .api-ref-banner p {
+      margin: 0;
+      font-size: 0.875rem;
+      color: var(--text-secondary, #94a3b8);
+    }
+
+    .api-ref-banner a {
+      color: var(--accent, #7c3aed);
+    }
+
+    .api-ref-banner code {
+      background: var(--code-bg, #0f172a);
+      padding: 0.1em 0.4em;
+      border-radius: 4px;
+      font-size: 0.8em;
+    }
+
+    .api-ref-banner .badge-group {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .api-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      font-size: 0.75rem;
+      padding: 0.2em 0.6em;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+
+    .api-badge.endpoints {
+      background: #1e3a5f;
+      color: #60a5fa;
+    }
+
+    .api-badge.version {
+      background: #14532d;
+      color: #4ade80;
+    }
+
+    .api-badge.openapi {
+      background: #3b1f6b;
+      color: #c084fc;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="compare/index.html" class="nav-link" data-page="compare/index.html">Compare</a>
+      <a href="docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+      <a href="blog.html" class="nav-link" data-page="blog.html">Blog</a>
+      <a href="limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub ↗
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu">
+        <i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- Info banner -->
+<div class="api-ref-banner">
+  <div class="badge-group">
+    <span class="api-badge endpoints">216 endpoints</span>
+    <span class="api-badge version">v1.0.0</span>
+    <span class="api-badge openapi">OpenAPI 3.1</span>
+  </div>
+  <p>
+    Auto-generated from the live server spec &middot;
+    Base URL: <code>http://127.0.0.1:8052</code> &middot;
+    <a href="openapi.json" target="_blank" rel="noopener">Download openapi.json</a> &middot;
+    <a href="openapi-reference.md">Narrative reference</a>
+  </p>
+</div>
+
+<!-- Redoc container -->
+<div class="api-ref-body">
+  <div id="redoc-container"></div>
+</div>
+
+<script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+<script>
+  (function () {
+    // Determine color scheme for Redoc theming
+    var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var storedTheme = localStorage.getItem('theme');
+    var isDark = storedTheme === 'dark' || (!storedTheme && prefersDark);
+
+    var colors = isDark
+      ? {
+          primaryColor: '#7c3aed',
+          backgroundColor: '#0f172a',
+          textColor: '#e2e8f0',
+          secondaryTextColor: '#94a3b8',
+          headerBg: '#1e293b',
+          borderColor: '#334155',
+          codeBackground: '#1e293b',
+          codeFontSize: '13px',
+        }
+      : {
+          primaryColor: '#6d28d9',
+          backgroundColor: '#ffffff',
+          textColor: '#1e293b',
+          secondaryTextColor: '#64748b',
+          headerBg: '#f8fafc',
+          borderColor: '#e2e8f0',
+          codeBackground: '#f1f5f9',
+          codeFontSize: '13px',
+        };
+
+    Redoc.init(
+      'openapi.json',
+      {
+        theme: {
+          colors: {
+            primary: { main: colors.primaryColor },
+            text: { primary: colors.textColor, secondary: colors.secondaryTextColor },
+            border: { dark: colors.borderColor, light: colors.borderColor },
+            http: {
+              get: '#0369a1',
+              post: '#15803d',
+              put: '#b45309',
+              delete: '#b91c1c',
+              patch: '#7c3aed',
+            },
+          },
+          schema: {
+            nestedBackground: isDark ? '#162032' : '#f8fafc',
+            typeNameColor: colors.primaryColor,
+          },
+          sidebar: {
+            backgroundColor: isDark ? '#111827' : '#f8fafc',
+            textColor: colors.textColor,
+            activeTextColor: colors.primaryColor,
+            width: '260px',
+          },
+          rightPanel: {
+            backgroundColor: isDark ? '#0c1a2e' : '#1e293b',
+            textColor: '#e2e8f0',
+          },
+          typography: {
+            fontSize: '15px',
+            lineHeight: '1.6',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+            headings: {
+              fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+            },
+            code: {
+              fontSize: colors.codeFontSize,
+              fontFamily: '"SF Mono", "Fira Code", Consolas, "Liberation Mono", monospace',
+              color: isDark ? '#a78bfa' : '#6d28d9',
+              backgroundColor: colors.codeBackground,
+            },
+          },
+        },
+        scrollYOffset: 64,        // nav height
+        hideDownloadButton: false,
+        disableSearch: false,
+        expandResponses: '200,201',
+        pathInMiddlePanel: false,
+        noAutoAuth: false,
+        nativeScrollbars: false,
+        requiredPropsFirst: true,
+        sortPropsAlphabetically: false,
+        showExtensions: false,
+        hideSingleRequestSampleTab: false,
+        jsonSampleExpandLevel: 2,
+        enumSkipQuotes: false,
+      },
+      document.getElementById('redoc-container'),
+      function () {
+        // Redoc loaded — sync with site theme toggle
+        document.addEventListener('themeChange', function (e) {
+          // Reload page to re-init Redoc with new theme colors
+          // (Redoc doesn't support runtime theme switching)
+          location.reload();
+        });
+      }
+    );
+  })();
+</script>
+
+</body>
+</html>

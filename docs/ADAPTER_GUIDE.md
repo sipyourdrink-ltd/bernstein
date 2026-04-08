@@ -1,7 +1,7 @@
 # Adapter Selection Guide
 
-Bernstein supports 19 adapters for different CLI coding agents. This guide covers
-when to use each, what they support, and how to configure them.
+Bernstein supports 19 adapters for different CLI coding agents. This guide helps
+you pick the right one for your use case.
 
 All adapters implement the `CLIAdapter` interface (`adapters/base.py`): `spawn()`,
 process monitoring via PID, log capture to `.sdd/runtime/<session>.log`, and
@@ -13,29 +13,30 @@ Source of truth: `src/bernstein/adapters/registry.py`, individual adapter files.
 
 ## Comparison Matrix
 
-| Adapter | Provider | Models | Cost Tier | Tool Use | Structured Output | MCP Support | Install |
-|---------|----------|--------|-----------|----------|-------------------|-------------|---------|
-| `claude` | Anthropic | opus, sonnet, haiku | $$-$$$ | Full (scoped by role) | JSON schema enforced | Yes (--mcp-config) | `npm i -g @anthropic-ai/claude-code` |
-| `codex` | OpenAI | gpt-4o, o3, o4-mini | $$-$$$ | Full | JSON (--json) | No | `npm i -g @openai/codex` |
-| `gemini` | Google | gemini-2.5-pro/flash | Free-$$$ | Full | JSON (--output-format json) | No | `npm i -g @google/gemini-cli` |
-| `aider` | Multi | Any via provider prefix | $-$$$ | File editing | No | No | `pip install aider-chat` |
-| `amp` | Sourcegraph | Anthropic + OpenAI models | $$-$$$ | Full | No | No | `brew install amp` |
-| `qwen` | Multi | qwen3-coder, qwen3.6 | Free-$$ | Full | No | No | Qwen CLI |
-| `ollama` | Local | deepseek-r1, qwen2.5-coder, etc. | Free | File editing (via Aider) | No | No | `brew install ollama` + `pip install aider-chat` |
-| `cody` | Sourcegraph | Anthropic/OpenAI/Google via SG | $$ | Chat only | No | No | Sourcegraph CLI (`sg`) |
-| `cursor` | Cursor | Cursor's model routing | $$ | Full | No | Yes (--add-mcp) | `cursor` CLI from cursor.com |
-| `goose` | Block | Anthropic models | $$-$$$ | Full | No | No | Block's Goose CLI |
-| `roo-code` | Multi | Anthropic + OpenAI | $$-$$$ | Full | JSON (--output-format json) | No | `npm i -g @roo-code/cli` |
-| `continue` | Multi | Anthropic/OpenAI/Google | $-$$$ | Full | No | Via config.yaml | `npm i -g @continuedev/continue-cli` |
-| `opencode` | Multi | Any configured provider | $-$$$ | Full | JSON (--format json) | No | OpenCode CLI |
-| `kiro` | AWS | AWS-managed models | $$ | Full | No | No | `kiro-cli` |
-| `kilo` | Stackblitz | Any via provider routing | $-$$$ | Full | No | Yes (--mcp) | `kilo` from kilocode.ai |
-| `tabby` | Self-hosted | Server-configured model | Free | Agent tasks | No | No | `npm i -g @tabbyml/tabby-agent` + server |
-| `iac` | N/A | N/A (Terraform/Pulumi) | N/A | IaC plan+apply | No | No | `terraform` or `pulumi` |
-| `generic` | Any | Pass-through | Varies | Depends on CLI | No | No | User-provided binary |
-| `mock` | None | None (simulated) | Free | Simulated | Simulated | No | Built-in (testing only) |
+| Adapter | Provider | Models | Reasoning | Cost Tier | Tool Use | Structured Output | MCP | Recommended Use Case |
+|---------|----------|--------|-----------|-----------|----------|-------------------|-----|----------------------|
+| `claude` | Anthropic | opus, sonnet, haiku | ★★★★★ (opus) / ★★★★ (sonnet) / ★★ (haiku) | $$–$$$ | Full (role-scoped) | JSON schema enforced | Yes | Primary workhorse — architecture, features, tests, docs |
+| `codex` | OpenAI | o3, o4-mini, gpt-4o | ★★★★★ (o3/o4) / ★★★★ (gpt-4o) | $$–$$$ | Full | JSON (`--json`) | No | Provider diversity; OpenAI reasoning models |
+| `gemini` | Google | gemini-2.5-pro, flash | ★★★★ (pro) / ★★★ (flash) | Free–$$$ | Full | JSON (`--output-format json`) | No | Free-tier usage; cost-effective medium tasks |
+| `aider` | Multi | Any (Anthropic/OpenAI/Azure) | Inherited from model | $–$$$ | File editing | No | Commit-per-change workflows; focused file edits |
+| `amp` | Sourcegraph | Anthropic + OpenAI models | ★★★★★ (opus/o3) | $$–$$$ | Full | No | Sourcegraph-integrated teams; codebase-aware context |
+| `qwen` | Multi | qwen3-coder, qwen3.6-plus | ★★★ | Free–$$ | Full | No | Cost-sensitive; low-complexity tasks; free OpenRouter |
+| `ollama` | Local | deepseek-r1, qwen2.5-coder, phi4 | ★★★ (r1:70b) / ★★ (7b) | Free | File editing (via Aider) | No | Air-gapped; privacy-sensitive; zero API cost |
+| `cody` | Sourcegraph | Anthropic/OpenAI/Google (via SG) | Inherited from model | $$ | Chat only | No | Sourcegraph-integrated with codebase-level context |
+| `cursor` | Cursor | Cursor's model routing | ★★★★ | $$ | Full | No | Teams with Cursor subscriptions |
+| `goose` | Block | Anthropic models | ★★★★ | $$–$$$ | Full | No | Teams already using Block's Goose |
+| `roo-code` | Multi | Anthropic + OpenAI | ★★★★ | $$–$$$ | Full | JSON (`--output-format json`) | No | VS Code extension users wanting headless CLI |
+| `continue` | Multi | Anthropic/OpenAI/Google | Inherited from model | $–$$$ | Full | No | Teams with existing Continue.dev configurations |
+| `opencode` | Multi | Any configured provider | Inherited from model | $–$$$ | Full | JSON (`--format json`) | No | Multi-provider setups; single CLI interface |
+| `kiro` | AWS | AWS-managed models | ★★★ | $$ | Full | No | AWS-centric teams using AWS AI services |
+| `kilo` | Stackblitz | Any (via provider routing) | Inherited from model | $–$$$ | Full | No | Web development; Stackblitz-integrated teams |
+| `tabby` | Self-hosted | Server-configured model | Varies | Free | Agent tasks | No | Self-hosted; compliance-restricted; full model control |
+| `iac` | N/A | N/A (Terraform/Pulumi) | N/A | N/A | IaC plan+apply | No | Infrastructure tasks — pair with LLM adapter for codegen |
+| `generic` | Any | Pass-through | Depends on CLI | Varies | Depends on CLI | No | Unlisted CLIs; prototyping new adapters |
+| `mock` | None | None (simulated) | N/A | Free | Simulated | Simulated | Unit and integration tests only |
 
-**Cost tier key:** Free = no API cost, $ = <$0.01/task, $$ = $0.01-$0.10/task, $$$ = $0.10+/task.
+**Reasoning key:** ★★★★★ Exceptional (frontier reasoning) · ★★★★ Strong · ★★★ Good · ★★ Basic · ★ Minimal  
+**Cost tier key:** Free = no API cost · $ = <$0.01/task · $$ = $0.01–$0.10/task · $$$ = $0.10+/task  
 Actual costs depend on task complexity, token usage, and provider pricing.
 
 ---

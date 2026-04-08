@@ -116,7 +116,231 @@
       <li><strong>Future-proof</strong> — your task graph, roles, and prompts outlive any single model generation.</li>
     </ul>
 
-    <h2 id="matrix">Feature matrix</h2>
+    <h2 id="matrix">Adapter comparison matrix</h2>
+
+    <p>Quick-reference for choosing an adapter. Reasoning scale: ★★★★★ exceptional (frontier) · ★★★★ strong · ★★★ good · ★★ basic. Cost: Free = no API cost · $ = &lt;$0.01/task · $$ = $0.01–$0.10 · $$$ = $0.10+.</p>
+
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Adapter</th>
+          <th>Provider</th>
+          <th>Models</th>
+          <th>Reasoning</th>
+          <th>Cost Tier</th>
+          <th>Tool Use</th>
+          <th>Structured Output</th>
+          <th>MCP</th>
+          <th>Best For</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><a href="#claude"><code>claude</code></a></td>
+          <td>Anthropic</td>
+          <td>opus / sonnet / haiku</td>
+          <td>★★★★★ opus · ★★★★ sonnet</td>
+          <td>$$–$$$</td>
+          <td>Full (role-scoped)</td>
+          <td>JSON schema enforced</td>
+          <td>✓</td>
+          <td>Primary workhorse — architecture, features, tests, docs</td>
+        </tr>
+        <tr>
+          <td><a href="#codex"><code>codex</code></a></td>
+          <td>OpenAI</td>
+          <td>o3, o4-mini, gpt-4o</td>
+          <td>★★★★★ o3 · ★★★★ gpt-4o</td>
+          <td>$$–$$$</td>
+          <td>Full</td>
+          <td>JSON (<code>--json</code>)</td>
+          <td>—</td>
+          <td>Provider diversity; OpenAI reasoning models</td>
+        </tr>
+        <tr>
+          <td><a href="#gemini"><code>gemini</code></a></td>
+          <td>Google</td>
+          <td>gemini-2.5-pro / flash</td>
+          <td>★★★★ pro · ★★★ flash</td>
+          <td>Free–$$$</td>
+          <td>Full</td>
+          <td>JSON (<code>--output-format</code>)</td>
+          <td>—</td>
+          <td>Free-tier usage; cost-effective medium tasks</td>
+        </tr>
+        <tr>
+          <td><a href="#aider"><code>aider</code></a></td>
+          <td>Multi</td>
+          <td>Any (Anthropic/OpenAI/Azure)</td>
+          <td>Inherited from model</td>
+          <td>$–$$$</td>
+          <td>File editing</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Commit-per-change workflows; focused file edits</td>
+        </tr>
+        <tr>
+          <td><a href="#amp"><code>amp</code></a></td>
+          <td>Sourcegraph</td>
+          <td>opus 4.6, sonnet, o3</td>
+          <td>★★★★★ opus/o3</td>
+          <td>$$–$$$</td>
+          <td>Full</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Sourcegraph-integrated teams; codebase-aware context</td>
+        </tr>
+        <tr>
+          <td><a href="#qwen"><code>qwen</code></a></td>
+          <td>Multi</td>
+          <td>qwen3-coder, qwen3.6-plus</td>
+          <td>★★★</td>
+          <td>Free–$$</td>
+          <td>Full</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Cost-sensitive; low-complexity tasks; free OpenRouter</td>
+        </tr>
+        <tr>
+          <td><a href="#ollama"><code>ollama</code></a></td>
+          <td>Local</td>
+          <td>deepseek-r1, qwen2.5-coder, phi4</td>
+          <td>★★★ r1:70b · ★★ 7b</td>
+          <td>Free</td>
+          <td>File editing (Aider)</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Air-gapped; privacy-sensitive; zero API cost</td>
+        </tr>
+        <tr>
+          <td><a href="#cody"><code>cody</code></a></td>
+          <td>Sourcegraph</td>
+          <td>Via SG routing</td>
+          <td>Inherited from model</td>
+          <td>$$</td>
+          <td>Chat</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Sourcegraph-integrated with codebase-level context</td>
+        </tr>
+        <tr>
+          <td><a href="#cursor"><code>cursor</code></a></td>
+          <td>Cursor</td>
+          <td>Cursor's model routing</td>
+          <td>★★★★</td>
+          <td>$$</td>
+          <td>Full</td>
+          <td>—</td>
+          <td>✓ (<code>--add-mcp</code>)</td>
+          <td>Teams with Cursor subscriptions</td>
+        </tr>
+        <tr>
+          <td><a href="#goose"><code>goose</code></a></td>
+          <td>Block</td>
+          <td>Anthropic models</td>
+          <td>★★★★</td>
+          <td>$$–$$$</td>
+          <td>Full</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Teams already using Block's Goose</td>
+        </tr>
+        <tr>
+          <td><a href="#roo-code"><code>roo-code</code></a></td>
+          <td>Multi</td>
+          <td>Anthropic + OpenAI</td>
+          <td>★★★★</td>
+          <td>$$–$$$</td>
+          <td>Full</td>
+          <td>JSON (<code>--output-format</code>)</td>
+          <td>—</td>
+          <td>VS Code extension users wanting headless CLI</td>
+        </tr>
+        <tr>
+          <td><a href="#continue"><code>continue</code></a></td>
+          <td>Multi</td>
+          <td>Anthropic/OpenAI/Google</td>
+          <td>Inherited from model</td>
+          <td>$–$$$</td>
+          <td>Full</td>
+          <td>—</td>
+          <td>Via config</td>
+          <td>Teams with existing Continue.dev configurations</td>
+        </tr>
+        <tr>
+          <td><a href="#opencode"><code>opencode</code></a></td>
+          <td>Multi</td>
+          <td>Any configured provider</td>
+          <td>Inherited from model</td>
+          <td>$–$$$</td>
+          <td>Full</td>
+          <td>JSON (<code>--format json</code>)</td>
+          <td>—</td>
+          <td>Multi-provider setups; single CLI interface</td>
+        </tr>
+        <tr>
+          <td><a href="#kiro"><code>kiro</code></a></td>
+          <td>AWS</td>
+          <td>AWS-managed models</td>
+          <td>★★★</td>
+          <td>$$</td>
+          <td>Full</td>
+          <td>—</td>
+          <td>—</td>
+          <td>AWS-centric teams using AWS AI services</td>
+        </tr>
+        <tr>
+          <td><a href="#kilo"><code>kilo</code></a></td>
+          <td>Stackblitz</td>
+          <td>Any (provider routing)</td>
+          <td>Inherited from model</td>
+          <td>$–$$$</td>
+          <td>Full</td>
+          <td>—</td>
+          <td>✓ (<code>--mcp</code>)</td>
+          <td>Web development; Stackblitz-integrated teams</td>
+        </tr>
+        <tr>
+          <td><a href="#tabby"><code>tabby</code></a></td>
+          <td>Self-hosted</td>
+          <td>Server-configured</td>
+          <td>Varies</td>
+          <td>Free</td>
+          <td>Agent tasks</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Self-hosted; compliance-restricted; full model control</td>
+        </tr>
+        <tr>
+          <td><a href="#iac"><code>iac</code></a></td>
+          <td>N/A</td>
+          <td>N/A (Terraform/Pulumi)</td>
+          <td>N/A</td>
+          <td>N/A</td>
+          <td>IaC plan+apply</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Infrastructure tasks — pair with LLM adapter for codegen</td>
+        </tr>
+        <tr>
+          <td><a href="#generic"><code>generic</code></a></td>
+          <td>Any</td>
+          <td>Pass-through</td>
+          <td>Depends on CLI</td>
+          <td>Varies</td>
+          <td>Depends on CLI</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Unlisted CLIs; prototyping new adapters</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Detailed feature matrix</h3>
+
+    <p>Adapter capabilities at a glance:</p>
 
     <div class="table-wrap">
     <table>
@@ -188,14 +412,14 @@
           <td>—</td>
           <td>—</td>
           <td>✓ (stream-json)</td>
+          <td>✓ (--json)</td>
           <td>—</td>
-          <td>—</td>
-          <td>—</td>
+          <td>✓ (--output-format json)</td>
           <td>—</td>
           <td>✓ (--format json)</td>
+          <td>✓ (--format json)</td>
           <td>—</td>
-          <td>—</td>
-          <td>—</td>
+          <td>✓ (--output-format json)</td>
           <td>—</td>
         </tr>
         <tr>
