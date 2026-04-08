@@ -26,6 +26,8 @@ Last updated: 2026-04-08
 | Event-sourced task transitions (CQRS) | `WORKFLOW-event-sourced-task-transitions.md` | Draft | Append-only event log per task; state derived by replaying events, not mutable status field |
 | Multi-tenant task isolation (ENT-001) | `WORKFLOW-multi-tenant-task-isolation.md` | Approved | v1.2 — tenant-scoped CRUD, backlog, metrics. Implementation guidance for WAL scoping, tenant audit, quota wiring. Open Qs resolved. |
 | Cluster node auth hardening (ENT-002) | `WORKFLOW-cluster-node-auth.md` | Approved | v1.2 — JWT auth for node reg/heartbeats. Implementation guidance for persistent revocation, user_id bypass fix, dead code cleanup, auth failure rate limiting. Open Qs resolved. |
+| Audit integrity on startup (ENT-003) | `WORKFLOW-audit-integrity-on-startup.md` | Draft | `verify_on_startup()` exists but is dead code — never called from orchestrator. Spec defines wiring pattern + insertion point. |
+| SOC 2 evidence export (ENT-004) | `WORKFLOW-soc2-evidence-export.md` | Draft | Raw JSONL export exists; spec adds control mappings (CC6.1, CC7.2), evidence summaries, Merkle attestation, structured formatting. |
 | Cluster task stealing (ENT-007) | `WORKFLOW-cluster-task-stealing.md` | Draft | Pull-based task stealing with CAS locking — missing assigned_node/pinned_node fields, cooldown not persisted |
 | Per-tenant rate limiting & quotas (ENT-008) | `WORKFLOW-tenant-rate-limiting-quota.md` | Draft | API rate limits, task/hour, agent concurrency, cost budget — TenantRateLimiter exists but not wired to middleware |
 
@@ -124,6 +126,18 @@ Config path: `cluster.steal` in `bernstein.yaml` (not yet parsed — hardcoded t
 - `src/bernstein/core/routes/costs.py` — tenant-scoped cost queries
 
 Config path: `tenants:` and `rate_limit:` sections in `bernstein.yaml`
+
+### Audit integrity and compliance workflows
+
+- `src/bernstein/core/audit.py` — HMAC-chained append-only audit log
+- `src/bernstein/core/audit_integrity.py` — startup integrity verification (ENT-003)
+- `src/bernstein/core/audit_export.py` — SIEM export adapters (ENT-012)
+- `src/bernstein/core/compliance.py` — compliance presets, SOC 2 export (ENT-004)
+- `src/bernstein/core/merkle.py` — Merkle tree integrity seals
+- `src/bernstein/cli/audit_cmd.py` — CLI entry points for audit/seal/verify/export
+
+Config path: `.sdd/config/audit-key` (HMAC key), `.sdd/config/compliance.json` (preset)
+Data path: `.sdd/audit/*.jsonl` (daily logs), `.sdd/audit/merkle/` (seals)
 
 ### Review and quality workflows
 
