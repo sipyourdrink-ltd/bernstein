@@ -9,6 +9,7 @@ from bernstein.core.semantic_diff import (
     CallSiteMismatch,
     FunctionSignature,
     SemanticDiffReport,
+    _has_defaults,
     analyze_semantic_diff,
     detect_signature_changes,
     extract_signatures_from_source,
@@ -408,3 +409,131 @@ class TestFormatReport:
         )
         text = format_report(report)
         assert "No such file" in text
+
+
+# ---------------------------------------------------------------------------
+# Default-arg tracking
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultTracking:
+    def _sigs(self, source: str) -> dict[str, FunctionSignature]:
+        return extract_signatures_from_source(source, "test.py")
+
+    def test_defaults_extracted(self) -> None:
+        sigs = self._sigs(_SIMPLE_FUNC)
+        sig = sigs["greet"]
+        assert "loud" in sig.defaults
+        assert "name" not in sig.defaults
+
+    def test_no_defaults(self) -> None:
+        sigs = self._sigs("def plain(a, b): pass")
+        assert sigs["plain"].defaults == set()
+
+    def test_all_defaults(self) -> None:
+        sigs = self._sigs("def f(a=1, b=2, c=3): pass")
+        assert sigs["f"].defaults == {"a", "b", "c"}
+
+    def test_kwonly_defaults(self) -> None:
+        sigs = self._sigs("def f(a, *, b=10, c): pass")
+        sig = sigs["f"]
+        assert "b" in sig.defaults
+        assert "a" not in sig.defaults
+        assert "c" not in sig.defaults
+
+    def test_has_defaults_with_real_defaults(self) -> None:
+        sigs = self._sigs(_SIMPLE_FUNC)
+        assert _has_defaults(sigs["greet"]) is True
+
+    def test_has_defaults_no_defaults(self) -> None:
+        sigs = self._sigs("def f(a, b): pass")
+        assert _has_defaults(sigs["f"]) is False
+
+    def test_has_defaults_with_varargs(self) -> None:
+        sigs = self._sigs("def f(*args): pass")
+        assert _has_defaults(sigs["f"]) is True
+
+    def test_added_optional_arg_not_breaking(self) -> None:
+        """Adding an arg with a default should NOT produce compatibility issues."""
+        before = self._sigs(_SIMPLE_FUNC)  # greet(name, loud=False)
+        after = self._sigs(_ADDED_ARG)     # greet(name, loud=False, prefix="")
+        changes = detect_signature_changes(before, after)
+        # 'prefix' has a default — should not appear in compatibility_issues
+        breaking_issues = [
+            issue
+            for c in changes
+            for issue in c.compatibility_issues
+            if "prefix" in issue
+        ]
+        assert breaking_issues == []
+
+    def test_added_required_arg_is_breaking(self) -> None:
+        """Adding an arg WITHOUT a default IS breaking."""
+        before = self._sigs("def f(a: int) -> int: return a")
+        after = self._sigs("def f(a: int, b: int) -> int: return a + b")
+        changes = detect_signature_changes(before, after)
+        breaking_issues = [
+            issue
+            for c in changes
+            for issue in c.compatibility_issues
+            if "b" in issue
+        ]
+        assert len(breaking_issues) == 1
+        assert "without default" in breaking_issues[0]
+
+
+# ---------------------------------------------------------------------------
+# Edge cases — async, decorators, class method types
+# ---------------------------------------------------------------------------
+
+
+class TestEdgeCases:
+    def _sigs(self, source: str) -> dict[str, FunctionSignature]:
+        return extract_signatures_from_source(source, "test.py")
+
+    def test_async_function_extracted(self) -> None:
+        source = "async def fetch(url: str) -> bytes: pass"
+        sigs = self._sigs(source)
+        assert "fetch" in sigs
+        assert sigs["fetch"].args == ["url"]
+
+    def test_classmethod_skips_cls(self) -> None:
+        source = """\
+class Foo:
+    @classmethod
+    def create(cls, name: str) -> 'Foo':
+        pass
+"""
+        sigs = self._sigs(source)
+        assert "Foo.create" in sigs
+        assert "cls" not in sigs["Foo.create"].args
+        assert sigs["Foo.create"].args == ["name"]
+
+    def test_staticmethod_no_self(self) -> None:
+        source = """\
+class Foo:
+    @staticmethod
+    def helper(x: int) -> int:
+        return x
+"""
+        sigs = self._sigs(source)
+        assert sigs["Foo.helper"].args == ["x"]
+
+    def test_empty_source(self) -> None:
+        sigs = self._sigs("")
+        assert sigs == {}
+
+    def test_module_level_vars_ignored(self) -> None:
+        source = "X = 1\nY = 'hello'\ndef f(): pass"
+        sigs = self._sigs(source)
+        assert list(sigs.keys()) == ["f"]
+
+    def test_deeply_nested_class(self) -> None:
+        source = """\
+class Outer:
+    class Inner:
+        def method(self, x: int) -> int:
+            return x
+"""
+        sigs = self._sigs(source)
+        assert "Outer.Inner.method" in sigs

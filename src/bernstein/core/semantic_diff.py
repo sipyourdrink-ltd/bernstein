@@ -70,6 +70,8 @@ class FunctionSignature:
     has_kwargs: bool
     file: str
     lineno: int
+    defaults: frozenset[str] = frozenset()
+    defaults: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -224,6 +226,19 @@ def _build_signature(
     arg_names = [a.arg for a in all_args]
     arg_annotations = {a.arg: _annotation_str(a.annotation) for a in all_args}
 
+    # Determine which args have defaults.  In CPython the last N args in
+    # `args_obj.args` share defaults with `args_obj.defaults` (right-aligned).
+    non_self_args = [a for a in args_obj.args if not _is_self_or_cls(a.arg)]
+    n_defaults = len(args_obj.defaults)
+    defaults_set: set[str] = set()
+    if n_defaults:
+        for a in non_self_args[-n_defaults:]:
+            defaults_set.add(a.arg)
+    # kwonly args: kw_defaults has one entry per kwonlyarg (None = no default)
+    for i, kwa in enumerate(args_obj.kwonlyargs):
+        if i < len(args_obj.kw_defaults) and args_obj.kw_defaults[i] is not None:
+            defaults_set.add(kwa.arg)
+
     return FunctionSignature(
         name=node.name,
         qualname=qualname,
@@ -234,6 +249,7 @@ def _build_signature(
         has_kwargs=args_obj.kwarg is not None,
         file=file,
         lineno=node.lineno,
+        defaults=frozenset(defaults_set),
     )
 
 
@@ -266,9 +282,10 @@ def _check_arg_compat(
         issues.append(f"argument '{arg}' removed — callers passing it will break")
 
     for arg in sorted(added):
-        # Added arg without default is breaking; we can't tell from AST alone
-        # whether it has a default, so flag it conservatively
-        issues.append(f"argument '{arg}' added — callers without it may break")
+        if arg in after.defaults:
+            # Added with a default value — existing callers are fine
+            continue
+        issues.append(f"argument '{arg}' added without default — callers without it will break")
 
     # Reordering check
     if before.args != after.args:
@@ -593,13 +610,8 @@ def analyze_semantic_diff(
 
 
 def _has_defaults(sig: FunctionSignature) -> bool:
-    """Heuristic: return True when the signature likely has default values.
-
-    We cannot determine defaults from signatures alone (they're stripped by
-    AST extraction), so this is a conservative check: if the function accepts
-    ``**kwargs`` or ``*args`` we assume some flexibility exists.
-    """
-    return sig.has_varargs or sig.has_kwargs
+    """Return True when the signature has default values or variadic params."""
+    return sig.has_varargs or sig.has_kwargs or bool(sig.defaults)
 
 
 # ---------------------------------------------------------------------------
