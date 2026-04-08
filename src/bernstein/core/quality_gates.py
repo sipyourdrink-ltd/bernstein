@@ -213,6 +213,8 @@ class QualityGatesConfig:
     migration_reversibility_check: bool = False
     large_file_check: bool = False
     large_file_threshold: int = 500
+    integration_test_gen: bool = False
+    review_rubric: bool = False
 
 
 @dataclass
