@@ -14,8 +14,10 @@ from typing import Any
 import pytest
 
 from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.core.git_pr import merge_branch
 from bernstein.core.guardrails import GuardrailsConfig
 from bernstein.core.janitor import evaluate_signal, run_janitor, verify_task
+from bernstein.core.lifecycle import transition_task
 from bernstein.core.models import (
     CompletionSignal,
     ModelConfig,
@@ -336,3 +338,154 @@ class TestSpawnExecuteVerifyPipeline:
         all_passed, failed = verify_task(task, tmp_path)
         assert all_passed is False
         assert len(failed) == 1
+
+
+# ---------------------------------------------------------------------------
+# TEST-001e: Full spawn → execute → verify → merge pipeline with status transitions
+# ---------------------------------------------------------------------------
+
+
+def _create_agent_branch(workdir: Path, branch: str) -> None:
+    """Create a new branch off main to simulate an agent worktree."""
+    subprocess.run(["git", "checkout", "-b", branch], cwd=workdir, check=True, capture_output=True)
+
+
+def _checkout_main(workdir: Path) -> None:
+    """Return to main branch."""
+    subprocess.run(["git", "checkout", "main"], cwd=workdir, check=True, capture_output=True)
+
+
+class TestFullSpawnExecuteVerifyMergePipeline:
+    """TEST-001e: Complete pipeline with task status transitions and git merge.
+
+    Exercises the critical path:
+    create task (OPEN) → claim (CLAIMED) → in progress (IN_PROGRESS) →
+    spawn agent → agent writes output → mark done (DONE) →
+    janitor verify → close (CLOSED) → merge branch into main.
+    """
+
+    def test_complete_pipeline_with_status_transitions_and_merge(self, tmp_path: Path) -> None:
+        """Full pipeline: task lifecycle transitions + spawn + verify + git merge."""
+        _init_git_repo(tmp_path)
+
+        # --- Task lifecycle: OPEN → CLAIMED → IN_PROGRESS ---
+        task = _make_task(
+            task_id="T-FULL-001",
+            signals=[
+                CompletionSignal(type="path_exists", value="src/feature.py"),
+                CompletionSignal(type="file_contains", value="src/feature.py :: def greet"),
+            ],
+        )
+        assert task.status == TaskStatus.OPEN
+
+        transition_task(task, TaskStatus.CLAIMED, actor="spawner")
+        assert task.status == TaskStatus.CLAIMED
+
+        transition_task(task, TaskStatus.IN_PROGRESS, actor="agent")
+        assert task.status == TaskStatus.IN_PROGRESS
+
+        # --- Agent work: create branch and write output ---
+        _create_agent_branch(tmp_path, "agent/T-FULL-001")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "feature.py").write_text("def greet():\n    return 'hello'\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "feat: add greet function"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        # --- Task lifecycle: IN_PROGRESS → DONE ---
+        transition_task(task, TaskStatus.DONE, actor="agent")
+        assert task.status == TaskStatus.DONE
+
+        # --- Janitor verification on the agent branch ---
+        all_passed, failed = verify_task(task, tmp_path)
+        assert all_passed is True, f"Janitor failed: {failed}"
+        assert failed == []
+
+        # --- Merge into main ---
+        _checkout_main(tmp_path)
+        merge_result = merge_branch(tmp_path, "agent/T-FULL-001", message="Merge agent/T-FULL-001")
+        assert merge_result.ok, f"Merge failed: {merge_result.stderr}"
+
+        # Confirm the merged file exists on main
+        assert (tmp_path / "src" / "feature.py").exists()
+
+        # --- Task lifecycle: DONE → CLOSED ---
+        transition_task(task, TaskStatus.CLOSED, actor="janitor")
+        assert task.status == TaskStatus.CLOSED
+
+    def test_pipeline_janitor_blocks_close_on_missing_output(self, tmp_path: Path) -> None:
+        """If janitor fails, the task must NOT transition to CLOSED."""
+        _init_git_repo(tmp_path)
+
+        task = _make_task(
+            task_id="T-FULL-002",
+            signals=[CompletionSignal(type="path_exists", value="src/missing.py")],
+        )
+        transition_task(task, TaskStatus.CLAIMED, actor="spawner")
+        transition_task(task, TaskStatus.IN_PROGRESS, actor="agent")
+
+        # Agent does NOT create the required file
+        _create_agent_branch(tmp_path, "agent/T-FULL-002")
+        # (no file written)
+
+        transition_task(task, TaskStatus.DONE, actor="agent")
+
+        all_passed, failed = verify_task(task, tmp_path)
+        assert all_passed is False
+        assert len(failed) > 0
+
+        # Task should NOT be closed — re-open for retry
+        transition_task(task, TaskStatus.FAILED, actor="janitor")
+        assert task.status == TaskStatus.FAILED
+
+        # Retry path: FAILED → OPEN
+        transition_task(task, TaskStatus.OPEN, actor="retry_handler")
+        assert task.status == TaskStatus.OPEN
+
+    @pytest.mark.asyncio
+    async def test_async_janitor_integrate_with_spawn_verify(self, tmp_path: Path) -> None:
+        """Async janitor pipeline: spawn fake adapter, then run_janitor to confirm."""
+        _init_git_repo(tmp_path)
+
+        # Spawn the fake adapter to create the required file
+        adapter = _FakeAdapter(output_file="result.py")
+        result = adapter.spawn(
+            prompt="Create result.py",
+            workdir=tmp_path,
+            model_config=ModelConfig(model="mock", effort="high"),
+            session_id="sess-e2e-003",
+        )
+        assert result.proc is not None
+        await asyncio.to_thread(result.proc.wait, 10)
+
+        # Commit the agent's output (simulating agent commit step)
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+        await asyncio.to_thread(
+            subprocess.run,
+            ["git", "commit", "-m", "agent: create result.py"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+        task = _make_task(
+            task_id="T-FULL-003",
+            status=TaskStatus.DONE,
+            signals=[CompletionSignal(type="path_exists", value="result.py")],
+        )
+
+        no_guardrails = GuardrailsConfig(
+            secrets=False,
+            scope=False,
+            file_permissions=False,
+            license_scan=False,
+            readme_reminder=False,
+        )
+        results = await run_janitor([task], tmp_path, guardrails_config=no_guardrails)
+        assert len(results) == 1
+        assert results[0].passed is True
+        assert results[0].task_id == task.id
