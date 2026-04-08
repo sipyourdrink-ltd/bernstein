@@ -20,7 +20,9 @@ from textual.widgets import Static
 
 from bernstein.tui.accessibility import AccessibilityConfig, detect_accessibility
 from bernstein.tui.keybinding_config import resolve_all_bindings as _resolve_all_bindings
+from bernstein.tui.progress_bar import TaskProgress
 from bernstein.tui.split_pane import SplitPaneState
+from bernstein.tui.themes import ThemeMode, cycle_theme, load_theme_config, save_theme_config
 from bernstein.tui.timeline import TaskTimeline, TimelineEntry
 from bernstein.tui.toast import ToastManager, render_toast_stack
 from bernstein.tui.widgets import (
@@ -200,6 +202,10 @@ class BernsteinApp(App[None]):
         self._toasts = ToastManager()
         # Track seen task IDs to detect completions
         self._seen_done: set[str] = set()
+        # TUI-011: theme — load persisted preference, fall back to auto-detect
+        self._theme_mode: ThemeMode = load_theme_config()
+        # TUI-010: cached task progress entries for aggregate run bar
+        self._task_progresses: list[TaskProgress] = []
 
     # -- layout ---------------------------------------------------------------
 
@@ -242,6 +248,9 @@ class BernsteinApp(App[None]):
             self.add_class("no-animations")
         if self.accessibility.high_contrast:
             self.add_class("high-contrast")
+
+        # TUI-011: apply initial theme
+        self._apply_theme()
 
         self._load_historical_logs()
         self.set_interval(self._poll_interval, self.action_refresh)
@@ -326,6 +335,12 @@ class BernsteinApp(App[None]):
         transition_reasons: dict[str, dict[str, float]] | None = None
         if isinstance(transition_reasons_raw, dict):
             transition_reasons = cast("dict[str, dict[str, float]]", transition_reasons_raw)
+        # TUI-010: compute aggregate run-level progress percentage
+        run_pct: float | None = None
+        if tasks_total := int(data.get("total", 0)):
+            tasks_done_count = int(data.get("completed", 0))
+            run_pct = (tasks_done_count / tasks_total) * 100.0
+
         self.query_one(StatusBar).set_summary(
             agents_active=int(data.get("active_agents", 0)),
             tasks_done=int(data.get("completed", 0)),
@@ -333,6 +348,7 @@ class BernsteinApp(App[None]):
             tasks_failed=int(data.get("failed", 0)),
             server_online=True,
             transition_reasons=transition_reasons,
+            run_progress_pct=run_pct,
         )
 
         tasks_data: list[Any] = data.get("per_role", [])
@@ -341,6 +357,17 @@ class BernsteinApp(App[None]):
             if isinstance(t, dict):
                 rows.append(TaskRow.from_api(cast("dict[str, Any]", t)))
         self.query_one(TaskListWidget).refresh_tasks(rows)
+        self._current_rows = rows
+
+        # TUI-010: update aggregate progress for run-level bar
+        self._task_progresses = [
+            TaskProgress(
+                task_id=row.task_id,
+                custom_pct=row.progress_pct,
+            )
+            for row in rows
+            if row.progress_pct is not None
+        ]
 
         # TUI-009: detect newly completed tasks and emit toasts
         for row in rows:
@@ -352,6 +379,47 @@ class BernsteinApp(App[None]):
         # Update timeline if visible
         if self.query_one("#task-timeline", TaskTimeline).display:
             self.run_worker(self._refresh_timeline())
+
+    # -- TUI-011: theme cycling -----------------------------------------------
+
+    def _apply_theme(self) -> None:
+        """Apply the current theme mode to the app.
+
+        Uses Textual's built-in ``dark`` toggle for dark/light mode.
+        High-contrast mode additionally adds a CSS class that styles.tcss
+        can target.
+        """
+        from bernstein.tui.themes import ThemeMode as _TM
+
+        resolved = self._theme_mode
+        if resolved == _TM.AUTO:
+            from bernstein.tui.themes import detect_terminal_theme
+
+            resolved = detect_terminal_theme()
+
+        # Textual built-in dark/light toggle
+        self.dark = resolved != _TM.LIGHT
+
+        # High-contrast CSS class
+        if resolved == _TM.HIGH_CONTRAST:
+            self.add_class("high-contrast")
+        else:
+            self.remove_class("high-contrast")
+
+        try:
+            self.refresh_css()
+        except Exception:
+            logger.debug("Could not refresh CSS after theme change", exc_info=True)
+
+    def action_cycle_theme(self) -> None:
+        """Cycle through dark → light → high-contrast → dark themes."""
+        self._theme_mode = cycle_theme(self._theme_mode)
+        save_theme_config(self._theme_mode)
+        self._apply_theme()
+        from bernstein.tui.toast import ToastLevel
+
+        self._toasts.add(f"Theme: {self._theme_mode.value}", level=ToastLevel.INFO)
+        self.query_one("#toast-overlay", _ToastOverlay).refresh()
 
     # -- TUI-008: split-pane --------------------------------------------------
 

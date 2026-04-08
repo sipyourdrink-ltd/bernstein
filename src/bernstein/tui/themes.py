@@ -8,9 +8,18 @@ configured explicitly.
 
 from __future__ import annotations
 
+import contextlib
+import json
+import logging
 import os
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+#: Default path for persisting the user's theme preference.
+_CONFIG_PATH = Path.home() / ".bernstein" / "tui_config.json"
 
 
 class ThemeMode(Enum):
@@ -231,6 +240,46 @@ def generate_theme_css(theme: ThemeColors) -> str:
     .status-blocked {{ color: {theme.muted}; }}
     .status-cancelled {{ color: {theme.muted}; }}
     """
+
+
+def load_theme_config(config_path: Path | None = None) -> ThemeMode:
+    """Load the persisted theme mode from user config.
+
+    Args:
+        config_path: Path to the JSON config file. Defaults to
+            ``~/.bernstein/tui_config.json``.
+
+    Returns:
+        Persisted ThemeMode, or AUTO if not set / unreadable.
+    """
+    path = config_path or _CONFIG_PATH
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        raw = data.get("theme", "")
+        return ThemeMode(raw)
+    except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError):
+        return ThemeMode.AUTO
+
+
+def save_theme_config(mode: ThemeMode, config_path: Path | None = None) -> None:
+    """Persist the theme mode to user config.
+
+    Args:
+        mode: Theme mode to save.
+        config_path: Path to the JSON config file. Defaults to
+            ``~/.bernstein/tui_config.json``.
+    """
+    path = config_path or _CONFIG_PATH
+    try:
+        existing: dict[str, object] = {}
+        if path.exists():
+            with contextlib.suppress(json.JSONDecodeError, OSError):
+                existing = json.loads(path.read_text(encoding="utf-8"))
+        existing["theme"] = mode.value
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not save theme config to %s: %s", path, exc)
 
 
 def theme_color(theme: ThemeColors, role: str) -> str:
