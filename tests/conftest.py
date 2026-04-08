@@ -8,6 +8,16 @@ import platform
 import resource
 import subprocess
 import sys
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register custom CLI options for the bernstein test suite."""
+    parser.addoption(
+        "--live",
+        action="store_true",
+        default=False,
+        help="Run live adapter conformance tests against real installed binaries.",
+    )
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
