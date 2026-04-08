@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from bernstein.core.models import Task
 
 # Import from sub-modules (facade re-exports)
+from bernstein.core.config_path_validation import check_config_paths
 from bernstein.core.log_redact import install_pii_filter
 from bernstein.core.preflight import (
     _claude_has_oauth_session,
@@ -298,6 +299,7 @@ def bootstrap_from_seed(
     if model is not None:
         object.__setattr__(seed, "model", model)
     preflight_checks(seed.cli, port)
+    check_config_paths(seed, workdir)
     effective_cells = cells if cells is not None else seed.cells
 
     # 2. Workspace + catalog + index (silent — errors logged, not printed)
