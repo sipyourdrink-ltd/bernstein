@@ -168,6 +168,86 @@ Exact files vary by enabled features and run mode.
 
 ---
 
+## Lifecycle state machines
+
+All task and agent status changes are governed by a deterministic FSM in
+`src/bernstein/core/lifecycle.py`. Every transition is validated against an
+explicit table; illegal moves raise `IllegalTransitionError` and emit a typed
+`LifecycleEvent` for audit and replay.
+
+See [LIFECYCLE.md](LIFECYCLE.md) for the full state tables, transition metadata,
+`TransitionReason`/`AbortReason` enumerations, and abort-chain hierarchy.
+
+### Task FSM (12 states)
+
+```mermaid
+stateDiagram-v2
+    [*] --> OPEN : dynamic creation
+    [*] --> PLANNED : plan mode
+
+    PLANNED --> OPEN : approved
+    PLANNED --> CANCELLED : rejected
+
+    OPEN --> CLAIMED : agent claims task
+    OPEN --> WAITING_FOR_SUBTASKS : decomposed before claim
+    OPEN --> CANCELLED : manual cancel
+
+    CLAIMED --> IN_PROGRESS : agent starts work
+    CLAIMED --> OPEN : unclaim / force-reassign
+    CLAIMED --> DONE : fast completion
+    CLAIMED --> FAILED : immediate failure
+    CLAIMED --> CANCELLED : manual cancel
+    CLAIMED --> WAITING_FOR_SUBTASKS : agent splits work
+    CLAIMED --> BLOCKED : dependency discovered
+
+    IN_PROGRESS --> DONE : agent reports success
+    IN_PROGRESS --> FAILED : agent reports failure
+    IN_PROGRESS --> BLOCKED : dependency discovered
+    IN_PROGRESS --> WAITING_FOR_SUBTASKS : agent decomposes task
+    IN_PROGRESS --> OPEN : requeue / force-reassign
+    IN_PROGRESS --> CANCELLED : manual cancel
+    IN_PROGRESS --> ORPHANED : heartbeat timeout / crash
+
+    ORPHANED --> DONE : partial work merged
+    ORPHANED --> FAILED : unrecoverable
+    ORPHANED --> OPEN : requeued for retry
+
+    BLOCKED --> OPEN : dependency resolved
+    BLOCKED --> CANCELLED : manual cancel
+
+    WAITING_FOR_SUBTASKS --> DONE : all subtasks completed
+    WAITING_FOR_SUBTASKS --> BLOCKED : subtask timeout escalation
+    WAITING_FOR_SUBTASKS --> CANCELLED : manual cancel
+
+    FAILED --> OPEN : retry (within max_retries)
+
+    DONE --> CLOSED : janitor verified + merged
+    DONE --> FAILED : verification rejected
+
+    CLOSED --> [*]
+    CANCELLED --> [*]
+```
+
+### Agent FSM (4 states)
+
+```mermaid
+stateDiagram-v2
+    [*] --> starting : spawn()
+
+    starting --> working : process confirmed alive
+    starting --> dead : spawn failure / fast exit
+
+    working --> idle : task completed, awaiting reuse
+    working --> dead : crash / kill / timeout / circuit break
+
+    idle --> working : new task assigned
+    idle --> dead : idle recycled (resource reclaim)
+
+    dead --> [*]
+```
+
+---
+
 ## Non-goals for this document
 
 - This file is not a roadmap backlog.
