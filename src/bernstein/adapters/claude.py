@@ -412,6 +412,8 @@ class ClaudeCodeAdapter(CLIAdapter):
                 parent environment is inherited (legacy behaviour).
         """
         log_file = log_path.open("w")
+        stderr_path = log_path.with_suffix(".stderr.log")
+        stderr_file = stderr_path.open("w")
         preexec_fn = self._get_preexec_fn()
         try:
             try:
@@ -420,7 +422,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                     cwd=workdir,
                     env=env,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
+                    stderr=stderr_file,
                     start_new_session=True,
                     preexec_fn=preexec_fn,
                 )
@@ -434,7 +436,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                     [sys.executable, "-c", wrapper],
                     stdin=claude_proc.stdout,
                     stdout=log_file,
-                    stderr=subprocess.DEVNULL,
+                    stderr=stderr_file,
                     start_new_session=True,
                     cwd=workdir,
                     env=env,
@@ -444,6 +446,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                 raise
         finally:
             log_file.close()
+            stderr_file.close()
 
         # Allow claude_proc to receive SIGPIPE if wrapper dies
         if claude_proc.stdout:

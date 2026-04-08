@@ -1269,13 +1269,10 @@ class AgentSpawner:
                 self._worktree_paths[session_id] = spawn_cwd
                 self._worktree_roots[session_id] = worktree_repo_root
             except WorktreeError as exc:
-                logger.warning(
-                    "Cannot create workspace for agent %s. "
-                    "Reason: %s. "
-                    "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually",
-                    session_id,
-                    exc,
-                )
+                raise SpawnError(
+                    f"Cannot create workspace for agent {session_id}: {exc}. "
+                    "Fix: run 'bernstein stop' then restart, or delete .sdd/worktrees/ manually"
+                ) from exc
 
         # Build per-task MCP config: auto-detected servers merged with base config
         effective_mcp = self._mcp_config
@@ -1374,6 +1371,16 @@ class AgentSpawner:
         _unattended_max = _unattended_policy.max_retries if _unattended_policy is not None else 1
         _unattended_attempt = 0
         result: SpawnResult | None = None
+
+        # Touch heartbeat file BEFORE spawn so the watchdog sees the agent as
+        # alive from the moment it starts — avoids a race window where the
+        # process is running but no heartbeat file exists yet.
+        try:
+            hb_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
+            hb_dir.mkdir(parents=True, exist_ok=True)
+            (hb_dir / session_id).touch()
+        except OSError:
+            pass
 
         while True:
             # Remote spawn already succeeded — skip the local adapter loop entirely
@@ -1595,17 +1602,6 @@ class AgentSpawner:
             session.finish_reason = result.finish_reason
             if result.log_path:
                 session.log_path = str(result.log_path)
-
-            # Touch heartbeat file immediately so the agent starts with a
-            # fresh timestamp — prevents idle recycling from killing agents
-            # that take a long time before emitting their first stream-json
-            # event (e.g. Claude Code thinking for 2+ minutes).
-            try:
-                hb_dir = self._workdir / ".sdd" / "runtime" / "heartbeats"
-                hb_dir.mkdir(parents=True, exist_ok=True)
-                (hb_dir / session_id).touch()
-            except OSError:
-                pass
 
         if session.status != "working":
             transition_agent(

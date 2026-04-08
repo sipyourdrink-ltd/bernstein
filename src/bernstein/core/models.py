@@ -261,6 +261,7 @@ class Task:
     max_output_tokens: int | None = None  # Escalated limit for model output
     meta_messages: list[str] = field(default_factory=list[str])  # Operational nudges/hints (T423)
     created_at: float = field(default_factory=time.time)
+    claimed_at: float | None = None  # Epoch timestamp when task was claimed by an agent
     completed_at: float | None = None  # Epoch timestamp when task completed/failed
     closed_at: float | None = None  # Epoch timestamp when task was verified and closed
     deadline: float | None = None  # Epoch timestamp when task must be complete
@@ -349,6 +350,7 @@ class Task:
             max_output_tokens=raw.get("max_output_tokens"),
             meta_messages=list(raw.get("meta_messages", [])),
             created_at=raw.get("created_at", time.time()),
+            claimed_at=raw.get("claimed_at"),
             completed_at=raw.get("completed_at"),
             closed_at=raw.get("closed_at"),
             deadline=raw.get("deadline"),
@@ -1055,6 +1057,7 @@ class OrchestratorConfig:
     permission_mode: str | None = None  # "bypass" | "plan" | "auto" | "default" — see permission_mode.py
     agent_resource_limits: Any | None = None  # ResourceLimits | None — OS-level limits for non-sandboxed spawns
     shutdown_stagger_delay_s: float = 5.0  # Seconds between SHUTDOWN signals during drain
+    stale_claim_timeout_s: float = 900.0  # Seconds before a claimed task with no live agent is released
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""

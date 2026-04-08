@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -533,6 +534,10 @@ class TestTickStarvingRolePriority:
         """When max_agents capacity is near-full, a starving role gets the last slot
         instead of a role that already has an agent and is still under its per-role cap.
         """
+        # Worktree creation requires a git repo with at least one commit.
+        subprocess.run(["git", "init", str(tmp_path)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"], capture_output=True, check=True)
+
         backend_task = _make_task(id="T-be", role="backend", priority=2)
         qa_task = _make_task(id="T-qa", role="qa", priority=2)
         all_tasks = [_task_as_dict(backend_task), _task_as_dict(qa_task)]

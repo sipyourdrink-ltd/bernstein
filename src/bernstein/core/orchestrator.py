@@ -246,7 +246,7 @@ class Orchestrator:
     _MAX_PROCESSED_DONE: int = 500  # cap _processed_done_tasks set size
     _MANAGER_REVIEW_COMPLETION_THRESHOLD: int = 7  # trigger review after this many completions
     _MANAGER_REVIEW_STALL_S: float = 900.0  # trigger review after 15 min of no progress
-    _STALE_CLAIM_TIMEOUT_S: float = 600.0  # 10 minutes — release claimed tasks older than this
+    _STALE_CLAIM_TIMEOUT_S: float = 900.0  # default fallback; prefer config.stale_claim_timeout_s
 
     def __init__(
         self,
@@ -2013,9 +2013,8 @@ class Orchestrator:
 
         When an agent dies silently (no crash signal, no heartbeat timeout),
         its claimed tasks stay in "claimed" forever.  This method detects
-        tasks with no matching live agent that have exceeded
-        ``_STALE_CLAIM_TIMEOUT_S`` and marks them failed so they can be
-        retried.
+        tasks with no matching live agent that have exceeded the stale claim
+        timeout and marks them failed so they can be retried.
 
         Args:
             claimed_tasks: Tasks with status "claimed" from the current tick.
@@ -2024,6 +2023,7 @@ class Orchestrator:
             Number of tasks released.
         """
         now = time.time()
+        timeout = self._config.stale_claim_timeout_s
         released = 0
         for task in claimed_tasks:
             # Skip tasks that have a known live agent in this session
@@ -2033,9 +2033,12 @@ class Orchestrator:
                 if agent is not None and agent.status != "dead":
                     continue
 
-            # Use created_at as lower-bound proxy (task model has no claimed_at)
-            age_s = now - task.created_at
-            if age_s < self._STALE_CLAIM_TIMEOUT_S:
+            # Use claimed_at (when available) to measure actual time in claimed
+            # state.  Fall back to created_at for legacy tasks that pre-date the
+            # claimed_at field — this is conservative (over-counts) but safe.
+            claim_epoch = task.claimed_at if task.claimed_at is not None else task.created_at
+            age_s = now - claim_epoch
+            if age_s < timeout:
                 continue
 
             try:

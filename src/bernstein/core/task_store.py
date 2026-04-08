@@ -74,6 +74,7 @@ class TaskRecord(TypedDict):
     risk_level: str
     slack_context: dict[str, Any] | None
     version: int
+    claimed_at: float | None
     completed_at: float | None
     closed_at: float | None
     claimed_by_session: str | None
@@ -434,6 +435,7 @@ class TaskStore:
             for task in list(self._by_status.get(stale_status, {}).values()):
                 self._index_remove(task)
                 task.status = TaskStatus.OPEN
+                task.claimed_at = None
                 task.claimed_by_session = None
                 self._index_add(task)
                 reset_count += 1
@@ -604,6 +606,7 @@ class TaskStore:
             "risk_level": task.risk_level,
             "slack_context": task.slack_context,
             "version": task.version,
+            "claimed_at": task.claimed_at,
             "completed_at": task.completed_at,
             "closed_at": task.closed_at,
             "claimed_by_session": task.claimed_by_session,
@@ -984,6 +987,7 @@ class TaskStore:
                 return None
             self._index_remove(task)
             transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_next")
+            task.claimed_at = time.time()
             task.claimed_by_session = claimed_by_session
             task.version += 1
             self._index_add(task)
@@ -1042,6 +1046,7 @@ class TaskStore:
                     raise ValueError(overlap_msg)
                 self._index_remove(task)
                 transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason="claim_by_id")
+                task.claimed_at = time.time()
                 task.claimed_by_session = claimed_by_session
                 task.version += 1
                 self._index_add(task)
@@ -1087,6 +1092,7 @@ class TaskStore:
                     continue
                 self._index_remove(task)
                 transition_task(task, TaskStatus.CLAIMED, actor="task_store", reason=f"claim_batch by {agent_id}")
+                task.claimed_at = time.time()
                 task.assigned_agent = agent_id
                 task.claimed_by_session = claimed_by_session
                 task.version += 1
@@ -1595,6 +1601,7 @@ class TaskStore:
                 transition_task(task, TaskStatus.OPEN, actor="task_store", reason="force_claim")
                 self._index_add(task)
             task.priority = 0
+            task.claimed_at = None  # Clear claim timestamp on force-claim
             task.claimed_by_session = None  # Clear ownership on force-claim
             task.version += 1
             await self._append_jsonl(self._task_to_record(task))

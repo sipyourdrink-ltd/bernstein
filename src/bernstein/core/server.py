@@ -366,6 +366,7 @@ class TaskResponse(BaseModel):
     slack_context: dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: float
+    claimed_at: float | None = None
     deadline: float | None = None
     progress_log: list[ProgressEntry] = Field(default_factory=list)
     version: int = 1
@@ -849,6 +850,7 @@ def task_to_response(task: Task) -> TaskResponse:
         slack_context=task.slack_context,
         metadata=task.metadata,
         created_at=task.created_at,
+        claimed_at=task.claimed_at,
         progress_log=list(cast("list[ProgressEntry]", task.progress_log)),  # type: ignore[reportUnknownMemberType]
         version=task.version,
         parent_session_id=task.parent_session_id,
