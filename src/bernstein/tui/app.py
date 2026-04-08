@@ -7,16 +7,22 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
+
+if TYPE_CHECKING:
+    from rich.text import Text
 
 import httpx
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Static
 
 from bernstein.tui.accessibility import AccessibilityConfig, detect_accessibility
 from bernstein.tui.keybinding_config import resolve_all_bindings as _resolve_all_bindings
+from bernstein.tui.split_pane import SplitPaneState
 from bernstein.tui.timeline import TaskTimeline, TimelineEntry
+from bernstein.tui.toast import ToastManager, render_toast_stack
 from bernstein.tui.widgets import (
     ActionBar,
     AgentLogWidget,
@@ -115,6 +121,49 @@ def _patch(path: str, data: dict[str, Any]) -> dict[str, Any] | None:  # type: i
 
 
 # ---------------------------------------------------------------------------
+# Toast overlay widget (TUI-009)
+# ---------------------------------------------------------------------------
+
+
+class _ToastOverlay(Static):
+    """Overlay widget that renders active toast notifications.
+
+    Docked at the bottom-right corner, renders the ToastManager's active
+    toasts as a stacked list. Hidden when there are no active toasts.
+    """
+
+    DEFAULT_CSS = """
+    _ToastOverlay {
+        dock: bottom;
+        layer: overlay;
+        align: right bottom;
+        width: 54;
+        height: auto;
+        padding: 0 1 1 1;
+        background: transparent;
+    }
+    """
+
+    def __init__(self, manager: ToastManager, **kwargs: Any) -> None:
+        """Initialise the overlay.
+
+        Args:
+            manager: Shared ToastManager instance.
+            **kwargs: Forwarded to Static.
+        """
+        super().__init__(**kwargs)
+        self._manager = manager
+
+    def render(self) -> Text:
+        """Render the active toast stack.
+
+        Returns:
+            Rich Text of all active toasts stacked vertically.
+        """
+        return render_toast_stack(self._manager)
+
+
+# ---------------------------------------------------------------------------
 # Main App
 # ---------------------------------------------------------------------------
 
@@ -145,22 +194,33 @@ class BernsteinApp(App[None]):
         self._resize_timer: object | None = None  # debounce timer handle (TUI-001)
         # TUI-013: detect accessibility mode from environment
         self.accessibility: AccessibilityConfig = AccessibilityConfig.from_level(detect_accessibility())
+        # TUI-008: split-pane state
+        self._split = SplitPaneState()
+        # TUI-009: toast notification manager
+        self._toasts = ToastManager()
+        # Track seen task IDs to detect completions
+        self._seen_done: set[str] = set()
 
     # -- layout ---------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        """Build the widget tree: status bar, task table, action bar, log, shortcuts footer."""
+        """Build the widget tree: status bar, split-pane body, toast overlay, shortcuts footer."""
         yield StatusBar(id="top-bar")
-        with Vertical(id="main-body"):
-            yield TaskListWidget(id="task-list")
-            yield TaskTimeline(id="task-timeline")
-            yield WaterfallWidget(id="waterfall-view")
-            yield ScratchpadViewer(id="scratchpad-viewer")
-            yield CoordinatorDashboard(id="coordinator-dashboard")
-            yield ApprovalPanel(id="approval-panel")
-            yield ToolObserverWidget(id="tool-observer")
-            yield ActionBar(id="action-bar")
-            yield AgentLogWidget(id="agent-log")
+        # TUI-008: Horizontal container to support split-pane layout
+        with Horizontal(id="main-body"):
+            with Vertical(id="left-pane"):
+                yield TaskListWidget(id="task-list")
+                yield TaskTimeline(id="task-timeline")
+                yield WaterfallWidget(id="waterfall-view")
+                yield ScratchpadViewer(id="scratchpad-viewer")
+                yield CoordinatorDashboard(id="coordinator-dashboard")
+                yield ApprovalPanel(id="approval-panel")
+                yield ToolObserverWidget(id="tool-observer")
+                yield ActionBar(id="action-bar")
+            with Vertical(id="right-pane"):
+                yield AgentLogWidget(id="agent-log")
+        # TUI-009: toast overlay widget
+        yield _ToastOverlay(self._toasts, id="toast-overlay")
         yield ShortcutsFooter(id="shortcuts-footer")
 
     def on_mount(self) -> None:
@@ -174,6 +234,9 @@ class BernsteinApp(App[None]):
         self.query_one(_APPROVAL_PANEL_SELECTOR, ApprovalPanel).display = False
         self.query_one("#tool-observer", ToolObserverWidget).display = False
 
+        # TUI-008: right pane hidden until split is toggled on
+        self.query_one("#right-pane").display = False
+
         # TUI-013: apply accessibility CSS class when enabled
         if self.accessibility.no_animations:
             self.add_class("no-animations")
@@ -182,6 +245,8 @@ class BernsteinApp(App[None]):
 
         self._load_historical_logs()
         self.set_interval(self._poll_interval, self.action_refresh)
+        # TUI-009: prune expired toasts and refresh toast overlay every second
+        self.set_interval(1.0, self._tick_toasts)
 
     def on_resize(self, event: object) -> None:
         """Debounce terminal resize events to avoid layout crashes (TUI-001).
@@ -277,9 +342,46 @@ class BernsteinApp(App[None]):
                 rows.append(TaskRow.from_api(cast("dict[str, Any]", t)))
         self.query_one(TaskListWidget).refresh_tasks(rows)
 
+        # TUI-009: detect newly completed tasks and emit toasts
+        for row in rows:
+            if row.status == "done" and row.task_id not in self._seen_done:
+                self._seen_done.add(row.task_id)
+                self._toasts.task_completed(row.task_id, row.title)
+                self.query_one("#toast-overlay", _ToastOverlay).refresh()
+
         # Update timeline if visible
         if self.query_one("#task-timeline", TaskTimeline).display:
             self.run_worker(self._refresh_timeline())
+
+    # -- TUI-008: split-pane --------------------------------------------------
+
+    def action_toggle_split_pane(self) -> None:
+        """Toggle split-pane layout (task list left, agent log right)."""
+        enabled = self._split.toggle()
+        left = self.query_one("#left-pane")
+        right = self.query_one("#right-pane")
+        if enabled:
+            ratio = self._split.ratio
+            left.styles.width = f"{int(ratio * 100)}%"
+            right.styles.width = f"{int((1 - ratio) * 100)}%"
+            right.display = True
+            left.focus()
+        else:
+            left.styles.width = "1fr"
+            right.display = False
+
+    # -- TUI-009: toast ticker ------------------------------------------------
+
+    def _tick_toasts(self) -> None:
+        """Prune expired toasts and refresh the overlay."""
+        pruned = self._toasts.prune()
+        if pruned or self._toasts.count > 0:
+            self.query_one("#toast-overlay", _ToastOverlay).refresh()
+
+    def action_dismiss_toasts(self) -> None:
+        """Dismiss all active toast notifications."""
+        self._toasts.dismiss_all()
+        self.query_one("#toast-overlay", _ToastOverlay).refresh()
 
     def action_toggle_timeline(self) -> None:
         """Show/hide the task execution timeline."""
