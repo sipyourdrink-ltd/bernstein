@@ -262,13 +262,14 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
       - run: uv run python scripts/run_tests.py -x --parallel 4
-      - name: Generate coverage report (3.13 only)
+      - name: Generate coverage and JUnit reports (3.13 only)
         if: matrix.python-version == '3.13'
         continue-on-error: true
         timeout-minutes: 25
         run: |
           # Run each test file in its own process with coverage to avoid OOM.
           # pytest --cov on 562 files in one process exceeds 7GB runner RAM.
+          # JUnit XML is accumulated across all runs via --junitxml append logic.
           uv run python -c "
           import subprocess, sys, os
           from pathlib import Path
@@ -277,30 +278,56 @@ jobs:
           test_dir = Path('tests/unit')
           files = sorted(test_dir.glob('test_*.py'))
           failed = 0
+          junit_parts = []
           for i, f in enumerate(files):
+              junit_part = f'.junit_part_{i}.xml'
               cmd = [
                   sys.executable, '-m', 'coverage', 'run',
                   '--source=src/bernstein', '--parallel-mode',
-                  '-m', 'pytest', str(f), '-x', '-q', '--tb=no', '--timeout=120', '-s', '-p', 'no:cacheprovider',
+                  '-m', 'pytest', str(f), '-x', '-q', '--tb=no', '--timeout=120', '-s',
+                  '-p', 'no:cacheprovider',
+                  f'--junitxml={junit_part}',
+                  '-o', 'junit_family=legacy',
               ]
               r = subprocess.run(cmd, capture_output=True, timeout=180)
               if r.returncode != 0:
                   failed += 1
+              if Path(junit_part).exists():
+                  junit_parts.append(junit_part)
               if (i + 1) % 50 == 0:
                   print(f'  coverage: {i+1}/{len(files)} files done', flush=True)
           print(f'Coverage collected from {len(files)} files ({failed} had failures)')
+
+          # Merge JUnit XML parts into a single junit.xml
+          if junit_parts:
+              import xml.etree.ElementTree as ET
+              root = ET.Element('testsuites')
+              for part in junit_parts:
+                  try:
+                      tree = ET.parse(part)
+                      for suite in tree.getroot():
+                          root.append(suite)
+                  except Exception:
+                      pass
+              ET.ElementTree(root).write('junit.xml', encoding='unicode', xml_declaration=True)
+              print(f'Merged {len(junit_parts)} JUnit XML files into junit.xml')
           "
           uv run python -m coverage combine || true
           uv run python -m coverage xml -o coverage.xml || true
           if [ ! -f coverage.xml ]; then
             echo "::warning::coverage.xml was not generated"
           fi
+          if [ ! -f junit.xml ]; then
+            echo "::warning::junit.xml was not generated"
+          fi
       - name: Upload coverage artifact
         if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: coverage.xml
+          path: |
+            coverage.xml
+            junit.xml
           if-no-files-found: warn
           retention-days: 1
       - name: Upload coverage to Codecov
@@ -308,6 +335,13 @@ jobs:
         uses: codecov/codecov-action@v6
         with:
           files: coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload test results to Codecov
+        if: matrix.python-version == '3.13' && !cancelled()
+        uses: codecov/test-results-action@v1
+        with:
+          files: junit.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
