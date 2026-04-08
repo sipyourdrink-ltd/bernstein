@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Bernstein Task Server API",
-    "version": "1.0.0",
-    "description": "Bernstein REST API \u2014 216 endpoints for multi-agent orchestration.\n\n## Authentication\n\nWhen auth is enabled (`BERNSTEIN_AUTH_ENABLED=true`), include a Bearer token in all requests:\n\n```\nAuthorization: Bearer <token>\n```\n\nPublic endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, `/.well-known/agent.json`, `/docs`, `/openapi.json`.\n\n## Base URL\n\nDefault: `http://127.0.0.1:8052`. Override with env vars `BERNSTEIN_HOST` and `BERNSTEIN_PORT`.\n\n## Error Format\n\nAll errors return JSON with a `detail` field:\n\n```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n| Status | Meaning |\n|--------|---------|\n| 400 | Bad request (validation error) |\n| 401 | Unauthorized (missing/invalid token) |\n| 403 | Forbidden (IP not in allowlist) |\n| 404 | Resource not found |\n| 409 | Conflict (task already in terminal state) |\n| 429 | Rate limited \u2014 respect the `Retry-After` header |\n| 500 | Internal server error |\n"
+    "title": "Bernstein Task Server",
+    "description": "Bernstein REST API — multi-agent orchestration for CLI coding agents.\n\n## Authentication\n\nWhen auth is enabled (`BERNSTEIN_AUTH_ENABLED=true`), include a Bearer token in all requests:\n\n```\nAuthorization: Bearer <token>\n```\n\nPublic endpoints (no auth required): `/health`, `/health/ready`, `/health/live`, `/.well-known/agent.json`, `/docs`, `/openapi.json`.\n\n## Base URL\n\nDefault: `http://127.0.0.1:8052`. Override with env vars `BERNSTEIN_HOST` and `BERNSTEIN_PORT`.\n\n## Error Format\n\nAll errors return JSON with a `detail` field:\n\n```json\n{\"detail\": \"Task not found: task-xyz\"}\n```\n\n| Status | Meaning |\n|--------|---------|\n| 400 | Bad request (validation error) |\n| 401 | Unauthorized (missing/invalid token) |\n| 403 | Forbidden (IP not in allowlist) |\n| 404 | Resource not found |\n| 409 | Conflict (task already in terminal state) |\n| 429 | Rate limited — respect the `Retry-After` header |\n| 500 | Internal server error |\n",
+    "version": "1.0.0"
   },
   "paths": {
     "/": {
@@ -612,7 +612,7 @@
           "authentication"
         ],
         "summary": "Get Group Mappings",
-        "description": "Get current SSO group \u2192 role mappings.",
+        "description": "Get current SSO group → role mappings.",
         "operationId": "get_group_mappings_auth_group_mappings_get",
         "responses": {
           "200": {
@@ -635,7 +635,7 @@
           "authentication"
         ],
         "summary": "Update Group Mappings",
-        "description": "Update SSO group \u2192 role mappings (admin only).",
+        "description": "Update SSO group → role mappings (admin only).",
         "operationId": "update_group_mappings_auth_group_mappings_put",
         "requestBody": {
           "content": {
@@ -1784,7 +1784,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) \u2014 manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
+        "description": "Update mutable task fields (role, priority, model) — manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
         "operationId": "patch_task_tasks__task_id__patch",
         "parameters": [
           {
@@ -3050,7 +3050,7 @@
     "/alerts": {
       "get": {
         "summary": "Get Alerts",
-        "description": "Return current dashboard alerts as JSON.\n\nBuilds alerts from the live task/agent state \u2014 failed tasks, blocked\ntasks, stale agents, and budget thresholds.  Intended for dashboard\npolling or external monitoring.\n\nReturns a JSON object with keys:\n- ``alerts``: list of alert dicts (``level``, ``message``, ``detail``)\n- ``count``: total number of alerts\n- ``ts``: server timestamp (Unix seconds)",
+        "description": "Return current dashboard alerts as JSON.\n\nBuilds alerts from the live task/agent state — failed tasks, blocked\ntasks, stale agents, and budget thresholds.  Intended for dashboard\npolling or external monitoring.\n\nReturns a JSON object with keys:\n- ``alerts``: list of alert dicts (``level``, ``message``, ``detail``)\n- ``count``: total number of alerts\n- ``ts``: server timestamp (Unix seconds)",
         "operationId": "get_alerts_alerts_get",
         "responses": {
           "200": {
@@ -3106,7 +3106,7 @@
     "/webhooks/github": {
       "post": {
         "summary": "Github Webhook",
-        "description": "Receive a GitHub App webhook, verify signature, and create tasks.\n\nHandles the following event types:\n- ``issues`` (opened / labeled)\n- ``pull_request_review_comment`` / ``issue_comment``\n- ``push``\n- ``workflow_run`` (completed + failure) \u2014 creates a ci-fix task, capped at\n  ``MAX_CI_RETRIES`` active attempts per branch.\n\nReads ``GITHUB_WEBHOOK_SECRET`` from environment for HMAC verification.\nReturns 200 on success, 401 on bad/missing signature, 400 on parse error.",
+        "description": "Receive a GitHub App webhook, verify signature, and create tasks.\n\nHandles the following event types:\n- ``issues`` (opened / labeled)\n- ``pull_request_review_comment`` / ``issue_comment``\n- ``push``\n- ``workflow_run`` (completed + failure) — creates a ci-fix task, capped at\n  ``MAX_CI_RETRIES`` active attempts per branch.\n\nReads ``GITHUB_WEBHOOK_SECRET`` from environment for HMAC verification.\nReturns 200 on success, 401 on bad/missing signature, 400 on parse error.",
         "operationId": "github_webhook_webhooks_github_post",
         "responses": {
           "200": {
@@ -3123,7 +3123,7 @@
     "/webhooks/gitlab": {
       "post": {
         "summary": "Gitlab Webhook",
-        "description": "Receive a GitLab CI webhook, verify token, and create ci-fix tasks.\n\nHandles the following event types:\n- ``pipeline`` (failed) \u2014 creates a ci-fix task, capped at\n  ``MAX_CI_RETRIES`` active attempts per branch.\n- ``job`` (failed) \u2014 creates a ci-fix task for the specific job.\n\nReads ``GITLAB_WEBHOOK_TOKEN`` from environment. GitLab sends a simple\nplaintext token in the ``x-gitlab-token`` header.\nReturns 200 on success, 401 on bad/missing token.",
+        "description": "Receive a GitLab CI webhook, verify token, and create ci-fix tasks.\n\nHandles the following event types:\n- ``pipeline`` (failed) — creates a ci-fix task, capped at\n  ``MAX_CI_RETRIES`` active attempts per branch.\n- ``job`` (failed) — creates a ci-fix task for the specific job.\n\nReads ``GITLAB_WEBHOOK_TOKEN`` from environment. GitLab sends a simple\nplaintext token in the ``x-gitlab-token`` header.\nReturns 200 on success, 401 on bad/missing token.",
         "operationId": "gitlab_webhook_webhooks_gitlab_post",
         "responses": {
           "200": {
@@ -3157,7 +3157,7 @@
     "/webhooks/slack/commands": {
       "post": {
         "summary": "Slack Slash Command",
-        "description": "Receive a Slack slash command, verify signature, and ack immediately.\n\nSlack requires a response within 3 seconds.  This endpoint verifies the\nrequest signature, parses the URL-encoded form payload, and returns an\nimmediate acknowledgement.  Any long-running work (task creation, etc.)\nshould be dispatched asynchronously using ``response_url``.\n\nReads ``SLACK_SIGNING_SECRET`` from environment for HMAC verification.\nReturns 200 on success, 401 on bad/missing signature, 400 on parse error.\n\nSlash command form fields parsed:\n    - ``command``      \u2014 the slash command (e.g. ``/bernstein``)\n    - ``text``         \u2014 text following the command\n    - ``user_id``      \u2014 Slack user ID\n    - ``channel_id``   \u2014 Slack channel ID\n    - ``response_url`` \u2014 URL for delayed responses (up to 30 min)\n    - ``trigger_id``   \u2014 trigger ID for opening modals",
+        "description": "Receive a Slack slash command, verify signature, and ack immediately.\n\nSlack requires a response within 3 seconds.  This endpoint verifies the\nrequest signature, parses the URL-encoded form payload, and returns an\nimmediate acknowledgement.  Any long-running work (task creation, etc.)\nshould be dispatched asynchronously using ``response_url``.\n\nReads ``SLACK_SIGNING_SECRET`` from environment for HMAC verification.\nReturns 200 on success, 401 on bad/missing signature, 400 on parse error.\n\nSlash command form fields parsed:\n    - ``command``      — the slash command (e.g. ``/bernstein``)\n    - ``text``         — text following the command\n    - ``user_id``      — Slack user ID\n    - ``channel_id``   — Slack channel ID\n    - ``response_url`` — URL for delayed responses (up to 30 min)\n    - ``trigger_id``   — trigger ID for opening modals",
         "operationId": "slack_slash_command_webhooks_slack_commands_post",
         "responses": {
           "200": {
@@ -3208,7 +3208,7 @@
     "/costs": {
       "get": {
         "summary": "Get Costs",
-        "description": "Aggregate cost data across all runs.\n\nScans every persisted cost file in ``.sdd/runtime/costs/``, aggregates\nper-agent and per-model totals, and computes cost attainment as\n``(total_spent / total_budget) * 100``.  Budget of zero is treated as\nunlimited \u2014 attainment is reported as 0.0 in that case.",
+        "description": "Aggregate cost data across all runs.\n\nScans every persisted cost file in ``.sdd/runtime/costs/``, aggregates\nper-agent and per-model totals, and computes cost attainment as\n``(total_spent / total_budget) * 100``.  Budget of zero is treated as\nunlimited — attainment is reported as 0.0 in that case.",
         "operationId": "get_costs_costs_get",
         "parameters": [
           {
@@ -4227,7 +4227,7 @@
     "/.well-known/acp.json": {
       "get": {
         "summary": "Acp Discovery",
-        "description": "ACP discovery document \u2014 editors poll this to find ACP-compatible agents.",
+        "description": "ACP discovery document — editors poll this to find ACP-compatible agents.",
         "operationId": "acp_discovery__well_known_acp_json_get",
         "responses": {
           "200": {
@@ -4312,7 +4312,7 @@
     "/acp/v0/runs": {
       "post": {
         "summary": "Create Acp Run",
-        "description": "Create an ACP run \u2014 creates a Bernstein task and links it.\n\nEditors call this when the user submits a goal via the ACP sidebar.",
+        "description": "Create an ACP run — creates a Bernstein task and links it.\n\nEditors call this when the user submits a goal via the ACP sidebar.",
         "operationId": "create_acp_run_acp_v0_runs_post",
         "requestBody": {
           "content": {
@@ -6350,7 +6350,7 @@
       },
       "patch": {
         "summary": "Patch Task",
-        "description": "Update mutable task fields (role, priority, model) \u2014 manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
+        "description": "Update mutable task fields (role, priority, model) — manager corrections.\n\nUsed by the manager agent or dashboard to correct mis-assigned tasks,\nadjust priority, or change model without interrupting the orchestrator.",
         "operationId": "patch_task_api_v1_tasks__task_id__patch",
         "parameters": [
           {
@@ -7707,7 +7707,7 @@
     "/api/v1/costs": {
       "get": {
         "summary": "Get Costs",
-        "description": "Aggregate cost data across all runs.\n\nScans every persisted cost file in ``.sdd/runtime/costs/``, aggregates\nper-agent and per-model totals, and computes cost attainment as\n``(total_spent / total_budget) * 100``.  Budget of zero is treated as\nunlimited \u2014 attainment is reported as 0.0 in that case.",
+        "description": "Aggregate cost data across all runs.\n\nScans every persisted cost file in ``.sdd/runtime/costs/``, aggregates\nper-agent and per-model totals, and computes cost attainment as\n``(total_spent / total_budget) * 100``.  Budget of zero is treated as\nunlimited — attainment is reported as 0.0 in that case.",
         "operationId": "get_costs_api_v1_costs_get",
         "parameters": [
           {
@@ -8225,7 +8225,7 @@
           "name"
         ],
         "title": "A2AArtifactRequest",
-        "description": "Body for POST /a2a/tasks/{id}/artifacts \u2014 attach an artifact."
+        "description": "Body for POST /a2a/tasks/{id}/artifacts — attach an artifact."
       },
       "A2AArtifactResponse": {
         "properties": {
@@ -8427,7 +8427,7 @@
           "message"
         ],
         "title": "A2ATaskSendRequest",
-        "description": "Body for POST /a2a/tasks/send \u2014 receive a task from an external A2A agent."
+        "description": "Body for POST /a2a/tasks/send — receive a task from an external A2A agent."
       },
       "ACPAgentCapabilityResponse": {
         "properties": {
@@ -9067,7 +9067,7 @@
           "user_code"
         ],
         "title": "DeviceAuthorizeRequest",
-        "description": "Body for POST /auth/cli/authorize \u2014 authorize a device code."
+        "description": "Body for POST /auth/cli/authorize — authorize a device code."
       },
       "DeviceCodeRequest": {
         "properties": {
@@ -9079,7 +9079,7 @@
         },
         "type": "object",
         "title": "DeviceCodeRequest",
-        "description": "Body for POST /auth/cli/device \u2014 initiate device auth flow."
+        "description": "Body for POST /auth/cli/device — initiate device auth flow."
       },
       "DeviceCodeResponse": {
         "properties": {
@@ -9132,7 +9132,7 @@
           "device_code"
         ],
         "title": "DevicePollRequest",
-        "description": "Body for POST /auth/cli/token \u2014 poll for device authorization."
+        "description": "Body for POST /auth/cli/token — poll for device authorization."
       },
       "DevicePollResponse": {
         "properties": {
@@ -9195,7 +9195,7 @@
           "role"
         ],
         "title": "GroupMappingEntry",
-        "description": "A single group \u2192 role mapping."
+        "description": "A single group → role mapping."
       },
       "GroupMappingsResponse": {
         "properties": {
@@ -9860,7 +9860,7 @@
         },
         "type": "object",
         "title": "TaskCountsResponse",
-        "description": "Lightweight status counts \u2014 no task bodies."
+        "description": "Lightweight status counts — no task bodies."
       },
       "TaskCreate": {
         "properties": {
@@ -10070,6 +10070,17 @@
               }
             ],
             "title": "Parent Session Id"
+          },
+          "parent_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Context"
           }
         },
         "type": "object",
@@ -10166,7 +10177,7 @@
         },
         "type": "object",
         "title": "TaskPatchRequest",
-        "description": "Body for PATCH /tasks/{task_id} \u2014 manager corrections."
+        "description": "Body for PATCH /tasks/{task_id} — manager corrections."
       },
       "TaskProgressRequest": {
         "properties": {
@@ -10438,6 +10449,17 @@
             "type": "number",
             "title": "Created At"
           },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed At"
+          },
           "deadline": {
             "anyOf": [
               {
@@ -10572,7 +10594,7 @@
           "description"
         ],
         "title": "TaskSelfCreate",
-        "description": "Body for POST /tasks/self-create \u2014 agent-initiated subtask creation.\n\nAgents use this to decompose work into subtasks during execution.\nThe parent_task_id is required and links the new subtask to the calling\nagent's current task."
+        "description": "Body for POST /tasks/self-create — agent-initiated subtask creation.\n\nAgents use this to decompose work into subtasks during execution.\nThe parent_task_id is required and links the new subtask to the calling\nagent's current task."
       },
       "TaskStealAction": {
         "properties": {
@@ -10613,7 +10635,7 @@
         },
         "type": "object",
         "title": "TaskStealRequest",
-        "description": "Body for POST /cluster/steal \u2014 report queue depths and request rebalancing."
+        "description": "Body for POST /cluster/steal — report queue depths and request rebalancing."
       },
       "TaskStealResponse": {
         "properties": {
@@ -10947,6 +10969,17 @@
               }
             ],
             "title": "Parent Session Id"
+          },
+          "parent_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Context"
           }
         },
         "type": "object",
@@ -11027,77 +11060,5 @@
         "description": "Workspace repository status payload."
       }
     }
-  },
-  "servers": [
-    {
-      "url": "http://127.0.0.1:8052",
-      "description": "Local default"
-    }
-  ],
-  "tags": [
-    {
-      "name": "tasks",
-      "description": "Create, list, update, and manage agent tasks"
-    },
-    {
-      "name": "agents",
-      "description": "Live agent sessions \u2014 monitor, kill, stream logs"
-    },
-    {
-      "name": "bulletin",
-      "description": "Cross-agent bulletin board for findings and blockers"
-    },
-    {
-      "name": "status",
-      "description": "Dashboard summary and system health"
-    },
-    {
-      "name": "health",
-      "description": "Health and readiness probes"
-    },
-    {
-      "name": "costs",
-      "description": "Cost tracking, budgets, and spending reports"
-    },
-    {
-      "name": "authentication",
-      "description": "JWT auth, OIDC, token management"
-    },
-    {
-      "name": "approvals",
-      "description": "Human-in-the-loop approval gates"
-    },
-    {
-      "name": "plans",
-      "description": "YAML plan loading and execution"
-    },
-    {
-      "name": "webhooks",
-      "description": "Outbound webhook subscriptions for task lifecycle events"
-    },
-    {
-      "name": "cluster",
-      "description": "Multi-node cluster registration and topology"
-    },
-    {
-      "name": "workspace",
-      "description": "Workspace and project management"
-    },
-    {
-      "name": "identities",
-      "description": "Identity and access management"
-    },
-    {
-      "name": "observability",
-      "description": "Metrics, traces, and SLO tracking"
-    },
-    {
-      "name": "graph",
-      "description": "Task dependency graph"
-    },
-    {
-      "name": "other",
-      "description": "Additional endpoints"
-    }
-  ]
+  }
 }
