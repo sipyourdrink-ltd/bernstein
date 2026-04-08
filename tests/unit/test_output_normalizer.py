@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from bernstein.core.output_normalizer import EventType, NormalizedEvent, OutputNormalizer
+from bernstein.core.output_normalizer import CompletionData, EventType, NormalizedEvent, OutputNormalizer
 
 
 class TestNormalizedEvent:
@@ -118,3 +118,40 @@ class TestOutputNormalizer:
         event = self.normalizer.parse_line("progress: 150")
         assert event.event_type == EventType.PROGRESS
         assert event.progress_pct == 100
+
+
+class TestCompletionData:
+    def setup_method(self) -> None:
+        self.normalizer = OutputNormalizer()
+
+    def test_extract_completion_done(self) -> None:
+        lines = ["Starting", "Agent completed task successfully"]
+        result = self.normalizer.extract_completion(lines, adapter="claude")
+        assert isinstance(result, CompletionData)
+        assert result.status == "done"
+        assert "completed" in result.summary.lower()
+        assert result.adapter == "claude"
+
+    def test_extract_completion_failed(self) -> None:
+        lines = ["Starting", "Fatal error occurred"]
+        result = self.normalizer.extract_completion(lines)
+        assert result.status == "failed"
+
+    def test_extract_completion_unknown(self) -> None:
+        lines = ["Starting agent", "Initializing"]
+        result = self.normalizer.extract_completion(lines)
+        assert result.status == "unknown"
+
+    def test_extract_files_changed(self) -> None:
+        lines = ["Modified file src/main.py", "Created tests/test_foo.py"]
+        result = self.normalizer.extract_completion(lines)
+        assert "src/main.py" in result.files_changed
+
+    def test_extract_completion_done_overrides_error(self) -> None:
+        lines = ["Error occurred", "Agent completed task successfully"]
+        result = self.normalizer.extract_completion(lines)
+        assert result.status == "done"
+
+    def test_extract_completion_session_id(self) -> None:
+        result = self.normalizer.extract_completion([], session_id="sess-42")
+        assert result.session_id == "sess-42"

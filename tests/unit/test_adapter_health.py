@@ -123,3 +123,23 @@ class TestAdapterHealthMonitor:
         stats = monitor.get_stats("claude")
         assert stats is not None
         assert stats.total == 0
+
+    def test_latency_tracking(self) -> None:
+        monitor = AdapterHealthMonitor()
+        monitor.record_success("claude", latency_ms=150.0)
+        monitor.record_success("claude", latency_ms=250.0)
+        stats = monitor.get_stats("claude")
+        assert stats is not None
+        assert stats.avg_latency_ms == pytest.approx(200.0)
+
+    def test_latency_without_data(self) -> None:
+        stats = AdapterStats(adapter_name="claude")
+        assert stats.avg_latency_ms == 0.0
+
+    def test_record_success_no_latency(self) -> None:
+        monitor = AdapterHealthMonitor()
+        monitor.record_success("claude")
+        stats = monitor.get_stats("claude")
+        assert stats is not None
+        assert stats.avg_latency_ms == 0.0
+        assert stats.successes == 1

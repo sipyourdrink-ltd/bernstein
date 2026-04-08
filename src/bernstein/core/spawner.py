@@ -17,6 +17,7 @@ from bernstein.adapters.registry import get_adapter
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
+from bernstein.core.adapter_health import AdapterHealthMonitor
 from bernstein.core.container import ContainerConfig, ContainerError, ContainerManager
 from bernstein.core.context import TaskContextBuilder
 from bernstein.core.context_recommendations import RecommendationEngine
@@ -769,6 +770,7 @@ class AgentSpawner:
         self._procs: dict[str, subprocess.Popen[bytes] | None] = {}
         self._shutdown_event: threading.Event | None = None
         self._agent_failure_timestamps: dict[str, float] = {}  # adapter_name -> last failure ts
+        self._adapter_health = AdapterHealthMonitor()
         self._use_worktrees = use_worktrees
         self._worktree_setup_config = worktree_setup_config
         self._worktree_mgr: WorktreeManager | None = None
@@ -1021,7 +1023,7 @@ class AgentSpawner:
         except OSError as exc:
             logger.warning("Could not check disk space: %s", exc)
 
-        # 5min cooldown check
+        # 5min cooldown check (legacy) + per-adapter health monitor
         now = time.time()
         adapter_name = self._adapter.name()
         last_fail = self._agent_failure_timestamps.get(adapter_name, 0.0)
@@ -1032,6 +1034,15 @@ class AgentSpawner:
                 300 - (now - last_fail),
             )
             raise SpawnError(f"Agent {adapter_name} is in cooldown after recent failure")
+        if not self._adapter_health.is_healthy(adapter_name):
+            stats = self._adapter_health.get_stats(adapter_name)
+            rate = stats.failure_rate if stats is not None else 0.0
+            logger.info(
+                "Adapter %s disabled by health monitor (failure_rate=%.0f%%) — skipping spawn",
+                adapter_name,
+                rate * 100,
+            )
+            raise SpawnError(f"Adapter {adapter_name} is disabled by health monitor (failure rate {rate:.0%})")
 
         if not tasks:
             raise ValueError("Cannot spawn agent with empty task list")
@@ -1400,6 +1411,9 @@ class AgentSpawner:
                             )
                         spawn_duration = time.perf_counter() - spawn_start
                         agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)
+                        self._adapter_health.record_success(
+                            adapter_name, latency_ms=spawn_duration * 1000
+                        )
                         session.provider = (
                             provider_name
                             if provider_name is not None
@@ -1409,6 +1423,7 @@ class AgentSpawner:
                         break
                     except RateLimitError as exc:
                         attempt_errors.append(f"{adapter_name}: {exc}")
+                        self._adapter_health.record_failure(adapter_name)
                         logger.warning(
                             "Rate-limit detected for provider=%s adapter=%s; retrying with alternate provider",
                             provider_name or adapter_name,
@@ -1456,6 +1471,7 @@ class AgentSpawner:
                                     attempted.remove(attempt_key)
                                     continue
 
+                        self._adapter_health.record_failure(adapter_name)
                         logger.warning(
                             "Agent spawn failed (session=%s provider=%s adapter=%s): %s",
                             session_id,
