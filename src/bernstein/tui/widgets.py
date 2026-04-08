@@ -15,6 +15,8 @@ from rich.text import Text
 from textual.containers import Container, Vertical
 from textual.widgets import DataTable, Label, RichLog, Static
 
+from bernstein.tui.accessibility import accessible_status_label, replace_unicode
+
 # Sparkline characters for cost trend visualization
 SPARKLINE_CHARS = "▁▂▃▄▅▆▇█"
 
@@ -347,14 +349,26 @@ class TaskListWidget(DataTable[Text]):
         for key in existing_keys - incoming.keys():
             self.remove_row(key)
 
+        # Resolve accessibility config from the parent app (TUI-013)
+        from bernstein.tui.accessibility import AccessibilityConfig
+
+        accessibility: AccessibilityConfig | None = None
+        try:
+            app = self.app
+            accessibility = getattr(app, "accessibility", None)
+        except Exception:
+            pass
+
         # Update existing rows in-place, add new ones
         columns = ("ID", "Status", "Role", "Title", "Model", "Time")
         for row in rows:
             colour = status_color(row.status)
             dot = status_dot(row.status)
+            status_text = accessible_status_label(row.status, accessibility)
+            prefix = replace_unicode(f"{dot} ", accessibility)
             cells = (
                 Text(row.task_id, style="bold"),
-                Text(f"{dot} {row.status}", style=colour),
+                Text(f"{prefix}{status_text}", style=colour),
                 Text(row.role, style="cyan"),
                 Text(row.title),
                 Text(row.model, style="dim"),
