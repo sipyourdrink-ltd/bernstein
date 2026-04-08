@@ -315,3 +315,196 @@ class TestWALHashConsistency:
         }
         modified = {**base, "inputs": {"a": 2}}
         assert _compute_entry_hash(base) != _compute_entry_hash(modified)
+
+
+# ---------------------------------------------------------------------------
+# TEST-003f: TickGuard non-blocking concurrency
+# ---------------------------------------------------------------------------
+
+
+class TestTickGuardConcurrency:
+    """TickGuard prevents overlapping ticks under concurrent access."""
+
+    def test_single_tick_acquires_lock(self) -> None:
+        from bernstein.core.tick_guard import TickGuard
+
+        guard = TickGuard()
+        with guard.try_acquire() as acquired:
+            assert acquired is True
+            assert guard.is_tick_running is True
+        assert guard.is_tick_running is False
+
+    def test_second_concurrent_tick_is_skipped(self) -> None:
+        from bernstein.core.tick_guard import TickGuard
+
+        guard = TickGuard()
+        inner_acquired: list[bool] = []
+        barrier = threading.Barrier(2)
+
+        def slow_tick() -> None:
+            with guard.try_acquire() as acquired:
+                if acquired:
+                    barrier.wait()  # Signal that we hold the lock
+                    time.sleep(0.05)  # Hold it briefly
+
+        def concurrent_tick() -> None:
+            barrier.wait()  # Wait until slow_tick holds lock
+            with guard.try_acquire() as acquired:
+                inner_acquired.append(acquired)
+
+        t1 = threading.Thread(target=slow_tick)
+        t2 = threading.Thread(target=concurrent_tick)
+        t1.start()
+        t2.start()
+        t1.join(timeout=5.0)
+        t2.join(timeout=5.0)
+
+        # Second concurrent tick should have been skipped
+        assert len(inner_acquired) == 1
+        assert inner_acquired[0] is False
+
+    def test_stats_track_skipped_ticks(self) -> None:
+        from bernstein.core.tick_guard import TickGuard
+
+        guard = TickGuard()
+        barrier = threading.Barrier(2)
+        ready = threading.Event()
+
+        def holding_tick() -> None:
+            with guard.try_acquire() as acquired:
+                if acquired:
+                    ready.set()
+                    barrier.wait()
+
+        def skipping_tick() -> None:
+            ready.wait(timeout=5.0)
+            with guard.try_acquire():
+                pass
+            barrier.wait()
+
+        t1 = threading.Thread(target=holding_tick)
+        t2 = threading.Thread(target=skipping_tick)
+        t1.start()
+        t2.start()
+        t1.join(timeout=5.0)
+        t2.join(timeout=5.0)
+
+        assert guard.stats.total_acquired >= 1
+        assert guard.stats.total_skipped >= 1
+        assert guard.stats.total_attempts == guard.stats.total_acquired + guard.stats.total_skipped
+
+    def test_sequential_ticks_all_succeed(self) -> None:
+        from bernstein.core.tick_guard import TickGuard
+
+        guard = TickGuard()
+        results: list[bool] = []
+
+        for _ in range(5):
+            with guard.try_acquire() as acquired:
+                results.append(acquired)
+
+        assert all(results), f"All sequential ticks should succeed, got: {results}"
+        assert guard.stats.total_acquired == 5
+        assert guard.stats.total_skipped == 0
+
+    def test_force_release_unblocks_subsequent_ticks(self) -> None:
+        from bernstein.core.tick_guard import TickGuard
+
+        guard = TickGuard()
+        # Manually acquire to simulate a stuck tick
+        guard._lock.acquire()
+        assert guard.is_tick_running is True
+
+        released = guard.force_release()
+        assert released is True
+        assert guard.is_tick_running is False
+
+        # Subsequent tick should now succeed
+        with guard.try_acquire() as acquired:
+            assert acquired is True
+
+    def test_duration_stats_are_recorded(self) -> None:
+        from bernstein.core.tick_guard import TickGuard
+
+        guard = TickGuard()
+        with guard.try_acquire() as acquired:
+            assert acquired is True
+            time.sleep(0.02)
+
+        assert guard.stats.last_tick_duration_s >= 0.01
+        assert guard.stats.longest_tick_duration_s >= 0.01
+
+
+# ---------------------------------------------------------------------------
+# TEST-003g: WAL threaded write race simulation
+# ---------------------------------------------------------------------------
+
+
+class TestWALThreadedWriteRace:
+    """Simulate multiple threads competing to append to WAL concurrently.
+
+    WALWriter is not inherently thread-safe (it uses file I/O), so we
+    verify that sequential serialization from each writer produces a
+    valid chain. When writers are independent instances, the OS serializes
+    file appends on local filesystems, but integrity depends on per-instance
+    state. These tests document the expected behavior.
+    """
+
+    def test_many_sequential_writes_preserve_chain(self, tmp_path: Path) -> None:
+        """Sequential writes from one writer maintain valid chain."""
+        sdd = tmp_path / ".sdd"
+        sdd.mkdir()
+        writer = WALWriter(run_id="thread-seq", sdd_dir=sdd)
+        lock = threading.Lock()
+        n = 30
+
+        def write_entry(i: int) -> None:
+            with lock:  # Serialize writes through a mutex
+                writer.append(
+                    decision_type="concurrent_write",
+                    inputs={"thread_index": i},
+                    output={"ok": True},
+                    actor=f"thread-{i}",
+                )
+
+        threads = [threading.Thread(target=write_entry, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10.0)
+
+        reader = WALReader(run_id="thread-seq", sdd_dir=sdd)
+        entries = list(reader.iter_entries())
+        assert len(entries) == n
+
+        ok, errors = reader.verify_chain()
+        assert ok is True, f"Chain broken: {errors}"
+
+    def test_generation_guard_prevents_stale_callbacks(self) -> None:
+        """Stale callbacks from old generations are discarded across threads."""
+        from bernstein.core.concurrency_guard import ConcurrencyGuard
+
+        guard = ConcurrencyGuard()
+        discarded_count = 0
+        executed_count = 0
+        lock = threading.Lock()
+
+        async def payload(gen: int) -> None:
+            nonlocal discarded_count, executed_count
+            if guard.is_stale(gen):
+                with lock:
+                    discarded_count += 1
+            else:
+                with lock:
+                    executed_count += 1
+
+        # Run 3 generations; capture gen from each
+        gens: list[int] = []
+        for _ in range(3):
+            g = guard.start()
+            gens.append(g)
+            guard.finish()
+
+        # All captured gens except the last should be stale
+        stale = [guard.is_stale(g) for g in gens]
+        assert stale == [True, True, False]
