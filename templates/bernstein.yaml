@@ -153,6 +153,23 @@ catalogs:
 #     ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"  # Expanded from local env
 
 # ---------------------------------------------------------------------------
+# Model fallback chain (AGENT-004)
+# ---------------------------------------------------------------------------
+# When a provider returns consecutive errors (429, 503, 529, or timeouts),
+# Bernstein automatically retries with the next model in the chain.
+# Configure here to override the built-in defaults.
+#
+# model_fallback:
+#   # Ordered list of fallback models to try in sequence.
+#   fallback_chain: [sonnet, gemini-flash, qwen]
+#   # Consecutive errors required to trigger a fallback switch.
+#   strike_limit: 3
+#   # Whether connection timeouts count as errors (default: true).
+#   include_timeouts: true
+#   # HTTP status codes that count toward the strike limit.
+#   trigger_codes: [429, 503, 529]
+
+# ---------------------------------------------------------------------------
 # Webhook notifications
 # ---------------------------------------------------------------------------
 # notify:

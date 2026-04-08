@@ -3715,6 +3715,20 @@ if __name__ == "__main__":
             elif seed_path.exists():
                 load_model_policy_from_yaml(seed_path, router)
 
+        # Configure model fallback tracker from bernstein.yaml (AGENT-004).
+        # Reads model_fallback: section and wires the configurable chain into
+        # the process-global singleton before any agents are spawned.
+        if seed and seed.model_fallback:
+            from bernstein.core.model_fallback import initialize_fallback_tracker
+
+            mf = seed.model_fallback
+            initialize_fallback_tracker(
+                fallback_chain=mf.fallback_chain or None,
+                strike_limit=mf.strike_limit,
+                include_timeouts=mf.include_timeouts,
+                trigger_codes=frozenset(mf.trigger_codes),
+            )
+
         # Load MCP config from user global + project seed
         mcp_config = None
         if adapter_name == "claude":

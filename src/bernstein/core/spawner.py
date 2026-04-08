@@ -1201,6 +1201,22 @@ class AgentSpawner:
         except Exception as _token_exc:
             logger.warning("Zero-trust token issuance failed for %s: %s", session_id, _token_exc)
 
+        # Prompt size pre-check (AGENT-003): estimate token count and reject or
+        # truncate before spending a worktree + adapter spawn on an oversized prompt.
+        from bernstein.core.prompt_precheck import PromptAction, check_prompt_size, truncate_prompt
+
+        _precheck = check_prompt_size(prompt, model=model_config.model)
+        if _precheck.action == PromptAction.REJECT:
+            logger.error("Prompt too large for session %s: %s", session_id, _precheck.message)
+            raise SpawnError(f"Prompt size pre-check failed: {_precheck.message}")
+        elif _precheck.action == PromptAction.TRUNCATE:
+            logger.warning(
+                "Prompt exceeds 80%% of context window for session %s; truncating. %s",
+                session_id,
+                _precheck.message,
+            )
+            prompt = truncate_prompt(prompt, _precheck.safe_char_limit)
+
         # Determine working directory: repo-specific > worktree > shared workdir
         spawn_cwd = self._workdir
         worktree_repo_root = self._workdir.resolve()

@@ -295,6 +295,41 @@ class SmtpSchema(BaseModel):
     to_addresses: list[str] = Field(default_factory=list)
 
 
+class ModelFallbackSchema(BaseModel):
+    """Model fallback chain configuration (AGENT-004).
+
+    Controls which HTTP error types trigger a model switch and which
+    fallback models to try in sequence.
+
+    Example::
+
+        model_fallback:
+          fallback_chain: [sonnet, gemini-flash, qwen]
+          strike_limit: 3
+          include_timeouts: true
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fallback_chain: list[str] = Field(
+        default_factory=list,
+        description="Ordered list of fallback models. e.g. [sonnet, gemini-flash, qwen]",
+    )
+    strike_limit: int = Field(
+        default=3,
+        ge=1,
+        description="Consecutive errors before falling back to next model.",
+    )
+    include_timeouts: bool = Field(
+        default=True,
+        description="Whether connection timeouts count toward the strike limit.",
+    )
+    trigger_codes: list[int] = Field(
+        default_factory=lambda: [429, 503, 529],
+        description="HTTP status codes that count as fallback-triggering errors.",
+    )
+
+
 class BernsteinConfig(BaseModel):
     """Top-level Pydantic model for bernstein.yaml.
 
@@ -364,6 +399,7 @@ class BernsteinConfig(BaseModel):
     test_agent: TestAgentSchema | None = None
     smtp: SmtpSchema | None = None
     mcp_servers: dict[str, Any] | None = None
+    model_fallback: ModelFallbackSchema | None = None
 
     # --- Less common ---
     routing: dict[str, str] | None = None
