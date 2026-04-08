@@ -352,3 +352,42 @@ def reset_fallback_tracker() -> None:
     """Reset the global tracker (test helper)."""
     global _tracker
     _tracker = None
+
+
+def initialize_fallback_tracker(
+    fallback_chain: list[str] | None = None,
+    strike_limit: int = DEFAULT_529_STRIKE_LIMIT,
+    include_timeouts: bool = True,
+    trigger_codes: frozenset[int] | None = None,
+) -> ModelFallbackTracker:
+    """Configure and return the process-global fallback tracker singleton.
+
+    Call this once at startup after loading ``bernstein.yaml`` to wire the
+    configured fallback chain into the global tracker.  Subsequent calls to
+    :func:`get_fallback_tracker` will return the configured instance.
+
+    Args:
+        fallback_chain: Ordered list of fallback model names.
+        strike_limit: Consecutive errors before triggering fallback.
+        include_timeouts: Whether timeouts count toward the strike limit.
+        trigger_codes: HTTP status codes that trigger strike counting.
+            Defaults to the module-level ``DEFAULT_FALLBACK_STATUS_CODES``.
+
+    Returns:
+        The newly configured global ``ModelFallbackTracker``.
+    """
+    global _tracker
+    chain_config = FallbackChainConfig(
+        trigger_codes=trigger_codes if trigger_codes is not None else DEFAULT_FALLBACK_STATUS_CODES,
+        include_timeouts=include_timeouts,
+        strike_limit=strike_limit,
+        fallback_chain=list(fallback_chain) if fallback_chain else [],
+    )
+    _tracker = ModelFallbackTracker(strike_limit=strike_limit, chain_config=chain_config)
+    logger.info(
+        "Fallback tracker initialized: strike_limit=%d, chain=%s, codes=%s",
+        strike_limit,
+        fallback_chain,
+        sorted(chain_config.trigger_codes),
+    )
+    return _tracker
