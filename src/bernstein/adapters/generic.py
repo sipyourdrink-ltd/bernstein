@@ -37,6 +37,7 @@ class GenericAdapter(CLIAdapter):
         extra_args: list[str] | None = None,
         display_name: str = "Generic CLI",
     ) -> None:
+        super().__init__()
         self._cli_command = cli_command
         self._prompt_flag = prompt_flag
         self._model_flag = model_flag

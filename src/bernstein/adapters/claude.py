@@ -126,6 +126,7 @@ class ClaudeCodeAdapter(CLIAdapter):
     }
 
     def __init__(self) -> None:
+        super().__init__()
         # Timestamp until which the provider is assumed rate-limited.
         self._rate_limit_until: float = 0.0
         # Timestamp of last successful (non-rate-limited) probe, for caching.

@@ -64,6 +64,7 @@ class OllamaAdapter(CLIAdapter):
     """
 
     def __init__(self, *, base_url: str = OLLAMA_BASE_URL) -> None:
+        super().__init__()
         self._base_url = base_url
 
     def _resolve_model(self, model_name: str) -> str:

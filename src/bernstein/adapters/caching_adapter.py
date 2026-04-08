@@ -53,6 +53,7 @@ class CachingAdapter(CLIAdapter):
         *,
         correlator: CacheBreakCorrelator | None = None,
     ) -> None:
+        super().__init__()
         self._inner = inner_adapter
         self._caching_mgr = PromptCachingManager(workdir)
         self._cache_break_path = workdir / ".sdd" / "metrics" / "cache_breaks.jsonl"

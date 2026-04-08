@@ -90,6 +90,7 @@ class IaCAdapter(CLIAdapter):
 
     def __init__(self, *, tool: str | None = None) -> None:
         """Force a specific tool, or None to auto-detect at spawn time."""
+        super().__init__()
         if tool is not None and tool not in _TOOL_DEFS:
             msg = f"Unknown IaC tool {tool!r}. Supported: {', '.join(_TOOL_DEFS)}"
             raise ValueError(msg)
