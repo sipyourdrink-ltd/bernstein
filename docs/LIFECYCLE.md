@@ -66,6 +66,7 @@ stateDiagram-v2
     BLOCKED --> CANCELLED : manual cancel
 
     WAITING_FOR_SUBTASKS --> DONE : all subtasks completed
+    WAITING_FOR_SUBTASKS --> BLOCKED : subtask timeout escalation
     WAITING_FOR_SUBTASKS --> CANCELLED : manual cancel
 
     FAILED --> OPEN : retry (within max_retries)
@@ -110,6 +111,7 @@ is `_always` (unconditional). Any transition not in this table raises
 | BLOCKED | OPEN | Blocking dependency resolved |
 | BLOCKED | CANCELLED | Manual cancellation |
 | WAITING_FOR_SUBTASKS | DONE | All child subtasks completed |
+| WAITING_FOR_SUBTASKS | BLOCKED | Subtask timeout escalation (parent blocked waiting on unresponsive subtask) |
 | WAITING_FOR_SUBTASKS | CANCELLED | Manual cancellation |
 | FAILED | OPEN | Retry (respects `max_retries`, default 3) |
 | DONE | CLOSED | Janitor verification passed + branch merged |
