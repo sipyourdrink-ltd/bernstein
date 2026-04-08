@@ -1,9 +1,15 @@
 site_name: Bernstein
 site_url: https://bernstein.readthedocs.io/
-site_description: Multi-agent orchestrator for CLI coding agents
+site_author: Alex Chernysh
+site_description: >-
+  Bernstein is a multi-agent orchestrator for CLI coding agents.
+  Spawn, coordinate, and manage parallel AI agents — Claude Code,
+  Codex, Gemini CLI, and more. Any model. One command.
 repo_url: https://github.com/chernistry/bernstein
 repo_name: chernistry/bernstein
 edit_uri: edit/main/docs/
+copyright: >-
+  Copyright &copy; 2025–2026 <a href="https://alexchernysh.com">Alex Chernysh</a>
 
 theme:
   name: material
@@ -34,8 +40,19 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/chernistry/bernstein
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/bernstein/
+    - icon: fontawesome/solid/globe
+      link: https://alexchernysh.com
+  generator: false
+
 plugins:
   - search
+  - social
   - minify:
       minify_html: true
 

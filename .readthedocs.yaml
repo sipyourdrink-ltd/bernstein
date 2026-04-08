@@ -4,6 +4,13 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.13"
+  apt_packages:
+    - libcairo2-dev
+    - libfreetype6-dev
+    - libffi-dev
+    - libjpeg-dev
+    - libpng-dev
+    - libz-dev
 
 mkdocs:
   configuration: mkdocs.yml

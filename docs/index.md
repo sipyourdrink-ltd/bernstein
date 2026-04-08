@@ -1,3 +1,8 @@
+---
+title: Bernstein — Multi-Agent Orchestrator for CLI Coding Agents
+description: Spawn, coordinate, and manage parallel AI coding agents. Claude Code, Codex, Gemini CLI, and more. Any model. One command.
+---
+
 # Bernstein
 
 **Orchestrate any AI coding agent. Any model. One command.**
@@ -24,8 +29,9 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 - [API Reference](openapi-reference.md) — task server REST API
 - [Changelog](CHANGELOG.md) — what's new
 
-## Source
+## Links
 
 - [GitHub](https://github.com/chernistry/bernstein)
 - [PyPI](https://pypi.org/project/bernstein/)
 - [npm](https://www.npmjs.com/package/bernstein-orchestrator)
+- [Author — Alex Chernysh](https://alexchernysh.com)
