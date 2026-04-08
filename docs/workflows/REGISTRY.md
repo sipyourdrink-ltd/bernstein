@@ -30,6 +30,8 @@ Last updated: 2026-04-08
 | SOC 2 evidence export (ENT-004) | `WORKFLOW-soc2-evidence-export.md` | Draft | Raw JSONL export exists; spec adds control mappings (CC6.1, CC7.2), evidence summaries, Merkle attestation, structured formatting. |
 | Cluster task stealing (ENT-007) | `WORKFLOW-cluster-task-stealing.md` | Draft | Pull-based task stealing with CAS locking — missing assigned_node/pinned_node fields, cooldown not persisted |
 | Per-tenant rate limiting & quotas (ENT-008) | `WORKFLOW-tenant-rate-limiting-quota.md` | Draft | API rate limits, task/hour, agent concurrency, cost budget — TenantRateLimiter exists but not wired to middleware |
+| Data residency enforcement (ENT-009) | `WORKFLOW-data-residency-enforcement.md` | Draft | DataResidencyController + router ModelPolicy exist but are not bridged. No enforcement on task server writes, no policy persistence, no attestation persistence. 8 RC findings. |
+| Disaster recovery with cross-region replication (ENT-010) | `WORKFLOW-disaster-recovery-cross-region.md` | Draft | backup_sdd/restore_sdd local-only. WALReplicationManager has no transport layer. No periodic scheduling, no remote upload, no failover detection, no runbook generation. 10 RC findings. |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
@@ -126,6 +128,26 @@ Config path: `cluster.steal` in `bernstein.yaml` (not yet parsed — hardcoded t
 - `src/bernstein/core/routes/costs.py` — tenant-scoped cost queries
 
 Config path: `tenants:` and `rate_limit:` sections in `bernstein.yaml`
+
+### Data residency enforcement workflows
+
+- `src/bernstein/core/data_residency.py` — DataResidencyController, policy storage, write validation, attestations
+- `src/bernstein/core/router.py` — ModelPolicy (required_region), PolicyFilter, ResidencyAttestation on routing
+- `src/bernstein/core/compliance.py` — ComplianceConfig (data_residency, data_residency_region)
+- `src/bernstein/core/metric_export.py` — _serialize_residency_attestations()
+- `src/bernstein/core/orchestrator.py` — logs data-residency feature flag (no controller init yet)
+
+Config path: `.sdd/config/residency_policies.json` (to be created)
+Data path: `.sdd/audit/residency_attestations.jsonl` (to be created)
+
+### Disaster recovery and replication workflows
+
+- `src/bernstein/core/disaster_recovery.py` — backup_sdd(), restore_sdd() (local only)
+- `src/bernstein/core/wal_replication.py` — WALReplicationManager, follower tracking, buffer management
+- `src/bernstein/cli/disaster_recovery_cmd.py` — CLI commands (bernstein dr backup/restore)
+
+Config path: `.sdd/config/dr.yaml` (to be created)
+Data path: `.sdd/docs/runbooks/` (to be created for generated runbooks)
 
 ### Audit integrity and compliance workflows
 
