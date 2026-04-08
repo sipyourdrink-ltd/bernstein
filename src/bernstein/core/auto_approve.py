@@ -138,19 +138,20 @@ def _expand_ansi_c_quoting(cmd: str) -> str:
 
 
 def _extract_substitution_payloads(cmd: str) -> str:
-    """Extract the inner content of backtick and $() substitutions.
+    """Replace backtick and $() substitutions with their inner content.
 
-    For pattern matching, the inner command is what matters (e.g. ``$(echo rm)``
-    should be treated as containing ``rm``). We append the inner payload to
-    the command so patterns can match it.
+    Replaces each substitution in-place so that the resulting command
+    string can be pattern-matched as a whole.  For example::
+
+        $(echo rm) -rf /tmp  →  echo rm -rf /tmp  →  matches rm\\s+-rf deny
+
+    This handles the common evasion technique of wrapping a dangerous
+    command name inside ``$(...)`` or backticks to break naive matching.
     """
-    payloads: list[str] = []
-    for m in _BACKTICK_RE.finditer(cmd):
-        payloads.append(m.group(1))
-    for m in _DOLLAR_PAREN_RE.finditer(cmd):
-        payloads.append(m.group(1))
-    if payloads:
-        return cmd + " " + " ".join(payloads)
+    # Replace $(...) with inner content
+    cmd = _DOLLAR_PAREN_RE.sub(lambda m: m.group(1), cmd)
+    # Replace `...` with inner content
+    cmd = _BACKTICK_RE.sub(lambda m: m.group(1), cmd)
     return cmd
 
 
@@ -162,7 +163,10 @@ def _expand_env_vars(cmd: str) -> str:
     For example, ``${HOME}`` becomes ``HOME``, which is benign.
     The critical case is obfuscation like ``$r$m`` → ``rm``.
     """
+    # Handle braced form first: ${VAR} → VAR
     cmd = _ENV_VAR_BRACED_RE.sub(lambda m: m.group(1), cmd)
+    # Handle bare form: $VAR → VAR (covers $r$m → rm evasion)
+    cmd = _ENV_VAR_BARE_RE.sub(lambda m: m.group(1), cmd)
     return cmd
 
 

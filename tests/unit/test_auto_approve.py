@@ -10,6 +10,7 @@ from bernstein.core.auto_approve import (
     classify_command,
     classify_tool_call,
     decompose_command,
+    normalize_command,
 )
 
 # ---------------------------------------------------------------------------
@@ -277,3 +278,97 @@ class TestApprovalResult:
         result = ApprovalResult(Decision.APPROVE, "ok")
         with pytest.raises(AttributeError):
             result.decision = Decision.DENY  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# normalize_command — evasion technique coverage
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeCommand:
+    def test_hex_escape_decodes_rm(self) -> None:
+        # r\x6d is 'rm' with hex-encoded 'm'
+        normalized = normalize_command(r"r\x6d -rf /tmp")
+        assert "rm" in normalized
+
+    def test_ansi_c_quoting_decodes(self) -> None:
+        # $'\x72\x6d' is bash ANSI-C quoting for 'rm'
+        normalized = normalize_command(r"$'\x72\x6d' -rf /tmp")
+        assert "rm" in normalized
+
+    def test_backtick_substitution_replaced(self) -> None:
+        # `echo rm` should be replaced inline with 'echo rm'
+        normalized = normalize_command("`echo rm` -rf /tmp")
+        assert "echo rm -rf" in normalized
+
+    def test_dollar_paren_substitution_replaced(self) -> None:
+        # $(echo rm) should be replaced inline with 'echo rm'
+        normalized = normalize_command("$(echo rm) -rf /tmp")
+        assert "echo rm -rf" in normalized
+
+    def test_env_var_bare_expands(self) -> None:
+        # $r$m → rm (each bare var name concatenated)
+        normalized = normalize_command("$r$m -rf /tmp")
+        assert "rm" in normalized
+
+    def test_env_var_braced_expands(self) -> None:
+        # ${RM} → RM (var name exposed for matching)
+        normalized = normalize_command("${RM} -rf /tmp")
+        assert "RM" in normalized
+
+    def test_homoglyph_fullwidth_r(self) -> None:
+        # Fullwidth 'r' (ｒ U+FF52) should normalize to ASCII 'r'
+        normalized = normalize_command("\uff52m -rf /tmp")
+        assert "rm" in normalized
+
+    def test_zero_width_chars_stripped(self) -> None:
+        # Zero-width chars between 'r' and 'm' should be stripped
+        normalized = normalize_command("r\u200bm -rf /tmp")
+        assert "rm" in normalized
+
+    def test_octal_escape_decodes(self) -> None:
+        # \162\155 is 'rm' in octal
+        normalized = normalize_command(r"\162\155 -rf /tmp")
+        assert "rm" in normalized
+
+
+# ---------------------------------------------------------------------------
+# classify_command — evasion techniques should still DENY
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyCommandEvasion:
+    def test_hex_escape_rm_denied(self) -> None:
+        # Hex-encoded 'm': r\x6d -rf /tmp → rm -rf /tmp
+        result = classify_command(r"r\x6d -rf /tmp")
+        assert result.decision == Decision.DENY, f"Expected DENY, got {result}"
+
+    def test_ansi_c_quoting_denied(self) -> None:
+        # ANSI-C quoting: $'\x72\x6d' -rf /tmp → rm -rf /tmp
+        result = classify_command(r"$'\x72\x6d' -rf /tmp")
+        assert result.decision == Decision.DENY, f"Expected DENY, got {result}"
+
+    def test_dollar_paren_rm_denied(self) -> None:
+        # $(echo rm) -rf /tmp → echo rm -rf /tmp → contains rm -rf
+        result = classify_command("$(echo rm) -rf /tmp")
+        assert result.decision == Decision.DENY, f"Expected DENY, got {result}"
+
+    def test_backtick_rm_denied(self) -> None:
+        # `echo rm` -rf /tmp → echo rm -rf /tmp → contains rm -rf
+        result = classify_command("`echo rm` -rf /tmp")
+        assert result.decision == Decision.DENY, f"Expected DENY, got {result}"
+
+    def test_env_var_concatenation_denied(self) -> None:
+        # $r$m expands to 'rm' (two single-char env vars concatenated)
+        result = classify_command("$r$m -rf /tmp")
+        assert result.decision == Decision.DENY, f"Expected DENY, got {result}"
+
+    def test_base64_pipe_denied(self) -> None:
+        # echo <b64> | base64 -d | sh is always DENY regardless of content
+        result = classify_command("echo cm0gLXJmIC90bXA= | base64 -d | sh")
+        assert result.decision == Decision.DENY, f"Expected DENY, got {result}"
+
+    def test_homoglyph_rm_denied(self) -> None:
+        # Fullwidth 'ｒ' + 'm' should still be caught
+        result = classify_command("\uff52m -rf /tmp")
+        assert result.decision == Decision.DENY, f"Expected DENY, got {result}"
