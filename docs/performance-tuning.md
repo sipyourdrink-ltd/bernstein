@@ -83,23 +83,35 @@ If idle % stays above 40% for more than a few minutes, you have too many agents 
 
 ### Model selection per task complexity
 
-Routing tasks to the cheapest model that can handle them cuts cost dramatically. Bernstein's bandit learns this automatically after ~5 observations per role, but you can configure defaults explicitly:
+Routing tasks to the cheapest model that can handle them cuts cost dramatically. Bernstein's bandit learns this automatically after ~5 observations per role, but you can configure defaults explicitly using `role_model_policy`:
 
 ```yaml
 # bernstein.yaml
-model_policy:
-  simple: "haiku"      # $1/$5 per 1M tokens — docs, formatting, simple fixes
-  medium: "sonnet"     # $3/$15 per 1M tokens — feature implementation, tests
-  complex: "opus"      # $5/$25 per 1M tokens — architecture, security, design
+role_model_policy:
+  docs:
+    model: haiku        # $1/$5 per 1M tokens — documentation, formatting
+    effort: low
+  backend:
+    model: sonnet       # $3/$15 per 1M tokens — feature implementation
+    effort: high
+  qa:
+    model: sonnet
+    effort: high
+  architect:
+    model: opus         # $5/$25 per 1M tokens — design, architecture review
+    effort: max
+  security:
+    model: opus
+    effort: max
 ```
 
 **Estimated cost comparison** for a 10-task medium project (~100k tokens/task):
 
-| Model | Input + Output cost | Relative cost |
-|---|---|---|
-| haiku | ~$0.60 | 1× (baseline) |
-| sonnet | ~$1.80 | 3× |
-| opus | ~$3.00 | 5× |
+| Model | Input + Output cost | Relative cost | Best for |
+|---|---|---|---|
+| haiku | ~$0.60 | 1× (baseline) | docs, formatting, simple fixes |
+| sonnet | ~$1.80 | 3× | feature implementation, tests |
+| opus | ~$3.00 | 5× | architecture, security, design |
 
 With the bandit optimizer (`EPSILON=0.1`, `QUALITY_THRESHOLD=0.80`), Bernstein converges on the cheapest model achieving ≥80% task success. The bandit state persists across runs in `.sdd/metrics/bandit_state.json`. Reset it to re-learn after a model upgrade:
 
@@ -206,9 +218,6 @@ worktree_setup:
     - node_modules
   copy_files:
     - .env
-  sparse_paths:
-    - src/myservice/**
-    - tests/unit/**
   setup_command: null   # e.g., "npm install" or "uv sync"
 ```
 

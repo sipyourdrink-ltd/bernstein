@@ -72,11 +72,14 @@ model: sonnet           # default model
 max_agents: 4           # concurrent agents; tune based on your API tier
 budget: 5.00            # hard spending cap in USD (optional)
 
-# Override model per complexity level
-model_policy:
-  simple: haiku
-  medium: sonnet
-  complex: opus
+# Override model per role
+role_model_policy:
+  docs:
+    model: haiku
+  backend:
+    model: sonnet
+  architect:
+    model: opus
 
 # Share context files with all agents
 context_files:
