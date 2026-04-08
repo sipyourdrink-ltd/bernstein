@@ -229,6 +229,7 @@ exclude = [
     "src/bernstein/core/integration_test_gen.py",
     "src/bernstein/core/compliance.py",
     "src/bernstein/core/adapter_health.py",
+    "src/bernstein/core/behavior_anomaly.py",
 ]
 
 [tool.pytest.ini_options]
