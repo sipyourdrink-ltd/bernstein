@@ -39,6 +39,7 @@ from bernstein.core.orchestrator import ShutdownInProgress
 from bernstein.core.prometheus import agent_spawn_duration, merge_duration
 from bernstein.core.router import ProviderHealthStatus, RouterError, TierAwareRouter
 from bernstein.core.sandbox import DockerSandbox, spawn_in_sandbox
+from bernstein.core.spawn_errors import RetryStrategy, classify_spawn_error
 from bernstein.core.team_state import TeamStateStore
 from bernstein.core.traces import AgentTrace, TraceStore, finalize_trace, new_trace
 from bernstein.core.worktree import WorktreeError, WorktreeManager, WorktreeSetupConfig
@@ -1459,7 +1460,25 @@ class AgentSpawner:
                         except RouterError:
                             provider_name = None
                     except (SpawnError, Exception) as exc:
+                        categorized = classify_spawn_error(exc, provider=provider_name)
                         attempt_errors.append(f"{adapter_name}: {exc}")
+
+                        # Fail-fast for permanent and operator-fix errors — no
+                        # point trying alternate providers when the binary is
+                        # missing or credentials are invalid.
+                        if categorized.retry_strategy in (
+                            RetryStrategy.NO_RETRY,
+                            RetryStrategy.RETRY_AFTER_FIX,
+                        ):
+                            logger.warning(
+                                "Spawn failure is non-retryable (strategy=%s session=%s adapter=%s): %s",
+                                categorized.retry_strategy.value,
+                                session_id,
+                                adapter_name,
+                                exc,
+                            )
+                            self._adapter_health.record_failure(adapter_name)
+                            break
 
                         # Check for auth error (T499)
                         is_auth_error = False
@@ -1488,10 +1507,11 @@ class AgentSpawner:
 
                         self._adapter_health.record_failure(adapter_name)
                         logger.warning(
-                            "Agent spawn failed (session=%s provider=%s adapter=%s): %s",
+                            "Agent spawn failed (session=%s provider=%s adapter=%s strategy=%s): %s",
                             session_id,
                             provider_name,
                             adapter_name,
+                            categorized.retry_strategy.value,
                             exc,
                         )
                         if self._router is None or provider_name is None:
