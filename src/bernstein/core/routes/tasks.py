@@ -288,6 +288,43 @@ def _try_attest_task_completion(
         logger.warning("Attestation failed for task %s (non-fatal)", task_id, exc_info=True)
 
 
+def _try_generate_sbom(request: Request) -> None:
+    """Best-effort SBOM generation triggered after task completion.
+
+    Runs only when ``BERNSTEIN_SBOM_ON_COMPLETE=1`` is set in the environment
+    or when ``request.app.state.sbom_on_complete`` is truthy.  Non-blocking —
+    any exception is caught and logged so the task completion route always
+    succeeds.
+
+    Artifacts are written to ``<workdir>/.sdd/artifacts/sbom/``.
+    """
+    import os
+
+    sbom_enabled = os.environ.get("BERNSTEIN_SBOM_ON_COMPLETE", "").strip() in ("1", "true", "yes")
+    if not sbom_enabled:
+        sbom_enabled = bool(getattr(request.app.state, "sbom_on_complete", False))
+    if not sbom_enabled:
+        return
+
+    workdir: Path | None = getattr(request.app.state, "workdir", None)
+    if workdir is None:
+        return
+
+    try:
+        from bernstein.core.sbom import SBOMGenerator
+
+        generator = SBOMGenerator(workdir)
+        sbom = generator.generate(source="pip")
+        artifact_path = generator.save(sbom)
+        logger.info(
+            "SBOM generated on task completion: %s (%d components)",
+            artifact_path,
+            len(sbom.components),
+        )
+    except Exception:
+        logger.warning("SBOM generation failed (non-fatal)", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Task CRUD
 # ---------------------------------------------------------------------------
@@ -643,6 +680,9 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
 
         # Sigstore/Ed25519 attestation for the task completion (fire-and-forget)
         _try_attest_task_completion(request, task.id, task.role, body.result_summary)
+
+        # SBOM generation on task completion (fire-and-forget, opt-in via env/state)
+        _try_generate_sbom(request)
 
         # Evict session from the real-time monitor to free memory
         _evict_realtime_session(request, task.claimed_by_session)

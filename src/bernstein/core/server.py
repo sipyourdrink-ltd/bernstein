@@ -1375,6 +1375,11 @@ def create_app(
 
     application.include_router(slo_router)
 
+    # SBOM generation and artifact listing (supply-chain security)
+    from bernstein.core.routes.sbom import router as sbom_router
+
+    application.include_router(sbom_router)
+
     # Claude Code hook receiver — real-time tool-use and lifecycle events
     from bernstein.core.routes.hooks import router as hooks_router
 

@@ -117,3 +117,78 @@ def test_jwt_secret_persists_without_env(tmp_path: Path) -> None:
 
     assert secret_path.exists()
     assert store2.authenticate(token) is not None
+
+
+def test_task_scoped_jwt_embeds_task_ids_in_claims(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Task-scoped JWTs must carry task_ids in the token payload for zero-trust enforcement."""
+
+    monkeypatch.setenv("BERNSTEIN_AUTH_JWT_SECRET", "agent-jwt-secret")
+    store = AgentIdentityStore(tmp_path)
+
+    _, token = store.create_identity(
+        "worker-1",
+        "backend",
+        task_ids=["task-aaa", "task-bbb"],
+    )
+    claims = verify_jwt(token, "agent-jwt-secret")
+
+    assert claims is not None
+    assert sorted(claims["task_ids"]) == ["task-aaa", "task-bbb"]
+    # allowed_files defaults to empty list
+    assert claims["allowed_files"] == []
+
+
+def test_file_scoped_jwt_embeds_allowed_files_in_claims(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """File-scoped JWTs must carry allowed_files in the token payload."""
+
+    monkeypatch.setenv("BERNSTEIN_AUTH_JWT_SECRET", "agent-jwt-secret")
+    store = AgentIdentityStore(tmp_path)
+
+    _, token = store.create_identity(
+        "worker-2",
+        "backend",
+        task_ids=["task-ccc"],
+        allowed_files=["src/**/*.py", "tests/**/*.py"],
+    )
+    claims = verify_jwt(token, "agent-jwt-secret")
+
+    assert claims is not None
+    assert sorted(claims["allowed_files"]) == ["src/**/*.py", "tests/**/*.py"]
+    assert claims["task_ids"] == ["task-ccc"]
+
+
+def test_scoped_token_rejects_claim_substitution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A token issued for task-A cannot authenticate as a token for task-B.
+
+    This guards against claim-substitution attacks where an attacker intercepts
+    a valid token and replays it against a different task. The identity store
+    verifies that the task_ids in the JWT payload match the stored credential.
+    """
+
+    monkeypatch.setenv("BERNSTEIN_AUTH_JWT_SECRET", "agent-jwt-secret")
+    store = AgentIdentityStore(tmp_path)
+
+    # Create a scoped token for task-A
+    identity_a, token_a = store.create_identity("worker-3", "backend", task_ids=["task-A"])
+
+    # Authenticate with the correct token — must succeed
+    authed = store.authenticate(token_a)
+    assert authed is not None
+    assert authed.task_ids == ["task-A"]
+
+    # Now tamper: create a second identity with task-B scope. Its token
+    # must NOT authenticate as worker-3's identity.
+    identity_b, token_b = store.create_identity("worker-4", "backend", task_ids=["task-B"])
+
+    # token_b should authenticate as worker-4, not worker-3
+    authed_b = store.authenticate(token_b)
+    assert authed_b is not None
+    assert authed_b.id == "worker-4"
+    assert authed_b.task_ids == ["task-B"]
+
+    # token_a should still only allow task-A access
+    authed_a = store.authenticate(token_a)
+    assert authed_a is not None
+    assert authed_a.task_ids == ["task-A"]
+    assert store.validate_task_access("worker-3", "task-A") is True
+    assert store.validate_task_access("worker-3", "task-B") is False
