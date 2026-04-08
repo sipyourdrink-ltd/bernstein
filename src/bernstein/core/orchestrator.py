@@ -1492,8 +1492,7 @@ class Orchestrator:
                 # Backoff: 5s, 10s, 15s, 20s, 30s (capped)
                 time.sleep(min(5.0 * server_failures, 30.0))
             elif tick_result is not None and (
-                tick_result.spawned or tick_result.verified
-                or tick_result.retried or tick_result.open_tasks > 0
+                tick_result.spawned or tick_result.verified or tick_result.retried or tick_result.open_tasks > 0
             ):
                 self._idle_multiplier = 1
                 time.sleep(self._config.poll_interval_s)
