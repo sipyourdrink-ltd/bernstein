@@ -1491,11 +1491,14 @@ class Orchestrator:
             if server_failures > 0:
                 # Backoff: 5s, 10s, 15s, 20s, 30s (capped)
                 time.sleep(min(5.0 * server_failures, 30.0))
-            elif tick_result is not None and (tick_result.spawned or tick_result.verified or tick_result.retried):
+            elif tick_result is not None and (
+                tick_result.spawned or tick_result.verified
+                or tick_result.retried or tick_result.open_tasks > 0
+            ):
                 self._idle_multiplier = 1
                 time.sleep(self._config.poll_interval_s)
             else:
-                self._idle_multiplier = min(self._idle_multiplier * 2, 1024)
+                self._idle_multiplier = min(self._idle_multiplier * 2, 8)
                 time.sleep(min(self._config.poll_interval_s * self._idle_multiplier, 30.0))
 
             # Hot-reload bernstein.yaml config (mutable fields only)
@@ -3141,9 +3144,9 @@ class Orchestrator:
         if not backlog_files:
             return 0
 
-        # Rate-limit ingestion: max 10 files per tick to prevent server overload.
+        # Rate-limit ingestion: max 50 files per tick to prevent server overload.
         # With 700+ backlog files, posting them all in one tick crashes the server.
-        _MAX_INGEST_PER_TICK = 10
+        _MAX_INGEST_PER_TICK = 50
 
         # Build title dedup set from existing server tasks (if available).
         # Prevents re-creating tasks that already exist on the server after a

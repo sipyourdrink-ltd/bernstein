@@ -79,7 +79,7 @@ def _task_from_dict(raw: dict[str, Any]) -> Task:  # type: ignore[reportUnusedFu
     return Task.from_dict(raw)
 
 
-_FETCH_PAGE_SIZE = 100
+_FETCH_PAGE_SIZE = 500
 
 
 def fetch_all_tasks(
