@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from bernstein.tui.themes import (
     DARK_THEME,
@@ -16,6 +20,8 @@ from bernstein.tui.themes import (
     detect_terminal_theme,
     generate_theme_css,
     get_theme,
+    load_theme_config,
+    save_theme_config,
     theme_color,
 )
 
@@ -134,3 +140,42 @@ class TestThemeColor:
 
     def test_unknown_role(self) -> None:
         assert theme_color(DARK_THEME, "nonexistent") == DARK_THEME.foreground
+
+
+class TestLoadSaveThemeConfig:
+    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
+        config = tmp_path / "tui_config.json"
+        save_theme_config(ThemeMode.LIGHT, config_path=config)
+        loaded = load_theme_config(config_path=config)
+        assert loaded == ThemeMode.LIGHT
+
+    def test_save_and_load_high_contrast(self, tmp_path: Path) -> None:
+        config = tmp_path / "tui_config.json"
+        save_theme_config(ThemeMode.HIGH_CONTRAST, config_path=config)
+        loaded = load_theme_config(config_path=config)
+        assert loaded == ThemeMode.HIGH_CONTRAST
+
+    def test_load_missing_file_returns_auto(self, tmp_path: Path) -> None:
+        config = tmp_path / "nonexistent.json"
+        loaded = load_theme_config(config_path=config)
+        assert loaded == ThemeMode.AUTO
+
+    def test_load_corrupt_file_returns_auto(self, tmp_path: Path) -> None:
+        config = tmp_path / "tui_config.json"
+        config.write_text("{invalid json", encoding="utf-8")
+        loaded = load_theme_config(config_path=config)
+        assert loaded == ThemeMode.AUTO
+
+    def test_save_preserves_other_keys(self, tmp_path: Path) -> None:
+        config = tmp_path / "tui_config.json"
+        config.write_text(json.dumps({"other_key": "value"}), encoding="utf-8")
+        save_theme_config(ThemeMode.DARK, config_path=config)
+        data = json.loads(config.read_text())
+        assert data["other_key"] == "value"
+        assert data["theme"] == "dark"
+
+    def test_save_creates_parent_dirs(self, tmp_path: Path) -> None:
+        config = tmp_path / "nested" / "dir" / "tui_config.json"
+        save_theme_config(ThemeMode.DARK, config_path=config)
+        assert config.exists()
+        assert json.loads(config.read_text())["theme"] == "dark"

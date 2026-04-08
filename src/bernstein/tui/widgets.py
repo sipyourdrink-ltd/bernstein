@@ -285,6 +285,7 @@ class TaskRow:
         session_id: Agent session ID, used for kill operations.
         tokens_used: Tokens consumed so far (0 if unknown).
         tokens_budget: Token budget allocation (0 if not set).
+        progress_pct: Completion percentage (0-100), or None if unknown.
     """
 
     task_id: str
@@ -296,6 +297,7 @@ class TaskRow:
     session_id: str
     tokens_used: int = 0
     tokens_budget: int = 0
+    progress_pct: float | None = None
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> TaskRow:
@@ -309,6 +311,20 @@ class TaskRow:
         """
         model = str(raw.get("model", "")) or "\u2014"
         elapsed = str(raw.get("elapsed", "")) or "\u2014"
+
+        # TUI-010: extract progress percentage
+        progress_pct: float | None = None
+        from bernstein.tui.progress_bar import TaskProgress
+
+        tp = TaskProgress.from_api(raw)
+        raw_pct = tp.percentage
+        # Only store a non-zero pct so empty rows show "—" rather than "0%"
+        if raw_pct > 0.0 or raw.get("progress") or raw.get("files_changed"):
+            progress_pct = raw_pct
+        # Always show 100% for completed tasks
+        if str(raw.get("status", "")) == "done":
+            progress_pct = 100.0
+
         return cls(
             task_id=str(raw.get("id", "")),
             status=str(raw.get("status", "open")),
@@ -319,6 +335,7 @@ class TaskRow:
             session_id=str(raw.get("session_id", "")),
             tokens_used=int(raw.get("tokens_used", 0) or 0),
             tokens_budget=int(raw.get("token_budget", 0) or 0),
+            progress_pct=progress_pct,
         )
 
 
@@ -332,7 +349,7 @@ class TaskListWidget(DataTable[Text]):
 
     def on_mount(self) -> None:
         """Set up columns when the widget is mounted."""
-        self.add_columns("ID", "Status", "Role", "Title", "Model", "Time")
+        self.add_columns("ID", "Status", "Role", "Title", "Model", "Time", "Progress")
         self.cursor_type = "row"
         self.zebra_stripes = True
 
@@ -351,6 +368,7 @@ class TaskListWidget(DataTable[Text]):
 
         # Resolve accessibility config from the parent app (TUI-013)
         from bernstein.tui.accessibility import AccessibilityConfig
+        from bernstein.tui.progress_bar import render_progress_bar_text
 
         accessibility: AccessibilityConfig | None = None
         try:
@@ -360,12 +378,17 @@ class TaskListWidget(DataTable[Text]):
             pass
 
         # Update existing rows in-place, add new ones
-        columns = ("ID", "Status", "Role", "Title", "Model", "Time")
+        columns = ("ID", "Status", "Role", "Title", "Model", "Time", "Progress")
         for row in rows:
             colour = status_color(row.status)
             dot = status_dot(row.status)
             status_text = accessible_status_label(row.status, accessibility)
             prefix = replace_unicode(f"{dot} ", accessibility)
+            # TUI-010: render compact progress bar for in-progress tasks
+            if row.progress_pct is not None:
+                progress_cell = render_progress_bar_text(row.progress_pct, width=10, show_pct=True)
+            else:
+                progress_cell = Text("\u2014", style="dim")
             cells = (
                 Text(row.task_id, style="bold"),
                 Text(f"{prefix}{status_text}", style=colour),
@@ -373,6 +396,7 @@ class TaskListWidget(DataTable[Text]):
                 Text(row.title),
                 Text(row.model, style="dim"),
                 Text(row.elapsed, style="dim"),
+                progress_cell,
             )
             if row.task_id in existing_keys:
                 # Update each cell individually — preserves cursor position
@@ -526,6 +550,7 @@ class StatusBar(Static):
         elapsed_seconds: float = 0.0,
         server_online: bool = True,
         transition_reasons: dict[str, dict[str, float]] | None = None,
+        run_progress_pct: float | None = None,
     ) -> None:
         """Update the status bar content.
 
@@ -541,6 +566,8 @@ class StatusBar(Static):
             transition_reasons: Transition reason histogram from Prometheus.
                 Shape: ``{"agent": {"completed": 5.0, ...}, "task": {...}}``.
                 When provided, the top agent reasons are shown inline.
+            run_progress_pct: Aggregate run-level completion percentage (0-100).
+                When provided, a compact progress bar is shown in the status bar.
         """
         minutes = int(elapsed_seconds) // 60
         seconds = int(elapsed_seconds) % 60
@@ -566,6 +593,12 @@ class StatusBar(Static):
         if tasks_failed:
             left_parts.append(f"[red]{tasks_failed} failed[/red]")
         left_parts.append(f"${cost_usd:.2f}{sparkline}")
+
+        # TUI-010: aggregate run-level progress bar
+        if run_progress_pct is not None:
+            from bernstein.tui.progress_bar import render_progress_bar
+
+            left_parts.append(render_progress_bar(run_progress_pct, width=12, show_pct=True))
 
         # Compact transition reason histogram: top 3 agent exit reasons
         if transition_reasons:
