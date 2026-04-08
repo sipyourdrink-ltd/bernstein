@@ -1051,6 +1051,8 @@ class OrchestratorConfig:
     test_agent: TestAgentConfig = field(default_factory=TestAgentConfig)
     convergence: ConvergenceGuardConfig = field(default_factory=ConvergenceGuardConfig)
     permission_mode: str | None = None  # "bypass" | "plan" | "auto" | "default" — see permission_mode.py
+    agent_resource_limits: Any | None = None  # ResourceLimits | None — OS-level limits for non-sandboxed spawns
+    shutdown_stagger_delay_s: float = 5.0  # Seconds between SHUTDOWN signals during drain
 
     def __post_init__(self) -> None:
         """Parse nested workflow config if dict provided."""

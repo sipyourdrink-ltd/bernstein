@@ -1715,22 +1715,30 @@ def check_kill_signals(orch: Any, result: Any) -> None:
         result.reaped.append(session_id)
 
 
-def send_shutdown_signals(orch: Any, reason: str) -> None:
+def send_shutdown_signals(orch: Any, reason: str, stagger_delay_s: float = 0.0) -> None:
     """Write SHUTDOWN signal files to all currently active agents.
 
     Called when ``bernstein stop`` is issued or the budget is hit so
     agents can save WIP before the orchestrator exits.
 
+    When *stagger_delay_s* > 0, signals are sent one at a time with a
+    ``time.sleep(stagger_delay_s)`` gap between each agent.  This prevents
+    a thundering-herd of simultaneous merge attempts during drain mode.
+
     Args:
         orch: Orchestrator instance.
         reason: Human-readable reason for the shutdown.
+        stagger_delay_s: Seconds to wait between consecutive SHUTDOWN signals.
+            Default 0 means all signals are sent without delay (original
+            behaviour, preserving backward compatibility).
     """
-    for session in orch._agents.values():
-        if session.status == "dead":
-            continue
+    active = [s for s in orch._agents.values() if s.status != "dead"]
+    for idx, session in enumerate(active):
         task_title = ", ".join(session.task_ids) if session.task_ids else "unknown task"
         with contextlib.suppress(OSError):
             orch._signal_mgr.write_shutdown(session.id, reason=reason, task_title=task_title)
+        if stagger_delay_s > 0 and idx < len(active) - 1:
+            time.sleep(stagger_delay_s)
 
 
 # ---------------------------------------------------------------------------

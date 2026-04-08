@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from bernstein.adapters.base import RateLimitError, SpawnError, SpawnResult
 from bernstein.adapters.registry import get_adapter
+from bernstein.core.resource_limits import ResourceLimits
 from bernstein.adapters.skills_injector import inject_skills
 from bernstein.agents.registry import AgentRegistry, get_registry
 from bernstein.bridges.base import AgentState, BridgeError, RuntimeBridge, SpawnRequest
@@ -741,8 +742,10 @@ class AgentSpawner:
         role_model_policy: dict[str, dict[str, str]] | None = None,
         runtime_bridge: RuntimeBridge | None = None,
         backend: AgentBackend = AgentBackend.SUBPROCESS,
+        resource_limits: ResourceLimits | None = None,
     ) -> None:
         self._enable_caching = enable_caching
+        self._resource_limits = resource_limits
         self._adapter_cache: dict[str, CLIAdapter] = {}
         if enable_caching:
             from bernstein.adapters.caching_adapter import CachingAdapter
@@ -1369,6 +1372,8 @@ class AgentSpawner:
                         break
 
                     try:
+                        # Apply OS-level resource limits to non-sandboxed spawns.
+                        target_adapter.set_resource_limits(self._resource_limits)
                         spawn_start = time.perf_counter()
                         if self._in_process is not None and self._backend == AgentBackend.IN_PROCESS:
                             # In-process: run the adapter's subprocess via

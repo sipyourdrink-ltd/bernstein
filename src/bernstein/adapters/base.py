@@ -13,8 +13,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from bernstein.core.platform_compat import kill_process_group, process_alive
+from bernstein.core.resource_limits import ResourceLimits, make_preexec_fn
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from bernstein.core.models import AbortReason, ApiTierInfo, ModelConfig
@@ -109,6 +111,32 @@ class CLIAdapter(ABC):
 
     Implement this for each supported CLI (Claude Code, Codex, Gemini, etc.).
     """
+
+    def __init__(self) -> None:
+        self._resource_limits: ResourceLimits | None = None
+
+    def set_resource_limits(self, limits: ResourceLimits | None) -> None:
+        """Configure OS-level resource limits applied to spawned child processes.
+
+        Must be called before :meth:`spawn`.  On POSIX, limits are enforced via
+        ``resource.setrlimit`` in the child process ``preexec_fn``.  On other
+        platforms the limits are recorded but not enforced.
+
+        Args:
+            limits: Resource limits to apply, or ``None`` to clear limits.
+        """
+        self._resource_limits = limits
+
+    def _get_preexec_fn(self) -> "Callable[[], None] | None":
+        """Return a preexec_fn for subprocess.Popen based on configured limits.
+
+        Returns:
+            A zero-argument callable to pass as ``preexec_fn``, or ``None``
+            when no limits are configured or the platform does not support it.
+        """
+        if self._resource_limits is None:
+            return None
+        return make_preexec_fn(self._resource_limits)
 
     @abstractmethod
     def spawn(

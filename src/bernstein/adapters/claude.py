@@ -411,6 +411,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                 parent environment is inherited (legacy behaviour).
         """
         log_file = log_path.open("w")
+        preexec_fn = self._get_preexec_fn()
         try:
             try:
                 claude_proc = subprocess.Popen(
@@ -420,6 +421,7 @@ class ClaudeCodeAdapter(CLIAdapter):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
+                    preexec_fn=preexec_fn,
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError("claude not found in PATH. Install Claude Code: https://claude.ai/code") from exc

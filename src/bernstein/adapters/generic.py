@@ -75,6 +75,7 @@ class GenericAdapter(CLIAdapter):
         )
 
         env = build_filtered_env()
+        preexec_fn = self._get_preexec_fn()
         with log_path.open("w") as log_file:
             try:
                 proc = subprocess.Popen(
@@ -84,6 +85,7 @@ class GenericAdapter(CLIAdapter):
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
+                    preexec_fn=preexec_fn,
                 )
             except FileNotFoundError as exc:
                 raise RuntimeError(f"{self._cli_command!r} not found in PATH") from exc
