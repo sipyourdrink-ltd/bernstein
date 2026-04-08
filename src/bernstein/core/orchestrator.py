@@ -1463,6 +1463,25 @@ class Orchestrator:
             self._recover_from_wal()
         except Exception:
             logger.exception("WAL recovery failed (non-fatal) — continuing startup")
+        # Audit log integrity check: verify the last N HMAC-chained entries.
+        try:
+            from bernstein.core.audit_integrity import verify_on_startup
+
+            _integrity = verify_on_startup(self._workdir / ".sdd")
+            if not _integrity.valid:
+                logger.warning(
+                    "Audit integrity check found %d error(s) — review with "
+                    "'bernstein audit verify'",
+                    len(_integrity.errors),
+                )
+            elif _integrity.entries_checked > 0:
+                logger.info(
+                    "Audit integrity OK (%d entries verified in %.1fms)",
+                    _integrity.entries_checked,
+                    _integrity.duration_ms,
+                )
+        except Exception:
+            logger.exception("Audit integrity check failed (non-fatal) — continuing startup")
         # Zombie cleanup: terminate orphaned agent processes from prior crashed runs.
         try:
             from bernstein.core.zombie_cleanup import scan_and_cleanup_zombies
