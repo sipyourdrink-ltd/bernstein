@@ -1,0 +1,129 @@
+site_name: Bernstein
+site_url: https://bernstein.readthedocs.io/
+site_description: Multi-agent orchestrator for CLI coding agents
+repo_url: https://github.com/chernistry/bernstein
+repo_name: chernistry/bernstein
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+  - attr_list
+  - def_list
+  - tables
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quickstart: GETTING_STARTED.md
+      - Tutorial: quickstart-tutorial.md
+      - Install on Linux: install-linux.md
+      - Configuration: CONFIG.md
+  - Concepts:
+      - Architecture: ARCHITECTURE.md
+      - Design: DESIGN.md
+      - Task Lifecycle: LIFECYCLE.md
+      - The Bernstein Way: the-bernstein-way.md
+      - Glossary: GLOSSARY.md
+  - Guides:
+      - Adapter Guide: ADAPTER_GUIDE.md
+      - Plan Files: plans.md
+      - Hook System: hook-system.md
+      - Plugin SDK: plugin-sdk.md
+      - Cost Optimization: cost-optimization.md
+      - Performance Tuning: performance-tuning.md
+      - Security Hardening: security-hardening.md
+      - GitHub Action: github-action.md
+      - GitHub App Setup: github-app-setup.md
+  - Deployment:
+      - Deployment Guide: deployment-guide.md
+      - Cluster Mode: CLUSTER.md
+      - Helm Deployment: HELM_DEPLOYMENT.md
+  - Reference:
+      - API Reference: openapi-reference.md
+      - Feature Matrix: FEATURE_MATRIX.md
+      - Model Policy: MODEL_POLICY.md
+      - Compatibility: compatibility.md
+      - Dependency Resolver: DEPENDENCY_RESOLVER.md
+      - Known Limitations: KNOWN_LIMITATIONS.md
+      - Troubleshooting: TROUBLESHOOTING.md
+      - Changelog: CHANGELOG.md
+  - Migration:
+      - Migration Guides: migration-guides.md
+      - From CrewAI: migration-from-crewai.md
+      - From LangGraph: migration-from-langgraph.md
+      - Zero Lock-in: zero-lock-in.md
+  - Blog:
+      - Zero-LLM Coordination: blog/zero-llm-coordination.md
+      - Multi-Agent Benchmark: blog/multi-agent-benchmark.md
+      - Self-Evolution 30 Days: blog/self-evolution-30-days.md
+      - SWE-Bench Thesis: blog/swe-bench-orchestration-thesis.md
+      - COBOL Modernization: blog/cobol-modernization.md
+  - Comparisons:
+      - vs Conductor: compare/bernstein-vs-conductor.md
+      - vs Crystal: compare/bernstein-vs-crystal.md
+      - vs Dorothy: compare/bernstein-vs-dorothy.md
+      - vs GitHub Agent HQ: compare/bernstein-vs-github-agent-hq.md
+      - vs Paperclip: compare/bernstein-vs-paperclip.md
+      - vs Parallel Code: compare/bernstein-vs-parallel-code.md
+      - vs Single Agent: compare/bernstein-vs-single-agent.md
+      - vs Stoneforge: compare/bernstein-vs-stoneforge.md
+      - Competitive Matrix: competitive-matrix.md
+  - Decisions:
+      - Agent Lifecycle: decisions/001-agent-lifecycle.md
+      - UX and Distribution: decisions/002-ux-and-distribution.md
+      - Self-Evolution: decisions/003-self-evolution.md
+      - File-Based State: decisions/004-file-based-state.md
+      - Short-Lived Agents: decisions/005-short-lived-agents.md
+      - No Embedded LLM: decisions/006-no-embedded-llm.md
+      - Pluggy Plugin System: decisions/007-pluggy-plugin-system.md
+      - Click for CLI: decisions/008-click-for-cli.md
+  - Contributing: CONTRIBUTING.md
+  - Audit: AUDIT.md
+  - Benchmarks: BENCHMARKS.md
+  - Agentic Manifesto: AGENTIC_MANIFESTO.md
+
+docs_dir: docs
+strict: false
