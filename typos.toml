@@ -10,6 +10,7 @@ ba = "ba"            # ba_table = Budget & Approval table (manifest_cmd.py)
 nd = "nd"            # nd = number of diffs (benchmarks/run_benchmark.py)
 opps = "opps"        # opps = opportunities (test_evolution_e2e.py, test_evolution_loop.py)
 ded = "ded"          # injection_ded = injection deduction (memory_sanitizer.py)
+ehr = "ehr"          # Electronic Health Record (HIPAA compliance)
 mis = "mis"          # false positive on partial words
 
 # Technical terms used consistently in the codebase
