@@ -9,6 +9,7 @@ from __future__ import annotations
 import platform
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 import yaml
 
@@ -63,6 +64,25 @@ CROSS_PLATFORM_WORKFLOW_CONTENT = {
 }
 
 
+def _load_ci_workflow() -> dict[object, Any]:
+    """Load the CI workflow as a typed mapping for assertions."""
+    data = yaml.safe_load(_CI_WORKFLOW.read_text())
+    assert isinstance(data, dict)
+    return cast("dict[object, Any]", data)
+
+
+def _ci_test_steps(data: dict[object, Any]) -> list[dict[str, Any]]:
+    """Return the step list for the main CI test job."""
+    jobs = cast("dict[str, Any]", data["jobs"])
+    test_job = cast("dict[str, Any]", jobs["test"])
+    steps = cast("list[Any]", test_job["steps"])
+    typed_steps: list[dict[str, Any]] = []
+    for raw_step in steps:
+        if isinstance(raw_step, dict):
+            typed_steps.append(cast("dict[str, Any]", raw_step))
+    return typed_steps
+
+
 class TestCIWorkflowExists:
     """Validate the existing CI workflow file."""
 
@@ -70,55 +90,106 @@ class TestCIWorkflowExists:
         assert _CI_WORKFLOW.exists(), "CI workflow file not found"
 
     def test_ci_workflow_valid_yaml(self) -> None:
-        data = yaml.safe_load(_CI_WORKFLOW.read_text())
-        assert isinstance(data, dict)
+        data = _load_ci_workflow()
         assert "name" in data
         assert "jobs" in data
 
     def test_ci_runs_on_ubuntu(self) -> None:
-        data = yaml.safe_load(_CI_WORKFLOW.read_text())
+        data = _load_ci_workflow()
         # At least one job should run on ubuntu
         has_ubuntu = False
-        for _job_name, job in data.get("jobs", {}).items():
-            runs_on = job.get("runs-on", "")
-            if "ubuntu" in str(runs_on):
+        jobs = cast("dict[str, Any]", data["jobs"])
+        for _job_name, job in jobs.items():
+            if not isinstance(job, dict):
+                continue
+            typed_job = cast("dict[str, Any]", job)
+            runs_on = str(typed_job.get("runs-on", ""))
+            if "ubuntu" in runs_on:
                 has_ubuntu = True
                 break
         assert has_ubuntu, "CI should have at least one Ubuntu job"
 
     def test_ci_uses_main_branch(self) -> None:
-        data = yaml.safe_load(_CI_WORKFLOW.read_text())
+        data = _load_ci_workflow()
         # PyYAML parses bare `on:` as boolean True, so check both keys
-        on_section = data.get("on") or data.get(True, {})
-        push = on_section.get("push", {}) if isinstance(on_section, dict) else {}
-        branches = push.get("branches", [])
+        on_section_raw = data["on"] if "on" in data else data.get(True, {})
+        on_section = cast("dict[str, Any]", on_section_raw if isinstance(on_section_raw, dict) else {})
+        push = cast("dict[str, Any]", on_section.get("push", {}))
+        branches = cast("list[str]", push.get("branches", []))
         assert "main" in branches, "CI push trigger must include 'main' branch"
+
+    def test_pull_request_test_job_fetches_base_ref_for_impacted_tests(self) -> None:
+        data = _load_ci_workflow()
+        steps = _ci_test_steps(data)
+        fetch_steps = [step for step in steps if step.get("name") == "Fetch base ref for impacted-test selection"]
+        assert len(fetch_steps) == 1
+        fetch_step = fetch_steps[0]
+        assert fetch_step.get("if") == "github.event_name == 'pull_request'"
+        assert "refs/heads/${{ github.base_ref }}" in fetch_step.get("run", "")
+
+    def test_pull_request_test_job_uses_affected_runner_with_fallback(self) -> None:
+        data = _load_ci_workflow()
+        steps = _ci_test_steps(data)
+        run_steps = [step for step in steps if step.get("name") == "Run isolated test suite"]
+        assert len(run_steps) == 1
+        run_script = run_steps[0].get("run", "")
+        assert "--affected" in run_script
+        assert "refs/remotes/origin/${{ github.base_ref }}" in run_script
+        assert "uv run python scripts/run_tests.py -x --parallel 4" in run_script
+
+    def test_coverage_reporting_only_runs_on_push(self) -> None:
+        data = _load_ci_workflow()
+        steps = _ci_test_steps(data)
+        coverage_steps = [
+            step
+            for step in steps
+            if "3.13 only" in step.get("name", "")
+            or "coverage" in step.get("name", "").lower()
+            or "Codecov" in step.get("name", "")
+        ]
+        assert coverage_steps, "expected coverage-related steps in CI workflow"
+        for step in coverage_steps:
+            condition = step.get("if", "")
+            assert "github.event_name == 'push'" in condition
 
 
 class TestCrossPlatformWorkflowContent:
     """Validate the generated cross-platform workflow content."""
 
     def test_has_matrix_strategy(self) -> None:
-        job = CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"]["test"]
-        matrix = job["strategy"]["matrix"]
+        jobs = cast("dict[str, Any]", CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"])
+        job = cast("dict[str, Any]", jobs["test"])
+        strategy = cast("dict[str, Any]", job["strategy"])
+        matrix = cast("dict[str, list[str]]", strategy["matrix"])
         assert "os" in matrix
         assert "python-version" in matrix
 
     def test_includes_macos(self) -> None:
-        matrix = CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"]["test"]["strategy"]["matrix"]
+        jobs = cast("dict[str, Any]", CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"])
+        job = cast("dict[str, Any]", jobs["test"])
+        strategy = cast("dict[str, Any]", job["strategy"])
+        matrix = cast("dict[str, list[str]]", strategy["matrix"])
         assert "macos-latest" in matrix["os"]
 
     def test_includes_linux(self) -> None:
-        matrix = CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"]["test"]["strategy"]["matrix"]
+        jobs = cast("dict[str, Any]", CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"])
+        job = cast("dict[str, Any]", jobs["test"])
+        strategy = cast("dict[str, Any]", job["strategy"])
+        matrix = cast("dict[str, list[str]]", strategy["matrix"])
         assert "ubuntu-latest" in matrix["os"]
 
     def test_includes_python_312(self) -> None:
-        matrix = CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"]["test"]["strategy"]["matrix"]
+        jobs = cast("dict[str, Any]", CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"])
+        job = cast("dict[str, Any]", jobs["test"])
+        strategy = cast("dict[str, Any]", job["strategy"])
+        matrix = cast("dict[str, list[str]]", strategy["matrix"])
         assert "3.12" in matrix["python-version"]
 
     def test_fail_fast_disabled(self) -> None:
-        job = CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"]["test"]
-        assert job["strategy"]["fail-fast"] is False
+        jobs = cast("dict[str, Any]", CROSS_PLATFORM_WORKFLOW_CONTENT["jobs"])
+        job = cast("dict[str, Any]", jobs["test"])
+        strategy = cast("dict[str, Any]", job["strategy"])
+        assert strategy["fail-fast"] is False
 
     def test_generates_valid_yaml(self) -> None:
         """The workflow content must serialize to valid YAML."""
@@ -127,7 +198,7 @@ class TestCrossPlatformWorkflowContent:
         assert reparsed == CROSS_PLATFORM_WORKFLOW_CONTENT
 
     def test_targets_main_branch(self) -> None:
-        on = CROSS_PLATFORM_WORKFLOW_CONTENT["on"]
+        on = cast("dict[str, dict[str, list[str]]]", CROSS_PLATFORM_WORKFLOW_CONTENT["on"])
         assert "main" in on["push"]["branches"]
         assert "main" in on["pull_request"]["branches"]
 

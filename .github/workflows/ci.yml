@@ -263,9 +263,21 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
-      - run: uv run python scripts/run_tests.py -x --parallel 4
+      - name: Fetch base ref for impacted-test selection
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin \
+            "refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+      - name: Run isolated test suite
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] && \
+             git rev-parse --verify "refs/remotes/origin/${{ github.base_ref }}" >/dev/null 2>&1; then
+            uv run python scripts/run_tests.py -x --parallel 4 --affected "refs/remotes/origin/${{ github.base_ref }}"
+          else
+            uv run python scripts/run_tests.py -x --parallel 4
+          fi
       - name: Generate coverage and JUnit reports (3.13 only)
-        if: matrix.python-version == '3.13'
+        if: matrix.python-version == '3.13' && github.event_name == 'push'
         continue-on-error: true
         timeout-minutes: 25
         run: |
@@ -323,7 +335,7 @@ jobs:
             echo "::warning::junit.xml was not generated"
           fi
       - name: Upload coverage artifact
-        if: matrix.python-version == '3.13'
+        if: matrix.python-version == '3.13' && github.event_name == 'push'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-report
@@ -333,14 +345,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
       - name: Upload coverage to Codecov
-        if: matrix.python-version == '3.13'
+        if: matrix.python-version == '3.13' && github.event_name == 'push'
         uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6
         with:
           files: coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload test results to Codecov
-        if: matrix.python-version == '3.13' && !cancelled()
+        if: matrix.python-version == '3.13' && github.event_name == 'push' && !cancelled()
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1
         with:
           files: junit.xml
