@@ -7,6 +7,7 @@ as explicit arguments so the Orchestrator methods can delegate to them.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import math
@@ -38,6 +39,7 @@ from bernstein.core.metrics import get_collector
 from bernstein.core.models import (
     AgentSession,
     Task,
+    TaskStatus,
 )
 from bernstein.core.router import RouterError
 from bernstein.core.rule_enforcer import RulesConfig, load_rules_config, run_rule_enforcement
@@ -205,6 +207,73 @@ def check_file_overlap(
                     )
                     return True
     return False
+
+
+def prepare_speculative_warm_pool(orch: Any, task_graph: Any, tasks: list[Task]) -> None:
+    """Pre-create warm-pool capacity for tasks that are one dependency away.
+
+    This keeps AGENT-022 aligned with Bernstein's short-lived-agent invariant:
+    only worktrees/adapter capacity are prepared ahead of time. No task is
+    claimed and no sleeping agent process is created.
+
+    Args:
+        orch: Orchestrator instance.
+        task_graph: TaskGraph for the current tick.
+        tasks: Current task snapshot across statuses.
+    """
+    warm_pool = getattr(getattr(orch, "_spawner", None), "_warm_pool", None)
+    if warm_pool is None or getattr(orch, "is_shutting_down", lambda: False)():
+        return
+
+    candidates = _speculative_warm_pool_candidates(orch, task_graph, tasks)
+    if not candidates:
+        return
+
+    desired_idle = min(warm_pool.config.pool_size, len({task.role for task in candidates}))
+    if desired_idle <= 0 or warm_pool.available >= desired_idle:
+        return
+
+    try:
+        created = asyncio.run(warm_pool.fill(target_idle=desired_idle))
+    except RuntimeError as exc:
+        logger.debug("Speculative warm-pool preparation skipped: %s", exc)
+        return
+
+    if created > 0:
+        logger.info(
+            "Speculative warm-pool prep: created %d idle worktree(s) for near-ready roles %s",
+            created,
+            sorted({task.role for task in candidates}),
+        )
+
+
+def _speculative_warm_pool_candidates(orch: Any, task_graph: Any, tasks: list[Task]) -> list[Task]:
+    """Return blocked tasks worth pre-warming for near-future execution."""
+    tasks_by_id = {task.id: task for task in tasks}
+    active_files = _get_active_agent_files(orch)
+    candidates: list[Task] = []
+
+    for task in tasks:
+        if task.status != TaskStatus.OPEN:
+            continue
+        blocking_edges = [
+            edge for edge in task_graph.edges_to(task.id) if edge.semantic_type.value in {"blocks", "validates"}
+        ]
+        if not blocking_edges:
+            continue
+        unresolved = [
+            edge.source
+            for edge in blocking_edges
+            if tasks_by_id.get(edge.source) is not None and tasks_by_id[edge.source].status != TaskStatus.DONE
+        ]
+        if len(unresolved) != 1:
+            continue
+        if set(task.owned_files) & active_files:
+            continue
+        candidates.append(task)
+
+    candidates.sort(key=lambda task: (task.priority, -task.estimated_minutes, task.id))
+    return candidates
 
 
 def _batch_timeout_seconds(batch: list[Task]) -> int:

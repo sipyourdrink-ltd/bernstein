@@ -12,15 +12,18 @@ from unittest.mock import MagicMock, patch
 import httpx
 
 from bernstein.core.convergence_guard import ConvergenceGuard
+from bernstein.core.graph import TaskGraph
 from bernstein.core.models import AgentSession, Complexity, ConvergenceGuardConfig, ModelConfig, Scope, TaskStatus
 from bernstein.core.orchestrator import TickResult
 from bernstein.core.task_lifecycle import (
     _enqueue_paired_test_task,
     _move_backlog_ticket,
     claim_and_spawn_batches,
+    prepare_speculative_warm_pool,
     process_completed_tasks,
     should_auto_decompose,
 )
+from bernstein.core.warm_pool import WarmPool, WarmPoolConfig
 
 
 def _never_quarantined(title: str) -> bool:
@@ -412,6 +415,29 @@ def test_claim_and_spawn_batches_records_bandit_shadow_without_overriding(tmp_pa
     assert task.model is None
     assert task.effort is None
     assert result.spawned == [session.id]
+
+
+def test_prepare_speculative_warm_pool_prewarms_near_ready_tasks_without_spawning(tmp_path: Path, make_task: Any) -> None:
+    """Near-ready blocked tasks should prepare worktree capacity without claiming or spawning."""
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+
+    warm_pool = WarmPool(repo_root, config=WarmPoolConfig(pool_size=1, use_git_worktrees=False))
+    orch = _claim_orch(repo_root)
+    orch._spawner._warm_pool = warm_pool
+    orch._spawner.spawn_for_tasks = MagicMock()
+
+    blocker = make_task(id="T-blocker", role="backend", status=TaskStatus.OPEN)
+    dependent = make_task(id="T-dependent", role="backend", status=TaskStatus.OPEN)
+    dependent.depends_on = [blocker.id]
+    graph = TaskGraph([blocker, dependent])
+
+    prepare_speculative_warm_pool(orch, graph, [blocker, dependent])
+
+    assert warm_pool.available == 1
+    orch._client.post.assert_not_called()
+    orch._spawner.spawn_for_tasks.assert_not_called()
 
 
 def test_process_completed_tasks_moves_ticket_and_caches_verified_result(tmp_path: Path, make_task: Any) -> None:

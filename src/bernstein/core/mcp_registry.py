@@ -86,6 +86,61 @@ class MCPServerEntry:
 
         return config
 
+    def to_catalog_dict(self) -> dict[str, Any]:
+        """Serialize the entry to the on-disk catalog format."""
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "package": self.package,
+        }
+        if self.capabilities:
+            payload["capabilities"] = list(self.capabilities)
+        if self.keywords:
+            payload["keywords"] = list(self.keywords)
+        if self.env_required:
+            payload["env_required"] = list(self.env_required)
+        if self.command != "npx":
+            payload["command"] = self.command
+        if self.args is not None:
+            payload["args"] = list(self.args)
+        return payload
+
+
+def load_catalog_entries(path: Path) -> list[MCPServerEntry]:
+    """Load MCP entries from a catalog path."""
+    return MCPRegistry(config_path=path).servers
+
+
+def save_catalog_entries(path: Path, servers: list[MCPServerEntry]) -> None:
+    """Write MCP entries to the standard YAML catalog format."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"servers": [server.to_catalog_dict() for server in servers]}
+    path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+
+def upsert_catalog_entry(path: Path, entry: MCPServerEntry) -> tuple[list[MCPServerEntry], bool]:
+    """Append or update a catalog entry by ``name`` without duplicating it.
+
+    Args:
+        path: Catalog file path.
+        entry: Entry to insert or replace.
+
+    Returns:
+        Tuple of ``(updated_entries, created_new)``.
+    """
+    existing = load_catalog_entries(path) if path.exists() else []
+    updated: list[MCPServerEntry] = []
+    replaced = False
+    for current in existing:
+        if current.name == entry.name:
+            updated.append(entry)
+            replaced = True
+        else:
+            updated.append(current)
+    if not replaced:
+        updated.append(entry)
+    save_catalog_entries(path, updated)
+    return updated, not replaced
+
 
 class MCPRegistry:
     """Registry of known MCP servers with auto-detection capabilities.

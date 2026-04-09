@@ -265,6 +265,7 @@ class Orchestrator:
     ) -> None:
         self._config = config
         self._spawner = spawner
+        self._warm_pool = getattr(spawner, "_warm_pool", None)
         self._workdir = workdir
 
         # Resolve the effective permission mode once at startup so every
@@ -1055,6 +1056,7 @@ class Orchestrator:
         all_tasks = [t for status_tasks in tasks_by_status.values() for t in status_tasks]
         self._latest_tasks_by_id = {task.id: task for task in all_tasks}
 
+        task_graph: TaskGraph | None = None
         if _run_normal:
             task_graph = TaskGraph(all_tasks)
             analysis = task_graph.analyse()
@@ -3945,6 +3947,17 @@ if __name__ == "__main__":
         if agent_rlimits is None:
             agent_rlimits = DEFAULT_AGENT_LIMITS
 
+        from bernstein.core.warm_pool import WarmPool, WarmPoolConfig
+
+        warm_pool = WarmPool(
+            workdir,
+            config=WarmPoolConfig(
+                pool_size=max(1, min(2, seed.max_agents if seed else 2)),
+                adapter_name=adapter_inst.name(),
+                use_git_worktrees=True,
+            ),
+        )
+
         spawner = AgentSpawner(
             adapter=adapter_inst,
             templates_dir=get_templates_dir(workdir),
@@ -3963,6 +3976,7 @@ if __name__ == "__main__":
             role_model_policy=seed.role_model_policy if seed else None,
             runtime_bridge=runtime_bridge,
             resource_limits=agent_rlimits,
+            warm_pool=warm_pool,
         )
         budget_usd = 0.0
         dry_run = False

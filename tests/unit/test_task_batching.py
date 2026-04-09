@@ -50,6 +50,68 @@ def test_group_by_role_different_roles_no_overlap_grouping() -> None:
     assert batches[0][0].role != batches[1][0].role
 
 
+def test_group_by_role_prefers_higher_cost_within_same_priority() -> None:
+    """Same-priority tasks should run expensive work first while budget remains."""
+    expensive = Task(
+        id="t-expensive",
+        title="Large migration",
+        description="...",
+        role="backend",
+        priority=2,
+        scope=Scope.LARGE,
+        complexity=Complexity.HIGH,
+    )
+    cheap = Task(
+        id="t-cheap",
+        title="Small cleanup",
+        description="...",
+        role="backend",
+        priority=2,
+        scope=Scope.SMALL,
+        complexity=Complexity.LOW,
+    )
+
+    batches = group_by_role(
+        [cheap, expensive],
+        max_per_batch=2,
+        cost_estimates={"t-expensive": 1.25, "t-cheap": 0.05},
+        budget_remaining_usd=5.0,
+    )
+
+    assert [task.id for task in batches[0]] == ["t-expensive", "t-cheap"]
+
+
+def test_group_by_role_keeps_priority_ahead_of_cost() -> None:
+    """Priority boosts still dominate the secondary cost-aware ordering."""
+    critical = Task(
+        id="t-critical",
+        title="Critical fix",
+        description="...",
+        role="backend",
+        priority=1,
+        scope=Scope.SMALL,
+        complexity=Complexity.LOW,
+    )
+    expensive = Task(
+        id="t-expensive",
+        title="Large migration",
+        description="...",
+        role="backend",
+        priority=2,
+        scope=Scope.LARGE,
+        complexity=Complexity.HIGH,
+    )
+
+    batches = group_by_role(
+        [expensive, critical],
+        max_per_batch=2,
+        cost_estimates={"t-expensive": 1.25, "t-critical": 0.05},
+        budget_remaining_usd=5.0,
+    )
+
+    assert [task.id for task in batches[0]] == ["t-critical", "t-expensive"]
+
+
 class TestCompactSmallTasks:
     """Tests for compact_small_tasks task grouping."""
 
