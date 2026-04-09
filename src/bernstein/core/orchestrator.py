@@ -103,6 +103,7 @@ from bernstein.core.task_lifecycle import (
     claim_and_spawn_batches,
     collect_completion_data,
     maybe_retry_task,
+    prepare_speculative_warm_pool,
     process_completed_tasks,
     retry_or_fail_task,
     should_auto_decompose,
@@ -1123,6 +1124,9 @@ class Orchestrator:
         alive_count = sum(1 for a in self._agents.values() if a.status != "dead")
         result.active_agents = alive_count
 
+        if task_graph is not None:
+            prepare_speculative_warm_pool(self, task_graph, all_tasks)
+
         # 3a. Build alive-per-role map for task distribution prioritization.
         # Starving roles (0 alive agents) get scheduled before well-served roles.
         _alive_per_role: dict[str, int] = {}
@@ -1131,6 +1135,18 @@ class Orchestrator:
                 _alive_per_role[_agent.role] = _alive_per_role.get(_agent.role, 0) + 1
 
         # 2. Group into batches with starving-role prioritization wired in
+        budget_status = self._cost_tracker.status()
+        cost_estimates: dict[str, float] = {}
+        if ready_tasks:
+            from bernstein.core.cost_estimation import estimate_spawn_cost
+
+            metrics_dir = self._workdir / ".sdd" / "metrics"
+            for task in ready_tasks:
+                try:
+                    estimate = estimate_spawn_cost(task, metrics_dir=metrics_dir)
+                    cost_estimates[task.id] = estimate.estimated_cost_usd
+                except Exception as exc:
+                    logger.debug("Cost estimate unavailable for task %s: %s", task.id, exc)
         priority_overrides = {
             task.id: max(1, task.priority - 1) for task in ready_tasks if task.id in critical_path_ids
         }
@@ -1143,6 +1159,8 @@ class Orchestrator:
             priority_overrides=priority_overrides,
             task_created_at=task_created_at,
             agent_affinity=self._agent_affinity if self._agent_affinity else None,
+            cost_estimates=cost_estimates or None,
+            budget_remaining_usd=budget_status.remaining_usd,
         )
         batches = compact_small_tasks(batches, self._config.max_tasks_per_agent)
 

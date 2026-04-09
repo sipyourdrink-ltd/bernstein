@@ -1162,24 +1162,41 @@ class ExpertBanditPanel(Static):
             t.append("\n \u2014routing bandit to enable", style="dim")
             return t
 
-        arms: dict[str, Any] = b.get("arms", {})
-        total_pulls = int(b.get("total_pulls", 0))
-        epsilon = float(b.get("epsilon", 0.1))
+        selection_frequency = cast("dict[str, Any]", b.get("selection_frequency", {}) or {})
+        exploration_stats = cast("dict[str, Any]", b.get("exploration_stats", {}) or {})
+        shadow_stats = cast("dict[str, Any]", b.get("shadow_stats", {}) or {})
 
-        t.append(f" {total_pulls} pulls", style="bold")
-        t.append(f"  ε={epsilon:.2f}", style="dim")
+        total_completions = int(b.get("total_completions", 0) or 0)
+        exploration_rate = float(b.get("exploration_rate", 0.0) or 0.0)
+        mode = str(b.get("mode", "bandit"))
+
+        t.append(f" {total_completions} completions", style="bold")
+        t.append(f"  explore={exploration_rate:.3f}", style="dim")
+        t.append(f"\n {mode}", style="dim")
         t.append("\n\n", style="")
 
-        for model, stats in sorted(arms.items(), key=lambda x: -float((x[1] or {}).get("success_rate", 0))):
-            if not isinstance(stats, dict):
-                continue
-            sr = float(stats.get("success_rate", 0.0))
-            pulls = int(stats.get("pulls", 0))
+        arms = sorted(selection_frequency.items(), key=lambda item: (-int(item[1]), item[0]))
+        for model, pulls_raw in arms:
+            pulls = int(pulls_raw)
+            stats = exploration_stats.get(model, {}) if isinstance(exploration_stats.get(model), dict) else {}
+            mean = float(stats.get("mean", 0.0) or 0.0)
+            last = float(stats.get("last", 0.0) or 0.0)
             short = model.replace("claude-", "").replace("-2025", "")[:18]
-            sr_color = "bright_green" if sr >= 0.9 else ("bright_yellow" if sr >= 0.7 else "bright_red")
+            mean_color = "bright_green" if mean <= 0.15 else ("bright_yellow" if mean <= 0.35 else "bright_red")
             t.append(f"  {short:<18}", style="bold")
-            t.append(f" {sr * 100:.0f}%", style=f"bold {sr_color}")
-            t.append(f" ({pulls})\n", style="dim")
+            t.append(f" {pulls:>3d} sel", style="dim")
+            t.append(f"  μ={mean:.3f}", style=f"bold {mean_color}")
+            t.append(f"  last={last:.3f}\n", style="dim")
+
+        matched = int(shadow_stats.get("matched_outcomes", 0) or 0)
+        if matched > 0 or int(shadow_stats.get("pending_outcomes", 0) or 0) > 0:
+            t.append("\n shadow ", style="bold bright_cyan")
+            t.append(
+                f"agree={float(shadow_stats.get('agreement_rate', 0.0) or 0.0):.0%} "
+                f"disagree={int(shadow_stats.get('disagreement_count', 0) or 0)} "
+                f"pending={int(shadow_stats.get('pending_outcomes', 0) or 0)}",
+                style="dim",
+            )
 
         return t
 

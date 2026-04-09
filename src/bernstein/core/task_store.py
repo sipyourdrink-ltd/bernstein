@@ -323,9 +323,11 @@ class TaskStore:
             try:
                 bandit_data = json.loads(bandit_state_path.read_text())
                 summary["routing"] = {
-                    "mode": "bandit",
+                    "mode": bandit_data.get("mode", "bandit"),
                     "total_completions": bandit_data.get("total_completions", 0),
                     "selection_frequency": bandit_data.get("selection_counts", {}),
+                    "exploration_stats": bandit_data.get("exploration_stats", {}),
+                    "shadow_stats": bandit_data.get("shadow_stats", {}),
                 }
             except json.JSONDecodeError:
                 logger.warning("Corrupted bandit state at %s — skipping", bandit_state_path)

@@ -470,11 +470,15 @@ def bandit_routing_stats(request: Request) -> JSONResponse:
             total_updates = int(policy.get("total_updates", 0))
         return JSONResponse(
             content={
-                "mode": "bandit",
+                "mode": state.get("mode", "bandit"),
                 "active": True,
                 "total_completions": state.get("total_completions", 0),
+                "warmup_min": state.get("warmup_min", 0),
+                "exploration_rate": state.get("exploration_rate", 0.0),
                 "total_policy_updates": total_updates,
                 "selection_frequency": state.get("selection_counts", {}),
+                "exploration_stats": state.get("exploration_stats", {}),
+                "shadow_stats": state.get("shadow_stats", {}),
             }
         )
     except Exception as exc:

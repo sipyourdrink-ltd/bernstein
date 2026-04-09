@@ -143,8 +143,12 @@ class WarmPool:
         """Return the pool configuration."""
         return self._config
 
-    async def fill(self) -> int:
+    async def fill(self, target_idle: int | None = None) -> int:
         """Pre-create entries up to the configured pool size.
+
+        Args:
+            target_idle: Optional idle-entry target. When omitted, fills to the
+                configured pool size.
 
         Returns:
             Number of new entries created.
@@ -153,7 +157,8 @@ class WarmPool:
             self._evict_expired()
             created = 0
             idle_count = sum(1 for e in self._entries if not e.in_use)
-            while idle_count + created < self._config.pool_size:
+            target = self._config.pool_size if target_idle is None else max(0, min(target_idle, self._config.pool_size))
+            while idle_count + created < target:
                 entry = self._create_entry()
                 self._entries.append(entry)
                 created += 1
@@ -161,7 +166,7 @@ class WarmPool:
                     "Warm pool: created entry %s (%d/%d)",
                     entry.entry_id,
                     len(self._entries),
-                    self._config.pool_size,
+                    target,
                 )
             return created
 

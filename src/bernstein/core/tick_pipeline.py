@@ -277,6 +277,8 @@ def group_by_role(
     priority_overrides: dict[str, int] | None = None,
     task_created_at: dict[str, float] | None = None,
     agent_affinity: dict[str, str] | None = None,
+    cost_estimates: dict[str, float] | None = None,
+    budget_remaining_usd: float | None = None,
 ) -> list[list[Task]]:
     """Group open tasks by role into batches of up to max_per_batch.
 
@@ -317,6 +319,11 @@ def group_by_role(
         agent_affinity: Optional map of task_id -> preferred_agent_id. Tasks
             sharing the same preferred agent are merged into a single affinity
             group so they are batched together when possible.
+        cost_estimates: Optional per-task estimated spawn costs. When present,
+            tasks with the same effective priority are ordered by descending cost
+            so expensive work runs earlier while budget is still available.
+        budget_remaining_usd: Current budget remaining. Used only to disable the
+            cost-aware secondary sort once no spend remains.
 
     Returns:
         List of batches, each a list of same-role tasks, round-robin interleaved.
@@ -329,7 +336,7 @@ def group_by_role(
     # Calculate current time for age-based priority boosting
     current_time = time.time() if task_created_at else None
 
-    def _sort_key(t: Task) -> tuple[int, int, int]:
+    def _sort_key(t: Task) -> tuple[float, float, float, int, str]:
         # Priority boost for upgrade proposals: subtract 1 from priority value
         # (lower = higher priority). Second element is original priority for ties.
         priority_boost = t.priority - 1 if t.task_type == TaskType.UPGRADE_PROPOSAL else t.priority
@@ -348,8 +355,20 @@ def group_by_role(
 
         # Effective priority: lower is better
         effective_priority = priority_boost - age_boost
+        estimated_cost = 0.0
+        budget_has_room = (
+            budget_remaining_usd is None or budget_remaining_usd == float("inf") or budget_remaining_usd > 0.0
+        )
+        if cost_estimates is not None and budget_has_room:
+            estimated_cost = float(cost_estimates.get(t.id, 0.0))
 
-        return (effective_priority, t.priority, -age_boost)  # Third element for stable sort
+        return (
+            effective_priority,
+            -estimated_cost,
+            t.priority,
+            -age_boost,
+            t.id,
+        )
 
     # Build per-role batch queues, sorted by priority within each role
     role_batch_queues: dict[str, list[list[Task]]] = {}

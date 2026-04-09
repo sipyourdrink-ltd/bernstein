@@ -65,6 +65,8 @@ FEATURE_DIM: int = 6 + len(_TASK_TYPE_VALUES) + len(_LANGUAGE_VALUES) + _ROLE_HA
 _DEFAULT_ARMS: list[str] = ["haiku", "sonnet", "opus"]
 _DEFAULT_ALPHA: float = 0.3
 _DEFAULT_WARMUP_MIN: int = 50
+_EXPLORATION_HISTORY_LIMIT: int = 100
+_POLICY_FORMAT_VERSION: int = 2
 
 # High-stakes roles never start at haiku (mirrors cascade_router logic)
 _HIGH_STAKES_ROLES: frozenset[str] = frozenset({"manager", "architect", "security"})
@@ -274,6 +276,33 @@ def _inv(A: list[list[float]]) -> list[list[float]]:
     return [[aug[i][n + j] for j in range(n)] for i in range(n)]
 
 
+def _sherman_morrison_update(A_inv: list[list[float]], x: list[float]) -> list[list[float]]:
+    """Rank-1 inverse update for ``A + x x^T``.
+
+    Args:
+        A_inv: Current inverse matrix.
+        x: Feature vector.
+
+    Returns:
+        Updated inverse matrix.
+    """
+    Ax = _matmul_vec(A_inv, x)
+    denom = 1.0 + _dot(x, Ax)
+    if abs(denom) <= 1e-12:
+        logger.warning("BanditPolicy: Sherman-Morrison denominator too small, recomputing inverse")
+        d = len(A_inv)
+        A = _inv(A_inv)
+        for i in range(d):
+            for j in range(d):
+                A[i][j] += x[i] * x[j]
+        return _inv(A)
+
+    updated: list[list[float]] = []
+    for i, row in enumerate(A_inv):
+        updated.append([value - (Ax[i] * Ax[j]) / denom for j, value in enumerate(row)])
+    return updated
+
+
 def _load_arms(value: object, fallback: list[str]) -> list[str]:
     """Load model arms from JSON, falling back when the payload is invalid."""
     if not isinstance(value, list):
@@ -297,6 +326,83 @@ def _is_matrix(value: object, dim: int) -> TypeGuard[list[list[float]]]:
         return False
     raw_rows = cast("list[object]", value)
     return len(raw_rows) == dim and all(_is_vector(row, dim) for row in raw_rows)
+
+
+def _coerce_int_mapping(value: object) -> dict[str, int]:
+    """Coerce a JSON mapping into ``dict[str, int]``."""
+    if not isinstance(value, dict):
+        return {}
+    raw_mapping = cast("dict[str, object]", value)
+    coerced: dict[str, int] = {}
+    for key, raw_item in raw_mapping.items():
+        if isinstance(raw_item, bool):
+            continue
+        if isinstance(raw_item, int | float | str):
+            with_value = int(float(raw_item))
+            coerced[str(key)] = with_value
+    return coerced
+
+
+def _load_exploration_history(value: object, arms: list[str]) -> dict[str, list[float]]:
+    """Load persisted exploration history with per-arm bounded windows."""
+    history: dict[str, list[float]] = {arm: [] for arm in arms}
+    if not isinstance(value, dict):
+        return history
+    raw_mapping = cast("dict[str, object]", value)
+    for arm in arms:
+        raw_samples: object = raw_mapping.get(arm, [])
+        if not isinstance(raw_samples, list):
+            continue
+        samples: list[float] = [float(v) for v in cast("list[object]", raw_samples) if isinstance(v, (int, float))]
+        history[arm] = samples[-_EXPLORATION_HISTORY_LIMIT:]
+    return history
+
+
+def _load_shadow_pending(value: object) -> dict[str, dict[str, Any]]:
+    """Load pending shadow decisions keyed by task ID."""
+    if not isinstance(value, dict):
+        return {}
+    raw_mapping = cast("dict[str, object]", value)
+    pending: dict[str, dict[str, Any]] = {}
+    for task_id, raw_payload in raw_mapping.items():
+        if isinstance(raw_payload, dict):
+            pending[str(task_id)] = cast("dict[str, Any]", raw_payload)
+    return pending
+
+
+def _load_shadow_counters(value: object) -> dict[str, float]:
+    """Load shadow analytics counters from persisted state."""
+    defaults = {
+        "total_decisions": 0.0,
+        "matched_outcomes": 0.0,
+        "agreement_count": 0.0,
+        "disagreement_count": 0.0,
+        "agree_reward_sum": 0.0,
+        "agree_reward_count": 0.0,
+        "disagree_reward_sum": 0.0,
+        "disagree_reward_count": 0.0,
+    }
+    if not isinstance(value, dict):
+        return defaults
+    raw_mapping = cast("dict[str, object]", value)
+    for key in tuple(defaults):
+        raw_item = raw_mapping.get(key)
+        if isinstance(raw_item, bool):
+            continue
+        if isinstance(raw_item, int | float | str):
+            defaults[key] = float(raw_item)
+    return defaults
+
+
+def _arm_score_payload(score: ArmScore | None) -> dict[str, float] | None:
+    """Serialize an arm score for JSON output."""
+    if score is None:
+        return None
+    return {
+        "exploit": round(score.exploit, 6),
+        "explore": round(score.explore, 6),
+        "total": round(score.total, 6),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -339,8 +445,8 @@ class BanditPolicy:
         self.arms = list(arms)
         self.alpha = alpha
         self.total_updates: int = 0
-        # Per-arm matrices: A_a (d x d) and b_a (d,)
-        self._A: dict[str, list[list[float]]] = {arm: _identity(d) for arm in self.arms}
+        # Per-arm matrices: A_a^-1 (d x d) and b_a (d,)
+        self._A_inv: dict[str, list[list[float]]] = {arm: _identity(d) for arm in self.arms}
         self._b: dict[str, list[float]] = {arm: [0.0] * d for arm in self.arms}
 
     # ------------------------------------------------------------------
@@ -371,7 +477,7 @@ class BanditPolicy:
         scores: list[ArmScore] = []
 
         for arm in self.arms:
-            A_inv = _inv(self._A[arm])
+            A_inv = self._A_inv[arm]
             theta = _matmul_vec(A_inv, self._b[arm])
             exploit = _dot(theta, x)
             variance = _dot(x, _matmul_vec(A_inv, x))
@@ -390,20 +496,16 @@ class BanditPolicy:
         """
         x = context.to_vector()
         # Lazily initialise arms not present at construction time
-        if arm not in self._A:
+        if arm not in self._A_inv:
             d = FEATURE_DIM
             self.arms.append(arm)
-            self._A[arm] = _identity(d)
+            self._A_inv[arm] = _identity(d)
             self._b[arm] = [0.0] * d
 
-        A = self._A[arm]
+        A_inv = self._A_inv[arm]
         b = self._b[arm]
-        d = len(x)
-
-        for i in range(d):
-            for j in range(d):
-                A[i][j] += x[i] * x[j]
-        for i in range(d):
+        self._A_inv[arm] = _sherman_morrison_update(A_inv, x)
+        for i in range(len(x)):
             b[i] += reward * x[i]
 
         self.total_updates += 1
@@ -423,12 +525,14 @@ class BanditPolicy:
             "alpha": self.alpha,
             "feature_schema_version": FEATURE_SCHEMA_VERSION,
             "feature_dim": FEATURE_DIM,
+            "policy_format_version": _POLICY_FORMAT_VERSION,
+            "matrix_storage": "A_inv",
             "total_updates": self.total_updates,
-            "A": self._A,
+            "A_inv": self._A_inv,
             "b": self._b,
         }
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data))
+        path.write_text(json.dumps(data), encoding="utf-8")
         logger.debug("BanditPolicy: saved to %s (total_updates=%d)", path, self.total_updates)
 
     @classmethod
@@ -469,27 +573,49 @@ class BanditPolicy:
                 alpha=float(raw_alpha) if isinstance(raw_alpha, int | float | str) else _DEFAULT_ALPHA,
             )
             policy.total_updates = int(raw_total_updates) if isinstance(raw_total_updates, int | float | str) else 0
-            raw_A = raw_data.get("A", {})
+            raw_A_inv = raw_data.get("A_inv")
+            raw_A = raw_data.get("A")
             raw_b = raw_data.get("b", {})
-            if not isinstance(raw_A, dict) or not isinstance(raw_b, dict):
+            if raw_A_inv is None and raw_A is None:
+                logger.info("BanditPolicy: resetting %s because policy matrices are missing", path)
+                return cls(arms=default_arms)
+            if raw_A_inv is not None and not isinstance(raw_A_inv, dict):
+                logger.info("BanditPolicy: resetting %s because inverse matrices are invalid", path)
+                return cls(arms=default_arms)
+            if raw_A is not None and not isinstance(raw_A, dict):
+                logger.info("BanditPolicy: resetting %s because legacy matrices are invalid", path)
+                return cls(arms=default_arms)
+            if not isinstance(raw_b, dict):
                 logger.info("BanditPolicy: resetting %s because policy matrices are invalid", path)
                 return cls(arms=default_arms)
-            raw_A_by_arm = cast("dict[str, object]", raw_A)
+            raw_A_inv_by_arm = cast("dict[str, object]", raw_A_inv or {})
+            raw_A_by_arm = cast("dict[str, object]", raw_A or {})
             raw_b_by_arm = cast("dict[str, object]", raw_b)
-            loaded_A: dict[str, list[list[float]]] = {}
+            loaded_A_inv: dict[str, list[list[float]]] = {}
             loaded_b: dict[str, list[float]] = {}
+            legacy_loaded = False
             for arm in policy.arms:
-                raw_matrix = raw_A_by_arm.get(arm)
+                raw_matrix = raw_A_inv_by_arm.get(arm)
                 raw_vector = raw_b_by_arm.get(arm)
+                if raw_matrix is None:
+                    raw_matrix = raw_A_by_arm.get(arm)
+                    if raw_matrix is not None:
+                        legacy_loaded = True
                 if not _is_matrix(raw_matrix, FEATURE_DIM) or not _is_vector(raw_vector, FEATURE_DIM):
                     logger.info("BanditPolicy: resetting %s because arm %s has incompatible dimensions", path, arm)
                     return cls(arms=default_arms)
-                loaded_A[arm] = [[float(value) for value in row] for row in raw_matrix]
+                matrix = [[float(value) for value in row] for row in raw_matrix]
+                loaded_A_inv[arm] = matrix if arm in raw_A_inv_by_arm else _inv(matrix)
                 loaded_b[arm] = [float(value) for value in raw_vector]
-            policy._A.clear()
-            policy._A.update(loaded_A)
+            policy._A_inv.clear()
+            policy._A_inv.update(loaded_A_inv)
             policy._b.clear()
             policy._b.update(loaded_b)
+            if legacy_loaded:
+                try:
+                    policy.save(path)
+                except OSError as exc:
+                    logger.warning("BanditPolicy: could not rewrite legacy policy format at %s: %s", path, exc)
             return policy
         except Exception as exc:
             logger.warning("BanditPolicy: could not load from %s: %s — starting fresh", path, exc)
@@ -565,6 +691,8 @@ class BanditRouter:
 
     POLICY_FILE = "policy.json"
     STATE_FILE = "bandit_state.json"
+    SHADOW_DECISIONS_FILE = "shadow_decisions.jsonl"
+    SHADOW_OUTCOMES_FILE = "shadow_outcomes.jsonl"
 
     def __init__(
         self,
@@ -580,6 +708,18 @@ class BanditRouter:
         self._policy: BanditPolicy | None = None
         self._total_completions: int = 0
         self._selection_counts: dict[str, int] = {}
+        self._exploration_history: dict[str, list[float]] = {}
+        self._shadow_pending: dict[str, dict[str, Any]] = {}
+        self._shadow_counters: dict[str, float] = {
+            "total_decisions": 0.0,
+            "matched_outcomes": 0.0,
+            "agreement_count": 0.0,
+            "disagreement_count": 0.0,
+            "agree_reward_sum": 0.0,
+            "agree_reward_count": 0.0,
+            "disagree_reward_sum": 0.0,
+            "disagree_reward_count": 0.0,
+        }
         self._loaded: bool = False
 
     # ------------------------------------------------------------------
@@ -640,6 +780,7 @@ class BanditRouter:
         else:
             assert self._policy is not None
             scores = self._policy.score(ctx)
+            self._record_exploration_scores(scores)
             best_score = scores[0]
             runner_up = scores[1] if len(scores) > 1 else None
             model = best_score.arm
@@ -690,6 +831,14 @@ class BanditRouter:
         assert self._policy is not None
         self._policy.update(arm=model, context=ctx, reward=reward)
         self._total_completions += 1
+        self._record_shadow_outcome(
+            task_id=task.id,
+            reward=reward,
+            quality_score=quality_score,
+            cost_usd=cost_usd,
+            model=model,
+            effort=effort,
+        )
         logger.debug(
             "BanditRouter.record_outcome: task=%s model=%s reward=%.3f quality=%.2f cost=%.5f total=%d",
             task.id,
@@ -727,9 +876,18 @@ class BanditRouter:
                     {
                         "total_completions": self._total_completions,
                         "selection_counts": self._selection_counts,
+                        "mode": "bandit" if self.is_warmed_up else "cold-start",
+                        "warmup_min": self._warmup_min,
+                        "exploration_rate": round(self.exploration_rate, 6),
+                        "exploration_history": self._exploration_history,
+                        "exploration_stats": self._exploration_stats(),
+                        "shadow_pending": self._shadow_pending,
+                        "shadow_counters": self._shadow_counters,
+                        "shadow_stats": self._shadow_stats(),
                         "saved_at": time.time(),
                     }
-                )
+                ),
+                encoding="utf-8",
             )
         except OSError as exc:
             logger.warning("BanditRouter: could not save state to %s: %s", state_path, exc)
@@ -749,8 +907,13 @@ class BanditRouter:
             executed_model: Model that the static live route actually used.
             executed_effort: Effort that the static live route actually used.
         """
+        self._ensure_loaded()
         if self._policy_dir is None:
             return
+        score_map = self._score_map(task)
+        selected_score = score_map.get(decision.model)
+        executed_score = score_map.get(executed_model)
+        agreement = decision.model == executed_model and decision.effort == executed_effort
         payload = {
             "timestamp": time.time(),
             "task_id": task.id,
@@ -762,14 +925,20 @@ class BanditRouter:
             "executed_effort": executed_effort,
             "from_bandit": decision.from_bandit,
             "reason": decision.reason,
+            "agreement": agreement,
+            "selected_score": _arm_score_payload(selected_score),
+            "executed_score": _arm_score_payload(executed_score),
         }
-        shadow_path = self._policy_dir / "shadow_decisions.jsonl"
+        self._shadow_pending[task.id] = dict(payload)
+        self._shadow_counters["total_decisions"] += 1.0
+        shadow_path = self._policy_dir / self.SHADOW_DECISIONS_FILE
         try:
             self._policy_dir.mkdir(parents=True, exist_ok=True)
             with shadow_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(payload) + "\n")
         except OSError as exc:
             logger.warning("BanditRouter: could not record shadow decision to %s: %s", shadow_path, exc)
+        self.save()
 
     def summary(self) -> dict[str, Any]:
         """Return a dict suitable for dashboard display.
@@ -785,6 +954,8 @@ class BanditRouter:
             "warmup_min": self._warmup_min,
             "exploration_rate": round(self.exploration_rate, 4),
             "selection_frequency": dict(self._selection_counts),
+            "exploration_stats": self._exploration_stats(),
+            "shadow_stats": self._shadow_stats(),
         }
 
     # ------------------------------------------------------------------
@@ -805,16 +976,133 @@ class BanditRouter:
             state_path = self._policy_dir / self.STATE_FILE
             if state_path.exists():
                 try:
-                    state = json.loads(state_path.read_text())
+                    state = json.loads(state_path.read_text(encoding="utf-8"))
                     self._total_completions = int(state.get("total_completions", 0))
-                    self._selection_counts = dict(state.get("selection_counts", {}))
+                    self._selection_counts = _coerce_int_mapping(state.get("selection_counts", {}))
+                    self._exploration_history = _load_exploration_history(
+                        state.get("exploration_history", {}),
+                        self._policy.arms,
+                    )
+                    self._shadow_pending = _load_shadow_pending(state.get("shadow_pending", {}))
+                    self._shadow_counters = _load_shadow_counters(state.get("shadow_counters", {}))
                 except Exception as exc:
                     logger.warning("BanditRouter: could not load state from %s: %s", state_path, exc)
             else:
                 # Infer completions from policy total_updates (backward compat)
                 self._total_completions = self._policy.total_updates
+            for arm in self._policy.arms:
+                self._selection_counts.setdefault(arm, 0)
+                self._exploration_history.setdefault(arm, [])
         else:
             self._policy = BanditPolicy(arms=self._arms, alpha=self._alpha)
+            for arm in self._policy.arms:
+                self._selection_counts.setdefault(arm, 0)
+                self._exploration_history.setdefault(arm, [])
+
+    def _score_map(self, task: Task) -> dict[str, ArmScore]:
+        """Return current arm scores keyed by model for a task context."""
+        if self._policy is None:
+            return {}
+        return {score.arm: score for score in self._policy.score(TaskContext.from_task(task))}
+
+    def _record_exploration_scores(self, scores: list[ArmScore]) -> None:
+        """Persist a bounded exploration-bonus history per arm."""
+        for score in scores:
+            history = self._exploration_history.setdefault(score.arm, [])
+            history.append(score.explore)
+            if len(history) > _EXPLORATION_HISTORY_LIMIT:
+                del history[:-_EXPLORATION_HISTORY_LIMIT]
+
+    def _exploration_stats(self) -> dict[str, dict[str, float | int]]:
+        """Return per-arm exploration aggregates for observability."""
+        stats: dict[str, dict[str, float | int]] = {}
+        arms = self._policy.arms if self._policy is not None else self._arms
+        for arm in arms:
+            history = self._exploration_history.get(arm, [])
+            if not history:
+                stats[arm] = {"samples": 0, "last": 0.0, "mean": 0.0, "variance": 0.0}
+                continue
+            mean = sum(history) / len(history)
+            variance = sum((value - mean) ** 2 for value in history) / len(history)
+            stats[arm] = {
+                "samples": len(history),
+                "last": round(history[-1], 6),
+                "mean": round(mean, 6),
+                "variance": round(variance, 6),
+            }
+        return stats
+
+    def _shadow_stats(self) -> dict[str, float | int]:
+        """Return aggregated observed shadow-routing statistics."""
+        total_decisions = int(self._shadow_counters["total_decisions"])
+        matched_outcomes = int(self._shadow_counters["matched_outcomes"])
+        agreement_count = int(self._shadow_counters["agreement_count"])
+        disagreement_count = int(self._shadow_counters["disagreement_count"])
+        agree_reward_count = int(self._shadow_counters["agree_reward_count"])
+        disagree_reward_count = int(self._shadow_counters["disagree_reward_count"])
+        return {
+            "total_decisions": total_decisions,
+            "matched_outcomes": matched_outcomes,
+            "pending_outcomes": len(self._shadow_pending),
+            "agreement_rate": round(agreement_count / matched_outcomes, 6) if matched_outcomes else 0.0,
+            "disagreement_count": disagreement_count,
+            "avg_executed_reward_when_agree": round(
+                self._shadow_counters["agree_reward_sum"] / agree_reward_count,
+                6,
+            )
+            if agree_reward_count
+            else 0.0,
+            "avg_executed_reward_when_disagree": round(
+                self._shadow_counters["disagree_reward_sum"] / disagree_reward_count,
+                6,
+            )
+            if disagree_reward_count
+            else 0.0,
+        }
+
+    def _record_shadow_outcome(
+        self,
+        *,
+        task_id: str,
+        reward: float,
+        quality_score: float,
+        cost_usd: float,
+        model: str,
+        effort: str,
+    ) -> None:
+        """Match a completion with its shadow decision and persist observed outcome."""
+        if self._policy_dir is None:
+            return
+        shadow = self._shadow_pending.pop(task_id, None)
+        if shadow is None:
+            return
+        agreement = bool(shadow.get("agreement", False))
+        self._shadow_counters["matched_outcomes"] += 1.0
+        if agreement:
+            self._shadow_counters["agreement_count"] += 1.0
+            self._shadow_counters["agree_reward_sum"] += reward
+            self._shadow_counters["agree_reward_count"] += 1.0
+        else:
+            self._shadow_counters["disagreement_count"] += 1.0
+            self._shadow_counters["disagree_reward_sum"] += reward
+            self._shadow_counters["disagree_reward_count"] += 1.0
+
+        payload = {
+            **shadow,
+            "completed_at": time.time(),
+            "observed_reward": round(reward, 6),
+            "observed_quality_score": round(quality_score, 6),
+            "observed_cost_usd": round(cost_usd, 6),
+            "executed_model": model,
+            "executed_effort": effort,
+        }
+        outcome_path = self._policy_dir / self.SHADOW_OUTCOMES_FILE
+        try:
+            self._policy_dir.mkdir(parents=True, exist_ok=True)
+            with outcome_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload) + "\n")
+        except OSError as exc:
+            logger.warning("BanditRouter: could not record shadow outcome to %s: %s", outcome_path, exc)
 
 
 # ---------------------------------------------------------------------------
