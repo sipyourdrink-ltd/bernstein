@@ -5,6 +5,8 @@ on:
   push:
     branches: [main]
     paths-ignore:
+      # Auto-release version bumps (prevent CI → release → CI loop)
+      - "pyproject.toml"
       # Documentation & prose
       - "docs/**"
       - "*.md"
