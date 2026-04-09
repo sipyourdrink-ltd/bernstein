@@ -638,6 +638,7 @@ def _emit_preflight_runtime_warnings(
     estimate: RunCostEstimate,
     auto_approve: bool,
     quiet: bool,
+    plan_approval_follows: bool = False,
 ) -> None:
     """Show startup cost and disk-usage warnings before execution.
 
@@ -665,9 +666,12 @@ def _emit_preflight_runtime_warnings(
                 "Run [bold]bernstein cleanup[/bold] if stale worktrees or logs are accumulating."
             )
 
+    # Cost confirmation is skipped when the plan approval prompt follows
+    # (it already shows cost and asks Y/N — no need to ask twice).
     if (
-        estimate.high_usd > 10.0
-        and not auto_approve
+        not auto_approve
+        and not plan_approval_follows
+        and estimate.high_usd > 10.0
         and not click.confirm(
             f"Warning: estimated cost may reach ${estimate.high_usd:.2f}. Continue?",
             default=True,
@@ -1148,6 +1152,7 @@ def run(
             estimate=estimate,
             auto_approve=auto_approve,
             quiet=quiet,
+            plan_approval_follows=not auto_approve,
         )
 
     # --plan_file: loadable YAML plan (stages + steps)
