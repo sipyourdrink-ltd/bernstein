@@ -474,7 +474,7 @@ Situation: {description}
 ## Open Questions
 
 - What is the RPO (Recovery Point Objective) target? This determines backup frequency and acceptable replication lag.
-- What is the RTO (Recovery Time Objective) target? This determines whether automated failover is required or manual runbook is sufficient.
+- What is the recovery time objective target? This determines whether automated failover is required or manual runbook is sufficient.
 - Should automated failover be supported (risky — split-brain potential) or should recovery always require operator action?
 - For S3/GCS upload: should we use the cloud SDK directly, or go through the existing `SecretsProvider` / `SecretsConfig` infrastructure for credentials?
 - Should there be a `bernstein dr status` command that shows replication health, last backup, and current RPO/RTO estimates?

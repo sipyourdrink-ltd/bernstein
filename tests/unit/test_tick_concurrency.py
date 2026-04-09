@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -467,11 +468,12 @@ class TestWALThreadedWriteRace:
                     actor=f"thread-{i}",
                 )
 
-        threads = [threading.Thread(target=write_entry, args=(i,)) for i in range(n)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=10.0)
+        # Keep the worker count bounded so this test stays reliable on CI
+        # runners that are already close to their per-process thread limit.
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="wal-thread-seq") as executor:
+            futures = [executor.submit(write_entry, i) for i in range(n)]
+            for future in futures:
+                future.result(timeout=10.0)
 
         reader = WALReader(run_id="thread-seq", sdd_dir=sdd)
         entries = list(reader.iter_entries())

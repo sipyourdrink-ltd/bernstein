@@ -430,7 +430,7 @@ class TestShutdownAndTimeoutTransitions:
         assert task.status == TaskStatus.ORPHANED
 
     def test_orphaned_task_can_recover_to_open(self) -> None:
-        """After timeout: ORPHANED → OPEN to allow requeueing."""
+        """After timeout: ORPHANED → OPEN to allow requeuing."""
         task = _make_task(TaskStatus.ORPHANED, task_id="T-TIME-002")
         transition_task(task, TaskStatus.OPEN, actor="recovery_handler")
         assert task.status == TaskStatus.OPEN
