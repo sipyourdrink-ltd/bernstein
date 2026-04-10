@@ -1,0 +1,204 @@
+# Bernstein Plan — Microservice Extraction from Monolith
+#
+# A four-stage plan for safely carving a service out of a monolith:
+#   1. Boundaries:   identify domain, map data and call dependencies
+#   2. New Service:  scaffold standalone service, port logic, write contract tests
+#   3. Gateway:      configure API gateway routing, feature-flag traffic split
+#   4. Decommission: remove monolith code, clean up shared DB tables
+#
+# Run:
+#   bernstein run examples/plans/microservice-extraction.yaml
+#
+# Estimated cost: $20–35 depending on service complexity and model choice.
+
+name: "Microservice Extraction from Monolith"
+description: >
+  Extract a bounded domain (e.g. billing, notifications, user-profile) from
+  a monolithic application into a standalone microservice. Covers dependency
+  mapping, service scaffolding, API gateway routing, and safe decommissioning
+  of the monolith code path.
+
+cli: auto
+budget: "$25"
+max_agents: 4
+constraints:
+  - "Zero downtime — feature flags control traffic cutover"
+  - "The extracted service owns its own database schema; no shared DB tables"
+  - "Contract tests must pass before any production traffic is routed to the new service"
+  - "Monolith code is deleted only after 100% traffic cutover and a monitoring bake period"
+
+stages:
+  # ── Stage 1: Identify Boundaries ──
+  - name: "Identify Boundaries"
+    description: "Map the domain's data, call graph, and external dependencies"
+    steps:
+      - title: "Map inbound call graph"
+        role: architect
+        scope: medium
+        complexity: medium
+        description: >
+          Search the monolith codebase for all call sites into the target domain
+          (e.g. all imports/calls into src/billing/). Produce
+          extraction/call-graph.md listing every caller, the method called, and
+          the data passed. Identify which calls are synchronous (direct function
+          call) versus async (queue/event).
+        files:
+          - "extraction/call-graph.md"
+        completion_signals:
+          - type: path_exists
+            path: "extraction/call-graph.md"
+
+      - title: "Map data dependencies and shared tables"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Identify every database table the target domain owns vs. shares.
+          Produce extraction/data-map.md listing: tables owned exclusively,
+          tables shared (with which other domains), foreign keys that cross
+          domain boundaries, and any cross-domain JOIN queries. Flag joins that
+          must become API calls after extraction.
+        files:
+          - "extraction/data-map.md"
+        completion_signals:
+          - type: path_exists
+            path: "extraction/data-map.md"
+
+      - title: "Define service contract (API spec)"
+        role: architect
+        scope: small
+        complexity: medium
+        description: >
+          Based on call-graph.md, write the OpenAPI spec for the new service at
+          extraction/service-contract.yaml. Each inbound call in the monolith
+          becomes an endpoint or event. Define request/response schemas.
+          This spec is the source of truth for contract testing in stages 2 and 3.
+        files:
+          - "extraction/service-contract.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "extraction/service-contract.yaml"
+
+  # ── Stage 2: New Service ──
+  - name: "New Service"
+    depends_on: ["Identify Boundaries"]
+    description: "Scaffold the standalone service, port business logic, and write contract tests"
+    steps:
+      - title: "Scaffold new service repository structure"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Create the new service directory (services/<domain>/) with: Dockerfile,
+          docker-compose.yaml for local dev, CI workflow file, pyproject.toml or
+          package.json (match project language), and a README. Include health check
+          endpoint (/health) and structured logging from the start.
+        files:
+          - "services/"
+        completion_signals:
+          - type: path_exists
+            path: "services"
+
+      - title: "Port business logic to new service"
+        role: backend
+        scope: large
+        complexity: high
+        description: >
+          Copy the domain logic from the monolith into the new service. Adapt
+          database access to use the service's own schema (from data-map.md).
+          Remove all imports from other monolith domains — replace cross-domain
+          data fetches with HTTP calls to the monolith API. All logic must remain
+          functionally identical to the monolith version.
+        files:
+          - "services/"
+        completion_signals:
+          - type: path_exists
+            path: "services"
+
+      - title: "Write contract and unit tests"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Write contract tests (Pact or Dredd) that validate the new service
+          implements extraction/service-contract.yaml correctly. Write unit tests
+          for all business logic ported from the monolith. Target 80%+ line
+          coverage. Tests must run in CI against a local DB via docker-compose.
+        files:
+          - "services/"
+        completion_signals:
+          - type: path_exists
+            path: "services"
+
+  # ── Stage 3: API Gateway Routing ──
+  - name: "API Gateway Routing"
+    depends_on: ["New Service"]
+    description: "Configure gateway to split traffic via feature flags, then ramp to 100%"
+    steps:
+      - title: "Configure API gateway routing rules"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Add routing rules to the API gateway (Kong, Nginx, AWS API Gateway,
+          or Traefik — match the existing stack). Route /v*/domain/* to the new
+          service when the feature flag EXTRACT_<DOMAIN>=true. When the flag is
+          false, requests fall through to the monolith. Test routing with
+          integration tests in tests/gateway/.
+        files:
+          - "infra/gateway/"
+          - "tests/gateway/"
+        completion_signals:
+          - type: path_exists
+            path: "infra/gateway"
+
+      - title: "Add monitoring and rollback runbook"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Add Prometheus metrics and a dashboard (Grafana JSON or similar) for
+          the new service: request latency p50/p99, error rate, DB query time.
+          Write infra/runbooks/rollback-<domain>.md describing how to flip the
+          feature flag back to 0% if issues are detected. Set error rate alert
+          threshold at 1%.
+        files:
+          - "infra/runbooks/"
+        completion_signals:
+          - type: path_exists
+            path: "infra/runbooks"
+
+  # ── Stage 4: Decommission Monolith Code ──
+  - name: "Decommission"
+    depends_on: ["API Gateway Routing"]
+    description: "Remove monolith domain code and clean up shared DB tables after full cutover"
+    steps:
+      - title: "Remove domain code from monolith"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Delete the target domain module from the monolith source tree.
+          Replace any remaining call sites with HTTP client calls to the new
+          service (for any internal monolith consumers that were not routed
+          through the gateway). Remove shared database JOINs — replace with
+          enrichment via service API. Ensure all monolith tests still pass.
+        completion_signals:
+          - type: command
+            run: "python -m pytest tests/ -x -q --ignore=tests/gateway"
+
+      - title: "Migrate and clean up shared DB tables"
+        role: backend
+        scope: small
+        complexity: medium
+        description: >
+          Write database migrations to: remove foreign keys pointing from the
+          monolith schema to tables now owned by the new service, and optionally
+          drop monolith-side copies of migrated data after a data consistency
+          check. Include a rollback migration. Document the schema delta in
+          extraction/db-cleanup.md.
+        files:
+          - "extraction/db-cleanup.md"
+        completion_signals:
+          - type: path_exists
+            path: "extraction/db-cleanup.md"

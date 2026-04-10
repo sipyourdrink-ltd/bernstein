@@ -1,0 +1,194 @@
+# Bernstein Plan — REST to GraphQL Migration
+#
+# A three-stage plan that migrates an existing REST API to GraphQL:
+#   1. Schema:    design and implement the GraphQL schema and resolver skeleton
+#   2. Resolvers: migrate REST endpoint logic to GraphQL resolvers
+#   3. Clients:   generate typed SDK and update documentation
+#
+# Existing REST API remains live during migration; both run in parallel until
+# all clients are migrated (strangler fig pattern).
+#
+# Run:
+#   bernstein run examples/plans/graphql-migration.yaml
+
+name: "REST to GraphQL Migration"
+description: >
+  Migrate an existing REST API to GraphQL using a strangler fig approach:
+  the REST API stays live while GraphQL is built alongside it. Covers
+  schema design, resolver implementation, N+1 mitigation with DataLoader,
+  and typed client SDK generation.
+
+cli: auto
+budget: "$16"
+max_agents: 4
+constraints:
+  - "REST API remains fully functional throughout migration — no breaking changes"
+  - "Use DataLoader for all database relations to prevent N+1 queries"
+  - "Schema-first design: SDL file is the source of truth"
+  - "All resolvers must have unit tests with mocked data loaders"
+  - "Deprecate REST endpoints with a Sunset header, not delete them"
+
+stages:
+  # ── Stage 1: Schema Design ──
+  - name: "Schema"
+    description: "Design the GraphQL schema and wire up the server skeleton"
+    steps:
+      - title: "Audit existing REST API and design GraphQL schema"
+        role: architect
+        scope: medium
+        complexity: medium
+        description: >
+          Enumerate all existing REST endpoints (method, path, request/response
+          shape). Group resources by domain. Design a GraphQL schema that covers
+          the same surface area: types, queries, mutations, and subscriptions.
+          Prefer graph relationships over flat lists. Write the schema in SDL
+          format at graphql/schema.graphql. Produce a mapping document at
+          docs/graphql/rest-to-graphql-map.md showing which REST endpoint maps
+          to which GraphQL operation.
+        files:
+          - "graphql/schema.graphql"
+          - "docs/graphql/rest-to-graphql-map.md"
+        completion_signals:
+          - type: path_exists
+            path: "graphql/schema.graphql"
+          - type: file_contains
+            path: "graphql/schema.graphql"
+            contains: "type Query"
+
+      - title: "Stand up GraphQL server alongside REST API"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Integrate a GraphQL server (e.g., Apollo Server, Strawberry, or
+          graphql-go) into the existing web framework. Mount at /graphql with
+          GraphiQL enabled in development only. Wire schema.graphql as the type
+          definitions. Add stub resolvers that return null for every field —
+          sufficient to make the server start and respond to introspection.
+          Add /graphql to the health check endpoint.
+        files:
+          - "src/graphql/server.py"
+          - "src/graphql/resolvers/__init__.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/graphql/server.py"
+
+      - title: "Implement DataLoader infrastructure"
+        role: backend
+        scope: small
+        complexity: medium
+        description: >
+          Create src/graphql/loaders.py implementing DataLoader classes for each
+          database relation that would cause N+1 queries (typically foreign key
+          lookups). Each loader: batches IDs from a single request cycle, issues
+          a single SQL IN query, returns results in input order. Attach loaders
+          to the GraphQL request context so they are scoped per-request.
+        files:
+          - "src/graphql/loaders.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/graphql/loaders.py"
+          - type: file_contains
+            path: "src/graphql/loaders.py"
+            contains: "DataLoader"
+
+  # ── Stage 2: Resolver Migration ──
+  - name: "Resolvers"
+    description: "Migrate REST endpoint logic into GraphQL resolvers"
+    depends_on: ["Schema"]
+    steps:
+      - title: "Implement Query resolvers"
+        role: backend
+        scope: large
+        complexity: medium
+        description: >
+          Implement all Query resolvers in src/graphql/resolvers/queries.py.
+          Port business logic from the corresponding REST GET handlers — do not
+          duplicate, extract shared logic into src/services/ if not already
+          there. Use DataLoaders for all relation lookups. Implement cursor-based
+          pagination for list queries (first, after args; edges + pageInfo
+          response). Add query depth limiting (max depth: 7).
+        files:
+          - "src/graphql/resolvers/queries.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/graphql/resolvers/queries.py"
+
+      - title: "Implement Mutation resolvers"
+        role: backend
+        scope: large
+        complexity: medium
+        description: >
+          Implement all Mutation resolvers in src/graphql/resolvers/mutations.py.
+          Port business logic from REST POST/PUT/DELETE handlers. Input validation
+          via Pydantic or equivalent — surface validation errors as GraphQL errors
+          with extensions.code = "VALIDATION_ERROR" and a details array. Wrap
+          each mutation in a database transaction. Return the affected object on
+          success so clients can update their cache.
+        files:
+          - "src/graphql/resolvers/mutations.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/graphql/resolvers/mutations.py"
+
+      - title: "Write resolver unit tests"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Write pytest tests for every resolver in tests/graphql/. Use
+          graphql-core's execute() function directly — no HTTP layer needed.
+          Mock data loaders and service calls. Cover: happy path, not-found
+          errors, permission denied, validation errors, and pagination (first
+          page, second page, empty page). Run with: pytest tests/graphql/ -x -q.
+        files:
+          - "tests/graphql/"
+        completion_signals:
+          - type: path_exists
+            path: "tests/graphql"
+          - type: command
+            run: "pytest tests/graphql/ -x -q"
+
+  # ── Stage 3: Client SDK and Docs ──
+  - name: "Clients"
+    description: "Generate typed client SDK and update all documentation"
+    depends_on: ["Resolvers"]
+    steps:
+      - title: "Generate typed client SDK"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Use graphql-codegen (TypeScript) or ariadne-codegen (Python) to
+          generate a typed client SDK from the schema and a set of predefined
+          operations (write these in sdk/operations.graphql). Publish the
+          generated SDK to packages/graphql-client/ with its own package.json.
+          Include a usage example in packages/graphql-client/README.md showing
+          how to execute a query and mutation with full type safety.
+        files:
+          - "sdk/operations.graphql"
+          - "packages/graphql-client/"
+        completion_signals:
+          - type: path_exists
+            path: "sdk/operations.graphql"
+
+      - title: "Write GraphQL API documentation"
+        role: docs
+        scope: medium
+        complexity: low
+        description: >
+          Write docs/graphql/guide.md covering: GraphQL endpoint URL and
+          authentication (how to pass the Bearer token), how to use GraphiQL
+          for exploration, pagination pattern (cursor-based, example query),
+          error format (extensions.code values and what they mean), rate limits,
+          and migration guide for teams moving from REST (link to
+          rest-to-graphql-map.md). Add deprecation notices on the REST
+          endpoint documentation pages using the Sunset header convention.
+        files:
+          - "docs/graphql/guide.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/graphql/guide.md"
+          - type: file_contains
+            path: "docs/graphql/guide.md"
+            contains: "## Authentication"

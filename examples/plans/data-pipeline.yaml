@@ -1,0 +1,187 @@
+# Bernstein Plan — Data Pipeline
+#
+# A three-stage plan that builds a robust ETL data pipeline:
+#   1. Ingestion:       connectors, schema validation, dead-letter queuing
+#   2. Transformation:  ETL jobs with lineage tracking
+#   3. Output:          warehouse loader and reporting layer
+#
+# Run:
+#   bernstein run examples/plans/data-pipeline.yaml
+
+name: "Data Pipeline"
+description: >
+  Build a production ETL pipeline that ingests data from multiple sources,
+  validates and transforms records, and loads results into a data warehouse
+  with lineage tracking and automated reporting.
+
+cli: auto
+budget: "$25"
+max_agents: 4
+constraints:
+  - "Python 3.12+"
+  - "Apache Arrow / Polars for in-memory transforms"
+  - "SQLAlchemy for warehouse writes"
+  - "Pydantic v2 for schema validation"
+  - "pytest for tests"
+
+stages:
+  # ── Stage 1: Ingestion Layer ──
+  - name: "Ingestion Layer"
+    description: "Source connectors, validation, and dead-letter queue"
+    steps:
+      - title: "Implement source connectors"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/ingestion/connectors/ with three connector modules:
+          - csv_connector.py: reads CSV files from a local or S3 path, yields
+            batches of dicts using chunked reads.
+          - postgres_connector.py: streams rows from a PostgreSQL table via
+            server-side cursor.
+          - http_connector.py: paginates through a REST API endpoint, respects
+            rate limits, and retries on 429/5xx.
+          Each connector must implement the abstract BaseConnector interface
+          defined in src/ingestion/base.py (read() -> AsyncIterator[list[dict]]).
+        files:
+          - "src/ingestion/base.py"
+          - "src/ingestion/connectors/csv_connector.py"
+          - "src/ingestion/connectors/postgres_connector.py"
+          - "src/ingestion/connectors/http_connector.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/ingestion/base.py"
+          - type: file_contains
+            path: "src/ingestion/base.py"
+            contains: "class BaseConnector"
+
+      - title: "Add schema validation and dead-letter queue"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/ingestion/validator.py. Define a Pydantic v2 BaseModel per
+          source schema. Validate each batch from the connectors; records that
+          fail validation are written to src/ingestion/dlq.py (a local JSONL
+          dead-letter file with timestamp, source, error, and raw record).
+          Valid records are forwarded downstream. Log a warning with the
+          failure rate after each batch.
+        files:
+          - "src/ingestion/validator.py"
+          - "src/ingestion/dlq.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/ingestion/validator.py"
+          - type: file_contains
+            path: "src/ingestion/validator.py"
+            contains: "BaseModel"
+
+      - title: "Write ingestion unit tests"
+        role: qa
+        scope: small
+        complexity: low
+        description: >
+          Create tests/ingestion/test_connectors.py using pytest and unittest.mock.
+          Test the CSV connector with a temp file, the HTTP connector with
+          responses mock, and the validator with valid and invalid records.
+          Assert DLQ entries are written correctly for schema violations.
+        files:
+          - "tests/ingestion/test_connectors.py"
+          - "tests/ingestion/test_validator.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/ingestion/test_connectors.py"
+          - type: test_passes
+            command: "pytest tests/ingestion/ -x -q"
+
+  # ── Stage 2: Transformation Layer ──
+  - name: "Transformation Layer"
+    description: "ETL jobs with lineage tracking and data quality checks"
+    depends_on: ["Ingestion Layer"]
+    steps:
+      - title: "Implement ETL transform jobs with Polars"
+        role: backend
+        scope: large
+        complexity: high
+        description: >
+          Create src/transforms/ with individual transform modules. Each transform
+          receives a Polars DataFrame and returns a transformed DataFrame.
+          Implement at minimum: normalize_dates.py, deduplicate.py, and
+          enrich_with_lookups.py (joins with a reference table).
+          Create src/transforms/pipeline.py that chains transforms in order,
+          tracks row counts before/after each step, and emits lineage events
+          to src/lineage/recorder.py.
+        files:
+          - "src/transforms/normalize_dates.py"
+          - "src/transforms/deduplicate.py"
+          - "src/transforms/enrich_with_lookups.py"
+          - "src/transforms/pipeline.py"
+          - "src/lineage/recorder.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/transforms/pipeline.py"
+          - type: file_contains
+            path: "src/transforms/pipeline.py"
+            contains: "def run"
+
+      - title: "Add data quality checks"
+        role: analyst
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/quality/checks.py with reusable data quality assertions:
+          - not_null(column): fails if any value is null
+          - unique(column): fails if duplicates exist
+          - value_in_set(column, allowed): fails on unexpected enum values
+          - row_count_within(min, max): fails if row count falls outside range
+          Run all checks at the end of each transform job. Write a summary report
+          to .sdd/runtime/dq_report.json. Fail the job if any critical check fails.
+        files:
+          - "src/quality/checks.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/quality/checks.py"
+          - type: file_contains
+            path: "src/quality/checks.py"
+            contains: "def not_null"
+
+  # ── Stage 3: Output Layer ──
+  - name: "Output Layer"
+    description: "Warehouse loader, idempotent writes, and reporting"
+    depends_on: ["Transformation Layer"]
+    steps:
+      - title: "Implement warehouse loader with upsert semantics"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/output/warehouse_loader.py. Use SQLAlchemy Core with a
+          connection pool to write transformed DataFrames to the target warehouse
+          (default: PostgreSQL). Implement upsert using ON CONFLICT DO UPDATE so
+          reruns are idempotent. Partition writes into configurable batch sizes
+          (default 5000 rows). Log rows inserted vs. updated after each batch.
+        files:
+          - "src/output/warehouse_loader.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/output/warehouse_loader.py"
+          - type: file_contains
+            path: "src/output/warehouse_loader.py"
+            contains: "ON CONFLICT"
+
+      - title: "Build automated reporting layer"
+        role: analyst
+        scope: medium
+        complexity: low
+        description: >
+          Create src/output/reporter.py that reads from the warehouse and
+          generates a daily summary report (run_date, source, rows_ingested,
+          rows_failed, rows_transformed, rows_loaded) as both a JSONL file
+          and a rendered Markdown table written to reports/daily_summary.md.
+          Add a CLI entry point: python -m src.output.reporter --date YYYY-MM-DD.
+        files:
+          - "src/output/reporter.py"
+          - "reports/.gitkeep"
+        completion_signals:
+          - type: path_exists
+            path: "src/output/reporter.py"

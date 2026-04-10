@@ -1,0 +1,164 @@
+# Bernstein Plan — Security & Compliance Remediation
+#
+# A three-stage plan for reaching compliance (OWASP Top 10 / SOC 2 baseline):
+#   1. Audit:       static analysis, dependency scan, secrets detection
+#   2. Fixes:       input validation, encryption at rest, audit logging
+#   3. Test Suite:  compliance-focused test cases, CI security gates
+#
+# Run:
+#   bernstein run examples/plans/compliance-remediation.yaml
+#
+# Estimated cost: $12–20 depending on codebase size and number of findings.
+
+name: "Security & Compliance Remediation"
+description: >
+  Audit an existing codebase for OWASP Top 10 and SOC 2 common control gaps,
+  then remediate: input validation, output encoding, secrets management,
+  encryption at rest, and audit logging. Closes out with a compliance-focused
+  test suite and hardened CI security gates.
+
+cli: auto
+budget: "$18"
+max_agents: 4
+constraints:
+  - "No plaintext secrets anywhere in source or config files"
+  - "All user input validated and sanitized before use"
+  - "PII fields encrypted at rest in the database"
+  - "Every privileged action produces an audit log entry"
+  - "SAST and dependency scans must pass in CI before merge"
+
+stages:
+  # ── Stage 1: Audit ──
+  - name: "Audit"
+    description: "Run automated scans and produce a prioritised findings report"
+    steps:
+      - title: "Run SAST and dependency vulnerability scan"
+        role: security
+        scope: medium
+        complexity: low
+        description: >
+          Run Bandit (Python), Semgrep (multi-language), or ESLint security
+          plugins (JS/TS) against the full source tree. Run pip-audit / npm audit
+          / Trivy against the dependency manifest. Run Gitleaks or truffleHog
+          against the git history for leaked secrets. Produce security/audit-report.md
+          with all findings categorised by severity (Critical / High / Medium / Low).
+          Do not fix anything yet — discovery only.
+        files:
+          - "security/audit-report.md"
+        completion_signals:
+          - type: path_exists
+            path: "security/audit-report.md"
+
+      - title: "Manual code review for business logic flaws"
+        role: security
+        scope: medium
+        complexity: high
+        description: >
+          Review the following manually (automated tools miss these): IDOR
+          (object-level auth checks), mass assignment (request body bound directly
+          to ORM models), SSRF (user-controlled URLs fetched server-side),
+          insecure deserialization, and privilege escalation paths. Add findings
+          to security/audit-report.md under a 'Manual Findings' section.
+        files:
+          - "security/audit-report.md"
+        completion_signals:
+          - type: path_exists
+            path: "security/audit-report.md"
+
+  # ── Stage 2: Implement Fixes ──
+  - name: "Implement Fixes"
+    depends_on: ["Audit"]
+    description: "Remediate all Critical and High findings; address key Medium findings"
+    steps:
+      - title: "Input validation and output encoding"
+        role: backend
+        scope: large
+        complexity: medium
+        description: >
+          For every API endpoint: add strict schema validation (Pydantic, Zod,
+          Joi, Marshmallow — match existing stack) for all request inputs. Reject
+          requests that fail validation with 400 and a structured error. Ensure
+          all database queries use parameterized statements (no string interpolation
+          into SQL). Add output encoding for any HTML rendered server-side.
+          Fix all injection findings from the audit report.
+        files:
+          - "src/"
+        completion_signals:
+          - type: path_exists
+            path: "src"
+
+      - title: "Secrets management and encryption at rest"
+        role: security
+        scope: medium
+        complexity: medium
+        description: >
+          Move all secrets (API keys, DB passwords, signing keys) from source
+          files and .env to a secrets manager (AWS Secrets Manager, HashiCorp
+          Vault, or GitHub Actions Secrets — match existing infra). Add envelope
+          encryption for PII database columns using the application-level
+          encryption library (SQLAlchemy-Utils EncryptedType, TypeORM transformers,
+          etc.). Rotate any keys that were previously committed to git.
+        files:
+          - "src/config/secrets.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/config/secrets.py"
+
+      - title: "Implement structured audit logging"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Add an audit log that records every privileged or data-modifying action:
+          user login/logout, permission changes, record creation/update/deletion,
+          export/download of sensitive data. Each log entry must include: timestamp
+          (UTC), actor user ID, action type, target resource ID, source IP, and
+          outcome (success/failure). Write to a tamper-evident append-only store
+          (a dedicated audit_log table or structured log stream). Do not log
+          sensitive field values — log IDs only.
+        files:
+          - "src/audit/"
+        completion_signals:
+          - type: path_exists
+            path: "src/audit"
+
+  # ── Stage 3: Compliance Test Suite ──
+  - name: "Compliance Test Suite"
+    depends_on: ["Implement Fixes"]
+    description: "Automated compliance tests and hardened CI security gates"
+    steps:
+      - title: "Write security-focused integration tests"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Write integration tests in tests/security/ covering: SQL injection
+          payloads rejected (400), XSS payloads escaped in responses, IDOR
+          blocked (403 when accessing another user's resource), unauthenticated
+          access to protected endpoints (401), and mass assignment blocked
+          (extraneous fields ignored). Each test must assert both the HTTP status
+          code and the absence of the injected payload in the response body.
+        files:
+          - "tests/security/"
+        completion_signals:
+          - type: path_exists
+            path: "tests/security"
+
+      - title: "Harden CI security gates"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Add the following CI jobs to the pipeline (GitHub Actions / GitLab CI
+          / Buildkite — match existing): (1) Semgrep SAST scan with fail-on-error,
+          (2) pip-audit / npm audit failing on critical severity, (3) Gitleaks
+          secret scan, (4) OWASP Dependency-Check for license compliance.
+          Add a security/ci-baseline.json that records accepted false positives
+          so the pipeline does not regress on known noise. All gates must pass
+          before merge to main.
+        files:
+          - ".github/workflows/security.yml"
+          - "security/ci-baseline.json"
+        completion_signals:
+          - type: path_exists
+            path: ".github/workflows/security.yml"

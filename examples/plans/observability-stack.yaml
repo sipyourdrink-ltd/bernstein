@@ -1,0 +1,164 @@
+# Bernstein Plan — Observability Stack
+#
+# A three-stage plan that adds full observability to an existing service:
+#   1. Logging:  structured JSON logs with correlation IDs
+#   2. Metrics:  Prometheus instrumentation and OpenTelemetry export
+#   3. Tracing:  distributed tracing and Grafana dashboard
+#
+# Run:
+#   bernstein run examples/plans/observability-stack.yaml
+
+name: "Observability Stack"
+description: >
+  Instrument an existing service with structured logging, Prometheus metrics,
+  OpenTelemetry distributed tracing, and a Grafana dashboard for end-to-end
+  visibility into system health and request flows.
+
+cli: auto
+budget: "$20"
+max_agents: 4
+constraints:
+  - "Python 3.12+"
+  - "OpenTelemetry SDK for traces and metrics"
+  - "Prometheus exposition format for metrics scraping"
+  - "JSON-structured logs with correlation ID propagation"
+
+stages:
+  # ── Stage 1: Structured Logging ──
+  - name: "Structured Logging"
+    description: "Replace ad-hoc print/logging calls with structured JSON logs"
+    steps:
+      - title: "Add structlog with JSON renderer"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Install structlog and configure a JSON renderer in src/logging_config.py.
+          Bind request_id, service, and environment to every log record via
+          contextvars. Replace all existing logging.getLogger() calls with
+          structlog.get_logger(). Ensure tracebacks are serialized as JSON arrays.
+        files:
+          - "src/logging_config.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/logging_config.py"
+          - type: file_contains
+            path: "src/logging_config.py"
+            contains: "structlog"
+
+      - title: "Add correlation ID middleware"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Create src/middleware/correlation.py with an ASGI/WSGI middleware that
+          reads X-Request-ID from inbound headers (or generates a UUID4), stores
+          it in a contextvar, and sets it on the response. Bind request_id to
+          the structlog context so every log line within the request includes it.
+        files:
+          - "src/middleware/correlation.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/middleware/correlation.py"
+
+  # ── Stage 2: Metrics Collection ──
+  - name: "Metrics Collection"
+    description: "Instrument with Prometheus counters/histograms and OpenTelemetry"
+    depends_on: ["Structured Logging"]
+    steps:
+      - title: "Instrument HTTP endpoints with Prometheus metrics"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Add prometheus-client to dependencies. Create src/metrics.py defining
+          a REQUEST_COUNT Counter (labels: method, endpoint, status_code) and a
+          REQUEST_LATENCY Histogram. Add a /metrics endpoint that returns the
+          Prometheus text exposition. Wrap request handlers to record these metrics
+          automatically via middleware or a decorator.
+        files:
+          - "src/metrics.py"
+          - "src/middleware/prometheus.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/metrics.py"
+          - type: file_contains
+            path: "src/metrics.py"
+            contains: "REQUEST_LATENCY"
+
+      - title: "Export metrics via OpenTelemetry"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Configure the OpenTelemetry SDK to export metrics to an OTLP endpoint
+          (default: localhost:4317). Add otel-metrics.yaml collector config and
+          docker-compose.observability.yaml that starts the OTel collector,
+          Prometheus, and Grafana. Set OTEL_EXPORTER_OTLP_ENDPOINT via env var
+          and document it in .env.example.
+        files:
+          - "otel-metrics.yaml"
+          - "docker-compose.observability.yaml"
+          - ".env.example"
+        completion_signals:
+          - type: path_exists
+            path: "docker-compose.observability.yaml"
+
+      - title: "Write metrics unit tests"
+        role: qa
+        scope: small
+        complexity: low
+        description: >
+          Create tests/test_metrics.py. Use the prometheus_client test registry
+          to assert that REQUEST_COUNT increments on each request and
+          REQUEST_LATENCY records a sample. Mock the OTLP exporter to avoid
+          needing a live collector in CI.
+        files:
+          - "tests/test_metrics.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/test_metrics.py"
+          - type: test_passes
+            command: "pytest tests/test_metrics.py -x -q"
+
+  # ── Stage 3: Distributed Tracing and Dashboard ──
+  - name: "Tracing and Dashboard"
+    description: "Add distributed traces and a Grafana dashboard"
+    depends_on: ["Metrics Collection"]
+    steps:
+      - title: "Instrument service with OpenTelemetry traces"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Configure the OTel tracer provider in src/tracing.py. Auto-instrument
+          HTTP client libraries (httpx/requests) and the database layer. Add
+          manual span creation for critical business operations. Propagate
+          W3C TraceContext headers on outbound calls. Export traces to the
+          OTel collector defined in docker-compose.observability.yaml.
+        files:
+          - "src/tracing.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/tracing.py"
+          - type: file_contains
+            path: "src/tracing.py"
+            contains: "TracerProvider"
+
+      - title: "Create Grafana dashboard"
+        role: devops
+        scope: medium
+        complexity: low
+        description: >
+          Create grafana/dashboards/service-overview.json as a Grafana dashboard
+          JSON model with panels for: request rate, error rate, p50/p95/p99
+          latency, and a Tempo trace search panel. Wire the Grafana provisioning
+          config in grafana/provisioning/ so the dashboard loads automatically
+          when the compose stack starts. Document the dashboard URL in README.
+        files:
+          - "grafana/dashboards/service-overview.json"
+          - "grafana/provisioning/dashboards.yaml"
+          - "grafana/provisioning/datasources.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "grafana/dashboards/service-overview.json"

@@ -1,0 +1,181 @@
+# Bernstein Plan — Internationalization (i18n) Rollout
+#
+# A three-stage plan for full i18n support:
+#   1. Framework:   install i18n library, configure locales, set up translation pipeline
+#   2. Extraction:  replace hardcoded strings with translation keys, generate base messages
+#   3. UI:          locale switcher component, RTL layout support, date/number formatting
+#
+# Run:
+#   bernstein run examples/plans/i18n-rollout.yaml
+#
+# Estimated cost: $10–18 depending on codebase size and number of locales.
+
+name: "Internationalization (i18n) Rollout"
+description: >
+  Add full internationalization support to an existing application. Covers i18n
+  library setup, extraction of all hardcoded strings into translation files,
+  locale switching UI, RTL layout support, and locale-aware formatting for
+  dates, numbers, and currencies.
+
+cli: auto
+budget: "$15"
+max_agents: 4
+constraints:
+  - "English (en) is the source locale; add es, fr, de, ja as initial targets"
+  - "Translation files use ICU message format for plurals and interpolation"
+  - "No hardcoded user-visible strings anywhere in source after stage 2"
+  - "RTL layout must work for Arabic (ar) without a separate code path"
+
+stages:
+  # ── Stage 1: i18n Framework Setup ──
+  - name: "Framework Setup"
+    description: "Install i18n library, configure locale loading, and set up translation pipeline"
+    steps:
+      - title: "Install and configure i18n library"
+        role: frontend
+        scope: small
+        complexity: low
+        description: >
+          Install the appropriate i18n library for the project stack (react-i18next
+          for React, vue-i18n for Vue, Flask-Babel for Flask, django-i18n for
+          Django, etc.). Configure it to: load locale files from src/locales/,
+          default to 'en', detect browser/system locale on startup, and support
+          lazy loading of non-default locales. Wire up the provider at the
+          application root.
+        files:
+          - "src/locales/en.json"
+          - "src/i18n.ts"
+        completion_signals:
+          - type: path_exists
+            path: "src/locales/en.json"
+
+      - title: "Set up translation file structure and CI validation"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Create the locale directory structure: src/locales/{en,es,fr,de,ja}/.
+          Add a CI step (scripts/check-translations.py or similar) that fails
+          if any key present in en.json is missing from another locale file.
+          Add placeholder translations for all non-English locales (copy English
+          values with a [UNTRANSLATED] prefix so missing strings are visible
+          in development).
+        files:
+          - "src/locales/"
+          - "scripts/check-translations.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/locales"
+          - type: path_exists
+            path: "scripts/check-translations.py"
+
+  # ── Stage 2: String Extraction ──
+  - name: "String Extraction"
+    depends_on: ["Framework Setup"]
+    description: "Replace all hardcoded user-visible strings with translation keys"
+    steps:
+      - title: "Audit and catalogue hardcoded strings"
+        role: analyst
+        scope: medium
+        complexity: low
+        description: >
+          Scan the entire source tree for hardcoded user-visible strings: JSX
+          text nodes, string literals in labels/titles/placeholders/aria-labels,
+          backend flash messages, email templates, and validation error messages.
+          Produce i18n/string-audit.csv with columns: file, line, original string,
+          proposed key. Group keys by feature domain (auth.*, profile.*, dashboard.*).
+        files:
+          - "i18n/string-audit.csv"
+        completion_signals:
+          - type: path_exists
+            path: "i18n/string-audit.csv"
+
+      - title: "Replace hardcoded strings in source"
+        role: frontend
+        scope: large
+        complexity: medium
+        description: >
+          Working through string-audit.csv, replace each hardcoded string with
+          the appropriate i18n call (t('key'), _('key'), gettext('key'), etc.).
+          Add the English source string to src/locales/en.json under the proposed
+          key. Handle plurals (ICU format: {count, plural, one {# item} other
+          {# items}}), named interpolations, and HTML-safe strings. Do not change
+          any business logic — string replacement only.
+        files:
+          - "src/locales/en.json"
+        completion_signals:
+          - type: path_exists
+            path: "src/locales/en.json"
+
+      - title: "Extract and wire backend strings"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Extract hardcoded strings from backend code (API error messages, email
+          subjects/bodies, server-rendered templates). Wire the locale from the
+          Accept-Language request header into the backend i18n context. Ensure
+          email templates render in the recipient's preferred locale, not the
+          server default.
+        files:
+          - "src/locales/en.json"
+        completion_signals:
+          - type: path_exists
+            path: "src/locales/en.json"
+
+  # ── Stage 3: Locale Switching UI ──
+  - name: "Locale Switching UI"
+    depends_on: ["String Extraction"]
+    description: "Locale switcher component, RTL layout, and locale-aware formatting"
+    steps:
+      - title: "Build locale switcher component"
+        role: frontend
+        scope: small
+        complexity: low
+        description: >
+          Create a LocaleSwitcher component (dropdown or segmented control)
+          showing flag icon + locale name for each supported locale. Switching
+          locale should: update the i18n context, persist the selection to
+          localStorage, set the lang and dir attributes on <html>, and reload
+          the current page content without a full page reload. Place in the
+          application header/nav.
+        files:
+          - "src/components/LocaleSwitcher.tsx"
+        completion_signals:
+          - type: path_exists
+            path: "src/components/LocaleSwitcher.tsx"
+
+      - title: "Add RTL layout support"
+        role: frontend
+        scope: medium
+        complexity: medium
+        description: >
+          Audit CSS/styles for hardcoded directional values (left, right,
+          margin-left, padding-right, text-align: left). Replace with logical
+          properties (inline-start, inline-end, margin-inline-start, etc.) or
+          use a CSS-in-JS RTL transform plugin. Add Arabic (ar) as a locale to
+          verify RTL. Write a Playwright/Cypress snapshot test that renders the
+          main layout in RTL mode and checks for visual regressions.
+        files:
+          - "tests/e2e/rtl.spec.ts"
+        completion_signals:
+          - type: path_exists
+            path: "tests/e2e/rtl.spec.ts"
+
+      - title: "Locale-aware date, number, and currency formatting"
+        role: frontend
+        scope: small
+        complexity: medium
+        description: >
+          Replace all manual date/number formatting with Intl.DateTimeFormat,
+          Intl.NumberFormat, and Intl.RelativeTimeFormat (or the backend
+          equivalent — babel's format_datetime, Java's NumberFormat, etc.).
+          Wrap these in utility functions (formatDate, formatCurrency, formatNumber)
+          in src/utils/format.ts. Write unit tests for each formatter across
+          all five supported locales.
+        files:
+          - "src/utils/format.ts"
+          - "tests/unit/format.test.ts"
+        completion_signals:
+          - type: path_exists
+            path: "src/utils/format.ts"

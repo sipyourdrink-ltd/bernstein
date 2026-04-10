@@ -1,0 +1,203 @@
+# Bernstein Plan — Event-Driven Architecture Refactor
+#
+# A three-stage plan that refactors a synchronous monolith into an event-driven
+# system:
+#   1. Event Bus:     set up message broker, schema registry, and base contracts
+#   2. Migration:     convert synchronous calls to producers and consumers
+#   3. Sagas:         implement saga pattern for distributed transactions
+#
+# Targets Kafka as the broker. Adjust constraints for RabbitMQ or NATS.
+#
+# Run:
+#   bernstein run examples/plans/event-driven-refactor.yaml
+
+name: "Event-Driven Architecture Refactor"
+description: >
+  Refactor a synchronous monolith into an event-driven system. Introduces
+  Kafka as the event bus, migrates synchronous service-to-service calls to
+  producers and consumers, and implements the saga pattern for operations
+  that span multiple services.
+
+cli: auto
+budget: "$22"
+max_agents: 4
+constraints:
+  - "Kafka for event bus (docker-compose for local dev, MSK for production)"
+  - "Avro schemas with Confluent Schema Registry for all event payloads"
+  - "Consumers must be idempotent — event IDs deduplicated in Redis (TTL 7 days)"
+  - "No synchronous HTTP calls between services for business-critical paths"
+  - "Outbox pattern for reliable event emission (events written to DB first)"
+  - "Dead-letter topics for all consumer groups (suffix .DLT)"
+
+stages:
+  # ── Stage 1: Event Bus Setup ──
+  - name: "Event Bus"
+    description: "Message broker, schema registry, outbox, and base consumer framework"
+    steps:
+      - title: "Set up Kafka and Schema Registry in docker-compose"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Add Kafka (KRaft mode, no ZooKeeper) and Confluent Schema Registry
+          to docker-compose.yaml. Expose Kafka on localhost:9092 and the Schema
+          Registry on localhost:8081. Add a kafka-ui service on port:8080 for
+          local debugging. Write a scripts/kafka-topics.sh that creates all
+          required topics with the correct partition counts and retention settings.
+          Document the local setup in docs/event-bus/local-setup.md.
+        files:
+          - "docker-compose.yaml"
+          - "scripts/kafka-topics.sh"
+          - "docs/event-bus/local-setup.md"
+        completion_signals:
+          - type: path_exists
+            path: "scripts/kafka-topics.sh"
+
+      - title: "Define Avro event schemas and base contracts"
+        role: architect
+        scope: medium
+        complexity: medium
+        description: >
+          Design Avro schemas for all domain events. Store schemas in
+          schemas/events/. Every schema must include: event_id (UUID),
+          event_type (string), schema_version (int), occurred_at (timestamp-ms),
+          and a payload union. Register schemas with the Schema Registry.
+          Produce schemas/events/README.md documenting naming conventions,
+          versioning policy (backward compatibility required), and how to
+          add a new event type.
+        files:
+          - "schemas/events/"
+          - "schemas/events/README.md"
+        completion_signals:
+          - type: path_exists
+            path: "schemas/events"
+
+      - title: "Implement outbox pattern and base producer/consumer"
+        role: backend
+        scope: large
+        complexity: high
+        description: >
+          Implement the transactional outbox pattern: an events table in the
+          database where events are inserted in the same transaction as business
+          data. Write a relay process (src/event_bus/relay.py) that polls the
+          events table and publishes un-published rows to Kafka, then marks them
+          published. Implement a base consumer class (src/event_bus/consumer.py)
+          with: Avro deserialization, exactly-once deduplication via Redis,
+          automatic DLT routing on repeated failure, and structured error logging.
+        files:
+          - "src/event_bus/relay.py"
+          - "src/event_bus/consumer.py"
+          - "src/event_bus/producer.py"
+          - "migrations/add_outbox_table.sql"
+        completion_signals:
+          - type: path_exists
+            path: "src/event_bus/relay.py"
+          - type: path_exists
+            path: "src/event_bus/consumer.py"
+
+  # ── Stage 2: Producer and Consumer Migration ──
+  - name: "Migration"
+    description: "Replace synchronous inter-service HTTP calls with events"
+    depends_on: ["Event Bus"]
+    steps:
+      - title: "Migrate order service to event producer"
+        role: backend
+        scope: large
+        complexity: medium
+        description: >
+          Replace direct HTTP calls from the order service to downstream services
+          (inventory, notifications, billing) with event publication via the
+          outbox. Emit OrderCreated, OrderUpdated, and OrderCancelled events.
+          Update src/services/orders.py to write to the outbox table in the same
+          transaction as order persistence. Remove the HTTP client calls.
+          Add integration tests that assert events are present in the outbox
+          after each operation.
+        files:
+          - "src/services/orders.py"
+          - "tests/integration/test_order_events.py"
+        completion_signals:
+          - type: file_contains
+            path: "src/services/orders.py"
+            contains: "outbox"
+
+      - title: "Implement downstream consumers"
+        role: backend
+        scope: large
+        complexity: medium
+        description: >
+          Implement consumers for each downstream service:
+          src/consumers/inventory_consumer.py — handles OrderCreated to reserve
+          stock, OrderCancelled to release stock.
+          src/consumers/notification_consumer.py — sends email/push on
+          OrderCreated and OrderCancelled.
+          src/consumers/billing_consumer.py — creates invoice on OrderCreated.
+          Each consumer extends the base consumer class and registers with the
+          consumer group appropriate to its service. Write unit tests for each.
+        files:
+          - "src/consumers/inventory_consumer.py"
+          - "src/consumers/notification_consumer.py"
+          - "src/consumers/billing_consumer.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/consumers/inventory_consumer.py"
+
+  # ── Stage 3: Saga Pattern ──
+  - name: "Sagas"
+    description: "Saga orchestration for distributed transactions"
+    depends_on: ["Migration"]
+    steps:
+      - title: "Implement saga orchestrator for order fulfillment"
+        role: backend
+        scope: large
+        complexity: high
+        description: >
+          Implement a choreography-based saga for the order fulfillment flow:
+          OrderCreated → reserve inventory → charge payment → ship order.
+          Each step publishes a success or failure event. On failure at any step,
+          compensating transactions run in reverse (release stock, refund payment).
+          Track saga state in a sagas table with columns: saga_id, saga_type,
+          step, status, payload, created_at, updated_at. Implement in
+          src/sagas/order_fulfillment.py.
+        files:
+          - "src/sagas/order_fulfillment.py"
+          - "migrations/add_sagas_table.sql"
+        completion_signals:
+          - type: path_exists
+            path: "src/sagas/order_fulfillment.py"
+          - type: file_contains
+            path: "src/sagas/order_fulfillment.py"
+            contains: "compensate"
+
+      - title: "Add saga monitoring and observability"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Add metrics for saga observability: saga_started_total (counter by
+          type), saga_completed_total, saga_failed_total, saga_compensation_total,
+          and saga_duration_seconds (histogram). Emit a structured log line at
+          each saga step transition. Add a Prometheus alert for sagas stuck in
+          a non-terminal state for more than 10 minutes. Document saga state
+          machine in docs/event-bus/sagas.md with a state diagram.
+        files:
+          - "docs/event-bus/sagas.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/event-bus/sagas.md"
+
+      - title: "Write saga integration tests"
+        role: qa
+        scope: medium
+        complexity: high
+        description: >
+          Write end-to-end saga tests using an embedded Kafka (testcontainers).
+          Test cases: happy path (all steps succeed), payment failure
+          (stock released, payment not charged), shipping failure (stock released,
+          payment refunded). Assert final saga state in the database and that
+          compensating events appear on the correct topics. Run with:
+          pytest tests/integration/test_sagas.py -x -q.
+        files:
+          - "tests/integration/test_sagas.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/integration/test_sagas.py"

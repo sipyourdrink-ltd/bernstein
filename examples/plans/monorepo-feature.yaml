@@ -1,0 +1,205 @@
+# Bernstein Plan — Monorepo Multi-Service Feature
+#
+# A four-stage plan for shipping a cross-cutting feature in a monorepo:
+#   1. Shared:    define shared library types and contracts
+#   2. Backend:   implement the feature in backend services
+#   3. Frontend:  implement the feature in the frontend app
+#   4. Integration: end-to-end tests across all services
+#
+# Assumes a monorepo with packages/shared, services/api, services/worker,
+# and apps/web directories.
+#
+# Run:
+#   bernstein run examples/plans/monorepo-feature.yaml
+
+name: "Monorepo Multi-Service Feature"
+description: >
+  Ship a new feature end-to-end across a monorepo: shared types and contracts
+  first, then backend service implementation, then frontend, then integration
+  tests that exercise the full stack.
+
+cli: auto
+budget: "$20"
+max_agents: 4
+constraints:
+  - "TypeScript strict mode throughout"
+  - "Shared types in packages/shared — no duplication across services"
+  - "Services communicate only through defined interfaces, not internal imports"
+  - "All new code requires unit tests; integration tests for cross-service flows"
+  - "Do not break existing API contracts"
+
+stages:
+  # ── Stage 1: Shared Library ──
+  - name: "Shared"
+    description: "Define shared types, DTOs, and event contracts used by all services"
+    steps:
+      - title: "Define shared TypeScript types and DTOs"
+        role: backend
+        scope: small
+        complexity: medium
+        description: >
+          In packages/shared/src/, define TypeScript interfaces and Zod schemas
+          for the new feature's domain objects. Export all types from
+          packages/shared/src/index.ts. Types must be strict (no `any`),
+          versioned (include a schemaVersion field on event payloads), and
+          documented with JSDoc. Update packages/shared/package.json exports
+          if needed.
+        files:
+          - "packages/shared/src/types.ts"
+          - "packages/shared/src/schemas.ts"
+          - "packages/shared/src/index.ts"
+        completion_signals:
+          - type: path_exists
+            path: "packages/shared/src/types.ts"
+          - type: file_contains
+            path: "packages/shared/src/index.ts"
+            contains: "export"
+
+      - title: "Define event and API contracts"
+        role: architect
+        scope: small
+        complexity: medium
+        description: >
+          Write packages/shared/src/contracts.ts declaring the event names,
+          payloads, and API request/response shapes for the feature. Define a
+          const enum for event types. Document each contract with a JSDoc
+          comment explaining when it is emitted and who consumes it.
+          Add contract exports to packages/shared/src/index.ts.
+        files:
+          - "packages/shared/src/contracts.ts"
+        completion_signals:
+          - type: path_exists
+            path: "packages/shared/src/contracts.ts"
+
+  # ── Stage 2: Backend ──
+  - name: "Backend"
+    description: "Implement feature in the API service and background worker"
+    depends_on: ["Shared"]
+    steps:
+      - title: "Implement API service endpoints"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          In services/api/src/, add the feature's REST endpoints. Import types
+          from @monorepo/shared. Validate request bodies with Zod schemas from
+          the shared package. Implement business logic in a service class, not
+          in route handlers. Add database persistence with the existing ORM.
+          Return proper HTTP status codes and typed response bodies.
+        files:
+          - "services/api/src/routes/feature.ts"
+          - "services/api/src/services/feature-service.ts"
+        completion_signals:
+          - type: path_exists
+            path: "services/api/src/routes/feature.ts"
+
+      - title: "Implement background worker consumers"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          In services/worker/src/, implement event consumers for events emitted
+          by the API service. Use the event contracts from @monorepo/shared.
+          Consumers must be idempotent (safe to retry). Add dead-letter queue
+          handling for failures. Write unit tests for consumer logic in
+          services/worker/src/__tests__/.
+        files:
+          - "services/worker/src/consumers/feature-consumer.ts"
+          - "services/worker/src/__tests__/feature-consumer.test.ts"
+        completion_signals:
+          - type: path_exists
+            path: "services/worker/src/consumers/feature-consumer.ts"
+
+      - title: "Write API service unit tests"
+        role: qa
+        scope: medium
+        complexity: low
+        description: >
+          Write unit tests for the feature service and route handlers in
+          services/api/src/__tests__/. Mock the database layer. Test happy path,
+          validation errors, and edge cases. Aim for 80%+ branch coverage on
+          the new files. Use Jest and ts-jest.
+        files:
+          - "services/api/src/__tests__/feature.test.ts"
+        completion_signals:
+          - type: path_exists
+            path: "services/api/src/__tests__/feature.test.ts"
+          - type: command
+            run: "cd services/api && npm test -- --testPathPattern=feature"
+
+  # ── Stage 3: Frontend ──
+  - name: "Frontend"
+    description: "Implement the feature UI in the web application"
+    depends_on: ["Backend"]
+    steps:
+      - title: "Build feature UI components"
+        role: frontend
+        scope: medium
+        complexity: medium
+        description: >
+          In apps/web/src/features/, create React components for the feature.
+          Import types from @monorepo/shared. Implement a custom hook
+          (useFeature) that handles API calls, loading, and error state.
+          Components must be accessible (WCAG AA): keyboard navigable, proper
+          ARIA labels, sufficient color contrast. Add a Storybook story for
+          each new component.
+        files:
+          - "apps/web/src/features/feature/FeatureView.tsx"
+          - "apps/web/src/features/feature/useFeature.ts"
+          - "apps/web/src/features/feature/FeatureView.stories.tsx"
+        completion_signals:
+          - type: path_exists
+            path: "apps/web/src/features/feature/FeatureView.tsx"
+
+      - title: "Wire feature into app routing and navigation"
+        role: frontend
+        scope: small
+        complexity: low
+        description: >
+          Add the feature route to the app router. Add a navigation link in the
+          appropriate menu (sidebar or header). Update apps/web/src/router.tsx
+          and the navigation component. Ensure the route is protected if it
+          requires authentication. Add a breadcrumb entry if the app uses
+          breadcrumbs.
+        files:
+          - "apps/web/src/router.tsx"
+        completion_signals:
+          - type: file_contains
+            path: "apps/web/src/router.tsx"
+            contains: "feature"
+
+  # ── Stage 4: Integration Tests ──
+  - name: "Integration"
+    description: "End-to-end tests across all services"
+    depends_on: ["Frontend"]
+    steps:
+      - title: "Write API integration tests"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          In tests/integration/, write tests that start a real API server and
+          database (via docker-compose or testcontainers) and exercise the
+          feature end-to-end. Cover the full request lifecycle: create, read,
+          update, delete. Verify events are emitted to the queue. Use
+          supertest or Axios for HTTP.
+        files:
+          - "tests/integration/feature.test.ts"
+        completion_signals:
+          - type: path_exists
+            path: "tests/integration/feature.test.ts"
+
+      - title: "Write end-to-end browser tests"
+        role: qa
+        scope: medium
+        complexity: high
+        description: >
+          In tests/e2e/, write Playwright tests that drive a real browser
+          against the running app. Cover the primary user journey for the
+          feature. Assert on visible text and DOM state, not implementation
+          details. Tests must be retry-safe and not depend on test ordering.
+        files:
+          - "tests/e2e/feature.spec.ts"
+        completion_signals:
+          - type: path_exists
+            path: "tests/e2e/feature.spec.ts"

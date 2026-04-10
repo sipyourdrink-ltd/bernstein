@@ -1,0 +1,166 @@
+# Bernstein Plan — Onboarding Documentation
+#
+# A three-stage plan that produces full onboarding documentation for an
+# existing codebase:
+#   1. Discovery:    map architecture, dependencies, and entry points
+#   2. Docs:         generate README, ADRs, and API reference
+#   3. Onboarding:   create getting-started guide and dev setup scripts
+#
+# Run:
+#   bernstein run examples/plans/onboarding-docs.yaml
+
+name: "Onboarding Codebase Documentation"
+description: >
+  Produce complete onboarding documentation for an existing codebase.
+  Agents discover the architecture, generate reference docs, and build
+  a guided getting-started experience with automated dev setup scripts.
+
+cli: auto
+budget: "$12"
+max_agents: 3
+constraints:
+  - "Do not modify any source code — documentation only"
+  - "Markdown for all human-readable docs"
+  - "Shell scripts must work on macOS and Linux"
+  - "ADRs follow the Nygard template (Status, Context, Decision, Consequences)"
+
+stages:
+  # ── Stage 1: Discovery ──
+  - name: "Discovery"
+    description: "Map the codebase structure, dependencies, and entry points"
+    steps:
+      - title: "Map architecture and module boundaries"
+        role: architect
+        scope: medium
+        complexity: medium
+        description: >
+          Read the entire source tree. Identify top-level packages, key modules,
+          inter-module dependencies, and public entry points. Produce
+          docs/architecture/overview.md with a component diagram (Mermaid),
+          module responsibility table, and a list of external dependencies with
+          their purpose. Note any surprising or non-obvious design decisions.
+        files:
+          - "docs/architecture/overview.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/architecture/overview.md"
+          - type: file_contains
+            path: "docs/architecture/overview.md"
+            contains: "```mermaid"
+
+      - title: "Identify key workflows and data flows"
+        role: analyst
+        scope: small
+        complexity: medium
+        description: >
+          Trace the 3–5 most important end-to-end workflows in the codebase
+          (e.g., request lifecycle, background job execution, data ingestion).
+          For each, produce a sequence diagram in Mermaid and a short prose
+          description. Save to docs/architecture/workflows.md.
+        files:
+          - "docs/architecture/workflows.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/architecture/workflows.md"
+
+  # ── Stage 2: Generate Docs ──
+  - name: "Docs"
+    description: "Generate README, architectural decision records, and API reference"
+    depends_on: ["Discovery"]
+    steps:
+      - title: "Write top-level README"
+        role: docs
+        scope: medium
+        complexity: low
+        description: >
+          Create README.md at the project root. Sections: Project Overview,
+          Features, Architecture (link to docs/architecture/overview.md),
+          Quick Start (install + run in under 5 commands), Configuration,
+          Contributing, and License. Pull factual content from the discovery
+          docs — do not invent features. Write for a senior engineer audience;
+          no marketing language.
+        files:
+          - "README.md"
+        completion_signals:
+          - type: path_exists
+            path: "README.md"
+          - type: file_contains
+            path: "README.md"
+            contains: "## Quick Start"
+
+      - title: "Write architectural decision records"
+        role: architect
+        scope: medium
+        complexity: medium
+        description: >
+          Identify 3–5 significant design decisions in the codebase (e.g., choice
+          of database, async vs sync, monolith vs services). Write one ADR per
+          decision in docs/adr/ using the Nygard template. Number them
+          sequentially: 0001-*.md, 0002-*.md, etc. Infer context and rationale
+          from the code where not documented.
+        files:
+          - "docs/adr/"
+        completion_signals:
+          - type: path_exists
+            path: "docs/adr"
+
+      - title: "Generate API reference documentation"
+        role: docs
+        scope: medium
+        complexity: low
+        description: >
+          Scan all public HTTP endpoints or public module APIs. Generate
+          docs/api/reference.md with a table per endpoint/function: signature,
+          parameters, return type, and a one-line description. If the project
+          uses OpenAPI, validate or generate the openapi.yaml. Group by module
+          or resource type.
+        files:
+          - "docs/api/reference.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/api/reference.md"
+
+  # ── Stage 3: Onboarding ──
+  - name: "Onboarding"
+    description: "Create getting-started guide and automated dev setup scripts"
+    depends_on: ["Docs"]
+    steps:
+      - title: "Write getting-started guide"
+        role: docs
+        scope: medium
+        complexity: low
+        description: >
+          Create docs/getting-started.md that walks a new engineer from zero to
+          a running dev environment. Cover: prerequisites, repository clone,
+          dependency installation, environment variable setup, running the app,
+          running tests, and making the first change. Include expected terminal
+          output for each step. Link to docs/architecture/overview.md and
+          docs/api/reference.md where relevant.
+        files:
+          - "docs/getting-started.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/getting-started.md"
+          - type: file_contains
+            path: "docs/getting-started.md"
+            contains: "## Prerequisites"
+
+      - title: "Create dev environment setup script"
+        role: devops
+        scope: small
+        complexity: medium
+        description: >
+          Write scripts/dev-setup.sh that automates the full developer setup:
+          check prerequisites (node/python/go version as applicable), install
+          dependencies, copy .env.example to .env, run database migrations if
+          any, and verify the setup with a smoke test command. Script must be
+          idempotent and work on macOS and Debian/Ubuntu. Exit with a clear
+          message on success or failure.
+        files:
+          - "scripts/dev-setup.sh"
+        completion_signals:
+          - type: path_exists
+            path: "scripts/dev-setup.sh"
+          - type: file_contains
+            path: "scripts/dev-setup.sh"
+            contains: "#!/usr/bin/env bash"

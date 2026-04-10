@@ -1,0 +1,194 @@
+# Bernstein Plan — Authentication System Overhaul
+#
+# A three-stage plan that replaces a legacy session-based auth system with a
+# modern, hardened authentication stack:
+#   1. Infrastructure:   JWT tokens, session store, token refresh
+#   2. OAuth/SSO:        Google and GitHub OAuth, SAML SSO
+#   3. Hardening:        security audit, penetration testing, compliance checks
+#
+# Run:
+#   bernstein run examples/plans/auth-system.yaml
+
+name: "Authentication System Overhaul"
+description: >
+  Replace legacy session-based authentication with a hardened JWT + OAuth
+  system. Implements access/refresh token rotation, OAuth 2.0 social login,
+  SAML SSO for enterprise customers, and passes a full security audit.
+
+cli: auto
+budget: "$18"
+max_agents: 4
+constraints:
+  - "Passwords hashed with Argon2id (not bcrypt)"
+  - "JWTs signed with RS256; private key in environment, never in code"
+  - "Access tokens expire in 15 minutes; refresh tokens in 30 days"
+  - "No credentials logged anywhere"
+  - "All auth endpoints rate-limited"
+  - "OWASP Authentication Cheat Sheet compliance required"
+
+stages:
+  # ── Stage 1: Auth Infrastructure ──
+  - name: "Infrastructure"
+    description: "JWT issuance, refresh rotation, session store, and middleware"
+    steps:
+      - title: "Implement JWT token service"
+        role: backend
+        scope: medium
+        complexity: high
+        description: >
+          Create src/auth/token_service.py (or equivalent). Implement:
+          issue_access_token(user_id, claims) → signed JWT (RS256, 15 min TTL),
+          issue_refresh_token(user_id) → opaque random token stored in Redis with
+          30-day TTL, refresh(refresh_token) → new access + refresh token pair
+          (rotation: old refresh token invalidated immediately),
+          revoke(refresh_token), and verify(access_token) → decoded claims.
+          Include jti (JWT ID) for access tokens to support revocation.
+        files:
+          - "src/auth/token_service.py"
+          - "src/auth/keys.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/auth/token_service.py"
+
+      - title: "Build session store and middleware"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Implement a Redis-backed session store (src/auth/session_store.py)
+          with methods: save, load, invalidate, invalidate_all_for_user.
+          Write authentication middleware that validates the Authorization
+          header Bearer token, checks the jti revocation list, and injects
+          the user context into the request. Attach the middleware to all
+          protected routes.
+        files:
+          - "src/auth/session_store.py"
+          - "src/auth/middleware.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/auth/middleware.py"
+
+      - title: "Implement login, logout, and refresh endpoints"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/auth/routes.py with: POST /auth/login (email + password,
+          returns access + refresh tokens), POST /auth/logout (revokes refresh
+          token), POST /auth/refresh (rotates tokens), GET /auth/me (current
+          user from access token). Hash passwords with Argon2id on registration.
+          Apply rate limiting (5 req/min on login, 10 req/min on refresh).
+          Return RFC 7807 problem JSON on errors.
+        files:
+          - "src/auth/routes.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/auth/routes.py"
+          - type: file_contains
+            path: "src/auth/routes.py"
+            contains: "def login"
+
+  # ── Stage 2: OAuth and SSO ──
+  - name: "OAuth"
+    description: "Social login via OAuth 2.0 and enterprise SSO via SAML"
+    depends_on: ["Infrastructure"]
+    steps:
+      - title: "Implement Google and GitHub OAuth 2.0"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Add OAuth 2.0 authorization code flow for Google and GitHub.
+          Implement: GET /auth/oauth/{provider} (redirect to provider),
+          GET /auth/oauth/{provider}/callback (exchange code, upsert user,
+          issue tokens). Store provider user IDs in a linked_accounts table.
+          Handle account linking: if email already exists, link the OAuth
+          identity to the existing account. Use PKCE. Validate state parameter
+          to prevent CSRF.
+        files:
+          - "src/auth/oauth.py"
+          - "migrations/add_linked_accounts.sql"
+        completion_signals:
+          - type: path_exists
+            path: "src/auth/oauth.py"
+          - type: file_contains
+            path: "src/auth/oauth.py"
+            contains: "pkce"
+
+      - title: "Implement SAML 2.0 SSO for enterprise"
+        role: backend
+        scope: medium
+        complexity: high
+        description: >
+          Add SAML 2.0 service provider support for enterprise SSO. Implement
+          metadata endpoint (GET /auth/saml/metadata), SSO initiation
+          (GET /auth/saml/login), and assertion consumer service
+          (POST /auth/saml/acs). Map SAML attributes to user fields via a
+          configurable attribute map. Support multiple identity providers
+          (one per tenant). Validate signatures and check NotBefore/NotOnOrAfter.
+        files:
+          - "src/auth/saml.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/auth/saml.py"
+
+      - title: "Write auth flow tests"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Write integration tests covering: password login happy path, invalid
+          credentials, token refresh, refresh token rotation (old token rejected
+          after rotation), OAuth callback with mock provider, SAML ACS with
+          a test assertion. Use pytest with httpx for HTTP. Mock Redis and
+          external OAuth providers.
+        files:
+          - "tests/test_auth.py"
+          - "tests/test_oauth.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/test_auth.py"
+          - type: command
+            run: "pytest tests/test_auth.py tests/test_oauth.py -x -q"
+
+  # ── Stage 3: Security Hardening ──
+  - name: "Hardening"
+    description: "Security audit, penetration testing, and compliance verification"
+    depends_on: ["OAuth"]
+    steps:
+      - title: "Run static security analysis"
+        role: security
+        scope: medium
+        complexity: medium
+        description: >
+          Run Bandit and Safety (Python) or equivalent on the entire src/auth/
+          directory. Check for: hardcoded secrets, weak crypto, SQL injection,
+          timing attack vulnerabilities in token comparison (must use
+          hmac.compare_digest). Verify all secrets are loaded from environment
+          variables. Fix all HIGH and CRITICAL findings. Produce a report in
+          docs/security/static-analysis.md.
+        files:
+          - "docs/security/static-analysis.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/security/static-analysis.md"
+
+      - title: "Perform authentication penetration testing"
+        role: security
+        scope: medium
+        complexity: high
+        description: >
+          Manually test for common authentication vulnerabilities: brute force
+          (verify rate limiting fires), credential stuffing, JWT algorithm
+          confusion (none alg, RS256→HS256 downgrade), refresh token reuse after
+          rotation, CSRF on OAuth callback (missing state validation), session
+          fixation. Document each test and result in docs/security/pentest.md.
+          Fix any vulnerabilities found.
+        files:
+          - "docs/security/pentest.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/security/pentest.md"
+          - type: file_contains
+            path: "docs/security/pentest.md"
+            contains: "## Findings"

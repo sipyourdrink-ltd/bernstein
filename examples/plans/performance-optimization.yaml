@@ -1,0 +1,179 @@
+# Bernstein Plan — Performance Optimization Campaign
+#
+# A three-stage plan for data-driven performance improvement:
+#   1. Profiling:    establish baselines, identify bottlenecks with real workloads
+#   2. Optimizations: caching, query tuning, lazy loading, connection pooling
+#   3. Load Testing:  verify improvements under sustained load, set SLO gates
+#
+# Run:
+#   bernstein run examples/plans/performance-optimization.yaml
+#
+# Estimated cost: $12–20 depending on codebase size and model choice.
+
+name: "Performance Optimization Campaign"
+description: >
+  Data-driven performance improvement across the full stack. Establishes a
+  measured baseline, targets the highest-impact bottlenecks (DB queries,
+  caching, lazy loading, connection pooling), then validates gains under
+  realistic load with SLO-gated acceptance criteria.
+
+cli: auto
+budget: "$15"
+max_agents: 4
+constraints:
+  - "Every optimization must be validated by a before/after benchmark — no blind changes"
+  - "Target: p99 API latency < 500ms under 200 concurrent users"
+  - "Target: zero N+1 query patterns in any list endpoint"
+  - "No caching of user-specific data in a shared cache without key namespacing"
+
+stages:
+  # ── Stage 1: Profiling and Baseline ──
+  - name: "Profiling and Baseline"
+    description: "Measure current performance and identify the top bottlenecks"
+    steps:
+      - title: "Instrument application with profiling"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Add or enable query logging and slow query detection (Django Debug Toolbar,
+          SQLAlchemy query logger, pg_stat_statements, or EXPLAIN ANALYZE — match
+          stack). Add OpenTelemetry spans to the top 10 most-used API endpoints
+          if not already instrumented. Enable slow log threshold at 100ms. Record
+          all findings in perf/baseline-findings.md.
+        files:
+          - "perf/baseline-findings.md"
+        completion_signals:
+          - type: path_exists
+            path: "perf/baseline-findings.md"
+
+      - title: "Establish performance baseline with load test"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Write a Locust, k6, or Apache Bench script (perf/load-test.py or
+          perf/load-test.js) that simulates a realistic workload: browse, search,
+          create, and update operations weighted by production traffic shape.
+          Run against a staging environment with production-sized data. Record
+          p50, p95, p99 latencies and RPS in perf/baseline-results.json.
+          This is the control measurement for all subsequent comparisons.
+        files:
+          - "perf/load-test.py"
+          - "perf/baseline-results.json"
+        completion_signals:
+          - type: path_exists
+            path: "perf/baseline-results.json"
+
+      - title: "Identify and catalogue bottlenecks"
+        role: analyst
+        scope: medium
+        complexity: medium
+        description: >
+          Analyse the slow query log, profiler output, and load test traces.
+          Identify: N+1 ORM queries, missing indexes, un-cached repeated
+          computations, synchronous calls that could be async, and oversized
+          serializer responses (returning unused fields). Produce
+          perf/bottleneck-list.md with each issue, estimated impact, and
+          recommended fix. Sort by estimated impact descending.
+        files:
+          - "perf/bottleneck-list.md"
+        completion_signals:
+          - type: path_exists
+            path: "perf/bottleneck-list.md"
+
+  # ── Stage 2: Implement Optimizations ──
+  - name: "Implement Optimizations"
+    depends_on: ["Profiling and Baseline"]
+    description: "Apply targeted fixes for the top bottlenecks identified in stage 1"
+    steps:
+      - title: "Database query tuning and index optimisation"
+        role: backend
+        scope: large
+        complexity: high
+        description: >
+          Working through bottleneck-list.md: add missing indexes (composite
+          indexes for multi-column WHERE/ORDER BY), fix N+1 queries (eager loading
+          via select_related/prefetch_related/joinedload/include), rewrite
+          inefficient queries identified by EXPLAIN ANALYZE, and add covering
+          indexes for frequently-run read queries. Write a migration for each
+          index addition. Verify with EXPLAIN that query plans improve.
+        files:
+          - "db/migrations/"
+        completion_signals:
+          - type: path_exists
+            path: "db/migrations"
+
+      - title: "Add response caching layer"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Add Redis or Memcached caching for: expensive aggregation queries
+          (cache for 60s with user/org-namespaced keys), reference data lookups
+          (e.g. categories, settings — cache for 5 min with cache invalidation
+          on write), and rendered HTML fragments or serialized API responses
+          for public endpoints. Add cache hit/miss metrics. Ensure cache keys
+          include all parameters that affect the result.
+        files:
+          - "src/cache/"
+        completion_signals:
+          - type: path_exists
+            path: "src/cache"
+
+      - title: "Lazy loading and response payload reduction"
+        role: frontend
+        scope: medium
+        complexity: medium
+        description: >
+          On the frontend: convert heavy list views to use virtualized rendering
+          (react-window, vue-virtual-scroller, etc.) for lists over 100 items.
+          Add code splitting so non-critical routes are loaded on demand. On the
+          API side: implement sparse fieldsets or projections so clients only
+          receive fields they request. Add HTTP ETags to cacheable GET responses.
+        files:
+          - "src/"
+        completion_signals:
+          - type: path_exists
+            path: "src"
+
+  # ── Stage 3: Load Testing and Validation ──
+  - name: "Load Testing and Validation"
+    depends_on: ["Implement Optimizations"]
+    description: "Measure post-optimization performance and validate SLO targets"
+    steps:
+      - title: "Run post-optimization load test"
+        role: devops
+        scope: medium
+        complexity: low
+        description: >
+          Re-run the same load test script from perf/load-test.py against the
+          optimized build. Record results in perf/optimized-results.json using
+          the same metrics as the baseline. Generate a comparison report
+          (perf/comparison-report.md) showing percentage improvement for each
+          endpoint: p50, p95, p99 latency and RPS. Flag any endpoint that
+          did not improve or regressed.
+        files:
+          - "perf/optimized-results.json"
+          - "perf/comparison-report.md"
+        completion_signals:
+          - type: path_exists
+            path: "perf/comparison-report.md"
+
+      - title: "Add performance regression tests to CI"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Add a lightweight performance regression check to CI: run a short
+          k6/Locust smoke test (30s, 50 VUs) against the staging environment
+          after each deployment. Fail the deployment if p99 latency exceeds
+          the SLO threshold (500ms) or error rate exceeds 0.5%. Store results
+          in CI artifacts. Add the SLO thresholds to perf/slo.json so they
+          can be updated without changing CI config.
+        files:
+          - "perf/slo.json"
+          - ".github/workflows/perf-regression.yml"
+        completion_signals:
+          - type: path_exists
+            path: "perf/slo.json"

@@ -1,0 +1,159 @@
+# Bernstein Plan — API Versioning Strategy
+#
+# A three-stage plan for introducing clean API versioning:
+#   1. Infrastructure:  versioned router, version negotiation middleware, error handling
+#   2. Endpoint Migration: port all endpoints to /v2 with schema improvements
+#   3. Deprecation:     sunset headers, migration guide, client docs
+#
+# Run:
+#   bernstein run examples/plans/api-versioning.yaml
+#
+# Estimated cost: $12–20 depending on API surface area and model choice.
+
+name: "API Versioning Strategy"
+description: >
+  Introduce a /v1 → /v2 versioning layer to an existing REST API without
+  breaking current clients. Covers routing infrastructure, endpoint migration
+  with schema improvements, deprecation notices, and developer documentation.
+
+cli: auto
+budget: "$15"
+max_agents: 4
+constraints:
+  - "v1 endpoints must remain fully functional throughout"
+  - "Version routing via URL prefix (/v1/, /v2/) — no header-based versioning"
+  - "OpenAPI spec must be generated for both v1 and v2"
+  - "No breaking changes to v1 response schemas"
+
+stages:
+  # ── Stage 1: Version Infrastructure ──
+  - name: "Version Infrastructure"
+    description: "Router, middleware, and shared version negotiation layer"
+    steps:
+      - title: "Implement versioned router structure"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Refactor the existing router to mount all current endpoints under /v1/.
+          Create a top-level version router that dispatches /v1/* and /v2/* to
+          separate sub-routers. Ensure existing integration tests still pass
+          after the /v1 prefix is applied. Update any hardcoded URL paths in
+          tests and client fixtures.
+        files:
+          - "src/api/router.py"
+          - "src/api/v1/"
+          - "src/api/v2/"
+        completion_signals:
+          - type: path_exists
+            path: "src/api/v1"
+          - type: path_exists
+            path: "src/api/v2"
+
+      - title: "Add deprecation middleware"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Write middleware that injects a Deprecation response header on all
+          /v1/* responses (RFC 8594 format, e.g. Deprecation: Sat, 01 Jan 2028
+          00:00:00 GMT). Also inject a Link header pointing to the equivalent
+          /v2/ endpoint. The sunset date and link template should be configurable
+          via environment variables. Write unit tests for header injection.
+        files:
+          - "src/api/middleware/deprecation.py"
+          - "tests/unit/test_deprecation_middleware.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/api/middleware/deprecation.py"
+
+      - title: "Generate OpenAPI specs for v1 and v2"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Configure the OpenAPI generator (match existing tooling — FastAPI,
+          drf-spectacular, swagger-jsdoc, etc.) to produce separate spec files
+          for v1 and v2: docs/openapi-v1.yaml and docs/openapi-v2.yaml.
+          Serve them at /v1/openapi.json and /v2/openapi.json respectively.
+          Verify both specs are valid using the openapi-spec-validator CLI.
+        files:
+          - "docs/openapi-v1.yaml"
+          - "docs/openapi-v2.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "docs/openapi-v1.yaml"
+          - type: path_exists
+            path: "docs/openapi-v2.yaml"
+
+  # ── Stage 2: Endpoint Migration ──
+  - name: "Endpoint Migration"
+    depends_on: ["Version Infrastructure"]
+    description: "Port all endpoints to /v2 with schema improvements and bug fixes"
+    steps:
+      - title: "Migrate resource endpoints to v2"
+        role: backend
+        scope: large
+        complexity: medium
+        description: >
+          Implement /v2 versions of all resource endpoints. Apply planned schema
+          improvements: rename fields to camelCase, remove deprecated fields,
+          add pagination to list endpoints (cursor-based), unify error envelope
+          to { error: { code, message, details } }. Each v2 handler may share
+          service/repository logic with v1 — do not duplicate business logic.
+        files:
+          - "src/api/v2/"
+        completion_signals:
+          - type: path_exists
+            path: "src/api/v2"
+
+      - title: "Write v2 integration tests"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Write integration tests for every v2 endpoint covering: happy path,
+          validation errors (400), auth errors (401/403), not-found (404),
+          and pagination. Assert the new response schema is correct. Ensure
+          existing v1 tests still pass — run both suites in CI.
+        files:
+          - "tests/integration/v2/"
+        completion_signals:
+          - type: path_exists
+            path: "tests/integration/v2"
+
+  # ── Stage 3: Deprecation and Docs ──
+  - name: "Deprecation and Docs"
+    depends_on: ["Endpoint Migration"]
+    description: "Sunset notices, migration guide, and updated developer documentation"
+    steps:
+      - title: "Write v1 → v2 migration guide"
+        role: docs
+        scope: medium
+        complexity: low
+        description: >
+          Write docs/migration-v1-to-v2.md covering: summary of breaking changes,
+          field rename table, endpoint URL changes, error schema changes, and
+          pagination changes. Include before/after request/response examples for
+          each changed endpoint. Link from the main API README.
+        files:
+          - "docs/migration-v1-to-v2.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/migration-v1-to-v2.md"
+
+      - title: "Update API reference and changelog"
+        role: docs
+        scope: small
+        complexity: low
+        description: >
+          Update the API reference (README or docs site source) to feature v2
+          as the current version. Add a CHANGELOG entry documenting the v2
+          release date, v1 sunset date, and summary of changes. Add a deprecation
+          notice banner to any existing v1 documentation pages.
+        files:
+          - "CHANGELOG.md"
+          - "docs/api-reference.md"
+        completion_signals:
+          - type: path_exists
+            path: "CHANGELOG.md"

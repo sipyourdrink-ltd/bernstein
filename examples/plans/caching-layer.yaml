@@ -1,0 +1,190 @@
+# Bernstein Plan — Caching Layer
+#
+# A three-stage plan that adds a Redis caching layer to an existing service:
+#   1. Infrastructure:  Redis setup, connection pool, and health checks
+#   2. Cache-Aside:     cache-aside pattern for hot read paths
+#   3. Invalidation:    event-driven invalidation, TTL policy, and monitoring
+#
+# Run:
+#   bernstein run examples/plans/caching-layer.yaml
+
+name: "Caching Layer"
+description: >
+  Add a production-grade Redis caching layer to an existing service using the
+  cache-aside pattern. Covers Redis infrastructure setup, cache-aside decorators
+  for hot read paths, event-driven cache invalidation, TTL policies, and a
+  Prometheus-based cache health dashboard.
+
+cli: auto
+budget: "$15"
+max_agents: 4
+constraints:
+  - "Python 3.12+"
+  - "redis-py (async) for Redis access"
+  - "Cache keys must be deterministic and namespaced"
+  - "No stale data older than configured TTL may be served"
+  - "pytest for tests"
+
+stages:
+  # ── Stage 1: Cache Infrastructure ──
+  - name: "Cache Infrastructure"
+    description: "Redis setup, connection pooling, and health checks"
+    steps:
+      - title: "Add Redis to docker-compose and configure connection pool"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Add a redis service to docker-compose.yaml (redis:7-alpine). Enable
+          AOF persistence (appendonly yes) and set maxmemory-policy to
+          allkeys-lru. Expose port 6379. Add REDIS_URL to .env.example.
+          Create src/cache/client.py with an async Redis connection pool
+          (max_connections=20) initialized at app startup via a lifespan
+          context manager. Add a /readyz check that pings Redis.
+        files:
+          - "docker-compose.yaml"
+          - "src/cache/client.py"
+          - ".env.example"
+        completion_signals:
+          - type: path_exists
+            path: "src/cache/client.py"
+          - type: file_contains
+            path: "src/cache/client.py"
+            contains: "connection_pool"
+
+      - title: "Implement cache key builder and serialization"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Create src/cache/keys.py with a CacheKey dataclass that produces
+          namespaced, deterministic Redis keys: {namespace}:{version}:{hash}.
+          The hash is a SHA-256 digest of the sorted keyword arguments so
+          key collisions are impossible between different argument combinations.
+          Create src/cache/serializer.py using msgpack for compact binary
+          serialization of arbitrary Python objects, with a fallback to JSON
+          for non-msgpack-able types.
+        files:
+          - "src/cache/keys.py"
+          - "src/cache/serializer.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/cache/keys.py"
+          - type: file_contains
+            path: "src/cache/keys.py"
+            contains: "SHA-256"
+
+  # ── Stage 2: Cache-Aside Pattern ──
+  - name: "Cache-Aside Pattern"
+    description: "Apply cache-aside to hot read paths with async decorator"
+    depends_on: ["Cache Infrastructure"]
+    steps:
+      - title: "Build cache-aside decorator"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/cache/decorators.py with an async @cached(ttl, namespace,
+          key_fn=None) decorator. On a cache miss: call the decorated coroutine,
+          store the result in Redis with the given TTL, and return it. On a hit:
+          deserialize and return immediately. Increment hit/miss Prometheus
+          counters (cache_hits_total, cache_misses_total) labelled by namespace.
+          Support an optional key_fn argument to customize the cache key
+          from function arguments (overrides the default hash-based key).
+        files:
+          - "src/cache/decorators.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/cache/decorators.py"
+          - type: file_contains
+            path: "src/cache/decorators.py"
+            contains: "cache_hits_total"
+
+      - title: "Apply cache-aside to hot service methods"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Identify the three highest-traffic read paths in the existing service
+          (look for endpoints with >100 req/min in logs or metrics). Apply the
+          @cached decorator to the corresponding service-layer methods, NOT the
+          route handlers, so the cache works regardless of how the method is
+          called. Choose TTLs based on data volatility: user profiles (300s),
+          article listings (60s), configuration data (3600s). Add a comment
+          above each decorated method explaining the TTL rationale.
+        files:
+          - "src/services/users.py"
+          - "src/services/articles.py"
+          - "src/services/config.py"
+        completion_signals:
+          - type: file_contains
+            path: "src/services/users.py"
+            contains: "@cached"
+
+      - title: "Write cache-aside unit tests"
+        role: qa
+        scope: small
+        complexity: medium
+        description: >
+          Create tests/cache/test_decorators.py using pytest-asyncio and
+          fakeredis for an in-process Redis mock. Test: cache miss populates
+          the cache and returns the correct value, cache hit does not call
+          the underlying function a second time, TTL expiry triggers a miss,
+          and the decorator correctly namespaces keys. Assert hit/miss counters
+          increment as expected.
+        files:
+          - "tests/cache/test_decorators.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/cache/test_decorators.py"
+          - type: test_passes
+            command: "pytest tests/cache/ -x -q"
+
+  # ── Stage 3: Cache Invalidation and Monitoring ──
+  - name: "Invalidation and Monitoring"
+    description: "Event-driven invalidation, TTL governance, and cache dashboard"
+    depends_on: ["Cache-Aside Pattern"]
+    steps:
+      - title: "Implement event-driven cache invalidation"
+        role: backend
+        scope: medium
+        complexity: high
+        description: >
+          Create src/cache/invalidation.py with an InvalidationRegistry that maps
+          resource types to cache namespaces. When a write operation mutates a
+          resource (user update, article publish, config change), call
+          registry.invalidate(resource_type, resource_id) which deletes all
+          cache keys matching the namespace pattern using Redis SCAN + DEL
+          (never KEYS in production). Hook into the existing event bus or
+          SQLAlchemy after_flush event. Add an async invalidate_all(namespace)
+          for full namespace busts (admin use only, rate-limited).
+        files:
+          - "src/cache/invalidation.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/cache/invalidation.py"
+          - type: file_contains
+            path: "src/cache/invalidation.py"
+            contains: "SCAN"
+
+      - title: "Add cache monitoring and alerting"
+        role: devops
+        scope: medium
+        complexity: low
+        description: >
+          Add a Prometheus scrape job for Redis Exporter (oliver006/redis_exporter)
+          to docker-compose.observability.yaml. Create grafana/dashboards/cache.json
+          with panels for: hit rate (%), miss rate (%), eviction rate, memory
+          usage, and per-namespace hit/miss breakdown. Add two alerting rules
+          in monitoring/alerts/cache.yaml: CacheHitRateLow (< 70% for 10m) and
+          CacheMemoryHigh (> 85% maxmemory for 5m).
+        files:
+          - "docker-compose.observability.yaml"
+          - "grafana/dashboards/cache.json"
+          - "monitoring/alerts/cache.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "monitoring/alerts/cache.yaml"
+          - type: file_contains
+            path: "monitoring/alerts/cache.yaml"
+            contains: "CacheHitRateLow"

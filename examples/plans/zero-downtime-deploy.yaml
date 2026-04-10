@@ -1,0 +1,200 @@
+# Bernstein Plan — Zero-Downtime Deployment Strategy
+#
+# A three-stage plan that implements zero-downtime deploys:
+#   1. Blue-Green:  infrastructure provisioning and traffic switching
+#   2. Rolling:     automated rolling update pipeline with health checks
+#   3. Canary:      canary release with metric-based automatic rollback
+#
+# Run:
+#   bernstein run examples/plans/zero-downtime-deploy.yaml
+
+name: "Zero-Downtime Deployment"
+description: >
+  Implement a zero-downtime deployment strategy covering blue-green infrastructure
+  switching, automated rolling updates, and canary releases with automatic rollback
+  triggered by error-rate or latency SLO breaches.
+
+cli: auto
+budget: "$20"
+max_agents: 3
+constraints:
+  - "Kubernetes (kubectl/kustomize) for orchestration"
+  - "GitHub Actions for CI/CD pipeline"
+  - "Prometheus metrics for rollback signals"
+  - "Shell scripts must be POSIX-compatible"
+
+stages:
+  # ── Stage 1: Blue-Green Infrastructure ──
+  - name: "Blue-Green Infrastructure"
+    description: "Provision blue and green environments and automate traffic switching"
+    steps:
+      - title: "Create blue-green Kubernetes manifests"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Create deploy/blue-green/ with kustomize overlays for blue and green
+          environments. Each overlay contains a Deployment, Service, and
+          HorizontalPodAutoscaler. Use a label selector (slot: blue | green) on
+          the main Service to control which slot receives traffic. Add a
+          ConfigMap for slot-specific environment variables. Both slots share
+          the same PodDisruptionBudget ensuring at least one pod available at
+          all times during a switch.
+        files:
+          - "deploy/blue-green/base/deployment.yaml"
+          - "deploy/blue-green/base/service.yaml"
+          - "deploy/blue-green/overlays/blue/kustomization.yaml"
+          - "deploy/blue-green/overlays/green/kustomization.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "deploy/blue-green/base/service.yaml"
+
+      - title: "Write traffic switch automation script"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Create scripts/switch-slot.sh that accepts arguments --to blue|green
+          and --namespace. It should: verify the target slot deployment is Ready
+          (all replicas healthy), patch the Service selector to the new slot,
+          wait for the Endpoints resource to reflect the switch, and print a
+          summary of old vs. new slot. Add --dry-run flag that prints the patch
+          without applying. Log all actions to stdout in structured key=value
+          format for audit trails.
+        files:
+          - "scripts/switch-slot.sh"
+        completion_signals:
+          - type: path_exists
+            path: "scripts/switch-slot.sh"
+          - type: file_contains
+            path: "scripts/switch-slot.sh"
+            contains: "--dry-run"
+
+      - title: "Add blue-green deploy GitHub Actions workflow"
+        role: ci-fixer
+        scope: small
+        complexity: low
+        description: >
+          Create .github/workflows/deploy-blue-green.yaml. Trigger on pushes to
+          main. Steps: build and push container image, deploy to the inactive
+          slot (detect via label), run smoke tests against the inactive slot's
+          internal URL, and only switch traffic after smoke tests pass. Add a
+          manual approval gate before the switch using GitHub Environments.
+        files:
+          - ".github/workflows/deploy-blue-green.yaml"
+        completion_signals:
+          - type: path_exists
+            path: ".github/workflows/deploy-blue-green.yaml"
+
+  # ── Stage 2: Rolling Update Automation ──
+  - name: "Rolling Update Automation"
+    description: "Automated rolling updates with readiness gate enforcement"
+    depends_on: ["Blue-Green Infrastructure"]
+    steps:
+      - title: "Configure rolling update strategy with readiness gates"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Update the base Deployment in deploy/blue-green/base/deployment.yaml
+          with a RollingUpdate strategy: maxUnavailable: 0, maxSurge: 1.
+          Add a readinessProbe (/readyz, 5s period, 3 consecutive successes)
+          and a startupProbe to prevent premature traffic. Define a
+          minReadySeconds: 30 to allow metrics to stabilize before the next
+          pod rolls. Add a pre-stop lifecycle hook with a 15-second sleep to
+          drain in-flight requests before SIGTERM.
+        files:
+          - "deploy/blue-green/base/deployment.yaml"
+        completion_signals:
+          - type: file_contains
+            path: "deploy/blue-green/base/deployment.yaml"
+            contains: "maxUnavailable: 0"
+
+      - title: "Implement rollout health check script"
+        role: devops
+        scope: small
+        complexity: medium
+        description: >
+          Create scripts/rollout-health.sh that polls kubectl rollout status
+          every 10 seconds, checks the error rate from the Prometheus API
+          (rate(http_requests_total{status=~"5.."}[1m]) / rate(...[1m])), and
+          automatically triggers kubectl rollout undo if the error rate exceeds
+          a configurable threshold (default 5%) for two consecutive checks.
+          Exit 0 on successful rollout, non-zero on auto-rollback. Print a
+          clear message indicating which check triggered the rollback.
+        files:
+          - "scripts/rollout-health.sh"
+        completion_signals:
+          - type: path_exists
+            path: "scripts/rollout-health.sh"
+          - type: file_contains
+            path: "scripts/rollout-health.sh"
+            contains: "rollout undo"
+
+  # ── Stage 3: Canary Release ──
+  - name: "Canary Release"
+    description: "Weighted canary traffic split with SLO-based automatic rollback"
+    depends_on: ["Rolling Update Automation"]
+    steps:
+      - title: "Implement canary Kubernetes manifests"
+        role: devops
+        scope: medium
+        complexity: high
+        description: >
+          Create deploy/canary/ with a separate Deployment for the canary version
+          (initially 1 replica vs. 10 stable). Use an nginx Ingress with
+          nginx.ingress.kubernetes.io/canary and canary-weight annotations to
+          split traffic (start at 5%). Add a DestinationRule if using Istio.
+          Create a kustomize overlay that parameterizes canary-weight and
+          canary image tag so they can be overridden per-deploy without editing
+          base manifests.
+        files:
+          - "deploy/canary/deployment.yaml"
+          - "deploy/canary/ingress.yaml"
+          - "deploy/canary/kustomization.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "deploy/canary/ingress.yaml"
+          - type: file_contains
+            path: "deploy/canary/ingress.yaml"
+            contains: "canary-weight"
+
+      - title: "Build canary promotion and rollback pipeline"
+        role: devops
+        scope: medium
+        complexity: high
+        description: >
+          Create scripts/canary-promote.sh that implements a graduated promotion:
+          5% → 20% → 50% → 100%, waiting 5 minutes at each step and querying
+          Prometheus for error rate and p99 latency against configurable SLO
+          thresholds. If any check fails, automatically roll back by setting
+          canary-weight to 0 and deleting the canary deployment. On full
+          promotion (100%), scale down the stable deployment and rename the
+          canary to stable. Log every decision with timestamp and metric values.
+        files:
+          - "scripts/canary-promote.sh"
+        completion_signals:
+          - type: path_exists
+            path: "scripts/canary-promote.sh"
+          - type: file_contains
+            path: "scripts/canary-promote.sh"
+            contains: "rollback"
+
+      - title: "Document deployment runbook"
+        role: docs
+        scope: small
+        complexity: low
+        description: >
+          Create docs/deployment-runbook.md. Cover: when to use blue-green vs.
+          rolling vs. canary, step-by-step instructions for each strategy,
+          how to interpret rollback triggers, how to manually override an
+          automatic rollback, and a troubleshooting section for common failure
+          modes (stuck rollout, split-brain, Prometheus unreachable).
+        files:
+          - "docs/deployment-runbook.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/deployment-runbook.md"
+          - type: file_contains
+            path: "docs/deployment-runbook.md"
+            contains: "## Troubleshooting"

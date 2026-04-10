@@ -1,0 +1,182 @@
+# Bernstein Plan — Tech Debt Sprint
+#
+# A three-stage plan for a focused tech debt reduction sprint:
+#   1. Audit:      enumerate dead code, outdated deps, missing types, test gaps
+#   2. Refactor:   prune dead code, upgrade deps, add type annotations, fix hotspots
+#   3. Validation: ensure no regressions, update coverage gates, document decisions
+#
+# Run:
+#   bernstein run examples/plans/tech-debt-sprint.yaml
+#
+# Estimated cost: $10–18 depending on codebase size and model choice.
+
+name: "Tech Debt Sprint"
+description: >
+  A focused sprint to reduce accumulated technical debt. Covers dead code
+  removal, dependency upgrades, type annotation coverage, and refactoring of
+  the highest-complexity hotspots. Ends with updated test coverage gates and
+  a debt register for tracking remaining items.
+
+cli: auto
+budget: "$15"
+max_agents: 4
+constraints:
+  - "No feature changes — refactoring and cleanup only"
+  - "All existing tests must pass after every change"
+  - "Dependency upgrades must not change public API behaviour"
+  - "Type annotation coverage must not decrease"
+
+stages:
+  # ── Stage 1: Audit and Prioritise ──
+  - name: "Audit and Prioritise"
+    description: "Enumerate tech debt items and produce a prioritised backlog"
+    steps:
+      - title: "Identify dead code and unused dependencies"
+        role: analyst
+        scope: medium
+        complexity: low
+        description: >
+          Run vulture (Python) or ts-prune/knip (TypeScript) to find dead code:
+          unused functions, classes, variables, and imports. Run pip-check /
+          npm depcheck to find unused package dependencies. Run coverage reports
+          to find untested modules (below 30% line coverage). Produce
+          tech-debt/dead-code-report.md with file, line range, and deletion risk
+          (safe / needs-review / risky) for each item.
+        files:
+          - "tech-debt/dead-code-report.md"
+        completion_signals:
+          - type: path_exists
+            path: "tech-debt/dead-code-report.md"
+
+      - title: "Audit dependency freshness and security status"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Run pip list --outdated / npm outdated / cargo outdated to catalogue
+          all outdated dependencies. For each, record: current version, latest
+          version, major/minor/patch gap, and whether the upgrade contains
+          security fixes (cross-reference with pip-audit / npm audit output).
+          Produce tech-debt/dependency-audit.csv. Flag any dependency that is
+          more than 2 major versions behind or has a known CVE.
+        files:
+          - "tech-debt/dependency-audit.csv"
+        completion_signals:
+          - type: path_exists
+            path: "tech-debt/dependency-audit.csv"
+
+      - title: "Identify complexity hotspots and missing type coverage"
+        role: analyst
+        scope: medium
+        complexity: medium
+        description: >
+          Run radon (Python) or CodeClimate / complexity-report (JS/TS) to find
+          functions with cyclomatic complexity above 10. Run mypy --strict /
+          tsc --strict in report mode to count type errors and untyped functions.
+          Produce tech-debt/hotspot-report.md listing the top 20 highest-complexity
+          functions and top 10 modules with lowest type coverage. Include a debt
+          score (complexity × lines) for prioritisation.
+        files:
+          - "tech-debt/hotspot-report.md"
+        completion_signals:
+          - type: path_exists
+            path: "tech-debt/hotspot-report.md"
+
+  # ── Stage 2: Refactor ──
+  - name: "Refactor"
+    depends_on: ["Audit and Prioritise"]
+    description: "Execute the prioritised debt items: prune, upgrade, annotate, simplify"
+    steps:
+      - title: "Remove dead code and unused dependencies"
+        role: backend
+        scope: medium
+        complexity: low
+        description: >
+          Working through dead-code-report.md, delete all items marked 'safe'.
+          For 'needs-review' items, verify they are truly unreachable (grep for
+          dynamic calls, decorators, plugin registration), then delete if confirmed.
+          Remove unused packages from requirements.txt / package.json / pyproject.toml.
+          Run the full test suite after each file deletion to confirm no breakage.
+        completion_signals:
+          - type: command
+            run: "python -m pytest tests/ -x -q"
+
+      - title: "Upgrade outdated dependencies"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Upgrade dependencies from dependency-audit.csv, starting with CVE fixes,
+          then major-version-behind packages, then minor/patch. For each major
+          version upgrade: read the changelog, adapt any breaking API changes in
+          the codebase, run the test suite, and commit individually so each upgrade
+          is bisectable. Do not batch-upgrade everything in one commit.
+        completion_signals:
+          - type: command
+            run: "python -m pytest tests/ -x -q"
+
+      - title: "Add type annotations to hotspot modules"
+        role: backend
+        scope: large
+        complexity: medium
+        description: >
+          Add type annotations to the top 10 untyped modules from hotspot-report.md,
+          starting with the most-imported ones. Use mypy or pyright to verify each
+          module is clean after annotation. For Python: annotate all function
+          signatures, class attributes, and return types. For TypeScript: replace
+          any types with specific interfaces. Do not refactor logic — annotation only.
+        completion_signals:
+          - type: command
+            run: "python -m mypy src/ --ignore-missing-imports --no-error-summary"
+
+      - title: "Refactor top complexity hotspots"
+        role: backend
+        scope: medium
+        complexity: high
+        description: >
+          Refactor the top 5 functions from hotspot-report.md (highest debt score).
+          For each: extract sub-functions to reduce nesting, simplify conditionals
+          (replace nested if/else chains with guard clauses or strategy pattern),
+          and split functions exceeding 50 lines into single-responsibility units.
+          Each refactored function must have the same test coverage as before
+          (add tests first if coverage is missing).
+        completion_signals:
+          - type: command
+            run: "python -m pytest tests/ -x -q"
+
+  # ── Stage 3: Validation ──
+  - name: "Validation"
+    depends_on: ["Refactor"]
+    description: "Confirm no regressions, raise coverage gates, document remaining debt"
+    steps:
+      - title: "Run full test suite and coverage report"
+        role: qa
+        scope: small
+        complexity: low
+        description: >
+          Run the full test suite with coverage. Assert overall line coverage
+          did not decrease from the pre-sprint baseline. If coverage increased,
+          update the coverage threshold in pyproject.toml / jest.config.js /
+          .coveragerc to the new floor so it cannot regress in future PRs.
+          Produce tech-debt/coverage-delta.md showing before/after by module.
+        files:
+          - "tech-debt/coverage-delta.md"
+        completion_signals:
+          - type: path_exists
+            path: "tech-debt/coverage-delta.md"
+
+      - title: "Write debt register for remaining items"
+        role: docs
+        scope: small
+        complexity: low
+        description: >
+          Produce tech-debt/register.md listing all debt items NOT addressed in
+          this sprint: items deferred due to risk, items requiring a feature flag,
+          and 'needs-review' dead code left in place. For each: record the file,
+          the reason for deferral, and the recommended next step. This register
+          becomes the input for the next debt sprint.
+        files:
+          - "tech-debt/register.md"
+        completion_signals:
+          - type: path_exists
+            path: "tech-debt/register.md"

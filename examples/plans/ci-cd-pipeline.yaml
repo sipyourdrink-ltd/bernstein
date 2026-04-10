@@ -1,0 +1,170 @@
+# Bernstein Plan — CI/CD Pipeline Setup
+#
+# A three-stage plan that builds a complete CI/CD pipeline from scratch:
+#   1. Build & Test:    CI pipeline with lint, test, and build gates
+#   2. Deployment:      automated staging and production deployment
+#   3. Observability:   monitoring, alerting, and on-call runbooks
+#
+# Targets GitHub Actions with Docker containers. Adjust the constraints
+# for GitLab CI, CircleCI, or other providers.
+#
+# Run:
+#   bernstein run examples/plans/ci-cd-pipeline.yaml
+
+name: "CI/CD Pipeline Setup"
+description: >
+  Build a complete CI/CD pipeline: automated testing gates on every PR,
+  staging deployments on merge to main, production deployments on tag,
+  and a monitoring stack with alerting and runbooks.
+
+cli: auto
+budget: "$14"
+max_agents: 3
+constraints:
+  - "GitHub Actions for CI/CD"
+  - "Docker for all build artifacts"
+  - "Semantic versioning for releases (vMAJOR.MINOR.PATCH)"
+  - "All secrets via GitHub Secrets — never in workflow files"
+  - "Staging auto-deploys on merge to main; production requires tag push"
+  - "Test failures block merge; deployment failures trigger rollback"
+
+stages:
+  # ── Stage 1: Build and Test Pipeline ──
+  - name: "Build and Test"
+    description: "CI pipeline with lint, test, security scan, and build gates"
+    steps:
+      - title: "Create PR validation workflow"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Create .github/workflows/ci.yaml that triggers on pull_request to main.
+          Jobs (each runs in parallel where possible):
+          1. lint — run project linter, fail on any error
+          2. test — run unit and integration tests, upload coverage to Codecov
+          3. build — docker build, push to GHCR with PR number tag
+          4. security — run Trivy on the built image, fail on CRITICAL CVEs
+          Cache dependencies between runs using actions/cache. Each job uses
+          a minimal Docker image. Total pipeline target: under 5 minutes.
+        files:
+          - ".github/workflows/ci.yaml"
+        completion_signals:
+          - type: path_exists
+            path: ".github/workflows/ci.yaml"
+          - type: file_contains
+            path: ".github/workflows/ci.yaml"
+            contains: "pull_request"
+
+      - title: "Add code quality gates and coverage enforcement"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Add a coverage gate job to the CI workflow: fail the build if overall
+          coverage drops below 80% or any new file has below 60% coverage.
+          Integrate with Codecov for diff coverage comments on PRs.
+          Add a status check that must pass before merge (branch protection rule
+          instructions in docs/ci/branch-protection.md).
+        files:
+          - "docs/ci/branch-protection.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/ci/branch-protection.md"
+
+  # ── Stage 2: Deployment Automation ──
+  - name: "Deployment"
+    description: "Automated staging and production deployment with rollback"
+    depends_on: ["Build and Test"]
+    steps:
+      - title: "Create staging deployment workflow"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Create .github/workflows/deploy-staging.yaml that triggers on push
+          to main after CI passes. Steps: pull the GHCR image built in CI,
+          retag as staging, push, run database migrations, deploy to staging
+          via SSH or kubectl (whichever the project uses). Run a smoke test
+          after deploy (curl the health endpoint). On smoke test failure,
+          automatically roll back to the previous image and notify Slack.
+        files:
+          - ".github/workflows/deploy-staging.yaml"
+        completion_signals:
+          - type: path_exists
+            path: ".github/workflows/deploy-staging.yaml"
+          - type: file_contains
+            path: ".github/workflows/deploy-staging.yaml"
+            contains: "rollback"
+
+      - title: "Create production deployment workflow"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Create .github/workflows/deploy-production.yaml triggered on tag push
+          matching v*.*.*. Steps: validate semver tag format, pull staging image,
+          retag with semver and latest, push, create GitHub Release with
+          auto-generated changelog (git log since last tag), deploy with zero-
+          downtime rolling update, run production smoke tests. Require manual
+          approval (environment protection rule) before deploy job executes.
+        files:
+          - ".github/workflows/deploy-production.yaml"
+        completion_signals:
+          - type: path_exists
+            path: ".github/workflows/deploy-production.yaml"
+
+      - title: "Write deployment runbook"
+        role: docs
+        scope: small
+        complexity: low
+        description: >
+          Write docs/ops/deployment.md covering: how to trigger a production
+          deploy (tag and push), how to approve the manual gate in GitHub,
+          how to perform an emergency rollback (manual steps + command),
+          how to skip staging and deploy a hotfix directly, and a checklist
+          for pre-deploy verification. Include troubleshooting for the three
+          most common failure modes.
+        files:
+          - "docs/ops/deployment.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/ops/deployment.md"
+
+  # ── Stage 3: Monitoring and Alerting ──
+  - name: "Observability"
+    description: "Metrics, alerting, dashboards, and on-call runbooks"
+    depends_on: ["Deployment"]
+    steps:
+      - title: "Configure application metrics and health endpoints"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Add a /health endpoint that checks database connectivity, cache
+          availability, and any background queue depth. Add a /metrics endpoint
+          (Prometheus format) exposing: request count, error rate, p50/p95/p99
+          latency by route, and active connections. If using Kubernetes, add
+          liveness and readiness probe configuration in k8s/deployment.yaml.
+          Document metric names in docs/ops/metrics.md.
+        files:
+          - "docs/ops/metrics.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/ops/metrics.md"
+
+      - title: "Set up alerting rules and on-call runbooks"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Write alert definitions (Prometheus rules or equivalent) for:
+          error rate > 1% for 5 minutes, p95 latency > 2s for 5 minutes,
+          pod restarts > 3 in 10 minutes, disk > 80%, and certificate expiry
+          < 14 days. For each alert, write a corresponding runbook in
+          docs/runbooks/ explaining what the alert means, how to investigate,
+          and how to resolve it. Link runbooks from alert annotations.
+        files:
+          - "docs/runbooks/"
+        completion_signals:
+          - type: path_exists
+            path: "docs/runbooks"

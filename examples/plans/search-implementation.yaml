@@ -1,0 +1,189 @@
+# Bernstein Plan — Full-Text Search Implementation
+#
+# A three-stage plan that adds full-text search to an existing application:
+#   1. Index Setup:     Meilisearch cluster, index config, and auth
+#   2. Indexing Pipeline: document ingestion, sync jobs, and delta updates
+#   3. Search API:      query endpoint with facets, filters, and relevance tuning
+#
+# Run:
+#   bernstein run examples/plans/search-implementation.yaml
+
+name: "Search Implementation"
+description: >
+  Add production-ready full-text search to an existing application using
+  Meilisearch: configure the search index, build an indexing pipeline that
+  stays in sync with the primary database, and expose a search API with
+  faceted filtering and relevance tuning.
+
+cli: auto
+budget: "$20"
+max_agents: 4
+constraints:
+  - "Python 3.12+"
+  - "Meilisearch as the search engine"
+  - "FastAPI for the search API layer"
+  - "Async everywhere for IO-bound operations"
+  - "pytest for tests"
+
+stages:
+  # ── Stage 1: Search Index Setup ──
+  - name: "Search Index Setup"
+    description: "Configure Meilisearch instance, index settings, and auth"
+    steps:
+      - title: "Add Meilisearch to docker-compose"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Add a meilisearch service to docker-compose.yaml using the official
+          meilisearch:latest image. Configure MEILI_MASTER_KEY via .env,
+          persist data with a named volume, and expose port 7700. Add a
+          healthcheck (GET /health). Update .env.example with
+          MEILISEARCH_URL and MEILISEARCH_API_KEY placeholders.
+        files:
+          - "docker-compose.yaml"
+          - ".env.example"
+        completion_signals:
+          - type: file_contains
+            path: "docker-compose.yaml"
+            contains: "meilisearch"
+
+      - title: "Configure search index settings"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/search/index_config.py. Using the meilisearch-python async
+          client, define an async configure_index() function that:
+          - Creates or updates the 'articles' index with the primary key 'id'
+          - Sets searchableAttributes in priority order (title, tags, body, author)
+          - Sets filterableAttributes (published_at, category, author_id, tags)
+          - Sets sortableAttributes (published_at, popularity_score)
+          - Sets rankingRules (words, typo, proximity, attribute, sort, exactness)
+          - Sets typo tolerance (minWordSizeForTypos: {oneTypo: 5, twoTypos: 9})
+          Create a CLI script scripts/configure_search.py that runs configure_index().
+        files:
+          - "src/search/index_config.py"
+          - "scripts/configure_search.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/search/index_config.py"
+          - type: file_contains
+            path: "src/search/index_config.py"
+            contains: "searchableAttributes"
+
+  # ── Stage 2: Indexing Pipeline ──
+  - name: "Indexing Pipeline"
+    description: "Bulk indexing, incremental sync, and delete propagation"
+    depends_on: ["Search Index Setup"]
+    steps:
+      - title: "Implement bulk indexer for initial load"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/search/bulk_indexer.py. Read all published articles from
+          the database using SQLAlchemy async session in batches of 500.
+          Transform each Article ORM object to a search document dict (flatten
+          nested fields, convert datetimes to ISO strings, join tags to a list).
+          Use meilisearch-python's add_documents_in_batches() for efficient
+          upload. Log progress every 1000 documents. Add a CLI entrypoint
+          scripts/bulk_index.py with --batch-size and --dry-run flags.
+        files:
+          - "src/search/bulk_indexer.py"
+          - "scripts/bulk_index.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/search/bulk_indexer.py"
+          - type: file_contains
+            path: "src/search/bulk_indexer.py"
+            contains: "add_documents"
+
+      - title: "Build incremental sync job"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/search/sync_job.py. Implement an async sync loop that:
+          - Reads a high-water mark from .sdd/runtime/search_sync_hwm.json
+          - Queries the database for articles updated_at > hwm
+          - Upserts changed documents to Meilisearch
+          - Deletes documents for articles soft-deleted since the hwm
+          - Updates the hwm after successful sync
+          Handle transient Meilisearch errors with exponential backoff (tenacity).
+          Designed to run on a cron schedule (e.g. every 60 seconds).
+        files:
+          - "src/search/sync_job.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/search/sync_job.py"
+          - type: file_contains
+            path: "src/search/sync_job.py"
+            contains: "high-water"
+
+      - title: "Write indexing pipeline tests"
+        role: qa
+        scope: small
+        complexity: medium
+        description: >
+          Create tests/search/test_indexing.py. Use pytest-asyncio and mock
+          the meilisearch client with unittest.mock.AsyncMock. Test: bulk
+          indexer batching logic, document transformation (including edge cases
+          with null fields), incremental sync selecting only updated rows,
+          and delete propagation for soft-deleted records. Assert high-water
+          mark is written after each successful sync run.
+        files:
+          - "tests/search/test_indexing.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/search/test_indexing.py"
+          - type: test_passes
+            command: "pytest tests/search/ -x -q"
+
+  # ── Stage 3: Search API with Facets and Relevance Tuning ──
+  - name: "Search API"
+    description: "Query endpoint with facets, filters, highlighting, and tuning"
+    depends_on: ["Indexing Pipeline"]
+    steps:
+      - title: "Implement search FastAPI endpoint"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/api/routes/search.py with GET /search. Accept query params:
+          q (required), category (filter), author_id (filter), tags (multi-value
+          filter), sort (published_at:asc|desc|popularity_score:desc), page, and
+          limit (max 50). Build the Meilisearch query with facets on category
+          and tags, highlight on title and body (pre/post tags: <mark>/<mark>),
+          and a snippet strategy (3 words). Return a SearchResponse TypedDict
+          with hits, facetDistribution, totalHits, and processingTimeMs.
+        files:
+          - "src/api/routes/search.py"
+          - "src/api/schemas/search.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/api/routes/search.py"
+          - type: file_contains
+            path: "src/api/routes/search.py"
+            contains: "facets"
+
+      - title: "Add relevance tuning and synonyms"
+        role: analyst
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/search/relevance.py with an async setup_relevance() function
+          that loads synonyms from config/search_synonyms.yaml and pushes them
+          to Meilisearch. Create config/search_synonyms.yaml with at least 10
+          domain-relevant synonym groups (e.g. "js" <-> "javascript"). Add a
+          stop-words list for common terms that reduce relevance noise. Add a
+          scripts/update_relevance.py CLI script to reload synonyms without
+          a full re-index. Document tuning rationale in a brief inline comment
+          block at the top of the synonyms file.
+        files:
+          - "src/search/relevance.py"
+          - "config/search_synonyms.yaml"
+          - "scripts/update_relevance.py"
+        completion_signals:
+          - type: path_exists
+            path: "config/search_synonyms.yaml"

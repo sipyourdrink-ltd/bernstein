@@ -1,0 +1,150 @@
+# Bernstein Plan — Database Migration with Rollback
+#
+# A three-stage plan for a safe, reversible database migration:
+#   1. Schema Design:   model new schema, document changes, plan rollback
+#   2. Migration:       write up/down scripts, apply in staging, verify data
+#   3. Testing:         integration tests, rollback drill, sign-off
+#
+# Run:
+#   bernstein run examples/plans/database-migration.yaml
+#
+# Estimated cost: $10–20 depending on schema complexity and model choice.
+
+name: "Database Migration with Rollback Plan"
+description: >
+  Safely migrate a relational database schema with full rollback capability.
+  Covers schema design, versioned up/down migration scripts, data backfill,
+  and integration tests that verify both the forward migration and rollback.
+
+cli: auto
+budget: "$15"
+max_agents: 4
+constraints:
+  - "Migrations must be idempotent — safe to re-run"
+  - "Every migration script requires a paired rollback (down) script"
+  - "No destructive DDL on production data without a backup step"
+  - "All scripts must pass CI before merge"
+
+stages:
+  # ── Stage 1: Schema Design ──
+  - name: "Schema Design"
+    description: "Model the target schema, document all changes, and plan rollback paths"
+    steps:
+      - title: "Audit existing schema and identify changes"
+        role: architect
+        scope: medium
+        complexity: medium
+        description: >
+          Inspect the current database schema (tables, indexes, constraints,
+          foreign keys). Produce db/migration/schema-audit.md listing every
+          object that will change, be added, or be removed. Flag any nullable
+          columns being made NOT NULL — these require a data backfill step.
+        files:
+          - "db/migration/schema-audit.md"
+        completion_signals:
+          - type: path_exists
+            path: "db/migration/schema-audit.md"
+
+      - title: "Design target schema and ERD"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Based on schema-audit.md, write db/migration/target-schema.sql with
+          the full target DDL. Include a Mermaid ERD diagram in
+          db/migration/erd.md. Confirm every foreign key reference is valid
+          in the new schema and all indexes are covered.
+        files:
+          - "db/migration/target-schema.sql"
+          - "db/migration/erd.md"
+        completion_signals:
+          - type: path_exists
+            path: "db/migration/target-schema.sql"
+
+  # ── Stage 2: Migration Scripts ──
+  - name: "Migration Scripts"
+    depends_on: ["Schema Design"]
+    description: "Write versioned up/down migration scripts and backfill logic"
+    steps:
+      - title: "Write forward migration (up) scripts"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Using a migration tool (Flyway/Alembic/Liquibase — match the existing
+          project convention), write numbered migration files under db/migrations/.
+          Each file handles one logical change: add table, add column, add index,
+          add constraint. Scripts must be idempotent (use IF NOT EXISTS / IF EXISTS).
+        files:
+          - "db/migrations/"
+        completion_signals:
+          - type: path_exists
+            path: "db/migrations"
+
+      - title: "Write rollback (down) scripts"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          For every up script, write a paired down script that fully reverses
+          the change. Store alongside the up scripts (e.g. V3__add_users_index.sql
+          paired with U3__add_users_index.sql or a rollback block in the same file).
+          Verify that running down after up leaves the schema identical to baseline.
+        files:
+          - "db/migrations/"
+        completion_signals:
+          - type: path_exists
+            path: "db/migrations"
+
+      - title: "Write data backfill scripts"
+        role: backend
+        scope: small
+        complexity: medium
+        description: >
+          For any column or table that requires data population (e.g. a new NOT NULL
+          column with a default derived from existing data), write a standalone
+          backfill script in db/backfills/. Scripts must be safe to run against
+          large tables (batched updates, no full-table locks). Include a dry-run
+          mode that prints row counts without committing.
+        files:
+          - "db/backfills/"
+        completion_signals:
+          - type: path_exists
+            path: "db/backfills"
+
+  # ── Stage 3: Integration Testing ──
+  - name: "Integration Testing"
+    depends_on: ["Migration Scripts"]
+    description: "Verify forward migration, data integrity, and rollback in a test environment"
+    steps:
+      - title: "Integration tests for forward migration"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Write pytest/Jest/JUnit integration tests (match existing test framework)
+          in tests/db/ that spin up a fresh test database, apply all migrations,
+          and assert: schema structure matches target-schema.sql, row counts
+          match expectations after backfill, and all application queries run
+          without error. Tests must run in CI.
+        files:
+          - "tests/db/"
+        completion_signals:
+          - type: path_exists
+            path: "tests/db"
+
+      - title: "Rollback verification test"
+        role: qa
+        scope: small
+        complexity: medium
+        description: >
+          Add a dedicated rollback drill test: apply all up migrations, run the
+          application smoke test suite, then apply all down scripts in reverse
+          order. Assert that the schema after rollback is byte-for-byte identical
+          to the original baseline. Document any manual steps required in
+          db/migration/rollback-runbook.md.
+        files:
+          - "db/migration/rollback-runbook.md"
+        completion_signals:
+          - type: path_exists
+            path: "db/migration/rollback-runbook.md"

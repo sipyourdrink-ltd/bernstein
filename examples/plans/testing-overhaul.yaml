@@ -1,0 +1,206 @@
+# Bernstein Plan — Testing Infrastructure Overhaul
+#
+# A three-stage plan that builds a complete testing stack from scratch:
+#   1. Framework:   configure test runners, factories, fixtures, and coverage
+#   2. Test suites: write unit and integration tests for all critical paths
+#   3. CI gates:    integrate into CI with coverage enforcement and reporting
+#
+# Run:
+#   bernstein run examples/plans/testing-overhaul.yaml
+
+name: "Testing Infrastructure Overhaul"
+description: >
+  Build a complete testing infrastructure: framework configuration, shared
+  fixtures and factories, test suites for critical paths (auth, data access,
+  API layer, background jobs), and CI integration with coverage gates and
+  test result reporting.
+
+cli: auto
+budget: "$16"
+max_agents: 4
+constraints:
+  - "pytest as the test runner (Python) or Jest (Node); no mixing"
+  - "Minimum 80% line coverage on new code; 70% overall gate"
+  - "Tests must be isolated — no shared mutable state between test functions"
+  - "No real network calls or database in unit tests — mock at the boundary"
+  - "Integration tests use testcontainers for real database/cache instances"
+  - "Test suite must complete in under 3 minutes in CI"
+
+stages:
+  # ── Stage 1: Test Framework Setup ──
+  - name: "Framework"
+    description: "Configure test runner, fixtures, factories, and code coverage"
+    steps:
+      - title: "Configure test runner and project structure"
+        role: qa
+        scope: small
+        complexity: low
+        description: >
+          Set up the test runner configuration. For Python: create pyproject.toml
+          [tool.pytest.ini_options] with testpaths, addopts (-x --tb=short -q),
+          and markers (unit, integration, e2e). For Node: create jest.config.ts
+          with separate projects for unit and integration. Create the directory
+          structure: tests/unit/, tests/integration/, tests/e2e/. Add a
+          Makefile target (make test-unit, make test-integration, make test-e2e)
+          and document the structure in docs/testing/structure.md.
+        files:
+          - "docs/testing/structure.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/testing/structure.md"
+          - type: path_exists
+            path: "tests/unit"
+
+      - title: "Build shared fixtures and test factories"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Create tests/conftest.py (Python) or tests/setup.ts (Node) with:
+          - Database fixture: spins up testcontainers Postgres, runs migrations,
+            yields a connection, rolls back after each test.
+          - Redis fixture: testcontainers Redis instance, flushed after each test.
+          - HTTP client fixture: test client for the web framework, pre-authenticated.
+          - Factory functions for every domain model (UserFactory, OrderFactory,
+            etc.) using factory_boy or @faker-js/faker. Factories must produce
+            valid objects by default; allow field overrides.
+        files:
+          - "tests/conftest.py"
+          - "tests/factories.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/conftest.py"
+          - type: path_exists
+            path: "tests/factories.py"
+
+      - title: "Configure code coverage and reporting"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Configure coverage measurement: pytest-cov with branch coverage enabled
+          (or Istanbul for Node). Add .coveragerc (or coverage config in
+          pyproject.toml) excluding: migrations, conftest.py, __init__.py, and
+          test files themselves. Configure coverage to fail below 70% overall.
+          Generate HTML report to htmlcov/ locally. Add coverage badge generation
+          for the README. Document coverage workflow in docs/testing/coverage.md.
+        files:
+          - "docs/testing/coverage.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/testing/coverage.md"
+
+  # ── Stage 2: Test Suites ──
+  - name: "Test Suites"
+    description: "Write unit and integration tests for all critical application paths"
+    depends_on: ["Framework"]
+    steps:
+      - title: "Write authentication and authorization tests"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Write comprehensive tests for authentication and authorization critical
+          paths in tests/unit/test_auth.py and tests/integration/test_auth.py.
+          Unit tests (mock everything): token generation, token validation,
+          expired token rejection, invalid signature rejection, permission checks
+          for each role. Integration tests (real DB + Redis): register flow,
+          login + token issuance, refresh rotation, concurrent logout invalidating
+          all sessions, rate limit enforcement. Aim for 100% branch coverage on
+          the auth module.
+        files:
+          - "tests/unit/test_auth.py"
+          - "tests/integration/test_auth.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/unit/test_auth.py"
+          - type: path_exists
+            path: "tests/integration/test_auth.py"
+          - type: command
+            run: "pytest tests/unit/test_auth.py tests/integration/test_auth.py -x -q"
+
+      - title: "Write data access layer tests"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Write integration tests for all repository/DAO classes in
+          tests/integration/test_repositories.py. Use the database fixture from
+          conftest.py. Cover: create (happy path + unique constraint violation),
+          read by ID (found, not found), list with filters and pagination
+          (first page, last page, empty), update (optimistic locking if used),
+          delete (cascade behavior). Test that transactions roll back correctly
+          on failure. Use factories to build test data.
+        files:
+          - "tests/integration/test_repositories.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/integration/test_repositories.py"
+
+      - title: "Write API endpoint and background job tests"
+        role: qa
+        scope: large
+        complexity: medium
+        description: >
+          Write tests for the HTTP API layer and background jobs.
+          API tests (tests/integration/test_api.py): for each endpoint, cover
+          happy path, unauthenticated (401), unauthorized (403), invalid input
+          (422), and not-found (404). Use the HTTP client fixture; assert on
+          response body shape, not just status codes.
+          Background job tests (tests/unit/test_jobs.py): test each job handler
+          in isolation with mocked dependencies. Assert the job produces the
+          correct side effects and handles errors without crashing.
+        files:
+          - "tests/integration/test_api.py"
+          - "tests/unit/test_jobs.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/integration/test_api.py"
+          - type: path_exists
+            path: "tests/unit/test_jobs.py"
+
+  # ── Stage 3: CI Integration ──
+  - name: "CI"
+    description: "Integrate tests into CI with coverage gates and reporting"
+    depends_on: ["Test Suites"]
+    steps:
+      - title: "Add test jobs to CI workflow"
+        role: devops
+        scope: medium
+        complexity: medium
+        description: >
+          Add test jobs to .github/workflows/ci.yaml (create if absent):
+          - unit-tests job: runs pytest tests/unit/ (or jest --testPathPattern=unit),
+            uploads JUnit XML to GitHub, caches dependencies.
+          - integration-tests job: starts testcontainers (Docker-in-Docker or
+            docker-compose service containers), runs pytest tests/integration/,
+            uploads JUnit XML. Each job annotates the PR with failed test names
+            using the GitHub Actions test reporter. Both jobs must pass for
+            a PR to be mergeable.
+        files:
+          - ".github/workflows/ci.yaml"
+        completion_signals:
+          - type: path_exists
+            path: ".github/workflows/ci.yaml"
+          - type: file_contains
+            path: ".github/workflows/ci.yaml"
+            contains: "integration-tests"
+
+      - title: "Configure coverage gate and PR annotations"
+        role: devops
+        scope: small
+        complexity: low
+        description: >
+          Add a coverage job to the CI workflow that: runs all tests with coverage,
+          fails if overall coverage is below 70% or new-code coverage below 80%,
+          posts a coverage summary comment on the PR (total %, changed files,
+          diff coverage). Configure Codecov or a self-hosted coverage reporter.
+          Add the coverage badge to the README. Document the coverage policy
+          (what is excluded, what the thresholds are, how to request an
+          exception) in docs/testing/coverage.md.
+        files:
+          - "docs/testing/coverage.md"
+        completion_signals:
+          - type: file_contains
+            path: "docs/testing/coverage.md"
+            contains: "## Coverage Thresholds"

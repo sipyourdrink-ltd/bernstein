@@ -1,0 +1,215 @@
+# Bernstein Plan — Accessibility Audit and Remediation
+#
+# A three-stage plan that brings a web app to WCAG 2.1 AA compliance:
+#   1. Automated Audit:    axe-core scan, contrast check, and violation report
+#   2. Remediation:        fix critical contrast, ARIA, and keyboard nav issues
+#   3. Manual Testing:     screen-reader walkthrough and compliance report
+#
+# Run:
+#   bernstein run examples/plans/accessibility-audit.yaml
+
+name: "Accessibility Audit"
+description: >
+  Audit a web application for WCAG 2.1 AA compliance using automated tooling,
+  fix all critical violations (colour contrast, ARIA attributes, keyboard
+  navigation), then produce a manual testing checklist and a formal compliance
+  report suitable for external review.
+
+cli: auto
+budget: "$15"
+max_agents: 3
+constraints:
+  - "Target: WCAG 2.1 Level AA"
+  - "No third-party component library changes — fix in CSS/HTML overrides only"
+  - "All fixes must be tested against Chrome and Firefox"
+  - "Playwright for automated browser tests"
+
+stages:
+  # ── Stage 1: Automated WCAG Audit ──
+  - name: "Automated Audit"
+    description: "Run axe-core and contrast checks across all pages, produce report"
+    steps:
+      - title: "Set up axe-core Playwright audit script"
+        role: qa
+        scope: small
+        complexity: low
+        description: >
+          Create scripts/a11y_audit.py using playwright and axe-playwright-python
+          (or axe-core via page.evaluate). The script should:
+          - Accept a base URL and a list of routes to audit (from config/a11y_routes.yaml)
+          - Visit each route with Playwright in headless Chromium
+          - Run axe.run() with WCAG2AA tags
+          - Collect all violations with rule, impact, nodes, and help URL
+          - Write a machine-readable report to reports/a11y_violations.json
+          - Print a summary table: route | violations | critical | serious | moderate
+        files:
+          - "scripts/a11y_audit.py"
+          - "config/a11y_routes.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "scripts/a11y_audit.py"
+          - type: path_exists
+            path: "config/a11y_routes.yaml"
+
+      - title: "Add contrast ratio checker"
+        role: qa
+        scope: small
+        complexity: low
+        description: >
+          Create scripts/contrast_check.py. Use the wcag-contrast-ratio Python
+          library to scan the compiled CSS (or design token file) for all
+          colour pairs defined as CSS custom properties. Check every text/background
+          combination against WCAG AA thresholds (4.5:1 normal text, 3:1 large
+          text). Write failures to reports/contrast_failures.json with the
+          colour pair, computed ratio, required ratio, and CSS variable names.
+        files:
+          - "scripts/contrast_check.py"
+        completion_signals:
+          - type: path_exists
+            path: "scripts/contrast_check.py"
+
+      - title: "Add a11y audit to CI"
+        role: ci-fixer
+        scope: small
+        complexity: low
+        description: >
+          Create .github/workflows/accessibility.yaml. Run on pull requests
+          targeting main. Steps: install Playwright browsers, start the dev
+          server, run scripts/a11y_audit.py against localhost, upload
+          reports/a11y_violations.json as a workflow artifact. Fail the workflow
+          if any 'critical' impact violations are found. Post a summary comment
+          on the PR using the GitHub Actions job summary API.
+        files:
+          - ".github/workflows/accessibility.yaml"
+        completion_signals:
+          - type: path_exists
+            path: ".github/workflows/accessibility.yaml"
+          - type: file_contains
+            path: ".github/workflows/accessibility.yaml"
+            contains: "critical"
+
+  # ── Stage 2: Fix Critical Violations ──
+  - name: "Remediation"
+    description: "Fix contrast failures, ARIA errors, and keyboard navigation gaps"
+    depends_on: ["Automated Audit"]
+    steps:
+      - title: "Fix colour contrast violations"
+        role: frontend
+        scope: medium
+        complexity: medium
+        description: >
+          Read reports/contrast_failures.json. For each failing colour pair,
+          update the CSS custom properties in src/styles/tokens.css (or the
+          equivalent design token file) to meet AA ratios. Prefer darkening
+          foreground colours over lightening backgrounds to preserve brand.
+          After each change, re-run scripts/contrast_check.py to verify.
+          Do NOT change font sizes or weights to cheat the large-text threshold.
+          Document every token change in a comments block within tokens.css
+          with the old value, new value, and computed ratio.
+        files:
+          - "src/styles/tokens.css"
+        completion_signals:
+          - type: file_contains
+            path: "src/styles/tokens.css"
+            contains: "a11y-fix"
+
+      - title: "Fix ARIA attribute violations"
+        role: frontend
+        scope: medium
+        complexity: medium
+        description: >
+          Read reports/a11y_violations.json and filter for ARIA-related rules
+          (aria-required-attr, aria-roles, aria-hidden-focus, etc.).
+          For each violation:
+          - Add missing aria-label or aria-labelledby to interactive elements
+          - Fix invalid role assignments
+          - Ensure aria-hidden is not set on focusable elements
+          - Add aria-live="polite" to dynamic content regions
+          Prefer semantic HTML (button, nav, main, aside) over role overrides.
+          Re-run axe scan after changes to confirm violations are cleared.
+        files:
+          - "src/components/"
+        completion_signals:
+          - type: path_exists
+            path: "src/components/"
+
+      - title: "Fix keyboard navigation and focus management"
+        role: frontend
+        scope: medium
+        complexity: high
+        description: >
+          Audit keyboard navigation manually by tabbing through each page.
+          Fix issues found:
+          - Ensure all interactive elements are reachable via Tab in logical order
+          - Add visible focus styles (:focus-visible outline) for every interactive
+            element — remove any outline: none without a replacement
+          - Implement focus trapping for modal dialogs (focus-trap-react or
+            equivalent vanilla JS)
+          - Ensure modal close returns focus to the trigger element
+          - Add skip-nav link as the first focusable element on each page
+          Write a Playwright test in tests/a11y/test_keyboard.spec.ts that tabs
+          through the main nav and asserts each item receives focus.
+        files:
+          - "src/styles/focus.css"
+          - "src/components/Modal.tsx"
+          - "src/components/SkipNav.tsx"
+          - "tests/a11y/test_keyboard.spec.ts"
+        completion_signals:
+          - type: path_exists
+            path: "src/components/SkipNav.tsx"
+          - type: path_exists
+            path: "tests/a11y/test_keyboard.spec.ts"
+
+  # ── Stage 3: Manual Testing and Compliance Report ──
+  - name: "Manual Testing and Report"
+    description: "Screen-reader walkthrough checklist and formal compliance report"
+    depends_on: ["Remediation"]
+    steps:
+      - title: "Create manual screen-reader testing checklist"
+        role: qa
+        scope: small
+        complexity: low
+        description: >
+          Create docs/a11y-manual-testing-checklist.md. Write a step-by-step
+          checklist for testing with NVDA (Windows) and VoiceOver (macOS) covering:
+          - Page title announced on load
+          - Heading hierarchy navigable via H key
+          - All images have meaningful alt text (or alt="" for decorative)
+          - Form fields announced with label and error messages
+          - Modals announced and dismissable without mouse
+          - Dynamic content updates announced via aria-live regions
+          - Data tables have row/column headers
+          Each item should have: description, how to test, expected behaviour,
+          and a pass/fail column for the tester to fill in.
+        files:
+          - "docs/a11y-manual-testing-checklist.md"
+        completion_signals:
+          - type: path_exists
+            path: "docs/a11y-manual-testing-checklist.md"
+          - type: file_contains
+            path: "docs/a11y-manual-testing-checklist.md"
+            contains: "VoiceOver"
+
+      - title: "Produce WCAG 2.1 AA compliance report"
+        role: docs
+        scope: medium
+        complexity: low
+        description: >
+          Create reports/wcag-compliance-report.md. Structure it as a formal
+          VPAT-style document with sections:
+          1. Executive Summary (scope, audit date, tool versions)
+          2. Automated Scan Results (table: criterion, level, status, notes)
+          3. Violations Fixed (before/after for each fix with axe rule ID)
+          4. Known Remaining Issues (if any, with remediation timeline)
+          5. Testing Methodology (tools, browsers, assistive technologies)
+          6. Sign-off checklist
+          Pull violation counts from reports/a11y_violations.json and
+          contrast data from reports/contrast_failures.json to populate tables.
+        files:
+          - "reports/wcag-compliance-report.md"
+        completion_signals:
+          - type: path_exists
+            path: "reports/wcag-compliance-report.md"
+          - type: file_contains
+            path: "reports/wcag-compliance-report.md"
+            contains: "Executive Summary"

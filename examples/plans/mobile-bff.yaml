@@ -1,0 +1,188 @@
+# Bernstein Plan — Mobile Backend-for-Frontend (BFF)
+#
+# A three-stage plan that builds a mobile BFF layer:
+#   1. API Design:        OpenAPI spec, auth, and data contracts
+#   2. Implementation:    aggregation endpoints, caching, and error handling
+#   3. SDK and Testing:   generated client SDK and integration tests
+#
+# Run:
+#   bernstein run examples/plans/mobile-bff.yaml
+
+name: "Mobile BFF"
+description: >
+  Build a backend-for-frontend service tailored for mobile clients: a single
+  aggregation layer that combines multiple upstream APIs into mobile-optimized
+  payloads, with response caching, offline-friendly error contracts, and an
+  auto-generated client SDK.
+
+cli: auto
+budget: "$20"
+max_agents: 4
+constraints:
+  - "Python 3.12+ with FastAPI"
+  - "OpenAPI 3.1 spec as source of truth"
+  - "JWT bearer token authentication"
+  - "Response caching via Redis"
+  - "pytest + httpx for tests"
+
+stages:
+  # ── Stage 1: BFF API Design ──
+  - name: "BFF API Design"
+    description: "Define the API contract, auth flow, and data models"
+    steps:
+      - title: "Write OpenAPI 3.1 specification"
+        role: architect
+        scope: medium
+        complexity: medium
+        description: >
+          Create api/openapi.yaml — an OpenAPI 3.1 spec covering all BFF
+          endpoints. Define mobile-optimized response schemas that flatten
+          nested upstream data. Include:
+          - /auth/refresh (POST) — token refresh
+          - /me (GET) — user profile + notification count in one call
+          - /feed (GET) — paginated activity feed
+          - /search (GET) — unified search across upstream services
+          Use components/schemas for reusable types. Add x-mobile-ttl extension
+          hints for client-side cache durations.
+        files:
+          - "api/openapi.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "api/openapi.yaml"
+          - type: file_contains
+            path: "api/openapi.yaml"
+            contains: "openapi: 3.1"
+
+      - title: "Set up FastAPI app and auth middleware"
+        role: backend
+        scope: small
+        complexity: medium
+        description: >
+          Scaffold the FastAPI application in src/bff/app.py. Configure JWT
+          validation middleware (python-jose) that validates tokens against the
+          upstream auth service JWKS endpoint. Add request-scoped dependency
+          injection for the authenticated user. Set up CORS for mobile origins.
+          Add /healthz and /readyz endpoints.
+        files:
+          - "src/bff/app.py"
+          - "src/bff/auth.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/bff/app.py"
+          - type: file_contains
+            path: "src/bff/app.py"
+            contains: "FastAPI"
+
+  # ── Stage 2: Endpoint Implementation ──
+  - name: "Endpoint Implementation"
+    description: "Aggregation endpoints, caching, and resilience"
+    depends_on: ["BFF API Design"]
+    steps:
+      - title: "Implement aggregation endpoints"
+        role: backend
+        scope: large
+        complexity: high
+        description: >
+          Implement the four endpoints from the OpenAPI spec in
+          src/bff/routes/. Each route should:
+          - Fan out concurrent requests to upstream services using asyncio.gather()
+          - Merge upstream responses into the mobile-optimized schema
+          - Return partial results with a degraded: true flag when one upstream fails
+          - Set Cache-Control and ETag headers per x-mobile-ttl hints
+          Use httpx.AsyncClient (shared, connection-pooled) for upstream calls.
+          Implement timeout per upstream (default 3s) and a circuit breaker
+          via tenacity.
+        files:
+          - "src/bff/routes/feed.py"
+          - "src/bff/routes/me.py"
+          - "src/bff/routes/search.py"
+          - "src/bff/upstream_client.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/bff/routes/feed.py"
+          - type: file_contains
+            path: "src/bff/upstream_client.py"
+            contains: "AsyncClient"
+
+      - title: "Add Redis response caching"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/bff/cache.py with an async Redis cache helper using
+          redis-py (async mode). Cache GET endpoint responses keyed by
+          (user_id, endpoint, query_params_hash) with TTL driven by
+          x-mobile-ttl hints from the spec. Add cache hit/miss metrics.
+          Implement stale-while-revalidate: return stale data immediately
+          and trigger a background refresh task.
+        files:
+          - "src/bff/cache.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/bff/cache.py"
+          - type: file_contains
+            path: "src/bff/cache.py"
+            contains: "stale"
+
+      - title: "Add global error handling and mobile error contracts"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Create src/bff/errors.py with a FastAPI exception handler that maps
+          all exceptions to a consistent mobile error envelope:
+          { "error": { "code": "...", "message": "...", "retryable": bool } }.
+          Map upstream 4xx to client errors, 5xx to retryable server errors,
+          and timeouts to retryable: true. Log structured error details server-side
+          but never expose stack traces to clients.
+        files:
+          - "src/bff/errors.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/bff/errors.py"
+
+  # ── Stage 3: SDK Generation and Integration Tests ──
+  - name: "SDK and Integration Tests"
+    description: "Auto-generate client SDK and write end-to-end integration tests"
+    depends_on: ["Endpoint Implementation"]
+    steps:
+      - title: "Generate TypeScript client SDK from OpenAPI spec"
+        role: frontend
+        scope: medium
+        complexity: low
+        description: >
+          Use openapi-typescript-codegen (or openapi-generator with typescript-fetch
+          template) to generate a TypeScript client SDK from api/openapi.yaml.
+          Output to sdk/mobile-bff-client/. Add a Makefile target `make sdk` that
+          re-generates the SDK. Include a README in sdk/ explaining how to install
+          and use the generated client in React Native and web apps.
+        files:
+          - "sdk/mobile-bff-client/"
+          - "Makefile"
+        completion_signals:
+          - type: path_exists
+            path: "Makefile"
+          - type: file_contains
+            path: "Makefile"
+            contains: "sdk"
+
+      - title: "Write integration tests with mock upstreams"
+        role: qa
+        scope: medium
+        complexity: medium
+        description: >
+          Create tests/integration/ with pytest fixtures that start the FastAPI
+          app via httpx.AsyncClient and mock all upstream HTTP calls with
+          respx. Test: authenticated and unauthenticated requests, partial
+          upstream failures returning degraded responses, cache hit behaviour,
+          and the mobile error envelope on 5xx. Assert response shapes match
+          the OpenAPI spec using openapi-core.
+        files:
+          - "tests/integration/test_feed.py"
+          - "tests/integration/test_me.py"
+          - "tests/integration/conftest.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/integration/test_feed.py"
+          - type: test_passes
+            command: "pytest tests/integration/ -x -q"
