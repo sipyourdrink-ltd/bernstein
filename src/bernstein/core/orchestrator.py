@@ -3950,11 +3950,8 @@ if __name__ == "__main__":
         from bernstein.core.warm_pool import WarmPool, WarmPoolConfig
 
         warm_pool = WarmPool(
-            workdir,
             config=WarmPoolConfig(
-                pool_size=max(1, min(2, seed.max_agents if seed else 2)),
-                adapter_name=adapter_inst.name(),
-                use_git_worktrees=True,
+                max_slots=max(1, min(2, seed.max_agents if seed else 2)),
             ),
         )
 
