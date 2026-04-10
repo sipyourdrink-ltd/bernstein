@@ -11,6 +11,7 @@ How to run Bernstein in different environments. Each section is self-contained w
 - [Kubernetes / Helm](#kubernetes--helm)
 - [Team shared server (bare metal)](#team-shared-server)
 - [Environment variable reference](#environment-variables)
+- [Zero-downtime upgrades (blue-green)](#zero-downtime-upgrades-blue-green)
 - [Upgrading](#upgrading)
 
 ---
@@ -779,6 +780,82 @@ sudo systemctl start bernstein@project-b
 
 ---
 
+## Zero-downtime upgrades (blue-green)
+
+Bernstein supports blue-green deployments to upgrade the server without dropping in-flight tasks. The mechanism swaps the `.sdd/` symlink between two parallel state directories (`.sdd-blue/` and `.sdd-green/`), letting the new version warm up before traffic switches.
+
+### How it works
+
+```
+.sdd/  →  .sdd-blue/    ← current live state
+          .sdd-green/   ← new version (being prepared)
+```
+
+On `switch_traffic()`, the `.sdd/` symlink is atomically re-pointed at `.sdd-green/`. If the health check fails, `rollback()` re-points it back to `.sdd-blue/`.
+
+### Python API
+
+```python
+from pathlib import Path
+from bernstein.core.blue_green import BlueGreenConfig, BlueGreenDeployment
+
+cfg = BlueGreenConfig(
+    health_check_url="http://127.0.0.1:8052/status",
+    rollback_on_error=True,
+    switch_delay_seconds=10,
+)
+deploy = BlueGreenDeployment(cfg, base_dir=Path("."))
+
+# 1. Prepare the green environment with the new version
+green_path = deploy.prepare_green("2.1.0")
+
+# 2. Start the new server process pointing at green_path
+# ... start bernstein with BERNSTEIN_SDD_DIR=green_path ...
+
+# 3. Check health
+if deploy.health_check():
+    deploy.switch_traffic()   # symlink: .sdd/ → .sdd-green/
+else:
+    deploy.rollback()         # stays on blue; green is discarded
+```
+
+### Upgrade procedure (bare metal)
+
+```bash
+# 1. Install the new version alongside the old
+pip install bernstein==2.1.0 --target /opt/bernstein/v2.1.0
+
+# 2. Start the new server on a staging port
+BERNSTEIN_PORT=8053 BERNSTEIN_SDD_DIR=.sdd-green \
+  /opt/bernstein/v2.1.0/bin/bernstein conduct &
+
+# 3. Verify it is healthy
+curl http://127.0.0.1:8053/status
+
+# 4. Switch traffic via the Python API or CLI
+python3 -c "
+from pathlib import Path
+from bernstein.core.blue_green import BlueGreenConfig, BlueGreenDeployment
+cfg = BlueGreenConfig(health_check_url='http://127.0.0.1:8053/status')
+BlueGreenDeployment(cfg, Path('.')).switch_traffic()
+"
+
+# 5. Stop the old server
+kill $(cat .sdd-blue/runtime/server.pid)
+```
+
+### Check deployment status
+
+```python
+status = deploy.status()
+print(status.active)         # "blue" or "green"
+print(status.blue_version)   # "2.0.0"
+print(status.green_version)  # "2.1.0"
+print(status.healthy)        # True / False
+```
+
+---
+
 ## Upgrading
 
 1. Stop the running instance: `bernstein stop`
@@ -789,3 +866,5 @@ sudo systemctl start bernstein@project-b
 State format is forward-compatible between minor versions. For major version upgrades, check `docs/migration-guides.md` for breaking changes.
 
 To roll back: `pip install bernstein==<previous-version>` and restore `.sdd.backup/`.
+
+For zero-downtime upgrades on production servers, use the [blue-green procedure](#zero-downtime-upgrades-blue-green) above.
