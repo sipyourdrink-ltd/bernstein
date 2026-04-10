@@ -272,6 +272,8 @@ class CommandHook:
                 log.debug("Hook chain %s aborted by %s", hook_name, script.name)
                 return payload, True
             return payload, False
+        except HookValidationError:
+            raise
         except (json.JSONDecodeError, TypeError, ValueError):
             log.warning(
                 "Hook script %s returned malformed JSON: %s",
@@ -342,6 +344,8 @@ class CommandHook:
                         proc.stderr.strip() or proc.stdout.strip(),
                     )
             except HookBlockingError:
+                raise
+            except HookValidationError:
                 raise
             except Exception as exc:
                 log.warning("Failed to execute hook script %s: %s", script, exc)

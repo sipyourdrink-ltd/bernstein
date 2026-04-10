@@ -11,7 +11,6 @@ from bernstein.core.routes.graphql_api import (
     parse_graphql_query,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -143,9 +142,7 @@ class TestExecuteGraphQL:
         assert task["cost_usd"] is None
 
     def test_tasks_agent_virtual_field(self) -> None:
-        mock_store = _MockStore(
-            [{"id": "t1", "assigned_agent": "a1", "provider": "claude"}]
-        )
+        mock_store = _MockStore([{"id": "t1", "assigned_agent": "a1", "provider": "claude"}])
         result = execute_graphql("{ tasks { id agent } }", store=mock_store)
         task = result["data"]["tasks"][0]
         assert task["agent"]["id"] == "a1"

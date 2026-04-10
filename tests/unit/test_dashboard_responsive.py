@@ -7,14 +7,7 @@ from pathlib import Path
 import pytest
 
 # Path to the dashboard template
-_TEMPLATE_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "bernstein"
-    / "dashboard"
-    / "templates"
-    / "index.html"
-)
+_TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "src" / "bernstein" / "dashboard" / "templates" / "index.html"
 
 
 @pytest.fixture()

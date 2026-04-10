@@ -7,9 +7,9 @@ from pathlib import Path
 import yaml
 
 from bernstein.tui.layout_persistence import (
-    LayoutConfig,
     _DEFAULT_PANELS,
     _REQUIRED_PANELS,
+    LayoutConfig,
     load_layout,
     save_layout,
 )
@@ -121,41 +121,31 @@ class TestLoadCorruptFile:
 
     def test_bad_ratio_clamped(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
-        path.write_text(
-            yaml.safe_dump({"split_ratio": 99.0}), encoding="utf-8"
-        )
+        path.write_text(yaml.safe_dump({"split_ratio": 99.0}), encoding="utf-8")
         cfg = load_layout(config_path=path)
         assert cfg.split_ratio == 0.8
 
     def test_bad_ratio_low_clamped(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
-        path.write_text(
-            yaml.safe_dump({"split_ratio": -1.0}), encoding="utf-8"
-        )
+        path.write_text(yaml.safe_dump({"split_ratio": -1.0}), encoding="utf-8")
         cfg = load_layout(config_path=path)
         assert cfg.split_ratio == 0.2
 
     def test_bad_ratio_string_uses_default(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
-        path.write_text(
-            yaml.safe_dump({"split_ratio": "not-a-number"}), encoding="utf-8"
-        )
+        path.write_text(yaml.safe_dump({"split_ratio": "not-a-number"}), encoding="utf-8")
         cfg = load_layout(config_path=path)
         assert cfg.split_ratio == 0.5
 
     def test_bad_orientation_uses_default(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
-        path.write_text(
-            yaml.safe_dump({"orientation": "diagonal"}), encoding="utf-8"
-        )
+        path.write_text(yaml.safe_dump({"orientation": "diagonal"}), encoding="utf-8")
         cfg = load_layout(config_path=path)
         assert cfg.orientation == "horizontal"
 
     def test_bad_panels_uses_default(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
-        path.write_text(
-            yaml.safe_dump({"visible_panels": "not-a-list"}), encoding="utf-8"
-        )
+        path.write_text(yaml.safe_dump({"visible_panels": "not-a-list"}), encoding="utf-8")
         cfg = load_layout(config_path=path)
         assert cfg.visible_panels == _DEFAULT_PANELS
 

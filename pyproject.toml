@@ -235,6 +235,14 @@ exclude = [
     "src/bernstein/core/vault_injector.py",
     "src/bernstein/core/hook_protocol.py",
     "src/bernstein/core/hook_templates.py",
+    "src/bernstein/core/frame_headers.py",
+    "src/bernstein/core/routes/batch_ops.py",
+    "src/bernstein/core/routes/embedding.py",
+    "src/bernstein/core/routes/graphql_api.py",
+    "src/bernstein/tui/layout_persistence.py",
+    "src/bernstein/tui/mouse_support.py",
+    "src/bernstein/tui/task_detail_overlay.py",
+    "src/bernstein/tui/session_recorder.py",
 ]
 
 [tool.pytest.ini_options]

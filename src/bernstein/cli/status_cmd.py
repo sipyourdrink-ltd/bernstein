@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 
@@ -21,6 +21,8 @@ from bernstein.cli.helpers import (
 )
 from bernstein.cli.status import render_status
 from bernstein.cli.ui import make_console
+from bernstein.core.agent_discovery import AgentCapabilities, DiscoveryResult, discover_agents_cached
+from bernstein.worker_badges import format_worker_badge, get_badge_for_worker
 
 
 def _load_remote_agents_from_snapshot(runtime_dir: Path) -> list[dict[str, Any]]:
@@ -66,6 +68,70 @@ def _load_remote_agents_from_snapshot(runtime_dir: Path) -> list[dict[str, Any]]
             }
         )
     return remote_agents
+
+
+def _match_discovered_agent(
+    command: str,
+    model: str,
+    discovery: DiscoveryResult,
+) -> AgentCapabilities | None:
+    """Best-effort match of a running session to discovered agent metadata."""
+    command_token = command.replace("[remote]", "").strip().split(" ", 1)[0].lower()
+    command_token = Path(command_token).name
+    for agent in discovery.agents:
+        binary_name = Path(agent.binary).name.lower()
+        if command_token and (agent.name.lower() == command_token or binary_name == command_token):
+            return agent
+
+    model_lower = model.lower()
+    for agent in discovery.agents:
+        if any(
+            model_lower == available.lower() or model_lower in available.lower() for available in agent.available_models
+        ):
+            return agent
+    return None
+
+
+def _skill_badges(agent: AgentCapabilities | None) -> list[str]:
+    """Render concise capability badges for ps/status output."""
+    if agent is None:
+        return []
+    badges = [f"reasoning:{agent.reasoning_strength}"]
+    if agent.supports_mcp:
+        badges.append("mcp")
+    badges.extend(agent.best_for[:2])
+    return badges
+
+
+def _worker_tier(agent: AgentCapabilities | None) -> str:
+    """Map discovered cost tier to the worker badge tier palette."""
+    if agent is None:
+        return "paid"
+    if agent.cost_tier == "free":
+        return "free"
+    if agent.cost_tier in {"cheap", "moderate", "expensive"}:
+        return "paid"
+    return "enterprise"
+
+
+def _decorate_agent_rows(agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attach worker badge and capability badges to ps output rows."""
+    try:
+        discovery = discover_agents_cached()
+    except Exception:
+        return agents
+
+    for agent in agents:
+        matched = _match_discovered_agent(str(agent["command"]), str(agent["model"]), discovery)
+        badge = get_badge_for_worker(
+            worker_id=str(agent["session"]),
+            role=str(agent["role"]),
+            model=str(agent["model"]),
+            tier=_worker_tier(matched),
+        )
+        agent["worker_badge"] = format_worker_badge(badge)
+        agent["skill_badges"] = _skill_badges(matched)
+    return agents
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +248,8 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
         if str(remote["session"]) not in seen_sessions:
             agents.append(remote)
 
+    agents = _decorate_agent_rows(agents)
+
     if as_json or is_json():
         print_json(agents)
         return
@@ -195,6 +263,8 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
     table.add_column("Role", min_width=10)
     table.add_column("CLI", min_width=8)
     table.add_column("Model", min_width=16)
+    table.add_column("Worker", min_width=22)
+    table.add_column("Skills", min_width=18)
     table.add_column("Worker PID", justify="right")
     table.add_column("Agent PID", justify="right")
     table.add_column("Runtime", justify="right")
@@ -205,6 +275,8 @@ def ps_cmd(as_json: bool, pid_dir: str) -> None:
             f"[bold]{a['role']}[/bold]",
             a["command"],
             a["model"],
+            str(a.get("worker_badge", "")),
+            ", ".join(cast("list[str]", a.get("skill_badges", []))),
             str(a["worker_pid"]),
             str(a["child_pid"] or "—"),
             a["runtime"],

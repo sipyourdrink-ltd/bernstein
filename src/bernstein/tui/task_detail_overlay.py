@@ -8,11 +8,14 @@ Triggered by pressing Enter on a task in the task list.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, ClassVar
 
-from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import Binding, BindingType
 from textual.screen import ModalScreen
 from textual.widgets import Static
+
+if TYPE_CHECKING:
+    from textual.app import ComposeResult
 
 _MAX_LOG_LINES = 50
 
@@ -101,7 +104,7 @@ def format_task_detail(detail: TaskDetail) -> str:
 class TaskDetailScreen(ModalScreen[None]):
     """Full-screen modal overlay for task detail view."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "dismiss", "Close", show=True),
         Binding("q", "dismiss", "Close", show=False),
     ]
@@ -133,6 +136,6 @@ class TaskDetailScreen(ModalScreen[None]):
         """Build the overlay content."""
         yield Static(format_task_detail(self._detail), id="task-detail-content")
 
-    def action_dismiss(self) -> None:
+    async def action_dismiss(self, result: None = None) -> None:
         """Close the overlay."""
         self.dismiss()

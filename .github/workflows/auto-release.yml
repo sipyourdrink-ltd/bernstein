@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_commit.author.name != 'bernstein-orchestrator[bot]'
+      github.event.workflow_run.actor.login != 'bernstein-orchestrator[bot]'
     environment:
       name: pypi
       url: https://pypi.org/p/bernstein

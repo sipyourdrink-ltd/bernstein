@@ -60,10 +60,11 @@ def load_mouse_config(yaml_path: Path | None = None) -> MouseConfig:
             mouse = data.get("mouse")
             if not isinstance(mouse, dict):
                 continue
+            mouse_dict: dict[str, object] = dict(mouse)
             return MouseConfig(
-                click_to_select=bool(mouse.get("click_to_select", True)),
-                scroll_enabled=bool(mouse.get("scroll_enabled", True)),
-                drag_resize=bool(mouse.get("drag_resize", True)),
+                click_to_select=bool(mouse_dict.get("click_to_select", True)),
+                scroll_enabled=bool(mouse_dict.get("scroll_enabled", True)),
+                drag_resize=bool(mouse_dict.get("drag_resize", True)),
             )
         except Exception:
             continue

@@ -9,7 +9,6 @@ from bernstein.tui.vim_mode import (
     VimState,
 )
 
-
 # --- VimMode enum ---
 
 
@@ -42,7 +41,7 @@ class TestVimAction:
         action = VimAction(VimActionKind.NONE)
         try:
             action.kind = VimActionKind.SCROLL_UP  # type: ignore[misc]
-            assert False, "Should have raised"
+            raise AssertionError("Should have raised")
         except AttributeError:
             pass
 

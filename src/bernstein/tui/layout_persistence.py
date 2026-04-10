@@ -8,9 +8,8 @@ at ``~/.bernstein/tui_layout.yaml``.
 
 from __future__ import annotations
 
-import contextlib
 import logging
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -24,9 +23,7 @@ _LAYOUT_PATH = Path.home() / ".bernstein" / "tui_layout.yaml"
 _REQUIRED_PANELS: frozenset[str] = frozenset({"task-list"})
 
 #: Default set of visible panels.
-_DEFAULT_PANELS: frozenset[str] = frozenset(
-    {"task-list", "agent-log", "timeline", "status-bar"}
-)
+_DEFAULT_PANELS: frozenset[str] = frozenset({"task-list", "agent-log", "timeline", "status-bar"})
 
 
 @dataclass(frozen=True)
@@ -60,12 +57,8 @@ class LayoutConfig:
         if panel_id in self.visible_panels:
             if panel_id in _REQUIRED_PANELS:
                 return self
-            return replace(
-                self, visible_panels=self.visible_panels - {panel_id}
-            )
-        return replace(
-            self, visible_panels=self.visible_panels | {panel_id}
-        )
+            return replace(self, visible_panels=self.visible_panels - {panel_id})
+        return replace(self, visible_panels=self.visible_panels | {panel_id})
 
 
 def _clamp_ratio(value: object) -> float:
@@ -126,9 +119,7 @@ def load_layout(config_path: Path | None = None) -> LayoutConfig:
 
     # Visible panels: accept a list of strings.
     raw_panels = raw.get("visible_panels")
-    if isinstance(raw_panels, list) and all(
-        isinstance(p, str) for p in raw_panels
-    ):
+    if isinstance(raw_panels, list) and all(isinstance(p, str) for p in raw_panels):
         panels = frozenset(raw_panels) | _REQUIRED_PANELS
     else:
         panels = _DEFAULT_PANELS
@@ -141,9 +132,7 @@ def load_layout(config_path: Path | None = None) -> LayoutConfig:
     )
 
 
-def save_layout(
-    config: LayoutConfig, config_path: Path | None = None
-) -> None:
+def save_layout(config: LayoutConfig, config_path: Path | None = None) -> None:
     """Persist the layout configuration to a YAML file.
 
     Creates parent directories if they don't exist.  Errors are logged
@@ -164,8 +153,6 @@ def save_layout(
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump(data, default_flow_style=False), encoding="utf-8"
-        )
+        path.write_text(yaml.safe_dump(data, default_flow_style=False), encoding="utf-8")
     except OSError as exc:
         logger.warning("Could not save layout config to %s: %s", path, exc)

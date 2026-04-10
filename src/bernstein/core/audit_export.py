@@ -679,7 +679,12 @@ class FileExporter(BaseSIEMExporter):
 
         start = time.time()
         try:
-            out_path = Path(self._file.path)
+            out_path = Path(self._file.path).resolve()
+            # Ensure output stays within the intended directory
+            allowed_root = Path.cwd().resolve()
+            if not str(out_path).startswith(str(allowed_root)):
+                msg = f"Export path escapes working directory: {out_path}"
+                raise ValueError(msg)
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
             if self._file.format == "jsonl":

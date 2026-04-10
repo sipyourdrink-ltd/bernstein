@@ -1242,6 +1242,13 @@ def create_app(
     # Crash guard — outermost middleware, catches unhandled exceptions
     application.add_middleware(CrashGuardMiddleware)
 
+    from bernstein.core.frame_headers import FrameHeadersMiddleware, load_frame_embedding_policy
+
+    application.add_middleware(
+        FrameHeadersMiddleware,
+        policy=load_frame_embedding_policy(),
+    )
+
     # Structured request logging — logs after crash-guard normalization so the
     # final status code is always captured.
     application.add_middleware(
@@ -1457,6 +1464,26 @@ def create_app(
 
     application.include_router(health_deps_router)
 
+    # WEB-017: Batch operations endpoint
+    from bernstein.core.routes.batch_ops import router as batch_ops_router
+
+    application.include_router(batch_ops_router)
+
+    # WEB-018: Agent comparison view
+    from bernstein.core.routes.agent_comparison import router as agent_comparison_router
+
+    application.include_router(agent_comparison_router)
+
+    # WEB-019: Audit log endpoint with search and filtering
+    from bernstein.core.routes.audit_log import router as audit_log_router
+
+    application.include_router(audit_log_router)
+
+    # WEB-021: GraphQL API alongside REST
+    from bernstein.core.routes.graphql_api import router as graphql_router
+
+    application.include_router(graphql_router)
+
     # WEB-007: API v1 versioned routes — mount all existing routers under /api/v1/
     from bernstein.core.routes.api_v1 import router as api_v1_router
 
@@ -1468,6 +1495,10 @@ def create_app(
     api_v1_router.include_router(export_router)
     api_v1_router.include_router(grafana_router)
     api_v1_router.include_router(health_deps_router)
+    api_v1_router.include_router(batch_ops_router)
+    api_v1_router.include_router(agent_comparison_router)
+    api_v1_router.include_router(audit_log_router)
+    api_v1_router.include_router(graphql_router)
     application.include_router(api_v1_router)
 
     return application

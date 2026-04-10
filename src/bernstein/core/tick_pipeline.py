@@ -39,8 +39,8 @@ def _task_affinity_config(task: Task) -> dict[str, object]:
     raw_affinity = task.metadata.get("affinity")
     hints: dict[str, object] = {}
     if isinstance(raw_affinity, dict):
-        typed_affinity: dict[str, object] = raw_affinity  # type: ignore[assignment]
-        hints.update(typed_affinity)
+        typed_affinity = cast("dict[object, object]", raw_affinity)
+        hints.update({str(key): value for key, value in typed_affinity.items()})
     for key in ("preferred_model", "preferred_agent", "preferred_agent_id", "same_as_task", "same_agent_as_task"):
         value = task.metadata.get(key)
         if key not in hints and value is not None:
