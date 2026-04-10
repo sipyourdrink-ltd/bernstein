@@ -437,7 +437,7 @@ def test_prepare_speculative_warm_pool_prewarms_near_ready_tasks_without_spawnin
 
     prepare_speculative_warm_pool(orch, graph, [blocker, dependent])
 
-    assert warm_pool.available == 1
+    assert warm_pool.stats()["ready"] == 1
     orch._client.post.assert_not_called()
     orch._spawner.spawn_for_tasks.assert_not_called()
 
