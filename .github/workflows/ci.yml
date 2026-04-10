@@ -249,16 +249,23 @@ jobs:
   # ─── Slow checks (cancel old runs, 15-45 min) ─────────────────────────
 
   test:
-    name: Test (Python ${{ matrix.python-version }})
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
     needs: [lint]  # fast-fail: don't waste 45min if lint fails
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.12", "3.13"]
+        exclude:
+          # Coverage/JUnit upload only on ubuntu; skip duplicate slow jobs on macOS/Windows for 3.12
+          - os: macos-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
@@ -266,11 +273,12 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
       - name: Fetch base ref for impacted-test selection
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && runner.os != 'Windows'
         run: |
           git fetch --no-tags --depth=1 origin \
             "refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
-      - name: Run isolated test suite
+      - name: Run isolated test suite (Linux/macOS)
+        if: runner.os != 'Windows'
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ] && \
              git rev-parse --verify "refs/remotes/origin/${{ github.base_ref }}" >/dev/null 2>&1; then
@@ -278,8 +286,12 @@ jobs:
           else
             uv run python scripts/run_tests.py -x --parallel 4
           fi
-      - name: Generate coverage and JUnit reports (3.13 only)
-        if: matrix.python-version == '3.13' && github.event_name == 'push'
+      - name: Run isolated test suite (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: uv run python scripts/run_tests.py -x --parallel 4
+      - name: Generate coverage and JUnit reports (ubuntu, 3.13 only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' && github.event_name == 'push'
         continue-on-error: true
         timeout-minutes: 25
         run: |
@@ -337,7 +349,7 @@ jobs:
             echo "::warning::junit.xml was not generated"
           fi
       - name: Upload coverage artifact
-        if: matrix.python-version == '3.13' && github.event_name == 'push'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' && github.event_name == 'push'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-report
@@ -347,14 +359,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
       - name: Upload coverage to Codecov
-        if: matrix.python-version == '3.13' && github.event_name == 'push'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' && github.event_name == 'push'
         uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6
         with:
           files: coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
       - name: Upload test results to Codecov
-        if: matrix.python-version == '3.13' && github.event_name == 'push' && !cancelled()
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' && github.event_name == 'push' && !cancelled()
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1
         with:
           files: junit.xml

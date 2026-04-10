@@ -20,6 +20,8 @@ import pytest
 MUTMUT_CONFIG = {
     "paths_to_mutate": [
         "src/bernstein/core/lifecycle.py",
+        "src/bernstein/core/spawner.py",
+        "src/bernstein/core/guardrails.py",
         "src/bernstein/core/models.py",
         "src/bernstein/core/task_store.py",
         "src/bernstein/core/config_schema.py",
@@ -129,3 +131,48 @@ class TestKeyMutationScenarios:
         t1 = Task(id="a", title="t", description="d", role="r", priority=1)
         t3 = Task(id="b", title="t", description="d", role="r", priority=3)
         assert t1.priority < t3.priority  # Mutant might flip this
+
+    def test_guardrails_sandboxed_relaxes_only_relaxable(self) -> None:
+        """SAFETY/IMMUNE decisions must never be relaxed even in sandbox (mutant might remove check)."""
+        import os
+
+        from bernstein.core.guardrails import relax_sandboxed
+        from bernstein.core.policy_engine import DecisionType, PermissionDecision
+
+        os.environ["BERNSTEIN_SANDBOX"] = "1"
+        try:
+            safety_decision = PermissionDecision(type=DecisionType.SAFETY, reason="critical safety check")
+            decisions = [safety_decision]
+            result = relax_sandboxed(decisions, check_name="file_permissions")
+            # Safety decisions must remain SAFETY even inside sandbox
+            assert result[0].type == DecisionType.SAFETY
+        finally:
+            os.environ.pop("BERNSTEIN_SANDBOX", None)
+
+    def test_guardrails_sandbox_relaxes_deny(self) -> None:
+        """DENY decisions on relaxable checks must become ALLOW in sandbox (mutant might skip relaxation)."""
+        import os
+
+        from bernstein.core.guardrails import relax_sandboxed
+        from bernstein.core.policy_engine import DecisionType, PermissionDecision
+
+        os.environ["BERNSTEIN_SANDBOX"] = "1"
+        try:
+            deny_decision = PermissionDecision(type=DecisionType.DENY, reason="out of scope file")
+            result = relax_sandboxed([deny_decision], check_name="scope_enforcement")
+            assert result[0].type == DecisionType.ALLOW
+        finally:
+            os.environ.pop("BERNSTEIN_SANDBOX", None)
+
+    def test_guardrails_no_relax_outside_sandbox(self) -> None:
+        """Outside a sandbox, DENY decisions must stay DENY (mutant might always relax)."""
+        import os
+
+        from bernstein.core.guardrails import relax_sandboxed
+        from bernstein.core.policy_engine import DecisionType, PermissionDecision
+
+        os.environ.pop("BERNSTEIN_SANDBOX", None)
+        deny_decision = PermissionDecision(type=DecisionType.DENY, reason="outside sandbox")
+        result = relax_sandboxed([deny_decision], check_name="file_permissions")
+        # Without sandbox, no relaxation should occur
+        assert result[0].type == DecisionType.DENY
