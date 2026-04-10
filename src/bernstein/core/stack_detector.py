@@ -105,10 +105,10 @@ class StackInfo:
         ci_systems: CI/CD systems detected by config files.
     """
 
-    languages: list[str] = field(default_factory=list)
-    frameworks: list[str] = field(default_factory=list)
-    package_managers: list[str] = field(default_factory=list)
-    ci_systems: list[str] = field(default_factory=list)
+    languages: list[str] = field(default_factory=list[str])
+    frameworks: list[str] = field(default_factory=list[str])
+    package_managers: list[str] = field(default_factory=list[str])
+    ci_systems: list[str] = field(default_factory=list[str])
 
 
 def detect_stack(project_dir: Path) -> StackInfo:
