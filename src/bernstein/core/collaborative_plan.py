@@ -78,10 +78,7 @@ def _resolve_path(data: dict[str, Any], path: str) -> tuple[Any, str]:
     parts = path.split(".")
     current: Any = data
     for part in parts[:-1]:
-        if isinstance(current, list):
-            current = cast("Any", current[int(part)])
-        else:
-            current = current[part]  # type: ignore[index]
+        current = cast("Any", current[int(part)]) if isinstance(current, list) else current[part]
     final_key: str = parts[-1]
     return current, final_key
 
