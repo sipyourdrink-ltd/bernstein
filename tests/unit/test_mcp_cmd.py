@@ -111,10 +111,16 @@ def test_mcp_test_validates_installed_server() -> None:
         )
 
         result = runner.invoke(mcp_server, ["test", "fixture"])
+        inventory_path = Path(".sdd/mcp/tool_catalog/fixture.json")
+        inventory_exists = inventory_path.exists()
+        inventory = inventory_path.read_text(encoding="utf-8") if inventory_exists else ""
 
     assert result.exit_code == 0
     assert "Protocol validation passed" in result.output
     assert "fixture" in result.output
+    assert inventory_exists is True
+    assert "ping" in inventory
+    assert "echo" in inventory
 
 
 def test_mcp_test_fails_for_unknown_server() -> None:
@@ -125,3 +131,38 @@ def test_mcp_test_fails_for_unknown_server() -> None:
 
     assert result.exit_code != 0
     assert "No MCP catalog entries found" in result.output
+
+
+def test_mcp_usage_reports_recommendations() -> None:
+    runner = CliRunner()
+
+    with runner.isolated_filesystem():
+        save_catalog_entries(
+            Path(".sdd/config/mcp_servers.yaml"),
+            [
+                MCPServerEntry(name="filesystem", package="@mcp/filesystem"),
+                MCPServerEntry(name="github", package="@mcp/github"),
+            ],
+        )
+        Path(".sdd/mcp/tool_catalog").mkdir(parents=True, exist_ok=True)
+        Path(".sdd/mcp/tool_catalog/filesystem.json").write_text(
+            '{"server_name":"filesystem","tools":[{"name":"read_file"},{"name":"write_file"}]}\n',
+            encoding="utf-8",
+        )
+        wal_dir = Path(".sdd/runtime/wal")
+        wal_dir.mkdir(parents=True, exist_ok=True)
+        wal_dir.joinpath("usage.wal.jsonl").write_text(
+            (
+                '{"timestamp":1.0,"decision_type":"mcp_tool_call","inputs":{"server_name":"filesystem","tool_name":"read_file"},'
+                '"output":{"latency_ms":12.5,"error":null}}\n'
+            ),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(mcp_server, ["usage"])
+
+    assert result.exit_code == 0
+    assert "MCP Usage Analytics" in result.output
+    assert "filesystem" in result.output
+    assert "github" in result.output
+    assert "Consider removing it" in result.output

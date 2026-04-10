@@ -62,7 +62,13 @@ def gateway_group() -> None:
     metavar="ID",
     help="WAL run ID (auto-generated if not provided).",
 )
-def start_cmd(upstream: str, transport: str, port: int, run_id: str | None) -> None:
+@click.option(
+    "--server-name",
+    default="unknown",
+    show_default=True,
+    help="Logical MCP server name recorded into the gateway WAL for historical analytics.",
+)
+def start_cmd(upstream: str, transport: str, port: int, run_id: str | None, server_name: str) -> None:
     """Start the MCP gateway proxy.
 
     In stdio mode the gateway acts as an MCP stdio server — point your MCP
@@ -87,7 +93,7 @@ def start_cmd(upstream: str, transport: str, port: int, run_id: str | None) -> N
 
     wal_writer = WALWriter(run_id=effective_run_id, sdd_dir=sdd_dir)
     upstream_cmd = shlex.split(upstream)
-    gateway = MCPGateway(upstream_cmd=upstream_cmd, wal_writer=wal_writer)
+    gateway = MCPGateway(upstream_cmd=upstream_cmd, wal_writer=wal_writer, server_name=server_name)
 
     if transport == "sse":
         console.print(
@@ -96,6 +102,7 @@ def start_cmd(upstream: str, transport: str, port: int, run_id: str | None) -> N
             f"  (run-id: [dim]{effective_run_id}[/dim])"
         )
         console.print(f"  Upstream: [cyan]{upstream}[/cyan]")
+        console.print(f"  Server: [cyan]{server_name}[/cyan]")
     else:
         # stdio: suppress console output — stdout is the MCP transport
         pass

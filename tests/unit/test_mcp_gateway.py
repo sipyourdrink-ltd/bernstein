@@ -248,7 +248,7 @@ class TestMCPGatewayLiveMode:
 
         sdd = Path(tmp_path) / ".sdd"
         writer = _make_wal_writer(tmp_path, run_id="live-session")
-        gw = MCPGateway(upstream_cmd=[], wal_writer=writer)
+        gw = MCPGateway(upstream_cmd=[], wal_writer=writer, server_name="filesystem")
 
         fake_response: dict[str, Any] = {
             "jsonrpc": "2.0",
@@ -280,6 +280,7 @@ class TestMCPGatewayLiveMode:
         entries = list(reader.iter_entries())
         assert len(entries) == 1
         assert entries[0].decision_type == "mcp_tool_call"
+        assert entries[0].inputs["server_name"] == "filesystem"
         assert entries[0].inputs["tool_name"] == "read_file"
         assert "latency_ms" in entries[0].output
 

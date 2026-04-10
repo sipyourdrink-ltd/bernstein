@@ -10,7 +10,7 @@ Architecture:
 - create_gateway_sse_app: FastAPI SSE server for MCP SSE transport
 
 WAL decision_type: "mcp_tool_call"
-WAL inputs:  {method, tool_name, arguments, request_id}
+WAL inputs:  {method, server_name, tool_name, arguments, request_id}
 WAL output:  {result, error, latency_ms}
 """
 
@@ -157,10 +157,13 @@ class MCPGateway:
         upstream_cmd: list[str],
         wal_writer: WALWriter,
         replay: GatewayReplay | None = None,
+        *,
+        server_name: str = "unknown",
     ) -> None:
         self._upstream_cmd = upstream_cmd
         self._wal_writer = wal_writer
         self._replay = replay
+        self._server_name = server_name.strip() or "unknown"
         self._metrics: dict[str, ToolMetrics] = {}
         self._proc: asyncio.subprocess.Process | None = None
         self._pending: dict[Any, asyncio.Future[dict[str, Any]]] = {}
@@ -290,6 +293,7 @@ class MCPGateway:
             decision_type="mcp_tool_call",
             inputs={
                 "method": method,
+                "server_name": self._server_name,
                 "tool_name": tool_name,
                 "arguments": params.get("arguments", {}),
                 "request_id": req_id,
