@@ -38,6 +38,7 @@ VALID_GATE_NAMES = frozenset(
         "type_check",
         "tests",
         "pii_scan",
+        "dlp_scan",
         "mutation_testing",
         "intent_verification",
         "security_scan",
@@ -214,6 +215,8 @@ def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]
         pipeline.append(GatePipelineStep(name="merge_conflict", required=True, condition="any_changed"))
     if config.pii_scan:
         pipeline.append(GatePipelineStep(name="pii_scan", required=True, condition="any_changed"))
+    if config.dlp_scan:
+        pipeline.append(GatePipelineStep(name="dlp_scan", required=True, condition="any_changed"))
     if config.mutation_testing:
         pipeline.append(GatePipelineStep(name="mutation_testing", required=True, condition="python_changed"))
     if config.intent_verification.enabled:
@@ -430,6 +433,25 @@ class GateRunner:
                 cached=False,
                 duration_ms=0,
                 details=pii_result.detail,
+                metadata={},
+            )
+
+        if step.name == "dlp_scan":
+            dlp_result = await asyncio.to_thread(
+                qg.run_dlp_gate_sync,
+                self._config,
+                run_dir,
+                changed_files if self._changed_files_resolved else None,
+            )
+            dlp_status: GateStatus = "pass" if dlp_result.passed else "fail"
+            return GateResult(
+                name="dlp_scan",
+                status=dlp_status,
+                required=step.required,
+                blocked=step.required and not dlp_result.passed and dlp_result.blocked,
+                cached=False,
+                duration_ms=0,
+                details=dlp_result.detail,
                 metadata={},
             )
 

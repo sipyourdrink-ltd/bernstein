@@ -16,6 +16,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any, Literal
 
 from bernstein.core.telemetry import start_span
@@ -215,6 +216,18 @@ class QualityGatesConfig:
     large_file_threshold: int = 500
     integration_test_gen: bool = False
     review_rubric: bool = False
+    dlp_scan: bool = True
+    dlp_check_license_violations: bool = True
+    dlp_check_regulated_data: bool = True
+    dlp_check_proprietary_data: bool = True
+    dlp_block_license_violations: bool = True
+    dlp_block_regulated_data: bool = True
+    dlp_block_proprietary_data: bool = False
+    dlp_internal_url_patterns: list[str] = field(default_factory=list)
+    dlp_ignore_paths: list[str] = field(default_factory=list)
+    dlp_allowlist_prefixes: list[str] = field(
+        default_factory=lambda: ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "MOCK", "SAMPLE"]
+    )
 
 
 @dataclass
@@ -665,6 +678,126 @@ def run_pii_gate_sync(
 ) -> QualityGateCheckResult:
     """Public sync wrapper used by the async gate runner."""
     return _run_pii_gate(config, run_dir, changed_files)
+
+
+# ---------------------------------------------------------------------------
+# DLP scan gate
+# ---------------------------------------------------------------------------
+
+
+def _run_dlp_gate(
+    config: QualityGatesConfig,
+    run_dir: Path,
+    changed_files: list[str] | None = None,
+) -> QualityGateCheckResult:
+    """Scan files for DLP violations: license issues, regulated data, and proprietary patterns.
+
+    Extends the PII gate with additional categories:
+    - License violations (third-party copyright headers, SPDX identifiers)
+    - Regulated data (PHI: NPI numbers, ICD-10 codes, MRNs, DEA numbers)
+    - Proprietary data (internal hostnames, customer IDs, RFC-1918 addresses)
+
+    Hard-blocks merge when ``dlp_block_license_violations`` or
+    ``dlp_block_regulated_data`` are True and matching findings are detected.
+
+    Args:
+        config: Quality gates configuration.
+        run_dir: Working directory (agent worktree root).
+        changed_files: Optional changed-file set. When provided, only these
+            files are scanned.
+
+    Returns:
+        QualityGateCheckResult with ``blocked=True`` if any hard-block finding
+        is detected.
+    """
+    from pathlib import Path as _Path
+
+    from bernstein.core.dlp_scanner import DLPConfig, DLPScanner
+
+    dlp_config = DLPConfig(
+        enabled=True,
+        check_license_violations=config.dlp_check_license_violations,
+        check_regulated_data=config.dlp_check_regulated_data,
+        check_proprietary_data=config.dlp_check_proprietary_data,
+        block_license_violations=config.dlp_block_license_violations,
+        block_regulated_data=config.dlp_block_regulated_data,
+        block_proprietary_data=config.dlp_block_proprietary_data,
+        internal_url_patterns=list(config.dlp_internal_url_patterns),
+        ignore_paths=list(config.dlp_ignore_paths),
+        allowlist_prefixes=list(config.dlp_allowlist_prefixes),
+    )
+    scanner = DLPScanner(dlp_config)
+
+    _skip_extensions = {
+        ".pyc", ".pyo", ".so", ".dylib", ".whl", ".egg",
+        ".gz", ".zip", ".tar", ".png", ".jpg", ".gif", ".ico", ".pdf",
+    }
+
+    scan_targets: list[_Path]
+    if changed_files is not None:
+        scan_targets = [_Path(run_dir) / rel for rel in changed_files]
+    else:
+        scan_targets = sorted(_Path(run_dir).rglob("*"))
+
+    all_findings: list[tuple[str, Any]] = []
+
+    for fpath in scan_targets:
+        if not fpath.is_file():
+            continue
+        if fpath.suffix in _skip_extensions:
+            continue
+        # Check ignore paths
+        rel = str(fpath.relative_to(run_dir))
+        if any(
+            rel.startswith(ig.rstrip("/")) or fnmatch(rel, ig)
+            for ig in config.dlp_ignore_paths
+        ):
+            continue
+        try:
+            content = fpath.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+
+        result = scanner.scan_text(content)
+        for finding in result.findings:
+            all_findings.append((rel, finding))
+
+    if not all_findings:
+        return QualityGateCheckResult(
+            gate="dlp_scan",
+            passed=True,
+            blocked=False,
+            detail="DLP scan: no violations detected.",
+        )
+
+    has_blocks = any(f.block_merge for _, f in all_findings)
+    categories = sorted({f.category for _, f in all_findings})
+    lines = [f"DLP scan: {len(all_findings)} finding(s) — categories: {', '.join(categories)}"]
+    for fpath_str, f in all_findings:
+        block_label = "[BLOCK]" if f.block_merge else "[WARN]"
+        lines.append(
+            f"  {block_label} [{f.severity.upper()}] {fpath_str}"
+            f" (line {f.line_number}): {f.description} — {f.redacted_match}"
+        )
+    detail = "\n".join(lines)
+    if len(detail) > 2000:
+        detail = detail[:2000] + "\n... (truncated)"
+
+    return QualityGateCheckResult(
+        gate="dlp_scan",
+        passed=not has_blocks,
+        blocked=has_blocks,
+        detail=detail,
+    )
+
+
+def run_dlp_gate_sync(
+    config: QualityGatesConfig,
+    run_dir: Path,
+    changed_files: list[str] | None = None,
+) -> QualityGateCheckResult:
+    """Public sync wrapper used by the async gate runner."""
+    return _run_dlp_gate(config, run_dir, changed_files)
 
 
 # ---------------------------------------------------------------------------
