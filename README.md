@@ -10,11 +10,7 @@
 
 ### Orchestrate any AI coding agent. Any model. One command.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/tui.svg">
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/tui.svg">
-  <img alt="Bernstein TUI — live task dashboard" src="docs/assets/tui.svg" width="700">
-</picture>
+<img alt="Bernstein in action — parallel AI agents orchestrated in real time" src="docs/assets/in-action.gif" width="700">
 
 [![CI](https://github.com/chernistry/bernstein/actions/workflows/ci.yml/badge.svg)](https://github.com/chernistry/bernstein/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/chernistry/bernstein/graph/badge.svg)](https://codecov.io/gh/chernistry/bernstein)
