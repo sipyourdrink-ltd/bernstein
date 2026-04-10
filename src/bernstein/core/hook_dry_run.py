@@ -179,11 +179,7 @@ def format_dry_run_report(report: DryRunReport) -> str:
         lines.append("  Handlers:")
         for result in report.results:
             status = "WOULD FIRE" if result.would_execute else "SKIP"
-            time_str = (
-                f" ({result.execution_time_ms:.2f}ms)"
-                if result.execution_time_ms is not None
-                else ""
-            )
+            time_str = f" ({result.execution_time_ms:.2f}ms)" if result.execution_time_ms is not None else ""
             lines.append(f"    - {result.hook_name}: {status}{time_str}")
 
     return "\n".join(lines)

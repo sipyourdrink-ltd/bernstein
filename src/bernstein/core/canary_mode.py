@@ -332,11 +332,7 @@ def format_canary_report(report: CanaryReport) -> str:
     if mismatches:
         lines.append(f"--- Mismatches ({len(mismatches)}) ---")
         for d in mismatches:
-            lines.append(
-                f"  {d.task_id}: "
-                f"{d.primary_adapter}/{d.primary_model} -> "
-                f"{d.canary_adapter}/{d.canary_model}"
-            )
+            lines.append(f"  {d.task_id}: {d.primary_adapter}/{d.primary_model} -> {d.canary_adapter}/{d.canary_model}")
         lines.append("")
 
     if matches:

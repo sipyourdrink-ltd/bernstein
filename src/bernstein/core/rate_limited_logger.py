@@ -156,10 +156,7 @@ class LogDeduplicator:
         summaries: list[str] = []
         for message, state in self._state.items():
             if state.suppressed > 0:
-                summaries.append(
-                    f"{message} repeated {state.suppressed} times"
-                    f" in last {self._window}s"
-                )
+                summaries.append(f"{message} repeated {state.suppressed} times in last {self._window}s")
         self.reset()
         return summaries
 

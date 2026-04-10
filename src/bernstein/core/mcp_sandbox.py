@@ -203,15 +203,10 @@ def validate_sandbox_config(config: SandboxConfig) -> list[str]:
     errors: list[str] = []
 
     if config.runtime not in _VALID_RUNTIMES:
-        errors.append(
-            f"Invalid runtime '{config.runtime}'; must be one of {sorted(_VALID_RUNTIMES)}"
-        )
+        errors.append(f"Invalid runtime '{config.runtime}'; must be one of {sorted(_VALID_RUNTIMES)}")
 
     if config.profile not in BUILTIN_PROFILES:
-        errors.append(
-            f"Unknown profile '{config.profile}'; "
-            f"available profiles: {sorted(BUILTIN_PROFILES)}"
-        )
+        errors.append(f"Unknown profile '{config.profile}'; available profiles: {sorted(BUILTIN_PROFILES)}")
 
     if not config.image:
         errors.append("Sandbox image must not be empty")
@@ -260,9 +255,7 @@ def load_sandbox_config(yaml_path: Path | None = None) -> SandboxConfig:
 
     extra_mounts_raw: Any = section.get("extra_mounts", [])
     extra_mounts: list[str] = (
-        [str(m) for m in cast("list[Any]", extra_mounts_raw)]
-        if isinstance(extra_mounts_raw, list)
-        else []
+        [str(m) for m in cast("list[Any]", extra_mounts_raw)] if isinstance(extra_mounts_raw, list) else []
     )
 
     return SandboxConfig(
