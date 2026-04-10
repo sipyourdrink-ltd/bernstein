@@ -28,7 +28,7 @@
 [![A2A Compatible](https://img.shields.io/badge/A2A-0.2%2C%200.3-blue)](docs/compatibility.md)
 [![Share on X](https://img.shields.io/badge/share-on%20X-black?logo=x&logoColor=white)](https://x.com/intent/tweet?text=Bernstein%20%E2%80%94%20orchestrate%20parallel%20AI%20coding%20agents.%20Any%20model.%20One%20command.&url=https%3A%2F%2Fgithub.com%2Fchernistry%2Fbernstein&hashtags=ai,opensource,devtools)
 
-[Documentation](https://chernistry.github.io/bernstein/) &middot; [Getting Started](docs/GETTING_STARTED.md) &middot; [Glossary](docs/GLOSSARY.md) &middot; [Limitations](docs/KNOWN_LIMITATIONS.md)
+[Documentation](https://bernstein.readthedocs.io/) &middot; [Getting Started](docs/GETTING_STARTED.md) &middot; [Glossary](docs/GLOSSARY.md) &middot; [Limitations](docs/KNOWN_LIMITATIONS.md)
 
 #### Wall of fame
 

@@ -34,6 +34,69 @@ _PRIORITY_AGE_THRESHOLD_SECONDS = 300  # 5 minutes
 _PRIORITY_BOOST_AMOUNT = 1  # Boost priority by 1 (lower value = higher priority)
 
 
+def _task_affinity_config(task: Task) -> dict[str, object]:
+    """Return normalized affinity hints from task metadata."""
+    raw_affinity = task.metadata.get("affinity")
+    hints: dict[str, object] = {}
+    if isinstance(raw_affinity, dict):
+        typed_affinity: dict[str, object] = raw_affinity  # type: ignore[assignment]
+        hints.update(typed_affinity)
+    for key in ("preferred_model", "preferred_agent", "preferred_agent_id", "same_as_task", "same_agent_as_task"):
+        value = task.metadata.get(key)
+        if key not in hints and value is not None:
+            hints[key] = value
+    return hints
+
+
+def _apply_task_affinity_hints(tasks: list[Task], agent_affinity: dict[str, str] | None) -> dict[str, str]:
+    """Resolve metadata-driven affinity hints into batching inputs."""
+    effective_affinity = dict(agent_affinity or {})
+    tasks_by_id = {task.id: task for task in tasks}
+
+    for task in tasks:
+        hints = _task_affinity_config(task)
+        preferred_model = hints.get("preferred_model")
+        if isinstance(preferred_model, str) and preferred_model.strip() and not task.model:
+            task.model = preferred_model.strip()
+
+        preferred_agent = hints.get("preferred_agent")
+        if not isinstance(preferred_agent, str) or not preferred_agent.strip():
+            preferred_agent = hints.get("preferred_agent_id")
+
+        if not isinstance(preferred_agent, str) or not preferred_agent.strip():
+            same_as_task = hints.get("same_as_task") or hints.get("same_agent_as_task")
+            if isinstance(same_as_task, str) and same_as_task.strip():
+                referenced_task = tasks_by_id.get(same_as_task)
+                if referenced_task is not None and referenced_task.assigned_agent:
+                    preferred_agent = referenced_task.assigned_agent
+                elif same_as_task in effective_affinity:
+                    preferred_agent = effective_affinity[same_as_task]
+
+        if isinstance(preferred_agent, str) and preferred_agent.strip():
+            effective_affinity[task.id] = preferred_agent.strip()
+
+    return effective_affinity
+
+
+def _group_model_hints(tasks: list[Task]) -> set[str]:
+    return {task.model.strip().lower() for task in tasks if isinstance(task.model, str) and task.model.strip()}
+
+
+def _group_agent_hints(tasks: list[Task], agent_affinity: dict[str, str]) -> set[str]:
+    return {
+        agent_affinity[task.id].strip()
+        for task in tasks
+        if task.id in agent_affinity and agent_affinity[task.id].strip()
+    }
+
+
+def _groups_can_merge(left: list[Task], right: list[Task], agent_affinity: dict[str, str]) -> bool:
+    """Return True when two groups are compatible for batching."""
+    if len(_group_model_hints(left + right)) > 1:
+        return False
+    return len(_group_agent_hints(left + right, agent_affinity)) <= 1
+
+
 # ---------------------------------------------------------------------------
 # TypedDicts shared across orchestrator sub-modules
 # ---------------------------------------------------------------------------
@@ -329,6 +392,8 @@ def group_by_role(
         List of batches, each a list of same-role tasks, round-robin interleaved.
         If alive_per_role is provided, starving roles come first.
     """
+    effective_agent_affinity = _apply_task_affinity_hints(tasks, agent_affinity)
+
     by_role: dict[str, list[Task]] = defaultdict(list)
     for task in tasks:
         by_role[task.role].append(task)
@@ -383,7 +448,7 @@ def group_by_role(
             if task_files:
                 for i, group in enumerate(affinity_groups):
                     group_files: set[str] = set().union(*(set(t.owned_files) for t in group))  # type: ignore[reportUnknownVariableType]
-                    if task_files & group_files:
+                    if task_files & group_files and _groups_can_merge(group, [task], effective_agent_affinity):
                         matching_groups.append(i)
 
             if matching_groups:
@@ -399,11 +464,11 @@ def group_by_role(
         # 1.5 Agent affinity pass: merge groups that share a preferred agent.
         # Tasks downstream of a completed task carry a preferred_agent_id hint;
         # grouping them together ensures a single new agent handles all of them.
-        if agent_affinity:
+        if effective_agent_affinity:
             agent_to_group_indices: dict[str, list[int]] = defaultdict(list)
             for idx, group in enumerate(affinity_groups):
                 for task in group:
-                    preferred = agent_affinity.get(task.id)
+                    preferred = effective_agent_affinity.get(task.id)
                     if preferred:
                         agent_to_group_indices[preferred].append(idx)
                         break  # one match per group is enough
@@ -411,7 +476,11 @@ def group_by_role(
                 if len(group_indices) > 1:
                     first_idx = group_indices[0]
                     for other_idx in sorted(group_indices[1:], reverse=True):
-                        if other_idx < len(affinity_groups):
+                        if other_idx < len(affinity_groups) and _groups_can_merge(
+                            affinity_groups[first_idx],
+                            affinity_groups[other_idx],
+                            effective_agent_affinity,
+                        ):
                             affinity_groups[first_idx].extend(affinity_groups.pop(other_idx))
 
         # 2. Second pass: pack affinity groups into batches of max_per_batch
@@ -425,7 +494,11 @@ def group_by_role(
             # at or near max_per_batch, just give it its own batch(es).
             if len(group) < max_per_batch:
                 for batch in role_batches:
-                    if len(batch) + len(group) <= max_per_batch:
+                    if len(batch) + len(group) <= max_per_batch and _groups_can_merge(
+                        batch,
+                        group,
+                        effective_agent_affinity,
+                    ):
                         batch.extend(group)
                         added = True
                         break
