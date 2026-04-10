@@ -10,7 +10,6 @@ import contextlib
 import hashlib
 import json
 import logging
-import resource
 import shutil
 import subprocess
 import sys
@@ -242,7 +241,12 @@ def memory_usage_mb() -> float:
     """Return current process memory usage in MB.
 
     ``ru_maxrss`` is kilobytes on Linux and bytes on macOS, so normalize both.
+    Returns 0.0 on Windows where ``resource`` is unavailable.
     """
+    try:
+        import resource
+    except ModuleNotFoundError:
+        return 0.0
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     if sys.platform == "darwin":
         return round(rss / (1024 * 1024), 2)
