@@ -82,6 +82,8 @@ from bernstein.cli.policy_cmd import policy_group
 from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
+from bernstein.cli.logs_group_cmd import logs_group
+from bernstein.cli.postmortem_cmd import postmortem_cmd
 from bernstein.cli.report_cmd import report_cmd
 from bernstein.cli.self_update_cmd import self_update_cmd
 from bernstein.cli.task_cmd import (
@@ -671,7 +673,7 @@ cli.add_command(reject)
 cli.add_command(pending)
 cli.add_command(plan)
 cli.add_command(plan, "tasks")
-cli.add_command(logs_cmd, "logs")
+cli.add_command(logs_group, "logs")
 cli.add_command(list_tasks, "list-tasks")
 
 # From workspace_cmd module - groups and commands
@@ -733,6 +735,7 @@ cli.add_command(prompts_group, "prompts")
 cli.add_command(ci_group, "ci")
 cli.add_command(gateway_group, "gateway")
 cli.add_command(report_cmd, "report")
+cli.add_command(postmortem_cmd, "postmortem")
 cli.add_command(man_pages_cmd, "man-pages")
 cli.add_command(workflow_group, "workflow")
 cli.add_command(quickstart_cmd, "quickstart")

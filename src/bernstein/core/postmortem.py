@@ -1,0 +1,579 @@
+"""Automated post-mortem report generation for failed orchestration runs.
+
+Analyses a completed (or failed) run and produces a structured report
+covering:
+
+- Chronological event timeline
+- Root-cause analysis derived from agent log failure patterns
+- Contributing factors (rate limits, compile errors, test failures, …)
+- Per-task agent decision traces for every failed task
+- Recommended actions to prevent recurrence
+
+Data sources (read-only):
+- ``.sdd/runs/{run_id}/summary.json`` — high-level run summary
+- ``.sdd/metrics/task_*.json`` / ``*.jsonl`` — per-task metrics
+- ``.sdd/runtime/{session}.log`` / ``.sdd/logs/{session}.log`` — agent logs
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PostMortemEvent:
+    """A single event in the chronological timeline.
+
+    Attributes:
+        timestamp: Unix epoch seconds (0 means unknown).
+        label: Short human-readable description of the event.
+        kind: Category such as ``"task_start"``, ``"task_fail"``, ``"error"``.
+        task_id: Associated task identifier if applicable.
+    """
+
+    timestamp: float
+    label: str
+    kind: str
+    task_id: str = ""
+
+
+@dataclass
+class FailedTaskTrace:
+    """Agent decision trace for a single failed task.
+
+    Attributes:
+        task_id: Task identifier.
+        role: Agent role that attempted the task.
+        model: Model used.
+        session_id: Agent session identifier.
+        dominant_failure: Most frequent failure category detected in logs.
+        error_snippets: Up to three representative error messages.
+        files_touched: Files the agent modified before failing.
+        retry_context: Concise retry-context summary from the log aggregator.
+    """
+
+    task_id: str
+    role: str
+    model: str
+    session_id: str
+    dominant_failure: str
+    error_snippets: list[str]
+    files_touched: list[str]
+    retry_context: str
+
+
+@dataclass
+class ContributingFactor:
+    """A factor that contributed to the run failure.
+
+    Attributes:
+        category: E.g. ``"rate_limit"``, ``"compile_error"``, ``"test_failure"``.
+        count: How many times this pattern was observed.
+        description: Human-readable explanation.
+    """
+
+    category: str
+    count: int
+    description: str
+
+
+@dataclass
+class RecommendedAction:
+    """A concrete action recommended to prevent recurrence.
+
+    Attributes:
+        priority: ``"high"``, ``"medium"``, or ``"low"``.
+        action: Imperative description of what to do.
+        rationale: Why this action is recommended.
+    """
+
+    priority: str
+    action: str
+    rationale: str
+
+
+@dataclass
+class PostMortemReport:
+    """Full post-mortem report for a run.
+
+    Attributes:
+        run_id: Orchestrator run identifier.
+        goal: High-level goal of the run.
+        generated_at: Unix epoch when the report was generated.
+        total_tasks: Total number of tasks in the run.
+        failed_tasks: Number of tasks that failed.
+        success_rate_pct: Percentage of tasks that succeeded.
+        timeline: Chronological events ordered by timestamp.
+        failed_task_traces: Per-task traces for every failed task.
+        contributing_factors: Aggregated failure patterns across all agents.
+        recommended_actions: Prioritised list of remediation actions.
+    """
+
+    run_id: str
+    goal: str
+    generated_at: float
+    total_tasks: int
+    failed_tasks: int
+    success_rate_pct: float
+    timeline: list[PostMortemEvent] = field(default_factory=list)
+    failed_task_traces: list[FailedTaskTrace] = field(default_factory=list)
+    contributing_factors: list[ContributingFactor] = field(default_factory=list)
+    recommended_actions: list[RecommendedAction] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Generator
+# ---------------------------------------------------------------------------
+
+_FACTOR_DESCRIPTIONS: dict[str, str] = {
+    "rate_limit": "Agent hit API rate limits, causing delays or retries.",
+    "compile_error": "Syntax or import errors prevented code execution.",
+    "test_failure": "Automated tests failed, blocking task completion.",
+    "tool_failure": "Tool calls (file I/O, shell, etc.) returned errors.",
+    "git_error": "Git operations failed (merge conflict, worktree lock).",
+    "timeout": "Agent exceeded the allowed time budget for the task.",
+    "permission": "File or system permission errors blocked progress.",
+}
+
+_ACTION_TEMPLATES: dict[str, tuple[str, str, str]] = {
+    # category → (priority, action, rationale)
+    "rate_limit": (
+        "high",
+        "Add exponential back-off and configure a lower concurrency ceiling.",
+        "Repeated rate-limit hits stall agents and inflate wall-clock time.",
+    ),
+    "compile_error": (
+        "high",
+        "Add a pre-task linting step so agents start from a clean baseline.",
+        "Compile errors at the start of a task waste the full model budget.",
+    ),
+    "test_failure": (
+        "medium",
+        "Run the failing tests locally and fix them before the next run.",
+        "Persistent test failures indicate regressions introduced during the run.",
+    ),
+    "tool_failure": (
+        "medium",
+        "Review tool permissions and verify the environment setup.",
+        "Tool failures often indicate missing dependencies or config drift.",
+    ),
+    "git_error": (
+        "high",
+        "Resolve open worktree locks or merge conflicts before re-running.",
+        "Git errors leave the workspace in an inconsistent state.",
+    ),
+    "timeout": (
+        "medium",
+        "Increase the per-task timeout or decompose the task into smaller steps.",
+        "Timeouts indicate that tasks are scoped too broadly for the model.",
+    ),
+    "permission": (
+        "low",
+        "Verify file-system permissions for the workspace directory.",
+        "Permission errors are usually a one-time environment misconfiguration.",
+    ),
+}
+
+
+class PostMortemGenerator:
+    """Generates a :class:`PostMortemReport` from ``.sdd/`` data.
+
+    Args:
+        workdir: Project root containing the ``.sdd/`` directory.
+        run_id: Specific run to analyse.  If ``None``, the latest run is
+            auto-detected from ``.sdd/runs/``.
+    """
+
+    def __init__(self, workdir: Path, run_id: str | None = None) -> None:
+        self._workdir = workdir
+        self._sdd = workdir / ".sdd"
+        self._run_id = run_id or self._detect_latest_run_id()
+
+    # -- public API ---------------------------------------------------------
+
+    def generate(self) -> PostMortemReport:
+        """Collect data and build a :class:`PostMortemReport`.
+
+        Returns:
+            Fully populated ``PostMortemReport``.
+        """
+        summary = self._load_summary()
+        task_metrics = self._load_task_metrics()
+
+        goal = str(summary.get("goal", ""))
+        total = len(task_metrics)
+        failed_count = sum(1 for tm in task_metrics if not bool(tm.get("success", False)))
+        success_rate = ((total - failed_count) / total * 100) if total > 0 else 0.0
+
+        timeline = self._build_timeline(task_metrics)
+        failed_traces = self._build_failed_traces(task_metrics)
+        factors = self._aggregate_factors(failed_traces)
+        actions = self._build_recommendations(factors)
+
+        return PostMortemReport(
+            run_id=self._run_id,
+            goal=goal,
+            generated_at=time.time(),
+            total_tasks=total,
+            failed_tasks=failed_count,
+            success_rate_pct=success_rate,
+            timeline=timeline,
+            failed_task_traces=failed_traces,
+            contributing_factors=factors,
+            recommended_actions=actions,
+        )
+
+    def to_markdown(self, report: PostMortemReport) -> str:
+        """Render a :class:`PostMortemReport` as a markdown string.
+
+        Args:
+            report: The report to render.
+
+        Returns:
+            Multi-line markdown string.
+        """
+        import datetime
+
+        lines: list[str] = []
+        ts = datetime.datetime.fromtimestamp(report.generated_at).strftime("%Y-%m-%d %H:%M:%S")
+
+        lines.append(f"# Post-Mortem Report — Run `{report.run_id}`")
+        lines.append("")
+        if report.goal:
+            lines.append(f"**Goal:** {report.goal}")
+        lines.append(f"**Generated:** {ts}")
+        lines.append(f"**Tasks:** {report.total_tasks} total, {report.failed_tasks} failed")
+        if report.total_tasks:
+            lines.append(f"**Success rate:** {report.success_rate_pct:.0f}%")
+        lines.append("")
+
+        # -- Timeline ----------------------------------------------------------
+        lines.append("## Event Timeline")
+        lines.append("")
+        if report.timeline:
+            import datetime as _dt
+
+            lines.append("| Time | Event | Kind | Task |")
+            lines.append("|------|-------|------|------|")
+            for ev in report.timeline:
+                t_str = _dt.datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S") if ev.timestamp > 0 else "—"
+                lines.append(f"| {t_str} | {ev.label} | `{ev.kind}` | {ev.task_id or '—'} |")
+        else:
+            lines.append("No timeline data available.")
+        lines.append("")
+
+        # -- Root cause / contributing factors ---------------------------------
+        lines.append("## Root Cause Analysis")
+        lines.append("")
+        if report.contributing_factors:
+            dominant = max(report.contributing_factors, key=lambda f: f.count)
+            lines.append(f"**Primary cause:** {dominant.category} ({dominant.count} occurrence(s))")
+            lines.append("")
+            lines.append(f"> {dominant.description}")
+            lines.append("")
+            if len(report.contributing_factors) > 1:
+                lines.append("**Additional contributing factors:**")
+                lines.append("")
+                for factor in sorted(report.contributing_factors, key=lambda f: f.count, reverse=True):
+                    if factor is dominant:
+                        continue
+                    lines.append(f"- **{factor.category}** ({factor.count}x): {factor.description}")
+        else:
+            lines.append(
+                "No dominant failure pattern detected. "
+                "Review agent logs manually for more detail."
+            )
+        lines.append("")
+
+        # -- Failed task traces ------------------------------------------------
+        lines.append("## Agent Decision Traces (Failed Tasks)")
+        lines.append("")
+        if report.failed_task_traces:
+            for trace in report.failed_task_traces:
+                lines.append(f"### Task `{trace.task_id}`")
+                lines.append("")
+                lines.append(f"- **Role:** {trace.role or '—'}")
+                lines.append(f"- **Model:** {trace.model or '—'}")
+                lines.append(f"- **Session:** `{trace.session_id or '—'}`")
+                lines.append(f"- **Dominant failure:** `{trace.dominant_failure or 'unknown'}`")
+                if trace.files_touched:
+                    lines.append(f"- **Files touched:** {', '.join(f'`{f}`' for f in trace.files_touched[:5])}")
+                if trace.error_snippets:
+                    lines.append("")
+                    lines.append("**Error snippets:**")
+                    lines.append("")
+                    lines.append("```")
+                    for snippet in trace.error_snippets[:3]:
+                        lines.append(snippet[:200])
+                    lines.append("```")
+                if trace.retry_context:
+                    lines.append("")
+                    lines.append(f"**Retry context:** {trace.retry_context}")
+                lines.append("")
+        else:
+            lines.append("No failed task traces available.")
+        lines.append("")
+
+        # -- Recommended actions -----------------------------------------------
+        lines.append("## Recommended Actions")
+        lines.append("")
+        if report.recommended_actions:
+            for action in sorted(
+                report.recommended_actions,
+                key=lambda a: {"high": 0, "medium": 1, "low": 2}.get(a.priority, 3),
+            ):
+                badge = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(action.priority, "•")
+                lines.append(f"{badge} **[{action.priority.upper()}]** {action.action}")
+                lines.append(f"  _{action.rationale}_")
+                lines.append("")
+        else:
+            lines.append("No specific actions recommended.")
+        lines.append("")
+
+        return "\n".join(lines)
+
+    def to_html(self, report: PostMortemReport) -> str:
+        """Render a :class:`PostMortemReport` as an HTML document.
+
+        Args:
+            report: The report to render.
+
+        Returns:
+            Complete HTML string with embedded styling.
+        """
+        md = self.to_markdown(report)
+        # Minimal HTML wrapper — avoids heavyweight markdown-to-HTML dependency.
+        escaped = (
+            md.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\n", "<br>\n")
+        )
+        title = f"Post-Mortem: {report.run_id}"
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{title}</title>
+  <style>
+    body {{ font-family: monospace; max-width: 900px; margin: 2em auto; padding: 0 1em; }}
+    pre {{ background: #f4f4f4; padding: 1em; border-radius: 4px; overflow-x: auto; }}
+  </style>
+</head>
+<body>
+<pre>{escaped}</pre>
+</body>
+</html>
+"""
+
+    def save(self, report: PostMortemReport, fmt: str = "markdown", path: Path | None = None) -> Path:
+        """Write the post-mortem report to disk.
+
+        Args:
+            report: The report to save.
+            fmt: ``"markdown"`` or ``"html"``.
+            path: Explicit output path.  Defaults to
+                ``.sdd/reports/postmortem_{run_id}.{ext}``.
+
+        Returns:
+            Path where the report was written.
+        """
+        from pathlib import Path as _Path
+
+        ext = "html" if fmt == "html" else "md"
+        if path is None:
+            reports_dir = self._sdd / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            path = reports_dir / f"postmortem_{report.run_id}.{ext}"
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+        content = self.to_html(report) if fmt == "html" else self.to_markdown(report)
+        _Path(path).write_text(content, encoding="utf-8")
+        logger.info("Post-mortem report written to %s", path)
+        return path
+
+    # -- internal helpers ---------------------------------------------------
+
+    def _detect_latest_run_id(self) -> str:
+        """Find the most recent run ID from ``.sdd/runs/``."""
+        runs_dir = self._sdd / "runs"
+        if not runs_dir.is_dir():
+            return "unknown"
+        run_dirs = sorted(runs_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+        for d in run_dirs:
+            if d.is_dir() and (d / "summary.json").exists():
+                return d.name
+        return "unknown"
+
+    def _load_summary(self) -> dict[str, Any]:
+        """Load summary.json for the run."""
+        summary_path = self._sdd / "runs" / self._run_id / "summary.json"
+        if not summary_path.exists():
+            return {}
+        try:
+            raw: Any = json.loads(summary_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                return cast("dict[str, Any]", raw)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to load summary.json: %s", exc)
+        return {}
+
+    def _load_task_metrics(self) -> list[dict[str, Any]]:
+        """Load per-task metrics from ``.sdd/metrics/task_*.json``."""
+        metrics_dir = self._sdd / "metrics"
+        if not metrics_dir.is_dir():
+            return []
+
+        results: list[dict[str, Any]] = []
+        for f in sorted(metrics_dir.glob("task_*.json")):
+            try:
+                raw: Any = json.loads(f.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    results.append(cast("dict[str, Any]", raw))
+            except (OSError, json.JSONDecodeError):
+                continue
+        if results:
+            return results
+
+        # Fallback: scan JSONL for task_completion_time entries
+        for f in sorted(metrics_dir.glob("*.jsonl")):
+            try:
+                for raw_line in f.read_text(encoding="utf-8").splitlines():
+                    stripped = raw_line.strip()
+                    if not stripped:
+                        continue
+                    entry_raw: Any = json.loads(stripped)
+                    if not isinstance(entry_raw, dict):
+                        continue
+                    entry = cast("dict[str, Any]", entry_raw)
+                    if entry.get("metric_type") != "task_completion_time":
+                        continue
+                    labels: dict[str, Any] = entry.get("labels") or {}
+                    results.append(
+                        {
+                            "task_id": str(labels.get("task_id", "")),
+                            "role": str(labels.get("role", "")),
+                            "model": str(labels.get("model", "")),
+                            "success": str(labels.get("success", "false")).lower() == "true",
+                            "session_id": str(labels.get("session_id", "")),
+                            "start_time": 0.0,
+                            "end_time": float(entry.get("timestamp", 0.0)),
+                            "cost_usd": 0.0,
+                        }
+                    )
+            except (OSError, json.JSONDecodeError):
+                continue
+        return results
+
+    def _build_timeline(self, task_metrics: list[dict[str, Any]]) -> list[PostMortemEvent]:
+        """Build a chronological list of events from task metrics."""
+        events: list[PostMortemEvent] = []
+        for tm in task_metrics:
+            task_id = str(tm.get("task_id", ""))
+            start = float(tm.get("start_time", 0.0))
+            end = float(tm.get("end_time", 0.0))
+            success = bool(tm.get("success", False))
+
+            if start > 0:
+                events.append(
+                    PostMortemEvent(
+                        timestamp=start,
+                        label=f"Task started: {task_id}",
+                        kind="task_start",
+                        task_id=task_id,
+                    )
+                )
+            if end > 0:
+                kind = "task_complete" if success else "task_fail"
+                label = f"Task {'completed' if success else 'FAILED'}: {task_id}"
+                events.append(
+                    PostMortemEvent(timestamp=end, label=label, kind=kind, task_id=task_id)
+                )
+
+        return sorted(events, key=lambda e: e.timestamp)
+
+    def _build_failed_traces(self, task_metrics: list[dict[str, Any]]) -> list[FailedTaskTrace]:
+        """Build decision traces for each failed task using agent logs."""
+        from bernstein.core.agent_log_aggregator import AgentLogAggregator
+
+        aggregator = AgentLogAggregator(self._workdir)
+        traces: list[FailedTaskTrace] = []
+
+        for tm in task_metrics:
+            if bool(tm.get("success", False)):
+                continue
+
+            task_id = str(tm.get("task_id", ""))
+            role = str(tm.get("role", ""))
+            model = str(tm.get("model", ""))
+            session_id = str(tm.get("session_id", ""))
+
+            if session_id and aggregator.log_exists(session_id):
+                summary = aggregator.parse_log(session_id)
+                retry_ctx = aggregator.failure_context_for_retry(session_id)
+                error_snippets = [
+                    ev.message[:200]
+                    for ev in summary.events
+                    if ev.level == "error"
+                ][:3]
+                dominant = summary.dominant_failure_category or ""
+                files_touched = summary.files_modified
+            else:
+                retry_ctx = ""
+                error_snippets = []
+                dominant = ""
+                files_touched = []
+
+            traces.append(
+                FailedTaskTrace(
+                    task_id=task_id,
+                    role=role,
+                    model=model,
+                    session_id=session_id,
+                    dominant_failure=dominant,
+                    error_snippets=error_snippets,
+                    files_touched=files_touched,
+                    retry_context=retry_ctx,
+                )
+            )
+
+        return traces
+
+    def _aggregate_factors(self, traces: list[FailedTaskTrace]) -> list[ContributingFactor]:
+        """Count failure categories across all failed task traces."""
+        counts: dict[str, int] = {}
+        for trace in traces:
+            if trace.dominant_failure:
+                counts[trace.dominant_failure] = counts.get(trace.dominant_failure, 0) + 1
+
+        factors: list[ContributingFactor] = []
+        for category, count in sorted(counts.items(), key=lambda kv: kv[1], reverse=True):
+            desc = _FACTOR_DESCRIPTIONS.get(category, f"Repeated {category} errors.")
+            factors.append(ContributingFactor(category=category, count=count, description=desc))
+        return factors
+
+    def _build_recommendations(self, factors: list[ContributingFactor]) -> list[RecommendedAction]:
+        """Map contributing factors to concrete recommended actions."""
+        seen: set[str] = set()
+        actions: list[RecommendedAction] = []
+        for factor in factors:
+            template = _ACTION_TEMPLATES.get(factor.category)
+            if template and factor.category not in seen:
+                seen.add(factor.category)
+                priority, action, rationale = template
+                actions.append(RecommendedAction(priority=priority, action=action, rationale=rationale))
+        return actions
