@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  <meta name="author" content="Alex Chernysh" />
+  <link rel="author" href="https://alexchernysh.com" />
+  <meta property="og:site_name" content="Bernstein Documentation" />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Bernstein",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, macOS, Windows",
+    "description": "Open-source multi-agent orchestration platform for AI coding agents. Deterministic scheduling, 18+ CLI adapters, zero vendor lock-in.",
+    "url": "https://bernstein.readthedocs.io/",
+    "downloadUrl": "https://pypi.org/project/bernstein/",
+    "codeRepository": "https://github.com/chernistry/bernstein",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "author": {
+      "@type": "Person",
+      "@id": "https://alexchernysh.com/#person",
+      "name": "Alex Chernysh",
+      "url": "https://alexchernysh.com"
+    },
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "sameAs": [
+      "https://github.com/chernistry/bernstein",
+      "https://chernistry.github.io/bernstein/",
+      "https://alexchernysh.com/bernstein",
+      "https://pypi.org/project/bernstein/"
+    ]
+  }
+  </script>
+{% endblock %}

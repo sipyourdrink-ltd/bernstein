@@ -2,9 +2,9 @@ site_name: Bernstein
 site_url: https://bernstein.readthedocs.io/
 site_author: Alex Chernysh
 site_description: >-
-  Bernstein is a multi-agent orchestrator for CLI coding agents.
-  Spawn, coordinate, and manage parallel AI agents — Claude Code,
-  Codex, Gemini CLI, and more. Any model. One command.
+  Bernstein is the open-source multi-agent orchestration platform for AI coding
+  agents. Run Claude Code, Codex, Gemini CLI in parallel with deterministic
+  scheduling, 18+ adapters, and zero vendor lock-in.
 repo_url: https://github.com/chernistry/bernstein
 repo_name: chernistry/bernstein
 edit_uri: edit/main/docs/
@@ -13,6 +13,7 @@ copyright: >-
 
 theme:
   name: material
+  custom_dir: docs/overrides
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
@@ -28,31 +29,75 @@ theme:
       toggle:
         icon: material/brightness-4
         name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
   features:
     - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.sections
     - navigation.expand
     - navigation.top
+    - navigation.indexes
+    - navigation.footer
     - search.suggest
     - search.highlight
+    - search.share
     - content.code.copy
+    - content.code.annotate
     - content.action.edit
+    - content.tabs.link
+    - toc.follow
+    - announce.dismiss
   icon:
     repo: fontawesome/brands/github
+    logo: material/music-note-eighth
 
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/chernistry/bernstein
+      name: Bernstein on GitHub
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/bernstein/
+      name: Bernstein on PyPI
     - icon: fontawesome/solid/globe
       link: https://alexchernysh.com
+      name: Alex Chernysh
+  analytics:
+    provider: google
+    property: G-PLACEHOLDER
+    feedback:
+      title: Was this page helpful?
+      ratings:
+        - icon: material/thumb-up-outline
+          name: This page was helpful
+          data: 1
+          note: Thanks for your feedback!
+        - icon: material/thumb-down-outline
+          name: This page could be improved
+          data: 0
+          note: Thanks, we'll improve this page.
   generator: false
+  consent:
+    title: Cookie consent
+    description: >-
+      We use cookies to recognize your repeated visits and preferences,
+      as well as to measure the effectiveness of our documentation and
+      whether users find what they're searching for. With your consent,
+      you're helping us to make our documentation better.
 
 plugins:
-  - search
-  - social
+  - search:
+      separator: '[\s\-\.]+'
+  - social:
+      cards_layout_options:
+        background_color: "#4a148c"
+        color: "#ffffff"
+  - tags
   - minify:
       minify_html: true
 
@@ -66,14 +111,32 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
   - pymdownx.inlinehilite
+  - pymdownx.snippets
   - pymdownx.tabbed:
       alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.critic
   - toc:
       permalink: true
+      toc_depth: 3
   - attr_list
+  - md_in_html
   - def_list
   - tables
+  - footnotes
+  - abbr
 
 nav:
   - Home: index.md
