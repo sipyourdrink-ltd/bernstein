@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.conversation_export import (
     ConversationExport,
     ConversationMessage,
@@ -37,7 +39,7 @@ def test_conversation_message_all_fields() -> None:
         turn_number=3,
     )
     assert msg.role == "tool_result"
-    assert msg.timestamp == 1000.0
+    assert msg.timestamp == pytest.approx(1000.0)
     assert msg.tool_name == "Bash"
     assert msg.turn_number == 3
 
@@ -72,7 +74,7 @@ def test_parse_system_event(tmp_path: Path) -> None:
     assert len(msgs) == 1
     assert msgs[0].role == "system"
     assert msgs[0].content == "init done"
-    assert msgs[0].timestamp == 1.0
+    assert msgs[0].timestamp == pytest.approx(1.0)
 
 
 def test_parse_human_event(tmp_path: Path) -> None:
@@ -100,7 +102,7 @@ def test_parse_assistant_text(tmp_path: Path) -> None:
     assert len(msgs) == 1
     assert msgs[0].role == "assistant"
     assert msgs[0].content == "I will fix the bug."
-    assert msgs[0].timestamp == 2.5
+    assert msgs[0].timestamp == pytest.approx(2.5)
 
 
 def test_parse_assistant_tool_use(tmp_path: Path) -> None:
@@ -142,7 +144,7 @@ def test_parse_tool_result(tmp_path: Path) -> None:
     assert msgs[0].role == "tool_result"
     assert msgs[0].tool_name == "Bash"
     assert msgs[0].content == "file.py"
-    assert msgs[0].timestamp == 3.0
+    assert msgs[0].timestamp == pytest.approx(3.0)
 
 
 def test_parse_mixed_events(tmp_path: Path) -> None:
@@ -214,7 +216,7 @@ def test_export_conversation(tmp_path: Path) -> None:
     assert export.agent_role == "backend"
     assert export.model == "claude-sonnet-4-20250514"
     assert export.total_tokens == 5000
-    assert export.cost_usd == 0.05
+    assert export.cost_usd == pytest.approx(0.05)
     assert export.outcome == "success"
     assert export.exported_at != ""
     assert len(export.messages) == 2
@@ -285,8 +287,8 @@ def test_serialize_export_roundtrip() -> None:
     )
     text = serialize_export(export)
     parsed = json.loads(text)
-    assert parsed["cost_usd"] == 0.02
-    assert parsed["messages"][0]["timestamp"] == 1.0
+    assert parsed["cost_usd"] == pytest.approx(0.02)
+    assert parsed["messages"][0]["timestamp"] == pytest.approx(1.0)
     assert parsed["messages"][1]["tool_name"] == "Bash"
 
 

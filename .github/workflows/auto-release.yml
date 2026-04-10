@@ -22,13 +22,22 @@ jobs:
     name: Patch release
     runs-on: ubuntu-latest
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.actor.login != 'bernstein-orchestrator[bot]'
+      github.event.workflow_run.conclusion == 'success'
     environment:
       name: pypi
       url: https://pypi.org/p/bernstein
     steps:
+      - name: Skip bot-triggered runs
+        id: bot-check
+        run: |
+          AUTHOR=$(gh api repos/${{ github.repository }}/commits/${{ github.event.workflow_run.head_sha }} --jq '.author.login // ""')
+          if [ "$AUTHOR" = "bernstein-orchestrator[bot]" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Generate App token
+        if: steps.bot-check.outputs.skip != 'true'
         id: app-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:

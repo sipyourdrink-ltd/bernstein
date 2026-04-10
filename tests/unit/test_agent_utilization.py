@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.agent_utilization import (
     UtilizationRecord,
     UtilizationSummary,
@@ -27,7 +29,7 @@ class TestUtilizationRecord:
             utilization_pct=60.0,
         )
         assert rec.agent_id == "a1"
-        assert rec.utilization_pct == 60.0
+        assert rec.utilization_pct == pytest.approx(60.0)
 
     def test_pct_matches_ratio(self) -> None:
         rec = UtilizationRecord(
@@ -61,23 +63,23 @@ class TestComputeUtilization:
         assert rec.role == "backend"
         assert rec.model == "sonnet"
         # active: working 5->15 (10s) + working 20->30 (10s) = 20s
-        assert rec.active_seconds == 20.0
+        assert rec.active_seconds == pytest.approx(20.0)
         # idle: starting 0->5 (5s) + idle 15->20 (5s) = 10s
-        assert rec.idle_seconds == 10.0
-        assert rec.total_seconds == 30.0
-        assert rec.utilization_pct == 66.7
+        assert rec.idle_seconds == pytest.approx(10.0)
+        assert rec.total_seconds == pytest.approx(30.0)
+        assert rec.utilization_pct == pytest.approx(66.7)
 
     def test_no_transitions(self) -> None:
         rec = compute_utilization("agent-2", [])
-        assert rec.active_seconds == 0.0
-        assert rec.idle_seconds == 0.0
-        assert rec.total_seconds == 0.0
-        assert rec.utilization_pct == 0.0
+        assert rec.active_seconds == pytest.approx(0.0)
+        assert rec.idle_seconds == pytest.approx(0.0)
+        assert rec.total_seconds == pytest.approx(0.0)
+        assert rec.utilization_pct == pytest.approx(0.0)
 
     def test_single_transition(self) -> None:
         rec = compute_utilization("agent-3", [(100.0, "working")])
-        assert rec.total_seconds == 0.0
-        assert rec.utilization_pct == 0.0
+        assert rec.total_seconds == pytest.approx(0.0)
+        assert rec.utilization_pct == pytest.approx(0.0)
 
     def test_all_idle(self) -> None:
         transitions: list[tuple[float, str]] = [
@@ -86,9 +88,9 @@ class TestComputeUtilization:
             (20.0, "dead"),
         ]
         rec = compute_utilization("agent-4", transitions)
-        assert rec.active_seconds == 0.0
-        assert rec.idle_seconds == 20.0
-        assert rec.utilization_pct == 0.0
+        assert rec.active_seconds == pytest.approx(0.0)
+        assert rec.idle_seconds == pytest.approx(20.0)
+        assert rec.utilization_pct == pytest.approx(0.0)
 
     def test_all_active(self) -> None:
         transitions: list[tuple[float, str]] = [
@@ -96,9 +98,9 @@ class TestComputeUtilization:
             (50.0, "dead"),
         ]
         rec = compute_utilization("agent-5", transitions)
-        assert rec.active_seconds == 50.0
-        assert rec.idle_seconds == 0.0
-        assert rec.utilization_pct == 100.0
+        assert rec.active_seconds == pytest.approx(50.0)
+        assert rec.idle_seconds == pytest.approx(0.0)
+        assert rec.utilization_pct == pytest.approx(100.0)
 
     def test_dead_segments_excluded(self) -> None:
         """Time spent in 'dead' status should not count toward active or idle."""
@@ -110,11 +112,11 @@ class TestComputeUtilization:
         ]
         rec = compute_utilization("agent-6", transitions)
         # working: 0->10 (10s) + working: 20->30 (10s) = 20s active
-        assert rec.active_seconds == 20.0
+        assert rec.active_seconds == pytest.approx(20.0)
         # dead: 10->20 (10s) not counted
-        assert rec.idle_seconds == 0.0
-        assert rec.total_seconds == 20.0
-        assert rec.utilization_pct == 100.0
+        assert rec.idle_seconds == pytest.approx(0.0)
+        assert rec.total_seconds == pytest.approx(20.0)
+        assert rec.utilization_pct == pytest.approx(100.0)
 
 
 # ---------------------------------------------------------------------------
@@ -126,11 +128,11 @@ class TestSummarizeUtilization:
     def test_empty_list(self) -> None:
         summary = summarize_utilization([])
         assert summary.total_agents == 0
-        assert summary.avg_utilization_pct == 0.0
+        assert summary.avg_utilization_pct == pytest.approx(0.0)
         assert summary.most_utilized == ""
         assert summary.least_utilized == ""
-        assert summary.total_active_seconds == 0.0
-        assert summary.total_idle_seconds == 0.0
+        assert summary.total_active_seconds == pytest.approx(0.0)
+        assert summary.total_idle_seconds == pytest.approx(0.0)
 
     def test_multiple_records(self) -> None:
         r1 = UtilizationRecord(
@@ -153,11 +155,11 @@ class TestSummarizeUtilization:
         )
         summary = summarize_utilization([r1, r2])
         assert summary.total_agents == 2
-        assert summary.avg_utilization_pct == 55.0
+        assert summary.avg_utilization_pct == pytest.approx(55.0)
         assert summary.most_utilized == "a1"
         assert summary.least_utilized == "a2"
-        assert summary.total_active_seconds == 110.0
-        assert summary.total_idle_seconds == 90.0
+        assert summary.total_active_seconds == pytest.approx(110.0)
+        assert summary.total_idle_seconds == pytest.approx(90.0)
 
     def test_single_record(self) -> None:
         r = UtilizationRecord(

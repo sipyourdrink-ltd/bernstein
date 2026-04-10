@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.cli.cost_estimate import (
     COST_PER_COMPLEXITY,
     TaskCostEstimate,
@@ -32,8 +34,8 @@ def test_task_cost_estimate_creation() -> None:
     assert est.role == "qa"
     assert est.complexity == "medium"
     assert est.scope == "medium"
-    assert est.estimated_cost_usd == 0.08
-    assert est.confidence == 0.6
+    assert est.estimated_cost_usd == pytest.approx(0.08)
+    assert est.confidence == pytest.approx(0.6)
     assert est.estimated_tokens == 8000
 
 
@@ -153,10 +155,10 @@ def test_estimate_run_cost_aggregation() -> None:
 def test_estimate_run_cost_empty_tasks() -> None:
     """Empty task list produces zero totals."""
     run = estimate_run_cost([])
-    assert run.total_estimated_usd == 0.0
+    assert run.total_estimated_usd == pytest.approx(0.0)
     assert run.over_budget is False
-    assert run.confidence_low == 0.0
-    assert run.confidence_high == 0.0
+    assert run.confidence_low == pytest.approx(0.0)
+    assert run.confidence_high == pytest.approx(0.0)
 
 
 def test_estimate_run_cost_confidence_bounds() -> None:
@@ -178,7 +180,7 @@ def test_estimate_run_cost_within_budget() -> None:
     tasks = _sample_tasks()
     run = estimate_run_cost(tasks, budget=100.0)
     assert run.over_budget is False
-    assert run.budget_usd == 100.0
+    assert run.budget_usd == pytest.approx(100.0)
 
 
 def test_estimate_run_cost_over_budget() -> None:

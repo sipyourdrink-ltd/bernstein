@@ -31,7 +31,7 @@ class TestSandboxProfile:
         assert p.writable_paths == []
         assert p.network_enabled is False
         assert p.memory_limit_mb == 512
-        assert p.cpu_limit == 1.0
+        assert p.cpu_limit == pytest.approx(1.0)
         assert p.timeout_seconds == 300
 
     def test_frozen(self) -> None:

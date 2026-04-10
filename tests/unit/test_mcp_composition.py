@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from bernstein.core.mcp_composition import (
@@ -90,7 +91,7 @@ class TestCompositionResult:
         )
         assert cr.composite_name == "chain"
         assert len(cr.step_results) == 2
-        assert cr.total_duration_ms == 30.0
+        assert cr.total_duration_ms == pytest.approx(30.0)
 
 
 # ---------------------------------------------------------------------------

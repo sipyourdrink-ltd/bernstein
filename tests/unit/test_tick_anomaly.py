@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.tick_anomaly import AnomalyAlert, TickAnomalyDetector, TickSample
 
 
@@ -9,8 +11,8 @@ class TestTickSample:
     def test_frozen(self) -> None:
         sample = TickSample(tick_number=1, duration_ms=100.0, timestamp=1000.0)
         assert sample.tick_number == 1
-        assert sample.duration_ms == 100.0
-        assert sample.timestamp == 1000.0
+        assert sample.duration_ms == pytest.approx(100.0)
+        assert sample.timestamp == pytest.approx(1000.0)
 
     def test_immutable(self) -> None:
         sample = TickSample(tick_number=1, duration_ms=100.0, timestamp=1000.0)
@@ -31,9 +33,9 @@ class TestAnomalyAlert:
             message="slow tick",
         )
         assert alert.tick_number == 5
-        assert alert.duration_ms == 5000.0
-        assert alert.threshold_ms == 300.0
-        assert alert.percentile == 95.0
+        assert alert.duration_ms == pytest.approx(5000.0)
+        assert alert.threshold_ms == pytest.approx(300.0)
+        assert alert.percentile == pytest.approx(95.0)
         assert alert.message == "slow tick"
 
 
@@ -55,7 +57,7 @@ class TestTickAnomalyDetector:
         assert result is not None
         assert isinstance(result, AnomalyAlert)
         assert result.tick_number == 21
-        assert result.duration_ms == 5000.0
+        assert result.duration_ms == pytest.approx(5000.0)
 
     def test_no_alert_before_min_samples(self) -> None:
         """No alerts emitted until min_samples threshold is met."""
@@ -93,8 +95,8 @@ class TestTickAnomalyDetector:
         result = detector.check(tick_number=30, duration_ms=1000.0)
         assert result is not None
         assert result.tick_number == 30
-        assert result.duration_ms == 1000.0
-        assert result.percentile == 95.0
+        assert result.duration_ms == pytest.approx(1000.0)
+        assert result.percentile == pytest.approx(95.0)
         assert result.threshold_ms > 0
         assert "1000.0ms" in result.message
 
@@ -107,11 +109,11 @@ class TestTickAnomalyDetector:
 
         s = detector.stats()
         assert set(s.keys()) == {"mean", "median", "p95", "p99", "min", "max", "count"}
-        assert s["count"] == 50.0
-        assert s["min"] == 10.0
-        assert s["max"] == 500.0
-        assert s["mean"] == 255.0  # mean of 10,20,...,500
-        assert s["median"] == 255.0  # median of 10,20,...,500
+        assert s["count"] == pytest.approx(50.0)
+        assert s["min"] == pytest.approx(10.0)
+        assert s["max"] == pytest.approx(500.0)
+        assert s["mean"] == pytest.approx(255.0)  # mean of 10,20,...,500
+        assert s["median"] == pytest.approx(255.0)  # median of 10,20,...,500
         assert s["p95"] > s["median"]
         assert s["p99"] > s["p95"]
 
@@ -119,9 +121,9 @@ class TestTickAnomalyDetector:
         """Stats on empty detector returns zeroes."""
         detector = TickAnomalyDetector()
         s = detector.stats()
-        assert s["count"] == 0.0
-        assert s["mean"] == 0.0
-        assert s["p95"] == 0.0
+        assert s["count"] == pytest.approx(0.0)
+        assert s["mean"] == pytest.approx(0.0)
+        assert s["p95"] == pytest.approx(0.0)
 
     def test_sliding_window_eviction(self) -> None:
         """Oldest samples are evicted when window_size is exceeded."""
@@ -137,9 +139,9 @@ class TestTickAnomalyDetector:
 
         # Stats should reflect only the fast ticks
         s = detector.stats()
-        assert s["count"] == 10.0
-        assert s["max"] == 50.0
-        assert s["min"] == 50.0
+        assert s["count"] == pytest.approx(10.0)
+        assert s["max"] == pytest.approx(50.0)
+        assert s["min"] == pytest.approx(50.0)
 
         # A 100ms tick should now be an anomaly (all samples are 50ms)
         result = detector.check(tick_number=20, duration_ms=100.0)
@@ -152,11 +154,11 @@ class TestTickAnomalyDetector:
         for i in range(20):
             detector.record(tick_number=i, duration_ms=100.0)
 
-        assert detector.stats()["count"] == 20.0
+        assert detector.stats()["count"] == pytest.approx(20.0)
 
         detector.reset()
 
-        assert detector.stats()["count"] == 0.0
+        assert detector.stats()["count"] == pytest.approx(0.0)
         # After reset, no alert even for extreme values (below min_samples)
         result = detector.check(tick_number=99, duration_ms=99999.0)
         assert result is None
@@ -164,21 +166,21 @@ class TestTickAnomalyDetector:
     def test_get_percentile_empty(self) -> None:
         """get_percentile on empty detector returns 0.0."""
         detector = TickAnomalyDetector()
-        assert detector.get_percentile(95.0) == 0.0
+        assert detector.get_percentile(95.0) == pytest.approx(0.0)
 
     def test_get_percentile_single_sample(self) -> None:
         """get_percentile with one sample returns that sample's duration."""
         detector = TickAnomalyDetector()
         detector.record(tick_number=1, duration_ms=42.0)
-        assert detector.get_percentile(50.0) == 42.0
-        assert detector.get_percentile(99.0) == 42.0
+        assert detector.get_percentile(50.0) == pytest.approx(42.0)
+        assert detector.get_percentile(99.0) == pytest.approx(42.0)
 
     def test_record_default_timestamp(self) -> None:
         """Record without explicit timestamp uses time.time()."""
         detector = TickAnomalyDetector()
         detector.record(tick_number=1, duration_ms=100.0)
         s = detector.stats()
-        assert s["count"] == 1.0
+        assert s["count"] == pytest.approx(1.0)
 
     def test_alert_message_format(self) -> None:
         """Alert message includes tick number and threshold info."""

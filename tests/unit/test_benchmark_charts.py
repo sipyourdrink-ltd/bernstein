@@ -66,9 +66,9 @@ class TestBenchmarkDataPoint:
         point = _SAMPLE_POINT_A
         assert point.run_id == "run-001"
         assert point.timestamp == "2026-04-01T10:00:00Z"
-        assert point.completion_time_s == 12.5
-        assert point.cost_usd == 0.035
-        assert point.quality_pass_rate == 0.92
+        assert point.completion_time_s == pytest.approx(12.5)
+        assert point.cost_usd == pytest.approx(0.035)
+        assert point.quality_pass_rate == pytest.approx(0.92)
         assert point.tasks_total == 10
         assert point.tasks_passed == 9
 
