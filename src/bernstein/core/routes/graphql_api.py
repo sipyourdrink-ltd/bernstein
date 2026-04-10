@@ -68,7 +68,7 @@ def parse_graphql_query(query: str) -> ParsedQuery:
     if brace_start < 0:
         return ParsedQuery()
 
-    operation = inner[:min(paren_start, brace_start) if paren_start >= 0 else brace_start].strip()
+    operation = inner[: min(paren_start, brace_start) if paren_start >= 0 else brace_start].strip()
     if not operation or not operation.isidentifier():
         return ParsedQuery()
 
