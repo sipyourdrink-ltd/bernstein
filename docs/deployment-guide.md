@@ -13,6 +13,9 @@ How to run Bernstein in different environments. Each section is self-contained w
 - [Environment variable reference](#environment-variables)
 - [Zero-downtime upgrades (blue-green)](#zero-downtime-upgrades-blue-green)
 - [Upgrading](#upgrading)
+- [Troubleshooting deployments](#troubleshooting-deployments)
+
+> **New to Bernstein?** Complete the [Quickstart Tutorial](QUICKSTART_TUTORIAL.md) first to see orchestration in action before deploying.
 
 ---
 
@@ -94,6 +97,16 @@ context_files:
 bernstein doctor        # checks dependencies, API keys, git setup
 bernstein status        # shows task server state
 ```
+
+### Smoke test
+
+Run the zero-config demo to confirm everything works end-to-end before using it on real code:
+
+```bash
+bernstein quickstart --keep    # runs 3 tasks on a demo project, keeps output
+```
+
+Expected: all 3 tasks complete and a summary table prints with elapsed time and cost.
 
 ---
 
@@ -201,6 +214,16 @@ gh secret set OPENAI_API_KEY --body "sk-..."
 ```
 
 Never commit API keys to your repository. Use GitHub Secrets for all provider credentials.
+
+### Verify CI output
+
+A successful run uploads the `.sdd/` state artifact and posts a markdown summary. In the Actions UI you should see:
+
+- A green `bernstein` job
+- `.sdd/` uploaded under Artifacts
+- A step summary with task counts, duration, and cost
+
+If the job fails with a non-zero exit, check the "Run plan" step logs. The most common causes are missing secrets and expired API keys.
 
 ---
 
@@ -389,6 +412,24 @@ docker compose logs -f bernstein-orchestrator
 ```bash
 docker compose down          # stop containers, keep volumes
 docker compose down -v       # stop and delete all data volumes
+```
+
+### Verify the cluster is healthy
+
+```bash
+# All containers should be "Up"
+docker compose ps
+
+# Task server health endpoint
+curl http://localhost:8052/health
+
+# Check the dashboard
+open http://localhost:8052/dashboard
+```
+
+Expected health response:
+```json
+{"status": "ok", "tasks_open": 0, "tasks_claimed": 0, "tasks_done": 0}
 ```
 
 ---
@@ -868,3 +909,159 @@ State format is forward-compatible between minor versions. For major version upg
 To roll back: `pip install bernstein==<previous-version>` and restore `.sdd.backup/`.
 
 For zero-downtime upgrades on production servers, use the [blue-green procedure](#zero-downtime-upgrades-blue-green) above.
+
+---
+
+## Troubleshooting deployments
+
+### Task server health check fails on startup
+
+The server may be waiting for PostgreSQL or Redis to be ready. Check dependencies first:
+
+```bash
+# Docker Compose
+docker compose logs postgres
+docker compose logs redis
+
+# Kubernetes
+kubectl logs -n bernstein -l app.kubernetes.io/component=postgresql
+kubectl get events -n bernstein --sort-by='.lastTimestamp'
+```
+
+If the server crashes immediately, check the server log directly:
+
+```bash
+# Local
+cat .sdd/runtime/logs/server.log
+
+# Docker
+docker logs bernstein-server
+
+# Kubernetes
+kubectl logs -n bernstein deploy/bernstein-server
+```
+
+### Workers are not claiming tasks
+
+**Check 1: Auth token mismatch.** Every node must share the same `BERNSTEIN_AUTH_TOKEN`:
+
+```bash
+# Docker Compose — inspect worker env
+docker compose exec bernstein-worker env | grep AUTH_TOKEN
+
+# Kubernetes — decode the secret
+kubectl get secret bernstein-auth -n bernstein -o jsonpath='{.data.BERNSTEIN_AUTH_TOKEN}' | base64 -d
+```
+
+**Check 2: Worker cannot reach the task server.** Verify the `BERNSTEIN_SERVER_URL` is correct and reachable from the worker:
+
+```bash
+# From inside the worker container
+docker compose exec bernstein-worker curl -s http://bernstein-server:8052/health
+
+# Kubernetes
+kubectl exec -n bernstein deploy/bernstein-worker -- curl -s http://bernstein-server:8052/health
+```
+
+**Check 3: No open tasks.** If the backlog is empty, workers have nothing to do:
+
+```bash
+curl http://localhost:8052/tasks?status=open
+```
+
+### Port 8052 is already in use
+
+A previous Bernstein session did not shut down cleanly. Find and stop it:
+
+```bash
+# Local — use Bernstein's own stop command
+bernstein stop --force
+
+# Or find the PID manually
+cat .sdd/runtime/pids/server.json
+kill <pid>
+
+# Or kill by port
+lsof -ti:8052 | xargs kill -9
+```
+
+### Agents spawn but exit immediately
+
+Agents exit when they have no work or cannot authenticate. Check logs:
+
+```bash
+bernstein logs -f                       # follow all agent output
+bernstein logs -a claude                # filter by agent name
+tail -f .sdd/runtime/logs/*.log         # raw log files
+```
+
+Common causes:
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `AuthenticationError` in log | API key missing or expired | Re-export `ANTHROPIC_API_KEY` etc. |
+| Agent exits with code 1 immediately | CLI not authenticated | Run `claude login` / `codex login` |
+| `Connection refused` to task server | Server not started | Check `bernstein status` |
+| Agent claims task then fails it | Task prompt too long | Reduce `scope` in task config |
+
+### Tasks stuck in "claimed" status
+
+An agent crashed before reporting completion. The task stays claimed until the janitor reclaims it (default: 5 minutes) or you force a reset:
+
+```bash
+# Auto-fix stale locks
+bernstein doctor --fix
+
+# Or restart cleanly
+bernstein stop && bernstein start
+```
+
+Stale claimed tasks appear in `bernstein status` with a "claimed for >5m" annotation.
+
+### Docker volume permissions
+
+If the server cannot write to `.sdd/`, the named volume may be owned by root:
+
+```bash
+docker compose exec bernstein-server ls -la /workspace/.sdd
+# If root-owned:
+docker compose exec --user root bernstein-server chown -R bernstein:bernstein /workspace/.sdd
+```
+
+### Kubernetes pod stuck in `Pending`
+
+Usually a resource or PersistentVolumeClaim issue:
+
+```bash
+kubectl describe pod -n bernstein -l app.kubernetes.io/name=bernstein
+kubectl get pvc -n bernstein
+```
+
+If `PVC` is in `Pending`, your cluster may not have a default StorageClass:
+
+```bash
+kubectl get storageclass
+# Set one as default if none exists:
+kubectl patch storageclass <name> -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+```
+
+### Grafana shows no data
+
+Check that Prometheus is scraping the task server:
+
+```bash
+# Docker Compose — open Prometheus targets page
+open http://localhost:9090/targets
+
+# Kubernetes
+kubectl port-forward -n bernstein svc/prometheus 9090:9090 &
+open http://localhost:9090/targets
+```
+
+If `bernstein-server` shows as `DOWN`, the metrics endpoint is not reachable. Verify the server is running and the Prometheus scrape config points to the correct host and port.
+
+### Still stuck?
+
+1. Run `bernstein doctor` — it checks the most common issues automatically.
+2. Check the [Troubleshooting guide](TROUBLESHOOTING.md) for agent-level issues (API errors, quality gate failures, cost overruns).
+3. Open an issue at [chernistry/bernstein](https://github.com/chernistry/bernstein/issues) with the output of `bernstein doctor --json`.
