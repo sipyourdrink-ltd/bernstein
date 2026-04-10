@@ -62,7 +62,7 @@ class TaskEvent:
     kind: TaskEventKind
     timestamp: str
     actor: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict[str, Any])
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize this event to a plain dictionary."""
