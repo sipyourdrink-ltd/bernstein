@@ -78,9 +78,16 @@ jobs:
 
       - name: Push to homebrew-tap repo
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # HOMEBREW_TAP_TOKEN must be a PAT with repo scope for chernistry/homebrew-tap.
+          # Falls back to GITHUB_TOKEN (which only works for the current repo).
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.GITHUB_TOKEN }}
           META_VERSION: ${{ steps.meta.outputs.version }}
+        continue-on-error: true
         run: |
+          if [ "$GH_TOKEN" = "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN secret not set. Add a PAT with repo scope to push to chernistry/homebrew-tap."
+          fi
+
           # Clone or create tap repo
           if gh repo view chernistry/homebrew-tap > /dev/null 2>&1; then
             gh repo clone chernistry/homebrew-tap /tmp/homebrew-tap

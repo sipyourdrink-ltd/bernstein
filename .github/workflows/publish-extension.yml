@@ -69,8 +69,10 @@ jobs:
         run: echo "path=$(ls packages/vscode/*.vsix)" >> "$GITHUB_OUTPUT"
 
       # Publish to VS Code Marketplace (requires VS_MARKETPLACE_TOKEN secret)
+      # continue-on-error: version may already exist if re-running for same tag
       - name: Publish to VS Code Marketplace
         if: env.VS_MARKETPLACE_TOKEN != ''
+        continue-on-error: true
         uses: HaaLeo/publish-vscode-extension@4004fc217b5ac892b15a1c3cbe6458de97242dde # v2
         with:
           pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
@@ -78,8 +80,10 @@ jobs:
           extensionFile: ${{ steps.vsix.outputs.path }}
 
       # Publish to Open VSX — used by Cursor, VSCodium, Gitpod (requires OPEN_VSX_TOKEN secret)
+      # continue-on-error: version may already exist if re-running for same tag
       - name: Publish to Open VSX
         if: env.OPEN_VSX_TOKEN != ''
+        continue-on-error: true
         uses: HaaLeo/publish-vscode-extension@4004fc217b5ac892b15a1c3cbe6458de97242dde # v2
         with:
           pat: ${{ secrets.OPEN_VSX_TOKEN }}

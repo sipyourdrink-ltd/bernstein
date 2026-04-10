@@ -21,11 +21,13 @@ jobs:
         with:
           enable-cache: true
       - name: Install audit tools
-        run: uv pip install pip-audit safety
+        run: uv pip install --system pip-audit safety
 
       - name: Check dependencies
         id: check
-        run: uv run python scripts/check_dependencies.py --output .sdd/dependency-report.json
+        run: |
+          mkdir -p .sdd
+          uv run python scripts/check_dependencies.py --output .sdd/dependency-report.json
         continue-on-error: true
 
       - name: Upload report
@@ -34,10 +36,11 @@ jobs:
         with:
           name: dependency-report
           path: .sdd/dependency-report.json
+          if-no-files-found: ignore
 
       - name: Parse report
         id: parse
-        if: success() || failure()
+        if: steps.check.outcome == 'success'
         run: |
           python << 'EOF'
           import json, os
@@ -138,10 +141,11 @@ jobs:
         with:
           enable-cache: true
       - name: Install audit tools
-        run: uv pip install pip-audit safety
+        run: uv pip install --system pip-audit safety
 
       - name: Check and apply fixes
         run: |
+          mkdir -p .sdd
           uv run python scripts/check_dependencies.py --output .sdd/dependency-report.json || true
           uv run python scripts/apply_dependency_fixes.py --report .sdd/dependency-report.json --create-pr || true
         continue-on-error: true

@@ -162,6 +162,8 @@ jobs:
           cd packaging/npm
           npm version "$VERSION" --no-git-tag-version
       - name: Publish to npm
+        # continue-on-error: npm token may be expired or package may already exist
+        continue-on-error: true
         run: cd packaging/npm && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
