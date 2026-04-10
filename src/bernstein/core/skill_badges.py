@@ -25,10 +25,10 @@ class SkillLevel(IntEnum):
 
 # Display mapping: filled vs hollow stars per level.
 _STARS: dict[SkillLevel, str] = {
-    SkillLevel.NONE: "\u2606\u2606\u2606",       # three hollow stars
-    SkillLevel.BASIC: "\u2605\u2606\u2606",       # one filled, two hollow
+    SkillLevel.NONE: "\u2606\u2606\u2606",  # three hollow stars
+    SkillLevel.BASIC: "\u2605\u2606\u2606",  # one filled, two hollow
     SkillLevel.PROFICIENT: "\u2605\u2605\u2606",  # two filled, one hollow
-    SkillLevel.EXPERT: "\u2605\u2605\u2605",      # three filled
+    SkillLevel.EXPERT: "\u2605\u2605\u2605",  # three filled
 }
 
 

@@ -36,9 +36,7 @@ if TYPE_CHECKING:
 # trace-id  = 32HEXDIG
 # parent-id = 16HEXDIG  (a.k.a. span-id)
 # flags     = 2HEXDIG   ("01" = sampled)
-_TRACEPARENT_RE = re.compile(
-    r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$"
-)
+_TRACEPARENT_RE = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
 
 #: Current W3C traceparent version.
 _VERSION = "00"
