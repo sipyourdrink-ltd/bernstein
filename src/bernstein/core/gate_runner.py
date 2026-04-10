@@ -34,6 +34,7 @@ GateStatus = Literal["pass", "fail", "warn", "timeout", "skipped", "bypassed"]
 
 VALID_GATE_NAMES = frozenset(
     {
+        "auto_format",
         "lint",
         "type_check",
         "tests",
@@ -194,6 +195,8 @@ def _migration_downgrade_is_pass(source: str) -> bool:
 def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]:
     """Build the implicit pipeline used when the seed file omits one."""
     pipeline: list[GatePipelineStep] = []
+    if config.auto_format:
+        pipeline.append(GatePipelineStep(name="auto_format", required=False, condition="any_changed"))
     if config.lint:
         pipeline.append(GatePipelineStep(name="lint", required=True, condition="always"))
     if config.type_check:
@@ -374,6 +377,9 @@ class GateRunner:
         changed_files: list[str],
     ) -> GateResult:
         from bernstein.core import quality_gates as qg
+
+        if step.name == "auto_format":
+            return await asyncio.to_thread(self._run_auto_format_gate_sync, step, run_dir, changed_files)
 
         if step.name == "lint":
             command = self._lint_command(step, changed_files)
@@ -1018,6 +1024,149 @@ class GateRunner:
             details=detail,
             metadata={"threshold": threshold, "oversized_files": len(oversized)},
         )
+
+    def _run_auto_format_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Auto-format changed files in place before lint runs.
+
+        Runs language-appropriate formatters on changed files only (not the
+        whole repo).  The gate always passes — it fixes rather than blocks.
+        Any files reformatted are reported in the gate details so that the
+        commit/push step can stage the changes.
+
+        Supported languages:
+        - Python: ``ruff format`` (configured via ``auto_format_python_command``)
+        - JS/TS:  ``prettier --write`` (configured via ``auto_format_js_command``,
+          only when ``prettier`` is on PATH)
+        - Rust:   ``rustfmt`` (configured via ``auto_format_rust_command``,
+          only when ``rustfmt`` is on PATH)
+        """
+        import shutil
+
+        if not changed_files:
+            return self._skipped(step, "No changed files to format.")
+
+        formatted: list[str] = []
+        skipped_langs: list[str] = []
+
+        # --- Python: ruff format ---
+        py_files = [f for f in changed_files if f.endswith(".py")]
+        if py_files:
+            py_cmd_base = self._config.auto_format_python_command
+            py_exe = shlex.split(py_cmd_base)[0] if py_cmd_base else "ruff"
+            # ruff is invoked via "uv run ruff" in this project, but we honour
+            # whatever command is configured.  Resolve the first token via PATH;
+            # if it's "uv" we always try (uv is present in the project env).
+            if py_exe == "uv" or shutil.which(py_exe) is not None:
+                py_result = self._run_formatter_sync(
+                    py_cmd_base, py_files, run_dir, lang="Python"
+                )
+                if py_result:
+                    formatted.append(py_result)
+            else:
+                skipped_langs.append(f"Python ({py_exe!r} not found)")
+
+        # --- JS/TS: prettier ---
+        js_exts = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+        js_files = [f for f in changed_files if Path(f).suffix in js_exts]
+        if js_files:
+            js_cmd_base = self._config.auto_format_js_command
+            js_exe = shlex.split(js_cmd_base)[0] if js_cmd_base else "prettier"
+            if shutil.which(js_exe) is not None:
+                js_result = self._run_formatter_sync(
+                    js_cmd_base, js_files, run_dir, lang="JS/TS"
+                )
+                if js_result:
+                    formatted.append(js_result)
+            else:
+                skipped_langs.append(f"JS/TS ({js_exe!r} not found)")
+
+        # --- Rust: rustfmt ---
+        rs_files = [f for f in changed_files if f.endswith(".rs")]
+        if rs_files:
+            rs_cmd_base = self._config.auto_format_rust_command
+            rs_exe = shlex.split(rs_cmd_base)[0] if rs_cmd_base else "rustfmt"
+            if shutil.which(rs_exe) is not None:
+                rs_result = self._run_formatter_sync(
+                    rs_cmd_base, rs_files, run_dir, lang="Rust"
+                )
+                if rs_result:
+                    formatted.append(rs_result)
+            else:
+                skipped_langs.append(f"Rust ({rs_exe!r} not found)")
+
+        if not py_files and not js_files and not rs_files:
+            return self._skipped(step, "No formattable files changed (Python/JS/TS/Rust).")
+
+        parts: list[str] = []
+        if formatted:
+            parts.append("; ".join(formatted))
+        else:
+            parts.append("all changed files already well-formatted")
+        if skipped_langs:
+            parts.append(f"skipped: {', '.join(skipped_langs)}")
+
+        return GateResult(
+            name=step.name,
+            status="pass",
+            required=step.required,
+            blocked=False,
+            cached=False,
+            duration_ms=0,
+            details=". ".join(parts),
+            metadata={"formatted_langs": [r.split(":")[0] for r in formatted]},
+        )
+
+    def _run_formatter_sync(
+        self,
+        base_command: str,
+        files: list[str],
+        run_dir: Path,
+        lang: str,
+    ) -> str | None:
+        """Run a formatter on the specified files; return a summary string or None."""
+        cmd = shlex.split(base_command) + files
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=run_dir,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+            logger.warning("auto_format: %s formatter error: %s", lang, exc)
+            return None
+
+        if proc.returncode not in (0, 1):
+            # exit code 1 from ruff means "files were changed", which is fine;
+            # anything else is unexpected but we still don't block.
+            logger.warning(
+                "auto_format: %s formatter exited %d: %s",
+                lang,
+                proc.returncode,
+                (proc.stderr or proc.stdout)[:200],
+            )
+            return None
+
+        # Count reformatted files by inspecting stdout (ruff reports "N file(s) reformatted")
+        output = (proc.stdout or "").strip()
+        reformatted = 0
+        if "reformatted" in output:
+            for token in output.split():
+                try:
+                    reformatted = int(token)
+                    break
+                except ValueError:
+                    continue
+
+        if reformatted:
+            return f"{lang}: {reformatted} file(s) reformatted"
+        return None
 
     async def _run_integration_test_gen_gate(
         self,
