@@ -311,6 +311,7 @@ class SeedConfig:
     internal_llm_provider: str = "openrouter_free"
     internal_llm_model: str = "nvidia/nemotron-3-super-120b-a12b"
     model_fallback: ModelFallbackSeedConfig | None = None
+    org_policies: list[str] = field(default_factory=list)
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -1410,6 +1411,12 @@ def parse_seed(path: Path) -> SeedConfig:
 
     model_fallback = _parse_model_fallback(data.get("model_fallback"))
 
+    # --- Org policies ---
+    org_policies_raw: object = data.get("org_policies", [])
+    if not isinstance(org_policies_raw, list):
+        raise SeedError(f"org_policies must be a list of file paths, got: {type(org_policies_raw).__name__}")
+    org_policies: list[str] = [str(p) for p in org_policies_raw]
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -1453,6 +1460,7 @@ def parse_seed(path: Path) -> SeedConfig:
         internal_llm_provider=internal_llm_provider_raw,
         internal_llm_model=internal_llm_model_raw,
         model_fallback=model_fallback,
+        org_policies=org_policies,
     )
 
 
