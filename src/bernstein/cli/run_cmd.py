@@ -757,7 +757,7 @@ def _make_profile_ctx(profile: bool, workdir: Path) -> contextlib.AbstractContex
     return contextlib.nullcontext()
 
 
-def _exec_restart() -> None:
+def exec_restart() -> None:
     """Re-exec the current process as ``bernstein run`` (full stack restart).
 
     On macOS/Linux, uses ``os.execv`` which replaces the current process
@@ -806,7 +806,7 @@ def _finalize_run_output(*, quiet: bool) -> None:
             # Hot restart: server+orchestrator already killed by the TUI,
             # re-exec the full `bernstein run` so everything restarts cleanly.
             if getattr(app, "_restart_on_exit", False):
-                _exec_restart()
+                exec_restart()
         except Exception:
             # Textual failed at runtime -- fall through to fallback
             _try_fallback_display()

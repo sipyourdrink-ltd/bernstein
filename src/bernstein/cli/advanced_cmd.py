@@ -92,9 +92,9 @@ def live(interval: float, classic: bool, no_splash: bool) -> None:
         # Hot restart: server+orchestrator already killed by the TUI,
         # re-exec the full `bernstein run` so everything restarts cleanly.
         if getattr(app, "_restart_on_exit", False):
-            from bernstein.cli.run_cmd import _exec_restart
+            from bernstein.cli.run_cmd import exec_restart
 
-            _exec_restart()
+            exec_restart()
         return
 
     # -- classic Rich Live display --
