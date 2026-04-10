@@ -56,8 +56,9 @@ class TestBuildHeaders:
             allowed_origins=["https://example.com", "https://notion.so"],
         )
         csp = build_csp_header(config)
-        assert " https://example.com" in csp or csp.startswith("https://example.com")
-        assert " https://notion.so" in csp or csp.startswith("https://notion.so")
+        csp_parts = csp.split()
+        assert "https://example.com" in csp_parts
+        assert "https://notion.so" in csp_parts
 
 
 class TestLoadConfig:

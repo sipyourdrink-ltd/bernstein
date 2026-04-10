@@ -89,7 +89,8 @@ class TestFormatHelpSuggestion:
     def test_format_contains_base_url(self) -> None:
         link = HELP_LINKS[0]
         result = format_help_suggestion(link)
-        assert "https://bernstein.readthedocs.io" in result
+        url_part = result.removeprefix("See: ")
+        assert url_part.startswith("https://bernstein.readthedocs.io")
 
 
 class TestEnrichErrorMessage:

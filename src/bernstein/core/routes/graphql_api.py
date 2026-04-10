@@ -63,7 +63,7 @@ def parse_graphql_query(query: str) -> ParsedQuery:
     inner = query.strip().strip("{").strip("}").strip()
 
     # Extract operation name, optional args, and field block
-    match = re.match(r"(\w+)\s{0,10}(?:\(([^)]*)\))?\s{0,10}\{([^}]*)\}", inner)
+    match = re.match(r"(\w+)\s{0,10}(?:\(([^)]{0,500})\))?\s{0,10}\{([^}]{0,2000})\}", inner)
     if not match:
         return ParsedQuery()
 
