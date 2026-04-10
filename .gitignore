@@ -14,6 +14,9 @@ build/
 .env.*
 .env.local
 
+# Superpowers plans (local only)
+docs/superpowers/
+
 # IDE and Editor directories/files
 .DS_Store
 .idea/

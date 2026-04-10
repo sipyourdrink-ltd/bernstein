@@ -103,8 +103,7 @@ class TokenUsage:
         raw_tags: object = d.get("cost_tags", {})
         tags: dict[str, str]
         if isinstance(raw_tags, dict):
-            raw_dict: dict[str, Any] = dict(raw_tags)
-            tags = {str(k): str(v) for k, v in raw_dict.items()}
+            tags = {str(k): str(v) for k, v in cast("dict[str, Any]", raw_tags).items()}
         else:
             tags = {}
         return cls(
