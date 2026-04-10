@@ -1062,9 +1062,7 @@ class GateRunner:
             # whatever command is configured.  Resolve the first token via PATH;
             # if it's "uv" we always try (uv is present in the project env).
             if py_exe == "uv" or shutil.which(py_exe) is not None:
-                py_result = self._run_formatter_sync(
-                    py_cmd_base, py_files, run_dir, lang="Python"
-                )
+                py_result = self._run_formatter_sync(py_cmd_base, py_files, run_dir, lang="Python")
                 if py_result:
                     formatted.append(py_result)
             else:
@@ -1077,9 +1075,7 @@ class GateRunner:
             js_cmd_base = self._config.auto_format_js_command
             js_exe = shlex.split(js_cmd_base)[0] if js_cmd_base else "prettier"
             if shutil.which(js_exe) is not None:
-                js_result = self._run_formatter_sync(
-                    js_cmd_base, js_files, run_dir, lang="JS/TS"
-                )
+                js_result = self._run_formatter_sync(js_cmd_base, js_files, run_dir, lang="JS/TS")
                 if js_result:
                     formatted.append(js_result)
             else:
@@ -1091,9 +1087,7 @@ class GateRunner:
             rs_cmd_base = self._config.auto_format_rust_command
             rs_exe = shlex.split(rs_cmd_base)[0] if rs_cmd_base else "rustfmt"
             if shutil.which(rs_exe) is not None:
-                rs_result = self._run_formatter_sync(
-                    rs_cmd_base, rs_files, run_dir, lang="Rust"
-                )
+                rs_result = self._run_formatter_sync(rs_cmd_base, rs_files, run_dir, lang="Rust")
                 if rs_result:
                     formatted.append(rs_result)
             else:
