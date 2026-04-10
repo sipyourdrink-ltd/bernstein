@@ -233,6 +233,8 @@ exclude = [
     "src/bernstein/core/resource_limits.py",
     "src/bernstein/cli/compliance_cmd.py",
     "src/bernstein/core/vault_injector.py",
+    "src/bernstein/core/hook_protocol.py",
+    "src/bernstein/core/hook_templates.py",
 ]
 
 [tool.pytest.ini_options]
