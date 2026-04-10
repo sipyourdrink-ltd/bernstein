@@ -1431,6 +1431,11 @@ def create_app(
 
     application.include_router(slo_router)
 
+    # Custom metrics (OBS-148): user-defined formula-based KPIs
+    from bernstein.core.routes.custom_metrics import router as custom_metrics_router
+
+    application.include_router(custom_metrics_router)
+
     # SBOM generation and artifact listing (supply-chain security)
     from bernstein.core.routes.sbom import router as sbom_router
 

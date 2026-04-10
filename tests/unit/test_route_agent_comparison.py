@@ -198,7 +198,9 @@ class TestAgentComparisonRoute:
         store = comparison_app.state.store
         store.agents = {
             "agent-1": _Agent(id="agent-1", provider="claude", exit_code=0),
-            "agent-2": _Agent(id="agent-2", provider="codex", model_config=_ModelConfig(model="gpt-5.4-mini"), exit_code=1),
+            "agent-2": _Agent(
+                id="agent-2", provider="codex", model_config=_ModelConfig(model="gpt-5.4-mini"), exit_code=1
+            ),
         }
 
         client = TestClient(comparison_app)

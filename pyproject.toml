@@ -261,6 +261,9 @@ exclude = [
     "src/bernstein/core/log_search.py",
     "src/bernstein/core/postmortem.py",
     "src/bernstein/core/routes/team_dashboard.py",
+    "src/bernstein/core/agent_trust.py",
+    "src/bernstein/core/custom_metrics.py",
+    "src/bernstein/core/routes/custom_metrics.py",
 ]
 
 [tool.pytest.ini_options]

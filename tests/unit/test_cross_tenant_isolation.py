@@ -122,9 +122,7 @@ class TestTaskFilteringIsolation:
         assert "task-x" not in result
         assert "task-y" in result
 
-    def test_filter_returns_empty_when_no_matching_tasks(
-        self, manager: TenantIsolationManager
-    ) -> None:
+    def test_filter_returns_empty_when_no_matching_tasks(self, manager: TenantIsolationManager) -> None:
         tasks: dict[str, Any] = {
             "task-1": FakeTask(id="task-1", tenant_id="tenant-a"),
         }
@@ -139,9 +137,7 @@ class TestTaskFilteringIsolation:
         result = manager.filter_tasks(tasks, "tenant-a")
         assert set(result.keys()) == {"t1", "t2"}
 
-    def test_default_tenant_isolation_from_named_tenant(
-        self, manager: TenantIsolationManager
-    ) -> None:
+    def test_default_tenant_isolation_from_named_tenant(self, manager: TenantIsolationManager) -> None:
         tasks: dict[str, Any] = {
             "def-task": FakeTask(id="def-task", tenant_id=DEFAULT_TENANT_ID),
             "a-task": FakeTask(id="a-task", tenant_id="tenant-a"),
@@ -302,9 +298,7 @@ class TestAuditIsolation:
 class TestQuotaIndependence:
     """Tenant A's usage does not exhaust Tenant B's quota."""
 
-    def test_tenant_a_quota_does_not_affect_tenant_b(
-        self, manager: TenantIsolationManager
-    ) -> None:
+    def test_tenant_a_quota_does_not_affect_tenant_b(self, manager: TenantIsolationManager) -> None:
         manager.register_quota("tenant-a", TenantQuota(max_tasks=2))
         manager.register_quota("tenant-b", TenantQuota(max_tasks=5))
 

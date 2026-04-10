@@ -63,6 +63,37 @@ def get_error_budget(request: Request) -> JSONResponse:
     )
 
 
+@router.get("/slo/burndown")
+def get_slo_burndown(request: Request) -> JSONResponse:
+    """Return SLO burn-down rate visualization data (OBS-150).
+
+    Provides:
+    - Current SLO compliance and error budget fraction
+    - Burn rate relative to the allowed failure rate (1.0 = on-target)
+    - Linear projection of days until the SLO is breached
+    - Sparkline data points for rendering a burn-down chart
+    - Human-readable breach projection summary
+
+    Example response::
+
+        {
+          "slo_name": "task_success",
+          "slo_target": 0.9,
+          "slo_current": 0.942,
+          "burn_rate": 0.3,
+          "burn_rate_per_day": 0.05,
+          "budget_fraction": 0.72,
+          "budget_consumed_pct": 28.0,
+          "days_to_breach": 6.1,
+          "breach_projection": "SLO will breach in 6.1 days at current rate",
+          "status": "green",
+          "sparkline": [...]
+        }
+    """
+    tracker = _get_tracker(request)
+    return JSONResponse(tracker.get_burndown_dashboard())
+
+
 @router.post("/slo/reset")
 def reset_slo_state(request: Request) -> JSONResponse:
     """Reset SLO tracker to initial state (no persisted data cleared)."""

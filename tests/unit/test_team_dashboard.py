@@ -46,9 +46,15 @@ class TestTeamDashboard:
 
     def test_with_completed_tasks(self, dashboard_app: tuple[FastAPI, TaskStore, Path]) -> None:
         app, store, _sdd = dashboard_app
-        store._tasks["t1"] = Task(id="t1", title="Build API", description="Build it", role="backend", status=TaskStatus.DONE)
-        store._tasks["t2"] = Task(id="t2", title="Write tests", description="Test it", role="qa", status=TaskStatus.DONE)
-        store._tasks["t3"] = Task(id="t3", title="Deploy", description="Deploy it", role="devops", status=TaskStatus.OPEN)
+        store._tasks["t1"] = Task(
+            id="t1", title="Build API", description="Build it", role="backend", status=TaskStatus.DONE
+        )
+        store._tasks["t2"] = Task(
+            id="t2", title="Write tests", description="Test it", role="qa", status=TaskStatus.DONE
+        )
+        store._tasks["t3"] = Task(
+            id="t3", title="Deploy", description="Deploy it", role="devops", status=TaskStatus.OPEN
+        )
 
         client = TestClient(app)
         resp = client.get("/dashboard/team")
@@ -100,15 +106,9 @@ class TestTeamDashboard:
         app, _store, sdd = dashboard_app
         merge_dir = sdd / "runtime" / "merge_queue"
         merge_dir.mkdir(parents=True)
-        (merge_dir / "m1.json").write_text(
-            json.dumps({"status": "merged", "files_changed": 5})
-        )
-        (merge_dir / "m2.json").write_text(
-            json.dumps({"status": "merged", "files_changed": 3})
-        )
-        (merge_dir / "m3.json").write_text(
-            json.dumps({"status": "pending", "files_changed": 0})
-        )
+        (merge_dir / "m1.json").write_text(json.dumps({"status": "merged", "files_changed": 5}))
+        (merge_dir / "m2.json").write_text(json.dumps({"status": "merged", "files_changed": 3}))
+        (merge_dir / "m3.json").write_text(json.dumps({"status": "pending", "files_changed": 0}))
 
         client = TestClient(app)
         resp = client.get("/dashboard/team")
@@ -129,9 +129,7 @@ class TestTeamDashboard:
         costs_dir = sdd / "runtime" / "costs"
         costs_dir.mkdir(parents=True)
         (costs_dir / "bad.json").write_text("not json at all")
-        (costs_dir / "good.json").write_text(
-            json.dumps({"total_cost_usd": 2.0, "budget_usd": 10.0, "usages": []})
-        )
+        (costs_dir / "good.json").write_text(json.dumps({"total_cost_usd": 2.0, "budget_usd": 10.0, "usages": []}))
 
         client = TestClient(app)
         resp = client.get("/dashboard/team")

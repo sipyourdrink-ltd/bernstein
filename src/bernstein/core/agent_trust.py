@@ -318,22 +318,16 @@ class TrustEvaluator:
             return False, f"no policy configured for level {score.trust_level.value!r}"
 
         if score.tasks_completed < policy.min_tasks:
-            return False, (
-                f"need {policy.min_tasks} completed tasks, have {score.tasks_completed}"
-            )
+            return False, (f"need {policy.min_tasks} completed tasks, have {score.tasks_completed}")
         if score.success_rate < policy.min_success_rate:
-            return False, (
-                f"success rate {score.success_rate:.0%} below required {policy.min_success_rate:.0%}"
-            )
+            return False, (f"success rate {score.success_rate:.0%} below required {policy.min_success_rate:.0%}")
         if score.security_violations > policy.max_security_violations:
             return False, (
-                f"{score.security_violations} security violations exceed max "
-                f"{policy.max_security_violations}"
+                f"{score.security_violations} security violations exceed max {policy.max_security_violations}"
             )
         if score.consecutive_successes < policy.min_consecutive_successes:
             return False, (
-                f"need {policy.min_consecutive_successes} consecutive successes, "
-                f"have {score.consecutive_successes}"
+                f"need {policy.min_consecutive_successes} consecutive successes, have {score.consecutive_successes}"
             )
 
         next_level = self.next_level(score.trust_level)

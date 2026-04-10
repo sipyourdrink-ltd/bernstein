@@ -295,6 +295,45 @@ class SmtpSchema(BaseModel):
     to_addresses: list[str] = Field(default_factory=list)
 
 
+class CustomMetricSchema(BaseModel):
+    """A single custom metric definition for domain-specific KPIs (OBS-148).
+
+    Example in bernstein.yaml::
+
+        metrics:
+          code_per_dollar:
+            formula: "lines_changed / total_cost"
+            unit: "lines/$"
+            description: "Code output per dollar spent"
+          success_rate:
+            formula: "tasks_completed / (tasks_completed + tasks_failed + 0.001)"
+            unit: "ratio"
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    formula: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Arithmetic expression using built-in variables: tasks_spawned, "
+            "tasks_completed, tasks_failed, tasks_retried, errors, active_agents, "
+            "open_tasks, tick_duration_ms, total_spawned, total_completed, "
+            "total_failed, total_errors, total_cost, lines_changed, total_tokens."
+        ),
+    )
+    unit: str = Field(default="", description='Unit label shown in dashboards (e.g. "lines/$").')
+    description: str = Field(default="", description="Human-readable description of this metric.")
+    alert_above: float | None = Field(
+        default=None,
+        description="Emit an alert when the metric value exceeds this threshold.",
+    )
+    alert_below: float | None = Field(
+        default=None,
+        description="Emit an alert when the metric value falls below this threshold.",
+    )
+
+
 class ModelFallbackSchema(BaseModel):
     """Model fallback chain configuration (AGENT-004).
 
@@ -400,6 +439,13 @@ class BernsteinConfig(BaseModel):
     smtp: SmtpSchema | None = None
     mcp_servers: dict[str, Any] | None = None
     model_fallback: ModelFallbackSchema | None = None
+    metrics: dict[str, CustomMetricSchema] | None = Field(
+        default=None,
+        description=(
+            "Custom metric definitions for domain-specific KPIs. "
+            "Each key is the metric name; the value specifies the formula and display unit."
+        ),
+    )
 
     # --- Less common ---
     routing: dict[str, str] | None = None
