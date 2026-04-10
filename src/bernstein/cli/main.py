@@ -72,6 +72,7 @@ from bernstein.cli.gateway_cmd import gateway_group
 from bernstein.cli.graph_cmd import graph_group
 from bernstein.cli.incident_cmd import incident_cmd
 from bernstein.cli.init_wizard_cmd import init_wizard_cmd
+from bernstein.cli.logs_group_cmd import logs_group
 from bernstein.cli.maintenance_cmd import cleanup_cmd, history_cmd
 from bernstein.cli.man_page import man_pages_cmd
 from bernstein.cli.manifest_cmd import manifest_group
@@ -79,11 +80,10 @@ from bernstein.cli.memory_cmd import memory_group
 from bernstein.cli.merge_cmd import merge_cmd
 from bernstein.cli.plan_validate_cmd import validate_plan
 from bernstein.cli.policy_cmd import policy_group
+from bernstein.cli.postmortem_cmd import postmortem_cmd
 from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
-from bernstein.cli.logs_group_cmd import logs_group
-from bernstein.cli.postmortem_cmd import postmortem_cmd
 from bernstein.cli.report_cmd import report_cmd
 from bernstein.cli.self_update_cmd import self_update_cmd
 from bernstein.cli.task_cmd import (

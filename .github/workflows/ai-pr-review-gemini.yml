@@ -80,10 +80,12 @@ jobs:
       - name: Post review comment
         if: steps.check.outputs.skip == 'false'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          REVIEW_BODY: ${{ steps.review.outputs.body }}
         with:
           script: |
             const marker = '<!-- ai-review-gemini -->';
-            const body = `${marker}\n### AI Review (Gemini)\n\n${{ steps.review.outputs.body }}`;
+            const body = `${marker}\n### AI Review (Gemini)\n\n${process.env.REVIEW_BODY}`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
