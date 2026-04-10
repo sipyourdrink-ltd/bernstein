@@ -203,9 +203,7 @@ class SecurityIncidentResponder:
 
         # 1. Kill the agent
         try:
-            kill_signal_path = self._write_kill_signal(
-                incident_id, session_id, event_type, detail
-            )
+            kill_signal_path = self._write_kill_signal(incident_id, session_id, event_type, detail)
             steps_taken.append(ContainmentStep.KILL_SIGNAL)
         except Exception:
             logger.exception("Containment step KILL_SIGNAL failed for %s", incident_id)
@@ -214,14 +212,15 @@ class SecurityIncidentResponder:
         # 2. Quarantine the worktree
         try:
             self._quarantine_worktree(
-                incident_id, session_id, event_type, detail,
+                incident_id,
+                session_id,
+                event_type,
+                detail,
                 branch=effective_branch,
             )
             steps_taken.append(ContainmentStep.QUARANTINE_WORKTREE)
         except Exception:
-            logger.exception(
-                "Containment step QUARANTINE_WORKTREE failed for %s", incident_id
-            )
+            logger.exception("Containment step QUARANTINE_WORKTREE failed for %s", incident_id)
             steps_failed.append(ContainmentStep.QUARANTINE_WORKTREE)
 
         # 3. Forensic snapshot
@@ -240,21 +239,15 @@ class SecurityIncidentResponder:
             )
             steps_taken.append(ContainmentStep.FORENSIC_SNAPSHOT)
         except Exception:
-            logger.exception(
-                "Containment step FORENSIC_SNAPSHOT failed for %s", incident_id
-            )
+            logger.exception("Containment step FORENSIC_SNAPSHOT failed for %s", incident_id)
             steps_failed.append(ContainmentStep.FORENSIC_SNAPSHOT)
 
         # 4. Block the task from retry
         try:
-            block_path = self._block_task_retry(
-                incident_id, task_id, session_id, event_type, detail
-            )
+            block_path = self._block_task_retry(incident_id, task_id, session_id, event_type, detail)
             steps_taken.append(ContainmentStep.BLOCK_RETRY)
         except Exception:
-            logger.exception(
-                "Containment step BLOCK_RETRY failed for %s", incident_id
-            )
+            logger.exception("Containment step BLOCK_RETRY failed for %s", incident_id)
             steps_failed.append(ContainmentStep.BLOCK_RETRY)
 
         # 5. Notify the security team
@@ -271,9 +264,7 @@ class SecurityIncidentResponder:
             )
             steps_taken.append(ContainmentStep.NOTIFY)
         except Exception:
-            logger.exception(
-                "Containment step NOTIFY failed for %s", incident_id
-            )
+            logger.exception("Containment step NOTIFY failed for %s", incident_id)
             steps_failed.append(ContainmentStep.NOTIFY)
 
         result = ContainmentResult(
@@ -298,9 +289,7 @@ class SecurityIncidentResponder:
                 ", ".join(steps_failed),
             )
         else:
-            logger.info(
-                "Incident %s fully contained (%d steps)", incident_id, len(steps_taken)
-            )
+            logger.info("Incident %s fully contained (%d steps)", incident_id, len(steps_taken))
 
         return result
 
@@ -676,9 +665,7 @@ class SecurityIncidentResponder:
             with open(bulletin_file, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(message) + "\n")
         except OSError:
-            logger.exception(
-                "Failed to write security alert to bulletin board for %s", incident_id
-            )
+            logger.exception("Failed to write security alert to bulletin board for %s", incident_id)
 
 
 # ---------------------------------------------------------------------------
