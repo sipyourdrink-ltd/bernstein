@@ -445,3 +445,139 @@ class TestMultiTenantScenario:
         assert len(view_b) == 3
         # No overlap
         assert set(view_a.keys()).isdisjoint(set(view_b.keys()))
+
+
+# ---------------------------------------------------------------------------
+# WAL content isolation
+# ---------------------------------------------------------------------------
+
+
+class TestWALContentIsolation:
+    """Tenant A's WAL entries are never readable via Tenant B's WAL path."""
+
+    def test_wal_content_not_cross_contaminated(self, sdd_dir: Path) -> None:
+        """Writing entries for both tenants does not mix their WAL contents."""
+        ensure_tenant_data_layout(sdd_dir, "tenant-a")
+        ensure_tenant_data_layout(sdd_dir, "tenant-b")
+
+        paths_a = tenant_data_paths(sdd_dir, "tenant-a")
+        paths_b = tenant_data_paths(sdd_dir, "tenant-b")
+
+        _write_wal_entry(paths_a.wal_dir, "entry-001", {"actor": "tenant-a", "seq": 1})
+        _write_wal_entry(paths_b.wal_dir, "entry-001", {"actor": "tenant-b", "seq": 1})
+
+        # Entry for tenant-a must live exclusively under tenant-a's WAL dir
+        a_entries = list(paths_a.wal_dir.glob("*.jsonl"))
+        b_entries = list(paths_b.wal_dir.glob("*.jsonl"))
+
+        assert len(a_entries) == 1
+        assert len(b_entries) == 1
+
+        content_a = json.loads(a_entries[0].read_text())
+        content_b = json.loads(b_entries[0].read_text())
+
+        assert content_a["actor"] == "tenant-a"
+        assert content_b["actor"] == "tenant-b"
+        assert content_a["actor"] != content_b["actor"]
+
+    def test_many_wal_entries_stay_isolated(self, sdd_dir: Path) -> None:
+        """High volume of WAL entries across two tenants remains isolated."""
+        ensure_tenant_data_layout(sdd_dir, "tenant-a")
+        ensure_tenant_data_layout(sdd_dir, "tenant-b")
+
+        paths_a = tenant_data_paths(sdd_dir, "tenant-a")
+        paths_b = tenant_data_paths(sdd_dir, "tenant-b")
+
+        for i in range(10):
+            _write_wal_entry(paths_a.wal_dir, f"a-{i:03d}", {"seq": i, "tenant": "tenant-a"})
+        for i in range(7):
+            _write_wal_entry(paths_b.wal_dir, f"b-{i:03d}", {"seq": i, "tenant": "tenant-b"})
+
+        a_entries = list(paths_a.wal_dir.glob("*.jsonl"))
+        b_entries = list(paths_b.wal_dir.glob("*.jsonl"))
+
+        assert len(a_entries) == 10
+        assert len(b_entries) == 7
+
+        # Verify no tenant-b files leaked into tenant-a directory
+        for entry in a_entries:
+            data = json.loads(entry.read_text())
+            assert data.get("tenant") == "tenant-a", f"Unexpected tenant in {entry.name}: {data}"
+
+        for entry in b_entries:
+            data = json.loads(entry.read_text())
+            assert data.get("tenant") == "tenant-b", f"Unexpected tenant in {entry.name}: {data}"
+
+
+# ---------------------------------------------------------------------------
+# Persist and load state isolation
+# ---------------------------------------------------------------------------
+
+
+class TestPersistLoadIsolation:
+    """TenantIsolationManager persist/load state does not bleed between tenants."""
+
+    def test_persist_and_load_state_preserves_quota_isolation(self, sdd_dir: Path) -> None:
+        """Persisting and reloading state maintains per-tenant quotas."""
+        manager_a = TenantIsolationManager(sdd_dir)
+        manager_a.register_quota("tenant-a", TenantQuota(max_tasks=10, budget_usd=50.0))
+        manager_a.register_quota("tenant-b", TenantQuota(max_tasks=5, budget_usd=20.0))
+        manager_a.get_context("tenant-a")
+        manager_a.get_context("tenant-b")
+        manager_a.persist_state()
+
+        # New manager instance loads state from disk
+        manager_b = TenantIsolationManager(sdd_dir)
+        manager_b.load_state()
+
+        ctx_a = manager_b.get_context("tenant-a")
+        ctx_b = manager_b.get_context("tenant-b")
+
+        assert ctx_a.quota.max_tasks == 10
+        assert ctx_a.quota.budget_usd == pytest.approx(50.0)
+        assert ctx_b.quota.max_tasks == 5
+        assert ctx_b.quota.budget_usd == pytest.approx(20.0)
+
+        # Tenant A's quota must not equal Tenant B's quota
+        assert ctx_a.quota.max_tasks != ctx_b.quota.max_tasks
+        assert ctx_a.quota.budget_usd != ctx_b.quota.budget_usd
+
+    def test_load_state_missing_file_is_safe(self, sdd_dir: Path) -> None:
+        """Loading state when no persisted file exists does not raise."""
+        manager = TenantIsolationManager(sdd_dir)
+        manager.load_state()  # must not raise
+        # Default quota should be returned
+        ctx = manager.get_context("tenant-x")
+        assert ctx.quota.max_tasks == TenantQuota().max_tasks
+
+    def test_list_tenants_reflects_both_registry_and_contexts(self, manager: TenantIsolationManager) -> None:
+        """list_tenants returns all tenants from registry plus any dynamically added."""
+        # Registry has tenant-a and tenant-b; create context for tenant-c dynamically
+        manager.get_context("tenant-c")
+        tenants = manager.list_tenants()
+        assert "tenant-a" in tenants
+        assert "tenant-b" in tenants
+        assert "tenant-c" in tenants
+
+    def test_cost_data_isolated_after_reload(self, sdd_dir: Path) -> None:
+        """Cost/metrics data written before a manager reload remains tenant-scoped."""
+        ensure_tenant_data_layout(sdd_dir, "tenant-a")
+        ensure_tenant_data_layout(sdd_dir, "tenant-b")
+
+        paths_a = tenant_data_paths(sdd_dir, "tenant-a")
+        paths_b = tenant_data_paths(sdd_dir, "tenant-b")
+
+        _write_metrics(paths_a.metrics_dir, "cost.jsonl", {"cost_usd": 99.0, "tenant": "tenant-a"})
+        _write_metrics(paths_b.metrics_dir, "cost.jsonl", {"cost_usd": 1.0, "tenant": "tenant-b"})
+
+        # Reload paths from scratch and verify isolation persists
+        paths_a_reload = tenant_data_paths(sdd_dir, "tenant-a")
+        paths_b_reload = tenant_data_paths(sdd_dir, "tenant-b")
+
+        cost_a = json.loads((paths_a_reload.metrics_dir / "cost.jsonl").read_text())
+        cost_b = json.loads((paths_b_reload.metrics_dir / "cost.jsonl").read_text())
+
+        assert cost_a["cost_usd"] == pytest.approx(99.0)
+        assert cost_b["cost_usd"] == pytest.approx(1.0)
+        assert cost_a["tenant"] == "tenant-a"
+        assert cost_b["tenant"] == "tenant-b"

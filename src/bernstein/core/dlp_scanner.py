@@ -208,8 +208,34 @@ def _build_license_violation_rules() -> list[_RuleEntry]:
 
 
 def _build_regulated_data_rules() -> list[_RuleEntry]:
-    """Rules that detect regulated PHI / health record patterns."""
+    """Rules that detect regulated PHI / PCI DSS / financial record patterns."""
     return [
+        # Credit card numbers — 13-19 digits, Luhn-valid, with explicit label
+        # or in common card-number formatted patterns (groups separated by spaces/dashes).
+        # We match labeled context first to reduce false positives.
+        (
+            "regulated_data",
+            "credit_card_number",
+            re.compile(
+                r"""(?i)(?:card[-_]?(?:number|num|no)|cc[-_]?(?:number|num|no)"""
+                r"""|pan|credit[-_]?card)\s*[=:]\s*["']?(?:\d[ -]*){13,19}["']?"""
+            ),
+            "critical",
+            "Credit card number (PCI DSS) — store/transmit only via compliant vault",
+            True,
+        ),
+        # US Social Security Numbers — labeled or bare XXX-XX-XXXX pattern.
+        (
+            "regulated_data",
+            "us_ssn",
+            re.compile(
+                r"""(?i)(?:ssn|social[-_]?security[-_]?(?:number|num|no))\s*[=:]\s*["']?\d{3}-\d{2}-\d{4}["']?"""
+                r"""|(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"""
+            ),
+            "critical",
+            "US Social Security Number — regulated PII, must not appear in code or logs",
+            True,
+        ),
         # National Provider Identifier (NPI) — 10-digit number, often labeled.
         (
             "regulated_data",

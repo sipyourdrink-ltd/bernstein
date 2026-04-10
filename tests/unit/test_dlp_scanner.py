@@ -166,6 +166,42 @@ class TestRegulatedData:
         result = DLPScanner(config).scan_text(text)
         assert not _has_rule(result, "mrn")
 
+    def test_credit_card_number_labeled_detected(self) -> None:
+        text = 'card_number = "4111111111111111"'
+        result = _scanner().scan_text(text)
+        assert _has_rule(result, "credit_card_number")
+
+    def test_credit_card_pan_label_detected(self) -> None:
+        text = 'pan = "4111-1111-1111-1111"'
+        result = _scanner().scan_text(text)
+        assert _has_rule(result, "credit_card_number")
+
+    def test_credit_card_blocks_merge_by_default(self) -> None:
+        text = 'cc_number = "5500005555555559"'
+        result = _scanner().scan_text(text)
+        assert result.has_blocks is True
+        assert any(f.rule == "credit_card_number" and f.block_merge for f in result.findings)
+
+    def test_us_ssn_labeled_detected(self) -> None:
+        text = 'ssn = "123-45-6789"'
+        result = _scanner().scan_text(text)
+        assert _has_rule(result, "us_ssn")
+
+    def test_us_ssn_bare_pattern_detected(self) -> None:
+        text = "Employee SSN: 987-65-4321"
+        result = _scanner().scan_text(text)
+        assert _has_rule(result, "us_ssn")
+
+    def test_us_ssn_blocks_merge_by_default(self) -> None:
+        text = 'social_security_number = "234-56-7890"'
+        result = _scanner().scan_text(text)
+        assert result.has_blocks is True
+
+    def test_ssn_in_diff_added_line_detected(self) -> None:
+        diff = '+ssn = "111-22-3333"\n'
+        result = _scanner().scan_diff(diff)
+        assert _has_rule(result, "us_ssn")
+
 
 # ---------------------------------------------------------------------------
 # Proprietary data detection
