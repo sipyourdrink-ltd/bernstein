@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
@@ -111,7 +111,7 @@ def convert_crewai_config(config_path: Path) -> MigrationResult:
         A MigrationResult with the converted plan.
     """
     warnings: list[str] = []
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw: object = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         return MigrationResult(
             source=MigrationSource.CREWAI,
@@ -120,8 +120,9 @@ def convert_crewai_config(config_path: Path) -> MigrationResult:
             bernstein_yaml="",
         )
 
-    agents: list[dict[str, Any]] = raw.get("agents", [])
-    tasks: list[dict[str, Any]] = raw.get("tasks", [])
+    raw_typed = cast("dict[str, Any]", raw)
+    agents = cast("list[dict[str, Any]]", raw_typed.get("agents", []))
+    tasks = cast("list[dict[str, Any]]", raw_typed.get("tasks", []))
 
     if not tasks:
         warnings.append("No tasks found in CrewAI config.")
