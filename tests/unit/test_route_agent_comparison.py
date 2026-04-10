@@ -37,7 +37,7 @@ class TestAgentMetrics:
         assert m.cost_per_task == 0.0
 
     def test_model_dump_includes_computed_fields(self) -> None:
-        m = AgentMetrics(adapter="codex", model="gpt-4.1", total_tasks=2, succeeded=1, total_cost_usd=1.0)
+        m = AgentMetrics(adapter="codex", model="gpt-5.4-mini", total_tasks=2, succeeded=1, total_cost_usd=1.0)
         d = m.model_dump()
         assert "success_rate" in d
         assert "cost_per_task" in d
@@ -99,7 +99,7 @@ class TestComputeAgentMetrics:
 
     def test_multiple_groups_sorted(self) -> None:
         sessions = [
-            _session(provider="codex", model="gpt-4.1"),
+            _session(provider="codex", model="gpt-5.4-mini"),
             _session(provider="claude", model="sonnet"),
             _session(provider="claude", model="opus"),
         ]
@@ -107,7 +107,7 @@ class TestComputeAgentMetrics:
         assert len(result) == 3
         # Should be sorted by (adapter, model)
         keys = [(m.adapter, m.model) for m in result]
-        assert keys == [("claude", "opus"), ("claude", "sonnet"), ("codex", "gpt-4.1")]
+        assert keys == [("claude", "opus"), ("claude", "sonnet"), ("codex", "gpt-5.4-mini")]
 
     def test_quality_gate_pass_rate(self) -> None:
         sessions = [
@@ -198,7 +198,7 @@ class TestAgentComparisonRoute:
         store = comparison_app.state.store
         store.agents = {
             "agent-1": _Agent(id="agent-1", provider="claude", exit_code=0),
-            "agent-2": _Agent(id="agent-2", provider="codex", model_config=_ModelConfig(model="gpt-4.1"), exit_code=1),
+            "agent-2": _Agent(id="agent-2", provider="codex", model_config=_ModelConfig(model="gpt-5.4-mini"), exit_code=1),
         }
 
         client = TestClient(comparison_app)
@@ -212,7 +212,7 @@ class TestAgentComparisonRoute:
         assert data[0]["adapter"] == "claude"
         assert data[0]["model"] == "sonnet"
         assert data[1]["adapter"] == "codex"
-        assert data[1]["model"] == "gpt-4.1"
+        assert data[1]["model"] == "gpt-5.4-mini"
 
         # exit_code=0 -> done, exit_code=1 -> failed
         assert data[0]["succeeded"] == 1

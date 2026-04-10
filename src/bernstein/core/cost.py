@@ -61,9 +61,8 @@ MODEL_COSTS_PER_1M_TOKENS: dict[str, ModelUsdPer1MTokens] = {
     "o3": {"input": 2.0, "output": 8.0},
     "o4-mini": {"input": 1.1, "output": 4.4},
     "gemini-3": {"input": 3.0, "output": 15.0, "cache_read": 0.1},
-    "gemini-2.5-pro": {"input": 1.25, "output": 10.0, "cache_read": 0.05},
-    "gemini-2.5-flash": {"input": 0.3, "output": 2.5, "cache_read": 0.01},
-    "gemini-3-flash": {"input": 0.5, "output": 3.0, "cache_read": 0.02},
+    "gemini-3.1-pro": {"input": 0.50, "output": 3.00, "cache_read": 0.02},
+    "gemini-3-flash": {"input": 0.15, "output": 1.00, "cache_read": 0.005},
     "qwen3-coder": {"input": 0.22, "output": 0.9},
     # Blended-only entries in ``_MODEL_COST_USD_PER_1K`` — approximate 40/60 input/output split of total $/1M.
     "qwen-max": {"input": 0.8, "output": 1.2},
@@ -84,11 +83,10 @@ _MODEL_COST_USD_PER_1K: dict[str, float] = {
     "gpt-5.4-mini": 0.002625,  # ($0.75 + $4.50) / 2 / 1000
     "o3": 0.005,  # ($2 + $8) / 2 / 1000
     "o4-mini": 0.00275,  # ($1.10 + $4.40) / 2 / 1000
-    # Gemini (Google) — per 1M tokens: 3-pro ~$3/$15, 3-flash $0.50/$3, 2.5-pro $1.25/$10
+    # Gemini (Google) — per 1M tokens: 3-pro ~$3/$15, 3.1-pro $0.50/$3, 3-flash $0.15/$1
     "gemini-3": 0.009,  # ($3 + $15) / 2 / 1000
-    "gemini-2.5-pro": 0.005625,  # ($1.25 + $10) / 2 / 1000
-    "gemini-2.5-flash": 0.0014,  # ($0.30 + $2.50) / 2 / 1000
-    "gemini-3-flash": 0.00175,  # ($0.50 + $3) / 2 / 1000
+    "gemini-3.1-pro": 0.00175,  # ($0.50 + $3.00) / 2 / 1000
+    "gemini-3-flash": 0.000575,  # ($0.15 + $1.00) / 2 / 1000
     # Qwen — open-weight, very cheap via API
     "qwen3-coder": 0.00056,  # ($0.22 + $0.90) / 2 / 1000
     "qwen-max": 0.001,
@@ -760,7 +758,7 @@ class CachePricingRegistry:
         # OpenAI models
         self.register_tier(
             CachePricingTier(
-                model="gpt-4o",
+                model="gpt-5.4",
                 provider="openai",
                 cache_read_usd_per_1m=0.25,
                 cache_write_usd_per_1m=0.25,
@@ -773,7 +771,7 @@ class CachePricingRegistry:
         # Google models
         self.register_tier(
             CachePricingTier(
-                model="gemini-1.5-pro",
+                model="gemini-3.1-pro",
                 provider="google",
                 cache_read_usd_per_1m=0.20,
                 cache_write_usd_per_1m=0.20,

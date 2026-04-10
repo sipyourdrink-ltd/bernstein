@@ -48,7 +48,7 @@ class TestAiderAdapterSpawn:
             adapter.spawn(
                 prompt="fix the bug",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-s1",
             )
         cmd = popen.call_args.args[0]
@@ -64,13 +64,13 @@ class TestAiderAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-s2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
         assert "--model" in inner
-        # gpt-4o maps to openai/gpt-4o
-        assert inner[inner.index("--model") + 1] == "openai/gpt-4o"
+        # gpt-5.4 maps to openai/gpt-5.4
+        assert inner[inner.index("--model") + 1] == "openai/gpt-5.4"
 
     def test_model_map_sonnet(self, tmp_path: Path) -> None:
         adapter = AiderAdapter()
@@ -118,7 +118,7 @@ class TestAiderAdapterSpawn:
             adapter.spawn(
                 prompt="my-unique-task",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-s6",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -132,7 +132,7 @@ class TestAiderAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-s7",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -145,7 +145,7 @@ class TestAiderAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-flags1",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -158,7 +158,7 @@ class TestAiderAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-flags2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -172,7 +172,7 @@ class TestAiderAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-flags3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -185,7 +185,7 @@ class TestAiderAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-s8",
             )
         assert (tmp_path / ".sdd" / "runtime").is_dir()
@@ -197,7 +197,7 @@ class TestAiderAdapterSpawn:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-s9",
             )
         assert result.pid == 508
@@ -209,7 +209,7 @@ class TestAiderAdapterSpawn:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="my-aider-session",
             )
         assert result.log_path.name == "my-aider-session.log"
@@ -247,7 +247,7 @@ class TestAiderEnvIsolation:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-env1",
             )
         env = popen.call_args.kwargs.get("env", {})
@@ -267,7 +267,7 @@ class TestAiderEnvIsolation:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-env2",
             )
         env = popen.call_args.kwargs.get("env", {})
@@ -287,7 +287,7 @@ class TestAiderEnvIsolation:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-env3",
             )
         env = popen.call_args.kwargs.get("env", {})
@@ -312,7 +312,7 @@ class TestAiderEnvIsolation:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="aider-env4",
             )
         env = popen.call_args.kwargs.get("env", {})
@@ -338,7 +338,7 @@ class TestAiderSpawnMissingBinary:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="missing",
             )
 
@@ -354,7 +354,7 @@ class TestAiderSpawnMissingBinary:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="perm-denied",
             )
 

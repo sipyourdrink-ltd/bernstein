@@ -34,7 +34,7 @@ def metrics_dir(tmp_path: Path) -> Path:
         {
             "task_id": "def456",
             "role": "qa",
-            "model": "claude-haiku-4-5",
+            "model": "claude-haiku-4-5-20251001",
             "provider": "anthropic",
             "duration_seconds": 20.0,
             "tokens_prompt": 400,
@@ -83,7 +83,7 @@ def test_cost_table_contains_expected_columns(metrics_dir: Path) -> None:
     # Note: "Avg Duration" column may be truncated by Rich in narrow terminals
     # Data rows
     assert "claude-sonnet-4-6" in output
-    assert "claude-haiku-4-5" in output
+    assert "claude-haiku-4-5-20251001" in output
     # Totals row
     assert "TOTAL" in output
 
@@ -97,7 +97,7 @@ def test_cost_json_output(metrics_dir: Path) -> None:
     assert "totals" in data
     models = {r["model"] for r in data["rows"]}
     assert "claude-sonnet-4-6" in models
-    assert "claude-haiku-4-5" in models
+    assert "claude-haiku-4-5-20251001" in models
     # Deduplication: abc123 appears once
     sonnet_row = next(r for r in data["rows"] if r["model"] == "claude-sonnet-4-6")
     assert sonnet_row["tasks"] == 1

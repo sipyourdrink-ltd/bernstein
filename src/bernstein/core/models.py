@@ -418,7 +418,7 @@ class JanitorResult:
 class ModelConfig:
     """Which model and effort to use for a task."""
 
-    model: str  # e.g. "opus", "sonnet", "gpt-4.1"
+    model: str  # e.g. "opus", "sonnet", "gpt-5.4-mini"
     effort: str  # e.g. "max", "high", "normal"
     max_tokens: int = 200_000
     is_batch: bool = False  # Use provider batch API (~50% cost reduction) for non-urgent tasks

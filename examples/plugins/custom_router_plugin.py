@@ -232,7 +232,7 @@ def _resolve_alias(model: str) -> str:
 
     Examples::
 
-        "claude-haiku-4-5"  → "haiku"
+        "claude-haiku-4-5-20251001"  → "haiku"
         "claude-sonnet-4-6" → "sonnet"
         "claude-opus-4-6"   → "opus"
         "gemini-pro"        → "sonnet"  # fallback

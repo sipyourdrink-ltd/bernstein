@@ -91,8 +91,8 @@ class TestSpawnCommandArgs:
         assert cmd[cmd.index("--model") + 1] == full
 
     def test_unknown_model_passed_through(self, tmp_path: Path) -> None:
-        cmd, _, __ = self._spawn(tmp_path, model="gpt-4.1")
-        assert cmd[cmd.index("--model") + 1] == "gpt-4.1"
+        cmd, _, __ = self._spawn(tmp_path, model="gpt-5.4-mini")
+        assert cmd[cmd.index("--model") + 1] == "gpt-5.4-mini"
 
     @pytest.mark.parametrize(
         "effort, expected_turns, expected_effort_flag",

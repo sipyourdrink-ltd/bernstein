@@ -645,7 +645,7 @@ class TestDetectAuthStatus:
 class TestShortModel:
     def test_known_models(self) -> None:
         assert short_model("claude-opus-4-6") == "opus"
-        assert short_model("gemini-2.5-flash") == "2.5-flash"
+        assert short_model("gemini-3-flash") == "2.5-flash"
         assert short_model("o4-mini") == "o4-mini"
 
     def test_unknown_model_passthrough(self) -> None:

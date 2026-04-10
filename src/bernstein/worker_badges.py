@@ -107,7 +107,7 @@ def get_badge_for_worker(
     Args:
         worker_id: Unique worker identifier (12-char hex).
         role: Worker role (backend, qa, security, etc.).
-        model: Model name (sonnet, haiku, gpt-4o, etc.).
+        model: Model name (sonnet, haiku, gpt-5.4, etc.).
         tier: Tier name (free, paid, enterprise).
         start_time: When the worker started. Defaults to now if None.
         status: Current worker status. Defaults to RUNNING.

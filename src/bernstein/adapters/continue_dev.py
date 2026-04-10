@@ -27,12 +27,12 @@ logger = logging.getLogger(__name__)
 # Map Bernstein logical model names to Continue provider/model identifiers.
 # These follow Continue's ``provider/model`` format used in config.yaml.
 _MODEL_MAP: dict[str, str] = {
-    "opus": "anthropic/claude-opus-4-5",
-    "sonnet": "anthropic/claude-sonnet-4-5",
-    "haiku": "anthropic/claude-haiku-4-5",
-    "gpt-4o": "openai/gpt-4o",
-    "gpt-4.1": "openai/gpt-4.1",
-    "gemini-pro": "google/gemini-2.0-flash",
+    "opus": "anthropic/claude-opus-4-6",
+    "sonnet": "anthropic/claude-sonnet-4-6",
+    "haiku": "anthropic/claude-haiku-4-5-20251001",
+    "gpt-5.4": "openai/gpt-5.4",
+    "gpt-5.4-mini": "openai/gpt-5.4-mini",
+    "gemini-pro": "google/gemini-3-flash",
 }
 
 

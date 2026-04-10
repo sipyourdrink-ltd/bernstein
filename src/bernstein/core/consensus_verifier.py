@@ -53,8 +53,8 @@ logger = logging.getLogger(__name__)
 _REVIEWER_POOL: list[tuple[str, str]] = [
     # (provider_family, openrouter_model_id)
     ("google", "google/gemini-flash-1.5"),
-    ("anthropic", "anthropic/claude-haiku-3-5"),
-    ("openai", "openai/gpt-4o-mini"),
+    ("anthropic", "anthropic/claude-haiku-4-5-20251001"),
+    ("openai", "openai/gpt-5.4-mini"),
     ("meta", "meta-llama/llama-3.3-70b-instruct"),
     ("qwen", "qwen/qwen-2.5-coder-7b-instruct"),
     ("mistral", "mistralai/mistral-7b-instruct"),
@@ -109,7 +109,7 @@ def select_diverse_verifier_models(writer_model: str, n: int) -> list[str]:
     Example::
 
         models = select_diverse_verifier_models("anthropic/claude-sonnet-4", 2)
-        # → ["google/gemini-flash-1.5", "openai/gpt-4o-mini"]
+        # → ["google/gemini-flash-1.5", "openai/gpt-5.4-mini"]
     """
     excluded_family = _writer_family(writer_model)
 

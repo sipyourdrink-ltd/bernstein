@@ -60,7 +60,7 @@ class TestSelectReviewerModel:
         assert "claude" in reviewer
 
     def test_override_takes_priority(self) -> None:
-        override = "openai/gpt-4o-mini"
+        override = "openai/gpt-5.4-mini"
         reviewer = select_reviewer_model("claude-sonnet", override=override)
         assert reviewer == override
 
@@ -257,7 +257,7 @@ class TestVerifyWithCrossModel:
     @pytest.mark.asyncio
     async def test_reviewer_model_in_verdict(self, tmp_path: Path) -> None:
         task = _make_task()
-        config = CrossModelVerifierConfig(enabled=True, reviewer_model="openai/gpt-4o-mini")
+        config = CrossModelVerifierConfig(enabled=True, reviewer_model="openai/gpt-5.4-mini")
         diff_response = MagicMock(stdout="+x\n")
         approve_json = json.dumps({"verdict": "approve", "feedback": "OK", "issues": []})
 
@@ -270,7 +270,7 @@ class TestVerifyWithCrossModel:
         ):
             verdict = await verify_with_cross_model(task, tmp_path, "claude-sonnet", config)
 
-        assert verdict.reviewer_model == "openai/gpt-4o-mini"
+        assert verdict.reviewer_model == "openai/gpt-5.4-mini"
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +379,7 @@ class TestMultiVoterVerification:
                 tmp_path,
                 "claude-sonnet",
                 config,
-                voter_models=["google/gemini-flash-1.5", "anthropic/claude-haiku-3-5"],
+                voter_models=["google/gemini-flash-1.5", "anthropic/claude-haiku-4-5-20251001"],
             )
 
         assert verdict.verdict == "approve"
@@ -412,7 +412,7 @@ class TestMultiVoterVerification:
                 tmp_path,
                 "claude-sonnet",
                 config,
-                voter_models=["google/gemini-flash-1.5", "anthropic/claude-haiku-3-5"],
+                voter_models=["google/gemini-flash-1.5", "anthropic/claude-haiku-4-5-20251001"],
             )
 
         assert verdict.verdict == "request_changes"

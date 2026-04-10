@@ -28,7 +28,7 @@ budget: "$20"
 team: [backend, qa, devops]
 cli: codex
 max_agents: 4
-model: gpt-4.1
+model: gpt-5.4-mini
 """
 
 AUTO_TEAM_YAML = """\
@@ -74,7 +74,7 @@ class TestParseSeedValid:
         assert cfg.team == ["backend", "qa", "devops"]
         assert cfg.cli == "codex"
         assert cfg.max_agents == 4
-        assert cfg.model == "gpt-4.1"
+        assert cfg.model == "gpt-5.4-mini"
 
     def test_auto_team_explicit(self, seed_file: Path) -> None:
         seed_file.write_text(AUTO_TEAM_YAML)

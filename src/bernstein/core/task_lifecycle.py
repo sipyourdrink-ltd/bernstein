@@ -1437,9 +1437,9 @@ def claim_and_spawn_batches(
 
                 ab_task = batch[0]
                 primary_model = session.model_config.model
-                # Derive the alt model: sonnet ↔ opus; gpt: o1 ↔ gpt-4o
-                if "gpt" in primary_model or "o1" in primary_model:
-                    alt_model = "gpt-4o" if "o1" in primary_model else "o1-preview"
+                # Derive the alt model: sonnet ↔ opus; gpt: o3 ↔ gpt-5.4
+                if "gpt" in primary_model or "o3" in primary_model:
+                    alt_model = "gpt-5.4" if "o3" in primary_model else "o3"
                 else:
                     alt_model = "opus" if "sonnet" in primary_model.lower() else "sonnet"
 

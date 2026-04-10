@@ -75,7 +75,7 @@ class DistillationConfig:
             a fine-tuning batch for a given (role, task_type) key.
         max_description_chars: Truncate task description at this length.
         max_result_chars: Truncate result summary at this length.
-        target_model: Base model to fine-tune (e.g. ``"gpt-4o-mini"``).
+        target_model: Base model to fine-tune (e.g. ``"gpt-5.4-mini"``).
         provider: Fine-tuning provider (``"openai"``, ``"anthropic"``, ``"local"``).
         quality_threshold: Minimum quality score to include an example
             (0.0 to 1.0; janitor-passed tasks get 1.0).
@@ -89,7 +89,7 @@ class DistillationConfig:
     batch_threshold: int = _DEFAULT_BATCH_THRESHOLD
     max_description_chars: int = _DEFAULT_MAX_DESCRIPTION_CHARS
     max_result_chars: int = _DEFAULT_MAX_RESULT_CHARS
-    target_model: str = "gpt-4o-mini"
+    target_model: str = "gpt-5.4-mini"
     provider: str = "openai"
     quality_threshold: float = _HIGH_QUALITY_THRESHOLD
     auto_route: bool = True
@@ -242,7 +242,7 @@ class DistilledModel:
     """A registered distilled model available for routing.
 
     Attributes:
-        model_name: Provider model name (e.g. ``"ft:gpt-4o-mini:...:backend"``).
+        model_name: Provider model name (e.g. ``"ft:gpt-5.4-mini:...:backend"``).
         distillation_key: The ``role:task_type`` key this model serves.
         base_model: The base model it was fine-tuned from.
         batch_id: The training batch that produced it.

@@ -49,10 +49,10 @@ class TestBuildWorkerCmd:
             pid_dir=tmp_path,
             workdir=tmp_path,
             log_path=tmp_path / "backend-xyz.log",
-            model="gpt-4o",
+            model="gpt-5.4",
         )
         assert "--model" in result
-        assert result[result.index("--model") + 1] == "gpt-4o"
+        assert result[result.index("--model") + 1] == "gpt-5.4"
 
 
 # ---------------------------------------------------------------------------

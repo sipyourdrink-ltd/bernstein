@@ -131,12 +131,12 @@ async def test_recap_with_cost_data(client: AsyncClient, tmp_path: Path) -> None
         "total_spent_usd": 1.25,
         "per_model": [
             {
-                "model": "claude-sonnet-4-5-20250929",
+                "model": "claude-sonnet-4-6-20250929",
                 "total_cost_usd": 0.75,
                 "total_tokens": 5000,
                 "invocation_count": 10,
             },
-            {"model": "claude-opus-4-5-20251101", "total_cost_usd": 0.50, "total_tokens": 3000, "invocation_count": 5},
+            {"model": "claude-opus-4-6-20251101", "total_cost_usd": 0.50, "total_tokens": 3000, "invocation_count": 5},
         ],
         "per_agent": [
             {"agent_id": "backend", "total_cost_usd": 1.00},

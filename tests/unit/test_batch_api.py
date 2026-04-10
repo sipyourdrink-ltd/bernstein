@@ -120,7 +120,7 @@ class _RouterStub:
     ) -> Any:
         del task, preferred_provider
         self.base_config = base_config
-        model_config = base_config or ModelConfig(model="gpt-4.1-mini", effort="high", is_batch=True)
+        model_config = base_config or ModelConfig(model="gpt-5.4-mini-mini", effort="high", is_batch=True)
         return SimpleNamespace(provider=self._provider, model_config=model_config)
 
 

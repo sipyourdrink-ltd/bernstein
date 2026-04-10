@@ -28,15 +28,15 @@ role_config:
     model: sonnet
 
   # Use OpenAI Codex for test generation
-  # (GPT-4o is strong on test coverage and edge cases)
+  # (GPT-5.4-mini is strong on test coverage and edge cases)
   qa:
     cli: codex
-    model: gpt-4o
+    model: gpt-5.4-mini
 
   # Use Gemini Flash for documentation — fast and cheap
   docs:
     cli: gemini
-    model: gemini-2.0-flash
+    model: gemini-3-flash
 
   # Use Qwen (free tier via OpenRouter) for simple scaffolding tasks
   # Set OPENROUTER_API_KEY_FREE to use this

@@ -55,10 +55,10 @@ class TestResolveContextLimit:
         assert resolve_context_limit("sonnet") == 200_000
 
     def test_gemini_default(self) -> None:
-        assert resolve_context_limit("gemini-2.5-pro") == 1_000_000
+        assert resolve_context_limit("gemini-3.1-pro") == 1_000_000
 
     def test_gpt4_default(self) -> None:
-        assert resolve_context_limit("gpt-4o") == 128_000
+        assert resolve_context_limit("gpt-5.4") == 128_000
 
     def test_unknown_model_fallback(self) -> None:
         assert resolve_context_limit("totally-unknown-model") == 200_000

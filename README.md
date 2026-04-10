@@ -52,8 +52,8 @@ Bernstein auto-discovers installed CLI agents. Mix them in the same run — chea
 | Agent | Models | Install |
 |-------|--------|---------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | opus 4.6, sonnet 4.6, haiku 4.5 | `npm install -g @anthropic-ai/claude-code` |
-| [Codex CLI](https://github.com/openai/codex) | gpt-5.4, o3, o4-mini | `npm install -g @openai/codex` |
-| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | gemini-3-pro, 3-flash | `npm install -g @google/gemini-cli` |
+| [Codex CLI](https://github.com/openai/codex) | gpt-5.4, gpt-5.4-mini | `npm install -g @openai/codex` |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | gemini-3.1-pro, gemini-3-flash | `npm install -g @google/gemini-cli` |
 | [Cursor](https://www.cursor.com) | sonnet 4.6, opus 4.6, gpt-5.4 | [Cursor app](https://www.cursor.com) |
 | [Aider](https://aider.chat) | Any OpenAI/Anthropic-compatible | `pip install aider-chat` |
 | [Ollama](https://ollama.ai) + Aider | Local models (offline) | `brew install ollama` |

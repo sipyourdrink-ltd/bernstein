@@ -422,7 +422,7 @@ class TestIsModelUnavailableError:
         [
             "model not available",
             "Model is not available",
-            "The model claude-opus-4-5 is not available",
+            "The model claude-opus-4-6 is not available",
             "Unknown model gpt-99",
             "invalid model specified",
             "model does not exist",

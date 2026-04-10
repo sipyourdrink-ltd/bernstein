@@ -363,7 +363,7 @@ class TestCollectVotes:
             result = await protocol.collect_votes(
                 task=task,
                 worktree_path=tmp_path,
-                voter_models=["google/gemini-flash-1.5", "anthropic/claude-haiku-3-5"],
+                voter_models=["google/gemini-flash-1.5", "anthropic/claude-haiku-4-5-20251001"],
                 verifier_cfg=verifier_cfg,
             )
 

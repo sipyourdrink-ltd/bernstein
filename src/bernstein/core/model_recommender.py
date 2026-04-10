@@ -88,7 +88,6 @@ class ModelComparisonReport:
 # Maps model name to capability tier (higher = more capable)
 _MODEL_CAPABILITY: dict[str, int] = {
     "haiku": 1,
-    "gemini-2.5-flash": 1,
     "gemini-3-flash": 1,
     "qwen3-coder": 1,
     "qwen-turbo": 1,
@@ -96,7 +95,7 @@ _MODEL_CAPABILITY: dict[str, int] = {
     "gpt-5.4-mini": 2,
     "qwen-plus": 2,
     "sonnet": 3,
-    "gemini-2.5-pro": 3,
+    "gemini-3.1-pro": 3,
     "gemini-3": 3,
     "gpt-5.4": 3,
     "o3": 3,

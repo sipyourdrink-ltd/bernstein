@@ -22,7 +22,7 @@ _DEFAULT_SMOKE_MODELS: dict[str, str] = {
     "claude": "sonnet",
     "codex": "gpt-5.4-mini",
     "cursor": "sonnet",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3-flash",
     "kiro": "sonnet",
     "kilo": "sonnet",
     "opencode": "gpt-5.4-mini",

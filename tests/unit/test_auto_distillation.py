@@ -116,7 +116,7 @@ class TestDistillationBatch:
             example_ids=["e1", "e2"],
             status=TrainingJobStatus.PREPARING,
             provider="openai",
-            target_model="gpt-4o-mini",
+            target_model="gpt-5.4-mini",
             created_at=1000.0,
         )
         d = batch.to_dict()
@@ -137,9 +137,9 @@ class TestDistilledModel:
         from bernstein.core.auto_distillation import DistilledModel
 
         m = DistilledModel(
-            model_name="ft:gpt-4o-mini:backend",
+            model_name="ft:gpt-5.4-mini:backend",
             distillation_key="backend:standard",
-            base_model="gpt-4o-mini",
+            base_model="gpt-5.4-mini",
             batch_id="b1",
             registered_at=1000.0,
         )
@@ -149,9 +149,9 @@ class TestDistilledModel:
         from bernstein.core.auto_distillation import DistilledModel
 
         m = DistilledModel(
-            model_name="ft:gpt-4o-mini:backend",
+            model_name="ft:gpt-5.4-mini:backend",
             distillation_key="backend:standard",
-            base_model="gpt-4o-mini",
+            base_model="gpt-5.4-mini",
             batch_id="b1",
             registered_at=1000.0,
             tasks_routed=10,
@@ -165,7 +165,7 @@ class TestDistilledModel:
         m = DistilledModel(
             model_name="ft:model",
             distillation_key="qa:standard",
-            base_model="gpt-4o-mini",
+            base_model="gpt-5.4-mini",
             batch_id="b2",
             registered_at=999.0,
             tasks_routed=5,
@@ -439,9 +439,9 @@ class TestAutoDistillerModelLifecycle:
         assert distiller._batches[batch.batch_id].status == TrainingJobStatus.SUBMITTED
         assert distiller._batches[batch.batch_id].training_job_id == "job-123"
 
-        model = distiller.mark_batch_completed(batch.batch_id, "ft:gpt-4o-mini:backend")
+        model = distiller.mark_batch_completed(batch.batch_id, "ft:gpt-5.4-mini:backend")
         assert model is not None
-        assert model.model_name == "ft:gpt-4o-mini:backend"
+        assert model.model_name == "ft:gpt-5.4-mini:backend"
         assert model.active is True
         assert distiller._batches[batch.batch_id].status == TrainingJobStatus.COMPLETED
 
@@ -507,10 +507,10 @@ class TestAutoDistillerRouting:
         batch = distiller.prepare_batch("backend:standard")
         assert batch is not None
         distiller.mark_batch_submitted(batch.batch_id, "job-1")
-        distiller.mark_batch_completed(batch.batch_id, "ft:gpt-4o-mini:backend")
+        distiller.mark_batch_completed(batch.batch_id, "ft:gpt-5.4-mini:backend")
 
         result = distiller.get_distilled_model("backend", "standard")
-        assert result == "ft:gpt-4o-mini:backend"
+        assert result == "ft:gpt-5.4-mini:backend"
 
     def test_get_distilled_model_deactivates_low_success(self, tmp_path: Path) -> None:
         from bernstein.core.auto_distillation import AutoDistiller, DistillationConfig

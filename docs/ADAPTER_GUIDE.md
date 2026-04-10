@@ -20,8 +20,8 @@ Source of truth: `src/bernstein/adapters/registry.py`, individual adapter files.
 | Adapter | Provider | Models | Reasoning | Cost Tier | Tool Use | Structured Output | MCP | Recommended Use Case |
 |---------|----------|--------|-----------|-----------|----------|-------------------|-----|----------------------|
 | `claude` | Anthropic | opus, sonnet, haiku | ★★★★★ (opus) / ★★★★ (sonnet) / ★★ (haiku) | $$–$$$ | Full (role-scoped) | JSON schema enforced | Yes | Primary workhorse — architecture, features, tests, docs |
-| `codex` | OpenAI | o3, o4-mini, gpt-4o | ★★★★★ (o3/o4) / ★★★★ (gpt-4o) | $$–$$$ | Full | JSON (`--json`) | No | Provider diversity; OpenAI reasoning models |
-| `gemini` | Google | gemini-2.5-pro, flash | ★★★★ (pro) / ★★★ (flash) | Free–$$$ | Full | JSON (`--output-format json`) | No | Free-tier usage; cost-effective medium tasks |
+| `codex` | OpenAI | gpt-5.4, gpt-5.4-mini | ★★★★★ (5.4) / ★★★★ (5.4-mini) | $$–$$$ | Full | JSON (`--json`) | No | Provider diversity; OpenAI reasoning models |
+| `gemini` | Google | gemini-3.1-pro, gemini-3-flash | ★★★★★ (3.1-pro) / ★★★★ (3-flash) | Free–$$$ | Full | JSON (`--output-format json`) | No | Free-tier usage; cost-effective medium tasks |
 | `aider` | Multi | Any (Anthropic/OpenAI/Azure) | Inherited from model | $–$$$ | File editing | No | Commit-per-change workflows; focused file edits |
 | `amp` | Sourcegraph | Anthropic + OpenAI models | ★★★★★ (opus/o3) | $$–$$$ | Full | No | Sourcegraph-integrated teams; codebase-aware context |
 | `qwen` | Multi | qwen3-coder, qwen3.6-plus | ★★★ | Free–$$ | Full | No | Cost-sensitive; low-complexity tasks; free OpenRouter |
@@ -94,7 +94,7 @@ npm install -g @openai/codex
 - Output written to a `.last-message.txt` file
 - Tier detection from API key format (`sk-proj` = Pro, `sk-` = Plus, other = Free)
 
-**Model mapping:** Direct pass-through of `model_config.model` (e.g., `o3`, `gpt-4o`).
+**Model mapping:** Direct pass-through of `model_config.model` (e.g., `gpt-5.4`, `gpt-5.4-mini`).
 
 **Env vars:** `OPENAI_API_KEY` (required), `OPENAI_ORG_ID` (optional, triggers Enterprise tier), `OPENAI_BASE_URL` (optional).
 
@@ -115,7 +115,7 @@ npm install -g @google/gemini-cli
 - Tier detection: GCP project = Enterprise, `AIza` key prefix = Pro
 - Supports both `GOOGLE_API_KEY` and `GEMINI_API_KEY`
 
-**Model mapping:** Direct pass-through (e.g., `gemini-2.5-pro`, `gemini-2.5-flash`).
+**Model mapping:** Direct pass-through (e.g., `gemini-3.1-pro`, `gemini-3-flash`).
 
 **Env vars:** `GOOGLE_API_KEY` or `GEMINI_API_KEY` (one required), `GOOGLE_CLOUD_PROJECT` (optional, Enterprise tier), `GOOGLE_APPLICATION_CREDENTIALS` (optional).
 
@@ -145,8 +145,8 @@ pipx install aider-chat
 | `opus` | `anthropic/claude-opus-4-6` |
 | `sonnet` | `anthropic/claude-sonnet-4-6` |
 | `haiku` | `anthropic/claude-haiku-4-5-20251001` |
-| `gpt-4o` | `openai/gpt-4o` |
-| `gpt-4.1` | `openai/gpt-4.1` |
+| `gpt-5.4` | `openai/gpt-5.4` |
+| `gpt-5.4-mini` | `openai/gpt-5.4-mini` |
 
 **Env vars:** `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY` (at least one).
 
@@ -253,7 +253,7 @@ pip install aider-chat
 npm install -g @sourcegraph/cody
 ```
 
-**Model mapping:** Uses `provider::version::model` format (e.g., `anthropic::2024-10-22::claude-sonnet-4-5`).
+**Model mapping:** Uses `provider::version::model` format (e.g., `anthropic::2025-05-14::claude-sonnet-4-6`).
 
 **Env vars:** `SRC_ACCESS_TOKEN` (required), `SRC_ENDPOINT` (default: `https://sourcegraph.com`).
 
@@ -442,7 +442,7 @@ Simulates agent behavior for unit and integration tests. Not for production use.
 
 2. **Do you need the strongest reasoning?**
    - Claude Opus -> `claude` with `model: opus`
-   - OpenAI o3 -> `codex` or `amp`
+   - OpenAI GPT-5.4 -> `codex` or `amp`
    - Want to compare both -> use `TierAwareRouter` with multiple providers
 
 3. **Do you need structured output?**

@@ -19,8 +19,8 @@ _MODEL_MAP: dict[str, str] = {
     "opus": "claude-opus-4-6",
     "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-haiku-4-5-20251001",
-    "gpt-4o": "gpt-4o",
-    "gpt-4.1": "gpt-4.1",
+    "gpt-5.4": "gpt-5.4",
+    "gpt-5.4-mini": "gpt-5.4-mini",
 }
 
 

@@ -36,8 +36,8 @@ _MODEL_MAP: dict[str, str] = {
     "sonnet": "TODO: map to your CLI's sonnet model ID",
     "haiku": "TODO: map to your CLI's haiku model ID",
     # Add other models your CLI supports, e.g.:
-    # "gpt-4o": "openai/gpt-4o",
-    # "gpt-4.1": "openai/gpt-4.1",
+    # "gpt-5.4": "openai/gpt-5.4",
+    # "gpt-5.4-mini": "openai/gpt-5.4-mini",
 }
 
 

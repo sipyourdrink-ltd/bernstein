@@ -37,7 +37,7 @@ def test_role_model_policy_routes_roles_to_mixed_adapters_and_records_replay(tmp
     router.register_provider(
         ProviderConfig(
             name="gemini",
-            models={"gemini-2.5-flash": ModelConfig("gemini-2.5-flash", "high")},
+            models={"gemini-3-flash": ModelConfig("gemini-3-flash", "high")},
             tier=Tier.FREE,
             cost_per_1k_tokens=0.0,
         )
@@ -53,7 +53,7 @@ def test_role_model_policy_routes_roles_to_mixed_adapters_and_records_replay(tmp
         use_worktrees=False,
         role_model_policy={
             "backend": {"provider": "codex", "model": "openai/gpt-5.4-mini"},
-            "docs": {"provider": "gemini", "model": "gemini-2.5-flash"},
+            "docs": {"provider": "gemini", "model": "gemini-3-flash"},
         },
     )
 
@@ -131,4 +131,4 @@ def test_role_model_policy_routes_roles_to_mixed_adapters_and_records_replay(tmp
     spawned_events = [event for event in replay_events if event.get("event") == "agent_spawned"]
     assert len(spawned_events) == 2
     assert {event["provider"] for event in spawned_events} == {"codex", "gemini"}
-    assert {event["model"] for event in spawned_events} == {"openai/gpt-5.4-mini", "gemini-2.5-flash"}
+    assert {event["model"] for event in spawned_events} == {"openai/gpt-5.4-mini", "gemini-3-flash"}

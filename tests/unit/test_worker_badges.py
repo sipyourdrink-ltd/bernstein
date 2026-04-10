@@ -106,7 +106,7 @@ class TestWorkerBadgeColorProperties:
         badge = WorkerBadge(
             worker_id="a1b2c3d4e5f6",
             role="security",
-            model="gpt-4o",
+            model="gpt-5.4",
             tier="enterprise",
             start_time=FIXED_TIME,
         )
@@ -213,13 +213,13 @@ class TestFormatWorkerBadge:
         badge = WorkerBadge(
             worker_id="a1b2c3d4e5f6",
             role="qa",
-            model="gpt-4o",
+            model="gpt-5.4",
             tier="enterprise",
             start_time=FIXED_TIME,
         )
         result = format_worker_badge(badge)
         assert "qa" in result
-        assert "gpt-4o" in result
+        assert "gpt-5.4" in result
 
 
 # --- get_badge_for_worker ---

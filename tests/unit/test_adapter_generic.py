@@ -48,7 +48,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="fix bug",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s1",
             )
         cmd = popen.call_args.args[0]
@@ -64,7 +64,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -77,12 +77,12 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
         assert "--model" in inner
-        assert inner[inner.index("--model") + 1] == "gpt-4o"
+        assert inner[inner.index("--model") + 1] == "gpt-5.4"
 
     def test_model_flag_omitted_when_none(self, tmp_path: Path) -> None:
         adapter = GenericAdapter(cli_command="agent", model_flag=None)
@@ -91,7 +91,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -118,7 +118,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="do-this",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s6",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -132,7 +132,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="my-task",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s7",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -146,7 +146,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s8",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -161,7 +161,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s9",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -175,7 +175,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s10",
             )
         assert (tmp_path / ".sdd" / "runtime").is_dir()
@@ -187,7 +187,7 @@ class TestGenericAdapterSpawn:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s11",
             )
         assert result.pid == 710
@@ -199,7 +199,7 @@ class TestGenericAdapterSpawn:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="my-generic-session",
             )
         assert result.log_path.name == "my-generic-session.log"
@@ -211,7 +211,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-s12",
             )
         kwargs = popen.call_args.kwargs
@@ -265,7 +265,7 @@ class TestGenericEnvIsolation:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-env1",
             )
         env = popen.call_args.kwargs.get("env", {})
@@ -285,7 +285,7 @@ class TestGenericEnvIsolation:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen-env2",
             )
         env = popen.call_args.kwargs.get("env", {})
@@ -311,7 +311,7 @@ class TestGenericSpawnMissingBinary:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="missing",
             )
 
@@ -327,7 +327,7 @@ class TestGenericSpawnMissingBinary:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="perm-denied",
             )
 
@@ -343,7 +343,7 @@ class TestGenericSpawnMissingBinary:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="missing2",
             )
 

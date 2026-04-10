@@ -51,7 +51,7 @@ def _inner_cmd(full_cmd: list[str]) -> list[str]:
     return full_cmd[sep + 1 :]
 
 
-def _spawn_codex(tmp_path: Path, model: str = "gpt-4o") -> tuple[list[str], MagicMock]:
+def _spawn_codex(tmp_path: Path, model: str = "gpt-5.4") -> tuple[list[str], MagicMock]:
     adapter = CodexAdapter()
     proc_mock = _make_popen_mock(pid=100)
     with patch("bernstein.adapters.codex.subprocess.Popen", return_value=proc_mock) as popen:
@@ -101,7 +101,7 @@ class TestCodexAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="s1",
             )
         cmd = popen.call_args.args[0]
@@ -117,12 +117,12 @@ class TestCodexAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4.1", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4-mini", effort="high"),
                 session_id="s2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
         assert "-m" in inner
-        assert inner[inner.index("-m") + 1] == "gpt-4.1"
+        assert inner[inner.index("-m") + 1] == "gpt-5.4-mini"
 
     def test_exec_mode_full_auto(self, tmp_path: Path) -> None:
         adapter = CodexAdapter()
@@ -131,7 +131,7 @@ class TestCodexAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="s3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -144,7 +144,7 @@ class TestCodexAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="s4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -159,7 +159,7 @@ class TestCodexAdapterSpawn:
             adapter.spawn(
                 prompt="my-unique-prompt",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="s5",
             )
         cmd = popen.call_args.args[0]
@@ -172,7 +172,7 @@ class TestCodexAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="s6",
             )
         assert (tmp_path / ".sdd" / "runtime").is_dir()
@@ -184,7 +184,7 @@ class TestCodexAdapterSpawn:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="s7",
             )
         assert result.pid == 107
@@ -196,7 +196,7 @@ class TestCodexAdapterSpawn:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="my-session",
             )
         assert result.log_path.name == "my-session.log"
@@ -217,7 +217,7 @@ class TestGeminiAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.0-flash", effort="high"),
+                model_config=ModelConfig(model="gemini-3-flash", effort="high"),
                 session_id="g1",
             )
         cmd = popen.call_args.args[0]
@@ -514,7 +514,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="fix bug",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen1",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -527,12 +527,12 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
         assert "--model" in inner
-        assert inner[inner.index("--model") + 1] == "gpt-4o"
+        assert inner[inner.index("--model") + 1] == "gpt-5.4"
 
     def test_model_flag_omitted_when_none(self, tmp_path: Path) -> None:
         adapter = GenericAdapter(cli_command="mytool", model_flag=None)
@@ -541,7 +541,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -555,7 +555,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="do-this",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -569,7 +569,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen5",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -583,7 +583,7 @@ class TestGenericAdapterSpawn:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen6",
             )
         assert result.pid == 406
@@ -595,7 +595,7 @@ class TestGenericAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="gen7",
             )
         assert (tmp_path / ".sdd" / "runtime").is_dir()
@@ -703,7 +703,7 @@ class TestSpawnMissingBinary:
                 adapter.spawn(
                     prompt="hello",
                     workdir=tmp_path,
-                    model_config=ModelConfig(model="gpt-4o", effort="high"),
+                    model_config=ModelConfig(model="gpt-5.4", effort="high"),
                     session_id="missing-bin",
                 )
 
@@ -716,7 +716,7 @@ class TestSpawnMissingBinary:
                 adapter.spawn(
                     prompt="hello",
                     workdir=tmp_path,
-                    model_config=ModelConfig(model="gpt-4o", effort="high"),
+                    model_config=ModelConfig(model="gpt-5.4", effort="high"),
                     session_id="perm-denied",
                 )
 

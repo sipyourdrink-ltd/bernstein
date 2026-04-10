@@ -41,8 +41,8 @@ class TestModelForTask:
         assert 80 <= sonnet_count <= 120
 
     def test_uses_model_a_and_model_b_labels(self) -> None:
-        result = model_for_task("task-aaa", "gpt-4o", "o1-preview")
-        assert result in ("gpt-4o", "o1-preview")
+        result = model_for_task("task-aaa", "gpt-5.4", "o3")
+        assert result in ("gpt-5.4", "o3")
 
 
 # ---------------------------------------------------------------------------

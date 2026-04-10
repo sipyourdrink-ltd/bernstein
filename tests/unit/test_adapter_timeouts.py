@@ -72,7 +72,7 @@ class TestWatchdogFiresSigterm:
             result = adapter.spawn(
                 prompt="sleep forever",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="timeout-codex",
                 timeout_seconds=_SHORT_TIMEOUT,
             )
@@ -91,7 +91,7 @@ class TestWatchdogFiresSigterm:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="timer-stored",
                 timeout_seconds=1800,
             )
@@ -111,7 +111,7 @@ class TestWatchdogFiresSigterm:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="cancel-test",
                 timeout_seconds=_SHORT_TIMEOUT,
             )
@@ -134,7 +134,7 @@ class TestWatchdogFiresSigterm:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="early-exit",
                 timeout_seconds=_SHORT_TIMEOUT,
             )
@@ -161,7 +161,7 @@ class TestAllAdaptersHaveTimeout:
         tmp_path: Path,
         extra_patches: dict | None = None,
         *,
-        model: str = "gpt-4o",
+        model: str = "gpt-5.4",
         session_id: str = "s1",
     ) -> None:
         proc_mock = _make_popen_mock(pid=8000)
@@ -253,7 +253,7 @@ class TestDefaultTimeout:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="default-timeout",
                 # no timeout_seconds → uses default 1800
             )

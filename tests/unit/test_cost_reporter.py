@@ -49,8 +49,8 @@ class TestBuildCostSummary:
         assert "5" in summary
 
     def test_contains_model(self) -> None:
-        summary = build_cost_summary(cost_usd=0.001, task_count=1, model="claude-haiku-4-5")
-        assert "claude-haiku-4-5" in summary
+        summary = build_cost_summary(cost_usd=0.001, task_count=1, model="claude-haiku-4-5-20251001")
+        assert "claude-haiku-4-5-20251001" in summary
 
     def test_contains_annotation_marker(self) -> None:
         summary = build_cost_summary(cost_usd=0.0, task_count=0, model="x")

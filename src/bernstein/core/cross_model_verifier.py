@@ -30,7 +30,7 @@ _MAX_DIFF_CHARS = 12_000
 _MAX_TOKENS = 512
 _PROVIDER = "openrouter"
 _REVIEWER_GEMINI_FLASH = "google/gemini-flash-1.5"
-_REVIEWER_CLAUDE_HAIKU = "anthropic/claude-haiku-3-5"
+_REVIEWER_CLAUDE_HAIKU = "anthropic/claude-haiku-4-5-20251001"
 _DEFAULT_REVIEWER = _REVIEWER_GEMINI_FLASH
 
 # Model family -> cheap reviewer from a different provider

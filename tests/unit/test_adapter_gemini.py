@@ -49,7 +49,7 @@ class TestGeminiAdapterSpawn:
             adapter.spawn(
                 prompt="fix the bug",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-s1",
             )
         cmd = popen.call_args.args[0]
@@ -65,12 +65,12 @@ class TestGeminiAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-flash", effort="high"),
+                model_config=ModelConfig(model="gemini-3-flash", effort="high"),
                 session_id="gemini-s2",
             )
         inner = _inner_cmd(popen.call_args.args[0])
         assert "-m" in inner
-        assert inner[inner.index("-m") + 1] == "gemini-2.5-flash"
+        assert inner[inner.index("-m") + 1] == "gemini-3-flash"
 
     def test_output_format_json_flag(self, tmp_path: Path) -> None:
         adapter = GeminiAdapter()
@@ -79,7 +79,7 @@ class TestGeminiAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-s3",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -93,7 +93,7 @@ class TestGeminiAdapterSpawn:
             adapter.spawn(
                 prompt="my-unique-prompt",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-s4",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -107,7 +107,7 @@ class TestGeminiAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-s8",
             )
         inner = _inner_cmd(popen.call_args.args[0])
@@ -120,7 +120,7 @@ class TestGeminiAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-s5",
             )
         assert (tmp_path / ".sdd" / "runtime").is_dir()
@@ -132,7 +132,7 @@ class TestGeminiAdapterSpawn:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-s6",
             )
         assert result.pid == 105
@@ -144,7 +144,7 @@ class TestGeminiAdapterSpawn:
             result = adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="my-gemini-session",
             )
         assert result.log_path.name == "my-gemini-session.log"
@@ -156,7 +156,7 @@ class TestGeminiAdapterSpawn:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-s7",
             )
         kwargs = popen.call_args.kwargs
@@ -185,7 +185,7 @@ class TestGeminiEnvIsolation:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-env1",
             )
         env = popen.call_args.kwargs.get("env", {})
@@ -212,7 +212,7 @@ class TestGeminiEnvIsolation:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-env2",
             )
         env = popen.call_args.kwargs.get("env", {})
@@ -230,7 +230,7 @@ class TestGeminiEnvIsolation:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="gemini-env3",
             )
         env = popen.call_args.kwargs.get("env", {})
@@ -265,7 +265,7 @@ class TestGeminiSpawnMissingBinary:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="missing",
             )
 
@@ -281,7 +281,7 @@ class TestGeminiSpawnMissingBinary:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="perm-denied",
             )
 
@@ -298,7 +298,7 @@ class TestGeminiWarnings:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="warn-missing-key",
             )
         assert "neither GOOGLE_API_KEY nor GEMINI_API_KEY is set — spawn will fail" in caplog.text
@@ -313,7 +313,7 @@ class TestGeminiWarnings:
             adapter.spawn(
                 prompt="hello",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gemini-2.5-pro", effort="high"),
+                model_config=ModelConfig(model="gemini-3.1-pro", effort="high"),
                 session_id="pop-key",
             )
         env = popen.call_args.kwargs.get("env", {})

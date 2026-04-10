@@ -12,7 +12,7 @@ cli: auto
 # Maximum number of agents running concurrently.
 max_agents: 4
 
-# Optional model override (e.g. opus, sonnet, gpt-4.1).
+# Optional model override (e.g. opus, sonnet, gpt-5.4).
 # model: opus
 
 # Role team.  "auto" lets the manager choose; or list explicit roles.

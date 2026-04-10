@@ -137,7 +137,7 @@ async def _count_tokens_via_cheap_model(text: str) -> int | None:
         )
 
         resp = await client.chat.completions.create(
-            model="anthropic/claude-haiku-4-5",
+            model="anthropic/claude-haiku-4-5-20251001",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=16,
             temperature=0.0,

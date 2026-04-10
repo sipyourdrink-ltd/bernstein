@@ -58,8 +58,8 @@ class TestSimulateRouting:
 
     def test_config_model_override(self) -> None:
         """Config-level model/effort overrides take highest precedence."""
-        decision = simulate_routing(_task(), {"model": "gpt-4.1", "effort": "low"})
-        assert decision.model == "gpt-4.1"
+        decision = simulate_routing(_task(), {"model": "gpt-5.4-mini", "effort": "low"})
+        assert decision.model == "gpt-5.4-mini"
         assert decision.effort == "low"
         assert decision.reason == "config override"
 

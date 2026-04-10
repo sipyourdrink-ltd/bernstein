@@ -44,7 +44,7 @@ DEFAULT_CONTEXT_LIMITS: dict[str, int] = {
     "sonnet": 200_000,
     "haiku": 200_000,
     "gpt-4": 128_000,
-    "gpt-4.1": 1_000_000,
+    "gpt-5.4-mini": 1_000_000,
     "o3": 200_000,
     "o4-mini": 200_000,
     "gemini": 1_000_000,
@@ -116,7 +116,7 @@ def resolve_context_limit(model: str, explicit_limit: int = 0) -> int:
     name in ``DEFAULT_CONTEXT_LIMITS``.
 
     Args:
-        model: Model name (e.g. "opus", "sonnet", "gpt-4.1").
+        model: Model name (e.g. "opus", "sonnet", "gpt-5.4-mini").
         explicit_limit: Caller-provided context limit (0 = use default).
 
     Returns:

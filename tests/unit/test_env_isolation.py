@@ -148,7 +148,7 @@ class TestAdaptersUseFilteredEnv:
             adapter.spawn(
                 prompt="do work",
                 workdir=tmp_path,
-                model_config=ModelConfig(model="gpt-4o", effort="high"),
+                model_config=ModelConfig(model="gpt-5.4", effort="high"),
                 session_id="sess-codex",
             )
         kwargs = popen_spy.call_args.kwargs

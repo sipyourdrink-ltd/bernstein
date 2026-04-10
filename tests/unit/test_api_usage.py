@@ -17,7 +17,7 @@ def test_record_call_updates_session_summary_and_persists(tmp_path: Path) -> Non
 
     tracker.record_call(
         provider="openai",
-        model="gpt-4.1",
+        model="gpt-5.4-mini",
         input_tokens=120,
         output_tokens=30,
         cost_usd=0.42,
@@ -65,8 +65,8 @@ def test_get_usage_tracker_returns_singleton(monkeypatch: pytest.MonkeyPatch, tm
 
 def test_provider_summary_aggregates_multiple_providers(tmp_path: Path) -> None:
     tracker = ApiUsageTracker(tmp_path)
-    tracker.record_call("openai", "gpt-4.1", 10, 5, 0.1)
-    tracker.record_call("openai", "gpt-4.1", 20, 10, 0.2)
+    tracker.record_call("openai", "gpt-5.4-mini", 10, 5, 0.1)
+    tracker.record_call("openai", "gpt-5.4-mini", 20, 10, 0.2)
     tracker.record_call("anthropic", "sonnet", 30, 15, 0.3)
 
     summary = tracker.provider_summary()

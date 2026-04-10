@@ -270,12 +270,12 @@ class TestEvalJudgeInit:
 
     def test_custom_config(self) -> None:
         judge = EvalJudge(
-            model="openai/gpt-4o",
+            model="openai/gpt-5.4",
             provider="openai",
             backoff_schedule=(1.0, 2.0),
             circuit_breaker_threshold=5,
         )
-        assert judge.model == "openai/gpt-4o"
+        assert judge.model == "openai/gpt-5.4"
         assert judge.provider == "openai"
         assert judge.backoff_schedule == (1.0, 2.0)
         assert judge.circuit_breaker_threshold == 5

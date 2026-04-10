@@ -41,7 +41,7 @@ def test_prometheus_cost_metrics() -> None:
     status_data = {
         "total_cost_usd": 1.25,
         "cost_by_model_usd": {
-            "gpt-4o": 0.75,
+            "gpt-5.4": 0.75,
             "claude-3-5-sonnet": 0.50,
         },
     }
@@ -51,7 +51,7 @@ def test_prometheus_cost_metrics() -> None:
     output = generate_latest(registry).decode("utf-8")
 
     assert 'bernstein_cost_usd_total{adapter="total"} 1.25' in output
-    assert 'bernstein_cost_usd_by_model_total{adapter="unknown",model="gpt-4o"} 0.75' in output
+    assert 'bernstein_cost_usd_by_model_total{adapter="unknown",model="gpt-5.4"} 0.75' in output
 
 
 def test_prometheus_histograms() -> None:

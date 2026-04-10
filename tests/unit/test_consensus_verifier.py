@@ -39,7 +39,7 @@ class TestWriterFamily:
         assert _writer_family("google/gemini-flash-2") == "google"
 
     def test_gpt_is_openai(self) -> None:
-        assert _writer_family("openai/gpt-4o-mini") == "openai"
+        assert _writer_family("openai/gpt-5.4-mini") == "openai"
 
     def test_unknown_returns_empty(self) -> None:
         assert _writer_family("some/obscure-model-xyz") == ""
@@ -80,7 +80,7 @@ class TestSelectDiverseVerifierModels:
         assert len(models) == len(_REVIEWER_POOL)  # capped at pool size
 
     def test_n_1_returns_single_model(self) -> None:
-        models = select_diverse_verifier_models("openai/gpt-4o", 1)
+        models = select_diverse_verifier_models("openai/gpt-5.4", 1)
         assert len(models) == 1
 
     def test_unknown_writer_uses_full_pool(self) -> None:

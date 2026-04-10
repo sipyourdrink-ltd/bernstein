@@ -84,7 +84,7 @@ class AgentRegistry:
 
     SCHEMA_VERSION = "1.0"
     REQUIRED_FIELDS: ClassVar[set[str]] = {"name", "role", "model", "version"}
-    VALID_MODEL_VALUES: ClassVar[set[str]] = {"opus", "sonnet", "gpt-4.1", "gpt-4", "gemini-pro", "qwen-max"}
+    VALID_MODEL_VALUES: ClassVar[set[str]] = {"opus", "sonnet", "gpt-5.4-mini", "gpt-4", "gemini-pro", "qwen-max"}
     VALID_EFFORT_VALUES: ClassVar[set[str]] = {"max", "high", "normal", "low"}
 
     def __init__(

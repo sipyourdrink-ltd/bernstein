@@ -49,7 +49,7 @@ _SAMPLE_HISTORY: list[dict[str, object]] = [
     },
     {
         "adapter": "codex",
-        "model": "gpt-4o",
+        "model": "gpt-5.4",
         "task_type": "backend",
         "success": True,
         "cost_usd": 0.10,
@@ -88,7 +88,7 @@ class TestBuildLeaderboard:
         keys = {(r.adapter, r.model, r.task_type) for r in lb.records}
         assert keys == {
             ("claude", "sonnet", "backend"),
-            ("codex", "gpt-4o", "backend"),
+            ("codex", "gpt-5.4", "backend"),
             ("claude", "haiku", "qa"),
         }
 
@@ -185,7 +185,7 @@ class TestFormatLeaderboard:
         text = format_leaderboard(lb, sort_by="cost")
         # haiku at $0.005 should appear before codex at $0.10
         haiku_pos = text.find("haiku")
-        gpt4o_pos = text.find("gpt-4o")
+        gpt4o_pos = text.find("gpt-5.4")
         assert haiku_pos < gpt4o_pos
 
     def test_empty_leaderboard(self) -> None:
@@ -208,9 +208,9 @@ class TestGetRecommendation:
         lb = build_leaderboard(_SAMPLE_HISTORY)
         rec = get_recommendation("backend", lb)
         assert rec is not None
-        # codex/gpt-4o has 100% success rate vs claude/sonnet at 66%
+        # codex/gpt-5.4 has 100% success rate vs claude/sonnet at 66%
         assert rec.adapter == "codex"
-        assert rec.model == "gpt-4o"
+        assert rec.model == "gpt-5.4"
 
     def test_tiebreak_by_cost(self) -> None:
         """When success rates are equal, cheaper wins."""
