@@ -134,7 +134,7 @@ class TestRenderAsciiBarChart:
             width=10,
         )
         # The bar (block chars only) should not exceed width
-        bar_line = [line for line in result.splitlines() if "|" in line][0]
+        bar_line = next(line for line in result.splitlines() if "|" in line)
         bar_part = bar_line.split("|")[1]
         block_count = sum(1 for c in bar_part if c in "\u2588\u2593\u2591")
         assert block_count <= 10

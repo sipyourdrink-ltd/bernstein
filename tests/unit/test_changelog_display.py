@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from bernstein.cli.changelog_display import (
     ChangelogEntry,
     filter_changelog,

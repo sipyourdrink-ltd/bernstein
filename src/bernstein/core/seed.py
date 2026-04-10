@@ -311,6 +311,8 @@ class SeedConfig:
     internal_llm_provider: str = "openrouter_free"
     internal_llm_model: str = "nvidia/nemotron-3-super-120b-a12b"
     model_fallback: ModelFallbackSeedConfig | None = None
+    cost_tags: dict[str, str] = field(default_factory=dict)
+    cost_autopilot: bool = False
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -1410,6 +1412,17 @@ def parse_seed(path: Path) -> SeedConfig:
 
     model_fallback = _parse_model_fallback(data.get("model_fallback"))
 
+    # --- Cost allocation tags ---
+    cost_tags_raw: object = data.get("cost_tags", {})
+    if not isinstance(cost_tags_raw, dict):
+        raise SeedError(f"cost_tags must be a mapping, got: {type(cost_tags_raw).__name__}")
+    cost_tags: dict[str, str] = {str(k): str(v) for k, v in cost_tags_raw.items()}
+
+    # --- Cost autopilot ---
+    cost_autopilot_raw: object = data.get("cost_autopilot", False)
+    if not isinstance(cost_autopilot_raw, bool):
+        raise SeedError(f"cost_autopilot must be a boolean, got: {type(cost_autopilot_raw).__name__}")
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -1453,6 +1466,8 @@ def parse_seed(path: Path) -> SeedConfig:
         internal_llm_provider=internal_llm_provider_raw,
         internal_llm_model=internal_llm_model_raw,
         model_fallback=model_fallback,
+        cost_tags=cost_tags,
+        cost_autopilot=cost_autopilot_raw,
     )
 
 

@@ -10,7 +10,6 @@ from bernstein.core.agent_utilization import (
     summarize_utilization,
 )
 
-
 # ---------------------------------------------------------------------------
 # UtilizationRecord
 # ---------------------------------------------------------------------------

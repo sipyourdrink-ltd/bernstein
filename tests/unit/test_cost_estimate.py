@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from bernstein.cli.cost_estimate import (
     COST_PER_COMPLEXITY,
-    RunCostEstimate,
     TaskCostEstimate,
     estimate_run_cost,
     estimate_task_cost,
     format_cost_estimate,
 )
-
 
 # ---------------------------------------------------------------------------
 # TaskCostEstimate creation

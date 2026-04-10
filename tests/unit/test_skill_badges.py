@@ -10,7 +10,6 @@ from bernstein.core.skill_badges import (
     get_skill_set,
 )
 
-
 # -- SkillLevel ordering ----------------------------------------------------
 
 

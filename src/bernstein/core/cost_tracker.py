@@ -77,6 +77,7 @@ class TokenUsage:
     cached_tokens: int = 0  # Tokens served from cache (legacy)
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    cost_tags: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dict."""
@@ -93,11 +94,14 @@ class TokenUsage:
             "cached_tokens": self.cached_tokens,
             "cache_read_tokens": self.cache_read_tokens,
             "cache_write_tokens": self.cache_write_tokens,
+            "cost_tags": self.cost_tags,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TokenUsage:
         """Deserialise from a dict."""
+        raw_tags = d.get("cost_tags", {})
+        tags: dict[str, str] = {str(k): str(v) for k, v in raw_tags.items()} if isinstance(raw_tags, dict) else {}
         return cls(
             input_tokens=int(d["input_tokens"]),
             output_tokens=int(d["output_tokens"]),
@@ -111,6 +115,7 @@ class TokenUsage:
             cached_tokens=int(d.get("cached_tokens", 0)),
             cache_read_tokens=int(d.get("cache_read_tokens", 0)),
             cache_write_tokens=int(d.get("cache_write_tokens", 0)),
+            cost_tags=tags,
         )
 
 

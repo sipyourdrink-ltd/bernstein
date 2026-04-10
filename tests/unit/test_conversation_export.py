@@ -14,7 +14,6 @@ from bernstein.core.conversation_export import (
     serialize_export,
 )
 
-
 # ---------------------------------------------------------------------------
 # ConversationMessage creation
 # ---------------------------------------------------------------------------

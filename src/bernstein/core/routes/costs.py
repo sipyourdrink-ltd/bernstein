@@ -828,3 +828,43 @@ def token_efficiency(request: Request) -> JSONResponse:
             "most_efficient_model": efficiency_ranking[0]["model"] if efficiency_ranking else None,
         }
     )
+
+
+@router.get("/costs/by-tag")
+def get_costs_by_tag(request: Request, tag_key: str | None = None) -> JSONResponse:
+    """Aggregate costs grouped by cost allocation tag keys/values.
+
+    When ``tag_key`` is provided, returns costs broken down by values of
+    that specific tag.  Without ``tag_key``, returns costs grouped by
+    every tag key found across all usages.
+
+    Args:
+        request: FastAPI request.
+        tag_key: Optional tag key to filter by.
+
+    Returns:
+        JSON with ``by_tag`` mapping of tag keys to value-cost dicts.
+    """
+    from bernstein.core.cost_tracker import CostTracker
+
+    sdd_dir = _get_sdd_dir(request)
+    costs_dir = sdd_dir / "runtime" / "costs"
+
+    # tag_key -> tag_value -> accumulated cost
+    by_tag: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+
+    if costs_dir.exists():
+        cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+        for cost_file in cost_files:
+            tracker = CostTracker.load(sdd_dir, cost_file.stem)
+            if tracker is None:
+                continue
+            for u in tracker.usages:
+                for k, v in u.cost_tags.items():
+                    if tag_key is None or k == tag_key:
+                        by_tag[k][v] += u.cost_usd
+
+    # Round values for output
+    result: dict[str, dict[str, float]] = {k: {v: round(c, 6) for v, c in vals.items()} for k, vals in by_tag.items()}
+
+    return JSONResponse(content={"by_tag": result})

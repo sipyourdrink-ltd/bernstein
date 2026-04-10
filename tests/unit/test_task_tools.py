@@ -11,7 +11,6 @@ from bernstein.core.task_tools import (
     validate_task_tools,
 )
 
-
 # ---------------------------------------------------------------------------
 # TaskToolDefinition / TaskToolConfig creation
 # ---------------------------------------------------------------------------
