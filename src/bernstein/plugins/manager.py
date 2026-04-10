@@ -18,6 +18,14 @@ from typing import Any, ClassVar, cast
 
 import pluggy
 
+from bernstein.core.hook_protocol import (
+    HookValidationError,
+    merge_hook_payload,
+    normalize_hook_response,
+    parse_hook_response,
+    substitute_template_vars,
+    validate_hook_payload,
+)
 from bernstein.core.plugin_policy import (
     PluginPolicy,
     PluginPolicyViolation,
@@ -38,6 +46,7 @@ __all__ = [
     "DEFAULT_ELICIT_TIMEOUT",
     "SLOW_HOOK_THRESHOLD",
     "HookBlockingError",
+    "HookValidationError",
     "PluginManager",
     "PluginPolicyViolation",
     "get_plugin_manager",
@@ -216,64 +225,60 @@ class CommandHook:
             "BERNSTEIN_HOME": str(home_dir.path),
         }
 
-    def _substitute_template(self, text: str, vars: dict[str, str]) -> str:
-        """Replace ${VAR} placeholders with resolved values (T451).
-
-        Unknown variables are replaced with empty string to avoid leaking
-        unexpanded placeholders into environment variables or stdin.
-
-        Args:
-            text: Text potentially containing ${VAR} placeholders.
-            vars: Mapping of variable names to resolved values.
-
-        Returns:
-            Text with all known placeholders substituted.
-        """
-        import re as _re
-
-        def _replacer(m: _re.Match[str]) -> str:
-            var_name = m.group(1)
-            return vars.get(var_name, "")
-
-        return _re.sub(r"\$\{(\w+)\}", _replacer, text)
-
-    def _prepare_hook_env(self, **kwargs: Any) -> tuple[dict[str, str], dict[str, str]]:
+    def _prepare_hook_env(self, **kwargs: Any) -> tuple[dict[str, Any], dict[str, str]]:
         """Resolve template vars, apply substitution, and build env dict.
 
         Returns (sub_kwargs, env) where sub_kwargs has substituted values
         and env is os.environ augmented with BERNSTEIN_HOOK_* vars.
         """
         tpl_vars = self._resolve_template_vars(self._hooks_dir)
-        sub_kwargs: dict[str, str] = {}
+        sub_kwargs: dict[str, Any] = {}
         for key, value in kwargs.items():
-            sub_kwargs[key] = self._substitute_template(str(value), tpl_vars)
+            sub_kwargs[key] = substitute_template_vars(value, tpl_vars)
 
         env = os.environ.copy()
         for key, value in sub_kwargs.items():
-            env[f"BERNSTEIN_HOOK_{key.upper()}"] = value
+            if isinstance(value, str):
+                env[f"BERNSTEIN_HOOK_{key.upper()}"] = value
+            else:
+                env[f"BERNSTEIN_HOOK_{key.upper()}"] = json.dumps(value, sort_keys=True)
         return sub_kwargs, env
 
     @staticmethod
-    def _handle_success(script: Path, proc: subprocess.CompletedProcess[str]) -> None:
+    def _handle_success(
+        hook_name: str,
+        script: Path,
+        proc: subprocess.CompletedProcess[str],
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], bool]:
         """Process stdout from a hook that exited with code 0."""
         if not proc.stdout.strip():
-            return
+            return payload, False
         try:
-            response = cast("dict[str, Any]", json.loads(proc.stdout))
-            status = str(response.get("status", ""))
-            message = str(response.get("message", ""))
-            if status == "error":
+            raw_response = parse_hook_response(proc.stdout)
+            if raw_response is None:
+                return payload, False
+            response = normalize_hook_response(raw_response)
+            if response.status == "error":
                 log.warning(
                     "Hook script %s reported error: %s",
                     script.name,
-                    message or "no message",
+                    response.message or "no message",
                 )
-        except (json.JSONDecodeError, TypeError):
+            if response.data is not None:
+                payload = merge_hook_payload(payload, response.data)
+                validate_hook_payload(hook_name, payload)
+            if response.abort_chain:
+                log.debug("Hook chain %s aborted by %s", hook_name, script.name)
+                return payload, True
+            return payload, False
+        except (json.JSONDecodeError, TypeError, ValueError):
             log.warning(
                 "Hook script %s returned malformed JSON: %s",
                 script.name,
                 proc.stdout[:100],
             )
+            return payload, False
 
     @staticmethod
     def _handle_blocking(hook_name: str, proc: subprocess.CompletedProcess[str]) -> None:
@@ -289,6 +294,9 @@ class CommandHook:
         raise HookBlockingError(hook_name, error_detail)
 
     def _run_command(self, hook_name: str, **kwargs: Any) -> None:
+        current_payload = dict(kwargs)
+        validate_hook_payload(hook_name, current_payload)
+
         hook_path = self._hooks_dir / hook_name
         if not hook_path.is_dir():
             return
@@ -308,7 +316,7 @@ class CommandHook:
 
             log.debug("Executing hook script: %s", script)
             try:
-                sub_kwargs, env = self._prepare_hook_env(**kwargs)
+                sub_kwargs, env = self._prepare_hook_env(**current_payload)
                 proc = subprocess.run(
                     [str(script)],
                     input=json.dumps(sub_kwargs),
@@ -319,7 +327,9 @@ class CommandHook:
                 )
 
                 if proc.returncode == 0:
-                    self._handle_success(script, proc)
+                    current_payload, abort_chain = self._handle_success(hook_name, script, proc, current_payload)
+                    if abort_chain:
+                        break
                     continue
 
                 if proc.returncode == 2:
@@ -600,6 +610,8 @@ class PluginManager:
             return None
         try:
             return self._pm.hook.on_permission_denied(task_id=task_id, reason=reason, tool=tool, args=args)
+        except HookValidationError:
+            raise
         except Exception as exc:
             log.warning("on_permission_denied hook failed: %s", exc)
             return None
@@ -627,6 +639,8 @@ class PluginManager:
                 tool=tool,
                 tool_input=tool_input,
             )
+        except HookValidationError:
+            raise
         except HookBlockingError:
             raise
         except Exception as exc:
@@ -1181,7 +1195,7 @@ class PluginManager:
                 self._executor.submit(self._invoke_hook, hook_name, hook_caller, True, **kwargs)
             else:
                 self._invoke_hook(hook_name, hook_caller, False, **kwargs)
-        except HookBlockingError:
+        except (HookBlockingError, HookValidationError):
             # Re-raise blocking errors so they propagate to the orchestrator.
             raise
         except Exception as exc:
@@ -1214,7 +1228,7 @@ class PluginManager:
             if is_background:
                 log.debug("Starting background hook %r", name)
             hook_caller(**kwargs)
-        except HookBlockingError:
+        except (HookBlockingError, HookValidationError):
             outcome = "blocking_error"
             raise
         except Exception as exc:
