@@ -7,8 +7,11 @@ from pathlib import Path
 from bernstein.core.sdk_generator import (
     _method_name_from_operation,
     _python_type,
+    _ts_type,
     generate_sdk,
     generate_sdk_to_file,
+    generate_typescript_sdk,
+    generate_typescript_sdk_to_file,
 )
 
 
@@ -190,3 +193,109 @@ class TestGenerateSDKToFile:
         generate_sdk_to_file(str(output), spec)
         content = output.read_text()
         compile(content, str(output), "exec")
+
+
+class TestTsType:
+    """Test OpenAPI type to TypeScript type mapping."""
+
+    def test_string(self) -> None:
+        assert _ts_type({"type": "string"}) == "string"
+
+    def test_integer(self) -> None:
+        assert _ts_type({"type": "integer"}) == "number"
+
+    def test_number(self) -> None:
+        assert _ts_type({"type": "number"}) == "number"
+
+    def test_boolean(self) -> None:
+        assert _ts_type({"type": "boolean"}) == "boolean"
+
+    def test_array(self) -> None:
+        assert _ts_type({"type": "array"}) == "unknown[]"
+
+    def test_object(self) -> None:
+        assert _ts_type({"type": "object"}) == "Record<string, unknown>"
+
+    def test_unknown(self) -> None:
+        assert _ts_type({}) == "unknown"
+
+
+class TestGenerateTypeScriptSDK:
+    """Test TypeScript SDK generation."""
+
+    def test_contains_client_class(self) -> None:
+        spec = _minimal_openapi_spec()
+        sdk = generate_typescript_sdk(spec)
+        assert "class BernsteinClient" in sdk
+
+    def test_contains_error_class(self) -> None:
+        spec = _minimal_openapi_spec()
+        sdk = generate_typescript_sdk(spec)
+        assert "class BernsteinAPIError" in sdk
+
+    def test_generates_methods_for_endpoints(self) -> None:
+        spec = _minimal_openapi_spec()
+        sdk = generate_typescript_sdk(spec)
+        assert "listTasks" in sdk
+        assert "createTask" in sdk
+        assert "getTask" in sdk
+
+    def test_path_parameters_in_method(self) -> None:
+        spec = _minimal_openapi_spec()
+        sdk = generate_typescript_sdk(spec)
+        assert "task_id: string" in sdk
+
+    def test_optional_query_parameters(self) -> None:
+        spec = _minimal_openapi_spec()
+        sdk = generate_typescript_sdk(spec)
+        assert "status?: string" in sdk
+
+    def test_post_method_has_body(self) -> None:
+        spec = _minimal_openapi_spec()
+        sdk = generate_typescript_sdk(spec)
+        assert "body: Record<string, unknown>" in sdk
+
+    def test_empty_spec(self) -> None:
+        spec = {"openapi": "3.0.0", "info": {}, "paths": {}}
+        sdk = generate_typescript_sdk(spec)
+        assert "class BernsteinClient" in sdk
+
+    def test_uses_fetch(self) -> None:
+        spec = _minimal_openapi_spec()
+        sdk = generate_typescript_sdk(spec)
+        assert "fetch(" in sdk
+
+    def test_async_methods(self) -> None:
+        spec = _minimal_openapi_spec()
+        sdk = generate_typescript_sdk(spec)
+        assert "async " in sdk
+
+    def test_promise_return_type(self) -> None:
+        spec = _minimal_openapi_spec()
+        sdk = generate_typescript_sdk(spec)
+        assert "Promise<unknown>" in sdk
+
+
+class TestGenerateTypeScriptSDKToFile:
+    """Test TypeScript SDK file generation."""
+
+    def test_writes_file(self, tmp_path: Path) -> None:
+        spec = _minimal_openapi_spec()
+        output = tmp_path / "client.ts"
+        result = generate_typescript_sdk_to_file(str(output), spec)
+        assert Path(result).exists()
+        content = output.read_text()
+        assert "class BernsteinClient" in content
+
+    def test_creates_parent_dirs(self, tmp_path: Path) -> None:
+        spec = _minimal_openapi_spec()
+        output = tmp_path / "nested" / "dir" / "client.ts"
+        result = generate_typescript_sdk_to_file(str(output), spec)
+        assert Path(result).exists()
+
+    def test_has_ts_extension_content(self, tmp_path: Path) -> None:
+        spec = _minimal_openapi_spec()
+        output = tmp_path / "client.ts"
+        generate_typescript_sdk_to_file(str(output), spec)
+        content = output.read_text()
+        assert "export class" in content
