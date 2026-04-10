@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bernstein vs CrewAI — AI Agent Orchestration Comparison</title>
+  <meta name="description" content="Compare Bernstein and CrewAI for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/compare/bernstein-vs-crewai.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="Bernstein vs CrewAI — AI Agent Orchestration Comparison" />
+  <meta property="og:description" content="Compare Bernstein and CrewAI for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/compare/bernstein-vs-crewai.html" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Bernstein vs CrewAI — AI Agent Orchestration Comparison" />
+  <meta name="twitter:description" content="Compare Bernstein and CrewAI for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="author" href="https://alexchernysh.com" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Bernstein vs CrewAI — AI Agent Orchestration Comparison",
+    "description": "CrewAI uses LLM-driven scheduling with Python SDK agents. Bernstein uses deterministic scheduling with any CLI agent. Compare orchestration approaches.",
+    "author": { "@type": "Person", "name": "Alex Chernysh", "url": "https://alexchernysh.com" },
+    "datePublished": "2026-04-06",
+    "dateModified": "2026-04-06",
+    "publisher": { "@type": "Organization", "name": "Bernstein", "url": "https://chernistry.github.io/bernstein/" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "Bernstein vs CrewAI Feature Comparison",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Bernstein", "description": "Deterministic scheduling, 18+ CLI agent adapters, git worktree isolation, janitor verification, cost tracking" },
+      { "@type": "ListItem", "position": 2, "name": "CrewAI", "description": "Python-native, LLM-driven scheduling, role-based agents defined as Python SDK classes" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is the difference between CrewAI and Bernstein?",
+        "acceptedAnswer": { "@type": "Answer", "text": "CrewAI is a Python framework where you define agents as Python classes with LLM-driven task delegation. Bernstein is an orchestrator that wraps any installed CLI coding agent (Claude Code, Codex, Gemini CLI) with deterministic Python scheduling -- zero LLM tokens spent on coordination." }
+      },
+      {
+        "@type": "Question",
+        "name": "Does CrewAI or Bernstein cost more to run?",
+        "acceptedAnswer": { "@type": "Answer", "text": "CrewAI spends LLM tokens on agent coordination and task delegation decisions. Bernstein's scheduling is pure Python code with zero LLM overhead. For coordination-heavy workflows, Bernstein's deterministic scheduling significantly reduces costs." }
+      },
+      {
+        "@type": "Question",
+        "name": "Can I use CLI coding agents like Claude Code with CrewAI?",
+        "acceptedAnswer": { "@type": "Answer", "text": "CrewAI agents are Python SDK classes, not CLI tools. You define agent behavior in Python code. Bernstein wraps 18+ installed CLI agents (Claude Code, Codex, Gemini CLI, Aider, Cursor, and more) as subprocess adapters -- no Python SDK integration required." }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="../style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" integrity="sha384-eFTL69TLRZTkNfYZOLM+G04821K1qZao/4QLJbet1pP4tcF+fdXq/9CdqAbWRl/L" crossorigin="anonymous" />
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" integrity="sha384-ieG+IKD0d/ZPXyCBTMVAbqsQdns8QGJR/e26WMw7M4fkaI/rHcS/YIoi+ah9WGge" crossorigin="anonymous"></script>
+  <script src="../script.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="../index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="../getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="../concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="../adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="../api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="../leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="index.html" class="nav-link" data-page="compare/index.html">Compare</a>
+      <a href="../docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+      <a href="../blog.html" class="nav-link" data-page="blog.html">Blog</a>
+      <a href="../limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</nav>
+
+<div class="page-hero">
+  <div class="container">
+    <h1>Bernstein vs CrewAI</h1>
+    <p>Deterministic CLI orchestration vs Python-native LLM-driven agent scheduling.</p>
+  </div>
+</div>
+
+<div class="doc-layout">
+
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#feature-comparison">Feature comparison</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#scheduling">Scheduling: LLM vs deterministic</a></li>
+      <li><a href="#agent-model">Agent model: SDK vs CLI</a></li>
+      <li><a href="#cost">Cost comparison</a></li>
+      <li><a href="#when-crewai">When to use CrewAI</a></li>
+      <li><a href="#when-bernstein">When to use Bernstein</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+  </aside>
+
+  <main class="doc-content">
+
+    <p>CrewAI is a popular Python framework for multi-agent orchestration where agents are Python classes with LLM-driven task delegation. Bernstein takes a fundamentally different approach: it wraps any installed CLI coding agent (Claude Code, Codex, Gemini CLI, and 15+ others) with deterministic Python scheduling that spends zero LLM tokens on coordination. CrewAI is better for building custom agent applications in Python. Bernstein is better for orchestrating real CLI coding agents on software development tasks.</p>
+
+    <h2 id="overview">What each tool is</h2>
+
+    <p><strong>CrewAI</strong> is a Python-native multi-agent framework. You define agents as Python classes with roles, goals, and backstories. You define tasks with expected outputs. The framework uses LLM calls to decide which agent handles which task, how to delegate, and when to escalate. Agents communicate through a shared memory system. It is designed for building custom agent applications -- customer support, research pipelines, content generation.</p>
+
+    <p><strong>Bernstein</strong> is an orchestrator for CLI coding agents. You provide a natural language goal. Bernstein decomposes it into tasks using a single LLM planner call, then hands off to deterministic Python code: task assignment based on role/complexity rules, model routing via a cost-aware bandit, git worktree isolation per agent, and janitor verification (tests + linter) before merge. The agents are installed CLI tools (Claude Code, Codex, Gemini CLI), not Python SDK classes.</p>
+
+    <h2 id="feature-comparison">Feature comparison</h2>
+
+    <table>
+      <thead>
+        <tr><th>Feature</th><th>Bernstein</th><th>CrewAI</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Agent type</strong></td><td>CLI tools (installed separately)</td><td>Python SDK classes</td></tr>
+        <tr><td><strong>Scheduling</strong></td><td>Deterministic Python (zero LLM tokens)</td><td>LLM-driven delegation</td></tr>
+        <tr><td><strong>Agent count</strong></td><td>18+ CLI agents via adapters</td><td>Custom Python agents (unlimited)</td></tr>
+        <tr><td><strong>Task decomposition</strong></td><td>Single LLM call, then deterministic</td><td>LLM-driven throughout execution</td></tr>
+        <tr><td><strong>Git isolation</strong></td><td>Worktree per agent</td><td>No built-in git isolation</td></tr>
+        <tr><td><strong>Result verification</strong></td><td>Janitor (tests, linter, files)</td><td>No built-in verification</td></tr>
+        <tr><td><strong>Cost tracking</strong></td><td>Per-task, per-model, aggregated</td><td>Basic token counting</td></tr>
+        <tr><td><strong>Headless / CI</strong></td><td>Yes -- <code>--headless</code> flag</td><td>Programmable (Python script)</td></tr>
+        <tr><td><strong>Self-evolution</strong></td><td>Yes -- <code>--evolve</code> mode</td><td>No</td></tr>
+        <tr><td><strong>Use case</strong></td><td>Software development orchestration</td><td>General-purpose agent applications</td></tr>
+        <tr><td><strong>Setup</strong></td><td><code>pip install bernstein</code></td><td><code>pip install crewai</code></td></tr>
+        <tr><td><strong>License</strong></td><td>Apache 2.0</td><td>MIT</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="architecture">Architecture comparison</h2>
+
+    <p><strong>CrewAI</strong> uses LLM calls for scheduling decisions: which agent handles which task, how to delegate work, and when to escalate.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">Python script defining Crew
+    |
+    v
+CrewAI framework (LLM-driven scheduling)
+    |
+    +-- Agent A (Python class, role: "researcher")
+    |       +-- LLM call to decide approach
+    |       +-- LLM call to execute
+    |       +-- LLM call to review output
+    |
+    +-- Agent B (Python class, role: "writer")
+    |       +-- LLM call to decide approach
+    |       +-- LLM call to execute
+    |
+    +-- Delegation decisions (LLM calls)
+
+Scheduling overhead: multiple LLM calls per task</code></pre>
+    </div>
+
+    <p><strong>Bernstein</strong> uses a single LLM call for planning, then switches to deterministic code for everything else.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">bernstein -g "goal"
+    |
+    v
+Planner (1 LLM call: goal -> task list)
+    |
+    v
+Deterministic scheduler (Python, 0 LLM calls)
+    |
+    +-- Task A -> claude  (CLI process, isolated worktree)
+    +-- Task B -> codex   (CLI process, isolated worktree)
+    +-- Task C -> gemini  (CLI process, isolated worktree)
+         |
+         v
+    Janitor (tests + linter) -> merge
+
+Scheduling overhead: zero LLM tokens</code></pre>
+    </div>
+
+    <h2 id="scheduling">Scheduling: LLM vs deterministic</h2>
+
+    <p>CrewAI's LLM-driven scheduling means the framework spends tokens deciding which agent should handle a task, how to break it down, and when to delegate. For complex workflows, this can mean dozens of LLM calls before any actual work is done. The scheduling itself is non-deterministic -- the same crew definition can produce different execution paths on different runs.</p>
+
+    <p>Bernstein's scheduling is pure Python code: role-based task assignment, complexity-based model routing, dependency resolution. The scheduling logic is deterministic, auditable, and reproducible. It costs zero tokens. The only LLM call is the initial goal decomposition by the planner -- and even that is skippable if you provide a YAML plan file.</p>
+
+    <p>For software development tasks where the decomposition is straightforward (frontend + backend + tests + docs), deterministic scheduling is faster and cheaper. For novel, ambiguous tasks where the right decomposition is itself a research problem, LLM-driven scheduling can explore approaches that static rules would miss.</p>
+
+    <h2 id="agent-model">Agent model: SDK classes vs CLI tools</h2>
+
+    <p>CrewAI agents are Python classes. You write code to define their role, tools, and behavior. This gives you fine-grained control but requires Python integration for every agent capability.</p>
+
+    <p>Bernstein agents are installed CLI tools. Claude Code, Codex, Gemini CLI, Aider, Cursor -- whatever is on your PATH. Each runs as a subprocess with a prompt. No Python SDK integration required. The adapter layer is thin: it launches the CLI, passes the prompt, and reads the output.</p>
+
+    <p>This means Bernstein immediately benefits from any improvement the CLI tool vendors ship. When Claude Code gets a new capability, Bernstein uses it automatically. CrewAI requires manual integration of new model capabilities through Python code.</p>
+
+    <h2 id="cost">Cost comparison</h2>
+
+    <p>CrewAI's coordination overhead scales with workflow complexity. A 5-agent crew with delegation may spend 20-30 LLM calls on scheduling before producing output. At $0.01-0.03 per call, that is $0.20-0.90 in coordination overhead alone.</p>
+
+    <p>Bernstein's coordination overhead is fixed at zero tokens (or one planner call if using goal-based decomposition). The only LLM spend is on the actual coding work.</p>
+
+    <table>
+      <thead>
+        <tr><th>Cost component</th><th>Bernstein</th><th>CrewAI</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Task planning</strong></td><td>1 LLM call (or 0 with YAML plan)</td><td>Multiple LLM calls</td></tr>
+        <tr><td><strong>Task scheduling</strong></td><td>0 LLM calls (deterministic Python)</td><td>LLM calls per delegation decision</td></tr>
+        <tr><td><strong>Task execution</strong></td><td>1 CLI agent call per task</td><td>1+ LLM calls per agent per task</td></tr>
+        <tr><td><strong>Verification</strong></td><td>0 LLM calls (pytest + ruff)</td><td>Optional LLM review</td></tr>
+        <tr><td><strong>Typical total per task</strong></td><td>$0.15</td><td>$0.30-0.80</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="when-crewai">When to use CrewAI</h2>
+
+    <ul>
+      <li><strong>You are building a custom agent application.</strong> Customer support, research pipelines, content generation -- CrewAI's Python SDK gives you fine-grained control over agent behavior.</li>
+      <li><strong>You need agents with custom tools.</strong> CrewAI's tool system lets you attach any Python function as an agent capability.</li>
+      <li><strong>You want LLM-driven task delegation.</strong> For novel, ambiguous tasks where the right decomposition is not obvious, LLM scheduling can explore creative approaches.</li>
+      <li><strong>You prefer defining agents in code.</strong> Python classes with explicit roles, goals, and backstories.</li>
+      <li><strong>Your agents do not need git isolation.</strong> If the work is not file-based (API calls, database queries, web research), git worktrees are irrelevant.</li>
+    </ul>
+
+    <h2 id="when-bernstein">When to use Bernstein</h2>
+
+    <ul>
+      <li><strong>You want to orchestrate real CLI coding agents.</strong> Claude Code, Codex, Gemini CLI, Aider -- installed tools, not SDK abstractions.</li>
+      <li><strong>You want zero coordination overhead.</strong> Deterministic scheduling spends no tokens on figuring out which agent does what.</li>
+      <li><strong>You need git-native isolation.</strong> Each agent works in its own worktree. No merge conflicts during execution.</li>
+      <li><strong>You need built-in verification.</strong> Janitor runs tests and linter before any merge. Agents cannot self-certify completion.</li>
+      <li><strong>You want cost tracking and budget caps.</strong> Per-task, per-model cost logging with hard budget limits.</li>
+      <li><strong>You want headless, overnight operation.</strong> <code>bernstein --headless --budget 20</code> runs until complete.</li>
+    </ul>
+
+    <h2 id="faq">Frequently asked questions</h2>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>What is the difference between CrewAI and Bernstein?</strong></p>
+        <p>CrewAI is a Python framework where you define agents as Python classes with LLM-driven task delegation. Bernstein wraps any installed CLI coding agent with deterministic Python scheduling -- zero LLM tokens on coordination.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Does CrewAI or Bernstein cost more to run?</strong></p>
+        <p>CrewAI spends LLM tokens on agent coordination and task delegation. Bernstein's scheduling is pure Python with zero LLM overhead. For coordination-heavy workflows, Bernstein significantly reduces costs.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Can I use CLI coding agents like Claude Code with CrewAI?</strong></p>
+        <p>CrewAI agents are Python SDK classes. Bernstein wraps 18+ installed CLI agents as subprocess adapters -- no Python SDK integration required.</p>
+      </div>
+    </div>
+
+    <p style="margin-top:2rem;"><a href="index.html">&larr; Back to all comparisons</a></p>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; Created by <a href="https://alexchernysh.com" target="_blank" rel="noopener author">Alex Chernysh</a> &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
+</body>
+</html>

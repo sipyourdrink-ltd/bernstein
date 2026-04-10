@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bernstein vs Parallel Code — AI Agent Orchestration Comparison</title>
+  <meta name="description" content="Compare Bernstein and Parallel Code for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/compare/bernstein-vs-parallel-code.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="Bernstein vs Parallel Code — AI Agent Orchestration Comparison" />
+  <meta property="og:description" content="Compare Bernstein and Parallel Code for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/compare/bernstein-vs-parallel-code.html" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Bernstein vs Parallel Code — AI Agent Orchestration Comparison" />
+  <meta name="twitter:description" content="Compare Bernstein and Parallel Code for AI agent orchestration. Feature comparison, architecture differences, and when to choose each framework." />
+  <link rel="author" href="https://alexchernysh.com" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "Bernstein vs Parallel Code — AI Agent Orchestration Comparison",
+    "description": "Parallel Code lets you manually run multiple coding agents in separate terminals. Bernstein automates the coordination: task planning, model routing, verification, and merge.",
+    "author": { "@type": "Person", "name": "Alex Chernysh", "url": "https://alexchernysh.com" },
+    "datePublished": "2026-03-28",
+    "dateModified": "2026-04-06",
+    "publisher": { "@type": "Organization", "name": "Bernstein", "url": "https://chernistry.github.io/bernstein/" }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "Bernstein vs Parallel Code Feature Comparison",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Bernstein", "description": "Automated orchestration: task planning, model routing, git worktree isolation, janitor verification, merge coordination" },
+      { "@type": "ListItem", "position": 2, "name": "Parallel Code", "description": "Manual parallelism: multiple terminal sessions with human-coordinated task assignment and verification" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is the difference between Parallel Code and Bernstein?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Parallel Code is the pattern of running multiple coding agent sessions in separate terminal windows with human coordination. Bernstein automates the entire process: task planning from a natural language goal, model routing, git worktree isolation, janitor verification, and merge coordination." }
+      },
+      {
+        "@type": "Question",
+        "name": "When should I switch from manual parallel coding agents to Bernstein?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Switch when you experience merge conflicts from overlapping sessions, discover test failures after 'completed' sessions, find silent errors in unmonitored sessions, or spend more time coordinating 5+ sessions than the tasks themselves take." }
+      },
+      {
+        "@type": "Question",
+        "name": "Can Bernstein run coding agents overnight without supervision?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Yes. Run bernstein --headless --budget 15.00 and it operates until the backlog is empty or the budget runs out, retrying failures automatically. Manual parallel sessions require human monitoring." }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="../style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" integrity="sha384-eFTL69TLRZTkNfYZOLM+G04821K1qZao/4QLJbet1pP4tcF+fdXq/9CdqAbWRl/L" crossorigin="anonymous" />
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" integrity="sha384-ieG+IKD0d/ZPXyCBTMVAbqsQdns8QGJR/e26WMw7M4fkaI/rHcS/YIoi+ah9WGge" crossorigin="anonymous"></script>
+  <script src="../script.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="../index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="../getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="../concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="../adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="../api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="../leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="index.html" class="nav-link" data-page="compare/index.html">Compare</a>
+      <a href="../docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+      <a href="../blog.html" class="nav-link" data-page="blog.html">Blog</a>
+      <a href="../limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</nav>
+
+<div class="page-hero">
+  <div class="container">
+    <h1>Bernstein vs Parallel Code</h1>
+    <p>Automated orchestration vs manual multi-terminal parallelism for AI coding agents.</p>
+  </div>
+</div>
+
+<div class="doc-layout">
+
+  <aside class="doc-nav">
+    <div class="doc-nav-title">On this page</div>
+    <ul>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#feature-comparison">Feature comparison</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#coordination-tax">The coordination tax</a></li>
+      <li><a href="#when-manual">When manual parallel is better</a></li>
+      <li><a href="#when-bernstein">When Bernstein is better</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+  </aside>
+
+  <main class="doc-content">
+
+    <p>Parallel Code refers to running multiple coding agent sessions simultaneously in separate terminals or tmux panes with human coordination. Bernstein automates the entire parallel workflow: it decomposes goals into tasks, assigns each to the cheapest capable model, runs agents in isolated git worktrees, verifies output with a deterministic janitor, and merges results without conflicts. The question is whether you want to be the orchestrator or have software do it.</p>
+
+    <h2 id="overview">What each tool is</h2>
+
+    <p><strong>Parallel Code</strong> refers to the pattern of running multiple independent coding agent sessions simultaneously -- typically via tmux, multiple terminal windows, or a session manager. The parallelism is human-coordinated: you decide what tasks to run, assign them to sessions, and monitor the output.</p>
+
+    <p><strong>Bernstein</strong> automates that coordination. You provide a goal in natural language. Bernstein decomposes it into subtasks, assigns each to an agent process with the appropriate model and role, runs them in isolated git worktrees, verifies results with a janitor (tests + linter), and merges the work.</p>
+
+    <h2 id="feature-comparison">Feature comparison</h2>
+
+    <table>
+      <thead>
+        <tr><th>Feature</th><th>Bernstein</th><th>Parallel Code</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Task planning</strong></td><td>Automatic from natural language goal</td><td>Manual -- you write each task</td></tr>
+        <tr><td><strong>Parallelism</strong></td><td>Automatic -- up to N concurrent agents</td><td>Manual -- you open N sessions</td></tr>
+        <tr><td><strong>Git isolation</strong></td><td>Per-agent worktrees, automatic</td><td>Manual branch management</td></tr>
+        <tr><td><strong>Result verification</strong></td><td>Automatic janitor (tests, linter, files)</td><td>Manual -- you check output</td></tr>
+        <tr><td><strong>Merge coordination</strong></td><td>Automatic with conflict prevention</td><td>Manual conflict resolution</td></tr>
+        <tr><td><strong>Model routing</strong></td><td>Cost-aware bandit</td><td>Fixed -- same model per session</td></tr>
+        <tr><td><strong>Failure handling</strong></td><td>Automatic retry, quarantine</td><td>Manual -- you rerun failed sessions</td></tr>
+        <tr><td><strong>Cost tracking</strong></td><td>Per-task, per-model, aggregated</td><td>None</td></tr>
+        <tr><td><strong>Headless operation</strong></td><td>Yes</td><td>No -- requires human monitoring</td></tr>
+        <tr><td><strong>Self-evolution</strong></td><td>Yes</td><td>No</td></tr>
+        <tr><td><strong>Setup complexity</strong></td><td>Low -- <code>bernstein init</code>, <code>bernstein run</code></td><td>Zero -- open more terminals</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="architecture">Architecture comparison</h2>
+
+    <p><strong>Parallel Code</strong>: you are the scheduler, the verifier, and the merge coordinator.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">You (the human orchestrator)
+    |
+    +-- Terminal 1: claude --prompt "add /users endpoint"  -> you review
+    +-- Terminal 2: claude --prompt "write tests for auth"  -> you review
+    +-- Terminal 3: codex  --prompt "update API docs"       -> you review
+         |
+         v
+    You merge the output, resolve conflicts, check tests</code></pre>
+    </div>
+
+    <p><strong>Bernstein</strong>: the scheduler, verifier, and merge coordinator are all software.</p>
+
+    <div class="code-block">
+      <pre><code class="language-text">bernstein -g "add user management: endpoints + tests + docs"
+    |
+    v
+Task planner (LLM) -> 3 tasks: [endpoints, tests, docs]
+    |
+    +-- Task A -> claude  (worktree: feat/task-a) -> janitor -> merge
+    +-- Task B -> codex   (worktree: feat/task-b) -> janitor -> merge
+    +-- Task C -> gemini  (worktree: feat/task-c) -> janitor -> merge
+
+You return when it is done. Or set --headless and do not return.</code></pre>
+    </div>
+
+    <h2 id="coordination-tax">The coordination tax</h2>
+
+    <p>Managing parallel agent sessions manually costs real attention: writing prompts for each session, monitoring multiple outputs, running tests after completion, merging without conflicts, and tracking costs. For 2-3 sessions on a short task, this tax is acceptable. For 5+ sessions on a complex feature, it consumes most of the time savings from parallelism.</p>
+
+    <table>
+      <thead>
+        <tr><th>Metric</th><th>Manual parallel (estimated)</th><th>Bernstein</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Human attention required</strong></td><td>High (monitoring + verification)</td><td>Low (setup + review)</td></tr>
+        <tr><td><strong>CI pass rate</strong></td><td>Depends on verification</td><td>80% (janitor-enforced)</td></tr>
+        <tr><td><strong>Merge conflicts</strong></td><td>Frequent without coordination</td><td>0 (worktree isolation)</td></tr>
+        <tr><td><strong>Overnight operation</strong></td><td>Not possible</td><td>Yes (<code>--headless</code>)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="when-manual">When manual parallel is better</h2>
+
+    <ul>
+      <li><strong>You have 2-3 short tasks you have done before.</strong> The overhead of setting up Bernstein is not worth it.</li>
+      <li><strong>You want to watch the agent work.</strong> Parallel terminal sessions let you see reasoning in real time.</li>
+      <li><strong>You need fine-grained control over each session.</strong> Intervening mid-task, redirecting the agent.</li>
+      <li><strong>The tasks are not independent.</strong> Sequential dependencies mean parallelism does not help.</li>
+    </ul>
+
+    <h2 id="when-bernstein">When Bernstein is better</h2>
+
+    <ul>
+      <li><strong>You have 4+ tasks.</strong> Human coordination does not scale linearly; Bernstein does.</li>
+      <li><strong>You want verified output.</strong> Janitor runs tests after every task.</li>
+      <li><strong>You want to run overnight or in CI.</strong> <code>bernstein --headless --budget 15.00</code> runs unattended.</li>
+      <li><strong>You are doing this repeatedly.</strong> Setup investment pays off after a few runs.</li>
+      <li><strong>You want cost data.</strong> Per-task, per-model cost logging.</li>
+      <li><strong>You want model routing.</strong> Cheap models for simple tasks, expensive models for complex ones.</li>
+    </ul>
+
+    <h3>Migration path</h3>
+
+    <p>Parallel Code users typically adopt Bernstein after experiencing: two sessions modifying the same file creating merge conflicts, a session "completing" but tests failing, a session silently erroring out hours ago, or spending more time coordinating sessions than the tasks themselves took.</p>
+
+    <h2 id="faq">Frequently asked questions</h2>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>What is the difference between Parallel Code and Bernstein?</strong></p>
+        <p>Parallel Code is the pattern of running multiple coding agent sessions in separate terminal windows with human coordination. Bernstein automates the entire process: task planning, model routing, git worktree isolation, janitor verification, and merge coordination.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>When should I switch from manual parallel coding agents to Bernstein?</strong></p>
+        <p>Switch when you experience merge conflicts from overlapping sessions, discover test failures after "completed" sessions, find silent errors in unmonitored sessions, or spend more time coordinating 5+ sessions than the tasks themselves take.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Can Bernstein run coding agents overnight without supervision?</strong></p>
+        <p>Yes. Run <code>bernstein --headless --budget 15.00</code> and it operates until the backlog is empty or the budget runs out, retrying failures automatically.</p>
+      </div>
+    </div>
+
+    <p style="margin-top:2rem;"><a href="index.html">&larr; Back to all comparisons</a></p>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; Created by <a href="https://alexchernysh.com" target="_blank" rel="noopener author">Alex Chernysh</a> &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
+</body>
+</html>

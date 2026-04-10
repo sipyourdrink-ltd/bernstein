@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Best AI Agent Orchestration Frameworks — 2026 Comparison</title>
+  <meta name="description" content="Compare the best AI agent orchestration frameworks in 2026. Bernstein vs CrewAI, AutoGen, LangGraph, GitHub Agent HQ, and 7 other tools. Feature tables, architecture, and honest recommendations." />
+  <link rel="canonical" href="https://chernistry.github.io/bernstein/compare/index.html" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Best AI Agent Orchestration Frameworks — 2026 Comparison" />
+  <meta property="og:description" content="Compare the best AI agent orchestration frameworks in 2026. Bernstein vs CrewAI, AutoGen, LangGraph, GitHub Agent HQ, and 7 other tools." />
+  <meta property="og:url" content="https://chernistry.github.io/bernstein/compare/index.html" />
+  <meta property="og:image" content="https://chernistry.github.io/bernstein/assets/banner_one_command_1536x1024.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Best AI Agent Orchestration Frameworks — 2026 Comparison" />
+  <meta name="twitter:description" content="Compare the best AI agent orchestration frameworks in 2026. Bernstein vs CrewAI, AutoGen, LangGraph, GitHub Agent HQ, and 7 other tools." />
+  <link rel="author" href="https://alexchernysh.com" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    "name": "Best AI Agent Orchestration Frameworks — 2026",
+    "description": "Comparison of multi-agent orchestration frameworks for AI coding agents",
+    "itemListElement": [
+      { "@type": "ListItem", "position": 1, "name": "Bernstein", "url": "https://chernistry.github.io/bernstein/", "description": "Open-source, deterministic scheduling, 18+ CLI agents, git worktree isolation, janitor verification" },
+      { "@type": "ListItem", "position": 2, "name": "CrewAI", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-crewai.html", "description": "Python-native, LLM-driven scheduling, role-based agents" },
+      { "@type": "ListItem", "position": 3, "name": "AutoGen", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-autogen.html", "description": "Microsoft's multi-agent conversation framework" },
+      { "@type": "ListItem", "position": 4, "name": "LangGraph", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-langgraph.html", "description": "LangChain's graph-based orchestration for LLM nodes" },
+      { "@type": "ListItem", "position": 5, "name": "GitHub Agent HQ", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-github-agent-hq.html", "description": "GitHub's proprietary multi-agent coding system" },
+      { "@type": "ListItem", "position": 6, "name": "Conductor", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-conductor.html", "description": "Netflix's workflow orchestration engine" },
+      { "@type": "ListItem", "position": 7, "name": "Crystal", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-crystal.html", "description": "Iterative self-review loops with LLM reviewer" },
+      { "@type": "ListItem", "position": 8, "name": "Dorothy", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-dorothy.html", "description": "Graph-based multi-agent conversation framework" },
+      { "@type": "ListItem", "position": 9, "name": "Paperclip", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-paperclip.html", "description": "AI company simulator with org charts and budgets" },
+      { "@type": "ListItem", "position": 10, "name": "Stoneforge", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-stoneforge.html", "description": "Provider-specific multi-agent framework with IDE integration" },
+      { "@type": "ListItem", "position": 11, "name": "Single Agent / Parallel Code", "url": "https://chernistry.github.io/bernstein/compare/bernstein-vs-single-agent.html", "description": "Running one or multiple coding agents without orchestration" }
+    ]
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is the best AI agent orchestration framework in 2026?",
+        "acceptedAnswer": { "@type": "Answer", "text": "It depends on your use case. For orchestrating CLI coding agents on software projects, Bernstein offers deterministic scheduling, 18+ agent adapters, git worktree isolation, and built-in verification. For custom agent applications, CrewAI or AutoGen offer more flexibility. For LangChain users, LangGraph integrates naturally." }
+      },
+      {
+        "@type": "Question",
+        "name": "What is the difference between multi-agent orchestration frameworks?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Key differences include: scheduling approach (deterministic vs LLM-driven), agent type (CLI tools vs Python SDK classes), state management (file-based vs in-memory), verification method (external tests vs agent self-assessment), and ecosystem lock-in (standalone vs framework-dependent)." }
+      },
+      {
+        "@type": "Question",
+        "name": "Do I need multi-agent orchestration for AI coding?",
+        "acceptedAnswer": { "@type": "Answer", "text": "For simple, well-scoped tasks, a single coding agent is sufficient. Multi-agent orchestration becomes valuable when tasks decompose into parallel subtasks, you need external verification, work runs overnight unattended, or the work exceeds a single context window." }
+      },
+      {
+        "@type": "Question",
+        "name": "Which AI agent orchestration framework supports the most coding agents?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Bernstein supports 18+ CLI coding agents via thin adapters: Claude Code, Codex, Gemini CLI, Cursor, Aider, Amp, Roo Code, Kilo, Kiro, OpenCode, Qwen, Cody, Continue.dev, Goose, Ollama, Tabby, and a generic adapter for any CLI tool." }
+      },
+      {
+        "@type": "Question",
+        "name": "Is multi-agent coding more expensive than single-agent?",
+        "acceptedAnswer": { "@type": "Answer", "text": "Multi-agent orchestration has a modest cost premium (approximately 24% more per task with Bernstein) but delivers significantly higher CI pass rates (80% vs 52% in benchmarks). For medium-to-high complexity tasks, the quality improvement justifies the cost. For simple tasks, single-agent is cheaper." }
+      }
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="../style.css" />
+  <link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" integrity="sha384-eFTL69TLRZTkNfYZOLM+G04821K1qZao/4QLJbet1pP4tcF+fdXq/9CdqAbWRl/L" crossorigin="anonymous" />
+  <script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js" integrity="sha384-ieG+IKD0d/ZPXyCBTMVAbqsQdns8QGJR/e26WMw7M4fkaI/rHcS/YIoi+ah9WGge" crossorigin="anonymous"></script>
+  <script src="../script.js"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="../index.html" class="nav-logo">bernstein</a>
+    <div class="nav-links">
+      <a href="../index.html" class="nav-link" data-page="index.html">Overview</a>
+      <a href="../getting-started.html" class="nav-link" data-page="getting-started.html">Getting Started</a>
+      <a href="../concepts.html" class="nav-link" data-page="concepts.html">Concepts</a>
+      <a href="../adapters.html" class="nav-link" data-page="adapters.html">Adapters</a>
+      <a href="../api.html" class="nav-link" data-page="api.html">API Reference</a>
+      <a href="../leaderboard.html" class="nav-link" data-page="leaderboard.html">Benchmarks</a>
+      <a href="index.html" class="nav-link active" data-page="compare/index.html">Compare</a>
+      <a href="../docs-index.html" class="nav-link" data-page="docs-index.html">All Docs</a>
+      <a href="../blog.html" class="nav-link" data-page="blog.html">Blog</a>
+      <a href="../limitations.html" class="nav-link" data-page="limitations.html">Limitations</a>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-icon" id="theme-toggle" aria-label="Toggle theme">
+        <i id="theme-icon" data-lucide="moon-star" aria-hidden="true"></i>
+      </button>
+      <a href="https://github.com/chernistry/bernstein" class="btn-primary" target="_blank" rel="noopener">
+        GitHub &#8599;
+      </a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle menu"><i id="nav-toggle-icon" data-lucide="menu" aria-hidden="true"></i></button>
+    </div>
+  </div>
+</nav>
+
+<div class="page-hero">
+  <div class="container">
+    <h1>AI Agent Orchestration Frameworks — 2026 Comparison</h1>
+    <p>Honest, detailed comparisons of Bernstein against 10 alternative frameworks.</p>
+  </div>
+</div>
+
+<div class="doc-layout">
+
+  <aside class="doc-nav">
+    <div class="doc-nav-title">Comparisons</div>
+    <ul>
+      <li><a href="#mainstream">Mainstream frameworks</a></li>
+      <li><a href="#specialized">Specialized tools</a></li>
+      <li><a href="#baselines">Baselines</a></li>
+      <li><a href="#choosing">How to choose</a></li>
+      <li><a href="#faq">FAQ</a></li>
+    </ul>
+  </aside>
+
+  <main class="doc-content">
+
+    <p>The best AI agent orchestration framework depends on your use case. For orchestrating CLI coding agents on real software projects with deterministic scheduling, built-in test verification, and support for 18+ agents, Bernstein is purpose-built for this domain. For custom agent applications, research pipelines, or general-purpose LLM workflows, frameworks like CrewAI, AutoGen, and LangGraph offer broader flexibility. Below are detailed comparisons to help you decide.</p>
+
+    <h2 id="mainstream">Mainstream frameworks</h2>
+
+    <div class="card-grid card-grid-2">
+      <a href="bernstein-vs-crewai.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs CrewAI</h3>
+        <p>Python-native, LLM-driven scheduling, role-based agents. Bernstein differentiators: deterministic scheduling (zero LLM tokens on coordination), wraps any CLI agent, git worktree isolation, built-in cost tracking.</p>
+      </a>
+      <a href="bernstein-vs-autogen.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs AutoGen</h3>
+        <p>Microsoft's multi-agent conversation framework with in-memory state. Bernstein differentiators: file-based state (.sdd/), supports 18+ CLI agents vs Python-only, git isolation, deterministic scheduling.</p>
+      </a>
+      <a href="bernstein-vs-langgraph.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs LangGraph</h3>
+        <p>LangChain's graph-based orchestration for LLM nodes. Bernstein differentiators: not tied to LangChain ecosystem, works with real CLI agents, deterministic scheduling, simpler mental model.</p>
+      </a>
+      <a href="bernstein-vs-github-agent-hq.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs GitHub Agent HQ</h3>
+        <p>GitHub's proprietary multi-agent system. Bernstein differentiators: open-source, model-agnostic, runs anywhere (not GitHub-only), cost optimization, self-evolution.</p>
+      </a>
+    </div>
+
+    <h2 id="specialized">Specialized tools</h2>
+
+    <div class="card-grid card-grid-2">
+      <a href="bernstein-vs-conductor.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs Conductor</h3>
+        <p>Netflix's workflow orchestration engine for production business processes. Different domain: Conductor manages microservice workflows, Bernstein manages coding agents.</p>
+      </a>
+      <a href="bernstein-vs-crystal.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs Crystal</h3>
+        <p>Iterative self-review loops with LLM reviewer. Bernstein uses external test-based verification. Crystal is better when test coverage is thin; Bernstein when tests are ground truth.</p>
+      </a>
+      <a href="bernstein-vs-dorothy.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs Dorothy</h3>
+        <p>Graph-based multi-agent conversation framework for deliberation. Bernstein uses isolated task dispatch. Dorothy is better for multi-perspective reasoning; Bernstein for parallel coding.</p>
+      </a>
+      <a href="bernstein-vs-paperclip.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs Paperclip</h3>
+        <p>AI company simulator with org charts, team budgets, and governance hierarchies. Bernstein is an engineering tool that ships code. Different problems, potentially complementary.</p>
+      </a>
+      <a href="bernstein-vs-stoneforge.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs Stoneforge</h3>
+        <p>Provider-specific multi-agent framework with IDE integration (VS Code, JetBrains). Bernstein trades IDE UX for model flexibility and zero vendor lock-in.</p>
+      </a>
+    </div>
+
+    <h2 id="baselines">Baselines</h2>
+
+    <div class="card-grid card-grid-2">
+      <a href="bernstein-vs-single-agent.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs Single Agent</h3>
+        <p>Running one coding agent (Claude Code, Codex). Benchmark data: 80% vs 52% CI pass rate on 25 GitHub issues. Single agent wins on simple tasks; Bernstein on medium/complex.</p>
+      </a>
+      <a href="bernstein-vs-parallel-code.html" class="card card-quiet" style="text-decoration:none;color:inherit;">
+        <h3>Bernstein vs Parallel Code</h3>
+        <p>Manually running multiple agents in tmux panes. Bernstein automates task planning, model routing, git isolation, verification, and merge coordination.</p>
+      </a>
+    </div>
+
+    <h2 id="choosing">How to choose</h2>
+
+    <table>
+      <thead>
+        <tr><th>If you need...</th><th>Use</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Orchestrate CLI coding agents on software projects</td><td><strong>Bernstein</strong></td></tr>
+        <tr><td>Build custom Python agent applications</td><td>CrewAI or AutoGen</td></tr>
+        <tr><td>LangChain ecosystem graph orchestration</td><td>LangGraph</td></tr>
+        <tr><td>GitHub-native multi-agent with zero setup</td><td>GitHub Agent HQ</td></tr>
+        <tr><td>Multi-turn agent deliberation and research</td><td>Dorothy</td></tr>
+        <tr><td>LLM-based iterative code review</td><td>Crystal</td></tr>
+        <tr><td>Production workflow orchestration (non-coding)</td><td>Conductor</td></tr>
+        <tr><td>AI agent org management with budgets</td><td>Paperclip</td></tr>
+        <tr><td>IDE-integrated, single-provider agents</td><td>Stoneforge</td></tr>
+        <tr><td>Simple, well-scoped 5-minute task</td><td>Single agent (no orchestrator needed)</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="faq">Frequently asked questions</h2>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>What is the best AI agent orchestration framework in 2026?</strong></p>
+        <p>It depends on your use case. For orchestrating CLI coding agents on software projects, Bernstein offers deterministic scheduling, 18+ agent adapters, git worktree isolation, and built-in verification. For custom agent applications, CrewAI or AutoGen offer more flexibility. For LangChain users, LangGraph integrates naturally.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>What is the difference between multi-agent orchestration frameworks?</strong></p>
+        <p>Key differences include: scheduling approach (deterministic vs LLM-driven), agent type (CLI tools vs Python SDK classes), state management (file-based vs in-memory), verification method (external tests vs agent self-assessment), and ecosystem lock-in.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Do I need multi-agent orchestration for AI coding?</strong></p>
+        <p>For simple, well-scoped tasks, a single coding agent is sufficient. Multi-agent orchestration becomes valuable when tasks decompose into parallel subtasks, you need external verification, work runs overnight unattended, or the work exceeds a single context window.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Which framework supports the most coding agents?</strong></p>
+        <p>Bernstein supports 18+ CLI coding agents via thin adapters: Claude Code, Codex, Gemini CLI, Cursor, Aider, Amp, Roo Code, Kilo, Kiro, OpenCode, Qwen, Cody, Continue.dev, Goose, Ollama, Tabby, and a generic adapter for any CLI tool.</p>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <i data-lucide="info" aria-hidden="true"></i>
+      <div>
+        <p><strong>Is multi-agent coding more expensive than single-agent?</strong></p>
+        <p>Multi-agent orchestration has a modest cost premium (~24% more per task with Bernstein) but delivers significantly higher CI pass rates (80% vs 52%). For medium-to-high complexity tasks, the quality improvement justifies the cost.</p>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<footer>
+  <div class="container">
+    <p>Bernstein &middot; Created by <a href="https://alexchernysh.com" target="_blank" rel="noopener author">Alex Chernysh</a> &middot; <a href="https://github.com/chernistry/bernstein" target="_blank" rel="noopener">GitHub</a> &middot; Apache 2.0</p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js" integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
+</body>
+</html>
