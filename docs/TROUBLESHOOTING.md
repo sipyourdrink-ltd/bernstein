@@ -191,7 +191,7 @@ lsof -i :8052   # check what is listening
 ```bash
 git worktree list          # shows all worktrees
 ls .git/worktrees/         # stale entries may exist here
-ls .claude/worktrees/      # bernstein worktrees live here
+ls .sdd/worktrees/         # bernstein worktrees live here
 ```
 
 **Resolution:**
