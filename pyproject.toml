@@ -263,6 +263,9 @@ exclude = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "ci: tests that run as part of CI for every release",
+]
 
 [tool.coverage.run]
 source = ["bernstein"]
