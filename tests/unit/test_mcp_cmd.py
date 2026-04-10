@@ -2,13 +2,42 @@
 
 from __future__ import annotations
 
+import sys
+import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
 from click.testing import CliRunner
 
 from bernstein.cli.mcp_cmd import mcp_server
-from bernstein.core.mcp_registry import load_catalog_entries
+from bernstein.core.mcp_registry import MCPServerEntry, load_catalog_entries, save_catalog_entries
+
+
+def _write_stdio_fixture_server(path: Path) -> None:
+    path.write_text(
+        textwrap.dedent(
+            """
+            from __future__ import annotations
+
+            from mcp.server.fastmcp import FastMCP
+
+            mcp = FastMCP("fixture")
+
+            @mcp.tool()
+            def ping() -> str:
+                return "pong"
+
+            @mcp.tool()
+            def echo(message: str) -> str:
+                return message
+
+            if __name__ == "__main__":
+                mcp.run("stdio")
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_mcp_command_defaults_to_stdio_server() -> None:
@@ -61,3 +90,38 @@ def test_mcp_install_creates_catalog_and_is_idempotent() -> None:
     assert second.exit_code == 0
     assert [entry.name for entry in loaded_twice] == ["filesystem"]
     assert "Already installed" in second.output
+
+
+def test_mcp_test_validates_installed_server() -> None:
+    runner = CliRunner()
+
+    with runner.isolated_filesystem():
+        server_script = Path("fixture_server.py")
+        _write_stdio_fixture_server(server_script)
+        save_catalog_entries(
+            Path(".sdd/config/mcp_servers.yaml"),
+            [
+                MCPServerEntry(
+                    name="fixture",
+                    package="fixture-package",
+                    command=sys.executable,
+                    args=(str(server_script),),
+                )
+            ],
+        )
+
+        result = runner.invoke(mcp_server, ["test", "fixture"])
+
+    assert result.exit_code == 0
+    assert "Protocol validation passed" in result.output
+    assert "fixture" in result.output
+
+
+def test_mcp_test_fails_for_unknown_server() -> None:
+    runner = CliRunner()
+
+    with runner.isolated_filesystem():
+        result = runner.invoke(mcp_server, ["test", "missing"])
+
+    assert result.exit_code != 0
+    assert "No MCP catalog entries found" in result.output

@@ -355,8 +355,8 @@ def _load_run_cli():  # type: ignore[return]
     spec = importlib.util.spec_from_file_location("swe_bench_run", _RUN_PY)
     if spec is None or spec.loader is None:
         pytest.skip("could not load benchmarks/swe_bench/run.py")
+        return None  # unreachable — helps static analysers see the None-path ends
     loader = spec.loader
-    assert loader is not None  # narrowed above, re-assert for static analysis
     mod = importlib.util.module_from_spec(spec)
     sys.modules["swe_bench_run"] = mod
     loader.exec_module(mod)
