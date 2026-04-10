@@ -33,8 +33,8 @@ class TestCachedResponse:
         assert entry.request_id == "abc"
         assert entry.status_code == 200
         assert entry.body == {"ok": True}
-        assert entry.created_at == 1.0
-        assert entry.ttl_s == 60.0
+        assert entry.created_at == pytest.approx(1.0)
+        assert entry.ttl_s == pytest.approx(60.0)
 
     def test_is_frozen(self) -> None:
         entry = CachedResponse(
@@ -59,13 +59,13 @@ class TestDeduplicationConfig:
     def test_defaults(self) -> None:
         cfg = DeduplicationConfig()
         assert cfg.max_cache_size == 10_000
-        assert cfg.default_ttl_s == 300.0
+        assert cfg.default_ttl_s == pytest.approx(300.0)
         assert cfg.enabled is True
 
     def test_custom_values(self) -> None:
         cfg = DeduplicationConfig(max_cache_size=5, default_ttl_s=10.0, enabled=False)
         assert cfg.max_cache_size == 5
-        assert cfg.default_ttl_s == 10.0
+        assert cfg.default_ttl_s == pytest.approx(10.0)
         assert cfg.enabled is False
 
     def test_is_frozen(self) -> None:

@@ -82,6 +82,22 @@ def parse_graphql_query(query: str) -> ParsedQuery:
     return ParsedQuery(operation=operation, fields=fields, args=args)
 
 
+def _serialize_value(value: Any) -> Any:
+    """Convert non-serializable values (enums, dataclasses) to JSON-safe forms.
+
+    Args:
+        value: Any value from a task dict.
+
+    Returns:
+        JSON-serializable representation.
+    """
+    from enum import Enum
+
+    if isinstance(value, Enum):
+        return value.value
+    return value
+
+
 def _resolve_tasks(parsed: ParsedQuery, store: Any) -> list[dict[str, Any]]:
     """Resolve a tasks query against the store.
 
@@ -98,12 +114,17 @@ def _resolve_tasks(parsed: ParsedQuery, store: Any) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for t in tasks:
         task = t if isinstance(t, dict) else (t.__dict__ if hasattr(t, "__dict__") else {})
-        if status_filter and task.get("status") != status_filter:
+        # Normalize status to a string for comparison: handles both
+        # plain strings (mock stores) and TaskStatus enum instances
+        # (real TaskStore).
+        raw_status = task.get("status")
+        task_status_str = raw_status.value if hasattr(raw_status, "value") else raw_status
+        if status_filter and task_status_str != status_filter:
             continue
         row: dict[str, Any] = {}
         for f in parsed.fields:
             if f in task:
-                row[f] = task[f]
+                row[f] = _serialize_value(task[f])
             elif f == "agent":
                 row[f] = {
                     "id": task.get("assigned_agent", ""),

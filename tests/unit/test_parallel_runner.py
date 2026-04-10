@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from bernstein.testing.parallel_runner import (
     FileTestResult,
     ParallelConfig,
@@ -27,7 +29,7 @@ class TestDataclasses:
         bucket = TestBucket(bucket_id=0, test_files=["a.py"], estimated_duration_s=1.5)
         assert bucket.bucket_id == 0
         assert bucket.test_files == ["a.py"]
-        assert bucket.estimated_duration_s == 1.5
+        assert bucket.estimated_duration_s == pytest.approx(1.5)
 
     def test_parallel_config_defaults(self) -> None:
         cfg = ParallelConfig()
@@ -166,11 +168,11 @@ class TestBucketTests:
         # The slow file should be alone in one bucket
         slow_bucket = next(b for b in buckets if "slow.py" in b.test_files)
         assert len(slow_bucket.test_files) == 1
-        assert slow_bucket.estimated_duration_s == 10.0
+        assert slow_bucket.estimated_duration_s == pytest.approx(10.0)
         # The other bucket gets the three fast files
         fast_bucket = next(b for b in buckets if "slow.py" not in b.test_files)
         assert len(fast_bucket.test_files) == 3
-        assert fast_bucket.estimated_duration_s == 3.0
+        assert fast_bucket.estimated_duration_s == pytest.approx(3.0)
 
     def test_bucket_ids_sequential(self) -> None:
         files = ["a.py", "b.py", "c.py"]
@@ -189,7 +191,7 @@ class TestBucketTests:
         buckets = bucket_tests(files, num_buckets=2, history=history)
         # known.py (5.0s) goes to one bucket, unknown.py (default 1.0s) to the other
         total = sum(b.estimated_duration_s for b in buckets)
-        assert total == 6.0
+        assert total == pytest.approx(6.0)
 
 
 # ---------------------------------------------------------------------------
@@ -226,8 +228,8 @@ class TestBuildParallelReport:
         assert report.total_passed == 8
         assert report.total_failed == 0
         assert report.failures == []
-        assert report.cpu_time_s == 4.0
-        assert report.wall_time_s == 1.5
+        assert report.cpu_time_s == pytest.approx(4.0)
+        assert report.wall_time_s == pytest.approx(1.5)
         assert report.speedup == round(4.0 / 1.5, 2)
 
     def test_with_failures(self) -> None:
@@ -242,7 +244,7 @@ class TestBuildParallelReport:
     def test_empty_results(self) -> None:
         report = build_parallel_report([], wall_time=0.0)
         assert report.total_files == 0
-        assert report.speedup == 0.0
+        assert report.speedup == pytest.approx(0.0)
 
     def test_skipped_counted(self) -> None:
         results = [self._make_result("s.py", passed=0, skipped=5)]

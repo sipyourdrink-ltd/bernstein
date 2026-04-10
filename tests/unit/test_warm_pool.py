@@ -52,7 +52,7 @@ class TestPoolSlot:
         assert slot.slot_id == "s1"
         assert slot.role == "backend"
         assert slot.worktree_path == "/tmp/wt1"
-        assert slot.created_at == 1234.5
+        assert slot.created_at == pytest.approx(1234.5)
         assert slot.status == "claimed"
         assert slot.mcp_pid == 42
 
@@ -66,7 +66,7 @@ class TestWarmPoolConfig:
     def test_defaults(self) -> None:
         cfg = WarmPoolConfig()
         assert cfg.max_slots == 3
-        assert cfg.slot_ttl_seconds == 300.0
+        assert cfg.slot_ttl_seconds == pytest.approx(300.0)
         assert cfg.roles == []
 
     def test_frozen(self) -> None:
@@ -77,7 +77,7 @@ class TestWarmPoolConfig:
     def test_custom_values(self) -> None:
         cfg = WarmPoolConfig(max_slots=5, slot_ttl_seconds=600.0, roles=["backend", "qa"])
         assert cfg.max_slots == 5
-        assert cfg.slot_ttl_seconds == 600.0
+        assert cfg.slot_ttl_seconds == pytest.approx(600.0)
         assert cfg.roles == ["backend", "qa"]
 
 
@@ -276,7 +276,7 @@ class TestLoadWarmPoolConfig:
         )
         cfg = load_warm_pool_config(yaml_file)
         assert cfg.max_slots == 5
-        assert cfg.slot_ttl_seconds == 600.0
+        assert cfg.slot_ttl_seconds == pytest.approx(600.0)
         assert cfg.roles == ["backend", "qa"]
 
     def test_missing_section_returns_defaults(self, tmp_path: Path) -> None:
@@ -293,7 +293,7 @@ class TestLoadWarmPoolConfig:
         )
         cfg = load_warm_pool_config(yaml_file)
         assert cfg.max_slots == 7
-        assert cfg.slot_ttl_seconds == 300.0
+        assert cfg.slot_ttl_seconds == pytest.approx(300.0)
         assert cfg.roles == []
 
     def test_invalid_yaml_returns_defaults(self, tmp_path: Path) -> None:
@@ -310,5 +310,5 @@ class TestLoadWarmPoolConfig:
         )
         cfg = load_warm_pool_config(yaml_file)
         assert cfg.max_slots == 3
-        assert cfg.slot_ttl_seconds == 300.0
+        assert cfg.slot_ttl_seconds == pytest.approx(300.0)
         assert cfg.roles == []

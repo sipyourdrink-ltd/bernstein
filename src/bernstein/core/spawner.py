@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from bernstein.core.mcp_manager import MCPManager
     from bernstein.core.mcp_registry import MCPRegistry
     from bernstein.core.resource_limits import ResourceLimits
-    from bernstein.core.warm_pool import WarmPool, WarmPoolEntry
+    from bernstein.core.warm_pool import PoolSlot, WarmPool
     from bernstein.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------
@@ -805,7 +805,7 @@ class AgentSpawner:
         self._worktree_paths: dict[str, Path] = {}
         self._worktree_roots: dict[str, Path] = {}
         self._warm_pool = warm_pool
-        self._warm_pool_entries: dict[str, WarmPoolEntry] = {}
+        self._warm_pool_entries: dict[str, PoolSlot] = {}
         self._traces: dict[str, AgentTrace] = {}
         self._trace_store = TraceStore(workdir / ".sdd" / "traces")
         self._runtime_bridge = runtime_bridge
@@ -1286,15 +1286,15 @@ class AgentSpawner:
         if self._use_worktrees and worktree_mgr is not None:
             # Try acquiring a pre-provisioned worktree from the warm pool first.
             # This avoids the 5-15s ``git worktree add`` overhead on hot paths.
-            warm_entry = self._warm_pool.acquire(role) if self._warm_pool is not None else None
+            warm_entry = self._warm_pool.claim_slot(role) if self._warm_pool is not None else None
             if warm_entry is not None:
-                spawn_cwd = warm_entry.worktree_path
+                spawn_cwd = Path(warm_entry.worktree_path)
                 self._worktree_paths[session_id] = spawn_cwd
                 self._worktree_roots[session_id] = worktree_repo_root
                 self._warm_pool_entries[session_id] = warm_entry
                 logger.info(
-                    "Using warm pool entry %s for session %s (role=%s)",
-                    warm_entry.entry_id,
+                    "Using warm pool slot %s for session %s (role=%s)",
+                    warm_entry.slot_id,
                     session_id,
                     role,
                 )
@@ -2239,7 +2239,7 @@ class AgentSpawner:
             # (branch/path naming differs from normal worktrees).
             warm_entry = self._warm_pool_entries.pop(session.id, None)
             if warm_entry is not None and self._warm_pool is not None:
-                self._warm_pool.release_consumed(warm_entry)
+                self._warm_pool.release_slot(warm_entry.slot_id)
             else:
                 worktree_mgr.cleanup(session.id)
 

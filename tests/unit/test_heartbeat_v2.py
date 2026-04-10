@@ -54,7 +54,7 @@ class TestOrchestratorPing:
             agent_id="a1",
             timestamp=1.0,
         )
-        assert ping.timeout_s == 10.0
+        assert ping.timeout_s == pytest.approx(10.0)
 
     def test_custom_timeout(self) -> None:
         ping = OrchestratorPing(
@@ -64,7 +64,7 @@ class TestOrchestratorPing:
             timestamp=1.0,
             timeout_s=5.0,
         )
-        assert ping.timeout_s == 5.0
+        assert ping.timeout_s == pytest.approx(5.0)
 
 
 # ---------------------------------------------------------------------------
@@ -170,12 +170,12 @@ class TestHeartbeatV2Manager:
     def test_create_ping_custom_timeout(self) -> None:
         mgr = HeartbeatV2Manager(timeout_s=10.0)
         ping = mgr.create_ping(PingType.STATUS_REQUEST, "a1", timeout_s=3.0)
-        assert ping.timeout_s == 3.0
+        assert ping.timeout_s == pytest.approx(3.0)
 
     def test_create_ping_default_timeout(self) -> None:
         mgr = HeartbeatV2Manager(timeout_s=7.0)
         ping = mgr.create_ping(PingType.STATUS_REQUEST, "a1")
-        assert ping.timeout_s == 7.0
+        assert ping.timeout_s == pytest.approx(7.0)
 
     def test_record_pong_resets_failures(self) -> None:
         mgr = HeartbeatV2Manager(degraded_threshold=1, dead_threshold=3)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from bernstein.core.canary_mode import (
     build_canary_report,
     compare_decisions,
@@ -233,7 +235,7 @@ class TestBuildCanaryReport:
         canary = [simulate_routing(t, cfg) for t in tasks]
         report = build_canary_report(primary, canary)
         assert report.total_tasks == 5
-        assert report.match_rate == 1.0
+        assert report.match_rate == pytest.approx(1.0)
         assert all(d.matches for d in report.diffs)
 
     def test_none_matching(self) -> None:
@@ -243,7 +245,7 @@ class TestBuildCanaryReport:
         canary = [simulate_routing(t, {"model": "haiku"}) for t in tasks]
         report = build_canary_report(primary, canary)
         assert report.total_tasks == 4
-        assert report.match_rate == 0.0
+        assert report.match_rate == pytest.approx(0.0)
 
     def test_partial_matching(self) -> None:
         """Match rate is correctly calculated for partial matches."""
@@ -260,13 +262,13 @@ class TestBuildCanaryReport:
         ]
         report = build_canary_report(primary, canary)
         assert report.total_tasks == 2
-        assert report.match_rate == 0.5
+        assert report.match_rate == pytest.approx(0.5)
 
     def test_empty_tasks(self) -> None:
         """Empty task lists produce 1.0 match rate (vacuously true)."""
         report = build_canary_report([], [])
         assert report.total_tasks == 0
-        assert report.match_rate == 1.0
+        assert report.match_rate == pytest.approx(1.0)
 
     def test_generated_at_is_iso(self) -> None:
         """generated_at is a valid ISO-8601 timestamp."""

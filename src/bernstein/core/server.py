@@ -1484,6 +1484,16 @@ def create_app(
 
     application.include_router(graphql_router)
 
+    # Graduation framework — stage inspection and promotion
+    from bernstein.core.routes.graduation import router as graduation_router
+
+    application.include_router(graduation_router)
+
+    # Team state — current roster visibility for CLI/TUI
+    from bernstein.core.routes.team import router as team_router
+
+    application.include_router(team_router)
+
     # WEB-007: API v1 versioned routes — mount all existing routers under /api/v1/
     from bernstein.core.routes.api_v1 import router as api_v1_router
 

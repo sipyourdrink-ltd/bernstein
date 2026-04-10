@@ -90,7 +90,7 @@ class TestChaosScenario:
     def test_fields(self) -> None:
         s = _make_scenario(name="net-drop", intensity=0.8)
         assert s.name == "net-drop"
-        assert s.intensity == 0.8
+        assert s.intensity == pytest.approx(0.8)
         assert s.failure_type == FailureType.NETWORK_DROP
 
     def test_frozen(self) -> None:
@@ -100,11 +100,11 @@ class TestChaosScenario:
 
     def test_intensity_lower_bound(self) -> None:
         s = _make_scenario(intensity=0.0)
-        assert s.intensity == 0.0
+        assert s.intensity == pytest.approx(0.0)
 
     def test_intensity_upper_bound(self) -> None:
         s = _make_scenario(intensity=1.0)
-        assert s.intensity == 1.0
+        assert s.intensity == pytest.approx(1.0)
 
     def test_intensity_below_zero_raises(self) -> None:
         with pytest.raises(ValueError, match="intensity must be between 0 and 1"):
@@ -285,8 +285,8 @@ class TestEvaluateChaosResults:
         r1 = _make_result(recovery_time_s=1.0)
         r2 = _make_result(recovery_time_s=2.0)
         report = evaluate_chaos_results([r1, r2])
-        assert report.scenarios[0].recovery_time_s == 1.0
-        assert report.scenarios[1].recovery_time_s == 2.0
+        assert report.scenarios[0].recovery_time_s == pytest.approx(1.0)
+        assert report.scenarios[1].recovery_time_s == pytest.approx(2.0)
 
 
 # ---------------------------------------------------------------------------

@@ -81,7 +81,7 @@ class TestCheckpointMetadata:
         assert meta.task_count == 10
         assert meta.completed_count == 5
         assert meta.failed_count == 1
-        assert meta.cost_usd == 2.50
+        assert meta.cost_usd == pytest.approx(2.50)
         assert meta.plan_file == "plans/big-project.yaml"
 
     def test_metadata_is_frozen(self) -> None:
@@ -116,7 +116,7 @@ class TestCreateCheckpoint:
             "task-2": {"depends_on": ["task-1"]},
         }
         assert len(ckpt.agent_sessions) == 1
-        assert ckpt.cost_accumulator["opus"] == 1.75
+        assert ckpt.cost_accumulator["opus"] == pytest.approx(1.75)
         assert ckpt.wal_position == 42
 
 

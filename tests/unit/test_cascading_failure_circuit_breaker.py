@@ -49,7 +49,7 @@ class TestCircuitBreakerConfig:
         cfg = CircuitBreakerConfig(service_name="svc")
         assert cfg.service_name == "svc"
         assert cfg.failure_threshold == 5
-        assert cfg.recovery_timeout_s == 30.0
+        assert cfg.recovery_timeout_s == pytest.approx(30.0)
         assert cfg.half_open_max_calls == 3
         assert cfg.latency_threshold_ms is None
 
@@ -62,7 +62,7 @@ class TestCircuitBreakerConfig:
             latency_threshold_ms=500.0,
         )
         assert cfg.failure_threshold == 3
-        assert cfg.latency_threshold_ms == 500.0
+        assert cfg.latency_threshold_ms == pytest.approx(500.0)
 
     def test_frozen(self) -> None:
         cfg = CircuitBreakerConfig(service_name="svc")
@@ -327,12 +327,12 @@ class TestDefaultBreakers:
     def test_task_server_config(self) -> None:
         cfg = DEFAULT_BREAKERS["task_server"]
         assert cfg.service_name == "task_server"
-        assert cfg.latency_threshold_ms == 5000.0
+        assert cfg.latency_threshold_ms == pytest.approx(5000.0)
 
     def test_git_config(self) -> None:
         cfg = DEFAULT_BREAKERS["git"]
         assert cfg.service_name == "git"
-        assert cfg.latency_threshold_ms == 30000.0
+        assert cfg.latency_threshold_ms == pytest.approx(30000.0)
 
     def test_llm_provider_config(self) -> None:
         cfg = DEFAULT_BREAKERS["llm_provider"]

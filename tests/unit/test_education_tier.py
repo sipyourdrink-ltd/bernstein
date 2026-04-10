@@ -31,7 +31,7 @@ class TestStudentProfile:
         """StudentProfile has sensible defaults."""
         p = StudentProfile(student_id="s1", name="Alice", course_id="cs101")
         assert p.max_agents == 2
-        assert p.max_cost_usd == 1.0
+        assert p.max_cost_usd == pytest.approx(1.0)
         assert p.allowed_models == ("haiku", "flash")
 
     def test_frozen(self) -> None:
@@ -51,7 +51,7 @@ class TestStudentProfile:
             allowed_models=("opus", "sonnet"),
         )
         assert p.max_agents == 4
-        assert p.max_cost_usd == 5.0
+        assert p.max_cost_usd == pytest.approx(5.0)
         assert p.allowed_models == ("opus", "sonnet")
 
 
@@ -368,8 +368,8 @@ def _make_config(students: list[str] | None = None) -> _LegacyClassroomConfig:
 def test_budget_remaining_initial(tmp_path: Path) -> None:
     """All students start with full budget."""
     session = ClassroomSession(_make_config(), tmp_path)
-    assert session.student_budget_remaining("alice") == 1.0
-    assert session.student_budget_remaining("bob") == 1.0
+    assert session.student_budget_remaining("alice") == pytest.approx(1.0)
+    assert session.student_budget_remaining("bob") == pytest.approx(1.0)
 
 
 def test_budget_remaining_unknown_student(tmp_path: Path) -> None:
@@ -406,7 +406,7 @@ def test_student_isolation(tmp_path: Path) -> None:
     """One student's spending does not affect another's budget."""
     session = ClassroomSession(_make_config(), tmp_path)
     session.approve_task("alice", 0.50)
-    assert session.student_budget_remaining("bob") == 1.0
+    assert session.student_budget_remaining("bob") == pytest.approx(1.0)
 
 
 def test_student_summary(tmp_path: Path) -> None:
@@ -420,8 +420,8 @@ def test_student_summary(tmp_path: Path) -> None:
     assert len(summary) == 3
     alice = next(s for s in summary if s["student"] == "alice")
     assert alice["tasks_submitted"] == 2
-    assert alice["cost_used"] == 0.35
-    assert alice["budget_remaining"] == 0.65
+    assert alice["cost_used"] == pytest.approx(0.35)
+    assert alice["budget_remaining"] == pytest.approx(0.65)
 
 
 def test_student_summary_sorted(tmp_path: Path) -> None:
@@ -464,6 +464,6 @@ def test_export_grades_creates_directory(tmp_path: Path) -> None:
 def test_legacy_config_defaults() -> None:
     """_LegacyClassroomConfig has sensible defaults."""
     cfg = _LegacyClassroomConfig(instructor="prof", students=["s1"])
-    assert cfg.max_cost_per_student == 1.0
+    assert cfg.max_cost_per_student == pytest.approx(1.0)
     assert cfg.allowed_models == ["haiku", "flash"]
     assert cfg.sandbox_mode is True

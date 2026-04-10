@@ -37,7 +37,7 @@ from enum import Enum
 from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, Any
 
-from bernstein.adapters.base import CLIAdapter
+from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -137,7 +137,7 @@ class PluginAdapter(CLIAdapter):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
-        timeout_seconds: int = 1800,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> SpawnResult:
         """Launch an agent process with the given prompt."""
         ...

@@ -26,21 +26,21 @@ class TestScorePermissions:
 
     def test_no_requests(self) -> None:
         m = score_permissions(denied=0, escalated=0, total=0)
-        assert m.score == 100.0
+        assert m.score == pytest.approx(100.0)
         assert m.name == "permissions"
         assert m.weight == METRIC_WEIGHTS["permissions"]
 
     def test_no_escalations(self) -> None:
         m = score_permissions(denied=5, escalated=0, total=10)
-        assert m.score == 100.0
+        assert m.score == pytest.approx(100.0)
 
     def test_all_escalated(self) -> None:
         m = score_permissions(denied=0, escalated=10, total=10)
-        assert m.score == 0.0
+        assert m.score == pytest.approx(0.0)
 
     def test_partial_escalation(self) -> None:
         m = score_permissions(denied=2, escalated=3, total=10)
-        assert m.score == 70.0
+        assert m.score == pytest.approx(70.0)
 
     def test_details_mention_rate(self) -> None:
         m = score_permissions(denied=1, escalated=5, total=10)
@@ -57,20 +57,20 @@ class TestScoreSecrets:
 
     def test_none_detected(self) -> None:
         m = score_secrets(detected=0, blocked=0)
-        assert m.score == 100.0
+        assert m.score == pytest.approx(100.0)
         assert m.name == "secrets"
 
     def test_all_blocked(self) -> None:
         m = score_secrets(detected=4, blocked=4)
-        assert m.score == 100.0
+        assert m.score == pytest.approx(100.0)
 
     def test_none_blocked(self) -> None:
         m = score_secrets(detected=5, blocked=0)
-        assert m.score == 0.0
+        assert m.score == pytest.approx(0.0)
 
     def test_partial_block(self) -> None:
         m = score_secrets(detected=4, blocked=3)
-        assert m.score == 75.0
+        assert m.score == pytest.approx(75.0)
 
     def test_details_mention_leaked(self) -> None:
         m = score_secrets(detected=4, blocked=3)
@@ -87,20 +87,20 @@ class TestScoreSandbox:
 
     def test_no_violations(self) -> None:
         m = score_sandbox(violations=0)
-        assert m.score == 100.0
+        assert m.score == pytest.approx(100.0)
         assert m.name == "sandbox"
 
     def test_one_violation(self) -> None:
         m = score_sandbox(violations=1)
-        assert m.score == 80.0
+        assert m.score == pytest.approx(80.0)
 
     def test_five_violations_floors_at_zero(self) -> None:
         m = score_sandbox(violations=5)
-        assert m.score == 0.0
+        assert m.score == pytest.approx(0.0)
 
     def test_many_violations_floors_at_zero(self) -> None:
         m = score_sandbox(violations=10)
-        assert m.score == 0.0
+        assert m.score == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -113,24 +113,24 @@ class TestScoreAuditIntegrity:
 
     def test_verified_no_gaps(self) -> None:
         m = score_audit_integrity(verified=True, gaps=0)
-        assert m.score == 100.0
+        assert m.score == pytest.approx(100.0)
         assert m.name == "audit_integrity"
 
     def test_unverified_no_gaps(self) -> None:
         m = score_audit_integrity(verified=False, gaps=0)
-        assert m.score == 50.0
+        assert m.score == pytest.approx(50.0)
 
     def test_verified_with_gaps(self) -> None:
         m = score_audit_integrity(verified=True, gaps=3)
-        assert m.score == 70.0
+        assert m.score == pytest.approx(70.0)
 
     def test_unverified_with_gaps(self) -> None:
         m = score_audit_integrity(verified=False, gaps=3)
-        assert m.score == 20.0
+        assert m.score == pytest.approx(20.0)
 
     def test_floors_at_zero(self) -> None:
         m = score_audit_integrity(verified=False, gaps=10)
-        assert m.score == 0.0
+        assert m.score == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -143,20 +143,20 @@ class TestScorePolicyCompliance:
 
     def test_no_checks(self) -> None:
         m = score_policy_compliance(passed=0, total=0)
-        assert m.score == 100.0
+        assert m.score == pytest.approx(100.0)
         assert m.name == "policy_compliance"
 
     def test_all_passed(self) -> None:
         m = score_policy_compliance(passed=8, total=8)
-        assert m.score == 100.0
+        assert m.score == pytest.approx(100.0)
 
     def test_none_passed(self) -> None:
         m = score_policy_compliance(passed=0, total=5)
-        assert m.score == 0.0
+        assert m.score == pytest.approx(0.0)
 
     def test_partial(self) -> None:
         m = score_policy_compliance(passed=3, total=4)
-        assert m.score == 75.0
+        assert m.score == pytest.approx(75.0)
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +191,7 @@ class TestComputePosture:
 
     def test_perfect_score(self) -> None:
         report = compute_posture("run-1", **_perfect_metrics())
-        assert report.overall_score == 100.0
+        assert report.overall_score == pytest.approx(100.0)
         assert report.grade == "A"
         assert report.run_id == "run-1"
         assert len(report.metrics) == 5
@@ -199,7 +199,7 @@ class TestComputePosture:
 
     def test_poor_score(self) -> None:
         report = compute_posture("run-bad", **_poor_metrics())
-        assert report.overall_score == 0.0
+        assert report.overall_score == pytest.approx(0.0)
         assert report.grade == "F"
         assert len(report.recommendations) > 0
 
@@ -210,7 +210,7 @@ class TestComputePosture:
         metrics["secrets"] = score_secrets(detected=4, blocked=3)  # 75
         report = compute_posture("run-mix", **metrics)
         # Weighted: 100*0.25 + 75*0.20 + 80*0.20 + 100*0.15 + 100*0.20 = 91.0
-        assert report.overall_score == 91.0
+        assert report.overall_score == pytest.approx(91.0)
         assert report.grade == "A"
 
     def test_grade_boundaries(self) -> None:

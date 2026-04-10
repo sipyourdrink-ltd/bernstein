@@ -275,7 +275,7 @@ class MCPGateway:
                 await self._send_upstream(message)
             return None
 
-        fut: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending[req_id] = fut
         t0 = time.monotonic()
         try:
@@ -320,7 +320,7 @@ class MCPGateway:
 
     async def run_stdio(self) -> None:
         """Run as a stdio proxy. Reads from stdin, writes to stdout. Blocks until EOF."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         reader = asyncio.StreamReader()
         protocol = asyncio.StreamReaderProtocol(reader)
         await loop.connect_read_pipe(lambda: protocol, sys.stdin.buffer)

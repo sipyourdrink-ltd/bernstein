@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.hook_dry_run import (
     DEFAULT_HOOK_REGISTRY,
     DryRunReport,
@@ -32,7 +34,7 @@ class TestDryRunResult:
         assert result.would_execute is True
         assert result.payload == {"task_id": "t-1"}
         assert result.matched_handlers == ["slack_notify", "pagerduty_alert"]
-        assert result.execution_time_ms == 0.05
+        assert result.execution_time_ms == pytest.approx(0.05)
 
     def test_frozen(self) -> None:
         result = DryRunResult(

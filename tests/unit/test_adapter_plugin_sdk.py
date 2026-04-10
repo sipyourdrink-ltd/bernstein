@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from bernstein.adapters.base import CLIAdapter, SpawnResult
+from bernstein.adapters.base import DEFAULT_TIMEOUT_SECONDS, CLIAdapter, SpawnResult
 from bernstein.adapters.plugin_sdk import (
     AdapterCapability,
     AdapterPluginInfo,
@@ -69,7 +69,7 @@ class _StubPluginAdapter(PluginAdapter):
         model_config: ModelConfig,
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
-        timeout_seconds: int = 1800,
+        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     ) -> SpawnResult:
         raise NotImplementedError("stub")
 

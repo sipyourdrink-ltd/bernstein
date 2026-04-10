@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.hook_rate_limiter import (
     HookRateLimiter,
     RateLimitConfig,
@@ -15,12 +17,12 @@ class TestRateLimitConfig:
     def test_defaults(self) -> None:
         cfg = RateLimitConfig()
         assert cfg.max_per_window == 1
-        assert cfg.window_seconds == 60.0
+        assert cfg.window_seconds == pytest.approx(60.0)
 
     def test_custom_values(self) -> None:
         cfg = RateLimitConfig(max_per_window=5, window_seconds=120.0)
         assert cfg.max_per_window == 5
-        assert cfg.window_seconds == 120.0
+        assert cfg.window_seconds == pytest.approx(120.0)
 
     def test_frozen(self) -> None:
         cfg = RateLimitConfig()
@@ -43,7 +45,7 @@ class TestSuppressedEvent:
         )
         assert evt.event_type == "task.failed"
         assert evt.payload == {"task_id": "t1"}
-        assert evt.suppressed_at == 1000.0
+        assert evt.suppressed_at == pytest.approx(1000.0)
 
     def test_frozen(self) -> None:
         evt = SuppressedEvent(event_type="x", payload={}, suppressed_at=0.0)
@@ -95,7 +97,7 @@ class TestHookRateLimiter:
         assert len(flushed) == 2
         assert flushed[0].event_type == "task.failed"
         assert flushed[0].payload == {"task_id": "t1"}
-        assert flushed[0].suppressed_at == 100.0
+        assert flushed[0].suppressed_at == pytest.approx(100.0)
         assert flushed[1].payload == {"task_id": "t2"}
 
         # flush again returns empty

@@ -118,9 +118,10 @@ async def _retry_task(store: TaskStore, task_id: str) -> None:
     task.retry_count += 1
     task.version += 1
     store._index_add(task)
+    await store._append_jsonl(store._task_to_record(task))
 
 
-def _reprioritize_task(store: TaskStore, task_id: str, priority: int) -> None:
+async def _reprioritize_task(store: TaskStore, task_id: str, priority: int) -> None:
     """Update the priority of a single task."""
     task = store.get_task(task_id)
     if task is None:
@@ -128,9 +129,10 @@ def _reprioritize_task(store: TaskStore, task_id: str, priority: int) -> None:
     task.priority = priority
     task.version += 1
     store._index_add(task)
+    await store._append_jsonl(store._task_to_record(task))
 
 
-def _tag_task(store: TaskStore, task_id: str, tags: list[str]) -> None:
+async def _tag_task(store: TaskStore, task_id: str, tags: list[str]) -> None:
     """Add tags to a task's metadata."""
     task = store.get_task(task_id)
     if task is None:
@@ -139,6 +141,7 @@ def _tag_task(store: TaskStore, task_id: str, tags: list[str]) -> None:
     merged = list(dict.fromkeys(existing_tags + tags))  # deduplicate, preserve order
     task.metadata["tags"] = merged
     task.version += 1
+    await store._append_jsonl(store._task_to_record(task))
 
 
 # ---------------------------------------------------------------------------
@@ -173,10 +176,10 @@ async def batch_operations(body: BatchRequest, request: Request) -> BatchResult:
                 await _retry_task(store, task_id)
             elif body.action == BatchAction.REPRIORITIZE:
                 assert body.priority is not None  # validated above
-                _reprioritize_task(store, task_id, body.priority)
+                await _reprioritize_task(store, task_id, body.priority)
             elif body.action == BatchAction.TAG:
                 assert body.tags is not None  # validated above
-                _tag_task(store, task_id, body.tags)
+                await _tag_task(store, task_id, body.tags)
             result.succeeded.append(task_id)
         except KeyError:
             result.failed[task_id] = "not found"

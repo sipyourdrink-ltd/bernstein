@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.security_correlation import (
     BUILTIN_PATTERNS,
     CorrelationMatch,
@@ -73,18 +75,18 @@ class TestBuiltinPatterns:
     def test_repeated_secret_detection_config(self) -> None:
         pat = next(p for p in BUILTIN_PATTERNS if p.pattern_id == "repeated_secret_detection")
         assert pat.min_occurrences == 3
-        assert pat.time_window_hours == 24.0
+        assert pat.time_window_hours == pytest.approx(24.0)
         assert pat.event_types == ["secret_detected"]
 
     def test_permission_escalation_config(self) -> None:
         pat = next(p for p in BUILTIN_PATTERNS if p.pattern_id == "permission_escalation_pattern")
         assert pat.min_occurrences == 5
-        assert pat.time_window_hours == 1.0
+        assert pat.time_window_hours == pytest.approx(1.0)
 
     def test_sandbox_escape_config(self) -> None:
         pat = next(p for p in BUILTIN_PATTERNS if p.pattern_id == "sandbox_escape_attempts")
         assert pat.min_occurrences == 2
-        assert pat.time_window_hours == 1.0
+        assert pat.time_window_hours == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

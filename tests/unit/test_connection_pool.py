@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.core.connection_pool import (
     ConnectionHealth,
     ConnectionPool,
@@ -25,7 +27,7 @@ class TestConnectionHealth:
             is_healthy=True,
         )
         assert h.endpoint == "http://localhost:8052"
-        assert h.avg_latency_ms == 5.0
+        assert h.avg_latency_ms == pytest.approx(5.0)
         assert h.error_count == 1
         assert h.is_healthy is True
 
@@ -49,7 +51,7 @@ class TestPoolConfig:
     def test_defaults(self) -> None:
         cfg = PoolConfig()
         assert cfg.max_connections == 10
-        assert cfg.health_check_interval_s == 30.0
+        assert cfg.health_check_interval_s == pytest.approx(30.0)
         assert cfg.unhealthy_threshold == 3
         assert cfg.retire_after_errors == 10
 
@@ -68,7 +70,7 @@ class TestConnectionSlot:
         )
         assert slot.request_count == 0
         assert slot.error_count == 0
-        assert slot.avg_latency_ms == 0.0
+        assert slot.avg_latency_ms == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +153,7 @@ class TestConnectionPoolHealthRouting:
         updated = all_stats[slot.slot_id]
         assert updated.request_count == 2
         assert updated.error_count == 1
-        assert updated.avg_latency_ms == 15.0  # (10+20)/2
+        assert updated.avg_latency_ms == pytest.approx(15.0)  # (10+20)/2
 
 
 class TestConnectionPoolRetire:
@@ -192,7 +194,7 @@ class TestConnectionPoolHealthSummary:
         pool = ConnectionPool("http://localhost:8052")
         summary = pool.health_summary()
         assert summary.is_healthy is True
-        assert summary.avg_latency_ms == 0.0
+        assert summary.avg_latency_ms == pytest.approx(0.0)
         assert summary.error_count == 0
         assert summary.last_success_at is None
         assert summary.last_error_at is None
@@ -210,7 +212,7 @@ class TestConnectionPoolHealthSummary:
         pool.release(s2.slot_id, latency_ms=20.0, success=True)
 
         summary = pool.health_summary()
-        assert summary.avg_latency_ms == 15.0  # (10+20)/2
+        assert summary.avg_latency_ms == pytest.approx(15.0)  # (10+20)/2
         assert summary.error_count == 0
         assert summary.is_healthy is True
         assert summary.last_success_at is not None

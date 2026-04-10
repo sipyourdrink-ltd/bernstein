@@ -322,7 +322,6 @@ class Orchestrator:
         # Run completion summary state
         self._summary_written: bool = False
         self._run_start_ts: float = time.time()
-        self._idle_shutdown_ts: dict[str, float] = {}  # agent_id -> shutdown signal sent ts
         self._agent_failure_timestamps: dict[str, float] = {}  # adapter_name -> last failure ts
         self._shutting_down = threading.Event()
         self._executor_drained = False
@@ -352,11 +351,6 @@ class Orchestrator:
             policy_issues = self._router.validate_policy()
             for issue in policy_issues:
                 logger.warning("Model policy: %s", issue)
-
-        # Rate-limit-aware scheduling: detects 429s and throttles providers
-        from bernstein.core.rate_limit_tracker import RateLimitTracker as _RLTracker
-
-        self._rate_limit_tracker = _RLTracker()
 
         # Telemetry
         from bernstein.core.telemetry import init_telemetry
@@ -2365,6 +2359,7 @@ class Orchestrator:
             client=self._client,
             server_url=self._config.server_url,
             decomposed_task_ids=self._decomposed_task_ids,
+            workdir=self._workdir,
         )
 
     # -- Session and cleanup ------------------------------------------------

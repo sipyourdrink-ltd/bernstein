@@ -137,7 +137,7 @@ class TestBuildLeaderboard:
             avg_duration_s=0.0,
             quality_rate=0.0,
         )
-        assert rec.success_rate == 0.0
+        assert rec.success_rate == pytest.approx(0.0)
 
     def test_role_fallback(self) -> None:
         """Uses 'role' key when 'task_type' is absent."""

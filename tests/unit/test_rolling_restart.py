@@ -66,8 +66,8 @@ class TestRestartState:
             wal_position=0,
         )
         assert state.active_agent_pids == []
-        assert state.started_at == 0.0
-        assert state.completed_at == 0.0
+        assert state.started_at == pytest.approx(0.0)
+        assert state.completed_at == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -80,8 +80,8 @@ class TestRestartPlan:
 
     def test_defaults(self) -> None:
         plan = RestartPlan()
-        assert plan.drain_timeout_s == 30.0
-        assert plan.handoff_timeout_s == 10.0
+        assert plan.drain_timeout_s == pytest.approx(30.0)
+        assert plan.handoff_timeout_s == pytest.approx(10.0)
         assert plan.verify_agents is True
         assert plan.backup_state is True
 

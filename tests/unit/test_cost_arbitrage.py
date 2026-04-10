@@ -39,9 +39,9 @@ class TestProviderPricing:
         )
         assert p.provider == "anthropic"
         assert p.model == "opus"
-        assert p.input_cost_per_mtok == 15.0
-        assert p.output_cost_per_mtok == 75.0
-        assert p.quality_score == 0.97
+        assert p.input_cost_per_mtok == pytest.approx(15.0)
+        assert p.output_cost_per_mtok == pytest.approx(75.0)
+        assert p.quality_score == pytest.approx(0.97)
         assert p.latency_ms == 8000
         assert p.rate_limit_rpm == 200
 
@@ -56,7 +56,7 @@ class TestArbitrageConfig:
 
     def test_defaults(self) -> None:
         cfg = ArbitrageConfig()
-        assert cfg.min_quality == 0.7
+        assert cfg.min_quality == pytest.approx(0.7)
         assert cfg.max_latency_ms == 30_000
         assert cfg.prefer_cheapest is True
 
@@ -67,7 +67,7 @@ class TestArbitrageConfig:
 
     def test_custom(self) -> None:
         cfg = ArbitrageConfig(min_quality=0.9, max_latency_ms=5000, prefer_cheapest=False)
-        assert cfg.min_quality == 0.9
+        assert cfg.min_quality == pytest.approx(0.9)
         assert cfg.max_latency_ms == 5000
         assert cfg.prefer_cheapest is False
 
@@ -91,8 +91,8 @@ class TestArbitrageResult:
         r = ArbitrageResult(selected=p, candidates=[p], estimated_cost_usd=0.01, savings_vs_default_pct=42.0)
         assert r.selected is p
         assert r.candidates == [p]
-        assert r.estimated_cost_usd == 0.01
-        assert r.savings_vs_default_pct == 42.0
+        assert r.estimated_cost_usd == pytest.approx(0.01)
+        assert r.savings_vs_default_pct == pytest.approx(42.0)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ class TestEstimateTaskCost:
 
     def test_zero_tokens(self) -> None:
         p = ProviderPricing("x", "y", 10.0, 20.0, 0.9, 500, 100)
-        assert estimate_task_cost_for_provider(p, 0, 0) == 0.0
+        assert estimate_task_cost_for_provider(p, 0, 0) == pytest.approx(0.0)
 
     def test_known_values(self) -> None:
         p = ProviderPricing("x", "y", 10.0, 20.0, 0.9, 500, 100)
@@ -156,7 +156,7 @@ class TestEstimateTaskCost:
 
     def test_free_provider(self) -> None:
         p = ProviderPricing("ollama", "llama3", 0.0, 0.0, 0.7, 5000, 60)
-        assert estimate_task_cost_for_provider(p, 50_000, 25_000) == 0.0
+        assert estimate_task_cost_for_provider(p, 50_000, 25_000) == pytest.approx(0.0)
 
     def test_small_token_count(self) -> None:
         p = ProviderPricing("anthropic", "haiku", 0.25, 1.25, 0.80, 1000, 1000)
@@ -193,7 +193,7 @@ class TestSelectCheapest:
         result = select_cheapest("small", config=cfg)
         # ollama/llama3 is free and meets 0.7 quality
         assert result.selected.provider == "ollama"
-        assert result.estimated_cost_usd == 0.0
+        assert result.estimated_cost_usd == pytest.approx(0.0)
 
     def test_high_quality_excludes_cheap_models(self) -> None:
         cfg = ArbitrageConfig(min_quality=0.95)

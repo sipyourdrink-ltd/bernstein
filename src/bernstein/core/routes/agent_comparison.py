@@ -137,7 +137,6 @@ def _extract_sessions(request: Request) -> list[dict[str, Any]]:
 
     store = request.app.state.store
     agents: dict[str, Any] = store.agents
-    tasks: dict[str, Any] = getattr(store, "_tasks", {})
 
     sessions: list[dict[str, Any]] = []
 
@@ -160,17 +159,18 @@ def _extract_sessions(request: Request) -> list[dict[str, Any]]:
         else:
             status = "working"
 
-        # Sum cost from associated tasks
+        # Sum cost from associated tasks using the public get_task() API
         task_ids: list[str] = getattr(agent, "task_ids", [])
         cost_usd = 0.0
         quality_gate_passed = True
         for tid in task_ids:
-            task = tasks.get(tid)
+            task = store.get_task(tid)
             if task is None:
                 continue
-            task_cost = getattr(task, "cost_usd", 0.0)
+            # Task model does not have cost_usd; check metadata as fallback
+            task_cost = getattr(task, "cost_usd", None) or task.metadata.get("cost_usd", 0.0)
             if task_cost:
-                cost_usd += task_cost
+                cost_usd += float(task_cost)
             task_status = getattr(task, "status", None)
             if task_status is not None and hasattr(task_status, "value") and task_status.value == "failed":
                 quality_gate_passed = False

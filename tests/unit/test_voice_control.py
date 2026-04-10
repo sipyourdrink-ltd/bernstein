@@ -5,6 +5,8 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from bernstein.cli.voice_control import (
     VoiceConfig,
     VoiceIntent,
@@ -25,7 +27,7 @@ def test_voice_intent_defaults() -> None:
     assert intent.action == "run"
     assert intent.plan_file is None
     assert intent.target is None
-    assert intent.confidence == 0.0
+    assert intent.confidence == pytest.approx(0.0)
 
 
 def test_voice_intent_is_frozen() -> None:
@@ -101,14 +103,14 @@ def test_parse_unknown_intent() -> None:
     """Unrecognized transcript resolves to action='unknown'."""
     intent = parse_voice_intent("banana chocolate milkshake")
     assert intent.action == "unknown"
-    assert intent.confidence == 0.0
+    assert intent.confidence == pytest.approx(0.0)
 
 
 def test_parse_empty_transcript() -> None:
     """Empty transcript resolves to unknown with zero confidence."""
     intent = parse_voice_intent("")
     assert intent.action == "unknown"
-    assert intent.confidence == 0.0
+    assert intent.confidence == pytest.approx(0.0)
 
 
 def test_parse_run_without_plan_ref() -> None:
