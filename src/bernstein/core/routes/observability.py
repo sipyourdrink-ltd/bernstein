@@ -692,3 +692,179 @@ def get_incident_timeline(
         window_before_s=float(window_before),
         window_after_s=float(window_after),
     )
+
+
+def _estimate_role_prompt_tokens(workdir: Path, role: str) -> int:
+    """Estimate token count for a role's system prompt template.
+
+    Reads the system_prompt.md for the given role and applies a
+    4-chars/token heuristic for markdown content.
+
+    Args:
+        workdir: Repository root.
+        role: Agent role name (e.g. 'backend', 'qa').
+
+    Returns:
+        Estimated token count, or 0 if the template cannot be read.
+    """
+    if not role:
+        return 0
+    prompt_file = workdir / "templates" / "roles" / role / "system_prompt.md"
+    try:
+        content = prompt_file.read_bytes()
+        return max(1, len(content) // 4)
+    except OSError:
+        return 0
+
+
+@router.get("/observability/token-breakdown")
+def token_breakdown(request: Request) -> dict[str, Any]:
+    """Return per-session token consumption breakdown.
+
+    For each agent session with a ``.tokens`` sidecar file, breaks down
+    token usage into estimated categories:
+
+    - ``system_prompt_estimated``: overhead from Bernstein role templates
+    - ``task_description_estimated``: tokens for the task title + description
+    - ``context_estimated``: remaining input tokens (context files, tool results,
+      prior conversation history, etc.)
+    - ``output_tokens``: actual assistant output tokens
+
+    Also reports ``optimization_opportunities`` — a list of human-readable
+    insights when a category accounts for an unusually large share of tokens
+    (e.g. "context files are 60% of input").
+
+    Token sidecar files live at ``.sdd/runtime/{session_id}.tokens``.
+    Breakdown percentages use a 4-chars/token heuristic for size estimates.
+
+    Returns:
+        Dict with ``sessions`` list and aggregate ``summary``.
+    """
+    workdir = _get_workdir(request)
+    store = _get_store(request)
+    runtime_dir = workdir / ".sdd" / "runtime"
+
+    # Load agents snapshot for role/task_id mapping
+    snapshot = _read_json(runtime_dir / "agents.json", {"agents": []})
+    tasks_by_id = {task.id: task for task in store.list_tasks()}
+
+    session_info: dict[str, dict[str, Any]] = {}
+    for raw in cast("list[dict[str, Any]]", snapshot.get("agents", [])):
+        sid = str(raw.get("id", ""))
+        if sid:
+            session_info[sid] = {
+                "role": str(raw.get("role", "")),
+                "task_ids": [str(t) for t in cast("list[Any]", raw.get("task_ids", []))],
+            }
+
+    sessions: list[dict[str, Any]] = []
+
+    for tokens_file in sorted(runtime_dir.glob("*.tokens")):
+        session_id = tokens_file.stem
+        input_tokens = 0
+        output_tokens = 0
+
+        try:
+            for line in tokens_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec: dict[str, Any] = json.loads(line)
+                    input_tokens += int(rec.get("in", 0))
+                    output_tokens += int(rec.get("out", 0))
+                except (json.JSONDecodeError, ValueError):
+                    continue
+        except OSError:
+            continue
+
+        if input_tokens == 0 and output_tokens == 0:
+            continue
+
+        info = session_info.get(session_id, {})
+        role = info.get("role", "unknown")
+        task_ids: list[str] = info.get("task_ids", [])
+
+        # Estimate system prompt tokens from role template file size (~4 chars/token)
+        system_prompt_estimated = _estimate_role_prompt_tokens(workdir, role)
+
+        # Estimate task description tokens from title + description length
+        task_desc_estimated = 0
+        task_titles: list[str] = []
+        for task_id in task_ids:
+            task = tasks_by_id.get(task_id)
+            if task:
+                task_titles.append(task.title)
+                text_len = len(task.title) + len(getattr(task, "description", "") or "")
+                task_desc_estimated += max(1, text_len // 4)
+
+        # Context = remaining input after accounting for system prompt + task desc
+        context_estimated = max(0, input_tokens - system_prompt_estimated - task_desc_estimated)
+        total = input_tokens + output_tokens
+
+        # Compute optimization opportunities
+        opportunities: list[str] = []
+        if input_tokens > 0:
+            system_pct = round(100.0 * system_prompt_estimated / input_tokens, 1)
+            context_pct = round(100.0 * context_estimated / input_tokens, 1)
+            output_pct = round(100.0 * output_tokens / total, 1) if total > 0 else 0.0
+
+            if system_pct > 30:
+                opportunities.append(
+                    f"System prompt is ~{system_pct}% of input — consider trimming the role template for this task type"
+                )
+            if context_pct > 60:
+                opportunities.append(
+                    f"Context files/history are ~{context_pct}% of input — agent may be loading files it never used"
+                )
+            if output_pct < 5 and total >= 1000:
+                opportunities.append(
+                    "Output is <5% of total tokens — agent consumed many tokens producing little output"
+                )
+
+        sessions.append(
+            {
+                "session_id": session_id,
+                "role": role,
+                "task_ids": task_ids,
+                "task_titles": task_titles,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total,
+                "breakdown": {
+                    "system_prompt_estimated": system_prompt_estimated,
+                    "task_description_estimated": task_desc_estimated,
+                    "context_estimated": context_estimated,
+                    "output_tokens": output_tokens,
+                },
+                "percentages": {
+                    "system_prompt_pct": round(100.0 * system_prompt_estimated / input_tokens, 1)
+                    if input_tokens > 0
+                    else 0.0,
+                    "task_description_pct": round(100.0 * task_desc_estimated / input_tokens, 1)
+                    if input_tokens > 0
+                    else 0.0,
+                    "context_pct": round(100.0 * context_estimated / input_tokens, 1) if input_tokens > 0 else 0.0,
+                    "output_pct": round(100.0 * output_tokens / total, 1) if total > 0 else 0.0,
+                },
+                "optimization_opportunities": opportunities,
+            }
+        )
+
+    total_input = sum(s["input_tokens"] for s in sessions)
+    total_output = sum(s["output_tokens"] for s in sessions)
+    total_system_overhead = sum(s["breakdown"]["system_prompt_estimated"] for s in sessions)
+
+    return {
+        "sessions": sessions,
+        "summary": {
+            "total_sessions": len(sessions),
+            "total_input_tokens": total_input,
+            "total_output_tokens": total_output,
+            "total_tokens": total_input + total_output,
+            "system_prompt_overhead_pct": round(100.0 * total_system_overhead / total_input, 1)
+            if total_input > 0
+            else 0.0,
+        },
+        "note": "Breakdown is estimated. system_prompt and task_description use a ~4 chars/token heuristic.",
+    }

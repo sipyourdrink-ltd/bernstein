@@ -99,6 +99,7 @@ from bernstein.cli.task_cmd import (
     sync,
 )
 from bernstein.cli.templates_cmd import templates_group
+from bernstein.cli.triggers_cmd import triggers_group
 from bernstein.cli.undo_cmd import undo_cmd
 from bernstein.cli.verbosity import apply_verbosity
 from bernstein.cli.verify_cmd import verify_cmd
@@ -754,6 +755,7 @@ cli.add_command(templates_group, "templates")
 cli.add_command(validate_plan, "validate")
 cli.add_command(dep_impact_cmd, "dep-impact")
 cli.add_command(fingerprint_group, "fingerprint")
+cli.add_command(triggers_group, "triggers")
 
 # New CLI commands (CLI-004 through CLI-013)
 cli.add_command(dry_run_cmd, "dry-run")
