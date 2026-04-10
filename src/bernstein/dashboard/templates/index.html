@@ -51,10 +51,20 @@
     /* DAG */
     .dag-node rect { rx: 4; ry: 4; }
     .dag-edge { fill: none; stroke: #4a4a4e; stroke-width: 1.5; }
-    @media (max-width: 640px) {
+    @media (max-width: 768px) {
       .stat-grid { grid-template-columns: repeat(2, 1fr); }
       table th:nth-child(6), table td:nth-child(6),
+      table th:nth-child(7), table td:nth-child(7),
       table th:nth-child(8), table td:nth-child(8) { display: none; }
+      .mobile-stack { flex-direction: column; }
+      .mobile-full { width: 100%; }
+    }
+    @media (max-width: 480px) {
+      table th:nth-child(3), table td:nth-child(3),
+      table th:nth-child(5), table td:nth-child(5) { display: none; }
+      .filter-bar { flex-direction: column; gap: 0.25rem; }
+      .filter-bar select { width: 100%; }
+      .header-actions { flex-wrap: wrap; gap: 0.5rem; }
     }
   </style>
 </head>
@@ -73,14 +83,24 @@
         <p class="text-[10px] text-muted">Orchestrator Dashboard</p>
       </div>
     </div>
-    <div class="flex items-center gap-4 text-xs">
+    <div class="flex items-center gap-4 text-xs header-actions">
       <div class="flex items-center gap-1.5">
         <span class="inline-block w-1.5 h-1.5 rounded-full"
               :class="connected ? 'bg-green-500 pulse' : 'bg-red-500'"></span>
         <span class="text-muted tabular" x-text="connected ? (wsActive ? 'WS Live' : 'SSE Live') : (polling ? 'Polling' : 'Offline')"></span>
       </div>
-      <span class="text-muted tabular font-mono" x-text="elapsed"></span>
-      <span class="text-muted/50 text-[10px]" x-text="lastUpdate"></span>
+      <span class="text-muted tabular font-mono hidden sm:inline" x-text="elapsed"></span>
+      <span class="text-muted/50 text-[10px] hidden md:inline" x-text="lastUpdate"></span>
+      <!-- Mobile menu toggle -->
+      <button @click="sidebarOpen = !sidebarOpen"
+              class="lg:hidden p-1.5 rounded bg-surface-2 border border-border text-muted hover:text-text transition-colors"
+              :class="sidebarOpen ? 'bg-accent/20 text-accent-light' : ''"
+              aria-label="Toggle sidebar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path x-show="!sidebarOpen" d="M3 12h18M3 6h18M3 18h18"/>
+          <path x-show="sidebarOpen" d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+      </button>
     </div>
   </header>
 
@@ -99,7 +119,7 @@
   </template>
 
   <!-- Stat Cards -->
-  <div class="px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+  <div class="px-4 py-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 stat-grid">
     <!-- Total Tasks -->
     <div class="bg-surface border border-border rounded-lg p-3">
       <div class="text-[10px] text-muted uppercase tracking-wider mb-1">Total Tasks</div>
@@ -197,7 +217,7 @@
           </div>
         </div>
         <!-- Filter bar -->
-        <div class="flex items-center gap-2 flex-wrap">
+        <div class="flex items-center gap-2 flex-wrap filter-bar">
           <!-- Status filter -->
           <select x-model="taskFilter"
                   class="text-[10px] bg-bg border border-border rounded px-1.5 py-0.5 text-muted focus:text-text focus:border-accent/50 outline-none">
@@ -236,8 +256,8 @@
         </div>
       </div>
       <!-- Table view -->
-      <div class="flex-1 overflow-auto" x-show="taskView==='table'">
-        <table class="w-full text-xs">
+      <div class="flex-1 overflow-auto overflow-x-auto" x-show="taskView==='table'">
+        <table class="w-full text-xs min-w-[600px]">
           <thead class="sticky top-0 bg-surface z-10">
             <tr class="border-b border-border">
               <th class="px-3 py-1.5 text-left text-[10px] font-medium text-muted uppercase tracking-wider w-8">St</th>
@@ -347,8 +367,10 @@
       </div>
     </div>
 
-    <!-- Right: Agents + Activity Log (40%) -->
-    <div class="lg:col-span-2 flex flex-col gap-3 overflow-hidden" style="max-height: min(60vh, 500px);">
+    <!-- Right: Agents + Activity Log (40%) — hidden on mobile unless toggled -->
+    <div class="lg:col-span-2 flex flex-col gap-3 overflow-hidden"
+         :class="{ 'hidden lg:flex': !sidebarOpen }"
+         style="max-height: min(60vh, 500px);">
 
       <!-- Agent Cards -->
       <div class="bg-surface border border-border rounded-lg flex flex-col overflow-hidden" style="flex: 1 1 55%;">
@@ -763,6 +785,7 @@
         costTab: 'agent',
         taskView: 'table',
         dagExpanded: false,
+        sidebarOpen: false,
         _agentEventSource: null,
         _logPollTimer: null,
 
