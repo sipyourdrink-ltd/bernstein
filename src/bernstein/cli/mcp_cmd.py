@@ -5,13 +5,18 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import click
 
 from bernstein.cli.helpers import SERVER_URL, console
 from bernstein.core.mcp_marketplace import marketplace_entries, marketplace_entry
-from bernstein.core.mcp_protocol_test import MCPProtocolTestResult, resolve_catalog_server, run_protocol_test
 from bernstein.core.mcp_registry import load_catalog_entries, upsert_catalog_entry
+from bernstein.core.mcp_usage_analytics import (
+    MCPUsageAnalyticsReport,
+    analyze_mcp_usage,
+    write_tool_inventory_snapshot,
+)
 
 
 def _catalog_path() -> Path:
@@ -108,6 +113,8 @@ def install_marketplace_entry(server_name: str) -> None:
 )
 def test_server(server_name: str, json_output: bool) -> None:
     """Validate an installed MCP server with a bounded protocol smoke suite."""
+    from bernstein.core.mcp_protocol_test import resolve_catalog_server, run_protocol_test
+
     catalog_path = _catalog_path()
     entry = resolve_catalog_server(server_name, catalog_path)
     if entry is None:
@@ -119,6 +126,20 @@ def test_server(server_name: str, json_output: bool) -> None:
         )
 
     report = asyncio.run(run_protocol_test(entry, cwd=Path.cwd()))
+    if report.tool_reports:
+        write_tool_inventory_snapshot(
+            Path.cwd() / ".sdd",
+            entry.name,
+            [
+                {
+                    "name": tool_report.name,
+                    "required_arguments": list(tool_report.required_arguments),
+                    "input_schema_valid": tool_report.input_schema_valid,
+                    "output_schema_valid": tool_report.output_schema_valid,
+                }
+                for tool_report in report.tool_reports
+            ],
+        )
 
     if json_output:
         console.print_json(json.dumps(report.to_dict()))
@@ -131,7 +152,23 @@ def test_server(server_name: str, json_output: bool) -> None:
         )
 
 
-def _print_protocol_report(report: MCPProtocolTestResult) -> None:
+@mcp_server.command("usage")
+@click.option(
+    "--json-output",
+    is_flag=True,
+    default=False,
+    help="Emit the historical usage report as JSON instead of Rich tables.",
+)
+def usage_report(json_output: bool) -> None:
+    """Analyze historical MCP usage and print optimization recommendations."""
+    report = analyze_mcp_usage(Path.cwd() / ".sdd", catalog_path=_catalog_path())
+    if json_output:
+        console.print_json(json.dumps(report.to_dict()))
+        return
+    _print_usage_report(report)
+
+
+def _print_protocol_report(report: Any) -> None:
     """Render a human-readable MCP protocol validation report."""
     from rich.table import Table
 
@@ -185,3 +222,60 @@ def _render_optional_status(value: bool | None) -> str:
     if value is None:
         return "[yellow]skip[/yellow]"
     return _render_status(value)
+
+
+def _print_usage_report(report: MCPUsageAnalyticsReport) -> None:
+    """Render a human-readable historical MCP usage report."""
+    from rich.table import Table
+    console.print("[bold cyan]MCP Usage Analytics[/bold cyan]")
+    console.print(
+        f"Recorded tool calls: [bold]{report.total_calls}[/bold]  "
+        f"Installed servers: [bold]{len(report.installed_servers)}[/bold]"
+    )
+
+    servers_table = Table(title="Server Summary", show_header=True, header_style="bold cyan")
+    servers_table.add_column("Server")
+    servers_table.add_column("Installed")
+    servers_table.add_column("Calls")
+    servers_table.add_column("Used tools")
+    servers_table.add_column("Unused tools")
+    servers_table.add_column("Error rate")
+    servers_table.add_column("Avg latency (ms)")
+
+    for server in report.servers:
+        servers_table.add_row(
+            server.server_name,
+            "yes" if server.installed else "no",
+            str(server.total_calls),
+            str(server.distinct_tools_used),
+            str(len(server.unused_tools)),
+            f"{server.error_rate:.0%}",
+            f"{server.avg_latency_ms:.2f}",
+        )
+
+    console.print(servers_table)
+
+    top_tools_table = Table(title="Top Tools", show_header=True, header_style="bold cyan")
+    top_tools_table.add_column("Server")
+    top_tools_table.add_column("Tool")
+    top_tools_table.add_column("Calls")
+    top_tools_table.add_column("Error rate")
+    top_tools_table.add_column("Avg latency (ms)")
+
+    for tool in report.top_tools[:10]:
+        top_tools_table.add_row(
+            tool.server_name,
+            tool.tool_name,
+            str(tool.total_calls),
+            f"{tool.error_rate:.0%}",
+            f"{tool.avg_latency_ms:.2f}",
+        )
+
+    console.print(top_tools_table)
+
+    if report.recommendations:
+        console.print("[yellow]Recommendations:[/yellow]")
+        for recommendation in report.recommendations:
+            console.print(f"  - {recommendation.message}")
+    else:
+        console.print("[green]No optimization recommendations right now.[/green]")
