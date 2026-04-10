@@ -3,6 +3,28 @@
 Comprehensive reference for diagnosing and resolving Bernstein failures.
 Each entry follows the pattern: symptom, cause, diagnosis, resolution.
 
+**Jump to a failure mode:**
+1. [Adapter Not Found](#1-adapter-not-found)
+2. [CLI Binary Not in PATH](#2-cli-binary-not-in-path)
+3. [API Key Not Set](#3-api-key-not-set)
+4. [Rate Limiting / Provider Throttling](#4-rate-limiting--provider-throttling)
+5. [Budget Exceeded](#5-budget-exceeded)
+6. [Permission Denied on Agent Spawn](#6-permission-denied-on-agent-spawn)
+7. [Task Server Unreachable](#7-task-server-unreachable)
+8. [Worktree Corruption](#8-worktree-corruption)
+9. [Merge Conflicts After Agent Completion](#9-merge-conflicts-after-agent-completion)
+10. [Config File Errors (bernstein.yaml)](#10-config-file-errors-bernsteinyaml)
+11. [MCP Server Connection Failures](#11-mcp-server-connection-failures)
+12. [Agent Timeout (Watchdog Kill)](#12-agent-timeout-watchdog-kill)
+13. [Orphaned Tasks (Agent Crash Mid-Task)](#13-orphaned-tasks-agent-crash-mid-task)
+14. [Dependency Deadlock (Blocked Tasks)](#14-dependency-deadlock-blocked-tasks)
+15. [Spawn Failure (Fast Exit Detection)](#15-spawn-failure-fast-exit-detection)
+16. [Stale PID Files](#16-stale-pid-files)
+17. [JSONL State File Corruption](#17-jsonl-state-file-corruption)
+18. [Template Rendering Failure](#18-template-rendering-failure)
+19. [Container Isolation Failures](#19-container-isolation-failures)
+20. [Plan YAML Parse Errors](#20-plan-yaml-parse-errors)
+
 ---
 
 ## 1. Adapter Not Found
@@ -454,3 +476,42 @@ print(yaml.dump(plan, default_flow_style=False))
 | `.sdd/backlog.jsonl` | Persistent task backlog |
 | `.sdd/runtime/cost_report.json` | Run cost tracking |
 | `.sdd/runtime/access.jsonl` | HTTP request log (caution: grows unbounded) |
+| `.sdd/runtime/server.log` | Task server logs |
+| `.sdd/runtime/heartbeats/<session>.json` | Live agent progress (updated every 15s) |
+
+## Quick Reference: Diagnostic Commands
+
+```bash
+# Check overall system state
+bernstein status
+bernstein doctor
+
+# List all tasks by status
+curl -s http://127.0.0.1:8052/tasks?status=open | python3 -m json.tool
+curl -s http://127.0.0.1:8052/tasks?status=claimed | python3 -m json.tool
+curl -s http://127.0.0.1:8052/tasks?status=orphaned | python3 -m json.tool
+
+# Inspect a specific agent session
+bernstein ps                                 # list running agents and their PIDs
+cat .sdd/runtime/<session>.log               # tail agent output
+cat .sdd/runtime/pids/<session>.json         # PID + metadata
+
+# Check cost
+cat .sdd/runtime/cost_report.json | python3 -m json.tool
+
+# Prune stale worktrees (safe to run any time)
+git worktree prune
+
+# Validate config
+python3 -c "import yaml; yaml.safe_load(open('bernstein.yaml'))"
+bernstein doctor
+```
+
+## Getting Help
+
+If you cannot resolve an issue with this guide:
+
+1. **Run `bernstein doctor`** — the built-in diagnostic prints the most common configuration problems.
+2. **Check agent logs** — `.sdd/runtime/<session>.log` contains the full CLI output including provider error messages.
+3. **Search GitHub Issues** — many error messages are already tracked at `https://github.com/bernstein-ai/bernstein/issues`.
+4. **File a bug report** — include the output of `bernstein doctor`, the relevant log snippet, and your `bernstein.yaml` (redact API keys).
