@@ -1594,3 +1594,123 @@ class ToolObserverWidget(Static):
     def render(self) -> Text:
         """Render the current ring buffer as a Rich text table."""
         return render_tool_observer(self._ring)
+
+
+# ---------------------------------------------------------------------------
+# SLO burn-down rate widget (OBS-150)
+# ---------------------------------------------------------------------------
+
+
+def build_slo_burndown_text(burndown: dict[str, object]) -> Text:
+    """Render SLO burn-down data as a Rich Text block for TUI display.
+
+    Shows:
+    - Current SLO compliance % vs. target
+    - Error budget consumption with a progress bar
+    - Burn rate sparkline over recent history
+    - Days-to-breach projection in colour-coded text
+
+    Args:
+        burndown: Dict as returned by GET /slo/burndown.
+
+    Returns:
+        Rich Text object ready for rendering.
+    """
+    text = Text()
+
+    slo_target = float(burndown.get("slo_target", 0.9))
+    slo_current = float(burndown.get("slo_current", 0.0))
+    burn_rate = float(burndown.get("burn_rate", 0.0))
+    budget_fraction = float(burndown.get("budget_fraction", 1.0))
+    budget_consumed_pct = float(burndown.get("budget_consumed_pct", 0.0))
+    breach_projection = str(burndown.get("breach_projection", ""))
+    status = str(burndown.get("status", "green"))
+    total_tasks = int(burndown.get("total_tasks", 0))  # type: ignore[arg-type]
+
+    # Status indicator
+    status_color = {"green": "green", "yellow": "yellow", "red": "red"}.get(status, "white")
+    status_dot = {"green": "●", "yellow": "◉", "red": "◍"}.get(status, "○")
+    text.append(f"{status_dot} SLO Burn-Down\n", style=f"bold {status_color}")
+
+    # SLO compliance row
+    slo_pct = slo_current * 100
+    target_pct = slo_target * 100
+    slo_color = "green" if slo_current >= slo_target else ("yellow" if slo_current >= slo_target * 0.95 else "red")
+    text.append("  Compliance: ", style="dim")
+    text.append(f"{slo_pct:.1f}%", style=f"bold {slo_color}")
+    text.append(f" / {target_pct:.0f}% target\n", style="dim")
+
+    # Burn rate row
+    burn_color = "green" if burn_rate <= 1.0 else ("yellow" if burn_rate <= 2.0 else "red")
+    text.append("  Burn rate:  ", style="dim")
+    text.append(f"{burn_rate:.2f}x", style=f"bold {burn_color}")
+    text.append(" (1.0 = on-target)\n", style="dim")
+
+    # Error budget bar
+    bar_width = 20
+    consumed_chars = int((1.0 - budget_fraction) * bar_width)
+    remaining_chars = bar_width - consumed_chars
+    bar_color = "green" if budget_fraction > 0.5 else ("yellow" if budget_fraction > 0.1 else "red")
+    bar = "█" * consumed_chars + "░" * remaining_chars
+    text.append("  Budget:     ", style="dim")
+    text.append(f"[{bar}]", style=bar_color)
+    text.append(f" {budget_consumed_pct:.0f}% consumed\n", style="dim")
+
+    # Sparkline of recent burn rate history
+    sparkline_data = burndown.get("sparkline", [])
+    if sparkline_data and isinstance(sparkline_data, list):
+        burn_rates = [float(pt.get("burn_rate", 0.0)) for pt in sparkline_data]  # type: ignore[union-attr]
+        if burn_rates:
+            sparkline_str = generate_sparkline(burn_rates, width=20)
+            text.append("  Trend:      ", style="dim")
+            text.append(sparkline_str, style=burn_color)
+            text.append(" (burn rate)\n", style="dim")
+
+    # Projection / breach warning
+    text.append(f"  {breach_projection}\n", style=status_color)
+
+    # Task count footer
+    text.append(f"  Tasks: {total_tasks}", style="dim")
+
+    return text
+
+
+class SLOBurnDownWidget(Static):
+    """TUI widget showing SLO burn-down rate and breach projection (OBS-150).
+
+    Displays the current SLO compliance, error budget consumption, burn rate
+    sparkline, and a linear projection of when the SLO will be breached.
+
+    Usage::
+
+        widget = SLOBurnDownWidget()
+        widget.update_from_data(burndown_dict)  # call on each poll cycle
+    """
+
+    DEFAULT_CSS = """
+    SLOBurnDownWidget {
+        height: auto;
+        border: tall $primary 30%;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialise the burn-down widget."""
+        super().__init__(**kwargs)
+        self._burndown: dict[str, object] = {}
+
+    def update_from_data(self, burndown: dict[str, object]) -> None:
+        """Refresh widget state from a /slo/burndown response.
+
+        Args:
+            burndown: Response dict from GET /slo/burndown.
+        """
+        self._burndown = burndown
+        self.refresh()
+
+    def render(self) -> Text:
+        """Render burn-down data as Rich text."""
+        if not self._burndown:
+            return Text("  Waiting for SLO data…", style="dim")
+        return build_slo_burndown_text(self._burndown)
