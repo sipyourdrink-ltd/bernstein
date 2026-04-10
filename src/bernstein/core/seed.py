@@ -1428,9 +1428,7 @@ def parse_seed(path: Path) -> SeedConfig:
     # --- Deployment strategy ---
     deployment_strategy_raw: object = data.get("deployment_strategy", "rolling")
     if not isinstance(deployment_strategy_raw, str):
-        raise SeedError(
-            f"deployment_strategy must be a string, got: {type(deployment_strategy_raw).__name__}"
-        )
+        raise SeedError(f"deployment_strategy must be a string, got: {type(deployment_strategy_raw).__name__}")
 
     # --- Org policies ---
     org_policies_raw: object = data.get("org_policies", [])
