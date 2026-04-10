@@ -15,9 +15,7 @@ Covers:
 from __future__ import annotations
 
 import subprocess
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -32,7 +30,6 @@ from bernstein.core.commit_signing import (
     verify_commit_signature,
 )
 from bernstein.core.git_basic import GitResult
-
 
 # ---------------------------------------------------------------------------
 # CommitProvenance
@@ -297,7 +294,7 @@ class TestVerifyCommitSignature:
         _make_staged_change(git_repo)
         provenance = CommitProvenance(agent_id="a", task_id="t", run_id="r")
         sign_and_commit(git_repo, "feat: unsigned", provenance)
-        verified, detail = verify_commit_signature(git_repo)
+        verified, _detail = verify_commit_signature(git_repo)
         # Unsigned commits should fail verification
         assert verified is False
 
