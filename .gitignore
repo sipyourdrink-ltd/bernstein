@@ -51,6 +51,13 @@ site/
 docs/specs/
 docs/plans/
 
+# Build / test artifacts
+coverage-test.xml
+coverage*.xml
+*.junit.xml
+htmlcov/
+.coverage
+
 # Project/Repository-specific generated or log files
 *.pid
 *.log
