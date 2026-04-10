@@ -150,6 +150,4 @@ class HookRateLimiter:
     def _prune(self, event_type: str, now: float) -> None:
         """Remove timestamps outside the current window."""
         cutoff = now - self._config.window_seconds
-        self._timestamps[event_type] = [
-            ts for ts in self._timestamps[event_type] if ts > cutoff
-        ]
+        self._timestamps[event_type] = [ts for ts in self._timestamps[event_type] if ts > cutoff]

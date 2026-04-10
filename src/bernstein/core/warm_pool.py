@@ -283,9 +283,7 @@ def load_warm_pool_config(yaml_path: Path | None = None) -> WarmPoolConfig:
             slot_ttl_raw: Any = section.get("slot_ttl_seconds", 300.0)
             roles_raw: Any = section.get("roles", [])
             max_slots: int = (
-                max_slots_raw
-                if isinstance(max_slots_raw, int) and not isinstance(max_slots_raw, bool)
-                else 3
+                max_slots_raw if isinstance(max_slots_raw, int) and not isinstance(max_slots_raw, bool) else 3
             )
             slot_ttl: float = (
                 float(slot_ttl_raw)

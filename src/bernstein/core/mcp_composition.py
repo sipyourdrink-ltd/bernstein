@@ -195,10 +195,7 @@ def validate_composition(tool: CompositeToolDef) -> list[str]:
         # Duplicate output_key
         if step.output_key:
             if step.output_key in seen_keys:
-                errors.append(
-                    f"Step {idx} ({step.tool_name}): duplicate output_key "
-                    f"'{step.output_key}'."
-                )
+                errors.append(f"Step {idx} ({step.tool_name}): duplicate output_key '{step.output_key}'.")
             seen_keys.add(step.output_key)
 
     return errors

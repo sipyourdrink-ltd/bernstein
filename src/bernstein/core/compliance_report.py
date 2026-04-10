@@ -45,19 +45,13 @@ SOC2_CONTROLS: list[ControlMapping] = [
     ControlMapping(
         control_id="CC6.1",
         title="Logical Access",
-        description=(
-            "The entity implements logical access security measures to "
-            "protect against unauthorized access."
-        ),
+        description=("The entity implements logical access security measures to protect against unauthorized access."),
         evidence_types=["auth.", "login", "access.", "permission."],
     ),
     ControlMapping(
         control_id="CC6.2",
         title="Access Provisioning",
-        description=(
-            "Prior to issuing system credentials, the entity registers "
-            "and authorizes new users."
-        ),
+        description=("Prior to issuing system credentials, the entity registers and authorizes new users."),
         evidence_types=["user.", "credential.", "provision.", "register."],
     ),
     ControlMapping(
@@ -73,8 +67,7 @@ SOC2_CONTROLS: list[ControlMapping] = [
         control_id="CC8.1",
         title="Change Management",
         description=(
-            "The entity authorizes, designs, develops, configures, "
-            "documents, tests, approves, and implements changes."
+            "The entity authorizes, designs, develops, configures, documents, tests, approves, and implements changes."
         ),
         evidence_types=[
             "task.",

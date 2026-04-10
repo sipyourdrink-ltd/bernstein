@@ -93,11 +93,13 @@ class TickAnomalyDetector:
             timestamp: Unix timestamp; defaults to ``time.time()``.
         """
         ts = timestamp if timestamp is not None else time.time()
-        self._samples.append(TickSample(
-            tick_number=tick_number,
-            duration_ms=duration_ms,
-            timestamp=ts,
-        ))
+        self._samples.append(
+            TickSample(
+                tick_number=tick_number,
+                duration_ms=duration_ms,
+                timestamp=ts,
+            )
+        )
 
     def check(
         self,
