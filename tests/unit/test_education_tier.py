@@ -7,12 +7,356 @@ from pathlib import Path
 
 import pytest
 
-from bernstein.core.education_tier import ClassroomConfig, ClassroomSession
+from bernstein.core.education_tier import (
+    ClassroomConfig,
+    ClassroomSession,
+    DecisionExplanation,
+    ExerciseResult,
+    StudentProfile,
+    _LegacyClassroomConfig,
+    enforce_student_limits,
+    explain_agent_decision,
+    format_exercise_report,
+)
+
+# ---------------------------------------------------------------------------
+# StudentProfile
+# ---------------------------------------------------------------------------
 
 
-def _make_config(students: list[str] | None = None) -> ClassroomConfig:
+class TestStudentProfile:
+    """Tests for the StudentProfile frozen dataclass."""
+
+    def test_defaults(self) -> None:
+        """StudentProfile has sensible defaults."""
+        p = StudentProfile(student_id="s1", name="Alice", course_id="cs101")
+        assert p.max_agents == 2
+        assert p.max_cost_usd == 1.0
+        assert p.allowed_models == ("haiku", "flash")
+
+    def test_frozen(self) -> None:
+        """StudentProfile is immutable."""
+        p = StudentProfile(student_id="s1", name="Alice", course_id="cs101")
+        with pytest.raises(AttributeError):
+            p.name = "Bob"  # type: ignore[misc]
+
+    def test_custom_values(self) -> None:
+        """StudentProfile accepts custom limits."""
+        p = StudentProfile(
+            student_id="s2",
+            name="Bob",
+            course_id="cs201",
+            max_agents=4,
+            max_cost_usd=5.0,
+            allowed_models=("opus", "sonnet"),
+        )
+        assert p.max_agents == 4
+        assert p.max_cost_usd == 5.0
+        assert p.allowed_models == ("opus", "sonnet")
+
+
+# ---------------------------------------------------------------------------
+# ClassroomConfig
+# ---------------------------------------------------------------------------
+
+
+class TestClassroomConfig:
+    """Tests for the ClassroomConfig frozen dataclass."""
+
+    def test_defaults(self) -> None:
+        """ClassroomConfig has sensible defaults."""
+        cfg = ClassroomConfig(course_id="cs101", instructor_id="prof1")
+        assert cfg.max_students == 30
+        assert cfg.shared_plan is None
+        assert cfg.explanation_mode is True
+
+    def test_frozen(self) -> None:
+        """ClassroomConfig is immutable."""
+        cfg = ClassroomConfig(course_id="cs101", instructor_id="prof1")
+        with pytest.raises(AttributeError):
+            cfg.course_id = "cs999"  # type: ignore[misc]
+
+    def test_with_shared_plan(self) -> None:
+        """ClassroomConfig accepts an optional shared plan."""
+        cfg = ClassroomConfig(
+            course_id="cs101",
+            instructor_id="prof1",
+            shared_plan="plans/lab1.yaml",
+        )
+        assert cfg.shared_plan == "plans/lab1.yaml"
+
+
+# ---------------------------------------------------------------------------
+# ExerciseResult
+# ---------------------------------------------------------------------------
+
+
+class TestExerciseResult:
+    """Tests for the ExerciseResult frozen dataclass."""
+
+    def test_creation(self) -> None:
+        """ExerciseResult stores all fields."""
+        r = ExerciseResult(
+            student_id="s1",
+            task_id="t1",
+            success=True,
+            cost_usd=0.05,
+            agent_decisions=["chose haiku", "spawned 1 agent"],
+            duration_s=12.5,
+        )
+        assert r.student_id == "s1"
+        assert r.success is True
+        assert r.agent_decisions == ["chose haiku", "spawned 1 agent"]
+
+    def test_frozen(self) -> None:
+        """ExerciseResult is immutable."""
+        r = ExerciseResult(
+            student_id="s1",
+            task_id="t1",
+            success=True,
+            cost_usd=0.0,
+            agent_decisions=[],
+            duration_s=1.0,
+        )
+        with pytest.raises(AttributeError):
+            r.success = False  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# DecisionExplanation
+# ---------------------------------------------------------------------------
+
+
+class TestDecisionExplanation:
+    """Tests for the DecisionExplanation frozen dataclass."""
+
+    def test_creation(self) -> None:
+        """DecisionExplanation stores all fields."""
+        d = DecisionExplanation(
+            decision="Selected claude/haiku",
+            reasoning="Low complexity task.",
+            alternatives=["claude/flash"],
+        )
+        assert d.decision == "Selected claude/haiku"
+        assert "Low complexity" in d.reasoning
+        assert d.alternatives == ["claude/flash"]
+
+    def test_frozen(self) -> None:
+        """DecisionExplanation is immutable."""
+        d = DecisionExplanation(decision="d", reasoning="r", alternatives=[])
+        with pytest.raises(AttributeError):
+            d.decision = "x"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# explain_agent_decision
+# ---------------------------------------------------------------------------
+
+
+class TestExplainAgentDecision:
+    """Tests for the explain_agent_decision function."""
+
+    def test_low_complexity(self) -> None:
+        """Low complexity tasks mention cost-efficiency."""
+        exp = explain_agent_decision("claude", "haiku", "backend", "low")
+        assert "cost-efficient" in exp.reasoning
+        assert "claude" in exp.decision
+        assert "haiku" in exp.decision
+
+    def test_high_complexity(self) -> None:
+        """High complexity tasks mention capability depth."""
+        exp = explain_agent_decision("codex", "opus", "architect", "high")
+        assert "capable" in exp.reasoning or "reasoning depth" in exp.reasoning
+        assert "codex" in exp.decision
+        assert "opus" in exp.decision
+
+    def test_medium_complexity(self) -> None:
+        """Medium complexity tasks mention trade-off."""
+        exp = explain_agent_decision("claude", "sonnet", "qa", "medium")
+        assert "trade-off" in exp.reasoning
+        assert "sonnet" in exp.decision
+
+    def test_trivial_complexity(self) -> None:
+        """Trivial tasks are treated as low complexity."""
+        exp = explain_agent_decision("claude", "flash", "docs", "trivial")
+        assert "cost-efficient" in exp.reasoning
+
+    def test_critical_complexity(self) -> None:
+        """Critical tasks are treated as high complexity."""
+        exp = explain_agent_decision("claude", "opus", "security", "critical")
+        assert "capable" in exp.reasoning or "reasoning depth" in exp.reasoning
+
+    def test_unknown_complexity_defaults_to_medium(self) -> None:
+        """Unknown complexity labels fall back to medium-tier reasoning."""
+        exp = explain_agent_decision("claude", "sonnet", "backend", "unknown")
+        assert "trade-off" in exp.reasoning
+
+    def test_alternatives_exclude_selected(self) -> None:
+        """Selected model is not listed as an alternative."""
+        exp = explain_agent_decision("claude", "haiku", "backend", "low")
+        assert "claude/haiku" not in exp.alternatives
+
+    def test_decision_format(self) -> None:
+        """Decision string includes adapter, model, role, and complexity."""
+        exp = explain_agent_decision("gemini", "flash", "frontend", "medium")
+        assert "gemini/flash" in exp.decision
+        assert "frontend" in exp.decision
+        assert "medium" in exp.decision
+
+    def test_return_type(self) -> None:
+        """Returns a DecisionExplanation instance."""
+        exp = explain_agent_decision("claude", "haiku", "qa", "low")
+        assert isinstance(exp, DecisionExplanation)
+
+
+# ---------------------------------------------------------------------------
+# enforce_student_limits
+# ---------------------------------------------------------------------------
+
+
+class TestEnforceStudentLimits:
+    """Tests for the enforce_student_limits function."""
+
+    def test_no_violations(self) -> None:
+        """No violations when within all limits."""
+        profile = StudentProfile(student_id="s1", name="A", course_id="c1")
+        violations = enforce_student_limits(profile, current_cost=0.5, active_agents=1)
+        assert violations == []
+
+    def test_cost_exceeded(self) -> None:
+        """Violation when cost meets or exceeds limit."""
+        profile = StudentProfile(student_id="s1", name="A", course_id="c1", max_cost_usd=1.0)
+        violations = enforce_student_limits(profile, current_cost=1.0, active_agents=0)
+        assert len(violations) == 1
+        assert "Cost limit" in violations[0]
+
+    def test_cost_over_limit(self) -> None:
+        """Violation when cost is over limit."""
+        profile = StudentProfile(student_id="s1", name="A", course_id="c1", max_cost_usd=1.0)
+        violations = enforce_student_limits(profile, current_cost=1.5, active_agents=0)
+        assert len(violations) == 1
+        assert "Cost limit" in violations[0]
+
+    def test_agent_limit_reached(self) -> None:
+        """Violation when active agents meet or exceed max."""
+        profile = StudentProfile(student_id="s1", name="A", course_id="c1", max_agents=2)
+        violations = enforce_student_limits(profile, current_cost=0.0, active_agents=2)
+        assert len(violations) == 1
+        assert "Agent limit" in violations[0]
+
+    def test_both_violations(self) -> None:
+        """Both cost and agent violations returned simultaneously."""
+        profile = StudentProfile(
+            student_id="s1",
+            name="A",
+            course_id="c1",
+            max_agents=2,
+            max_cost_usd=1.0,
+        )
+        violations = enforce_student_limits(profile, current_cost=2.0, active_agents=3)
+        assert len(violations) == 2
+
+    def test_within_limits_zero(self) -> None:
+        """Zero cost and zero agents produce no violations."""
+        profile = StudentProfile(student_id="s1", name="A", course_id="c1")
+        violations = enforce_student_limits(profile, current_cost=0.0, active_agents=0)
+        assert violations == []
+
+
+# ---------------------------------------------------------------------------
+# format_exercise_report
+# ---------------------------------------------------------------------------
+
+
+class TestFormatExerciseReport:
+    """Tests for the format_exercise_report function."""
+
+    def test_empty_results(self) -> None:
+        """Empty results produce a placeholder message."""
+        report = format_exercise_report([])
+        assert "No exercise results" in report
+
+    def test_single_result(self) -> None:
+        """Single result appears in both summary and detail sections."""
+        results = [
+            ExerciseResult(
+                student_id="alice",
+                task_id="t1",
+                success=True,
+                cost_usd=0.05,
+                agent_decisions=["chose haiku"],
+                duration_s=10.0,
+            ),
+        ]
+        report = format_exercise_report(results)
+        assert "Exercise Report" in report
+        assert "alice" in report
+        assert "1/1 passed" in report
+        assert "PASS" in report
+        assert "$0.0500" in report
+
+    def test_multiple_students(self) -> None:
+        """Multiple students each get a summary line."""
+        results = [
+            ExerciseResult("alice", "t1", True, 0.10, [], 5.0),
+            ExerciseResult("bob", "t2", False, 0.20, [], 8.0),
+            ExerciseResult("alice", "t3", True, 0.15, [], 7.0),
+        ]
+        report = format_exercise_report(results)
+        assert "alice" in report
+        assert "bob" in report
+        # Alice: 2/2 passed
+        assert "2/2 passed" in report
+        # Bob: 0/1 passed
+        assert "0/1 passed" in report
+
+    def test_fail_status(self) -> None:
+        """Failed tasks show FAIL in detail section."""
+        results = [
+            ExerciseResult("alice", "t1", False, 0.01, [], 2.0),
+        ]
+        report = format_exercise_report(results)
+        assert "FAIL" in report
+
+    def test_decisions_count(self) -> None:
+        """Report includes decision count when decisions are present."""
+        results = [
+            ExerciseResult("alice", "t1", True, 0.01, ["d1", "d2", "d3"], 1.0),
+        ]
+        report = format_exercise_report(results)
+        assert "3 decisions" in report
+
+    def test_no_decisions(self) -> None:
+        """No decision count when agent_decisions is empty."""
+        results = [
+            ExerciseResult("alice", "t1", True, 0.01, [], 1.0),
+        ]
+        report = format_exercise_report(results)
+        assert "decisions" not in report
+
+    def test_students_sorted(self) -> None:
+        """Student summary is in alphabetical order."""
+        results = [
+            ExerciseResult("charlie", "t1", True, 0.01, [], 1.0),
+            ExerciseResult("alice", "t2", True, 0.01, [], 1.0),
+            ExerciseResult("bob", "t3", True, 0.01, [], 1.0),
+        ]
+        report = format_exercise_report(results)
+        # Alice should appear before Bob, Bob before Charlie in summary.
+        alice_pos = report.index("alice")
+        bob_pos = report.index("bob")
+        charlie_pos = report.index("charlie")
+        assert alice_pos < bob_pos < charlie_pos
+
+
+# ---------------------------------------------------------------------------
+# Legacy ClassroomSession (backward compat)
+# ---------------------------------------------------------------------------
+
+
+def _make_config(students: list[str] | None = None) -> _LegacyClassroomConfig:
     """Create a standard test classroom config."""
-    return ClassroomConfig(
+    return _LegacyClassroomConfig(
         instructor="prof_smith",
         students=students or ["alice", "bob", "charlie"],
         max_cost_per_student=1.0,
@@ -117,9 +461,9 @@ def test_export_grades_creates_directory(tmp_path: Path) -> None:
     assert out.exists()
 
 
-def test_config_defaults() -> None:
-    """ClassroomConfig has sensible defaults."""
-    cfg = ClassroomConfig(instructor="prof", students=["s1"])
+def test_legacy_config_defaults() -> None:
+    """_LegacyClassroomConfig has sensible defaults."""
+    cfg = _LegacyClassroomConfig(instructor="prof", students=["s1"])
     assert cfg.max_cost_per_student == 1.0
     assert cfg.allowed_models == ["haiku", "flash"]
     assert cfg.sandbox_mode is True
