@@ -166,11 +166,7 @@ def filter_changelog(
     from_tuple = _parse_version_tuple(from_version)
     to_tuple = _parse_version_tuple(to_version)
 
-    return [
-        entry
-        for entry in entries
-        if from_tuple < _parse_version_tuple(entry.version) <= to_tuple
-    ]
+    return [entry for entry in entries if from_tuple < _parse_version_tuple(entry.version) <= to_tuple]
 
 
 # ---------------------------------------------------------------------------

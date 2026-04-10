@@ -83,9 +83,7 @@ DEFAULT_ROUTING: list[PhaseModelConfig] = [
 ]
 
 # Lookup for fast default resolution by phase.
-_DEFAULT_BY_PHASE: dict[ConversationPhase, PhaseModelConfig] = {
-    cfg.phase: cfg for cfg in DEFAULT_ROUTING
-}
+_DEFAULT_BY_PHASE: dict[ConversationPhase, PhaseModelConfig] = {cfg.phase: cfg for cfg in DEFAULT_ROUTING}
 
 
 def load_routing_strategy(task_data: dict[str, Any]) -> ModelRoutingStrategy | None:

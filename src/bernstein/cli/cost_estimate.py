@@ -223,8 +223,7 @@ def format_cost_estimate(estimate: RunCostEstimate) -> str:
 
     # Header
     lines.append(
-        f"  {'Task':<12} {'Role':<12} {'Cplx':<10} {'Scope':<8} "
-        f"{'Est. Cost':>10}  {'Conf':>5}  {'Tokens':>10}  Bar"
+        f"  {'Task':<12} {'Role':<12} {'Cplx':<10} {'Scope':<8} {'Est. Cost':>10}  {'Conf':>5}  {'Tokens':>10}  Bar"
     )
     lines.append("  " + "\u2500" * 90)
 
@@ -248,19 +247,15 @@ def format_cost_estimate(estimate: RunCostEstimate) -> str:
         pct = (estimate.total_estimated_usd / budget * 100) if budget > 0 else math.inf
         if estimate.over_budget:
             lines.append(
-                f"  [bold red]Over budget![/bold red]  "
-                f"${estimate.total_estimated_usd:.4f} / ${budget:.4f} ({pct:.0f}%)"
+                f"  [bold red]Over budget![/bold red]  ${estimate.total_estimated_usd:.4f} / ${budget:.4f} ({pct:.0f}%)"
             )
         else:
             lines.append(
-                f"  [green]Within budget[/green]  "
-                f"${estimate.total_estimated_usd:.4f} / ${budget:.4f} ({pct:.0f}%)"
+                f"  [green]Within budget[/green]  ${estimate.total_estimated_usd:.4f} / ${budget:.4f} ({pct:.0f}%)"
             )
 
     # Confidence interval
     lines.append("")
-    lines.append(
-        f"  Confidence range: {estimate.confidence_low:.0%} \u2013 {estimate.confidence_high:.0%}"
-    )
+    lines.append(f"  Confidence range: {estimate.confidence_low:.0%} \u2013 {estimate.confidence_high:.0%}")
 
     return "\n".join(lines)
