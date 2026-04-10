@@ -6,7 +6,7 @@ Repository: https://github.com/chernistry/bernstein
 Package: https://pypi.org/project/bernstein/
 Documentation: https://chernistry.github.io/bernstein/getting-started.html
 API: https://chernistry.github.io/bernstein/api.html
-Website: https://alexchernysh.com
+Author: Alex Chernysh <https://alexchernysh.com>
 License: Apache-2.0
 Category: DeveloperTool, AIOrchestration, MultiAgent
 Tags: multi-agent, orchestration, ai-coding, deterministic-scheduling, cli-agents
