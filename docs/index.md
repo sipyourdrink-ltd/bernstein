@@ -107,4 +107,3 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 - [GitHub](https://github.com/chernistry/bernstein)
 - [PyPI](https://pypi.org/project/bernstein/)
 - [npm](https://www.npmjs.com/package/bernstein-orchestrator)
-- [Author — Alex Chernysh](https://alexchernysh.com)

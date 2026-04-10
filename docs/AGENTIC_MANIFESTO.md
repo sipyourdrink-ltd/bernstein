@@ -26,5 +26,5 @@ When verifying an agent's work, we must validate that the **Intent** of the prom
 
 ---
 
-*Authored by Alex Chernysh and the Bernstein Contributors.*
+*Written by the Bernstein Contributors.*
 *We build Bernstein to embody these principles.*

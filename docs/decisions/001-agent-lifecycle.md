@@ -2,7 +2,7 @@
 
 **Status**: Proposed
 **Date**: 2026-03-22
-**Author**: Sasha (with analysis support)
+**Author**: Bernstein Architecture Team
 **Context**: Bernstein agent orchestration system
 
 ---

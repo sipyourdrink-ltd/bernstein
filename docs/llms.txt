@@ -18,4 +18,4 @@
 - [GitHub Repository](https://github.com/chernistry/bernstein): Source code, issues, discussions
 - [PyPI Package](https://pypi.org/project/bernstein/): pip install bernstein
 - [Blog](https://chernistry.github.io/bernstein/blog.html): Engineering articles on multi-agent orchestration patterns
-- [Author](https://alexchernysh.com): Built by Alex Chernysh
+- [Website](https://alexchernysh.com)
