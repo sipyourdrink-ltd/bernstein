@@ -14,8 +14,20 @@ build/
 .env.*
 .env.local
 
-# Superpowers plans (local only)
+# Internal docs (local only — kept on disk, excluded from git)
 docs/superpowers/
+docs/research/
+docs/launch/
+docs/social/
+docs/conference/
+docs/plans/
+docs/specs/
+docs/blog/
+docs/compare/
+docs/competitive-matrix.md
+docs/content-calendar.md
+docs/jetbrains-deferral.md
+docs/roadmap-200-tickets.md
 
 # IDE and Editor directories/files
 .DS_Store

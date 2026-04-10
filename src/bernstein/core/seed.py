@@ -314,6 +314,7 @@ class SeedConfig:
     cost_tags: dict[str, str] = field(default_factory=dict)
     cost_autopilot: bool = False
     deployment_strategy: str = "rolling"
+    org_policies: list[str] = field(default_factory=list)
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -1431,6 +1432,12 @@ def parse_seed(path: Path) -> SeedConfig:
             f"deployment_strategy must be a string, got: {type(deployment_strategy_raw).__name__}"
         )
 
+    # --- Org policies ---
+    org_policies_raw: object = data.get("org_policies", [])
+    if not isinstance(org_policies_raw, list):
+        raise SeedError(f"org_policies must be a list of file paths, got: {type(org_policies_raw).__name__}")
+    org_policies: list[str] = [str(p) for p in org_policies_raw]
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -1477,6 +1484,7 @@ def parse_seed(path: Path) -> SeedConfig:
         cost_tags=cost_tags,
         cost_autopilot=cost_autopilot_raw,
         deployment_strategy=deployment_strategy_raw,
+        org_policies=org_policies,
     )
 
 

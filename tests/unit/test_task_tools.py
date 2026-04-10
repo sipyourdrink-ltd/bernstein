@@ -183,9 +183,7 @@ class TestGenerateMCPServerConfig:
     def test_basic_structure(self) -> None:
         config = TaskToolConfig(
             task_id="t1",
-            tools=(
-                TaskToolDefinition(name="lint", description="Lint code", command="ruff check ."),
-            ),
+            tools=(TaskToolDefinition(name="lint", description="Lint code", command="ruff check ."),),
         )
         result = generate_mcp_server_config(config)
 
@@ -199,9 +197,7 @@ class TestGenerateMCPServerConfig:
     def test_description_in_env(self) -> None:
         config = TaskToolConfig(
             task_id="t2",
-            tools=(
-                TaskToolDefinition(name="test", description="Run tests", command="pytest"),
-            ),
+            tools=(TaskToolDefinition(name="test", description="Run tests", command="pytest"),),
         )
         result = generate_mcp_server_config(config)
         server = result["mcpServers"]["task-tool-test"]
@@ -243,9 +239,7 @@ class TestGenerateMCPServerConfig:
     def test_no_cwd_when_no_working_dir(self) -> None:
         config = TaskToolConfig(
             task_id="t5",
-            tools=(
-                TaskToolDefinition(name="echo", description="", command="echo hi"),
-            ),
+            tools=(TaskToolDefinition(name="echo", description="", command="echo hi"),),
         )
         result = generate_mcp_server_config(config)
         server = result["mcpServers"]["task-tool-echo"]
@@ -273,9 +267,7 @@ class TestGenerateMCPServerConfig:
     def test_no_env_when_no_description_or_schema(self) -> None:
         config = TaskToolConfig(
             task_id="t8",
-            tools=(
-                TaskToolDefinition(name="bare", description="", command="true"),
-            ),
+            tools=(TaskToolDefinition(name="bare", description="", command="true"),),
         )
         result = generate_mcp_server_config(config)
         server = result["mcpServers"]["task-tool-bare"]

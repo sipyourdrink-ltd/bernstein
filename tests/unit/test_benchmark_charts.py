@@ -220,24 +220,32 @@ class TestRenderComparisonReport:
 
 class TestLoadBenchmarkData:
     def test_loads_json_files(self, tmp_path: Path) -> None:
-        _write_benchmark_json(tmp_path, "run1.json", {
-            "run_id": "r1",
-            "timestamp": "2026-04-01T00:00:00Z",
-            "completion_time_s": 5.0,
-            "cost_usd": 0.01,
-            "quality_pass_rate": 1.0,
-            "tasks_total": 5,
-            "tasks_passed": 5,
-        })
-        _write_benchmark_json(tmp_path, "run2.json", {
-            "run_id": "r2",
-            "timestamp": "2026-04-02T00:00:00Z",
-            "completion_time_s": 6.0,
-            "cost_usd": 0.02,
-            "quality_pass_rate": 0.8,
-            "tasks_total": 5,
-            "tasks_passed": 4,
-        })
+        _write_benchmark_json(
+            tmp_path,
+            "run1.json",
+            {
+                "run_id": "r1",
+                "timestamp": "2026-04-01T00:00:00Z",
+                "completion_time_s": 5.0,
+                "cost_usd": 0.01,
+                "quality_pass_rate": 1.0,
+                "tasks_total": 5,
+                "tasks_passed": 5,
+            },
+        )
+        _write_benchmark_json(
+            tmp_path,
+            "run2.json",
+            {
+                "run_id": "r2",
+                "timestamp": "2026-04-02T00:00:00Z",
+                "completion_time_s": 6.0,
+                "cost_usd": 0.02,
+                "quality_pass_rate": 0.8,
+                "tasks_total": 5,
+                "tasks_passed": 4,
+            },
+        )
 
         points = load_benchmark_data(tmp_path)
         assert len(points) == 2
@@ -246,39 +254,51 @@ class TestLoadBenchmarkData:
 
     def test_sorted_by_timestamp(self, tmp_path: Path) -> None:
         # Write files in reverse timestamp order
-        _write_benchmark_json(tmp_path, "b.json", {
-            "run_id": "late",
-            "timestamp": "2026-04-10T00:00:00Z",
-            "completion_time_s": 1.0,
-            "cost_usd": 0.01,
-            "quality_pass_rate": 0.9,
-            "tasks_total": 1,
-            "tasks_passed": 1,
-        })
-        _write_benchmark_json(tmp_path, "a.json", {
-            "run_id": "early",
-            "timestamp": "2026-04-01T00:00:00Z",
-            "completion_time_s": 2.0,
-            "cost_usd": 0.02,
-            "quality_pass_rate": 0.8,
-            "tasks_total": 1,
-            "tasks_passed": 1,
-        })
+        _write_benchmark_json(
+            tmp_path,
+            "b.json",
+            {
+                "run_id": "late",
+                "timestamp": "2026-04-10T00:00:00Z",
+                "completion_time_s": 1.0,
+                "cost_usd": 0.01,
+                "quality_pass_rate": 0.9,
+                "tasks_total": 1,
+                "tasks_passed": 1,
+            },
+        )
+        _write_benchmark_json(
+            tmp_path,
+            "a.json",
+            {
+                "run_id": "early",
+                "timestamp": "2026-04-01T00:00:00Z",
+                "completion_time_s": 2.0,
+                "cost_usd": 0.02,
+                "quality_pass_rate": 0.8,
+                "tasks_total": 1,
+                "tasks_passed": 1,
+            },
+        )
 
         points = load_benchmark_data(tmp_path)
         assert points[0].run_id == "early"
         assert points[1].run_id == "late"
 
     def test_skips_malformed_files(self, tmp_path: Path) -> None:
-        _write_benchmark_json(tmp_path, "good.json", {
-            "run_id": "ok",
-            "timestamp": "2026-04-01T00:00:00Z",
-            "completion_time_s": 1.0,
-            "cost_usd": 0.01,
-            "quality_pass_rate": 1.0,
-            "tasks_total": 1,
-            "tasks_passed": 1,
-        })
+        _write_benchmark_json(
+            tmp_path,
+            "good.json",
+            {
+                "run_id": "ok",
+                "timestamp": "2026-04-01T00:00:00Z",
+                "completion_time_s": 1.0,
+                "cost_usd": 0.01,
+                "quality_pass_rate": 1.0,
+                "tasks_total": 1,
+                "tasks_passed": 1,
+            },
+        )
         # Malformed: missing required keys
         _write_benchmark_json(tmp_path, "bad.json", {"run_id": "broken"})
         # Malformed: invalid JSON

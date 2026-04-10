@@ -142,9 +142,7 @@ class TestShouldShowTip:
         marker = tmp_path / "last_shown"
         marker.touch()
         now = marker.stat().st_mtime + 61  # 61s later
-        assert should_show_tip(
-            cooldown_path=marker, now=now, cooldown_seconds=60
-        ) is True
+        assert should_show_tip(cooldown_path=marker, now=now, cooldown_seconds=60) is True
 
     def test_mark_tip_shown_creates_file(self, tmp_path: Path) -> None:
         marker = tmp_path / "subdir" / "last_shown"

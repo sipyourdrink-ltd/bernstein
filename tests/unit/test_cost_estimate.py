@@ -109,9 +109,7 @@ def test_estimate_task_cost_tokens_positive() -> None:
 def test_estimate_task_cost_uses_historical_avg() -> None:
     """When historical_avg is provided, cost shifts toward it."""
     pure_heuristic = estimate_task_cost("t-1", "X", "backend", "medium", "medium")
-    with_history = estimate_task_cost(
-        "t-1", "X", "backend", "medium", "medium", historical_avg=0.50
-    )
+    with_history = estimate_task_cost("t-1", "X", "backend", "medium", "medium", historical_avg=0.50)
     # Historical average is 0.50 which is much higher than the 0.08 baseline,
     # so the blended estimate should be higher than the pure heuristic.
     assert with_history.estimated_cost_usd > pure_heuristic.estimated_cost_usd
@@ -120,18 +118,14 @@ def test_estimate_task_cost_uses_historical_avg() -> None:
 def test_estimate_task_cost_historical_boosts_confidence() -> None:
     """Providing historical data increases confidence."""
     without = estimate_task_cost("t-1", "X", "backend", "medium", "medium")
-    with_hist = estimate_task_cost(
-        "t-1", "X", "backend", "medium", "medium", historical_avg=0.10
-    )
+    with_hist = estimate_task_cost("t-1", "X", "backend", "medium", "medium", historical_avg=0.10)
     assert with_hist.confidence > without.confidence
 
 
 def test_estimate_task_cost_historical_zero_ignored() -> None:
     """A historical_avg of 0 is treated as absent."""
     without = estimate_task_cost("t-1", "X", "backend", "medium", "medium")
-    with_zero = estimate_task_cost(
-        "t-1", "X", "backend", "medium", "medium", historical_avg=0.0
-    )
+    with_zero = estimate_task_cost("t-1", "X", "backend", "medium", "medium", historical_avg=0.0)
     assert with_zero.estimated_cost_usd == without.estimated_cost_usd
 
 

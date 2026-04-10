@@ -26,9 +26,7 @@ class TestSkillLevelOrdering:
         assert SkillLevel.PROFICIENT < SkillLevel.EXPERT
 
     def test_full_ordering(self) -> None:
-        ordered = sorted(
-            [SkillLevel.EXPERT, SkillLevel.NONE, SkillLevel.PROFICIENT, SkillLevel.BASIC]
-        )
+        ordered = sorted([SkillLevel.EXPERT, SkillLevel.NONE, SkillLevel.PROFICIENT, SkillLevel.BASIC])
         assert ordered == [
             SkillLevel.NONE,
             SkillLevel.BASIC,
