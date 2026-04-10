@@ -195,9 +195,10 @@ def setup_worktree_env(
     if config.setup_command:
         logger.info("Running worktree setup command: %s", config.setup_command)
         try:
+            import shlex
+
             result = subprocess.run(
-                config.setup_command,
-                shell=True,  # SECURITY: worktree setup commands are admin-configured
+                shlex.split(config.setup_command),
                 cwd=worktree_path,
                 capture_output=True,
                 text=True,
