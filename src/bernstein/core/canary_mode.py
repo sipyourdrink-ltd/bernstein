@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -288,7 +288,7 @@ def build_canary_report(
     total = len(diffs)
     matching = sum(1 for d in diffs if d.matches)
     match_rate = matching / total if total > 0 else 1.0
-    generated_at = datetime.now(tz=timezone.utc).isoformat()
+    generated_at = datetime.now(tz=UTC).isoformat()
 
     return CanaryReport(
         total_tasks=total,

@@ -5,15 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from bernstein.core.canary_mode import (
-    CanaryDecision,
-    CanaryDiff,
-    CanaryReport,
     build_canary_report,
     compare_decisions,
     format_canary_report,
     simulate_routing,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

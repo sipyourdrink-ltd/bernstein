@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,7 +55,7 @@ class ToolStep:
 
     tool_name: str
     server: str
-    args_template: dict[str, str] = field(default_factory=dict)
+    args_template: dict[str, str] = field(default_factory=lambda: dict[str, str]())
     output_key: str = ""
     on_failure: Literal["stop", "skip", "retry"] = "stop"
 
@@ -73,7 +73,7 @@ class CompositeToolDef:
 
     name: str
     description: str
-    steps: list[ToolStep] = field(default_factory=list)
+    steps: list[ToolStep] = field(default_factory=lambda: list[ToolStep]())
     timeout_seconds: int = 300
 
 
@@ -91,7 +91,7 @@ class StepResult:
 
     tool_name: str
     success: bool
-    output: dict[str, Any] = field(default_factory=dict)
+    output: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
     error: str | None = None
     duration_ms: float = 0.0
 
@@ -109,7 +109,7 @@ class CompositionResult:
 
     composite_name: str
     success: bool
-    step_results: list[StepResult] = field(default_factory=list)
+    step_results: list[StepResult] = field(default_factory=lambda: list[StepResult]())
     total_duration_ms: float = 0.0
 
 
@@ -251,11 +251,12 @@ def load_compositions(yaml_path: Path | None = None) -> list[CompositeToolDef]:
         if not isinstance(data, dict):
             continue
 
-        raw_comps = data.get("mcp_compositions")
+        data_typed = cast("dict[str, Any]", data)
+        raw_comps: Any = data_typed.get("mcp_compositions")
         if not isinstance(raw_comps, list):
             continue
 
-        return _parse_compositions(raw_comps)
+        return _parse_compositions(cast("list[Any]", raw_comps))
 
     return []
 
@@ -267,28 +268,37 @@ def _parse_compositions(raw_list: list[Any]) -> list[CompositeToolDef]:
         if not isinstance(entry, dict):
             logger.warning("Skipping non-dict mcp_compositions entry: %r", entry)
             continue
+        entry_d = cast("dict[str, Any]", entry)
         steps: list[ToolStep] = []
-        for raw_step in entry.get("steps", []):
-            if not isinstance(raw_step, dict):
+        raw_steps: Any = entry_d.get("steps", [])
+        for raw_step_item in cast("list[Any]", raw_steps) if isinstance(raw_steps, list) else []:
+            if not isinstance(raw_step_item, dict):
                 continue
-            on_failure = raw_step.get("on_failure", "stop")
+            raw_step = cast("dict[str, Any]", raw_step_item)
+            on_failure: str = str(raw_step.get("on_failure", "stop"))
             if on_failure not in ("stop", "skip", "retry"):
                 on_failure = "stop"
+            args_raw: Any = raw_step.get("args_template", {})
+            args_dict: dict[str, str] = (
+                {str(k): str(v) for k, v in cast("dict[Any, Any]", args_raw).items()}
+                if isinstance(args_raw, dict)
+                else {}
+            )
             steps.append(
                 ToolStep(
                     tool_name=str(raw_step.get("tool_name", "")),
                     server=str(raw_step.get("server", "")),
-                    args_template=dict(raw_step.get("args_template", {})),
+                    args_template=args_dict,
                     output_key=str(raw_step.get("output_key", "")),
                     on_failure=on_failure,
                 )
             )
         results.append(
             CompositeToolDef(
-                name=str(entry.get("name", "")),
-                description=str(entry.get("description", "")),
+                name=str(entry_d.get("name", "")),
+                description=str(entry_d.get("description", "")),
                 steps=steps,
-                timeout_seconds=int(entry.get("timeout_seconds", 300)),
+                timeout_seconds=int(entry_d.get("timeout_seconds", 300)),
             )
         )
     return results

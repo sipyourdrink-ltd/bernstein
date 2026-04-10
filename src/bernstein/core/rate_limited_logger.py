@@ -29,7 +29,6 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-
 # ---------------------------------------------------------------------------
 # LogDeduplicator — core deduplication logic
 # ---------------------------------------------------------------------------
@@ -39,7 +38,7 @@ from dataclasses import dataclass, field
 class _MessageState:
     """Tracks emission history for a single unique message."""
 
-    timestamps: list[float] = field(default_factory=list)
+    timestamps: list[float] = field(default_factory=lambda: list[float]())
     suppressed: int = 0
 
 
@@ -164,6 +163,20 @@ class LogDeduplicator:
         self.reset()
         return summaries
 
+    def get_message_state(self, message: str) -> _MessageState | None:
+        """Return the internal state for *message*, or ``None`` if unseen.
+
+        This is the public accessor for internal message tracking state,
+        used by ``RateLimitedLogFilter`` to reset suppression counts.
+
+        Args:
+            message: The log message text.
+
+        Returns:
+            The ``_MessageState`` for the given message, or ``None``.
+        """
+        return self._state.get(message)
+
     def reset(self) -> None:
         """Clear all deduplication state."""
         self._state.clear()
@@ -210,7 +223,7 @@ class RateLimitedLogFilter(logging.Filter):
                 # Reset args so getMessage() doesn't re-format.
                 record.args = None
                 # Clear suppression count now that we've reported it.
-                state = self._dedup._state.get(msg)  # noqa: SLF001
+                state = self._dedup.get_message_state(msg)
                 if state is not None:
                     state.suppressed = 0
             self._dedup.record(msg)

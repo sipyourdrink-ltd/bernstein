@@ -19,7 +19,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Result dataclasses
 # ---------------------------------------------------------------------------
@@ -60,7 +59,7 @@ class DryRunReport:
 
     event_type: str
     payload: dict[str, Any]
-    results: list[DryRunResult] = field(default_factory=list)
+    results: list[DryRunResult] = field(default_factory=lambda: list[DryRunResult]())
     total_handlers: int = 0
     would_trigger: int = 0
 

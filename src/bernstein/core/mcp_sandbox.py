@@ -18,7 +18,6 @@ Usage::
 
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
@@ -49,8 +48,8 @@ class SandboxProfile:
     """
 
     name: str
-    read_only_paths: list[str] = field(default_factory=list)
-    writable_paths: list[str] = field(default_factory=list)
+    read_only_paths: list[str] = field(default_factory=lambda: list[str]())
+    writable_paths: list[str] = field(default_factory=lambda: list[str]())
     network_enabled: bool = False
     memory_limit_mb: int = 512
     cpu_limit: float = 1.0
@@ -110,7 +109,7 @@ class SandboxConfig:
     profile: str = "standard"
     runtime: str = "docker"
     image: str = "bernstein/mcp-sandbox:latest"
-    extra_mounts: list[str] = field(default_factory=list)
+    extra_mounts: list[str] = field(default_factory=lambda: list[str]())
 
 
 # ---------------------------------------------------------------------------
@@ -252,15 +251,18 @@ def load_sandbox_config(yaml_path: Path | None = None) -> SandboxConfig:
     if not isinstance(data, dict):
         return SandboxConfig()
 
-    section: Any = data.get("mcp_sandbox")
-    if not isinstance(section, dict):
+    data_typed = cast("dict[str, Any]", data)
+    section_raw: Any = data_typed.get("mcp_sandbox")
+    if not isinstance(section_raw, dict):
         return SandboxConfig()
 
-    section = cast("dict[str, Any]", section)
+    section = cast("dict[str, Any]", section_raw)
 
-    extra_mounts_raw = section.get("extra_mounts", [])
+    extra_mounts_raw: Any = section.get("extra_mounts", [])
     extra_mounts: list[str] = (
-        list(extra_mounts_raw) if isinstance(extra_mounts_raw, list) else []
+        [str(m) for m in cast("list[Any]", extra_mounts_raw)]
+        if isinstance(extra_mounts_raw, list)
+        else []
     )
 
     return SandboxConfig(

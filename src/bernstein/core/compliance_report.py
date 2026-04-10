@@ -12,11 +12,9 @@ file-based SOC 2 reporting see ``soc2_report.py``.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Control mapping
@@ -39,7 +37,7 @@ class ControlMapping:
     control_id: str
     title: str
     description: str
-    evidence_types: list[str] = field(default_factory=list)
+    evidence_types: list[str] = field(default_factory=lambda: list[str]())
 
 
 # Pre-defined SOC 2 Type II control mappings relevant to Bernstein.
@@ -111,7 +109,7 @@ class EvidenceSummary:
     event_count: int
     first_event: str
     last_event: str
-    sample_events: list[dict[str, Any]] = field(default_factory=list)
+    sample_events: list[dict[str, Any]] = field(default_factory=lambda: list[dict[str, Any]]())
 
 
 # ---------------------------------------------------------------------------
@@ -190,10 +188,7 @@ def compute_merkle_root(events: list[dict[str, Any]]) -> str:
 
 def _event_matches_control(event_type: str, control: ControlMapping) -> bool:
     """Return True if *event_type* matches any prefix in *control.evidence_types*."""
-    for pattern in control.evidence_types:
-        if event_type.startswith(pattern):
-            return True
-    return False
+    return any(event_type.startswith(pattern) for pattern in control.evidence_types)
 
 
 def map_events_to_controls(

@@ -13,9 +13,11 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 

@@ -7,16 +7,15 @@ import hashlib
 import pytest
 
 from bernstein.core.compliance_report import (
+    SOC2_CONTROLS,
     CompliancePackage,
     ControlMapping,
     EvidenceSummary,
-    SOC2_CONTROLS,
     build_compliance_package,
     compute_merkle_root,
     format_compliance_report,
     map_events_to_controls,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

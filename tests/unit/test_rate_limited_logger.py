@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import logging
-from unittest.mock import MagicMock
-
-import pytest
 
 from bernstein.core.rate_limited_logger import (
     LogDeduplicator,
@@ -207,7 +204,7 @@ class TestRateLimitedLogFilter:
             exc_info=None,
         )
         # Force the window to expire by manipulating state timestamps
-        state = dedup._state["timeout"]  # noqa: SLF001
+        state = dedup._state["timeout"]
         state.timestamps = []  # clear so should_log returns True
 
         result = filt.filter(r_resume)

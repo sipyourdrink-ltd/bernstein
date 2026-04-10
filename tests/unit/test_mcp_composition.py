@@ -16,7 +16,6 @@ from bernstein.core.mcp_composition import (
     validate_composition,
 )
 
-
 # ---------------------------------------------------------------------------
 # Dataclass construction
 # ---------------------------------------------------------------------------
@@ -35,7 +34,7 @@ class TestToolStep:
         step = ToolStep(tool_name="a", server="b")
         try:
             step.tool_name = "x"  # type: ignore[misc]
-            raise AssertionError("Expected FrozenInstanceError")  # noqa: TRY301
+            raise AssertionError("Expected FrozenInstanceError")
         except AttributeError:
             pass
 

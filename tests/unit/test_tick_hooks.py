@@ -10,10 +10,8 @@ from bernstein.core.tick_hooks import (
     TickContext,
     TickHookManager,
     TickHookResult,
-    TickHookSpec,
 )
 from bernstein.plugins import hookimpl
-
 
 # ---------------------------------------------------------------------------
 # Helpers

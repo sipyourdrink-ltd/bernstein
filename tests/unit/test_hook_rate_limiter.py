@@ -8,7 +8,6 @@ from bernstein.core.hook_rate_limiter import (
     SuppressedEvent,
 )
 
-
 # --- TestRateLimitConfig ---
 
 
@@ -27,7 +26,7 @@ class TestRateLimitConfig:
         cfg = RateLimitConfig()
         try:
             cfg.max_per_window = 10  # type: ignore[misc]
-            raise AssertionError("Expected FrozenInstanceError")  # noqa: TRY301
+            raise AssertionError("Expected FrozenInstanceError")
         except AttributeError:
             pass
 
@@ -50,7 +49,7 @@ class TestSuppressedEvent:
         evt = SuppressedEvent(event_type="x", payload={}, suppressed_at=0.0)
         try:
             evt.event_type = "y"  # type: ignore[misc]
-            raise AssertionError("Expected FrozenInstanceError")  # noqa: TRY301
+            raise AssertionError("Expected FrozenInstanceError")
         except AttributeError:
             pass
 
