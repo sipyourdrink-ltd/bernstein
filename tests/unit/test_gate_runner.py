@@ -215,3 +215,102 @@ def test_bypass_denied_when_disabled(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="bypass is disabled"):
         asyncio.run(runner.run_all(_make_task(), tmp_path, skip_gates=["lint"]))
+
+
+# ---------------------------------------------------------------------------
+# Auto-format gate
+# ---------------------------------------------------------------------------
+
+
+def _make_auto_format_runner(tmp_path: Path, *, python_cmd: str = "ruff format") -> GateRunner:
+    config = QualityGatesConfig(
+        auto_format=True,
+        auto_format_python_command=python_cmd,
+        pipeline=[GatePipelineStep(name="auto_format", required=False, condition="any_changed")],
+        cache_enabled=False,
+    )
+    return GateRunner(config, tmp_path)
+
+
+def test_auto_format_passes_and_reports_reformatted_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """auto_format gate always passes and reports how many files were reformatted."""
+    import subprocess
+
+    (tmp_path / "a.py").write_text("x=1\n", encoding="utf-8")
+    runner = _make_auto_format_runner(tmp_path)
+    task = _make_task(owned_files=["a.py"])
+
+    fake_proc = subprocess.CompletedProcess(
+        args=["ruff", "format", "a.py"],
+        returncode=0,
+        stdout="1 file reformatted",
+        stderr="",
+    )
+
+    with patch("subprocess.run", return_value=fake_proc):
+        report = asyncio.run(runner.run_all(task, tmp_path))
+
+    result = report.results[0]
+    assert result.name == "auto_format"
+    assert result.status == "pass"
+    assert result.blocked is False
+    assert "Python" in result.details
+    assert "reformatted" in result.details
+
+
+def test_auto_format_skips_when_formatter_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """auto_format skips a language when its formatter binary is not on PATH."""
+    import shutil
+
+    (tmp_path / "a.py").write_text("x=1\n", encoding="utf-8")
+    runner = _make_auto_format_runner(tmp_path, python_cmd="nonexistent-fmt")
+    task = _make_task(owned_files=["a.py"])
+
+    original_which = shutil.which
+
+    def fake_which(name: str) -> str | None:
+        if name == "nonexistent-fmt":
+            return None
+        return original_which(name)
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+
+    report = asyncio.run(runner.run_all(task, tmp_path))
+
+    result = report.results[0]
+    assert result.status == "pass"
+    assert result.blocked is False
+    assert "not found" in result.details
+
+
+def test_auto_format_skips_when_no_changed_files(tmp_path: Path) -> None:
+    """auto_format gate skips cleanly when no changed files are present."""
+    config = QualityGatesConfig(
+        auto_format=True,
+        pipeline=[GatePipelineStep(name="auto_format", required=False, condition="any_changed")],
+        cache_enabled=False,
+    )
+    runner = GateRunner(config, tmp_path)
+    task = _make_task(owned_files=[])
+
+    report = asyncio.run(runner.run_all(task, tmp_path))
+
+    result = report.results[0]
+    assert result.status == "skipped"
+    assert result.blocked is False
+
+
+def test_auto_format_appears_before_lint_in_default_pipeline(tmp_path: Path) -> None:
+    """auto_format is inserted before lint in the default pipeline."""
+    from bernstein.core.gate_runner import build_default_pipeline
+
+    config = QualityGatesConfig(auto_format=True, lint=True)
+    pipeline = build_default_pipeline(config)
+    names = [step.name for step in pipeline]
+    assert "auto_format" in names
+    assert "lint" in names
+    assert names.index("auto_format") < names.index("lint")
