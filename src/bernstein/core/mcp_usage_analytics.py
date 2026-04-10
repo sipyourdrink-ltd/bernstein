@@ -164,9 +164,7 @@ def analyze_mcp_usage(
 ) -> MCPUsageAnalyticsReport:
     """Analyze historical MCP usage from gateway WAL files and tool inventories."""
     installed_servers = (
-        tuple(sorted(entry.name for entry in load_catalog_entries(catalog_path)))
-        if catalog_path
-        else ()
+        tuple(sorted(entry.name for entry in load_catalog_entries(catalog_path))) if catalog_path else ()
     )
     tool_inventory = _load_tool_inventory(sdd_dir)
     usage_rows = _load_usage_rows(sdd_dir)
@@ -221,9 +219,7 @@ def analyze_mcp_usage(
                 / total_calls
             )
         last_used_candidates = [
-            tool.last_used_at
-            for tool in top_tools
-            if tool.server_name == server_name and tool.last_used_at
+            tool.last_used_at for tool in top_tools if tool.server_name == server_name and tool.last_used_at
         ]
         last_used_at = max(last_used_candidates) if last_used_candidates else None
         unused_tools = tuple(tool for tool in known_tools if tool not in set(used_tools))
@@ -251,8 +247,7 @@ def analyze_mcp_usage(
                     kind="unused_server",
                     server_name=server.server_name,
                     message=(
-                        f"Installed server {server.server_name!r} has no recorded tool calls. "
-                        "Consider removing it."
+                        f"Installed server {server.server_name!r} has no recorded tool calls. Consider removing it."
                     ),
                 )
             )
