@@ -140,12 +140,12 @@ class DLPConfig:
     block_license_violations: bool = True
     block_regulated_data: bool = True
     block_proprietary_data: bool = False
-    internal_url_patterns: list[str] = field(default_factory=list)
-    ignore_paths: list[str] = field(default_factory=list)
+    internal_url_patterns: list[str] = field(default_factory=lambda: list[str]())
+    ignore_paths: list[str] = field(default_factory=lambda: list[str]())
     allowlist_prefixes: list[str] = field(
         default_factory=lambda: ["FAKE", "TEST", "EXAMPLE", "DUMMY", "PLACEHOLDER", "MOCK", "SAMPLE"]
     )
-    allowlist_patterns: list[str] = field(default_factory=list)
+    allowlist_patterns: list[str] = field(default_factory=lambda: list[str]())
 
 
 # ---------------------------------------------------------------------------
