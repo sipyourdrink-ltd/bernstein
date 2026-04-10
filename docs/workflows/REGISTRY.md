@@ -2,7 +2,7 @@
 
 This registry maps workflow specs in `docs/workflows/` to current implementation status in the codebase.
 
-Last updated: 2026-04-08
+Last updated: 2026-04-11
 
 ---
 
@@ -32,6 +32,8 @@ Last updated: 2026-04-08
 | Per-tenant rate limiting & quotas (ENT-008) | `WORKFLOW-tenant-rate-limiting-quota.md` | Draft | API rate limits, task/hour, agent concurrency, cost budget — TenantRateLimiter exists but not wired to middleware |
 | Data residency enforcement (ENT-009) | `WORKFLOW-data-residency-enforcement.md` | Draft | DataResidencyController + router ModelPolicy exist but are not bridged. No enforcement on task server writes, no policy persistence, no attestation persistence. 8 RC findings. |
 | Disaster recovery with cross-region replication (ENT-010) | `WORKFLOW-disaster-recovery-cross-region.md` | Draft | backup_sdd/restore_sdd local-only. WALReplicationManager has no transport layer. No periodic scheduling, no remote upload, no failover detection, no runbook generation. 10 RC findings. |
+| Embeddable PR status widget (road-006) | `WORKFLOW-pr-status-widget.md` | Draft | Embed status widget in PR body: quality grade, cost, agents, duration. Extends approval.py _pr_body with data from quality_gates, quality_score, cost_tracker. 5 RC findings. |
+| Ephemeral VM environments — Firecracker/gVisor (road-115) | `WORKFLOW-ephemeral-vm-environments.md` | Draft | VM-level agent isolation via Firecracker (<125ms boot) or standalone gVisor. Parallel to existing Docker/Podman ContainerManager. Requires new VMManager, IsolationMode.VM enum value. 8 RC findings. |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
@@ -168,6 +170,28 @@ Data path: `.sdd/audit/*.jsonl` (daily logs), `.sdd/audit/merkle/` (seals)
 - `src/bernstein/core/quality_gates.py`
 - `src/bernstein/core/approval.py`
 - `src/bernstein/core/janitor.py`
+
+### PR status widget workflows
+
+- `src/bernstein/core/approval.py` (`_pr_body` — widget embed point)
+- `src/bernstein/github_app/cost_reporter.py` (coexisting cost comment)
+- `src/bernstein/github_app/check_runs.py` (check run URL for widget)
+- `src/bernstein/core/quality_gates.py` (`QualityGatesResult` data source)
+- `src/bernstein/core/quality_score.py` (`QualityScore` data source)
+- `src/bernstein/core/run_report.py` (`RunReport` data source)
+- New: `src/bernstein/core/pr_status_widget.py` (widget builder — to be created)
+
+### Ephemeral VM environment workflows
+
+- `src/bernstein/core/container.py` (`ContainerRuntime.FIRECRACKER`, `ContainerRuntime.GVISOR`)
+- `src/bernstein/core/sandbox.py` (`DockerSandbox` — containers only, not VMs)
+- `src/bernstein/core/spawner.py` (isolation mode routing)
+- `src/bernstein/core/worktree.py` (worktree creation before VM boot)
+- `src/bernstein/core/worktree_isolation.py` (AGENT-002 validation)
+- `src/bernstein/core/network_isolation.py` (network policy for VM tap devices)
+- `src/bernstein/core/models.py` (`IsolationMode` enum — needs `VM` value)
+- New: `src/bernstein/core/vm_manager.py` (VM lifecycle — to be created)
+- New: `src/bernstein/core/vm_images.py` (rootfs image build/cache — to be created)
 
 ---
 
