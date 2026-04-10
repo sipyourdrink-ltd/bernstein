@@ -152,6 +152,14 @@ class QualityGatesConfig:
         mutation_timeout_s: Timeout for mutation testing (longer than other gates).
         intent_verification: Config for the LLM-based intent verification gate.
         benchmark: Config for the performance benchmark regression gate.
+        auto_format: Run automatic code formatting before lint. Auto-fixes
+            formatting issues on changed files rather than blocking merge.
+        auto_format_python_command: Shell command for Python formatting
+            (applied to changed .py files; default: ``ruff format``).
+        auto_format_js_command: Shell command for JS/TS formatting
+            (applied to changed .js/.ts/.jsx/.tsx files; default: ``prettier --write``).
+        auto_format_rust_command: Shell command for Rust formatting
+            (applied to changed .rs files; default: ``rustfmt``).
     """
 
     enabled: bool = True
@@ -215,6 +223,10 @@ class QualityGatesConfig:
     large_file_threshold: int = 500
     integration_test_gen: bool = False
     review_rubric: bool = False
+    auto_format: bool = False
+    auto_format_python_command: str = "ruff format"
+    auto_format_js_command: str = "prettier --write"
+    auto_format_rust_command: str = "rustfmt"
 
 
 @dataclass
