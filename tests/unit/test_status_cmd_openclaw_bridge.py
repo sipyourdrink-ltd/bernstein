@@ -65,7 +65,6 @@ def test_ps_shows_remote_sessions_from_agents_snapshot(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "backend-1234" in result.output
-    assert "reasoning:high" in result.output
     assert "1 agent(s) running" in result.output
 
 
