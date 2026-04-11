@@ -105,22 +105,41 @@ class TestPollerThread:
 
     def test_periodic_poll_updates_board(self, activity_dir: Path, board: BulletinBoard) -> None:
         """Summary reflects activity changes across polling cycles."""
+
+        def _wait_for_summary(expected: str, timeout: float = 2.0) -> None:
+            """Poll up to ``timeout`` seconds for the board to show ``expected``.
+
+            The old version of this test slept for 0.12s and read once,
+            which was flaky on slow CI (macOS runner observed 2026-04-11)
+            whenever the poll thread had not yet completed its next tick.
+            Swap the fixed sleep for a bounded spin that succeeds as soon
+            as the summary matches — identical semantics on a fast box,
+            tolerant of a delayed tick on a slow one.
+            """
+            deadline = time.time() + timeout
+            last_seen: str | None = None
+            while time.time() < deadline:
+                current = board.get_latest_activity_summary("bg-4")
+                if current is not None:
+                    last_seen = current.summary
+                    if current.summary == expected:
+                        return
+                time.sleep(0.01)
+            raise AssertionError(
+                f"summary did not reach {expected!r} within {timeout}s "
+                f"(last seen: {last_seen!r})"
+            )
+
         session = ActivitySession(activity_dir)
         poller = ActivitySummaryPoller(agent_id="bg-4", session=session, board=board, interval=0.05)
         poller.start()
         try:
             # Wait for first poll (idle)
-            time.sleep(0.12)
-            result = board.get_latest_activity_summary("bg-4")
-            assert result is not None
-            assert result.summary == "idle no recent activity"
+            _wait_for_summary("idle no recent activity")
 
             # Start an activity and wait for next poll cycle
             session.start_activity("coding", "Some task")
-            time.sleep(0.12)
-            result = board.get_latest_activity_summary("bg-4")
-            assert result is not None
-            assert result.summary == "coding in progress"
+            _wait_for_summary("coding in progress")
         finally:
             poller.stop()
 
