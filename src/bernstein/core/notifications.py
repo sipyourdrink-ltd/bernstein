@@ -60,6 +60,10 @@ EVENT_APPROVAL_NEEDED = "approval.needed"
 EVENT_INCIDENT_CRITICAL = "incident.critical"
 EVENT_TASK_DEADLINE_WARNING = "task.deadline_warning"
 EVENT_TASK_DEADLINE_EXCEEDED = "task.deadline_exceeded"
+EVENT_PROVIDER_LATENCY_SPIKE = "provider.latency_spike"
+EVENT_PREDICTIVE_BUDGET_EXHAUSTION = "predictive.budget_exhaustion"
+EVENT_PREDICTIVE_COMPLETION_DECLINE = "predictive.completion_decline"
+EVENT_PREDICTIVE_RUN_OVERRUN = "predictive.run_overrun"
 
 # ---------------------------------------------------------------------------
 # Types
@@ -76,6 +80,10 @@ NotificationEvent = Literal[
     "incident.critical",
     "task.deadline_warning",
     "task.deadline_exceeded",
+    "provider.latency_spike",
+    "predictive.budget_exhaustion",
+    "predictive.completion_decline",
+    "predictive.run_overrun",
 ]
 
 # PagerDuty severity mapping per event
@@ -90,6 +98,10 @@ _PD_SEVERITY: dict[str, str] = {
     EVENT_INCIDENT_CRITICAL: "critical",
     EVENT_TASK_DEADLINE_WARNING: "warning",
     EVENT_TASK_DEADLINE_EXCEEDED: "critical",
+    EVENT_PROVIDER_LATENCY_SPIKE: "warning",
+    EVENT_PREDICTIVE_BUDGET_EXHAUSTION: "critical",
+    EVENT_PREDICTIVE_COMPLETION_DECLINE: "warning",
+    EVENT_PREDICTIVE_RUN_OVERRUN: "warning",
 }
 
 # Discord / Slack color codes per event
