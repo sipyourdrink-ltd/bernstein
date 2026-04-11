@@ -1,0 +1,88 @@
+# Bernstein researcher sandbox — network-isolated instance for security research
+#
+# Differences from the standard sandbox:
+#   - Binds to localhost:18052 (API) and localhost:18080 (dashboard)
+#   - All egress blocked via `internal: true` network (no outbound internet)
+#   - Pre-loaded demo tokens: research-token-{1,2,3}
+#   - Resource caps: 2 CPU, 2 GB RAM per container
+#   - Ephemeral volumes — nothing persists after `down -v`
+#
+# Start:  ./scripts/researcher_sandbox.sh start
+# Stop:   ./scripts/researcher_sandbox.sh stop
+
+services:
+  bernstein-server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: >
+      python -m bernstein.cli server
+        --host 0.0.0.0
+        --port 8052
+        --sandbox
+        --sandbox-demo-tokens research-token-1,research-token-2,research-token-3
+        --sandbox-demo-token-levels read,write,admin
+    environment:
+      BERNSTEIN_SANDBOX: "1"
+      BERNSTEIN_SANDBOX_MAX_SESSIONS: "5"
+      BERNSTEIN_SANDBOX_BUDGET: "0.00"       # no real LLM calls
+      BERNSTEIN_SANDBOX_MAX_AGENTS: "3"
+      BERNSTEIN_SANDBOX_TIMEOUT: "3600"
+      BERNSTEIN_RESEARCHER_MODE: "1"         # enables /admin endpoint for research-token-3
+      BERNSTEIN_AUTH_TOKEN: "research-token-2"
+      # Disable outbound LLM calls — agents return stub responses
+      BERNSTEIN_STUB_LLM: "1"
+    ports:
+      - "127.0.0.1:18052:8052"
+    volumes:
+      - researcher-workspaces:/app/workspaces
+      - researcher-sdd:/app/.sdd
+    networks:
+      - research-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8052/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Lightweight dashboard — proxies to the task server
+  bernstein-dashboard:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: >
+      python -m bernstein.cli dashboard
+        --host 0.0.0.0
+        --port 8080
+        --server-url http://bernstein-server:8052
+    environment:
+      BERNSTEIN_SERVER_URL: "http://bernstein-server:8052"
+    ports:
+      - "127.0.0.1:18080:8080"
+    networks:
+      - research-net
+    depends_on:
+      bernstein-server:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+
+volumes:
+  researcher-workspaces:
+  researcher-sdd:
+
+networks:
+  # internal: true blocks all outbound traffic — containers can only talk to each other.
+  research-net:
+    internal: true
