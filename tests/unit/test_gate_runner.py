@@ -310,3 +310,106 @@ def test_auto_format_appears_before_lint_in_default_pipeline(tmp_path: Path) -> 
     assert "auto_format" in names
     assert "lint" in names
     assert names.index("auto_format") < names.index("lint")
+
+
+# ---------------------------------------------------------------------------
+# Incremental type-check with dependent expansion
+# ---------------------------------------------------------------------------
+
+
+def test_type_check_command_includes_transitive_importers(tmp_path: Path) -> None:
+    """A signature change in models.py causes pyright to also check service.py."""
+    src = tmp_path / "src"
+    (src / "demo").mkdir(parents=True)
+    (src / "demo" / "__init__.py").write_text("", encoding="utf-8")
+    (src / "demo" / "models.py").write_text("class Model:\n    name: str\n", encoding="utf-8")
+    (src / "demo" / "service.py").write_text(
+        "from demo.models import Model\n\ndef use() -> Model:\n    return Model()\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+
+    config = QualityGatesConfig(
+        pipeline=[GatePipelineStep(name="type_check", required=True, condition="python_changed")],
+        cache_enabled=False,
+    )
+    runner = GateRunner(config, tmp_path)
+    task = _make_task(owned_files=["src/demo/models.py"])
+
+    captured_commands: list[str] = []
+
+    def fake_run(command: str, _cwd: Path, _timeout_s: int) -> tuple[bool, str]:
+        captured_commands.append(command)
+        return True, "ok"
+
+    with patch("bernstein.core.quality_gates._run_command", side_effect=fake_run):
+        asyncio.run(runner.run_all(task, tmp_path))
+
+    assert len(captured_commands) == 1
+    cmd = captured_commands[0]
+    assert "models.py" in cmd
+    # service.py imports models.py — it must be included in the type-check scope
+    assert "service.py" in cmd
+
+
+def test_type_check_command_falls_back_when_dependency_info_unavailable(tmp_path: Path) -> None:
+    """When dependency index is empty, pyright still runs on the changed files only."""
+    src = tmp_path / "src"
+    (src / "demo").mkdir(parents=True)
+    (src / "demo" / "models.py").write_text("class Model: pass\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+
+    config = QualityGatesConfig(
+        pipeline=[GatePipelineStep(name="type_check", required=True, condition="python_changed")],
+        cache_enabled=False,
+    )
+    runner = GateRunner(config, tmp_path)
+    task = _make_task(owned_files=["src/demo/models.py"])
+
+    captured_commands: list[str] = []
+
+    def fake_run(command: str, _cwd: Path, _timeout_s: int) -> tuple[bool, str]:
+        captured_commands.append(command)
+        return True, "ok"
+
+    with (
+        patch("bernstein.core.test_impact.TestImpactAnalyzer") as mock_analyzer_cls,
+        patch("bernstein.core.quality_gates._run_command", side_effect=fake_run),
+    ):
+        mock_analyzer_cls.side_effect = RuntimeError("index unavailable")
+        asyncio.run(runner.run_all(task, tmp_path))
+
+    assert len(captured_commands) == 1
+    assert "models.py" in captured_commands[0]
+
+
+def test_type_check_command_no_extra_files_when_no_importers(tmp_path: Path) -> None:
+    """A leaf module with no importers is type-checked alone (no extra files added)."""
+    src = tmp_path / "src"
+    (src / "demo").mkdir(parents=True)
+    (src / "demo" / "__init__.py").write_text("", encoding="utf-8")
+    (src / "demo" / "utils.py").write_text("def helper() -> int:\n    return 1\n", encoding="utf-8")
+    (src / "demo" / "other.py").write_text("def thing() -> int:\n    return 2\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+
+    config = QualityGatesConfig(
+        pipeline=[GatePipelineStep(name="type_check", required=True, condition="python_changed")],
+        cache_enabled=False,
+    )
+    runner = GateRunner(config, tmp_path)
+    task = _make_task(owned_files=["src/demo/utils.py"])
+
+    captured_commands: list[str] = []
+
+    def fake_run(command: str, _cwd: Path, _timeout_s: int) -> tuple[bool, str]:
+        captured_commands.append(command)
+        return True, "ok"
+
+    with patch("bernstein.core.quality_gates._run_command", side_effect=fake_run):
+        asyncio.run(runner.run_all(task, tmp_path))
+
+    assert len(captured_commands) == 1
+    cmd = captured_commands[0]
+    assert "utils.py" in cmd
+    # other.py does not import utils.py — it must not be included
+    assert "other.py" not in cmd
