@@ -190,7 +190,7 @@ async def call_llm(
         try:
             from bernstein.adapters.registry import get_adapter
 
-            adapter = get_adapter(provider)
+            get_adapter(provider)
             _cli_binary = provider  # adapter exists, use its name as binary
             logger.debug("Using registered adapter '%s' as internal LLM CLI", provider)
         except Exception:
