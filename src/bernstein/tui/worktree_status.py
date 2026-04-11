@@ -2,10 +2,65 @@
 
 from __future__ import annotations
 
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from rich.text import Text
 from textual.widgets import Static
+
+
+@dataclass(frozen=True)
+class WorktreeStatus:
+    """Git worktree status snapshot."""
+
+    branch: str
+    is_dirty: bool = False
+    ahead: int = 0
+    behind: int = 0
+
+
+def format_worktree_display(status: WorktreeStatus) -> str:
+    """Format worktree status for display."""
+    parts = [status.branch]
+    if status.is_dirty:
+        parts.append("[dirty]")
+    else:
+        parts.append("[clean]")
+    if status.ahead:
+        parts.append(f"{status.ahead}\u2191")
+    if status.behind:
+        parts.append(f"{status.behind}\u2193")
+    return " ".join(parts)
+
+
+def get_worktree_status(workdir: Path) -> WorktreeStatus | None:
+    """Get git worktree status for a directory."""
+    try:
+        branch_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if branch_result.returncode != 0:
+            return None
+        branch = branch_result.stdout.strip()
+
+        dirty_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        is_dirty = bool(dirty_result.stdout.strip())
+
+        return WorktreeStatus(branch=branch, is_dirty=is_dirty)
+    except (subprocess.TimeoutExpired, OSError, FileNotFoundError):
+        return None
 
 
 def render_runtime_health(snapshot: dict[str, Any] | None) -> Text:
