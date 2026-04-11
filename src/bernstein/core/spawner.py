@@ -1482,6 +1482,7 @@ class AgentSpawner:
                                 mcp_config=effective_mcp,
                                 session=session,
                                 adapter=target_adapter,
+                                task_scope=max_scope,
                             )
                         elif self._container_mgr is not None:
                             result = self._spawn_in_container(
@@ -1492,6 +1493,7 @@ class AgentSpawner:
                                 mcp_config=effective_mcp,
                                 session=session,
                                 adapter=target_adapter,
+                                task_scope=max_scope,
                             )
                         else:
                             # Extract budget_multiplier from task metadata
@@ -1783,11 +1785,14 @@ class AgentSpawner:
             status="starting",
         )
 
+        _scope_order = {"small": 0, "medium": 1, "large": 2}
+        resume_scope = max((t.scope.value for t in tasks), key=lambda s: _scope_order.get(s, 1))
         result = self._adapter.spawn(
             prompt=prompt,
             workdir=worktree_path,
             model_config=model_config,
             session_id=session_id,
+            task_scope=resume_scope,
         )
         session.pid = result.pid
         session.abort_reason = result.abort_reason
@@ -1824,6 +1829,7 @@ class AgentSpawner:
         mcp_config: dict[str, Any] | None,
         session: AgentSession,
         adapter: CLIAdapter,
+        task_scope: str = "medium",
     ) -> SpawnResult:
         """Spawn an agent inside a container.
 
@@ -1838,6 +1844,8 @@ class AgentSpawner:
             model_config: Model and effort configuration.
             mcp_config: MCP server configuration.
             session: AgentSession to update with container metadata.
+            adapter: Adapter selected for this spawn attempt.
+            task_scope: Task scope for max_turns scaling.
 
         Returns:
             SpawnResult with PID and log path.
@@ -1924,6 +1932,7 @@ class AgentSpawner:
                 model_config=model_config,
                 session_id=session_id,
                 mcp_config=mcp_config,
+                task_scope=task_scope,
             )
 
     def _spawn_in_sandbox(
@@ -1936,6 +1945,7 @@ class AgentSpawner:
         mcp_config: dict[str, Any] | None,
         session: AgentSession,
         adapter: CLIAdapter,
+        task_scope: str = "medium",
     ) -> SpawnResult:
         """Spawn an agent in a per-session Docker or Podman sandbox.
 
@@ -1947,6 +1957,7 @@ class AgentSpawner:
             mcp_config: Optional MCP configuration for the adapter.
             session: Mutable session record to update.
             adapter: Adapter selected for this spawn attempt.
+            task_scope: Task scope for max_turns scaling.
 
         Returns:
             Spawn result for the sandboxed process.
@@ -2002,6 +2013,7 @@ class AgentSpawner:
                 model_config=model_config,
                 session_id=session_id,
                 mcp_config=mcp_config,
+                task_scope=task_scope,
             )
 
         self._sandbox_managers[session_id] = manager

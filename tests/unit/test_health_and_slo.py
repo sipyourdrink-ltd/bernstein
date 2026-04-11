@@ -5,13 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from bernstein.core.slo_tracker import SLOStatus, SLOTracker, format_slo_report
 
 from bernstein.core.health_score import (
     HealthScore,
     calculate_health_score,
     format_health_report,
 )
-from bernstein.core.slo_tracker import SLOStatus, SLOTracker, format_slo_report
 from bernstein.core.workload_prediction import (
     WorkloadPrediction,
     format_workload_report,

@@ -11,6 +11,7 @@ permissions:
 jobs:
   delete:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.ref == 'refs/heads/master'
     steps:
       - name: Delete master branch

@@ -117,6 +117,7 @@ jobs:
   repo-hygiene:
     name: Repo hygiene
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -403,7 +404,8 @@ jobs:
     name: Auto-fix lint
     runs-on: ubuntu-latest
     needs: [lint, repo-hygiene]
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'bernstein[bot]' && github.actor != 'bernstein-orchestrator[bot]'
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -453,6 +455,7 @@ jobs:
       success() &&
       github.ref == 'refs/heads/main' &&
       github.event_name == 'push'
+    timeout-minutes: 5
     permissions:
       contents: read
       issues: write
@@ -475,6 +478,7 @@ jobs:
       failure() &&
       github.ref == 'refs/heads/main' &&
       github.event_name == 'push'
+    timeout-minutes: 5
     permissions:
       contents: read
       issues: write
@@ -497,6 +501,7 @@ jobs:
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
     needs: [repo-hygiene, lint, typecheck, test, spelling, dead-code, actionlint, dist-size, sonarcloud]
+    timeout-minutes: 5
     permissions:
       pull-requests: write
     steps:

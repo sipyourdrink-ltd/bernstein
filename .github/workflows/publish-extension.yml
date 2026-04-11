@@ -7,9 +7,13 @@ on:
     tags:
       - 'ext-v*'   # trigger: git tag ext-v0.1.0 && git push --tags
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     env:

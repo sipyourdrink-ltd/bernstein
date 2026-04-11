@@ -114,6 +114,7 @@ class IaCAdapter(CLIAdapter):
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        task_scope: str = "medium",
     ) -> SpawnResult:
         """Spawn an IaC plan-then-apply process."""
         tool = self._resolve_tool()

@@ -187,6 +187,14 @@ class ClaudeCodeAdapter(CLIAdapter):
         "large": 15.0,
     }
 
+    # Scope multipliers: large tasks get proportionally more turns so they
+    # don't die prematurely.
+    _SCOPE_MULTIPLIERS: ClassVar[dict[str, float]] = {
+        "small": 1.0,
+        "medium": 1.5,
+        "large": 2.0,
+    }
+
     def _build_command(
         self,
         model_config: ModelConfig,
@@ -234,11 +242,9 @@ class ClaudeCodeAdapter(CLIAdapter):
         """
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         effort = getattr(model_config, "effort", "high")
-        max_turns = (
-            self.BATCH_MAX_TURNS
-            if batch_mode
-            else {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
-        )
+        base_turns = {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
+        scope_multiplier = self._SCOPE_MULTIPLIERS.get(task_scope, 1.5)
+        max_turns = self.BATCH_MAX_TURNS if batch_mode else int(base_turns * scope_multiplier)
         effort_map = {"max": "max", "high": "high", "medium": "medium", "normal": "medium", "low": "low"}
         claude_effort = effort_map.get(effort, "high")
 

@@ -11,10 +11,19 @@ on:
         description: "Commit SHA for documentation"
         required: false
 
+concurrency:
+  group: protocol-compat-table-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   generate-table:
     name: Generate Compatibility Table
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.actor != 'bernstein[bot]' && github.actor != 'github-actions[bot]'
     permissions:
       contents: write
     steps:

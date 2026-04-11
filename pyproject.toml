@@ -10,12 +10,37 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Alex Chernysh", email = "alex@alexchernysh.com" }]
-keywords = ["ai", "agents", "orchestration", "multi-agent", "coding", "cli"]
+keywords = [
+    "ai",
+    "agents",
+    "orchestration",
+    "multi-agent",
+    "coding",
+    "cli",
+    "llm",
+    "automation",
+    "devtools",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "Topic :: Software Development :: Build Tools",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
 ]
 dependencies = [
     "fastapi>=0.115",
@@ -43,8 +68,28 @@ dependencies = [
     "websockets>=14.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/chernistry/bernstein"
+Documentation = "https://github.com/chernistry/bernstein#readme"
+Repository = "https://github.com/chernistry/bernstein"
+Issues = "https://github.com/chernistry/bernstein/issues"
+Changelog = "https://github.com/chernistry/bernstein/releases"
+Funding = "https://github.com/sponsors/chernistry"
+
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "pyright"]
+# Mirrored from [dependency-groups].dev so `pip install bernstein[dev]` works
+# for users not on uv. Keep floors in sync with [dependency-groups].dev.
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "pytest-benchmark>=4.0",
+    "pytest-timeout>=2.3.1",
+    "hypothesis>=6.100",
+    "respx>=0.22",
+    "ruff>=0.9",
+    "pyright>=1.1",
+]
 grpc = ["grpcio>=1.68", "grpcio-tools>=1.68", "grpcio-reflection>=1.68", "protobuf>=5.29"]
 k8s = ["kubernetes>=31.0"]
 ml = ["scikit-learn>=1.5"]
@@ -84,6 +129,9 @@ exclude = [
     ".github/",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/bernstein"]
+
 [tool.hatch.build.targets.wheel.force-include]
 "templates/prompts" = "bernstein/_default_templates/prompts"
 "templates/bernstein.yaml" = "bernstein/_default_templates/bernstein.yaml"
@@ -97,6 +145,12 @@ extend-exclude = [
     "scripts/gen_roadmap_*.py",
     "scripts/convert_tickets_*.py",
 ]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "RUF"]
@@ -297,14 +351,36 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
+minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Tests use explicit @pytest.mark.asyncio — keep strict mode to avoid
+# auto-collecting unmarked async tests and breaking existing suites.
+asyncio_mode = "strict"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+]
 markers = [
     "ci: tests that run as part of CI for every release",
 ]
+# Visible warnings without converting to errors; individual tests or runs
+# can tighten via `pytest -W error::DeprecationWarning`.
+filterwarnings = [
+    "default",
+    "ignore::PendingDeprecationWarning",
+    "ignore::ResourceWarning",
+]
 
 [tool.coverage.run]
+branch = true
 source = ["bernstein"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/_default_templates/*",
+    "*/__main__.py",
+]
 
 [tool.coverage.paths]
 source = [
@@ -314,10 +390,16 @@ source = [
 
 [tool.coverage.report]
 show_missing = true
+skip_covered = false
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
     "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "raise AssertionError",
+    "@abstractmethod",
+    "@overload",
+    "\\.\\.\\.",
 ]
 
 [dependency-groups]

@@ -477,6 +477,7 @@ class {class_name}(CLIAdapter):
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = 1800,
+        task_scope: str = "medium",
     ) -> SpawnResult:
         """Launch {cli_name} with the given prompt.
 
