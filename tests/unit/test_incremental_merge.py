@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
-
+from bernstein.core.git_basic import GitResult
 from bernstein.core.incremental_merge import (
-    IncrementalMergeResult,
     IncrementalMergeState,
     _files_committed_in_branch,
     _load_state,
@@ -19,8 +16,6 @@ from bernstein.core.incremental_merge import (
     get_incremental_merge_state,
     incremental_merge_files,
 )
-from bernstein.core.git_basic import GitResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers

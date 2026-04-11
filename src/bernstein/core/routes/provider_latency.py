@@ -29,7 +29,7 @@ def provider_latency_current(request: Request) -> JSONResponse:
     """Return current p50/p95/p99 latency percentiles for all tracked providers.
 
     Each entry in the response includes a ``baseline_p99_ms`` derived from the
-    past 7 days of data. When ``p99_ms`` exceeds ``baseline_p99_ms × 2``, the
+    past 7 days of data. When ``p99_ms`` exceeds ``baseline_p99_ms x 2``, the
     entry carries ``"degraded": true``.
     """
     metrics_dir = _get_metrics_dir(request)
@@ -61,7 +61,7 @@ def provider_latency_history(
     request: Request,
     provider: str | None = Query(default=None, description="Filter by provider name"),
     model: str | None = Query(default=None, description="Filter by model identifier"),
-    hours: int = Query(default=24, ge=1, le=168, description="Hours of history to return (1–168)"),
+    hours: int = Query(default=24, ge=1, le=168, description="Hours of history to return (1-168)"),
 ) -> JSONResponse:
     """Return raw latency samples for time-series charting.
 

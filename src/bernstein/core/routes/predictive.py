@@ -6,7 +6,7 @@ GET /metrics/predictions — evaluate all forecasts and return any active alerts
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -16,6 +16,9 @@ from bernstein.core.predictive_alerts import (
     load_completion_timestamps,
     load_cost_history,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 router = APIRouter()
 
@@ -59,7 +62,6 @@ def get_predictions(
     Each alert has: ``kind``, ``severity``, ``message``,
     ``minutes_until_impact``, ``confidence``.
     """
-    from pathlib import Path
 
     sdd_dir = _get_sdd_dir(request)
     metrics_dir: Path | None = sdd_dir / "metrics" if sdd_dir is not None else None
@@ -85,7 +87,7 @@ def get_predictions(
             open_count = counts.get("open", 0)
             in_progress_count = counts.get("in_progress", 0)
             tasks_remaining = open_count + in_progress_count
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     # Pull run start time from supervisor state if available

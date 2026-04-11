@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.dead_code_detector import (
     DeadCodeReport,
     _check_unreachable_branches,
@@ -14,7 +12,6 @@ from bernstein.core.dead_code_detector import (
     _extract_removed_names,
     analyse,
 )
-
 
 # ---------------------------------------------------------------------------
 # _extract_removed_names

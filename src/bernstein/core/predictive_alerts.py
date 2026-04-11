@@ -530,7 +530,8 @@ class PredictiveAlertEngine:
         predicted_at = run_start_timestamp + window_hours * 3600
 
         fraction_over = overrun_hours / window_hours
-        severity = AlertSeverity.CRITICAL if fraction_over >= self._overrun_warning_fraction * 2 else AlertSeverity.WARNING
+        is_critical = fraction_over >= self._overrun_warning_fraction * 2
+        severity = AlertSeverity.CRITICAL if is_critical else AlertSeverity.WARNING
 
         msg = (
             f"Run will exceed the {window_hours:.0f}-hour window by "

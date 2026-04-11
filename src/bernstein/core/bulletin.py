@@ -897,11 +897,10 @@ class DirectChannel:
             for q in self._queries.values():
                 if q.resolved or q.is_expired():
                     continue
-                if agent_id and q.target_agent == agent_id:
-                    results.append(q)
-                elif role and q.target_role == role:
-                    results.append(q)
-                elif q.target_agent is None and q.target_role is None:
+                matches_agent = agent_id and q.target_agent == agent_id
+                matches_role = role and q.target_role == role
+                matches_broadcast = q.target_agent is None and q.target_role is None
+                if matches_agent or matches_role or matches_broadcast:
                     results.append(q)
             return results
 

@@ -10,7 +10,6 @@ import pytest
 
 from bernstein.core.provider_latency import (
     DegradationAlert,
-    LatencyPercentiles,
     ProviderLatencyTracker,
     _make_key,
     _split_key,
@@ -143,7 +142,7 @@ class TestProviderLatencyTracker:
         # Force baseline to be set with a known value
         from bernstein.core.provider_latency import _make_key
         key = _make_key("anthropic", "sonnet")
-        tracker._baseline_p99[key] = 100.0  # noqa: SLF001
+        tracker._baseline_p99[key] = 100.0
 
         # Now inject high-latency samples to spike p99 > 200ms
         alert: DegradationAlert | None = None
@@ -197,5 +196,5 @@ class TestProviderLatencyTracker:
 
         tracker = ProviderLatencyTracker(tmp_path)
         key = _make_key("openai", "gpt-4")
-        assert key in tracker._baseline_p99  # noqa: SLF001
-        assert tracker._baseline_p99[key] == pytest.approx(200.0, abs=1.0)  # noqa: SLF001
+        assert key in tracker._baseline_p99
+        assert tracker._baseline_p99[key] == pytest.approx(200.0, abs=1.0)

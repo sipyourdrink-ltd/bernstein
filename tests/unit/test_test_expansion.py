@@ -5,15 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.test_expansion import (
-    NeedsCoverageRecord,
     ExpansionResult,
+    NeedsCoverageRecord,
     find_uncovered_source_files,
     write_needs_coverage,
 )
-
 
 # ---------------------------------------------------------------------------
 # find_uncovered_source_files

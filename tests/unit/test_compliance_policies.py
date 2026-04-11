@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from bernstein.core.compliance_policies import (
     ALL_POLICIES,
     ComplianceFramework,
@@ -16,7 +14,6 @@ from bernstein.core.compliance_policies import (
     evaluate_framework,
     evaluate_policy,
 )
-
 
 # ---------------------------------------------------------------------------
 # Policy library completeness
@@ -85,7 +82,7 @@ def test_failing_policy_returns_finding() -> None:
 
 def test_evaluate_policy_exception_returns_fail() -> None:
     """A check that raises should be treated as a failure, not a crash."""
-    from bernstein.core.compliance_policies import _p, ComplianceFramework, PolicySeverity
+    from bernstein.core.compliance_policies import ComplianceFramework, PolicySeverity, _p
 
     bad = _p(
         "test-boom",

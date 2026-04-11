@@ -18,10 +18,6 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 # ---------------------------------------------------------------------------
 # Component detection
@@ -171,7 +167,7 @@ def _fetch_tasks_from_server(server_url: str, status: str = "done") -> list[dict
         if isinstance(data, dict) and "tasks" in data:
             return data["tasks"]  # type: ignore[return-value]
         return []
-    except Exception:  # noqa: BLE001
+    except Exception:
         return []
 
 

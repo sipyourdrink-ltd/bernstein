@@ -159,7 +159,7 @@ class ProviderLatencyTracker:
             latency_ms: Observed response latency in milliseconds.
 
         Returns:
-            :class:`DegradationAlert` if current p99 has degraded ≥ 2× baseline,
+            :class:`DegradationAlert` if current p99 has degraded ≥ 2x baseline,
             ``None`` otherwise.
         """
         if latency_ms < 0:
@@ -203,7 +203,7 @@ class ProviderLatencyTracker:
                         timestamp=time.time(),
                         message=(
                             f"{provider}/{model} latency degraded: "
-                            f"p99={current_p99:.0f}ms is {ratio:.1f}× "
+                            f"p99={current_p99:.0f}ms is {ratio:.1f}x "
                             f"baseline={baseline:.0f}ms"
                         ),
                     )
@@ -400,7 +400,7 @@ def get_tracker(metrics_dir: Path | None = None) -> ProviderLatencyTracker:
     Returns:
         Singleton :class:`ProviderLatencyTracker` instance.
     """
-    global _tracker_instance  # noqa: PLW0603
+    global _tracker_instance
     with _tracker_lock:
         if _tracker_instance is None:
             _tracker_instance = ProviderLatencyTracker(metrics_dir)

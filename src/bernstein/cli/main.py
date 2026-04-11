@@ -51,7 +51,6 @@ from bernstein.cli.audit_cmd import audit_group
 from bernstein.cli.auth_cmd import auth_group, auth_login
 from bernstein.cli.cache_cmd import cache_group
 from bernstein.cli.changelog_cmd import changelog_cmd
-from bernstein.cli.run_changelog_cmd import run_changelog_cmd
 from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
@@ -87,6 +86,7 @@ from bernstein.cli.profile_cmd import profile_cmd
 from bernstein.cli.prompts_cmd import prompts_group
 from bernstein.cli.quickstart_cmd import quickstart_cmd
 from bernstein.cli.report_cmd import report_cmd
+from bernstein.cli.run_changelog_cmd import run_changelog_cmd
 from bernstein.cli.self_update_cmd import self_update_cmd
 from bernstein.cli.slo_cmd import slo_cmd
 from bernstein.cli.task_cmd import (
@@ -141,7 +141,6 @@ __all__ = [
     "cache_group",
     "cancel",
     "changelog_cmd",
-    "run_changelog_cmd",
     "chaos_group",
     "checkpoint_cmd",
     "cleanup_cmd",
@@ -188,6 +187,7 @@ __all__ = [
     "retro",
     "return_claimed_to_open",
     "review_cmd",
+    "run_changelog_cmd",
     "save_session_on_stop",
     "server_get",
     "server_post",

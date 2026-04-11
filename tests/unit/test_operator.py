@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -40,7 +40,7 @@ class TestJobName:
 
 class TestPlanReconciler:
     def test_validates_empty_stages(self) -> None:
-        from bernstein.core.operator import PlanReconciler, OperatorConfig
+        from bernstein.core.operator import OperatorConfig, PlanReconciler
 
         mock_api = MagicMock()
         reconciler = PlanReconciler(mock_api, OperatorConfig())
@@ -58,7 +58,7 @@ class TestPlanReconciler:
         assert any("at least one stage" in e for e in status["validationErrors"])
 
     def test_validates_missing_steps(self) -> None:
-        from bernstein.core.operator import PlanReconciler, OperatorConfig
+        from bernstein.core.operator import OperatorConfig, PlanReconciler
 
         mock_api = MagicMock()
         reconciler = PlanReconciler(mock_api, OperatorConfig())
@@ -74,7 +74,7 @@ class TestPlanReconciler:
         assert status["phase"] == "Failed"
 
     def test_validates_unknown_dependency(self) -> None:
-        from bernstein.core.operator import PlanReconciler, OperatorConfig
+        from bernstein.core.operator import OperatorConfig, PlanReconciler
 
         mock_api = MagicMock()
         reconciler = PlanReconciler(mock_api, OperatorConfig())
@@ -99,7 +99,7 @@ class TestPlanReconciler:
         assert any("nonexistent" in e for e in status["validationErrors"])
 
     def test_valid_plan_succeeds(self) -> None:
-        from bernstein.core.operator import PlanReconciler, OperatorConfig
+        from bernstein.core.operator import OperatorConfig, PlanReconciler
 
         mock_api = MagicMock()
         reconciler = PlanReconciler(mock_api, OperatorConfig())
@@ -134,7 +134,7 @@ class TestPlanReconciler:
 
 class TestRunReconciler:
     def _make_reconciler(self) -> tuple:
-        from bernstein.core.operator import RunReconciler, OperatorConfig
+        from bernstein.core.operator import OperatorConfig, RunReconciler
 
         crd_api = MagicMock()
         batch_api = MagicMock()

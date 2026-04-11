@@ -1,8 +1,9 @@
-﻿"""Tests for bernstein.core.test_data_gen."""
+"""Tests for bernstein.core.test_data_gen."""
 
 from __future__ import annotations
 
-import random
+import functools
+import operator
 
 import pytest
 
@@ -127,7 +128,9 @@ class TestGeneratePlan:
             for tid in stage["task_ids"]:
                 for dep in tasks_by_id[tid]["dependencies"]:
                     # Dependencies must be from an earlier stage
-                    assert dep in sum((s["task_ids"] for s in plan["stages"][: stage["stage_id"] - 1]), [])
+                    assert dep in functools.reduce(
+                        operator.iadd, (s["task_ids"] for s in plan["stages"][: stage["stage_id"] - 1]), []
+                    )
 
     def test_all_task_ids_from_stages(self) -> None:
         plan = generate_plan(stages=4, tasks_per_stage=3)
@@ -167,6 +170,7 @@ class TestGenerateCompletionSignal:
 
     def test_completed_at_is_iso_format(self) -> None:
         import re
+
         task = generate_task()
         signal = generate_completion_signal(task)
         # ISO 8601 with timezone
@@ -182,10 +186,10 @@ class TestFrozenDataclasses:
             has_dependencies=False,
             quality_gates=("tests_pass",),
         )
-        with pytest.raises(Exception):  # frozen dataclass
+        with pytest.raises(AttributeError):  # frozen dataclass
             template.role = "reviewer"  # type: ignore[assignment]
 
     def test_generated_task_immutable(self) -> None:
         task = generate_task()
-        with pytest.raises(Exception):  # frozen dataclass
+        with pytest.raises(AttributeError):  # frozen dataclass
             task.title = "Hacked"  # type: ignore[assignment]

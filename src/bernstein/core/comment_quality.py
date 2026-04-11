@@ -10,8 +10,6 @@ Verifies that docstrings in changed Python files are:
 
 from __future__ import annotations
 
-from __future__ import annotations
-
 import ast
 import logging
 import re
@@ -296,18 +294,12 @@ def _check_param_accuracy(
 
 def _func_has_return_value(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Return True when *node* contains at least one non-bare ``return`` statement."""
-    for child in ast.walk(node):
-        if isinstance(child, ast.Return) and child.value is not None:
-            return True
-    return False
+    return any(isinstance(child, ast.Return) and child.value is not None for child in ast.walk(node))
 
 
 def _func_raises_exceptions(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Return True when *node* contains at least one ``raise`` statement."""
-    for child in ast.walk(node):
-        if isinstance(child, ast.Raise) and child.exc is not None:
-            return True
-    return False
+    return any(isinstance(child, ast.Raise) and child.exc is not None for child in ast.walk(node))
 
 
 def _check_completeness(

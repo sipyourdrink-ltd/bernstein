@@ -8,15 +8,14 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.seccomp_profiles import (
-    AgentSeccompProfile,
     _SYSCALLS_ALWAYS_DENY,
+    AgentSeccompProfile,
     build_custom_profile,
     build_profile,
     profile_for_role,
     write_custom_profile,
     write_profile,
 )
-
 
 # ---------------------------------------------------------------------------
 # build_profile
@@ -129,9 +128,8 @@ def test_write_profile_content_is_valid_json(tmp_path: Path) -> None:
 def test_write_profile_default_dir_is_tmp(monkeypatch: pytest.MonkeyPatch) -> None:
     import tempfile
 
-    captured: list[Path] = []
 
-    original = write_profile.__wrapped__ if hasattr(write_profile, "__wrapped__") else write_profile
+    write_profile.__wrapped__ if hasattr(write_profile, "__wrapped__") else write_profile
 
     # Check that passing None dest_dir doesn't raise and file ends up somewhere sensible
     out = write_profile(AgentSeccompProfile.STRICT, dest_dir=None)

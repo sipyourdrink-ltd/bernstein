@@ -24,6 +24,7 @@ _TIMED_OUT_PREFIX = "Timed out after "
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from bernstein.core.comment_quality import DocstyleKind
     from bernstein.core.gate_plugins import GatePluginRegistry
     from bernstein.core.models import Task
     from bernstein.core.quality_gates import QualityGatesConfig
@@ -753,7 +754,8 @@ class GateRunner:
         augments with AST-based cross-codebase caller analysis via
         :mod:`bernstein.core.dead_code_detector`.
         """
-        from bernstein.core import dead_code_detector, quality_gates as qg
+        from bernstein.core import dead_code_detector
+        from bernstein.core import quality_gates as qg
 
         python_files = self._python_files(changed_files)
         if not python_files:
@@ -817,7 +819,7 @@ class GateRunner:
 
         full_detail = "\n".join(detail_parts) or vulture_detail
         lost_caller_issues = [i for i in report.issues if i.kind == "lost_caller"]
-        has_breaking = bool(lost_caller_issues) or (not ok and not vulture_detail.startswith("Command error:") is False)
+        has_breaking = bool(lost_caller_issues) or (not ok and vulture_detail.startswith("Command error:") is not False)
 
         status: GateStatus = "fail" if (step.required or lost_caller_issues) else "warn"
         return GateResult(
@@ -848,7 +850,6 @@ class GateRunner:
         :mod:`bernstein.core.comment_quality`.
         """
         from bernstein.core import comment_quality
-        from bernstein.core.comment_quality import DocstyleKind
 
         python_files = self._python_files(changed_files)
         if not python_files:

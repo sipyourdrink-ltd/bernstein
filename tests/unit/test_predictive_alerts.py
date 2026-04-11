@@ -8,7 +8,6 @@ import pytest
 
 from bernstein.core.predictive_alerts import (
     AlertKind,
-    AlertSeverity,
     PredictiveAlertEngine,
     _ols,
     forecast_budget_exhaustion,

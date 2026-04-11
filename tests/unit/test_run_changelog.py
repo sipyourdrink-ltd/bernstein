@@ -5,9 +5,6 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from bernstein.core.run_changelog import (
     RunChangelog,
@@ -21,7 +18,6 @@ from bernstein.core.run_changelog import (
     format_markdown,
     generate_run_changelog,
 )
-
 
 # ---------------------------------------------------------------------------
 # Component detection

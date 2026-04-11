@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
-
-import pytest
 
 from bernstein.core.comment_quality import (
     CommentQualityReport,
@@ -21,7 +20,6 @@ from bernstein.core.comment_quality import (
     analyse,
     analyse_file,
 )
-import ast
 
 
 def _func_node(source: str) -> ast.FunctionDef | ast.AsyncFunctionDef:

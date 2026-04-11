@@ -13,7 +13,10 @@ import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -256,9 +259,8 @@ def _check_unused_imports(source: str, rel_path: str) -> list[DeadCodeIssue]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
             used_names.add(node.id)
-        elif isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name):
-                used_names.add(node.value.id)
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            used_names.add(node.value.id)
 
     issues: list[DeadCodeIssue] = []
     for name, lineno in imported_names.items():

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from bernstein.core.compression_models import CompressionMetrics, CompressionResult
 
 if TYPE_CHECKING:
+    from bernstein.core.embedding_scorer import EmbeddingScorer
     from bernstein.core.models import Task
 
 logger = logging.getLogger(__name__)
@@ -457,7 +458,6 @@ class ContextCompressor:
         embedding_matches: set[str] = set()
         if self.embedding_scorer is not None:
             try:
-                from bernstein.core.embedding_scorer import EmbeddingScorer
 
                 scorer: EmbeddingScorer = self.embedding_scorer  # type: ignore[assignment]
                 scored = scorer.score_for_tasks(tasks, top_k=max_files)

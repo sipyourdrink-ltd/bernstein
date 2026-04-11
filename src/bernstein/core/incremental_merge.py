@@ -35,17 +35,18 @@ avoid re-applying already-merged changes.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bernstein.core.git_basic import run_git
 
 if TYPE_CHECKING:
+    from pathlib import Path
     pass
 
 logger = logging.getLogger(__name__)
@@ -162,10 +163,8 @@ def _save_state(runtime_dir: Path, state: IncrementalMergeState) -> None:
         tmp_path.replace(path)
     except Exception as exc:
         logger.warning("Failed to save incremental merge state for %s: %s", state.session_id, exc)
-        try:
+        with contextlib.suppress(Exception):
             tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def get_incremental_merge_state(runtime_dir: Path, session_id: str) -> IncrementalMergeState:
@@ -215,7 +214,7 @@ def _files_committed_in_branch(workdir: Path, branch: str, files: list[str]) -> 
     """
     if not files:
         return set()
-    result = run_git(["ls-tree", "--name-only", "-r", branch, "--"] + files, workdir)
+    result = run_git(["ls-tree", "--name-only", "-r", branch, "--", *files], workdir)
     if not result.ok:
         logger.debug("ls-tree failed for branch %s: %s", branch, result.stderr.strip())
         return set()
@@ -237,7 +236,7 @@ def _checkout_files_from_branch(workdir: Path, branch: str, files: list[str]) ->
     Returns:
         List of files that could not be checked out.
     """
-    result = run_git(["checkout", branch, "--"] + files, workdir)
+    result = run_git(["checkout", branch, "--", *files], workdir)
     if result.ok:
         return []
     # On failure, report all requested files as failed
@@ -363,7 +362,7 @@ def incremental_merge_files(
                 )
 
             # Stage the merged files
-            run_git(["add", "--"] + merged, workdir)
+            run_git(["add", "--", *merged], workdir)
 
             # Build commit message
             commit_msg = message or (
