@@ -46,6 +46,7 @@ VALID_GATE_NAMES = frozenset(
         "coverage_delta",
         "complexity_check",
         "dead_code",
+        "comment_quality",
         "import_cycle",
         "merge_conflict",
         "benchmark",
@@ -211,6 +212,8 @@ def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]
         pipeline.append(GatePipelineStep(name="complexity_check", required=True, condition="python_changed"))
     if config.dead_code_check:
         pipeline.append(GatePipelineStep(name="dead_code", required=False, condition="python_changed"))
+    if config.comment_quality_check:
+        pipeline.append(GatePipelineStep(name="comment_quality", required=False, condition="python_changed"))
     if config.import_cycle_check:
         pipeline.append(GatePipelineStep(name="import_cycle", required=True, condition="python_changed"))
     if config.coverage_delta:
@@ -523,6 +526,9 @@ class GateRunner:
         if step.name == "dead_code":
             return await asyncio.to_thread(self._run_dead_code_gate_sync, step, run_dir, changed_files)
 
+        if step.name == "comment_quality":
+            return await asyncio.to_thread(self._run_comment_quality_gate_sync, step, run_dir, changed_files)
+
         if step.name == "import_cycle":
             return await asyncio.to_thread(self._run_import_cycle_gate_sync, step, run_dir, changed_files)
 
@@ -741,16 +747,22 @@ class GateRunner:
         run_dir: Path,
         changed_files: list[str],
     ) -> GateResult:
-        """Run the dead-code gate via vulture-compatible output."""
-        from bernstein.core import quality_gates as qg
+        """Run the dead-code gate.
+
+        Runs vulture (or a custom command) on changed Python files, then
+        augments with AST-based cross-codebase caller analysis via
+        :mod:`bernstein.core.dead_code_detector`.
+        """
+        from bernstein.core import dead_code_detector, quality_gates as qg
 
         python_files = self._python_files(changed_files)
         if not python_files:
             return self._skipped(step, _NO_PYTHON_FILES)
 
+        # --- vulture pass ---
         command = self._dead_code_command(step, python_files)
-        ok, detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
-        if detail.startswith(_TIMED_OUT_PREFIX):
+        ok, vulture_detail = qg.run_command_sync(command, run_dir, self._config.timeout_s)
+        if vulture_detail.startswith(_TIMED_OUT_PREFIX):
             return GateResult(
                 name=step.name,
                 status="timeout",
@@ -758,10 +770,34 @@ class GateRunner:
                 blocked=False,
                 cached=False,
                 duration_ms=0,
-                details=detail,
+                details=vulture_detail,
                 metadata={"command": command},
             )
-        if ok and detail == "(no output)":
+
+        # --- AST + cross-codebase caller analysis ---
+        try:
+            report = dead_code_detector.analyse(
+                python_files,
+                run_dir,
+                check_unused_imports=self._config.dead_code_check_unused_imports,
+                check_unreachable=self._config.dead_code_check_unreachable,
+                check_lost_callers=self._config.dead_code_check_lost_callers,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("dead_code_detector.analyse failed: %s", exc)
+            report = dead_code_detector.DeadCodeReport()
+
+        # Combine vulture output and AST findings
+        ast_details = ""
+        if report.issues:
+            ast_details = "\n".join(
+                f"  [{i.kind}] {i.file}: {i.detail}" for i in report.issues
+            )
+
+        vulture_ok = ok and vulture_detail == "(no output)"
+        ast_ok = report.passed
+
+        if vulture_ok and ast_ok:
             return GateResult(
                 name=step.name,
                 status="pass",
@@ -769,10 +805,67 @@ class GateRunner:
                 blocked=False,
                 cached=False,
                 duration_ms=0,
-                details="no dead code detected",
-                metadata={"command": command},
+                details=f"No dead code detected. {report.summary()}",
+                metadata={"command": command, "ast_issues": 0},
             )
-        if not ok and detail.startswith("Command error:"):
+
+        detail_parts: list[str] = []
+        if not vulture_ok and vulture_detail not in ("(no output)", ""):
+            detail_parts.append(f"vulture:\n{vulture_detail}")
+        if ast_details:
+            detail_parts.append(f"AST analysis:\n{ast_details}")
+
+        full_detail = "\n".join(detail_parts) or vulture_detail
+        lost_caller_issues = [i for i in report.issues if i.kind == "lost_caller"]
+        has_breaking = bool(lost_caller_issues) or (not ok and not vulture_detail.startswith("Command error:") is False)
+
+        status: GateStatus = "fail" if (step.required or lost_caller_issues) else "warn"
+        return GateResult(
+            name=step.name,
+            status=status,
+            required=step.required,
+            blocked=step.required or bool(lost_caller_issues),
+            cached=False,
+            duration_ms=0,
+            details=full_detail,
+            metadata={
+                "command": command,
+                "ast_issues": len(report.issues),
+                "lost_callers": len(lost_caller_issues),
+                "has_breaking": has_breaking,
+            },
+        )
+
+    def _run_comment_quality_gate_sync(
+        self,
+        step: GatePipelineStep,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Run the comment-quality gate on changed Python files.
+
+        Checks docstring accuracy, completeness, redundancy, and style via
+        :mod:`bernstein.core.comment_quality`.
+        """
+        from bernstein.core import comment_quality
+        from bernstein.core.comment_quality import DocstyleKind
+
+        python_files = self._python_files(changed_files)
+        if not python_files:
+            return self._skipped(step, _NO_PYTHON_FILES)
+
+        raw_style = self._config.comment_quality_docstyle
+        valid_styles = ("google", "numpy", "rest", "auto")
+        docstyle: DocstyleKind = raw_style if raw_style in valid_styles else "auto"  # type: ignore[assignment]
+
+        try:
+            report = comment_quality.analyse(
+                python_files,
+                run_dir,
+                docstyle=docstyle,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("comment_quality.analyse failed: %s", exc)
             return GateResult(
                 name=step.name,
                 status="fail",
@@ -780,19 +873,45 @@ class GateRunner:
                 blocked=step.required,
                 cached=False,
                 duration_ms=0,
-                details=detail,
-                metadata={"command": command},
+                details=f"Comment quality gate error: {exc}",
+                metadata={},
             )
-        status: GateStatus = "fail" if step.required else "warn"
+
+        if report.passed and not report.issues:
+            return GateResult(
+                name=step.name,
+                status="pass",
+                required=step.required,
+                blocked=False,
+                cached=False,
+                duration_ms=0,
+                details=report.summary(),
+                metadata={
+                    "checked_functions": report.checked_functions,
+                    "issue_count": 0,
+                },
+            )
+
+        issue_lines = "\n".join(
+            f"  [{i.kind}] {i.file}:{i.line} {i.symbol}: {i.detail}"
+            for i in report.issues
+        )
+        status: GateStatus = "fail" if not report.passed else "warn"
         return GateResult(
             name=step.name,
             status=status,
             required=step.required,
-            blocked=step.required,
+            blocked=step.required and not report.passed,
             cached=False,
             duration_ms=0,
-            details=detail,
-            metadata={"command": command},
+            details=f"{report.summary()}\n{issue_lines}",
+            metadata={
+                "checked_functions": report.checked_functions,
+                "issue_count": len(report.issues),
+                "blocking_issues": sum(
+                    1 for i in report.issues if i.kind in ("inaccurate", "incomplete")
+                ),
+            },
         )
 
     def _run_import_cycle_gate_sync(
@@ -1747,6 +1866,21 @@ class GateRunner:
             "dead_code_check": self._config.dead_code_check if step.name == "dead_code" else None,
             "dead_code_command": self._config.dead_code_command if step.name == "dead_code" else None,
             "dead_code_min_confidence": self._config.dead_code_min_confidence if step.name == "dead_code" else None,
+            "dead_code_check_lost_callers": (
+                self._config.dead_code_check_lost_callers if step.name == "dead_code" else None
+            ),
+            "dead_code_check_unused_imports": (
+                self._config.dead_code_check_unused_imports if step.name == "dead_code" else None
+            ),
+            "dead_code_check_unreachable": (
+                self._config.dead_code_check_unreachable if step.name == "dead_code" else None
+            ),
+            "comment_quality_check": (
+                self._config.comment_quality_check if step.name == "comment_quality" else None
+            ),
+            "comment_quality_docstyle": (
+                self._config.comment_quality_docstyle if step.name == "comment_quality" else None
+            ),
             "import_cycle_check": self._config.import_cycle_check if step.name == "import_cycle" else None,
             "import_cycle_command": self._config.import_cycle_command if step.name == "import_cycle" else None,
             "merge_conflict_check": self._config.merge_conflict_check if step.name == "merge_conflict" else None,
