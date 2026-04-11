@@ -868,3 +868,238 @@ def get_costs_by_tag(request: Request, tag_key: str | None = None) -> JSONRespon
     result: dict[str, dict[str, float]] = {k: {v: round(c, 6) for v, c in vals.items()} for k, vals in by_tag.items()}
 
     return JSONResponse(content={"by_tag": result})
+
+
+@router.get("/costs/token-breakdown")
+def get_token_breakdown(request: Request, session_id: str | None = None) -> JSONResponse:
+    """Per-agent session token consumption breakdown.
+
+    For each agent session shows where the context budget was spent:
+    system prompt (Bernstein overhead), context files, task description,
+    tool call results accumulated at runtime, and assistant output.
+
+    Identifies optimization opportunities — e.g. if 60% of tokens are
+    context files the agent never used.
+
+    Args:
+        request: FastAPI request.
+        session_id: If provided, return breakdown for a single session only.
+
+    Returns:
+        JSON with ``sessions`` list and aggregate ``summary``.
+    """
+    from bernstein.core.agent_session_token_breakdown import load_all_session_breakdowns, load_session_breakdown
+
+    sdd_dir = _get_sdd_dir(request)
+
+    if session_id is not None:
+        # Single session lookup: find usage in cost files first
+        from bernstein.core.cost_tracker import CostTracker
+
+        costs_dir = sdd_dir / "runtime" / "costs"
+        breakdown = None
+        if costs_dir.exists():
+            cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+            for cost_file in cost_files:
+                tracker = CostTracker.load(sdd_dir, cost_file.stem)
+                if tracker is None:
+                    continue
+                for usage in tracker.usages:
+                    if usage.agent_id == session_id:
+                        breakdown = load_session_breakdown(
+                            sdd_dir=sdd_dir,
+                            session_id=session_id,
+                            actual_input_tokens=usage.input_tokens,
+                            actual_output_tokens=usage.output_tokens,
+                            cache_read_tokens=usage.cache_read_tokens,
+                            cache_write_tokens=usage.cache_write_tokens,
+                            model=usage.model,
+                            cost_usd=usage.cost_usd,
+                            task_id=usage.task_id,
+                        )
+                        break
+                if breakdown is not None:
+                    break
+        if breakdown is None:
+            # Build from prompt analysis alone (no billing data)
+            breakdown = load_session_breakdown(sdd_dir=sdd_dir, session_id=session_id)
+        return JSONResponse(content={"sessions": [breakdown.to_dict()], "summary": None})
+
+    breakdowns = load_all_session_breakdowns(sdd_dir)
+
+    # Aggregate summary
+    total_sessions = len(breakdowns)
+    total_cost = sum(b.cost_usd for b in breakdowns)
+    total_input = sum(b.actual_input_tokens for b in breakdowns)
+    total_output = sum(b.output_tokens for b in breakdowns)
+    total_system = sum(b.system_prompt_tokens for b in breakdowns)
+    total_context = sum(b.context_tokens for b in breakdowns)
+    total_user = sum(b.user_prompt_tokens for b in breakdowns)
+    total_tools = sum(b.tool_result_tokens for b in breakdowns)
+    grand_total = total_input + total_output
+
+    def _pct(n: int) -> float:
+        return round(n / grand_total * 100, 1) if grand_total > 0 else 0.0
+
+    summary: dict[str, Any] = {
+        "total_sessions": total_sessions,
+        "total_cost_usd": round(total_cost, 6),
+        "total_tokens": grand_total,
+        "total_input_tokens": total_input,
+        "total_output_tokens": total_output,
+        "aggregate_breakdown": {
+            "system_prompt_tokens": total_system,
+            "system_prompt_pct": _pct(total_system),
+            "context_tokens": total_context,
+            "context_pct": _pct(total_context),
+            "user_prompt_tokens": total_user,
+            "user_prompt_pct": _pct(total_user),
+            "tool_result_tokens": total_tools,
+            "tool_result_pct": _pct(total_tools),
+            "output_tokens": total_output,
+            "output_pct": _pct(total_output),
+        },
+    }
+
+    return JSONResponse(
+        content={
+            "sessions": [b.to_dict() for b in breakdowns],
+            "summary": summary,
+        }
+    )
+
+
+@router.get("/costs/efficiency")
+def get_cost_efficiency(request: Request) -> JSONResponse:
+    """Real-time cost-per-line-of-code efficiency metric.
+
+    Shows cost efficiency as the run progresses:
+    - **current**: efficiency of the most recently completed task
+    - **run_average**: efficiency across all completed tasks in this run
+    - **historical_average**: efficiency across all tracked runs
+
+    Helps identify unusually expensive runs.
+
+    Returns:
+        JSON with ``current``, ``run_average``, ``historical_average``, and
+        ``message`` fields.
+    """
+    from bernstein.core.cost_tracker import CostTracker
+
+    sdd_dir = _get_sdd_dir(request)
+    costs_dir = sdd_dir / "runtime" / "costs"
+
+    empty: dict[str, Any] = {
+        "current": None,
+        "run_average": None,
+        "historical_average": None,
+        "message": "No cost data available yet.",
+    }
+    if not costs_dir.exists():
+        return JSONResponse(content=empty)
+
+    cost_files = sorted(costs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not cost_files:
+        return JSONResponse(content=empty)
+
+    # Load lines_changed from task progress data
+    lines_dir = sdd_dir / "runtime" / "lines_changed"
+
+    def _read_lines_for_agent(agent_id: str) -> int:
+        """Read persisted lines-changed count for an agent session."""
+        if not lines_dir.exists():
+            return 0
+        path = lines_dir / f"{agent_id}.json"
+        if not path.exists():
+            return 0
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return int(data.get("lines_changed", 0))
+        except (OSError, json.JSONDecodeError, ValueError):
+            return 0
+
+    # Current run
+    current_tracker = CostTracker.load(sdd_dir, cost_files[0].stem)
+    run_cost = 0.0
+    run_lines = 0
+    current_cost: float | None = None
+    current_lines: int | None = None
+    current_cost_per_line: float | None = None
+
+    if current_tracker is not None:
+        run_cost = current_tracker.spent_usd
+        for u in current_tracker.usages:
+            lines = _read_lines_for_agent(u.agent_id)
+            run_lines += lines
+
+        # Most recent usage entry = "current"
+        if current_tracker.usages:
+            last = current_tracker.usages[-1]
+            current_cost = round(last.cost_usd, 6)
+            current_lines = _read_lines_for_agent(last.agent_id)
+            if current_lines > 0 and current_cost is not None:
+                current_cost_per_line = round(current_cost / current_lines, 6)
+
+    run_cost_per_line: float | None = None
+    if run_lines > 0:
+        run_cost_per_line = round(run_cost / run_lines, 6)
+
+    # Historical (all runs)
+    hist_cost = 0.0
+    hist_lines = 0
+    for cost_file in cost_files:
+        tracker = CostTracker.load(sdd_dir, cost_file.stem)
+        if tracker is None:
+            continue
+        hist_cost += tracker.spent_usd
+        for u in tracker.usages:
+            hist_lines += _read_lines_for_agent(u.agent_id)
+
+    hist_cost_per_line: float | None = None
+    if hist_lines > 0:
+        hist_cost_per_line = round(hist_cost / hist_lines, 6)
+
+    # Build human-readable message
+    parts: list[str] = []
+    if current_cost_per_line is not None:
+        parts.append(f"Current efficiency: ${current_cost_per_line:.3f}/line")
+    if run_cost_per_line is not None:
+        parts.append(f"Run average: ${run_cost_per_line:.3f}/line")
+    if hist_cost_per_line is not None:
+        parts.append(f"Historical average: ${hist_cost_per_line:.3f}/line")
+    message = ". ".join(parts) + "." if parts else "Insufficient data — no lines_changed recorded yet."
+
+    current_data: dict[str, Any] | None = None
+    if current_tracker is not None and current_tracker.usages:
+        last = current_tracker.usages[-1]
+        current_data = {
+            "agent_id": last.agent_id,
+            "task_id": last.task_id,
+            "cost_usd": round(last.cost_usd, 6),
+            "lines_changed": current_lines or 0,
+            "cost_per_line": current_cost_per_line,
+        }
+
+    run_data: dict[str, Any] | None = None
+    if current_tracker is not None:
+        run_data = {
+            "run_id": current_tracker.run_id,
+            "cost_usd": round(run_cost, 6),
+            "lines_changed": run_lines,
+            "cost_per_line": run_cost_per_line,
+        }
+
+    hist_data: dict[str, Any] | None = {
+        "cost_usd": round(hist_cost, 6),
+        "lines_changed": hist_lines,
+        "cost_per_line": hist_cost_per_line,
+    }
+
+    return JSONResponse(
+        content={
+            "current": current_data,
+            "run_average": run_data,
+            "historical_average": hist_data,
+            "message": message,
+        }
+    )
