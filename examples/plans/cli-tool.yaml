@@ -1,27 +1,174 @@
-# examples/plans/cli-tool.yaml
+# Bernstein Plan — CLI Tool with Click
+#
+# A three-stage plan that builds a Python CLI tool:
+#   1. Bootstrap: project skeleton, Click dependency, config management
+#   2. Commands:  core business logic as Click commands with rich output
+#   3. Quality:   integration tests, docs, and packaging
+#
+# Run:
+#   bernstein run examples/plans/cli-tool.yaml
+
 name: "CLI Tool"
-description: "A robust CLI tool with tests and documentation"
+description: >
+  Build a robust Python CLI tool using Click with configuration management,
+  rich terminal output, comprehensive integration tests, and shell completion.
+
+cli: auto
+budget: "$12"
+max_agents: 3
+constraints:
+  - "Python 3.12+"
+  - "Click for CLI framework"
+  - "Rich for terminal output"
+  - "YAML for configuration files"
+  - "pytest for tests"
 
 stages:
+  # ── Stage 1: Bootstrap ──
   - name: "Bootstrap"
+    description: "Project skeleton, dependencies, and configuration layer"
     steps:
-      - goal: "Initialize project with pyproject.toml and click dependency"
+      - title: "Initialize project with pyproject.toml and dependencies"
         role: architect
-      - goal: "Basic CLI skeleton with help text"
-        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Create pyproject.toml with hatchling build backend. Add dependencies:
+          click>=8.1, rich>=13.0, pyyaml>=6.0. Create src/<tool_name>/__init__.py
+          with __version__. Add a [project.scripts] entry point for the CLI.
+        files:
+          - "pyproject.toml"
+          - "src/tool/__init__.py"
+        completion_signals:
+          - type: path_exists
+            path: "pyproject.toml"
+          - type: file_contains
+            path: "pyproject.toml"
+            contains: "click"
 
+      - title: "Build CLI skeleton with Click groups and help text"
+        role: backend
+        scope: small
+        complexity: low
+        description: >
+          Create src/tool/cli.py with a top-level Click group. Add --verbose
+          and --config flags as context settings. Implement a "version" command
+          that prints the current version. Wire up Rich console for styled output.
+          Add shell completion support via Click's built-in completion.
+        files:
+          - "src/tool/cli.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/tool/cli.py"
+          - type: file_contains
+            path: "src/tool/cli.py"
+            contains: "@click.group"
+
+      - title: "Add configuration management"
+        role: backend
+        scope: small
+        complexity: medium
+        description: >
+          Create src/tool/config.py that loads config from (in priority order):
+          CLI flags > environment variables > ~/.config/tool/config.yaml > defaults.
+          Use a dataclass for the config schema. Implement load_config() that
+          merges all sources and validates required fields. Create a default
+          config template at src/tool/default_config.yaml.
+        files:
+          - "src/tool/config.py"
+          - "src/tool/default_config.yaml"
+        completion_signals:
+          - type: path_exists
+            path: "src/tool/config.py"
+          - type: file_contains
+            path: "src/tool/config.py"
+            contains: "def load_config"
+
+  # ── Stage 2: Commands ──
   - name: "Commands"
+    description: "Core business logic as Click commands with rich output"
     depends_on: ["Bootstrap"]
     steps:
-      - goal: "Implement core business logic as click commands"
+      - title: "Implement core business commands"
         role: backend
-      - goal: "Add configuration management (YAML/JSON)"
-        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Create src/tool/commands/ package with at least three commands:
+          "init" (initialize a new project/workspace), "run" (execute the
+          main operation), and "status" (show current state). Each command
+          should use Rich tables/panels for output, handle errors with
+          click.echo(err, err=True) and sys.exit(1), and respect the
+          --verbose flag for debug output.
+        files:
+          - "src/tool/commands/__init__.py"
+          - "src/tool/commands/init.py"
+          - "src/tool/commands/run.py"
+          - "src/tool/commands/status.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/tool/commands/run.py"
+          - type: file_contains
+            path: "src/tool/cli.py"
+            contains: "cli.add_command"
 
+      - title: "Add file I/O and progress reporting"
+        role: backend
+        scope: medium
+        complexity: medium
+        description: >
+          Implement file operations used by commands (read/write project state,
+          handle lock files for concurrent access). Add Rich progress bars for
+          long-running operations. Implement a JSON/YAML output mode (--json flag)
+          for machine-readable output alongside the human-readable Rich output.
+        files:
+          - "src/tool/io.py"
+          - "src/tool/progress.py"
+        completion_signals:
+          - type: path_exists
+            path: "src/tool/io.py"
+
+  # ── Stage 3: Quality ──
   - name: "Quality"
+    description: "Tests, documentation, and distribution packaging"
     depends_on: ["Commands"]
     steps:
-      - goal: "Integration tests for CLI interface using CliRunner"
+      - title: "Write integration tests using Click CliRunner"
         role: qa
-      - goal: "Generate man pages or CLI documentation"
+        scope: medium
+        complexity: medium
+        description: >
+          Create tests/conftest.py with fixtures for temp directories and
+          config files. Create tests/test_cli.py testing: help text renders,
+          version command, init creates expected files, run succeeds on valid
+          input, run fails gracefully on invalid input, --json flag produces
+          valid JSON, --config flag overrides defaults. Use Click's CliRunner
+          for all tests.
+        files:
+          - "tests/conftest.py"
+          - "tests/test_cli.py"
+        completion_signals:
+          - type: path_exists
+            path: "tests/test_cli.py"
+          - type: test_passes
+            command: "pytest tests/ -x -q"
+
+      - title: "Generate CLI documentation"
         role: docs
+        scope: small
+        complexity: low
+        description: >
+          Create README.md with: project description, installation instructions
+          (pip install), usage examples for each command, configuration file
+          reference, and shell completion setup instructions. Auto-generate
+          a command reference by invoking each command with --help and capturing
+          output into docs/commands.md.
+        files:
+          - "README.md"
+          - "docs/commands.md"
+        completion_signals:
+          - type: path_exists
+            path: "README.md"
+          - type: file_contains
+            path: "README.md"
+            contains: "## Installation"
