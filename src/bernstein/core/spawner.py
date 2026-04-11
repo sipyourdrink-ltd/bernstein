@@ -2256,9 +2256,7 @@ class AgentSpawner:
                     # retries with rebase, but concurrent callers can
                     # still collide; the lock ensures only one push is
                     # in-flight per repository at a time.
-                    push_lock = self._push_locks.setdefault(
-                        worktree_root, threading.Lock()
-                    )
+                    push_lock = self._push_locks.setdefault(worktree_root, threading.Lock())
                     with push_lock:
                         push_result = safe_push(worktree_root, "main")
                     if push_result.ok:
