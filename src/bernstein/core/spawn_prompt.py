@@ -377,7 +377,7 @@ def _render_signal_check(session_id: str) -> str:
         "```\n"
         "If **SHUTDOWN** exists:\n"
         "```bash\n"
-        'git add -A && git commit -m "[WIP] <task title>" 2>/dev/null || true\n'
+        'git add -u && git commit -m "[WIP] <task title>" 2>/dev/null || true\n'
         "exit 0\n"
         "```\n"
         "If **WAKEUP** exists: read it, address the concern, then continue working.\n"

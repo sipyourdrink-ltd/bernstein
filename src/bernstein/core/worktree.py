@@ -20,6 +20,7 @@ import os
 import re as _re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -83,6 +84,86 @@ class WorktreeSetupConfig:
     copy_files: tuple[str, ...] = field(default_factory=tuple)
     sparse_paths: tuple[str, ...] = field(default_factory=tuple)
     setup_command: str | None = None
+
+
+_STALE_LOCK_AGE_S = 300  # 5 minutes — locks older than this are considered stale
+
+
+def _check_git_health(repo_root: Path) -> list[str]:
+    """Pre-flight health check for the git repository before worktree creation.
+
+    Detects and auto-repairs common corruption left by crashed agents:
+    1. Stale ``.git/index.lock`` — deleted if older than 5 minutes.
+    2. Stale ``.git/worktrees/*/locked`` files — same treatment.
+    3. Invalid HEAD — verified via ``git rev-parse --verify HEAD``.
+
+    Args:
+        repo_root: Absolute path to the repository root.
+
+    Returns:
+        List of human-readable warnings for issues that were detected
+        (and, where possible, auto-repaired).  Empty list means healthy.
+    """
+    warnings: list[str] = []
+    now = time.time()
+
+    # 1. Check for stale .git/index.lock
+    index_lock = repo_root / ".git" / "index.lock"
+    if index_lock.exists():
+        try:
+            age_s = now - index_lock.stat().st_mtime
+            if age_s > _STALE_LOCK_AGE_S:
+                index_lock.unlink()
+                msg = f"Removed stale .git/index.lock (age {age_s:.0f}s). Likely left by a crashed agent."
+                logger.warning(msg)
+                warnings.append(msg)
+            else:
+                msg = f".git/index.lock exists (age {age_s:.0f}s) — another git operation may be in progress"
+                logger.info(msg)
+                warnings.append(msg)
+        except OSError as exc:
+            msg = f"Could not inspect .git/index.lock: {exc}"
+            logger.warning(msg)
+            warnings.append(msg)
+
+    # 2. Check for stale .git/worktrees/*/locked files
+    git_worktrees_dir = repo_root / ".git" / "worktrees"
+    if git_worktrees_dir.is_dir():
+        for wt_dir in git_worktrees_dir.iterdir():
+            locked_file = wt_dir / "locked"
+            if not locked_file.exists():
+                continue
+            try:
+                age_s = now - locked_file.stat().st_mtime
+                if age_s > _STALE_LOCK_AGE_S:
+                    locked_file.unlink()
+                    msg = f"Removed stale lock {locked_file} (age {age_s:.0f}s). Likely left by a crashed agent."
+                    logger.warning(msg)
+                    warnings.append(msg)
+            except OSError as exc:
+                msg = f"Could not inspect {locked_file}: {exc}"
+                logger.warning(msg)
+                warnings.append(msg)
+
+    # 3. Verify HEAD is valid
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            msg = f"git HEAD is invalid: {result.stderr.strip()}"
+            logger.error(msg)
+            warnings.append(msg)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        msg = f"Failed to verify git HEAD: {exc}"
+        logger.error(msg)
+        warnings.append(msg)
+
+    return warnings
 
 
 def _apply_sparse_checkout(worktree_path: Path, sparse_paths: Sequence[str]) -> bool:
@@ -282,6 +363,11 @@ class WorktreeManager:
             raise WorktreeError(f"Worktree path '{worktree_path}' already exists")
 
         self._base_dir.mkdir(parents=True, exist_ok=True)
+
+        # Pre-flight: detect and auto-repair stale locks / invalid HEAD
+        health_warnings = _check_git_health(self.repo_root)
+        for warning in health_warnings:
+            logger.warning("Git health pre-check: %s", warning)
 
         result = worktree_add(self.repo_root, worktree_path, branch_name)
 
@@ -512,7 +598,7 @@ def write_worktree_lock(repo_root: Path, session_id: str, pid: int) -> Path:
     payload = {
         "session_id": session_id,
         "pid": pid,
-        "created_at": __import__("time").time(),
+        "created_at": time.time(),
     }
     lock_path.write_text(json.dumps(payload), encoding="utf-8")
     return lock_path

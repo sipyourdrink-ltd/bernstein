@@ -123,10 +123,11 @@ def test_worktree_setup_config_application(repo_root: Path) -> None:
         assert target_env.is_file()
         assert target_env.read_text() == "FOO=BAR"
 
-        # Check setup command
-        mock_run.assert_called_once()
-        args, kwargs = mock_run.call_args
-        assert args[0] == ["echo", "hello"]
+        # Check setup command (subprocess.run is also called by _check_git_health
+        # for HEAD verification, so we look for the setup call specifically)
+        setup_calls = [c for c in mock_run.call_args_list if c[0][0] == ["echo", "hello"]]
+        assert len(setup_calls) == 1
+        _, kwargs = setup_calls[0]
         assert kwargs["cwd"] == worktree_path
 
 
