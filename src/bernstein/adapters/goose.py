@@ -49,6 +49,7 @@ class GooseAdapter(CLIAdapter):
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        task_scope: str = "medium",
     ) -> SpawnResult:
         """Launch a Goose agent process.
 

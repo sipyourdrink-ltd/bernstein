@@ -216,7 +216,7 @@ class TestClaudeAdapterBatchMaxTurns:
         assert self._extract_max_turns(cmd) == ClaudeCodeAdapter.BATCH_MAX_TURNS
 
     def test_normal_prompt_gets_effort_based_turns(self, tmp_path: Path) -> None:
-        """Non-batch prompts use the normal effort-based max_turns."""
+        """Non-batch prompts use the normal effort-based max_turns (scaled by scope)."""
         adapter = ClaudeCodeAdapter()
         cmd = adapter._build_command(
             self._make_config(effort="high"),
@@ -225,7 +225,8 @@ class TestClaudeAdapterBatchMaxTurns:
             batch_mode=False,
         )
         turns = self._extract_max_turns(cmd)
-        assert turns == 50  # "high" effort maps to 50 turns
+        # Default task_scope="medium" applies 1.5x multiplier: int(50 * 1.5) = 75
+        assert turns == int(50 * 1.5)
 
     def test_batch_max_turns_is_at_least_200(self) -> None:
         """BATCH_MAX_TURNS constant is ≥ 200 for adequate lifecycle coverage."""

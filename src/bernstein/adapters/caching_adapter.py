@@ -100,6 +100,7 @@ class CachingAdapter(CLIAdapter):
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        task_scope: str = "medium",
     ) -> SpawnResult:
         """Spawn agent with caching: process prompt, check response cache, then delegate.
 
@@ -180,6 +181,7 @@ class CachingAdapter(CLIAdapter):
             session_id=session_id,
             mcp_config=mcp_config,
             timeout_seconds=timeout_seconds,
+            task_scope=task_scope,
         )
 
     def name(self) -> str:

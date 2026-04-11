@@ -179,6 +179,14 @@ class ClaudeCodeAdapter(CLIAdapter):
     # decompose + spawn workers + track completion.
     BATCH_MAX_TURNS: int = 200
 
+    # Scope multipliers: large tasks get proportionally more turns so they
+    # don't die prematurely (PROACTIVE-04).
+    _SCOPE_MULTIPLIERS: ClassVar[dict[str, float]] = {
+        "small": 1.0,
+        "medium": 1.5,
+        "large": 2.0,
+    }
+
     def _build_command(
         self,
         model_config: ModelConfig,
@@ -190,6 +198,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         agents_json: dict[str, Any] | None = None,
         system_addendum: str = "",
         batch_mode: bool = False,
+        task_scope: str = "medium",
     ) -> list[str]:
         """Build the claude CLI command with effort mapping.
 
@@ -215,14 +224,15 @@ class ClaudeCodeAdapter(CLIAdapter):
                 :attr:`BATCH_MAX_TURNS` (200) so the agent has enough turns
                 to research, decompose, spawn workers, and track their
                 completion via the ``/batch`` skill.
+            task_scope: Task scope (``"small"``, ``"medium"``, or ``"large"``).
+                Scales ``max_turns`` proportionally so large tasks get enough
+                turns to finish.
         """
         model_id = _MODEL_MAP.get(model_config.model, model_config.model)
         effort = getattr(model_config, "effort", "high")
-        max_turns = (
-            self.BATCH_MAX_TURNS
-            if batch_mode
-            else {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
-        )
+        base_turns = {"max": 100, "high": 50, "medium": 30, "normal": 25, "low": 15}.get(effort, 50)
+        scope_multiplier = self._SCOPE_MULTIPLIERS.get(task_scope, 1.5)
+        max_turns = self.BATCH_MAX_TURNS if batch_mode else int(base_turns * scope_multiplier)
         effort_map = {"max": "max", "high": "high", "medium": "medium", "normal": "medium", "low": "low"}
         claude_effort = effort_map.get(effort, "high")
 
@@ -527,6 +537,7 @@ class ClaudeCodeAdapter(CLIAdapter):
         session_id: str,
         mcp_config: dict[str, Any] | None = None,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        task_scope: str = "medium",
     ) -> SpawnResult:
         log_path = workdir / ".sdd" / "runtime" / f"{session_id}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -570,6 +581,7 @@ class ClaudeCodeAdapter(CLIAdapter):
             workdir=workdir,
             agents_json=agents_json,
             batch_mode=batch_mode,
+            task_scope=task_scope,
         )
 
         # Wrap with bernstein-worker for process visibility
