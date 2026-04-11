@@ -240,6 +240,7 @@ class QualityGatesConfig:
     auto_format_python_command: str = "ruff format"
     auto_format_js_command: str = "prettier --write"
     auto_format_rust_command: str = "rustfmt"
+    test_expansion: bool = False
 
 
 @dataclass

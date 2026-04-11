@@ -54,6 +54,7 @@ VALID_GATE_NAMES = frozenset(
         "large_file",
         "integration_test_gen",
         "review_rubric",
+        "test_expansion",
     }
 )
 VALID_GATE_CONDITIONS = frozenset({"always", "python_changed", "tests_changed", "any_changed", "deps_changed"})
@@ -236,6 +237,8 @@ def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]
         pipeline.append(GatePipelineStep(name="integration_test_gen", required=True, condition="python_changed"))
     if config.review_rubric:
         pipeline.append(GatePipelineStep(name="review_rubric", required=True, condition="python_changed"))
+    if config.test_expansion:
+        pipeline.append(GatePipelineStep(name="test_expansion", required=False, condition="python_changed"))
     return pipeline
 
 
@@ -383,6 +386,11 @@ class GateRunner:
 
         if step.name == "auto_format":
             return await asyncio.to_thread(self._run_auto_format_gate_sync, step, run_dir, changed_files)
+
+        if step.name == "test_expansion":
+            return await asyncio.to_thread(
+                self._run_test_expansion_gate_sync, step, task, run_dir, changed_files
+            )
 
         if step.name == "lint":
             command = self._lint_command(step, changed_files)

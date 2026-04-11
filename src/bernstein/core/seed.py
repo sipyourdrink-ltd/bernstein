@@ -1220,6 +1220,10 @@ def parse_seed(path: Path) -> SeedConfig:
             flaky_detection=_qg_bool("flaky_detection", False),
             flaky_min_runs=_qg_int("flaky_min_runs", 5),
             flaky_threshold=float(qg_dict.get("flaky_threshold", 0.15)),
+            auto_format=_qg_bool("auto_format", False),
+            auto_format_python_command=_qg_str("auto_format_python_command", "ruff format"),
+            auto_format_js_command=_qg_str("auto_format_js_command", "prettier --write"),
+            auto_format_rust_command=_qg_str("auto_format_rust_command", "rustfmt"),
         )
 
     formal_verification_raw: object = data.get("formal_verification")
