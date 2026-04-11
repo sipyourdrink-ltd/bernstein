@@ -30,7 +30,6 @@ _PRESET_PANELS: dict[str, frozenset[str]] = {
             "task-timeline",
         }
     ),
-    "balanced": frozenset({"task-list", "task-search", "task-context", "runtime-health", "agent-log", "task-timeline"}),
     "observability": frozenset(
         {
             "task-list",
