@@ -571,9 +571,7 @@ class TestQualityGatesAutoFormatParsing:
     """Tests that auto_format fields are correctly parsed from quality_gates config."""
 
     def test_auto_format_enabled_and_default_commands(self, seed_file: Path) -> None:
-        seed_file.write_text(
-            'goal: "Test"\nquality_gates:\n  auto_format: true\n'
-        )
+        seed_file.write_text('goal: "Test"\nquality_gates:\n  auto_format: true\n')
         cfg = parse_seed(seed_file)
         assert cfg.quality_gates is not None
         assert cfg.quality_gates.auto_format is True
@@ -589,8 +587,7 @@ class TestQualityGatesAutoFormatParsing:
 
     def test_auto_format_custom_python_command(self, seed_file: Path) -> None:
         seed_file.write_text(
-            'goal: "Test"\nquality_gates:\n  auto_format: true\n'
-            '  auto_format_python_command: "uv run ruff format"\n'
+            'goal: "Test"\nquality_gates:\n  auto_format: true\n  auto_format_python_command: "uv run ruff format"\n'
         )
         cfg = parse_seed(seed_file)
         assert cfg.quality_gates is not None
@@ -598,8 +595,7 @@ class TestQualityGatesAutoFormatParsing:
 
     def test_auto_format_custom_js_command(self, seed_file: Path) -> None:
         seed_file.write_text(
-            'goal: "Test"\nquality_gates:\n  auto_format: true\n'
-            '  auto_format_js_command: "npx prettier --write"\n'
+            'goal: "Test"\nquality_gates:\n  auto_format: true\n  auto_format_js_command: "npx prettier --write"\n'
         )
         cfg = parse_seed(seed_file)
         assert cfg.quality_gates is not None
@@ -607,8 +603,7 @@ class TestQualityGatesAutoFormatParsing:
 
     def test_auto_format_custom_rust_command(self, seed_file: Path) -> None:
         seed_file.write_text(
-            'goal: "Test"\nquality_gates:\n  auto_format: true\n'
-            '  auto_format_rust_command: "cargo fmt"\n'
+            'goal: "Test"\nquality_gates:\n  auto_format: true\n  auto_format_rust_command: "cargo fmt"\n'
         )
         cfg = parse_seed(seed_file)
         assert cfg.quality_gates is not None

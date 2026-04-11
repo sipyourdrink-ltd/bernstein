@@ -100,9 +100,7 @@ SOLUTION_PACK_CONFIGS: dict[SolutionPack, dict[str, Any]] = {
     },
 }
 
-_GITHUB_PUBLIC_RE = re.compile(
-    r"^https://github\.com/[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+/?$"
-)
+_GITHUB_PUBLIC_RE = re.compile(r"^https://github\.com/[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+/?$")
 
 
 @dataclass

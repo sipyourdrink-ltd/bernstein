@@ -164,9 +164,7 @@ class TestInferCapabilities:
         assert caps == []
 
     def test_multiple_capabilities(self) -> None:
-        caps = infer_capabilities_from_description(
-            "Write pytest tests for the API endpoint with JWT auth"
-        )
+        caps = infer_capabilities_from_description("Write pytest tests for the API endpoint with JWT auth")
         assert "testing" in caps
         assert "backend" in caps
         assert "security" in caps
@@ -247,8 +245,8 @@ class TestCapabilityRouter:
         router = CapabilityRouter(discovery=discovery)
         match = router.best_match(["security", "design"])
         assert match is not None
-        # Should pick strongest model
-        assert match.model == match.model  # exists
+        # Should pick strongest model — non-empty string
+        assert match.model
 
     def test_model_selection_cheap_caps(self, discovery: DiscoveryResult) -> None:
         router = CapabilityRouter(discovery=discovery)

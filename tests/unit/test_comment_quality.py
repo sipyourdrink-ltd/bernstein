@@ -200,7 +200,7 @@ class TestCheckCompleteness:
 class TestAnalyseFile:
     def test_no_issues_on_clean_file(self) -> None:
         source = (
-            'def add(x: int, y: int) -> int:\n'
+            "def add(x: int, y: int) -> int:\n"
             '    """Add two integers.\n\n'
             "    Args:\n"
             "        x: First number.\n"
@@ -226,14 +226,7 @@ class TestAnalyseFile:
 
     def test_wrong_style_flagged(self) -> None:
         # Google-style doc with numpy expected
-        source = (
-            'def foo(x: int) -> None:\n'
-            '    """Do something.\n\n'
-            "    Args:\n"
-            "        x: value.\n"
-            '    """\n'
-            "    pass\n"
-        )
+        source = 'def foo(x: int) -> None:\n    """Do something.\n\n    Args:\n        x: value.\n    """\n    pass\n'
         issues = analyse_file(source, "test.py", docstyle="numpy")
         assert any(i.kind == "wrong_style" for i in issues)
 
@@ -252,7 +245,7 @@ class TestAnalyse:
     def test_clean_file_passes(self, tmp_path: Path) -> None:
         src = tmp_path / "clean.py"
         src.write_text(
-            'def greet(name: str) -> str:\n'
+            "def greet(name: str) -> str:\n"
             '    """Greet a person by name.\n\n'
             "    Args:\n"
             "        name: The person's name.\n\n"
@@ -277,7 +270,7 @@ class TestAnalyse:
     def test_report_summary_no_issues(self, tmp_path: Path) -> None:
         src = tmp_path / "good.py"
         src.write_text(
-            'def foo(x: int) -> int:\n'
+            "def foo(x: int) -> int:\n"
             '    """Add one.\n\n'
             "    Args:\n"
             "        x: Input.\n\n"

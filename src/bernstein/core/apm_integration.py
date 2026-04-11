@@ -236,9 +236,7 @@ def configure_datadog(cfg: DatadogConfig | None = None) -> bool:
         if cfg.use_otlp:
             api_key = _resolve_dd_api_key(cfg)
             if not api_key:
-                logger.warning(
-                    "Datadog OTLP mode enabled but DD_API_KEY is not set — skipping ddtrace init"
-                )
+                logger.warning("Datadog OTLP mode enabled but DD_API_KEY is not set — skipping ddtrace init")
                 return False
             # Route to Datadog OTLP intake endpoint
             tracer_kwargs["writer"] = None  # will be handled via ddtrace's OTLP writer
@@ -411,8 +409,6 @@ def auto_configure_apm() -> list[APMProvider]:
             configured.append(APMProvider.NEWRELIC)
 
     if not configured:
-        logger.debug(
-            "auto_configure_apm: no APM credentials found — set DD_API_KEY or NEW_RELIC_LICENSE_KEY"
-        )
+        logger.debug("auto_configure_apm: no APM credentials found — set DD_API_KEY or NEW_RELIC_LICENSE_KEY")
 
     return configured

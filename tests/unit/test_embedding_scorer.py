@@ -21,9 +21,7 @@ def project(tmp_path: Path) -> Path:
         "class AuthService:\n    def login(self, username: str, password: str) -> bool:\n        return True\n"
     )
     (src / "models.py").write_text("class User:\n    name: str\n    email: str\n\nclass Order:\n    total: float\n")
-    (src / "api.py").write_text(
-        "from myapp.auth import AuthService\n\ndef handle_login():\n    auth = AuthService()\n"
-    )
+    (src / "api.py").write_text("from myapp.auth import AuthService\n\ndef handle_login():\n    auth = AuthService()\n")
     (src / "utils.py").write_text("def format_date(d):\n    return str(d)\n\ndef parse_csv(data):\n    pass\n")
     return tmp_path
 
@@ -74,13 +72,13 @@ class TestTfIdfBackend:
         backend = TfIdfBackend()
         backend.fit(["some text here"])
         vecs = backend.encode([""])
-        assert all(v == 0.0 for v in vecs[0])
+        assert all(v == pytest.approx(0.0) for v in vecs[0])
 
     def test_similarity_zero_norm(self) -> None:
         from bernstein.core.embedding_scorer import TfIdfBackend
 
         backend = TfIdfBackend()
-        assert backend.similarity([0.0, 0.0], [1.0, 2.0]) == 0.0
+        assert backend.similarity([0.0, 0.0], [1.0, 2.0]) == pytest.approx(0.0)
 
 
 class TestEmbeddingScorer:

@@ -152,9 +152,7 @@ def test_write_needs_coverage_merges_with_existing(tmp_path: Path) -> None:
 def test_expansion_result_needs_action_only_when_uncovered_files_exist() -> None:
     """needs_action is True iff uncovered_files is non-empty."""
     assert ExpansionResult(uncovered_files=[], covered_files=[]).needs_action is False
-    assert ExpansionResult(
-        uncovered_files=["src/a.py"], covered_files=[]
-    ).needs_action is True
+    assert ExpansionResult(uncovered_files=["src/a.py"], covered_files=[]).needs_action is True
 
 
 # ---------------------------------------------------------------------------

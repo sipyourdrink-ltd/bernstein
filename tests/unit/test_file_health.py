@@ -154,9 +154,7 @@ def test_compute_and_record_success(sdd_dir: Path, tracker: FileHealthTracker) -
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("def hello():\n    return 1\n")
 
-    with patch(
-        "bernstein.core.file_health._compute_churn_score", return_value=85
-    ):
+    with patch("bernstein.core.file_health._compute_churn_score", return_value=85):
         score, _flagged = tracker.compute_and_record("src/foo.py", "task-1", "success")
 
     assert score.path == "src/foo.py"
@@ -171,9 +169,7 @@ def test_compute_and_record_success(sdd_dir: Path, tracker: FileHealthTracker) -
     assert loaded.success_touches == 1
 
 
-def test_compute_and_record_failure_increases_density(
-    sdd_dir: Path, tracker: FileHealthTracker
-) -> None:
+def test_compute_and_record_failure_increases_density(sdd_dir: Path, tracker: FileHealthTracker) -> None:
     """A failure touch increases failure_touches and may flag the file."""
     src = sdd_dir.parent / "src" / "buggy.py"
     src.parent.mkdir(parents=True, exist_ok=True)
@@ -186,9 +182,7 @@ def test_compute_and_record_failure_increases_density(
     assert score.bug_density_score < 100
 
 
-def test_flagged_when_score_below_threshold(
-    sdd_dir: Path, tracker: FileHealthTracker
-) -> None:
+def test_flagged_when_score_below_threshold(sdd_dir: Path, tracker: FileHealthTracker) -> None:
     """Files with total score below MIN_HEALTHY_SCORE are flagged."""
     src = sdd_dir.parent / "src" / "bad.py"
     src.parent.mkdir(parents=True, exist_ok=True)
@@ -199,18 +193,14 @@ def test_flagged_when_score_below_threshold(
     with patch("bernstein.core.file_health._compute_churn_score", return_value=0):
         # Patch bug_density to force a low score
         with patch("bernstein.core.file_health._bug_density_score", return_value=0):
-            score, flagged = tracker.compute_and_record(
-                "src/bad.py", "task-bad", "failure"
-            )
+            score, flagged = tracker.compute_and_record("src/bad.py", "task-bad", "failure")
 
     if score.total < MIN_HEALTHY_SCORE:
         assert flagged
         assert score.flagged
 
 
-def test_flagged_on_degradation(
-    sdd_dir: Path, tracker: FileHealthTracker
-) -> None:
+def test_flagged_on_degradation(sdd_dir: Path, tracker: FileHealthTracker) -> None:
     """Score drop ≥ DEGRADATION_THRESHOLD flags the file."""
     src = sdd_dir.parent / "src" / "degrade.py"
     src.parent.mkdir(parents=True, exist_ok=True)
@@ -242,9 +232,7 @@ def test_flagged_on_degradation(
         assert flagged2
 
 
-def test_get_degraded_returns_unhealthy_files(
-    sdd_dir: Path, tracker: FileHealthTracker
-) -> None:
+def test_get_degraded_returns_unhealthy_files(sdd_dir: Path, tracker: FileHealthTracker) -> None:
     """get_degraded returns only files below the threshold."""
     src = sdd_dir.parent / "src" / "poor.py"
     src.parent.mkdir(parents=True, exist_ok=True)
@@ -263,9 +251,7 @@ def test_get_degraded_returns_unhealthy_files(
     assert any(s.path == "src/poor.py" for s in degraded)
 
 
-def test_record_task_outcome_multiple_files(
-    sdd_dir: Path, tracker: FileHealthTracker
-) -> None:
+def test_record_task_outcome_multiple_files(sdd_dir: Path, tracker: FileHealthTracker) -> None:
     """record_task_outcome updates all files in owned_files."""
     for name in ("a.py", "b.py"):
         src = sdd_dir.parent / "src" / name
@@ -273,9 +259,7 @@ def test_record_task_outcome_multiple_files(
         src.write_text("x = 1\n")
 
     with patch("bernstein.core.file_health._compute_churn_score", return_value=70):
-        results = tracker.record_task_outcome(
-            "task-multi", ["src/a.py", "src/b.py"], "success"
-        )
+        results = tracker.record_task_outcome("task-multi", ["src/a.py", "src/b.py"], "success")
 
     assert len(results) == 2
     paths = {s.path for s, _ in results}

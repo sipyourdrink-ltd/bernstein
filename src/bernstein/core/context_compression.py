@@ -458,7 +458,6 @@ class ContextCompressor:
         embedding_matches: set[str] = set()
         if self.embedding_scorer is not None:
             try:
-
                 scorer: EmbeddingScorer = self.embedding_scorer  # type: ignore[assignment]
                 scored = scorer.score_for_tasks(tasks, top_k=max_files)
                 for sf in scored:

@@ -10,6 +10,7 @@ import contextlib
 import heapq
 import json
 import logging
+import os
 import time
 import uuid
 from collections import deque
@@ -463,6 +464,8 @@ class TaskStore:
         def _write() -> None:
             with self._jsonl_path.open("a") as f:
                 f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
 
         await _retry_io(_write)
 
@@ -551,6 +554,8 @@ class TaskStore:
         def _write() -> None:
             with self._archive_path.open("a") as f:
                 f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
 
         await _retry_io(_write)
         await self._append_tenant_archive_record(task.tenant_id, line)

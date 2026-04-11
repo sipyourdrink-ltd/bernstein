@@ -95,7 +95,7 @@ class TestGrpcClientConfig:
         cfg = GrpcClientConfig()
         assert cfg.server_address == "localhost:50051"
         assert cfg.tls_enabled is False
-        assert cfg.timeout_s == 10.0
+        assert cfg.timeout_s == pytest.approx(10.0)
 
 
 class TestTaskClient:

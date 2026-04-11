@@ -47,6 +47,7 @@ from bernstein.core.git_basic import run_git
 
 if TYPE_CHECKING:
     from pathlib import Path
+
     pass
 
 logger = logging.getLogger(__name__)
@@ -338,10 +339,7 @@ def incremental_merge_files(
                 uncommitted_files=uncommitted,
                 conflicting_files=[],
                 commit_sha="",
-                error=(
-                    f"None of the requested files are committed in {branch}. "
-                    "Commit them in the worktree first."
-                ),
+                error=(f"None of the requested files are committed in {branch}. Commit them in the worktree first."),
             )
 
         # Perform the checkout under the external merge_lock (if provided)
@@ -366,8 +364,7 @@ def incremental_merge_files(
 
             # Build commit message
             commit_msg = message or (
-                f"Incremental merge from {branch}: "
-                + (", ".join(merged[:3]) + (" …" if len(merged) > 3 else ""))
+                f"Incremental merge from {branch}: " + (", ".join(merged[:3]) + (" …" if len(merged) > 3 else ""))
             )
             commit_result = run_git(["commit", "-m", commit_msg], workdir)
             if not commit_result.ok:

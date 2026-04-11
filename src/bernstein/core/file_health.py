@@ -183,9 +183,7 @@ def _compute_coupling_score(file_path: Path) -> int:
     except (SyntaxError, OSError):
         return 70
 
-    import_count = sum(
-        1 for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
-    )
+    import_count = sum(1 for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)))
 
     # Scale: 0 imports → 100, 30+ imports → 0
     score = max(0, int(100 - import_count * (100 / 30)))
@@ -471,12 +469,8 @@ class FileHealthTracker:
         # Retrieve existing touch counts
         existing = self.get(path)
         prev_total = existing.total if existing else 0
-        failure_touches = (existing.failure_touches if existing else 0) + (
-            1 if outcome == "failure" else 0
-        )
-        success_touches = (existing.success_touches if existing else 0) + (
-            1 if outcome == "success" else 0
-        )
+        failure_touches = (existing.failure_touches if existing else 0) + (1 if outcome == "failure" else 0)
+        success_touches = (existing.success_touches if existing else 0) + (1 if outcome == "success" else 0)
 
         # Compute sub-scores
         file_path = self._workdir / path
@@ -489,10 +483,7 @@ class FileHealthTracker:
         total = _composite(complexity, bug_density, coverage, churn, coupling)
 
         # Flag if score dropped significantly or is below healthy threshold
-        flagged = (
-            (prev_total > 0 and prev_total - total >= DEGRADATION_THRESHOLD)
-            or total < MIN_HEALTHY_SCORE
-        )
+        flagged = (prev_total > 0 and prev_total - total >= DEGRADATION_THRESHOLD) or total < MIN_HEALTHY_SCORE
 
         score = FileHealthScore(
             path=path,

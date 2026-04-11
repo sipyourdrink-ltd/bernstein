@@ -63,9 +63,7 @@ def test_build_profile_always_deny_syscalls_absent() -> None:
         profile = build_profile(profile_enum)
         allowed = set(profile["syscalls"][0]["names"])
         for denied in _SYSCALLS_ALWAYS_DENY:
-            assert denied not in allowed, (
-                f"Denied syscall '{denied}' found in profile '{profile_enum.value}'"
-            )
+            assert denied not in allowed, f"Denied syscall '{denied}' found in profile '{profile_enum.value}'"
 
 
 def test_build_profile_includes_architectures() -> None:
@@ -78,9 +76,7 @@ def test_build_profile_no_duplicate_syscalls() -> None:
     for profile_enum in AgentSeccompProfile:
         profile = build_profile(profile_enum)
         names = profile["syscalls"][0]["names"]
-        assert len(names) == len(set(names)), (
-            f"Duplicate syscalls in profile '{profile_enum.value}'"
-        )
+        assert len(names) == len(set(names)), f"Duplicate syscalls in profile '{profile_enum.value}'"
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +123,6 @@ def test_write_profile_content_is_valid_json(tmp_path: Path) -> None:
 
 def test_write_profile_default_dir_is_tmp(monkeypatch: pytest.MonkeyPatch) -> None:
     import tempfile
-
 
     write_profile.__wrapped__ if hasattr(write_profile, "__wrapped__") else write_profile
 

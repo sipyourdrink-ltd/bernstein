@@ -39,11 +39,7 @@ def provider_latency_current(request: Request) -> JSONResponse:
     data = []
     for p in entries:
         d = p.to_dict()
-        degraded = (
-            p.baseline_p99_ms > 0
-            and p.sample_count >= 10
-            and p.p99_ms >= p.baseline_p99_ms * 2.0
-        )
+        degraded = p.baseline_p99_ms > 0 and p.sample_count >= 10 and p.p99_ms >= p.baseline_p99_ms * 2.0
         d["degraded"] = degraded
         data.append(d)
 

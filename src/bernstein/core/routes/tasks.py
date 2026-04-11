@@ -1516,9 +1516,7 @@ def post_channel_query(body: ChannelQueryRequest, request: Request) -> ChannelQu
     response_model=ChannelResponseResponse,
     responses={404: {"description": "Query not found"}},
 )
-def post_channel_response(
-    query_id: str, body: ChannelResponseRequest, request: Request
-) -> ChannelResponseResponse:
+def post_channel_response(query_id: str, body: ChannelResponseRequest, request: Request) -> ChannelResponseResponse:
     """Respond to a channel query."""
     channel = _get_direct_channel(request)
     r = channel.post_response(

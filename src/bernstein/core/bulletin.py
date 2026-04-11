@@ -936,9 +936,7 @@ class DirectChannel:
         """
         removed = 0
         with self._lock:
-            expired_ids = [
-                qid for qid, q in self._queries.items() if q.is_expired() and not q.resolved
-            ]
+            expired_ids = [qid for qid, q in self._queries.items() if q.is_expired() and not q.resolved]
             for qid in expired_ids:
                 del self._queries[qid]
                 self._responses.pop(qid, None)

@@ -116,7 +116,7 @@ class TfIdfBackend:
         dot = sum(a * b for a, b in zip(query_vec, doc_vec, strict=False))
         norm_q = math.sqrt(sum(a * a for a in query_vec))
         norm_d = math.sqrt(sum(b * b for b in doc_vec))
-        if norm_q == 0.0 or norm_d == 0.0:
+        if not norm_q or not norm_d:
             return 0.0
         return dot / (norm_q * norm_d)
 
@@ -143,7 +143,7 @@ def _try_load_gte_backend() -> EmbeddingBackend | None:
             dot_val: float = float(np.dot(q, d))
             nq: float = float(np.linalg.norm(q))
             nd: float = float(np.linalg.norm(d))
-            if nq == 0.0 or nd == 0.0:
+            if not nq or not nd:
                 return 0.0
             return dot_val / (nq * nd)
 
@@ -250,10 +250,7 @@ class EmbeddingScorer:
                 scored.append((path, sim))
 
         scored.sort(key=lambda x: x[1], reverse=True)
-        return [
-            ScoredFile(path=path, score=score, method=self.backend_name)
-            for path, score in scored[:top_k]
-        ]
+        return [ScoredFile(path=path, score=score, method=self.backend_name) for path, score in scored[:top_k]]
 
     def score_for_tasks(
         self,
