@@ -39,6 +39,8 @@ Last updated: 2026-04-11
 | Multi-modal agent support (road-184) | `WORKFLOW-multi-modal-agent-support.md` | Draft | End-to-end attachment pipeline: plan YAML / API → Task → SpawnPrompt → Adapter → Agent. No multi-modal path exists today — Task, adapter, and prompt renderer all text-only. 7 RC findings. |
 | Plugin marketplace (road-089) | `WORKFLOW-plugin-marketplace.md` | Draft | Community plugin marketplace: search, install, update, uninstall, publish. Versioned, signed (Ed25519), reviewed. 6 sub-workflows, 10 RC findings (3 Critical: manifest not wired, trust not wired, signature is presence-only). |
 | WAL replication for HA (road-109) | `WORKFLOW-wal-replication-ha.md` | Draft | Single-region HA via WAL replication to standby. Pull-based, hash-chain verified, fencing-token failover. 5 sub-workflows, 12 RC findings (5 Critical: WALReplicationManager unwired, no HTTP routes, no standby mode). |
+| Distributed tracing context propagation (road-117) | `WORKFLOW-distributed-tracing-propagation.md` | Draft | End-to-end W3C traceparent propagation: CLI → task server → orchestrator → spawner → agent → quality gates → merge. Core trace_correlation.py and correlation.py exist but are completely unused. 11 steps, 15 test cases, 8 assumptions. |
+| Semantic task deduplication (road-069) | `WORKFLOW-semantic-task-deduplication.md` | Draft | Embedding-based duplicate detection at plan load time. TF-IDF (zero-dep) or gte-small backend. Three thresholds: auto-merge (0.92), warn (0.80), info (0.65). Reuses semantic_cache.py embeddings and duplicate_detector.py merge logic (both partially unused). 7 steps, 19 test cases, 7 assumptions. |
 
 Archived/deprecated reference docs remain under `docs/workflows/archive/`.
 
@@ -104,6 +106,22 @@ Trigger config path: `.sdd/config/triggers.yaml`
 
 Tenant config path: `bernstein.yaml` → `tenants:` section
 Tenant data path: `.sdd/{tenant_id}/`
+
+### Distributed tracing and correlation workflows
+
+- `src/bernstein/core/telemetry.py` — OTel SDK init, tracer/meter globals, exporter presets
+- `src/bernstein/core/tick_telemetry.py` — per-tick phase spans (ORCH-014)
+- `src/bernstein/core/trace_correlation.py` — W3C traceparent generation/parsing, correlation env builder (**unused**)
+- `src/bernstein/core/correlation.py` — CorrelationContext, ContextVar propagation, log filter (**unused**)
+- `src/bernstein/adapters/env_isolation.py` — environment allowlist (missing trace vars)
+
+### Task deduplication workflows
+
+- `src/bernstein/core/semantic_cache.py` — TF-IDF `_embed()`/`_cosine()` functions (reusable for task dedup)
+- `src/bernstein/core/duplicate_detector.py` — Jaccard word-overlap similarity + merge logic (**unused**)
+- `src/bernstein/core/embedding_scorer.py` — gte-small model loader (reusable for enhanced dedup)
+- `src/bernstein/core/plan_loader.py` — plan YAML parser (integration point for dedup)
+- `src/bernstein/core/planner.py` — LLM planner (integration point for dedup)
 
 ### Cluster auth and node registration workflows
 
