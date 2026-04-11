@@ -93,25 +93,25 @@ class TestEvaluateFormula:
 class TestBuildVariables:
     def test_defaults_are_zero(self) -> None:
         vars = build_variables()
-        assert vars["tasks_completed"] == 0.0
-        assert vars["total_cost"] == 0.0
-        assert vars["lines_changed"] == 0.0
+        assert vars["tasks_completed"] == pytest.approx(0.0)
+        assert vars["total_cost"] == pytest.approx(0.0)
+        assert vars["lines_changed"] == pytest.approx(0.0)
 
     def test_tick_vars_override_defaults(self) -> None:
         vars = build_variables(tick_vars={"tasks_completed": 42.0})
-        assert vars["tasks_completed"] == 42.0
+        assert vars["tasks_completed"] == pytest.approx(42.0)
 
     def test_extra_vars_override_defaults(self) -> None:
         vars = build_variables(extra_vars={"total_cost": 9.99})
-        assert vars["total_cost"] == 9.99
+        assert vars["total_cost"] == pytest.approx(9.99)
 
     def test_both_overrides_coexist(self) -> None:
         vars = build_variables(
             tick_vars={"tasks_completed": 10.0},
             extra_vars={"total_cost": 5.0},
         )
-        assert vars["tasks_completed"] == 10.0
-        assert vars["total_cost"] == 5.0
+        assert vars["tasks_completed"] == pytest.approx(10.0)
+        assert vars["total_cost"] == pytest.approx(5.0)
 
 
 class TestValidateFormula:
@@ -173,7 +173,7 @@ class TestCustomMetricsEvaluator:
         evaluator = CustomMetricsEvaluator(definitions=[{"name": "bad", "formula": "unknown_var + 1", "unit": ""}])
         results = evaluator.evaluate_all()
         assert len(results) == 1
-        assert results[0].value == 0.0
+        assert results[0].value == pytest.approx(0.0)
         assert results[0].error is not None
         assert "Unknown variable" in results[0].error
 
@@ -193,7 +193,7 @@ class TestCustomMetricsEvaluator:
         results = evaluator.evaluate_all()
         d = results[0].to_dict()
         assert d["name"] == "ratio"
-        assert d["value"] == 2.0
+        assert d["value"] == pytest.approx(2.0)
         assert d["unit"] == "x"
         assert d["description"] == "desc"
         assert "error" not in d
