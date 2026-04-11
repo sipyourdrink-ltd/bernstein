@@ -375,7 +375,7 @@ def _render_graph() -> None:
         console.print("[bold red]Bottlenecks:[/bold red] " + ", ".join(b[:8] for b in bottlenecks))
 
 
-@click.command("plan")
+@click.group("plan", invoke_without_command=True)
 @click.option(
     "--export",
     "export_file",
@@ -391,15 +391,20 @@ def _render_graph() -> None:
     help="Filter tasks by status.",
 )
 @click.option("--graph", "show_graph", is_flag=True, default=False, help="Show ASCII dependency graph.")
-def plan(export_file: str | None, status_filter: str | None, show_graph: bool) -> None:
-    """Show task backlog as a table, or export to JSON.
+@click.pass_context
+def plan(ctx: click.Context, export_file: str | None, status_filter: str | None, show_graph: bool) -> None:
+    """Show task backlog, or run plan subcommands (generate, validate...).
 
     \b
       bernstein plan                          # show all tasks
       bernstein plan --status open            # show only open tasks
       bernstein plan --export plan.json       # export full backlog to JSON
       bernstein plan --graph                  # show ASCII dependency graph
+      bernstein plan generate "description"   # generate a YAML plan from description
     """
+    if ctx.invoked_subcommand is not None:
+        return
+
     if show_graph:
         _render_graph()
         return
