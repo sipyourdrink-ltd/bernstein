@@ -757,7 +757,7 @@ def _render_prompt(
                     "```bash\n"
                     "curl -s -X POST http://127.0.0.1:8052/channel/query "
                     '-H "Content-Type: application/json" \\\n'
-                    "  -d '{\"sender_agent\": \"" + agent_id + "\", "
+                    '  -d \'{"sender_agent": "' + agent_id + '", '
                     '"topic": "<short-topic>", '
                     '"content": "<your question>", '
                     '"target_role": "<role>"}\'\n'
@@ -770,7 +770,7 @@ def _render_prompt(
                     "```bash\n"
                     "curl -s -X POST http://127.0.0.1:8052/channel/<query_id>/respond "
                     '-H "Content-Type: application/json" \\\n'
-                    "  -d '{\"responder_agent\": \"" + agent_id + "\", "
+                    '  -d \'{"responder_agent": "' + agent_id + '", '
                     '"content": "<your answer>"}\'\n'
                     "```\n",
                 ),
