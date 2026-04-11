@@ -131,6 +131,29 @@ BUILTIN_PRESETS: dict[str, ExporterPreset] = {
         insecure=True,
         description="Generic OTLP/HTTP collector on port 4318",
     ),
+    "newrelic": ExporterPreset(
+        name="newrelic",
+        endpoint="https://otlp.nr-data.net",
+        protocol=_HTTP_PROTOBUF,
+        headers={},  # api-key header injected at runtime from NEW_RELIC_LICENSE_KEY
+        insecure=False,
+        description=(
+            "New Relic OTLP ingest (US datacenter). "
+            "Set NEW_RELIC_LICENSE_KEY in the environment; "
+            "use endpoint_override for EU accounts: https://otlp.eu01.nr-data.net"
+        ),
+    ),
+    "newrelic-eu": ExporterPreset(
+        name="newrelic-eu",
+        endpoint="https://otlp.eu01.nr-data.net",
+        protocol=_HTTP_PROTOBUF,
+        headers={},
+        insecure=False,
+        description=(
+            "New Relic OTLP ingest (EU datacenter). "
+            "Set NEW_RELIC_LICENSE_KEY in the environment."
+        ),
+    ),
 }
 
 
