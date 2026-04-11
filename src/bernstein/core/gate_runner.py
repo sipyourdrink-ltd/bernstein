@@ -239,6 +239,8 @@ def build_default_pipeline(config: QualityGatesConfig) -> list[GatePipelineStep]
         pipeline.append(GatePipelineStep(name="review_rubric", required=True, condition="python_changed"))
     if config.test_expansion:
         pipeline.append(GatePipelineStep(name="test_expansion", required=False, condition="python_changed"))
+    if config.agent_test_mutation:
+        pipeline.append(GatePipelineStep(name="agent_test_mutation", required=True, condition="tests_changed"))
     return pipeline
 
 
@@ -473,6 +475,21 @@ class GateRunner:
             ok, detail, score = await asyncio.to_thread(qg.run_mutation_gate_sync, self._config, run_dir)
             return GateResult(
                 name="mutation_testing",
+                status="pass" if ok else "fail",
+                required=step.required,
+                blocked=step.required and not ok,
+                cached=False,
+                duration_ms=0,
+                details=detail,
+                metadata={"mutation_score": score} if score is not None else {},
+            )
+
+        if step.name == "agent_test_mutation":
+            ok, detail, score = await asyncio.to_thread(
+                qg.run_agent_test_mutation_gate_sync, self._config, task, run_dir
+            )
+            return GateResult(
+                name="agent_test_mutation",
                 status="pass" if ok else "fail",
                 required=step.required,
                 blocked=step.required and not ok,
