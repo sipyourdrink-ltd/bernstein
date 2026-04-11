@@ -361,24 +361,27 @@ class BM25Ranker:
 
 
 class ContextCompressor:
-    """Orchestrates context compression using dependency graph and BM25 ranking.
+    """Orchestrates context compression using dependency graph, BM25, and embedding scoring.
 
     Selects a minimal set of files relevant to a set of tasks by:
     1. Using BM25/TF-IDF to match task keywords to file content
-    2. Following dependency chains to include transitively-required files
-    3. Limiting total selected files to avoid exceeding token budget
+    2. Using embedding-based scoring to find semantically relevant files
+    3. Following dependency chains to include transitively-required files
+    4. Limiting total selected files to avoid exceeding token budget
 
     Attributes:
         workdir: Project root directory.
         graph: DependencyGraph instance.
         ranker: BM25Ranker instance (or None if no Python files found).
+        embedding_scorer: EmbeddingScorer for semantic file matching.
     """
 
-    def __init__(self, workdir: Path) -> None:
+    def __init__(self, workdir: Path, *, use_embeddings: bool = True) -> None:
         """Initialize ContextCompressor.
 
         Args:
             workdir: Project root directory.
+            use_embeddings: Whether to use embedding-based scoring alongside BM25.
         """
         self.workdir = workdir
         self.graph = DependencyGraph(workdir)
@@ -397,6 +400,16 @@ class ContextCompressor:
             logger.warning("Failed to build BM25 index: %s", e)
 
         self.ranker: BM25Ranker | None = BM25Ranker(file_contents) if file_contents else None
+
+        # Embedding-based scorer for semantic file relevance
+        self.embedding_scorer: object | None = None
+        if use_embeddings:
+            try:
+                from bernstein.core.embedding_scorer import EmbeddingScorer
+
+                self.embedding_scorer = EmbeddingScorer(workdir=workdir)
+            except Exception:
+                logger.debug("Embedding scorer unavailable, using BM25 only")
 
     def select_relevant_files(
         self,
@@ -440,10 +453,26 @@ class ContextCompressor:
                 pass
             return sorted(selected)[:max_files], len(bm25_matches), len(dependency_matches)
 
+        # Phase 1: Embedding-based scoring (broader semantic match)
+        embedding_matches: set[str] = set()
+        if self.embedding_scorer is not None:
+            try:
+                from bernstein.core.embedding_scorer import EmbeddingScorer
+
+                scorer: EmbeddingScorer = self.embedding_scorer  # type: ignore[assignment]
+                scored = scorer.score_for_tasks(tasks, top_k=max_files)
+                for sf in scored:
+                    if len(selected) >= max_files:
+                        break
+                    selected.add(sf.path)
+                    embedding_matches.add(sf.path)
+            except Exception:
+                logger.debug("Embedding scoring failed, falling back to BM25 only")
+
+        # Phase 2: BM25 ranking (keyword match, fills remaining slots)
         for task in tasks:
             query = f"{task.title} {task.description}"
 
-            # BM25 ranking: take top candidates
             ranked = self.ranker.rank(query, threshold=0.0, top_k=max_files * 2)
             for fname, _score in ranked:
                 if len(selected) >= max_files:

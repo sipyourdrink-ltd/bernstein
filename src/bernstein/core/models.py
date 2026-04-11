@@ -278,6 +278,7 @@ class Task:
     terminal_reason: str | None = None  # Why the previous attempt ended (from Claude Code)
     subtask_wait_started_at: float | None = None  # Epoch when task entered WAITING_FOR_SUBTASKS
     parent_context: str | None = None  # Parent agent's context summary (key decisions, files explored) for subtasks
+    requires: list[str] = field(default_factory=list[str])  # Capability-based addressing: e.g. ["python", "testing"]
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Task:
@@ -367,6 +368,7 @@ class Task:
             terminal_reason=raw.get("terminal_reason"),
             subtask_wait_started_at=raw.get("subtask_wait_started_at"),
             parent_context=raw.get("parent_context"),
+            requires=list(raw.get("requires", [])),
         )
 
 
