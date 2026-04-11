@@ -118,6 +118,18 @@ def _list_subdirs_cached(path: Path) -> list[str]:
 logger = logging.getLogger(__name__)
 
 
+def _sanitise_for_log(value: str) -> str:
+    """Strip CR/LF from ``value`` so attacker-controlled input cannot
+    inject fake log lines.
+
+    Used at every log site that touches data read out of the pending
+    pushes file or subprocess stderr (CodeQL/Sonar py/log-injection
+    S5145). Keep this function cheap and side-effect-free — it is
+    called inside the spawner hot path.
+    """
+    return value.replace("\r", "").replace("\n", "") if value else value
+
+
 def _render_signal_check(session_id: str) -> str:
     """Return signal-check instructions to append to every agent's system prompt.
 
@@ -2352,6 +2364,12 @@ class AgentSpawner:
         remaining: list[str] = []
         retried = 0
 
+        # ``_pending_pushes_path`` is the only filesystem location this
+        # routine writes to; the file contents are untrusted (could be
+        # tampered with by anyone who can write to .sdd/runtime/) so
+        # every field read out of a line must be validated before it is
+        # used in a path expression or a log message.
+        safe_base = self._pending_pushes_path().resolve().parent.parent.parent
         for line in lines:
             line = line.strip()
             if not line:
@@ -2360,20 +2378,54 @@ class AgentSpawner:
                 entry = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(entry, dict):
+                continue
 
-            repo_root = Path(entry["repo_root"])
+            raw_repo_root = entry.get("repo_root")
+            if not isinstance(raw_repo_root, str):
+                continue
+            try:
+                candidate_root = Path(raw_repo_root).resolve(strict=True)
+            except (OSError, RuntimeError):
+                # Stale or pruned path — drop the entry, do not keep
+                # retrying into a non-existent directory.
+                continue
+            # Reject paths that escape the workspace (.sdd/.. parent).
+            # This blocks the S2083 path-traversal vector: a malicious
+            # entry cannot steer ``safe_push`` at ``/etc`` or similar.
+            try:
+                candidate_root.relative_to(safe_base)
+            except ValueError:
+                logger.warning(
+                    "Skipping pending push entry: repo_root %r escapes workspace",
+                    _sanitise_for_log(raw_repo_root),
+                )
+                continue
+            if not (candidate_root / ".git").exists():
+                # Not actually a git worktree — nothing we can push.
+                continue
+
+            repo_root = candidate_root
             branch = entry.get("branch", "main")
+            if not isinstance(branch, str):
+                branch = "main"
             session_id = entry.get("session_id", "unknown")
+            if not isinstance(session_id, str):
+                session_id = "unknown"
+
+            # Strip CR/LF from the user-controlled fields before logging
+            # (CodeQL/Sonar py/log-injection S5145).
+            safe_session_id = _sanitise_for_log(session_id)
 
             push_result = safe_push(repo_root, branch)
             if push_result.ok:
-                logger.info("Retry push succeeded for %s (%s)", session_id, repo_root)
+                logger.info("Retry push succeeded for %s (%s)", safe_session_id, repo_root)
                 retried += 1
             else:
                 logger.warning(
                     "Retry push still failing for %s: %s",
-                    session_id,
-                    push_result.stderr,
+                    safe_session_id,
+                    _sanitise_for_log(push_result.stderr),
                 )
                 remaining.append(line)
 
