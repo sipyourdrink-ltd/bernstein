@@ -1,0 +1,182 @@
+syntax = "proto3";
+
+package bernstein.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_package = "ai.bernstein.v1";
+option go_package = "bernstein/v1;bernsteinv1";
+
+// Cluster-internal node management and task stealing.
+// Replaces HTTP heartbeats and node registration with low-latency gRPC.
+service ClusterService {
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // Bidirectional heartbeat stream — nodes keep a persistent connection.
+  rpc StreamHeartbeats(stream HeartbeatRequest) returns (stream HeartbeatResponse);
+  rpc UnregisterNode(UnregisterNodeRequest) returns (UnregisterNodeResponse);
+  rpc CordonNode(CordonRequest) returns (NodeStatusResponse);
+  rpc UncordonNode(UncordonRequest) returns (NodeStatusResponse);
+  rpc DrainNode(DrainRequest) returns (NodeStatusResponse);
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc GetClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse);
+  rpc StealTasks(StealTasksRequest) returns (StealTasksResponse);
+}
+
+// Cross-agent bulletin board messaging.
+service BulletinService {
+  rpc PostBulletin(PostBulletinRequest) returns (PostBulletinResponse);
+  rpc ReadBulletins(ReadBulletinsRequest) returns (ReadBulletinsResponse);
+  // Server-push stream of new bulletins.
+  rpc StreamBulletins(StreamBulletinsRequest) returns (stream BulletinMessage);
+}
+
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  NODE_STATUS_ONLINE = 1;
+  NODE_STATUS_READY = 2;
+  NODE_STATUS_DEGRADED = 3;
+  NODE_STATUS_CORDONED = 4;
+  NODE_STATUS_DRAINING = 5;
+  NODE_STATUS_OFFLINE = 6;
+}
+
+message NodeCapacity {
+  int32 max_agents = 1;
+  int32 available_slots = 2;
+  int32 active_agents = 3;
+  bool gpu_available = 4;
+  repeated string supported_models = 5;
+}
+
+message NodeInfo {
+  string id = 1;
+  string name = 2;
+  string url = 3;
+  NodeCapacity capacity = 4;
+  NodeStatus status = 5;
+  google.protobuf.Timestamp last_heartbeat = 6;
+  google.protobuf.Timestamp registered_at = 7;
+  map<string, string> labels = 8;
+  repeated string cell_ids = 9;
+}
+
+message RegisterNodeRequest {
+  string name = 1;
+  string url = 2;
+  NodeCapacity capacity = 3;
+  map<string, string> labels = 4;
+  repeated string cell_ids = 5;
+}
+
+message RegisterNodeResponse {
+  NodeInfo node = 1;
+  string auth_token = 2;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  NodeCapacity capacity = 2;
+}
+
+message HeartbeatResponse {
+  bool acknowledged = 1;
+  NodeInfo node = 2;
+}
+
+message UnregisterNodeRequest {
+  string node_id = 1;
+}
+
+message UnregisterNodeResponse {
+  bool removed = 1;
+}
+
+message CordonRequest {
+  string node_id = 1;
+}
+
+message UncordonRequest {
+  string node_id = 1;
+}
+
+message DrainRequest {
+  string node_id = 1;
+}
+
+message NodeStatusResponse {
+  string node_id = 1;
+  NodeStatus status = 2;
+}
+
+message ListNodesRequest {
+  NodeStatus status_filter = 1;
+}
+
+message ListNodesResponse {
+  repeated NodeInfo nodes = 1;
+}
+
+message ClusterStatusRequest {}
+
+message ClusterStatusResponse {
+  string topology = 1;
+  int32 total_nodes = 2;
+  int32 online_nodes = 3;
+  int32 offline_nodes = 4;
+  int32 total_capacity = 5;
+  int32 available_slots = 6;
+  int32 active_agents = 7;
+  repeated NodeInfo nodes = 8;
+}
+
+message StealTasksRequest {
+  map<string, int32> queue_depths = 1;
+}
+
+message StealAction {
+  string donor_node_id = 1;
+  string receiver_node_id = 2;
+  repeated string task_ids = 3;
+}
+
+message StealTasksResponse {
+  repeated StealAction actions = 1;
+  int32 total_stolen = 2;
+}
+
+message BulletinMessage {
+  string id = 1;
+  string agent_id = 2;
+  string type = 3;
+  string cell = 4;
+  string body = 5;
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+message PostBulletinRequest {
+  string agent_id = 1;
+  string type = 2;
+  string cell = 3;
+  string body = 4;
+}
+
+message PostBulletinResponse {
+  string id = 1;
+}
+
+message ReadBulletinsRequest {
+  google.protobuf.Timestamp since = 1;
+  string type_filter = 2;
+  string cell_filter = 3;
+  int32 limit = 4;
+}
+
+message ReadBulletinsResponse {
+  repeated BulletinMessage messages = 1;
+}
+
+message StreamBulletinsRequest {
+  string type_filter = 1;
+  string cell_filter = 2;
+}

@@ -33,8 +33,8 @@ USER bernstein
 # Bernstein state directory (mount a volume here for persistence)
 VOLUME ["/workspace/.sdd"]
 
-# Task server port
-EXPOSE 8052
+# Task server HTTP + gRPC ports
+EXPOSE 8052 50051
 
 # Default: all-in-one mode (reads bernstein.yaml, starts server + agents)
 # Override CMD in docker-compose / Helm to run individual components:

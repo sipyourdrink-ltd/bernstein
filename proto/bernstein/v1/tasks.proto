@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package bernstein.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option java_package = "ai.bernstein.v1";
+option go_package = "bernstein/v1;bernsteinv1";
+
+// Internal task operations for cluster communication.
+// REST remains the external API; gRPC is for node-to-node and orchestrator-to-agent.
+service TaskService {
+  rpc CreateTask(CreateTaskRequest) returns (TaskResponse);
+  rpc ClaimTask(ClaimTaskRequest) returns (TaskResponse);
+  rpc CompleteTask(CompleteTaskRequest) returns (TaskResponse);
+  rpc FailTask(FailTaskRequest) returns (TaskResponse);
+  rpc ReportProgress(ProgressRequest) returns (ProgressResponse);
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+  rpc GetTask(GetTaskRequest) returns (TaskResponse);
+  // Server-push stream of task lifecycle events.
+  rpc StreamTaskEvents(StreamTasksRequest) returns (stream TaskEvent);
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_OPEN = 1;
+  TASK_STATUS_CLAIMED = 2;
+  TASK_STATUS_IN_PROGRESS = 3;
+  TASK_STATUS_DONE = 4;
+  TASK_STATUS_FAILED = 5;
+  TASK_STATUS_BLOCKED = 6;
+  TASK_STATUS_CANCELLED = 7;
+  TASK_STATUS_ORPHANED = 8;
+}
+
+message Task {
+  string id = 1;
+  string goal = 2;
+  string role = 3;
+  TaskStatus status = 4;
+  string assigned_agent = 5;
+  string assigned_node = 6;
+  int32 priority = 7;
+  string model = 8;
+  string effort = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+  map<string, string> metadata = 12;
+}
+
+message CreateTaskRequest {
+  string goal = 1;
+  string role = 2;
+  int32 priority = 3;
+  string model = 4;
+  string effort = 5;
+  map<string, string> metadata = 6;
+}
+
+message ClaimTaskRequest {
+  string task_id = 1;
+  string agent_id = 2;
+  string node_id = 3;
+}
+
+message CompleteTaskRequest {
+  string task_id = 1;
+  string result_summary = 2;
+  repeated string files_changed = 3;
+}
+
+message FailTaskRequest {
+  string task_id = 1;
+  string error = 2;
+  bool retryable = 3;
+}
+
+message ProgressRequest {
+  string task_id = 1;
+  repeated string files_changed = 2;
+  bool tests_passing = 3;
+  repeated string errors = 4;
+  int32 progress_pct = 5;
+}
+
+message ProgressResponse {
+  bool acknowledged = 1;
+}
+
+message ListTasksRequest {
+  TaskStatus status_filter = 1;
+  string role_filter = 2;
+  string node_filter = 3;
+  int32 limit = 4;
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+  int32 total_count = 2;
+}
+
+message GetTaskRequest {
+  string task_id = 1;
+}
+
+message TaskResponse {
+  Task task = 1;
+}
+
+message StreamTasksRequest {
+  repeated TaskStatus status_filter = 1;
+  string node_filter = 2;
+}
+
+message TaskEvent {
+  enum EventType {
+    EVENT_TYPE_UNSPECIFIED = 0;
+    CREATED = 1;
+    CLAIMED = 2;
+    PROGRESS = 3;
+    COMPLETED = 4;
+    FAILED = 5;
+    CANCELLED = 6;
+  }
+  EventType type = 1;
+  Task task = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
