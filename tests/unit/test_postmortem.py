@@ -139,7 +139,7 @@ class TestPostMortemGeneratorGenerate:
         assert report.run_id == "test-run-abc"
         assert report.total_tasks == 0
         assert report.failed_tasks == 0
-        assert report.success_rate_pct == 0.0
+        assert report.success_rate_pct == pytest.approx(0.0)
 
     def test_generate_computes_success_rate(self, generator: PostMortemGenerator, metrics_dir: Path) -> None:
         for i, success in enumerate([True, True, False]):
