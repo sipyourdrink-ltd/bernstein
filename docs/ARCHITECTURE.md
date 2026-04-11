@@ -70,6 +70,8 @@ The public façade. Runs the tick loop: fetch open tasks, batch by role, spawn a
 - **Task lifecycle** (`core/task_lifecycle.py`) — claim, spawn, complete, retry, decompose
 - **Agent lifecycle** (`core/agent_lifecycle.py`) — heartbeat, crash detection, reaping, loop/deadlock detection
 
+All task and agent status changes are validated by the Lifecycle Governance Kernel (`core/lifecycle.py`), which enforces an explicit FSM transition table and emits typed `LifecycleEvent` records for audit and replay. See [LIFECYCLE.md](LIFECYCLE.md) for the full state diagrams, transition tables, and `TransitionReason`/`AbortReason` enumerations.
+
 ### Spawner (`core/spawner.py`)
 
 Launches CLI agents for task batches. Builds the prompt (system role prompt + task context), selects the appropriate adapter via the registry, and spawns the process inside a git worktree. Wraps every command with `build_worker_cmd()` for process visibility (`bernstein ps`).
