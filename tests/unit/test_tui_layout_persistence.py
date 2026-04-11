@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from bernstein.tui.layout_persistence import (
@@ -18,7 +19,7 @@ from bernstein.tui.layout_persistence import (
 class TestLayoutConfigDefaults:
     def test_default_split_ratio(self) -> None:
         cfg = LayoutConfig()
-        assert cfg.split_ratio == 0.5
+        assert cfg.split_ratio == pytest.approx(0.5)
 
     def test_default_split_disabled(self) -> None:
         cfg = LayoutConfig()
@@ -90,7 +91,7 @@ class TestSaveLoadRoundtrip:
         )
         save_layout(original, config_path=path)
         loaded = load_layout(config_path=path)
-        assert loaded.split_ratio == 0.7
+        assert loaded.split_ratio == pytest.approx(0.7)
         assert loaded.split_enabled is True
         assert loaded.orientation == "vertical"
         assert loaded.visible_panels == frozenset({"task-list", "timeline"})
@@ -123,19 +124,19 @@ class TestLoadCorruptFile:
         path = tmp_path / "layout.yaml"
         path.write_text(yaml.safe_dump({"split_ratio": 99.0}), encoding="utf-8")
         cfg = load_layout(config_path=path)
-        assert cfg.split_ratio == 0.8
+        assert cfg.split_ratio == pytest.approx(0.8)
 
     def test_bad_ratio_low_clamped(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
         path.write_text(yaml.safe_dump({"split_ratio": -1.0}), encoding="utf-8")
         cfg = load_layout(config_path=path)
-        assert cfg.split_ratio == 0.2
+        assert cfg.split_ratio == pytest.approx(0.2)
 
     def test_bad_ratio_string_uses_default(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"
         path.write_text(yaml.safe_dump({"split_ratio": "not-a-number"}), encoding="utf-8")
         cfg = load_layout(config_path=path)
-        assert cfg.split_ratio == 0.5
+        assert cfg.split_ratio == pytest.approx(0.5)
 
     def test_bad_orientation_uses_default(self, tmp_path: Path) -> None:
         path = tmp_path / "layout.yaml"

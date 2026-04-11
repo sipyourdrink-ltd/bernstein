@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from bernstein.core.routes.graphql_api import (
     GraphQLRequest,
     ParsedQuery,
@@ -165,7 +167,7 @@ class TestExecuteGraphQL:
         mock_store = _MockStore([])
         result = execute_graphql("{ costs { total_usd } }", store=mock_store)
         assert "data" in result
-        assert result["data"]["costs"]["total_usd"] == 0.0
+        assert result["data"]["costs"]["total_usd"] == pytest.approx(0.0)
 
     def test_unknown_operation(self) -> None:
         mock_store = _MockStore([])

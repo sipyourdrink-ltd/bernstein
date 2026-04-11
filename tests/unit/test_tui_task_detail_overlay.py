@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bernstein.tui.task_detail_overlay import TaskDetail, format_task_detail
 
 
@@ -20,7 +22,7 @@ class TestTaskDetail:
             quality_results={"lint": "pass", "tests": "pass"},
         )
         assert detail.task_id == "task-001"
-        assert detail.cost_usd == 0.05
+        assert detail.cost_usd == pytest.approx(0.05)
 
     def test_format_includes_all_sections(self) -> None:
         detail = TaskDetail(

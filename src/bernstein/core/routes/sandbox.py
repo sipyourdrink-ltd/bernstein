@@ -6,11 +6,29 @@ paste a GitHub URL, pick a solution pack, and watch agents work.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+
+# Session IDs are server-generated hex UUIDs / short hex tokens. Anything
+# outside this character class must be rejected before being embedded in
+# HTML or JS template strings to prevent XSS (SonarCloud S5131).
+_SESSION_ID_ALLOWED = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _validate_session_id(session_id: str) -> str:
+    """Return ``session_id`` if it matches the allowlist, else raise 400.
+
+    Used as an XSS guard before embedding session_id into HTML or JS
+    string literals in the sandbox dashboard template.
+    """
+    if not _SESSION_ID_ALLOWED.match(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    return session_id
+
 
 if TYPE_CHECKING:
     from bernstein.core.sandbox_eval import SandboxManager
@@ -123,6 +141,7 @@ async def cancel_session(session_id: str, request: Request) -> dict[str, str]:
 @router.get("/{session_id}", response_class=HTMLResponse, include_in_schema=False)
 async def sandbox_dashboard(session_id: str, request: Request) -> HTMLResponse:
     """Serve the sandbox session dashboard page."""
+    session_id = _validate_session_id(session_id)
     mgr = _get_manager(request)
     session = mgr.get_session(session_id)
     if not session:

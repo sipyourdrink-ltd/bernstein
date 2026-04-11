@@ -75,13 +75,15 @@ cmd_start() {
     echo "  Task server:  http://localhost:18052"
     echo "  Dashboard:    http://localhost:18080"
     echo
-    _bold "Demo tokens (use in Authorization: Bearer <token>):"
-    echo "  research-token-1   — read-only observer"
-    echo "  research-token-2   — standard agent (create/complete tasks)"
-    echo "  research-token-3   — elevated agent (access /admin endpoints)"
+    _bold "Demo tokens (use in Authorization: Bearer <TOKEN>):"
+    echo "  observer       — read-only (use token value: \$BERNSTEIN_SANDBOX_OBS_TOKEN)"
+    echo "  standard       — create/complete tasks (use token: \$BERNSTEIN_SANDBOX_STD_TOKEN)"
+    echo "  elevated       — admin endpoints (use token: \$BERNSTEIN_SANDBOX_ADMIN_TOKEN)"
+    echo "  (Tokens are generated at container start and printed to the compose logs.)"
     echo
-    _bold "Quick test:"
-    echo "  curl http://localhost:18052/tasks -H 'Authorization: Bearer research-token-2'"
+    _bold "Quick test (after exporting the sandbox token to \$TOKEN):"
+    # shellcheck disable=SC2016
+    echo '  curl http://localhost:18052/tasks -H "Authorization: Bearer $TOKEN"'
     echo
     _yellow "All outbound network traffic is blocked inside the sandbox."
     _yellow "To stop: ./scripts/researcher_sandbox.sh stop"

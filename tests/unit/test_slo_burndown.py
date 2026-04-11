@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from bernstein.core.slo import BurnRateSnapshot, SLOTracker
 
 
@@ -17,10 +19,10 @@ class TestBurnRateSnapshot:
             total_tasks=100,
         )
         d = snap.to_dict()
-        assert d["timestamp"] == 1234567890.0
-        assert d["burn_rate"] == 1.5
-        assert d["budget_fraction"] == 0.75
-        assert d["slo_current"] == 0.92
+        assert d["timestamp"] == pytest.approx(1234567890.0)
+        assert d["burn_rate"] == pytest.approx(1.5)
+        assert d["budget_fraction"] == pytest.approx(0.75)
+        assert d["slo_current"] == pytest.approx(0.92)
         assert d["total_tasks"] == 100
 
 
@@ -130,9 +132,11 @@ class TestSLOTrackerBurndown:
 
         class _FakeTask:
             success = True
-            end_time = time.time()
-            start_time = end_time - 10
             janitor_passed = True
+
+            def __init__(self) -> None:
+                self.end_time = time.time()
+                self.start_time = self.end_time - 10
 
         class _FakeCollector:
             _task_metrics = {"t1": _FakeTask(), "t2": _FakeTask()}

@@ -26,7 +26,7 @@ class TestAgentMetrics:
 
     def test_success_rate_zero_tasks(self) -> None:
         m = AgentMetrics(adapter="claude", model="opus", total_tasks=0)
-        assert m.success_rate == 0.0
+        assert m.success_rate == pytest.approx(0.0)
 
     def test_cost_per_task_with_tasks(self) -> None:
         m = AgentMetrics(adapter="claude", model="opus", total_tasks=4, total_cost_usd=2.0)
@@ -34,7 +34,7 @@ class TestAgentMetrics:
 
     def test_cost_per_task_zero_tasks(self) -> None:
         m = AgentMetrics(adapter="claude", model="opus", total_tasks=0, total_cost_usd=0.0)
-        assert m.cost_per_task == 0.0
+        assert m.cost_per_task == pytest.approx(0.0)
 
     def test_model_dump_includes_computed_fields(self) -> None:
         m = AgentMetrics(adapter="codex", model="gpt-5.4-mini", total_tasks=2, succeeded=1, total_cost_usd=1.0)
@@ -46,7 +46,7 @@ class TestAgentMetrics:
 
     def test_default_quality_gate_pass_rate(self) -> None:
         m = AgentMetrics(adapter="claude", model="sonnet")
-        assert m.quality_gate_pass_rate == 1.0
+        assert m.quality_gate_pass_rate == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +129,8 @@ class TestComputeAgentMetrics:
         assert m.total_tasks == 2
         assert m.succeeded == 1
         assert m.failed == 1
-        assert m.avg_completion_secs == 0.0
-        assert m.total_cost_usd == 0.0
+        assert m.avg_completion_secs == pytest.approx(0.0)
+        assert m.total_cost_usd == pytest.approx(0.0)
 
     def test_zero_duration_excluded_from_avg(self) -> None:
         sessions = [
@@ -144,7 +144,7 @@ class TestComputeAgentMetrics:
     def test_no_quality_gate_field_defaults_to_1(self) -> None:
         sessions = [{"provider": "claude", "model": "opus", "status": "done"}]
         result = compute_agent_metrics(sessions)
-        assert result[0].quality_gate_pass_rate == 1.0
+        assert result[0].quality_gate_pass_rate == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------

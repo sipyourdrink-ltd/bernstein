@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.tui.session_recorder import (
     RecordingFrame,
     SessionPlayer,
@@ -27,7 +29,7 @@ class TestSessionRecorder:
         lines = path.read_text().strip().splitlines()
         assert len(lines) == 1
         frame = json.loads(lines[0])
-        assert frame["timestamp"] == 1000.0
+        assert frame["timestamp"] == pytest.approx(1000.0)
         assert frame["event_type"] == "status_update"
         assert frame["data"]["agents"] == 2
 
@@ -77,7 +79,7 @@ class TestSessionPlayer:
         frames = player.load_frames()
         assert len(frames) == 2
         assert frames[0].event_type == "a"
-        assert frames[1].timestamp == 1.0
+        assert frames[1].timestamp == pytest.approx(1.0)
 
     def test_load_empty_file(self, tmp_path: Path) -> None:
         path = tmp_path / "empty.jsonl"
@@ -91,5 +93,5 @@ class TestSessionPlayer:
 
     def test_frame_dataclass(self) -> None:
         frame = RecordingFrame(timestamp=1.0, event_type="test", data={"k": "v"})
-        assert frame.timestamp == 1.0
+        assert frame.timestamp == pytest.approx(1.0)
         assert frame.data == {"k": "v"}

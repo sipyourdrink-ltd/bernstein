@@ -48,10 +48,10 @@ def test_agent_profile_to_dict() -> None:
     assert d["agent_id"] == "a1"
     assert d["role"] == "frontend"
     assert d["model"] == "haiku"
-    assert d["spawn_latency_s"] == 0.123
-    assert d["tokens_per_minute"] == 100.0
-    assert d["time_to_first_output_s"] == 0.123
-    assert d["total_completion_s"] == 30.568
+    assert d["spawn_latency_s"] == pytest.approx(0.123)
+    assert d["tokens_per_minute"] == pytest.approx(100.0)
+    assert d["time_to_first_output_s"] == pytest.approx(0.123)
+    assert d["total_completion_s"] == pytest.approx(30.568)
     assert d["task_count"] == 2
 
 
@@ -202,13 +202,13 @@ def test_aggregate_profiles_empty() -> None:
     result = aggregate_profiles([])
 
     assert result["count"] == 0
-    assert result["avg_spawn_latency_s"] == 0.0
-    assert result["avg_tokens_per_minute"] == 0.0
-    assert result["avg_time_to_first_output_s"] == 0.0
-    assert result["avg_total_completion_s"] == 0.0
+    assert result["avg_spawn_latency_s"] == pytest.approx(0.0)
+    assert result["avg_tokens_per_minute"] == pytest.approx(0.0)
+    assert result["avg_time_to_first_output_s"] == pytest.approx(0.0)
+    assert result["avg_total_completion_s"] == pytest.approx(0.0)
     assert result["total_tasks"] == 0
-    assert result["min_tokens_per_minute"] == 0.0
-    assert result["max_tokens_per_minute"] == 0.0
+    assert result["min_tokens_per_minute"] == pytest.approx(0.0)
+    assert result["max_tokens_per_minute"] == pytest.approx(0.0)
 
 
 def test_aggregate_profiles_single() -> None:

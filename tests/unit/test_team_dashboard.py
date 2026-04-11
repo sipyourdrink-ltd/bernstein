@@ -41,8 +41,8 @@ class TestTeamDashboard:
         assert "timestamp" in data
         assert data["summary"]["total_runs"] == 0
         assert data["summary"]["tasks_completed"] == 0
-        assert data["summary"]["cost_spent_usd"] == 0.0
-        assert data["summary"]["quality_gate_pass_rate_pct"] == 0.0
+        assert data["summary"]["cost_spent_usd"] == pytest.approx(0.0)
+        assert data["summary"]["quality_gate_pass_rate_pct"] == pytest.approx(0.0)
 
     def test_with_completed_tasks(self, dashboard_app: tuple[FastAPI, TaskStore, Path]) -> None:
         app, store, _sdd = dashboard_app
@@ -82,10 +82,10 @@ class TestTeamDashboard:
         resp = client.get("/dashboard/team")
         data = resp.json()
         assert data["summary"]["total_runs"] == 1
-        assert data["summary"]["cost_spent_usd"] == 1.25
-        assert data["summary"]["cost_saved_usd"] == 3.75
-        assert data["costs"]["per_agent"]["agent-1"] == 0.75
-        assert data["costs"]["per_model"]["opus"] == 0.75
+        assert data["summary"]["cost_spent_usd"] == pytest.approx(1.25)
+        assert data["summary"]["cost_saved_usd"] == pytest.approx(3.75)
+        assert data["costs"]["per_agent"]["agent-1"] == pytest.approx(0.75)
+        assert data["costs"]["per_model"]["opus"] == pytest.approx(0.75)
 
     def test_with_quality_gate_data(self, dashboard_app: tuple[FastAPI, TaskStore, Path]) -> None:
         app, _store, sdd = dashboard_app
@@ -100,7 +100,7 @@ class TestTeamDashboard:
         data = resp.json()
         assert data["quality_gates"]["passed"] == 2
         assert data["quality_gates"]["failed"] == 1
-        assert data["summary"]["quality_gate_pass_rate_pct"] == 66.7
+        assert data["summary"]["quality_gate_pass_rate_pct"] == pytest.approx(66.7)
 
     def test_with_merge_data(self, dashboard_app: tuple[FastAPI, TaskStore, Path]) -> None:
         app, _store, sdd = dashboard_app
@@ -135,4 +135,4 @@ class TestTeamDashboard:
         resp = client.get("/dashboard/team")
         data = resp.json()
         assert data["summary"]["total_runs"] == 1
-        assert data["summary"]["cost_spent_usd"] == 2.0
+        assert data["summary"]["cost_spent_usd"] == pytest.approx(2.0)
