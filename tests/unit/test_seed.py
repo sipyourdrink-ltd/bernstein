@@ -560,3 +560,56 @@ class TestBuildManagerDescription:
         assert "No TypeScript" in result
         assert "## Context files" in result
         assert "Important notes here" in result
+
+
+# ---------------------------------------------------------------------------
+# quality_gates auto_format config parsing
+# ---------------------------------------------------------------------------
+
+
+class TestQualityGatesAutoFormatParsing:
+    """Tests that auto_format fields are correctly parsed from quality_gates config."""
+
+    def test_auto_format_enabled_and_default_commands(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "Test"\nquality_gates:\n  auto_format: true\n'
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.auto_format is True
+        assert cfg.quality_gates.auto_format_python_command == "ruff format"
+        assert cfg.quality_gates.auto_format_js_command == "prettier --write"
+        assert cfg.quality_gates.auto_format_rust_command == "rustfmt"
+
+    def test_auto_format_disabled_by_default(self, seed_file: Path) -> None:
+        seed_file.write_text('goal: "Test"\nquality_gates:\n  lint: true\n')
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.auto_format is False
+
+    def test_auto_format_custom_python_command(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "Test"\nquality_gates:\n  auto_format: true\n'
+            '  auto_format_python_command: "uv run ruff format"\n'
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.auto_format_python_command == "uv run ruff format"
+
+    def test_auto_format_custom_js_command(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "Test"\nquality_gates:\n  auto_format: true\n'
+            '  auto_format_js_command: "npx prettier --write"\n'
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.auto_format_js_command == "npx prettier --write"
+
+    def test_auto_format_custom_rust_command(self, seed_file: Path) -> None:
+        seed_file.write_text(
+            'goal: "Test"\nquality_gates:\n  auto_format: true\n'
+            '  auto_format_rust_command: "cargo fmt"\n'
+        )
+        cfg = parse_seed(seed_file)
+        assert cfg.quality_gates is not None
+        assert cfg.quality_gates.auto_format_rust_command == "cargo fmt"
