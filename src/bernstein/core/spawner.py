@@ -1505,6 +1505,7 @@ class AgentSpawner:
                                 mcp_config=effective_mcp,
                                 task_scope=max_scope,
                                 budget_multiplier=_budget_mult,
+                                system_addendum="",
                             )
                         spawn_duration = time.perf_counter() - spawn_start
                         agent_spawn_duration.labels(adapter=provider_name or adapter_name).observe(spawn_duration)
