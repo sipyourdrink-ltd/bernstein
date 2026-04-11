@@ -315,6 +315,26 @@ class SeedConfig:
     cost_autopilot: bool = False
     deployment_strategy: str = "rolling"
     org_policies: list[str] = field(default_factory=list)
+    metrics: dict[str, MetricSchema] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MetricSchema:
+    """Definition of a single custom metric from bernstein.yaml.
+
+    Attributes:
+        formula: Arithmetic expression using built-in metric variables.
+        unit: Display unit label (e.g. ``"lines/$"``).
+        description: Human-readable description of what the metric measures.
+        alert_above: Optional threshold — alert when metric exceeds this value.
+        alert_below: Optional threshold — alert when metric falls below this value.
+    """
+
+    formula: str
+    unit: str = ""
+    description: str = ""
+    alert_above: float | None = None
+    alert_below: float | None = None
 
 
 _BUDGET_RE = re.compile(r"^\$(\d+(?:\.\d+)?)$")
@@ -407,6 +427,87 @@ def _parse_string_list(raw: object, field_name: str) -> tuple[str, ...]:
         if all(isinstance(s, str) for s in items):
             return tuple(str(s) for s in items)
     raise SeedError(f"{field_name} must be a list of strings, got: {raw!r}")
+
+
+def _parse_metrics(raw: object) -> dict[str, MetricSchema]:
+    """Parse the optional ``metrics`` section from ``bernstein.yaml``.
+
+    Each key is a metric name; each value is a mapping with a required
+    ``formula`` field and optional ``unit``, ``description``,
+    ``alert_above``, and ``alert_below``.
+
+    Example YAML::
+
+        metrics:
+          code_per_dollar:
+            formula: "lines_changed / total_cost"
+            unit: "lines/$"
+            description: "Code produced per dollar spent"
+
+    Args:
+        raw: Raw YAML value for the ``metrics`` section.
+
+    Returns:
+        Dict mapping metric name to a parsed ``MetricSchema``.
+
+    Raises:
+        SeedError: If the section is not a mapping or any entry is invalid.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise SeedError(f"metrics must be a mapping, got: {type(raw).__name__}")
+
+    result: dict[str, MetricSchema] = {}
+    metrics_dict: dict[str, object] = cast("dict[str, object]", raw)
+    for name, entry in metrics_dict.items():
+        if not isinstance(name, str) or not name.strip():
+            raise SeedError(f"metrics keys must be non-empty strings, got: {name!r}")
+        if not isinstance(entry, dict):
+            raise SeedError(f"metrics.{name} must be a mapping, got: {type(entry).__name__}")
+        entry_dict: dict[str, object] = cast("dict[str, object]", entry)
+
+        formula = entry_dict.get("formula")
+        if not isinstance(formula, str) or not formula.strip():
+            raise SeedError(f"metrics.{name}.formula must be a non-empty string")
+
+        unit_raw = entry_dict.get("unit", "")
+        if not isinstance(unit_raw, str):
+            raise SeedError(f"metrics.{name}.unit must be a string, got: {type(unit_raw).__name__}")
+
+        description_raw = entry_dict.get("description", "")
+        if not isinstance(description_raw, str):
+            raise SeedError(
+                f"metrics.{name}.description must be a string, got: {type(description_raw).__name__}"
+            )
+
+        alert_above: float | None = None
+        alert_above_raw = entry_dict.get("alert_above")
+        if alert_above_raw is not None:
+            if not isinstance(alert_above_raw, (int, float)):
+                raise SeedError(
+                    f"metrics.{name}.alert_above must be a number, got: {type(alert_above_raw).__name__}"
+                )
+            alert_above = float(alert_above_raw)
+
+        alert_below: float | None = None
+        alert_below_raw = entry_dict.get("alert_below")
+        if alert_below_raw is not None:
+            if not isinstance(alert_below_raw, (int, float)):
+                raise SeedError(
+                    f"metrics.{name}.alert_below must be a number, got: {type(alert_below_raw).__name__}"
+                )
+            alert_below = float(alert_below_raw)
+
+        result[name] = MetricSchema(
+            formula=formula.strip(),
+            unit=unit_raw,
+            description=description_raw,
+            alert_above=alert_above,
+            alert_below=alert_below,
+        )
+
+    return result
 
 
 def _parse_network_config(raw: object) -> NetworkConfig | None:
@@ -1440,6 +1541,9 @@ def parse_seed(path: Path) -> SeedConfig:
         raise SeedError(f"org_policies must be a list of file paths, got: {type(org_policies_raw).__name__}")
     org_policies: list[str] = [str(p) for p in org_policies_raw]
 
+    # --- Custom metrics ---
+    metrics = _parse_metrics(data.get("metrics"))
+
     return SeedConfig(
         goal=goal,
         budget_usd=budget_usd,
@@ -1487,6 +1591,7 @@ def parse_seed(path: Path) -> SeedConfig:
         cost_autopilot=cost_autopilot_raw,
         deployment_strategy=deployment_strategy_raw,
         org_policies=org_policies,
+        metrics=metrics,
     )
 
 

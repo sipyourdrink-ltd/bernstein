@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Request
@@ -387,6 +387,214 @@ def get_budget_forecast(request: Request) -> JSONResponse:
     payload = forecast.to_dict()
     payload["generated_at"] = time.time()
     return JSONResponse(payload)
+
+
+def _read_quality_scores(metrics_dir: Path, days: int = 90) -> list[dict[str, Any]]:
+    """Read per-task quality score history from quality_scores.jsonl.
+
+    Args:
+        metrics_dir: Path to the .sdd/metrics/ directory.
+        days: How many days of history to include.
+
+    Returns:
+        List of score dicts each with ``timestamp``, ``task_id``, ``total``
+        (0-100 score), and ``breakdown`` (dict[gate → points]).
+    """
+    scores_file = metrics_dir / "quality_scores.jsonl"
+    records: list[dict[str, Any]] = []
+    if not scores_file.exists():
+        return records
+
+    cutoff = time.time() - days * 86400
+    try:
+        for raw in scores_file.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rec: dict[str, Any] = json.loads(raw)
+                if _parse_timestamp(rec.get("timestamp", 0)) >= cutoff:
+                    records.append(rec)
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        pass
+
+    return records
+
+
+def _iso_date(ts: float) -> str:
+    """Return ISO date string (YYYY-MM-DD) for a Unix timestamp."""
+    return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%d")
+
+
+def _bucket_trend_series(
+    completion_records: list[dict[str, Any]],
+    gate_records: list[dict[str, Any]],
+    score_records: list[dict[str, Any]],
+    *,
+    granularity: str = "day",
+) -> list[dict[str, Any]]:
+    """Bucket metrics into time-series buckets for trend visualization.
+
+    Args:
+        completion_records: Task completion time records.
+        gate_records: Quality gate result records.
+        score_records: Quality score history records.
+        granularity: ``"day"`` or ``"week"`` bucketing.
+
+    Returns:
+        List of bucket dicts sorted by date, each with success_rate,
+        per-gate pass rates, and average quality score.
+    """
+
+    def _bucket_key(ts: float) -> str:
+        dt = datetime.fromtimestamp(ts, UTC)
+        if granularity == "week":
+            # ISO week start (Monday)
+            monday = dt - timedelta(days=dt.weekday())
+            return monday.strftime("%Y-%m-%d")
+        return dt.strftime("%Y-%m-%d")
+
+    # --- Completion success by bucket ---
+    bucket_tasks: dict[str, list[bool]] = defaultdict(list)
+    for rec in completion_records:
+        ts = _parse_timestamp(rec.get("timestamp", 0))
+        if ts == 0.0:
+            continue
+        key = _bucket_key(ts)
+        success = rec.get("labels", {}).get("success", "True") == "True"
+        bucket_tasks[key].append(success)
+
+    # --- Gate pass/fail by bucket and gate name ---
+    bucket_gates: dict[str, dict[str, dict[str, int]]] = defaultdict(
+        lambda: defaultdict(lambda: {"pass": 0, "total": 0})
+    )
+    for rec in gate_records:
+        ts = _parse_timestamp(rec.get("timestamp", 0))
+        if ts == 0.0:
+            continue
+        key = _bucket_key(ts)
+        gate = rec.get("gate") or "unknown"
+        result = rec.get("result", "pass")
+        bucket_gates[key][gate]["total"] += 1
+        if result == "pass":
+            bucket_gates[key][gate]["pass"] += 1
+
+    # --- Quality scores by bucket ---
+    bucket_scores: dict[str, list[int]] = defaultdict(list)
+    for rec in score_records:
+        ts = _parse_timestamp(rec.get("timestamp", 0))
+        if ts == 0.0:
+            continue
+        key = _bucket_key(ts)
+        total = rec.get("total")
+        if isinstance(total, (int, float)):
+            bucket_scores[key].append(int(total))
+
+    # --- Merge all buckets ---
+    all_keys = sorted(set(bucket_tasks) | set(bucket_gates) | set(bucket_scores))
+    series: list[dict[str, Any]] = []
+    for key in all_keys:
+        tasks = bucket_tasks.get(key, [])
+        total_tasks = len(tasks)
+        success_tasks = sum(1 for s in tasks if s)
+        success_rate = success_tasks / total_tasks if total_tasks > 0 else None
+
+        gates = bucket_gates.get(key, {})
+        gate_pass_rates: dict[str, float] = {}
+        for gate, counts in gates.items():
+            if counts["total"] > 0:
+                gate_pass_rates[gate] = counts["pass"] / counts["total"]
+
+        scores = bucket_scores.get(key, [])
+        avg_score = sum(scores) / len(scores) if scores else None
+
+        # Parse bucket date to a unix timestamp for the start of the bucket
+        try:
+            bucket_ts = datetime.strptime(key, "%Y-%m-%d").replace(tzinfo=UTC).timestamp()
+        except ValueError:
+            bucket_ts = 0.0
+
+        entry: dict[str, Any] = {
+            "date": key,
+            "ts": bucket_ts,
+            "tasks_total": total_tasks,
+            "tasks_success": success_tasks,
+            "gate_pass_rates": gate_pass_rates,
+        }
+        if success_rate is not None:
+            entry["success_rate"] = round(success_rate, 4)
+        if avg_score is not None:
+            entry["avg_quality_score"] = round(avg_score, 1)
+
+        series.append(entry)
+
+    return series
+
+
+@router.get("/quality/trend")
+def get_quality_trend(request: Request) -> JSONResponse:
+    """Return time-series quality metrics for trend visualization.
+
+    Buckets quality data by day (default) or week and returns per-bucket
+    success rates, gate pass rates, and average quality scores. Covers the
+    last 90 days by default so dashboards can show weeks-to-months trends.
+
+    Query parameters:
+    - ``days``: lookback window in days (default 90, max 365).
+    - ``granularity``: ``"day"`` (default) or ``"week"``.
+
+    Returns a ``series`` list ordered by date, each entry containing:
+    - ``date``: ISO date string (bucket start).
+    - ``ts``: Unix timestamp of the bucket start.
+    - ``tasks_total``, ``tasks_success``: raw task counts.
+    - ``success_rate``: fraction of tasks that succeeded (omitted if no tasks).
+    - ``gate_pass_rates``: dict of gate name → pass rate for that bucket.
+    - ``avg_quality_score``: mean quality score 0-100 (omitted if no scores).
+    """
+    sdd_dir = _get_sdd_dir(request)
+    metrics_dir = sdd_dir / "metrics"
+
+    # Parse query params from the raw request URL
+    params = dict(request.query_params)
+    try:
+        days = min(int(params.get("days", 90)), 365)
+    except (ValueError, TypeError):
+        days = 90
+    granularity = params.get("granularity", "day")
+    if granularity not in ("day", "week"):
+        granularity = "day"
+
+    if not metrics_dir.exists():
+        return JSONResponse(
+            {
+                "granularity": granularity,
+                "window_days": days,
+                "series": [],
+                "generated_at": time.time(),
+            }
+        )
+
+    completion_records = _read_completion_metrics(metrics_dir, days=days)
+    gate_records = _read_quality_gates(metrics_dir, days=days)
+    score_records = _read_quality_scores(metrics_dir, days=days)
+
+    series = _bucket_trend_series(
+        completion_records,
+        gate_records,
+        score_records,
+        granularity=granularity,
+    )
+
+    return JSONResponse(
+        {
+            "granularity": granularity,
+            "window_days": days,
+            "series": series,
+            "generated_at": time.time(),
+        }
+    )
 
 
 @router.get("/quality/models")

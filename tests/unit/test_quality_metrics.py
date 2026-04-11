@@ -384,6 +384,119 @@ def test_quality_endpoint_with_gate_data(tmp_path: Path) -> None:
     assert body["guardrail_pass_rate"] < 1.0
 
 
+# ---------------------------------------------------------------------------
+# /quality/trend endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_quality_trend_endpoint_empty(tmp_path: Path) -> None:
+    app = _make_test_app(tmp_path)
+    with TestClient(app) as client:
+        resp = client.get("/quality/trend")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "series" in body
+    assert "granularity" in body
+    assert "window_days" in body
+    assert "generated_at" in body
+    assert isinstance(body["series"], list)
+
+
+def test_quality_trend_endpoint_with_data(tmp_path: Path) -> None:
+    metrics_dir = tmp_path / ".sdd" / "metrics"
+    metrics_dir.mkdir(parents=True)
+
+    # Write completion records for two different days
+    today = time.strftime("%Y-%m-%d")
+    completion_file = metrics_dir / f"task_completion_time_{today}.jsonl"
+    records = [
+        {
+            "timestamp": time.time() - 3600,  # 1 hour ago
+            "metric_type": "task_completion_time",
+            "value": 30.0,
+            "labels": {"model": "sonnet", "success": "True"},
+        },
+        {
+            "timestamp": time.time() - 1800,  # 30 min ago
+            "metric_type": "task_completion_time",
+            "value": 60.0,
+            "labels": {"model": "sonnet", "success": "False"},
+        },
+    ]
+    completion_file.write_text("\n".join(json.dumps(r) for r in records))
+
+    # Write gate records
+    gates_file = metrics_dir / "quality_gates.jsonl"
+    gate_records = [
+        {"timestamp": time.time() - 3600, "task_id": "t1", "gate": "lint", "result": "pass"},
+        {"timestamp": time.time() - 1800, "task_id": "t2", "gate": "lint", "result": "blocked"},
+        {"timestamp": time.time() - 900, "task_id": "t3", "gate": "tests", "result": "pass"},
+    ]
+    gates_file.write_text("\n".join(json.dumps(r) for r in gate_records))
+
+    # Write quality scores
+    scores_file = metrics_dir / "quality_scores.jsonl"
+    score_records = [
+        {"timestamp": time.time() - 3600, "task_id": "t1", "total": 80, "breakdown": {}},
+        {"timestamp": time.time() - 1800, "task_id": "t2", "total": 60, "breakdown": {}},
+    ]
+    scores_file.write_text("\n".join(json.dumps(r) for r in score_records))
+
+    app = _make_test_app(tmp_path / "tasks.jsonl")
+    app.state.sdd_dir = tmp_path / ".sdd"
+
+    with TestClient(app) as client:
+        resp = client.get("/quality/trend?days=7&granularity=day")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["granularity"] == "day"
+    assert body["window_days"] == 7
+    series = body["series"]
+    assert len(series) >= 1
+
+    # Today's bucket should exist
+    today_bucket = next((b for b in series if b["date"] == today), None)
+    assert today_bucket is not None
+    assert today_bucket["tasks_total"] == 2
+    assert today_bucket["tasks_success"] == 1
+    assert abs(today_bucket["success_rate"] - 0.5) < 0.001
+    assert "lint" in today_bucket["gate_pass_rates"]
+    assert abs(today_bucket["gate_pass_rates"]["lint"] - 0.5) < 0.001
+    assert today_bucket["avg_quality_score"] == pytest.approx(70.0)
+
+
+def test_quality_trend_week_granularity(tmp_path: Path) -> None:
+    metrics_dir = tmp_path / ".sdd" / "metrics"
+    metrics_dir.mkdir(parents=True)
+
+    today = time.strftime("%Y-%m-%d")
+    completion_file = metrics_dir / f"task_completion_time_{today}.jsonl"
+    records = [
+        {
+            "timestamp": time.time(),
+            "metric_type": "task_completion_time",
+            "value": 10.0,
+            "labels": {"model": "haiku", "success": "True"},
+        }
+    ]
+    completion_file.write_text("\n".join(json.dumps(r) for r in records))
+
+    app = _make_test_app(tmp_path / "tasks.jsonl")
+    app.state.sdd_dir = tmp_path / ".sdd"
+
+    with TestClient(app) as client:
+        resp = client.get("/quality/trend?granularity=week")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["granularity"] == "week"
+    # Week bucket dates are always Monday (weekday 0)
+    for bucket in body["series"]:
+        from datetime import datetime as _dt
+
+        d = _dt.strptime(bucket["date"], "%Y-%m-%d")
+        assert d.weekday() == 0, f"Expected Monday bucket, got {bucket['date']} (weekday {d.weekday()})"
+
+
 def test_quality_endpoint_with_iso8601_timestamps(tmp_path: Path) -> None:
     """Test that /quality endpoint handles ISO 8601 string timestamps (not just Unix floats)."""
     metrics_dir = tmp_path / ".sdd" / "metrics"
