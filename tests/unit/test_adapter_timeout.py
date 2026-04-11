@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import signal
+import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -121,6 +122,7 @@ class TestCancelTimeout:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL not available on Windows")
 class TestWatchdogKillSequence:
     """Verify the timeout watchdog sends SIGTERM, then SIGKILL after grace period."""
 
