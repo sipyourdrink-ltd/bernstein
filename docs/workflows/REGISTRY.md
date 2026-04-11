@@ -33,6 +33,7 @@ Last updated: 2026-04-11
 | Data residency enforcement (ENT-009) | `WORKFLOW-data-residency-enforcement.md` | Draft | DataResidencyController + router ModelPolicy exist but are not bridged. No enforcement on task server writes, no policy persistence, no attestation persistence. 8 RC findings. |
 | Disaster recovery with cross-region replication (ENT-010) | `WORKFLOW-disaster-recovery-cross-region.md` | Draft | backup_sdd/restore_sdd local-only. WALReplicationManager has no transport layer. No periodic scheduling, no remote upload, no failover detection, no runbook generation. 10 RC findings. |
 | Embeddable PR status widget (road-006) | `WORKFLOW-pr-status-widget.md` | Draft | Embed status widget in PR body: quality grade, cost, agents, duration. Extends approval.py _pr_body with data from quality_gates, quality_score, cost_tracker. 5 RC findings. |
+| Speculative execution for branching task graphs (road-192) | `WORKFLOW-speculative-execution.md` | Draft | Speculatively spawn agents on both sides of conditional DAG branches before upstream resolves. Extends workflow_dsl.py DAGNode with `speculative` flag, adds cancel endpoint, discard cleanup. 8 RC findings (2 Critical: missing /cancel route, CANCELLED status). |
 | Ephemeral VM environments — Firecracker/gVisor (road-115) | `WORKFLOW-ephemeral-vm-environments.md` | Draft | VM-level agent isolation via Firecracker (<125ms boot) or standalone gVisor. Parallel to existing Docker/Podman ContainerManager. Requires new VMManager, IsolationMode.VM enum value. 8 RC findings. |
 | Team adoption dashboard (road-007) | `WORKFLOW-team-adoption-dashboard.md` | Draft | Aggregate org-level usage: runs, tasks, cost, quality, merges. 3 Critical gaps: cost key mismatch (always 0), quality source mismatch (always 0), missing merge writer (always 0). 8 RC findings. |
 | Multi-modal agent support (road-184) | `WORKFLOW-multi-modal-agent-support.md` | Draft | End-to-end attachment pipeline: plan YAML / API → Task → SpawnPrompt → Adapter → Agent. No multi-modal path exists today — Task, adapter, and prompt renderer all text-only. 7 RC findings. |
@@ -182,6 +183,21 @@ Data path: `.sdd/audit/*.jsonl` (daily logs), `.sdd/audit/merkle/` (seals)
 - `src/bernstein/core/quality_score.py` (`QualityScore` data source)
 - `src/bernstein/core/run_report.py` (`RunReport` data source)
 - New: `src/bernstein/core/pr_status_widget.py` (widget builder — to be created)
+
+### Speculative execution workflows
+
+- `src/bernstein/core/workflow_dsl.py` — DAGNode (needs `speculative` field), DAGEdge conditions, DAGExecutor
+- `src/bernstein/core/task_lifecycle.py` — `prepare_speculative_warm_pool()` (extension point)
+- `src/bernstein/core/orchestrator.py` — tick loop, dependency filter bypass for speculative tasks
+- `src/bernstein/core/spawner.py` — agent spawn with speculative flag, warm pool consumption
+- `src/bernstein/core/worktree.py` — worktree create/cleanup for speculative agents
+- `src/bernstein/core/warm_pool.py` — WarmPool slot pre-creation
+- `src/bernstein/core/routes/tasks.py` — needs POST /tasks/{id}/cancel endpoint
+- `src/bernstein/core/models.py` — TaskStatus.CANCELLED (verify in TERMINAL_STATUSES)
+- `src/bernstein/core/graph.py` — TaskGraph edge types, branch group identification
+
+Config path: `speculative_execution:` section in `bernstein.yaml`
+Data path: `.sdd/runtime/speculative/` (branch group state), `.sdd/metrics/speculative_waste.jsonl`
 
 ### Ephemeral VM environment workflows
 
