@@ -10,11 +10,13 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 from textual.widgets import Static
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +165,11 @@ def list_recordings(recordings_dir: Path, limit: int = 5) -> list[RecordingSumma
     """List recent recordings with lightweight summaries, newest first."""
     if not recordings_dir.exists():
         return []
-    summaries = [summary for path in recordings_dir.glob("*.jsonl") if (summary := summarize_recording(path)) is not None]
+    summaries = [
+        summary
+        for path in recordings_dir.glob("*.jsonl")
+        if (summary := summarize_recording(path)) is not None
+    ]
     summaries.sort(key=lambda summary: summary.modified_ts, reverse=True)
     return summaries[:limit]
 

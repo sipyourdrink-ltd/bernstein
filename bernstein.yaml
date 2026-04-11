@@ -47,8 +47,8 @@ role_model_policy:
     model: coder-model
     effort: high
 budget: $0
-internal_llm_provider: claude
-internal_llm_model: claude-sonnet-4-6
+internal_llm_provider: gemini
+internal_llm_model: gemini-3.1-pro-preview
 evolution_enabled: false
 auto_decompose: false
 constraints:

@@ -168,6 +168,37 @@ async def call_llm(
             logger.error("Claude CLI call failed: %s", exc)
             raise RuntimeError(f"Claude CLI call failed: {exc}") from exc
 
+    # Gemini CLI path — uses OAuth auth, no API key needed.
+    # Runs `gemini -p "prompt" -m model`
+    if provider == "gemini":
+        logger.debug("Calling Gemini CLI: model=%s", model)
+        try:
+            proc = await _asyncio.create_subprocess_exec(
+                "gemini",
+                "-p",
+                prompt,
+                "-m",
+                model,
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, stderr_bytes = await _asyncio.wait_for(proc.communicate(), timeout=120)
+            _stdout = stdout_bytes.decode() if stdout_bytes else ""
+            _stderr = stderr_bytes.decode() if stderr_bytes else ""
+            if proc.returncode != 0:
+                raise RuntimeError(f"gemini CLI exited {proc.returncode}: {_stderr[:200]}")
+            _text = _stdout.strip()
+            if _store is not None:
+                _store.record(prompt, model, _text)
+            return _text
+        except TimeoutError as exc:
+            raise RuntimeError("Gemini CLI timed out after 120s") from exc
+        except FileNotFoundError as exc:
+            raise RuntimeError("gemini CLI not found — install Gemini CLI") from exc
+        except Exception as exc:
+            logger.error("Gemini CLI call failed: %s", exc)
+            raise RuntimeError(f"Gemini CLI call failed: {exc}") from exc
+
     # OpenAI-compatible providers (OpenRouter, Together, G4F, etc.)
     client = get_client(provider)
     logger.debug("Calling LLM API using provider=%s, model=%s", provider, model)
