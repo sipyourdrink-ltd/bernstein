@@ -862,7 +862,7 @@ def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
             raise SeedError(f"role_model_policy[{role!r}] must be a mapping")
 
         normalized: dict[str, str] = {}
-        for key in ("provider", "model", "effort"):
+        for key in ("provider", "model", "effort", "cli"):
             value = settings.get(key)
             if value is None:
                 continue
@@ -870,7 +870,11 @@ def _parse_role_model_policy(raw: object) -> dict[str, dict[str, str]] | None:
                 raise SeedError(f"role_model_policy[{role!r}][{key!r}] must be a non-empty string")
             normalized[key] = value
 
-        unknown_keys = sorted(set(settings) - {"provider", "model", "effort"})
+        # `cli` is an alias for `provider` — map it so the spawner sees it
+        if "cli" in normalized and "provider" not in normalized:
+            normalized["provider"] = normalized["cli"]
+
+        unknown_keys = sorted(set(settings) - {"provider", "model", "effort", "cli"})
         if unknown_keys:
             raise SeedError(f"role_model_policy[{role!r}] has unknown keys: {', '.join(unknown_keys)}")
         parsed[role] = normalized

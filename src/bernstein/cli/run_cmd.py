@@ -612,6 +612,7 @@ def _estimate_run_preview(
         est_task_count = max(1, count)
 
     est_model = model_override or "sonnet"
+    est_cli = "claude"
     seed_path = Path(seed_file) if seed_file is not None else find_seed_file()
     if model_override is None and seed_path is not None and seed_path.exists():
         try:
@@ -620,13 +621,29 @@ def _estimate_run_preview(
             seed = parse_seed(seed_path)
             if seed.model:
                 est_model = seed.model
+            # Read the configured CLI adapter from role_model_policy or top-level cli
+            if seed.role_model_policy:
+                # Use the first role's cli/model as representative
+                for _role, _policy in seed.role_model_policy.items():
+                    if "cli" in _policy:
+                        est_cli = _policy["cli"]
+                    if "model" in _policy:
+                        est_model = _policy["model"]
+                    break
+            if seed.cli and seed.cli != "auto":
+                est_cli = seed.cli
         except Exception:
             est_model = "sonnet"
 
-    low_usd, high_usd = estimate_run_cost(est_task_count, est_model)
+    # For non-Claude adapters, costs are typically $0 (free tier) or much lower
+    if est_cli in ("qwen", "gemini", "ollama", "tabby"):
+        low_usd, high_usd = 0.0, 0.0
+    else:
+        low_usd, high_usd = estimate_run_cost(est_task_count, est_model)
+    display_model = f"{est_cli}/{est_model}" if est_cli != "claude" else est_model
     return RunCostEstimate(
         task_count=est_task_count,
-        model=est_model,
+        model=display_model,
         low_usd=low_usd,
         high_usd=high_usd,
     )
