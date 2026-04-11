@@ -4,8 +4,8 @@ import asyncio
 import shutil
 import time
 from pathlib import Path
-from typing import Any, cast
 from types import SimpleNamespace
+from typing import Any
 
 from bernstein.core.task_store import TaskStore
 
