@@ -852,6 +852,42 @@ def generate_auto_routing_yaml(discovery: DiscoveryResult | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def recommend_routing_by_capabilities(
+    required: list[str],
+    discovery: DiscoveryResult | None = None,
+    preferred_agent: str | None = None,
+) -> RouteRecommendation | None:
+    """Route a task by required capabilities instead of role.
+
+    Uses the CapabilityRouter to find the best agent+model for a set
+    of required capabilities like ["python", "testing", "refactoring"].
+
+    Args:
+        required: List of required capability names.
+        discovery: Pre-computed discovery result. If None, uses cached scan.
+        preferred_agent: Optional agent name to prefer.
+
+    Returns:
+        RouteRecommendation if a match is found, None otherwise.
+    """
+    if discovery is None:
+        discovery = discover_agents_cached()
+
+    from bernstein.core.capability_router import CapabilityRouter
+
+    router = CapabilityRouter(discovery=discovery)
+    match = router.best_match(required, preferred_agent=preferred_agent)
+    if match is None:
+        return None
+
+    return RouteRecommendation(
+        role="capability-routed",
+        agent_name=match.agent_name,
+        model=match.model,
+        reason=match.reason,
+    )
+
+
 def short_model(model: str) -> str:
     """Convert full model ID to a short display name."""
     mapping: dict[str, str] = {
