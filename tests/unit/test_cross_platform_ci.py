@@ -130,14 +130,10 @@ class TestCIWorkflowExists:
     def test_pull_request_test_job_uses_affected_runner_with_fallback(self) -> None:
         data = _load_ci_workflow()
         steps = _ci_test_steps(data)
-        run_steps = [
-            step for step in steps if (step.get("name") or "").startswith("Run isolated test suite")
-        ]
+        run_steps = [step for step in steps if (step.get("name") or "").startswith("Run isolated test suite")]
         assert run_steps, "expected at least one 'Run isolated test suite' step"
         # The Linux/macOS variant carries the --affected fallback logic.
-        unix_steps = [
-            step for step in run_steps if "Linux/macOS" in (step.get("name") or "")
-        ]
+        unix_steps = [step for step in run_steps if "Linux/macOS" in (step.get("name") or "")]
         assert len(unix_steps) == 1
         run_script = unix_steps[0].get("run", "")
         assert "--affected" in run_script

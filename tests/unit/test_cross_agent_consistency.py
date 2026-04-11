@@ -119,28 +119,34 @@ class TestCheckConsistencyBasic:
 
 class TestMethodMismatch:
     def test_different_methods_raises_issue(self) -> None:
-        report = check_consistency([
-            _backend(method="POST"),
-            _frontend(method="PUT"),
-        ])
+        report = check_consistency(
+            [
+                _backend(method="POST"),
+                _frontend(method="PUT"),
+            ]
+        )
         assert not report.is_consistent
         issues = report.issues_by_type(ConsistencyIssueType.METHOD_MISMATCH)
         assert len(issues) == 1
 
     def test_method_mismatch_lists_both_agents(self) -> None:
-        report = check_consistency([
-            _backend(method="POST", agent_id="b1"),
-            _frontend(method="PATCH", agent_id="f1"),
-        ])
+        report = check_consistency(
+            [
+                _backend(method="POST", agent_id="b1"),
+                _frontend(method="PATCH", agent_id="f1"),
+            ]
+        )
         issue = report.issues_by_type(ConsistencyIssueType.METHOD_MISMATCH)[0]
         assert "b1" in issue.agents_involved
         assert "f1" in issue.agents_involved
 
     def test_same_method_no_mismatch(self) -> None:
-        report = check_consistency([
-            _backend(method="GET"),
-            _frontend(method="GET"),
-        ])
+        report = check_consistency(
+            [
+                _backend(method="GET"),
+                _frontend(method="GET"),
+            ]
+        )
         assert report.issues_by_type(ConsistencyIssueType.METHOD_MISMATCH) == []
 
     def test_method_normalised_to_uppercase(self) -> None:
@@ -165,26 +171,32 @@ class TestMethodMismatch:
 
 class TestMissingRequestField:
     def test_consumer_sends_field_not_in_producer(self) -> None:
-        report = check_consistency([
-            _backend(request_fields={"name": "str"}),
-            _frontend(request_fields={"name": "str", "extra_field": "int"}),
-        ])
+        report = check_consistency(
+            [
+                _backend(request_fields={"name": "str"}),
+                _frontend(request_fields={"name": "str", "extra_field": "int"}),
+            ]
+        )
         issues = report.issues_by_type(ConsistencyIssueType.MISSING_REQUEST_FIELD)
         assert len(issues) == 1
         assert "extra_field" in issues[0].description
 
     def test_consumer_subset_of_producer_passes(self) -> None:
-        report = check_consistency([
-            _backend(request_fields={"name": "str", "quantity": "int", "note": "str"}),
-            _frontend(request_fields={"name": "str"}),
-        ])
+        report = check_consistency(
+            [
+                _backend(request_fields={"name": "str", "quantity": "int", "note": "str"}),
+                _frontend(request_fields={"name": "str"}),
+            ]
+        )
         assert report.issues_by_type(ConsistencyIssueType.MISSING_REQUEST_FIELD) == []
 
     def test_empty_consumer_request_passes(self) -> None:
-        report = check_consistency([
-            _backend(request_fields={"name": "str"}),
-            _frontend(request_fields={}),
-        ])
+        report = check_consistency(
+            [
+                _backend(request_fields={"name": "str"}),
+                _frontend(request_fields={}),
+            ]
+        )
         assert report.is_consistent
 
 
@@ -195,19 +207,23 @@ class TestMissingRequestField:
 
 class TestMissingResponseField:
     def test_consumer_reads_field_not_in_producer(self) -> None:
-        report = check_consistency([
-            _backend(response_fields={"id": "str"}),
-            _frontend(response_fields={"id": "str", "created_at": "float"}),
-        ])
+        report = check_consistency(
+            [
+                _backend(response_fields={"id": "str"}),
+                _frontend(response_fields={"id": "str", "created_at": "float"}),
+            ]
+        )
         issues = report.issues_by_type(ConsistencyIssueType.MISSING_RESPONSE_FIELD)
         assert len(issues) == 1
         assert "created_at" in issues[0].description
 
     def test_producer_superset_of_consumer_passes(self) -> None:
-        report = check_consistency([
-            _backend(response_fields={"id": "str", "name": "str", "created_at": "float"}),
-            _frontend(response_fields={"id": "str"}),
-        ])
+        report = check_consistency(
+            [
+                _backend(response_fields={"id": "str", "name": "str", "created_at": "float"}),
+                _frontend(response_fields={"id": "str"}),
+            ]
+        )
         assert report.issues_by_type(ConsistencyIssueType.MISSING_RESPONSE_FIELD) == []
 
 
@@ -218,35 +234,43 @@ class TestMissingResponseField:
 
 class TestFieldTypeMismatch:
     def test_request_field_type_conflict(self) -> None:
-        report = check_consistency([
-            _backend(request_fields={"quantity": "int"}),
-            _frontend(request_fields={"quantity": "str"}),
-        ])
+        report = check_consistency(
+            [
+                _backend(request_fields={"quantity": "int"}),
+                _frontend(request_fields={"quantity": "str"}),
+            ]
+        )
         issues = report.issues_by_type(ConsistencyIssueType.FIELD_TYPE_MISMATCH)
         assert len(issues) == 1
         assert "quantity" in issues[0].description
 
     def test_response_field_type_conflict(self) -> None:
-        report = check_consistency([
-            _backend(response_fields={"id": "int"}),
-            _frontend(response_fields={"id": "str"}),
-        ])
+        report = check_consistency(
+            [
+                _backend(response_fields={"id": "int"}),
+                _frontend(response_fields={"id": "str"}),
+            ]
+        )
         issues = report.issues_by_type(ConsistencyIssueType.FIELD_TYPE_MISMATCH)
         assert len(issues) == 1
 
     def test_matching_types_no_issue(self) -> None:
-        report = check_consistency([
-            _backend(request_fields={"count": "int"}, response_fields={"ok": "bool"}),
-            _frontend(request_fields={"count": "int"}, response_fields={"ok": "bool"}),
-        ])
+        report = check_consistency(
+            [
+                _backend(request_fields={"count": "int"}, response_fields={"ok": "bool"}),
+                _frontend(request_fields={"count": "int"}, response_fields={"ok": "bool"}),
+            ]
+        )
         assert report.issues_by_type(ConsistencyIssueType.FIELD_TYPE_MISMATCH) == []
 
     def test_empty_type_annotation_skipped(self) -> None:
         # Empty string type → no type conflict reported
-        report = check_consistency([
-            _backend(request_fields={"value": "int"}),
-            _frontend(request_fields={"value": ""}),
-        ])
+        report = check_consistency(
+            [
+                _backend(request_fields={"value": "int"}),
+                _frontend(request_fields={"value": ""}),
+            ]
+        )
         assert report.issues_by_type(ConsistencyIssueType.FIELD_TYPE_MISMATCH) == []
 
 
@@ -257,33 +281,41 @@ class TestFieldTypeMismatch:
 
 class TestErrorCodeAlignment:
     def test_consumer_handles_undeclared_error_code(self) -> None:
-        report = check_consistency([
-            _backend(error_codes=[400, 422]),
-            _frontend(error_codes=[400, 422, 503]),
-        ])
+        report = check_consistency(
+            [
+                _backend(error_codes=[400, 422]),
+                _frontend(error_codes=[400, 422, 503]),
+            ]
+        )
         issues = report.issues_by_type(ConsistencyIssueType.UNHANDLED_ERROR_CODE)
         assert len(issues) == 1
         assert "503" in issues[0].description
 
     def test_consumer_subset_of_producer_codes_passes(self) -> None:
-        report = check_consistency([
-            _backend(error_codes=[400, 422, 500]),
-            _frontend(error_codes=[400, 422]),
-        ])
+        report = check_consistency(
+            [
+                _backend(error_codes=[400, 422, 500]),
+                _frontend(error_codes=[400, 422]),
+            ]
+        )
         assert report.issues_by_type(ConsistencyIssueType.UNHANDLED_ERROR_CODE) == []
 
     def test_empty_error_codes_skips_check(self) -> None:
-        report = check_consistency([
-            _backend(error_codes=[]),
-            _frontend(error_codes=[404]),
-        ])
+        report = check_consistency(
+            [
+                _backend(error_codes=[]),
+                _frontend(error_codes=[404]),
+            ]
+        )
         assert report.issues_by_type(ConsistencyIssueType.UNHANDLED_ERROR_CODE) == []
 
     def test_multiple_undeclared_codes(self) -> None:
-        report = check_consistency([
-            _backend(error_codes=[400]),
-            _frontend(error_codes=[400, 429, 503]),
-        ])
+        report = check_consistency(
+            [
+                _backend(error_codes=[400]),
+                _frontend(error_codes=[400, 429, 503]),
+            ]
+        )
         issues = report.issues_by_type(ConsistencyIssueType.UNHANDLED_ERROR_CODE)
         assert len(issues) == 2
 
@@ -410,20 +442,24 @@ class TestMultiAgentScenarios:
 
 class TestConsistencyReportHelpers:
     def test_issues_by_type_filters_correctly(self) -> None:
-        report = check_consistency([
-            _backend(response_fields={"id": "str"}, error_codes=[400]),
-            _frontend(response_fields={"id": "str", "missing": "str"}, error_codes=[400, 503]),
-        ])
+        report = check_consistency(
+            [
+                _backend(response_fields={"id": "str"}, error_codes=[400]),
+                _frontend(response_fields={"id": "str", "missing": "str"}, error_codes=[400, 503]),
+            ]
+        )
         missing = report.issues_by_type(ConsistencyIssueType.MISSING_RESPONSE_FIELD)
         unhandled = report.issues_by_type(ConsistencyIssueType.UNHANDLED_ERROR_CODE)
         assert len(missing) >= 1
         assert len(unhandled) >= 1
 
     def test_is_consistent_false_when_issues_exist(self) -> None:
-        report = check_consistency([
-            _backend(response_fields={}),
-            _frontend(response_fields={"id": "str"}),
-        ])
+        report = check_consistency(
+            [
+                _backend(response_fields={}),
+                _frontend(response_fields={"id": "str"}),
+            ]
+        )
         assert not report.is_consistent
 
     def test_checked_endpoints_counts_shared_only(self) -> None:

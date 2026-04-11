@@ -109,28 +109,18 @@ class TestPostMortemGeneratorDataLoading:
         gen = PostMortemGenerator(workdir)
         assert gen._run_id in ("run-001", "run-002")
 
-    def test_load_summary_returns_empty_when_missing(
-        self, generator: PostMortemGenerator
-    ) -> None:
+    def test_load_summary_returns_empty_when_missing(self, generator: PostMortemGenerator) -> None:
         assert generator._load_summary() == {}
 
-    def test_load_summary_parses_json(
-        self, generator: PostMortemGenerator, summary_dir: Path
-    ) -> None:
-        (summary_dir / "summary.json").write_text(
-            json.dumps({"goal": "Do something cool"}), encoding="utf-8"
-        )
+    def test_load_summary_parses_json(self, generator: PostMortemGenerator, summary_dir: Path) -> None:
+        (summary_dir / "summary.json").write_text(json.dumps({"goal": "Do something cool"}), encoding="utf-8")
         s = generator._load_summary()
         assert s["goal"] == "Do something cool"
 
-    def test_load_task_metrics_returns_empty_when_no_dir(
-        self, generator: PostMortemGenerator
-    ) -> None:
+    def test_load_task_metrics_returns_empty_when_no_dir(self, generator: PostMortemGenerator) -> None:
         assert generator._load_task_metrics() == []
 
-    def test_load_task_metrics_reads_json_files(
-        self, generator: PostMortemGenerator, metrics_dir: Path
-    ) -> None:
+    def test_load_task_metrics_reads_json_files(self, generator: PostMortemGenerator, metrics_dir: Path) -> None:
         payload = {"task_id": "t1", "success": True, "start_time": 1000.0, "end_time": 1100.0}
         (metrics_dir / "task_t1.json").write_text(json.dumps(payload), encoding="utf-8")
         metrics = generator._load_task_metrics()
@@ -144,18 +134,14 @@ class TestPostMortemGeneratorDataLoading:
 
 
 class TestPostMortemGeneratorGenerate:
-    def test_generate_returns_report_with_unknown_when_no_data(
-        self, generator: PostMortemGenerator
-    ) -> None:
+    def test_generate_returns_report_with_unknown_when_no_data(self, generator: PostMortemGenerator) -> None:
         report = generator.generate()
         assert report.run_id == "test-run-abc"
         assert report.total_tasks == 0
         assert report.failed_tasks == 0
         assert report.success_rate_pct == 0.0
 
-    def test_generate_computes_success_rate(
-        self, generator: PostMortemGenerator, metrics_dir: Path
-    ) -> None:
+    def test_generate_computes_success_rate(self, generator: PostMortemGenerator, metrics_dir: Path) -> None:
         for i, success in enumerate([True, True, False]):
             payload = {
                 "task_id": f"t{i}",
@@ -169,9 +155,7 @@ class TestPostMortemGeneratorGenerate:
         assert report.failed_tasks == 1
         assert report.success_rate_pct == pytest.approx(66.67, abs=0.1)
 
-    def test_generate_builds_timeline(
-        self, generator: PostMortemGenerator, metrics_dir: Path
-    ) -> None:
+    def test_generate_builds_timeline(self, generator: PostMortemGenerator, metrics_dir: Path) -> None:
         payload = {
             "task_id": "t1",
             "success": False,
@@ -184,9 +168,7 @@ class TestPostMortemGeneratorGenerate:
         assert "task_start" in kinds
         assert "task_fail" in kinds
 
-    def test_generate_aggregates_factors(
-        self, generator: PostMortemGenerator, metrics_dir: Path
-    ) -> None:
+    def test_generate_aggregates_factors(self, generator: PostMortemGenerator, metrics_dir: Path) -> None:
         # We can't easily inject log data, but with no session logs the factors should be empty.
         payload = {"task_id": "t1", "success": False, "start_time": 1000.0, "end_time": 1100.0, "session_id": ""}
         (metrics_dir / "task_t1.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -201,15 +183,11 @@ class TestPostMortemGeneratorGenerate:
 
 
 class TestPostMortemMarkdown:
-    def test_to_markdown_contains_run_id(
-        self, generator: PostMortemGenerator, sample_report: PostMortemReport
-    ) -> None:
+    def test_to_markdown_contains_run_id(self, generator: PostMortemGenerator, sample_report: PostMortemReport) -> None:
         md = generator.to_markdown(sample_report)
         assert "run-42" in md
 
-    def test_to_markdown_contains_goal(
-        self, generator: PostMortemGenerator, sample_report: PostMortemReport
-    ) -> None:
+    def test_to_markdown_contains_goal(self, generator: PostMortemGenerator, sample_report: PostMortemReport) -> None:
         md = generator.to_markdown(sample_report)
         assert "Add JWT authentication" in md
 
@@ -220,9 +198,7 @@ class TestPostMortemMarkdown:
         assert "## Event Timeline" in md
         assert "task_fail" in md
 
-    def test_to_markdown_contains_rca(
-        self, generator: PostMortemGenerator, sample_report: PostMortemReport
-    ) -> None:
+    def test_to_markdown_contains_rca(self, generator: PostMortemGenerator, sample_report: PostMortemReport) -> None:
         md = generator.to_markdown(sample_report)
         assert "Root Cause Analysis" in md
         assert "compile_error" in md
@@ -257,15 +233,11 @@ class TestPostMortemHTML:
         assert "<html" in html
         assert "</html>" in html
 
-    def test_to_html_contains_run_id(
-        self, generator: PostMortemGenerator, sample_report: PostMortemReport
-    ) -> None:
+    def test_to_html_contains_run_id(self, generator: PostMortemGenerator, sample_report: PostMortemReport) -> None:
         html = generator.to_html(sample_report)
         assert "run-42" in html
 
-    def test_to_html_has_styled_tables(
-        self, generator: PostMortemGenerator, sample_report: PostMortemReport
-    ) -> None:
+    def test_to_html_has_styled_tables(self, generator: PostMortemGenerator, sample_report: PostMortemReport) -> None:
         html = generator.to_html(sample_report)
         assert "<table>" in html
         assert "<th>" in html
@@ -280,9 +252,7 @@ class TestPostMortemHTML:
         assert "Agent Decision Traces" in html
         assert "Recommended Actions" in html
 
-    def test_to_html_escapes_special_chars(
-        self, generator: PostMortemGenerator
-    ) -> None:
+    def test_to_html_escapes_special_chars(self, generator: PostMortemGenerator) -> None:
         report = PostMortemReport(
             run_id="<xss>",
             goal="<script>alert(1)</script>",
@@ -295,9 +265,7 @@ class TestPostMortemHTML:
         assert "<script>" not in html
         assert "&lt;script&gt;" in html
 
-    def test_to_html_not_just_pre_block(
-        self, generator: PostMortemGenerator, sample_report: PostMortemReport
-    ) -> None:
+    def test_to_html_not_just_pre_block(self, generator: PostMortemGenerator, sample_report: PostMortemReport) -> None:
         html = generator.to_html(sample_report)
         # Proper HTML should have structure beyond a single pre block
         assert html.count("<table>") >= 1

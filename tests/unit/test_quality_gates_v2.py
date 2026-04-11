@@ -49,6 +49,7 @@ def test_default_pipeline_includes_additive_gates() -> None:
         "coverage_delta",
         "merge_conflict",
         "pii_scan",
+        "dlp_scan",
     ]
 
 

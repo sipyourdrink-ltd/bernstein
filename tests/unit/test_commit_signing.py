@@ -215,12 +215,20 @@ class TestSignAndCommit:
         fail_git = GitResult(returncode=1, stdout="", stderr="error")
         prov = CommitProvenance(agent_id="a", task_id="t", run_id="r")
         ok_result = SignedCommitResult(
-            git_result=ok_git, sha="abc", signed=False, signing_mode="none",
-            provenance=prov, trailers=[],
+            git_result=ok_git,
+            sha="abc",
+            signed=False,
+            signing_mode="none",
+            provenance=prov,
+            trailers=[],
         )
         fail_result = SignedCommitResult(
-            git_result=fail_git, sha="", signed=False, signing_mode="none",
-            provenance=prov, trailers=[],
+            git_result=fail_git,
+            sha="",
+            signed=False,
+            signing_mode="none",
+            provenance=prov,
+            trailers=[],
         )
         assert ok_result.ok is True
         assert fail_result.ok is False
@@ -253,7 +261,10 @@ class TestReadCommitProvenance:
         # The initial commit from _init_git_repo has no Bernstein trailers
         first_sha = subprocess.run(
             ["git", "rev-list", "--max-parents=0", "HEAD"],
-            cwd=git_repo, capture_output=True, text=True, check=True,
+            cwd=git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         prov = read_commit_provenance(git_repo, first_sha)
         assert prov == {}
@@ -279,7 +290,10 @@ class TestIsAgentCommit:
         # The initial commit has no Bernstein trailers
         first_sha = subprocess.run(
             ["git", "rev-list", "--max-parents=0", "HEAD"],
-            cwd=git_repo, capture_output=True, text=True, check=True,
+            cwd=git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         assert is_agent_commit(git_repo, first_sha) is False
 

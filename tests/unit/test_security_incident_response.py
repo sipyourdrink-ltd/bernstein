@@ -163,9 +163,7 @@ class TestQuarantineWorktree:
             detail="Credential file read",
             branch="agent/session-q-2",
         )
-        data = json.loads(
-            (tmp_path / ".sdd" / "quarantine" / "session-q-2.json").read_text()
-        )
+        data = json.loads((tmp_path / ".sdd" / "quarantine" / "session-q-2.json").read_text())
         assert data["session_id"] == "session-q-2"
         assert data["reason"] == "security_incident"
         assert data["event_type"] == SecurityEventType.CREDENTIAL_EXFILTRATION
@@ -181,9 +179,7 @@ class TestQuarantineWorktree:
             task_id="task-no-branch",
             detail="Anomaly",
         )
-        data = json.loads(
-            (tmp_path / ".sdd" / "quarantine" / "session-no-branch.json").read_text()
-        )
+        data = json.loads((tmp_path / ".sdd" / "quarantine" / "session-no-branch.json").read_text())
         assert data["branch"] == "agent/session-no-branch"
 
 

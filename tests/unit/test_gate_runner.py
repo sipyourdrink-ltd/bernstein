@@ -232,9 +232,7 @@ def _make_auto_format_runner(tmp_path: Path, *, python_cmd: str = "ruff format")
     return GateRunner(config, tmp_path)
 
 
-def test_auto_format_passes_and_reports_reformatted_files(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_auto_format_passes_and_reports_reformatted_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """auto_format gate always passes and reports how many files were reformatted."""
     import subprocess
 
@@ -260,9 +258,7 @@ def test_auto_format_passes_and_reports_reformatted_files(
     assert "reformatted" in result.details
 
 
-def test_auto_format_skips_when_formatter_unavailable(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_auto_format_skips_when_formatter_unavailable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """auto_format skips a language when its formatter binary is not on PATH."""
     import shutil
 

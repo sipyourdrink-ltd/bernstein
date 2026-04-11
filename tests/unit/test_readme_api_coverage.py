@@ -132,6 +132,9 @@ DOCUMENTED_COMMANDS: frozenset[str] = frozenset(
         "worker",
         "dr",
         "incident",
+        "postmortem",
+        "slo",
+        "triggers",
         # Hidden aliases (backward compat — documented in README "Command aliases" table)
         "overture",  # alias for init
         "downbeat",  # alias for start
