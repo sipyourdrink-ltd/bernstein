@@ -28,7 +28,7 @@ from bernstein.core.a2a import A2AHandler
 from bernstein.core.access_log import StructuredAccessLogMiddleware
 from bernstein.core.acp import ACPHandler
 from bernstein.core.auth_rate_limiter import RequestRateLimitMiddleware
-from bernstein.core.bulletin import BulletinBoard, MessageBoard, MessageType
+from bernstein.core.bulletin import BulletinBoard, DirectChannel, MessageBoard, MessageType
 from bernstein.core.cluster import NodeRegistry
 from bernstein.core.json_logging import setup_json_logging
 from bernstein.core.models import (
@@ -694,6 +694,51 @@ class DelegationResponse(BaseModel):
     cell_id: str | None
 
 
+# -- Direct channel schemas ------------------------------------------------
+
+
+class ChannelQueryRequest(BaseModel):
+    """Body for POST /channel/query."""
+
+    sender_agent: str
+    topic: str
+    content: str
+    target_agent: str | None = None
+    target_role: str | None = None
+    ttl_seconds: float = 300
+
+
+class ChannelResponseRequest(BaseModel):
+    """Body for POST /channel/{query_id}/respond."""
+
+    responder_agent: str
+    content: str
+
+
+class ChannelQueryResponse(BaseModel):
+    """Single channel query in API responses."""
+
+    id: str
+    sender_agent: str
+    topic: str
+    content: str
+    target_agent: str | None
+    target_role: str | None
+    timestamp: float
+    expires_at: float
+    resolved: bool
+
+
+class ChannelResponseResponse(BaseModel):
+    """Single channel response in API responses."""
+
+    id: str
+    query_id: str
+    responder_agent: str
+    content: str
+    timestamp: float
+
+
 # -- A2A protocol schemas --------------------------------------------------
 
 
@@ -1318,12 +1363,14 @@ def create_app(
     # Attach shared state for route modules to access via request.app.state
     bulletin = BulletinBoard()
     message_board = MessageBoard()
+    direct_channel = DirectChannel()
     a2a_handler = A2AHandler(server_url="http://localhost:8052")
     acp_handler = ACPHandler(server_url="http://localhost:8052")
 
     application.state.store = store  # type: ignore[attr-defined]
     application.state.bulletin = bulletin  # type: ignore[attr-defined]
     application.state.message_board = message_board  # type: ignore[attr-defined]
+    application.state.direct_channel = direct_channel  # type: ignore[attr-defined]
     application.state.a2a_handler = a2a_handler  # type: ignore[attr-defined]
     application.state.acp_handler = acp_handler  # type: ignore[attr-defined]
     application.state.node_registry = node_registry  # type: ignore[attr-defined]
