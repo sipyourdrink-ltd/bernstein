@@ -1443,6 +1443,11 @@ def create_app(
     application.include_router(observability_router)
     application.include_router(quality_router)
 
+    # Per-file code health score routes
+    from bernstein.core.routes.file_health import router as file_health_router
+
+    application.include_router(file_health_router)
+
     # Graceful drain routes — freeze/unfreeze claim acceptance
     from bernstein.core.routes.drain import router as drain_router
 

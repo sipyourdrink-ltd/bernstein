@@ -370,6 +370,37 @@ def _try_generate_sbom(request: Request) -> None:
         logger.warning("SBOM generation failed (non-fatal)", exc_info=True)
 
 
+def _update_file_health(
+    request: Request,
+    task_id: str,
+    owned_files: list[str],
+    outcome: str,
+) -> None:
+    """Update per-file health scores after a task completes or fails.
+
+    Fires synchronously but swallows all exceptions so task routes always
+    succeed even if health tracking has an issue.
+
+    Args:
+        request: FastAPI request (for sdd_dir access).
+        task_id: ID of the task that just finished.
+        owned_files: Files the task claimed ownership of.
+        outcome: ``"success"`` or ``"failure"``.
+    """
+    if not owned_files:
+        return
+    sdd_dir: Path | None = getattr(request.app.state, "sdd_dir", None)
+    if sdd_dir is None:
+        return
+    try:
+        from bernstein.core.file_health import FileHealthTracker
+
+        tracker = FileHealthTracker(sdd_dir=sdd_dir)
+        tracker.record_task_outcome(task_id, owned_files, outcome)
+    except Exception:
+        logger.warning("file_health: update failed (non-fatal)", exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # Task CRUD
 # ---------------------------------------------------------------------------
@@ -732,6 +763,9 @@ async def complete_task(task_id: str, body: TaskCompleteRequest, request: Reques
         # Evict session from the real-time monitor to free memory
         _evict_realtime_session(request, task.claimed_by_session)
 
+        # Update per-file health scores (fire-and-forget)
+        _update_file_health(request, task.id, list(task.owned_files), "success")
+
         return task_to_response(task)
 
 
@@ -782,6 +816,10 @@ async def fail_task(task_id: str, body: TaskFailRequest, request: Request) -> Ta
         raise HTTPException(status_code=409, detail=str(exc)) from None
     sse_bus.publish("task_update", json.dumps({"id": task.id, "status": "failed"}))
     get_plugin_manager().fire_task_failed(task_id=task.id, role=task.role, error=body.reason)
+
+    # Update per-file health scores with failure outcome (fire-and-forget)
+    _update_file_health(request, task.id, list(task.owned_files), "failure")
+
     return task_to_response(task)
 
 
