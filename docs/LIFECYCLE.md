@@ -76,7 +76,13 @@ stateDiagram-v2
 
     CLOSED --> [*]
     CANCELLED --> [*]
+
+    %% PENDING_APPROVAL is a terminal state set directly by the approval
+    %% subsystem. It has no FSM-managed inbound or outbound transitions.
+    PENDING_APPROVAL --> [*]
 ```
+
+> **Note — `PENDING_APPROVAL`:** This state exists in the `TaskStatus` enum and is used by the approval subsystem (see `src/bernstein/core/approval.py`). It is set directly rather than through the `TASK_TRANSITIONS` table, so it has no FSM-managed entry or exit path. Tasks in this state await human review and cannot progress further without manual intervention.
 
 ### Task Transition Table (exhaustive)
 

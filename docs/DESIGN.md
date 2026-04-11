@@ -226,7 +226,12 @@ stateDiagram-v2
 
     CLOSED --> [*]
     CANCELLED --> [*]
+
+    %% PENDING_APPROVAL has no FSM-managed transitions — set directly by the approval subsystem.
+    PENDING_APPROVAL --> [*]
 ```
+
+> **Note — `PENDING_APPROVAL`:** Set directly by the approval subsystem; has no entry or exit in `TASK_TRANSITIONS`. See [LIFECYCLE.md](LIFECYCLE.md#terminal-states) for details.
 
 ### Agent FSM (4 states)
 
