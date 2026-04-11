@@ -11,6 +11,7 @@ This module is the public facade. Heavy lifting lives in:
 
 from __future__ import annotations
 
+import collections
 import concurrent.futures
 import contextlib
 import json
@@ -299,7 +300,7 @@ class Orchestrator:
         self.session_id: str = _uuid.uuid4().hex[:16]  # Unique ID for this orchestrator session
         self._task_to_session: dict[str, str] = {}  # task_id -> agent_id (reverse index)
         self._batch_sessions: dict[str, AgentSession] = {}
-        self._processed_done_tasks: set[str] = set()  # avoid re-processing done tasks
+        self._processed_done_tasks: collections.OrderedDict[str, None] = collections.OrderedDict()  # FIFO eviction
         self._retried_task_ids: set[str] = set()  # tasks that already have a retry queued
         self._decomposed_task_ids: set[str] = set()  # large tasks queued for decomposition
         # Crash recovery: per-task crash count and preserved worktrees for resume
@@ -968,6 +969,10 @@ class Orchestrator:
             else:
                 logger.error("Failed to fetch tasks: %s", exc)
             result.errors.append(f"fetch_all: {exc}")
+            # Even when the server is unreachable, refresh agent states and
+            # reap zombies so dead processes don't accumulate across ticks.
+            refresh_agent_states(self, {})
+            reap_dead_agents(self, result, {})
             return result
 
         logger.debug(
@@ -1375,6 +1380,15 @@ class Orchestrator:
 
         # 5. Reap dead/stale agents and fail their tasks
         reap_dead_agents(self, result, tasks_by_status)
+
+        # 5b. Retry any pushes that failed in previous ticks (normal cadence)
+        if _run_normal:
+            try:
+                retried = self._spawner.retry_pending_pushes()
+                if retried:
+                    logger.info("Retried %d pending push(es) successfully", retried)
+            except Exception as exc:
+                logger.warning("Pending push retry failed: %s", exc)
 
         # 6. Run evolution analysis cycle every N ticks
         # Gated behind _run_slow — evolution analysis is heavyweight.

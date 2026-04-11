@@ -198,18 +198,30 @@ def load_rules_config(workdir: Path) -> RulesConfig | None:
 
 
 def _get_git_diff(run_dir: Path) -> str:
-    """Return ``git diff HEAD`` output for *run_dir*."""
-    try:
-        result = subprocess.run(
-            ["git", "diff", "HEAD"],
-            cwd=run_dir,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        return result.stdout
-    except (subprocess.TimeoutExpired, OSError):
-        return ""
+    """Return committed changes relative to ``main``.
+
+    Uses ``git diff main..HEAD`` so that already-committed agent changes
+    are visible.  Falls back to ``git diff HEAD~1..HEAD`` when ``main``
+    is not available (e.g. detached-HEAD CI builds), and finally to an
+    empty string on any error.
+    """
+    for diff_cmd in (
+        ["git", "diff", "main..HEAD"],
+        ["git", "diff", "HEAD~1..HEAD"],
+    ):
+        try:
+            result = subprocess.run(
+                diff_cmd,
+                cwd=run_dir,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0 and result.stdout:
+                return result.stdout
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+    return ""
 
 
 def _parse_diff_additions(diff: str, file_glob: str | None) -> dict[str, list[str]]:
