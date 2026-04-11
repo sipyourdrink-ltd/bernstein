@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.agent_session_token_breakdown import (
     AgentSessionTokenBreakdown,
     load_all_session_breakdowns,
@@ -33,9 +35,7 @@ def _write_prompt_report(sdd_dir: Path, session_id: str, **kwargs: object) -> No
         "suggestions": [],
     }
     defaults.update(kwargs)
-    (metrics_dir / f"prompt_token_usage_{session_id}.json").write_text(
-        json.dumps(defaults), encoding="utf-8"
-    )
+    (metrics_dir / f"prompt_token_usage_{session_id}.json").write_text(json.dumps(defaults), encoding="utf-8")
 
 
 def _make_tracker_file(sdd_dir: Path, run_id: str, usages: list[dict]) -> None:
@@ -85,7 +85,7 @@ class TestAgentSessionTokenBreakdown:
     def test_percentages_zero_when_no_tokens(self) -> None:
         b = AgentSessionTokenBreakdown(session_id="empty")
         pct = b.percentages()
-        assert all(v == 0.0 for v in pct.values())
+        assert all(v == pytest.approx(0.0) for v in pct.values())
 
     def test_to_dict_structure(self) -> None:
         b = AgentSessionTokenBreakdown(

@@ -5,6 +5,8 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
+import pytest
+
 from bernstein.core.predictive_cost_model import (
     CostPrediction,
     PredictiveCostModel,
@@ -70,30 +72,30 @@ class TestTaskFeatures:
         assert f.to_feature_vector() == f.to_feature_vector()
 
     def test_scope_encoding(self) -> None:
-        assert _make_features(scope="small").to_feature_vector()[0] == 1.0
-        assert _make_features(scope="medium").to_feature_vector()[0] == 2.0
-        assert _make_features(scope="large").to_feature_vector()[0] == 3.0
+        assert _make_features(scope="small").to_feature_vector()[0] == pytest.approx(1.0)
+        assert _make_features(scope="medium").to_feature_vector()[0] == pytest.approx(2.0)
+        assert _make_features(scope="large").to_feature_vector()[0] == pytest.approx(3.0)
 
     def test_complexity_encoding(self) -> None:
-        assert _make_features(complexity="low").to_feature_vector()[1] == 1.0
-        assert _make_features(complexity="medium").to_feature_vector()[1] == 2.0
-        assert _make_features(complexity="high").to_feature_vector()[1] == 3.0
+        assert _make_features(complexity="low").to_feature_vector()[1] == pytest.approx(1.0)
+        assert _make_features(complexity="medium").to_feature_vector()[1] == pytest.approx(2.0)
+        assert _make_features(complexity="high").to_feature_vector()[1] == pytest.approx(3.0)
 
     def test_unknown_scope_defaults_to_medium(self) -> None:
         fv = _make_features(scope="custom").to_feature_vector()
-        assert fv[0] == 2.0
+        assert fv[0] == pytest.approx(2.0)
 
     def test_unknown_complexity_defaults_to_medium(self) -> None:
         fv = _make_features(complexity="custom").to_feature_vector()
-        assert fv[1] == 2.0
+        assert fv[1] == pytest.approx(2.0)
 
     def test_file_count_passthrough(self) -> None:
         fv = _make_features(file_count=42).to_feature_vector()
-        assert fv[2] == 42.0
+        assert fv[2] == pytest.approx(42.0)
 
     def test_code_complexity_passthrough(self) -> None:
         fv = _make_features(code_complexity=0.8).to_feature_vector()
-        assert fv[3] == 0.8
+        assert fv[3] == pytest.approx(0.8)
 
     def test_role_hash_bounded(self) -> None:
         fv = _make_features(role="backend").to_feature_vector()
@@ -112,7 +114,7 @@ class TestTaskFeatures:
         d = {"role": "qa", "scope": "small", "complexity": "low", "model": "haiku"}
         f = TaskFeatures.from_dict(d)
         assert f.file_count == 0
-        assert f.code_complexity == 0.5
+        assert f.code_complexity == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +205,7 @@ class TestHeuristicFallback:
     def test_fallback_confidence_zero_with_no_data(self) -> None:
         model = PredictiveCostModel(min_observations=10)
         pred = model.predict(_make_features())
-        assert pred.confidence == 0.0
+        assert pred.confidence == pytest.approx(0.0)
 
     def test_fallback_positive_tokens_and_cost(self) -> None:
         model = PredictiveCostModel(min_observations=10)
@@ -250,10 +252,14 @@ class TestTrainedPredictions:
         model = PredictiveCostModel(min_observations=5)
         for _ in range(50):
             model.record_observation(
-                _make_features(scope="small"), 10_000, 0.09,
+                _make_features(scope="small"),
+                10_000,
+                0.09,
             )
             model.record_observation(
-                _make_features(scope="large"), 100_000, 0.90,
+                _make_features(scope="large"),
+                100_000,
+                0.90,
             )
 
         small_pred = model.predict(_make_features(scope="small"))
@@ -402,7 +408,9 @@ class TestEdgeCases:
         model = PredictiveCostModel(min_observations=5)
         for _ in range(10):
             model.record_observation(
-                _make_features(), actual_tokens=10_000_000, actual_cost_usd=90.0,
+                _make_features(),
+                actual_tokens=10_000_000,
+                actual_cost_usd=90.0,
             )
         pred = model.predict(_make_features())
         assert pred.estimated_tokens >= 0

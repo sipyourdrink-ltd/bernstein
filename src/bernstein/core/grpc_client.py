@@ -7,8 +7,10 @@ not installed or the server is unreachable.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 try:
@@ -54,8 +56,7 @@ class TaskClient:
             ("grpc.keepalive_timeout_ms", 10_000),
         ]
         if self.config.tls_enabled and self.config.tls_ca_cert_path:
-            with open(self.config.tls_ca_cert_path, "rb") as f:
-                ca_cert = f.read()
+            ca_cert = await asyncio.to_thread(Path(self.config.tls_ca_cert_path).read_bytes)
             creds = grpc.ssl_channel_credentials(root_certificates=ca_cert)
             self._channel = grpc_aio.secure_channel(self.config.server_address, creds, options=opts)
         else:
@@ -193,8 +194,7 @@ class ClusterClient:
             ("grpc.keepalive_timeout_ms", 10_000),
         ]
         if self.config.tls_enabled and self.config.tls_ca_cert_path:
-            with open(self.config.tls_ca_cert_path, "rb") as f:
-                ca_cert = f.read()
+            ca_cert = await asyncio.to_thread(Path(self.config.tls_ca_cert_path).read_bytes)
             creds = grpc.ssl_channel_credentials(root_certificates=ca_cert)
             self._channel = grpc_aio.secure_channel(self.config.server_address, creds, options=opts)
         else:

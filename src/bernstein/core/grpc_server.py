@@ -7,8 +7,10 @@ orchestrator-to-agent traffic with lower latency and binary encoding.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -424,10 +426,8 @@ class BernsteinGrpcServer:
         bind = f"{self.config.host}:{self.config.port}"
 
         if self.config.tls_cert_path and self.config.tls_key_path:
-            with open(self.config.tls_cert_path, "rb") as f:
-                cert = f.read()
-            with open(self.config.tls_key_path, "rb") as f:
-                key = f.read()
+            cert = await asyncio.to_thread(Path(self.config.tls_cert_path).read_bytes)
+            key = await asyncio.to_thread(Path(self.config.tls_key_path).read_bytes)
             creds = grpc.ssl_server_credentials([(key, cert)])
             server.add_secure_port(bind, creds)
             logger.info("gRPC server listening on %s (TLS)", bind)

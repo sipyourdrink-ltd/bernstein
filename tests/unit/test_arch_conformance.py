@@ -26,21 +26,13 @@ class TestExtractAddedImportsPerFile:
     """Test _extract_added_imports_per_file() diff parsing."""
 
     def test_extracts_from_import(self) -> None:
-        diff = (
-            "+++ b/src/bernstein/core/foo.py\n"
-            "@@ -0,0 +1,3 @@\n"
-            "+from bernstein.cli import run\n"
-        )
+        diff = "+++ b/src/bernstein/core/foo.py\n@@ -0,0 +1,3 @@\n+from bernstein.cli import run\n"
         result = _extract_added_imports_per_file(diff)
         assert "src/bernstein/core/foo.py" in result
         assert "bernstein.cli" in result["src/bernstein/core/foo.py"]
 
     def test_extracts_bare_import(self) -> None:
-        diff = (
-            "+++ b/src/bernstein/core/bar.py\n"
-            "@@ -0,0 +1,2 @@\n"
-            "+import bernstein.adapters\n"
-        )
+        diff = "+++ b/src/bernstein/core/bar.py\n@@ -0,0 +1,2 @@\n+import bernstein.adapters\n"
         result = _extract_added_imports_per_file(diff)
         assert "src/bernstein/core/bar.py" in result
         assert "bernstein.adapters" in result["src/bernstein/core/bar.py"]
@@ -57,11 +49,7 @@ class TestExtractAddedImportsPerFile:
         assert "bernstein.core" in result.get("src/bernstein/core/baz.py", [])
 
     def test_ignores_non_python_files(self) -> None:
-        diff = (
-            "+++ b/README.md\n"
-            "@@ -0,0 +1 @@\n"
-            "+import bernstein\n"
-        )
+        diff = "+++ b/README.md\n@@ -0,0 +1 @@\n+import bernstein\n"
         result = _extract_added_imports_per_file(diff)
         assert result == {}
 
@@ -81,11 +69,7 @@ class TestExtractAddedImportsPerFile:
         assert "bernstein.adapters" in imports
 
     def test_import_comma_separated_takes_first(self) -> None:
-        diff = (
-            "+++ b/src/bernstein/core/multi.py\n"
-            "@@ -0,0 +1 @@\n"
-            "+import os, sys\n"
-        )
+        diff = "+++ b/src/bernstein/core/multi.py\n@@ -0,0 +1 @@\n+import os, sys\n"
         result = _extract_added_imports_per_file(diff)
         imports = result.get("src/bernstein/core/multi.py", [])
         # Should extract "os" as the first token
@@ -193,11 +177,7 @@ class TestCheckArchConformance:
             forbidden_imports=["bernstein.cli"],
         )
         config = self._make_config([module])
-        diff = (
-            "+++ b/src/bernstein/core/foo.py\n"
-            "@@ -0,0 +1 @@\n"
-            "+from bernstein.core import models\n"
-        )
+        diff = "+++ b/src/bernstein/core/foo.py\n@@ -0,0 +1 @@\n+from bernstein.core import models\n"
         results = check_arch_conformance(diff, config)
         assert all(d.type == DecisionType.ALLOW for d in results)
 
@@ -208,11 +188,7 @@ class TestCheckArchConformance:
             forbidden_imports=["bernstein.cli"],
         )
         config = self._make_config([module], block=True)
-        diff = (
-            "+++ b/src/bernstein/core/foo.py\n"
-            "@@ -0,0 +1 @@\n"
-            "+from bernstein.cli import run\n"
-        )
+        diff = "+++ b/src/bernstein/core/foo.py\n@@ -0,0 +1 @@\n+from bernstein.cli import run\n"
         results = check_arch_conformance(diff, config)
         assert any(d.type == DecisionType.DENY for d in results)
 
@@ -223,11 +199,7 @@ class TestCheckArchConformance:
             forbidden_imports=["bernstein.cli"],
         )
         config = self._make_config([module], block=False)
-        diff = (
-            "+++ b/src/bernstein/core/foo.py\n"
-            "@@ -0,0 +1 @@\n"
-            "+from bernstein.cli import run\n"
-        )
+        diff = "+++ b/src/bernstein/core/foo.py\n@@ -0,0 +1 @@\n+from bernstein.cli import run\n"
         results = check_arch_conformance(diff, config)
         assert any(d.type == DecisionType.ASK for d in results)
         assert not any(d.type == DecisionType.DENY for d in results)
@@ -239,11 +211,7 @@ class TestCheckArchConformance:
             forbidden_imports=["bernstein.cli"],
         )
         config = self._make_config([module])
-        diff = (
-            "+++ b/src/bernstein/core/foo.py\n"
-            "@@ -0,0 +1 @@\n"
-            "+from bernstein.cli import run\n"
-        )
+        diff = "+++ b/src/bernstein/core/foo.py\n@@ -0,0 +1 @@\n+from bernstein.cli import run\n"
         results = check_arch_conformance(diff, config)
         deny_decisions = [d for d in results if d.type == DecisionType.DENY]
         assert any("foo.py" in d.reason for d in deny_decisions)
@@ -257,11 +225,7 @@ class TestCheckArchConformance:
             forbidden_imports=["bernstein.cli"],
         )
         config = self._make_config([module])
-        diff = (
-            "+++ b/src/bernstein/adapters/claude.py\n"
-            "@@ -0,0 +1 @@\n"
-            "+from bernstein.cli import run\n"
-        )
+        diff = "+++ b/src/bernstein/adapters/claude.py\n@@ -0,0 +1 @@\n+from bernstein.cli import run\n"
         results = check_arch_conformance(diff, config)
         assert all(d.type == DecisionType.ALLOW for d in results)
 
@@ -273,11 +237,7 @@ class TestCheckArchConformance:
         )
         config = self._make_config([module])
         # bernstein.cli is NOT in the allowed list → violation
-        diff = (
-            "+++ b/src/bernstein/adapters/claude.py\n"
-            "@@ -0,0 +1 @@\n"
-            "+from bernstein.cli import run\n"
-        )
+        diff = "+++ b/src/bernstein/adapters/claude.py\n@@ -0,0 +1 @@\n+from bernstein.cli import run\n"
         results = check_arch_conformance(diff, config)
         assert any(d.type == DecisionType.DENY for d in results)
 
@@ -414,11 +374,7 @@ class TestGuardrailsIntegration:
             arch_conformance=arch_config,
         )
         task = Task(id="t1", title="test", description="d", role="qa")
-        diff = (
-            "+++ b/src/bernstein/core/foo.py\n"
-            "@@ -0,0 +1 @@\n"
-            "+from bernstein.cli import run\n"
-        )
+        diff = "+++ b/src/bernstein/core/foo.py\n@@ -0,0 +1 @@\n+from bernstein.cli import run\n"
         with tempfile.TemporaryDirectory() as tmpdir:
             results = run_guardrails(diff, task, config, Path(tmpdir))
 

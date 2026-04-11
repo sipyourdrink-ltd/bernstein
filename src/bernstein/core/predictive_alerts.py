@@ -170,7 +170,7 @@ def _ols(x: list[float], y: list[float]) -> tuple[float, float]:
     sxx = sum(xi * xi for xi in x)
     sxy = sum(xi * yi for xi, yi in zip(x, y, strict=False))
     denom = n * sxx - sx * sx
-    if denom == 0.0:
+    if not denom:
         return 0.0, sy / n
     slope = (n * sxy - sx * sy) / denom
     intercept = (sy - slope * sx) / n

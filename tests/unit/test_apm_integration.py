@@ -104,9 +104,7 @@ class TestNewRelicConfig:
 
 
 class TestConfigureDatadog:
-    def test_returns_false_when_ddtrace_present_otlp_mode_no_key(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_false_when_ddtrace_present_otlp_mode_no_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With use_otlp=True and no API key, ddtrace returns False before patching."""
         monkeypatch.delenv("DD_API_KEY", raising=False)
         monkeypatch.delenv("DATADOG_API_KEY", raising=False)
@@ -133,9 +131,7 @@ class TestConfigureDatadog:
 
         assert result is False
 
-    def test_falls_back_to_otlp_preset_when_ddtrace_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_falls_back_to_otlp_preset_when_ddtrace_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Without ddtrace, falls back to OTLP preset using bernstein.core.telemetry."""
         cfg = DatadogConfig(use_otlp=False, agent_host="dd-agent", agent_port=8126)
 
@@ -143,7 +139,9 @@ class TestConfigureDatadog:
             patch.dict("sys.modules", {"ddtrace": None}),
             patch(
                 "bernstein.core.apm_integration.configure_datadog.__wrapped__"  # type: ignore[attr-defined]
-            ) if False else patch("bernstein.core.telemetry.init_telemetry_from_preset") as mock_preset,
+            )
+            if False
+            else patch("bernstein.core.telemetry.init_telemetry_from_preset") as mock_preset,
         ):
             mock_preset.return_value = None
             result = configure_datadog(cfg)
@@ -166,9 +164,7 @@ class TestConfigureDatadog:
         assert cfg.agent_host == "custom-host"
 
     @patch("bernstein.core.telemetry.init_telemetry_from_preset")
-    def test_otlp_fallback_calls_preset(
-        self, mock_preset: MagicMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_otlp_fallback_calls_preset(self, mock_preset: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
         """When ddtrace is missing, falls back to OTLP preset."""
         monkeypatch.delenv("DD_API_KEY", raising=False)
         monkeypatch.delenv("DATADOG_API_KEY", raising=False)
@@ -206,9 +202,7 @@ class TestConfigureNewRelic:
         assert result is False
 
     @patch("bernstein.core.telemetry._init_http_telemetry")
-    def test_otlp_path_calls_http_telemetry(
-        self, mock_http: MagicMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_otlp_path_calls_http_telemetry(self, mock_http: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
         """OTLP path calls _init_http_telemetry with api-key header."""
         monkeypatch.setenv("NEW_RELIC_LICENSE_KEY", "nr-test-key")
         cfg = NewRelicConfig(
@@ -251,16 +245,17 @@ class TestConfigureNewRelic:
 class TestAutoConfigureApm:
     def test_returns_empty_when_no_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for var in (
-            "DD_API_KEY", "DATADOG_API_KEY", "DD_AGENT_HOST",
-            "NEW_RELIC_LICENSE_KEY", "NEWRELIC_API_KEY",
+            "DD_API_KEY",
+            "DATADOG_API_KEY",
+            "DD_AGENT_HOST",
+            "NEW_RELIC_LICENSE_KEY",
+            "NEWRELIC_API_KEY",
         ):
             monkeypatch.delenv(var, raising=False)
         result = auto_configure_apm()
         assert result == []
 
-    def test_includes_newrelic_when_key_present(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_includes_newrelic_when_key_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for var in ("DD_API_KEY", "DATADOG_API_KEY", "DD_AGENT_HOST"):
             monkeypatch.delenv(var, raising=False)
         monkeypatch.setenv("NEW_RELIC_LICENSE_KEY", "nr-key")
@@ -271,9 +266,7 @@ class TestAutoConfigureApm:
 
         assert APMProvider.NEWRELIC in result
 
-    def test_includes_datadog_when_agent_host_set(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_includes_datadog_when_agent_host_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for var in ("NEW_RELIC_LICENSE_KEY", "NEWRELIC_API_KEY"):
             monkeypatch.delenv(var, raising=False)
         monkeypatch.delenv("DD_API_KEY", raising=False)
@@ -286,9 +279,7 @@ class TestAutoConfigureApm:
 
         assert APMProvider.DATADOG in result
 
-    def test_returns_list_of_apm_providers(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_list_of_apm_providers(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("DD_AGENT_HOST", "dd-agent")
         monkeypatch.setenv("NEW_RELIC_LICENSE_KEY", "nr-key")
         monkeypatch.delenv("DD_API_KEY", raising=False)

@@ -35,13 +35,13 @@ class TestOLS:
 
     def test_insufficient_data(self) -> None:
         slope, intercept = _ols([1.0], [1.0])
-        assert slope == 0.0
-        assert intercept == 0.0
+        assert slope == pytest.approx(0.0)
+        assert intercept == pytest.approx(0.0)
 
     def test_empty_data(self) -> None:
         slope, intercept = _ols([], [])
-        assert slope == 0.0
-        assert intercept == 0.0
+        assert slope == pytest.approx(0.0)
+        assert intercept == pytest.approx(0.0)
 
 
 class TestForecastBudgetExhaustion:

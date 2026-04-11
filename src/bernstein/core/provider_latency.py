@@ -175,11 +175,39 @@ class ProviderLatencyTracker:
             # Persist the raw sample
             self._persist_sample(provider, model, latency_ms)
 
-            # Update baseline when we have enough samples
+            # Check for degradation BEFORE updating the baseline — otherwise
+            # the EMA absorbs any spike before the alert fires (test
+            # test_degradation_alert_triggered reproducer). Alert must be
+            # compared against the *existing* baseline, not the post-update
+            # one.
+            alert: DegradationAlert | None = None
             if sample_count >= _MIN_BASELINE_SAMPLES:
+                baseline = self._baseline_p99.get(key, 0.0)
+                current_p99 = self._trackers[key].p99()
+                if baseline > 0.0:
+                    ratio = current_p99 / baseline
+                    if ratio >= self._degradation_threshold:
+                        alert = DegradationAlert(
+                            provider=provider,
+                            model=model,
+                            current_p99_ms=current_p99,
+                            baseline_p99_ms=baseline,
+                            ratio=ratio,
+                            timestamp=time.time(),
+                            message=(
+                                f"{provider}/{model} latency degraded: "
+                                f"p99={current_p99:.0f}ms is {ratio:.1f}x "
+                                f"baseline={baseline:.0f}ms"
+                            ),
+                        )
+
+            # Update baseline only when no degradation alert fired — this
+            # keeps the baseline stable during sustained spikes so alerts
+            # keep firing instead of the EMA silencing them.
+            if sample_count >= _MIN_BASELINE_SAMPLES and alert is None:
                 p99 = self._trackers[key].p99()
                 existing = self._baseline_p99.get(key, 0.0)
-                if existing == 0.0:
+                if not existing:
                     # First baseline
                     self._baseline_p99[key] = p99
                     self._baseline_sample_counts[key] = sample_count
@@ -188,26 +216,7 @@ class ProviderLatencyTracker:
                     self._baseline_p99[key] = existing * 0.95 + p99 * 0.05
                     self._baseline_sample_counts[key] = sample_count
 
-            # Check for degradation
-            baseline = self._baseline_p99.get(key, 0.0)
-            if baseline > 0.0 and sample_count >= _MIN_BASELINE_SAMPLES:
-                current_p99 = self._trackers[key].p99()
-                ratio = current_p99 / baseline
-                if ratio >= self._degradation_threshold:
-                    return DegradationAlert(
-                        provider=provider,
-                        model=model,
-                        current_p99_ms=current_p99,
-                        baseline_p99_ms=baseline,
-                        ratio=ratio,
-                        timestamp=time.time(),
-                        message=(
-                            f"{provider}/{model} latency degraded: "
-                            f"p99={current_p99:.0f}ms is {ratio:.1f}x "
-                            f"baseline={baseline:.0f}ms"
-                        ),
-                    )
-        return None
+            return alert
 
     def get_percentiles(self, provider: str, model: str) -> LatencyPercentiles:
         """Get current latency percentiles for a specific provider+model.

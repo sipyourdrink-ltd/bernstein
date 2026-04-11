@@ -60,9 +60,9 @@ class TestProviderLatencyTracker:
     def test_unknown_provider_returns_zeros(self, tmp_path: Path) -> None:
         tracker = ProviderLatencyTracker(tmp_path)
         percs = tracker.get_percentiles("unknown", "model")
-        assert percs.p50_ms == 0.0
-        assert percs.p95_ms == 0.0
-        assert percs.p99_ms == 0.0
+        assert percs.p50_ms == pytest.approx(0.0)
+        assert percs.p95_ms == pytest.approx(0.0)
+        assert percs.p99_ms == pytest.approx(0.0)
         assert percs.sample_count == 0
 
     def test_multiple_providers_tracked_independently(self, tmp_path: Path) -> None:
@@ -141,6 +141,7 @@ class TestProviderLatencyTracker:
 
         # Force baseline to be set with a known value
         from bernstein.core.provider_latency import _make_key
+
         key = _make_key("anthropic", "sonnet")
         tracker._baseline_p99[key] = 100.0
 

@@ -50,11 +50,10 @@ class TestSandboxSession:
         s = SandboxSession()
         assert s.status == SessionStatus.QUEUED
         assert not s.is_terminal
-        assert s.elapsed_s == 0.0
+        assert s.elapsed_s == pytest.approx(0.0)
 
     def test_terminal_states(self) -> None:
-        for status in (SessionStatus.COMPLETED, SessionStatus.FAILED,
-                       SessionStatus.TIMED_OUT, SessionStatus.CANCELLED):
+        for status in (SessionStatus.COMPLETED, SessionStatus.FAILED, SessionStatus.TIMED_OUT, SessionStatus.CANCELLED):
             s = SandboxSession(status=status)
             assert s.is_terminal
 

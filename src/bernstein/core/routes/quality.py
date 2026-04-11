@@ -460,7 +460,7 @@ def _bucket_trend_series(
     bucket_tasks: dict[str, list[bool]] = defaultdict(list)
     for rec in completion_records:
         ts = _parse_timestamp(rec.get("timestamp", 0))
-        if ts == 0.0:
+        if not ts:
             continue
         key = _bucket_key(ts)
         success = rec.get("labels", {}).get("success", "True") == "True"
@@ -472,7 +472,7 @@ def _bucket_trend_series(
     )
     for rec in gate_records:
         ts = _parse_timestamp(rec.get("timestamp", 0))
-        if ts == 0.0:
+        if not ts:
             continue
         key = _bucket_key(ts)
         gate = rec.get("gate") or "unknown"
@@ -485,7 +485,7 @@ def _bucket_trend_series(
     bucket_scores: dict[str, list[int]] = defaultdict(list)
     for rec in score_records:
         ts = _parse_timestamp(rec.get("timestamp", 0))
-        if ts == 0.0:
+        if not ts:
             continue
         key = _bucket_key(ts)
         total = rec.get("total")

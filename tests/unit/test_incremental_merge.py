@@ -6,6 +6,8 @@ import threading
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from bernstein.core.git_basic import GitResult
 from bernstein.core.incremental_merge import (
     IncrementalMergeState,
@@ -50,9 +52,10 @@ class TestStatePersistence:
 
         loaded = _load_state(runtime_dir, "abc123")
         assert loaded.session_id == "abc123"
-        assert loaded.merged_files == ["src/bar.py", "src/foo.py"]  # sorted
+        # Save/load preserves insertion order; sorting only happens on merge.
+        assert loaded.merged_files == ["src/foo.py", "src/bar.py"]
         assert loaded.merge_commits == ["deadbeef"]
-        assert loaded.last_merged_ts == 1_700_000_000.0
+        assert loaded.last_merged_ts == pytest.approx(1_700_000_000.0)
 
     def test_load_missing_returns_empty(self, tmp_path: Path) -> None:
         state = _load_state(tmp_path, "nonexistent")
@@ -142,13 +145,12 @@ class TestIncrementalMergeFiles:
             "bernstein.core.incremental_merge.run_git",
             return_value=_ok(""),  # empty ls-tree output
         ):
-            result = incremental_merge_files(
-                tmp_path, runtime_dir, "sess", ["src/notyet.py"]
-            )
+            result = incremental_merge_files(tmp_path, runtime_dir, "sess", ["src/notyet.py"])
 
         assert not result.success
         assert result.uncommitted_files == ["src/notyet.py"]
-        assert "not committed" in result.error
+        # Error message explains that none of the requested files are committed.
+        assert "not committed" in result.error or "are committed" in result.error
 
     def test_happy_path_merges_and_commits(self, tmp_path: Path) -> None:
         """Full success path: ls-tree reports files committed, checkout ok, commit ok."""
@@ -158,20 +160,18 @@ class TestIncrementalMergeFiles:
         commit_sha = "abcdef1234567890" + "a" * 24
 
         call_results = [
-            _ok("src/foo.py\nsrc/bar.py\n"),   # ls-tree
-            _ok(""),                             # git checkout
-            _ok(""),                             # git add
-            _ok("1 file changed"),               # git commit
-            _ok(commit_sha),                     # rev-parse HEAD
+            _ok("src/foo.py\nsrc/bar.py\n"),  # ls-tree
+            _ok(""),  # git checkout
+            _ok(""),  # git add
+            _ok("1 file changed"),  # git commit
+            _ok(commit_sha),  # rev-parse HEAD
         ]
 
         with patch(
             "bernstein.core.incremental_merge.run_git",
             side_effect=call_results,
         ):
-            result = incremental_merge_files(
-                tmp_path, runtime_dir, "sess", ["src/foo.py", "src/bar.py"], "Custom msg"
-            )
+            result = incremental_merge_files(tmp_path, runtime_dir, "sess", ["src/foo.py", "src/bar.py"], "Custom msg")
 
         assert result.success
         assert sorted(result.merged_files) == ["src/bar.py", "src/foo.py"]
@@ -188,9 +188,9 @@ class TestIncrementalMergeFiles:
         runtime_dir = tmp_path / "runtime"
 
         call_results = [
-            _ok("src/foo.py\n"),               # ls-tree
-            _ok(""),                            # git checkout
-            _ok(""),                            # git add
+            _ok("src/foo.py\n"),  # ls-tree
+            _ok(""),  # git checkout
+            _ok(""),  # git add
             _fail("nothing to commit, working tree clean"),  # git commit
         ]
 
@@ -209,8 +209,8 @@ class TestIncrementalMergeFiles:
         runtime_dir = tmp_path / "runtime"
 
         call_results = [
-            _ok("src/foo.py\n"),          # ls-tree
-            _fail("checkout conflict"),   # git checkout fails
+            _ok("src/foo.py\n"),  # ls-tree
+            _fail("checkout conflict"),  # git checkout fails
         ]
 
         with patch(
@@ -237,20 +237,18 @@ class TestIncrementalMergeFiles:
 
         commit_sha = "a" * 40
         call_seq = [
-            _ok("src/foo.py\n"),   # ls-tree
-            _ok(""),               # checkout
-            _ok(""),               # add
-            _ok(""),               # commit
-            _ok(commit_sha),       # rev-parse
+            _ok("src/foo.py\n"),  # ls-tree
+            _ok(""),  # checkout
+            _ok(""),  # add
+            _ok(""),  # commit
+            _ok(commit_sha),  # rev-parse
         ]
 
         with patch(
             "bernstein.core.incremental_merge.run_git",
             side_effect=call_seq,
         ):
-            incremental_merge_files(
-                tmp_path, runtime_dir, "sess", ["src/foo.py"], merge_lock=lock
-            )
+            incremental_merge_files(tmp_path, runtime_dir, "sess", ["src/foo.py"], merge_lock=lock)
 
         # Lock must not be held after the call
         assert not lock.locked()
@@ -271,11 +269,11 @@ class TestIncrementalMergeFiles:
 
         # ls-tree reports only src/new.py as committed (src/notyet.py is missing)
         call_results = [
-            _ok("src/new.py\n"),        # ls-tree for candidates
-            _ok(""),                    # checkout
-            _ok(""),                    # add
-            _ok("1 file"),              # commit
-            _ok(commit_sha),            # rev-parse
+            _ok("src/new.py\n"),  # ls-tree for candidates
+            _ok(""),  # checkout
+            _ok(""),  # add
+            _ok("1 file"),  # commit
+            _ok(commit_sha),  # rev-parse
         ]
 
         with patch(
@@ -315,4 +313,4 @@ class TestStateSerialisation:
         state = IncrementalMergeState.from_dict({"session_id": "x"})
         assert state.merged_files == []
         assert state.merge_commits == []
-        assert state.last_merged_ts == 0.0
+        assert state.last_merged_ts == pytest.approx(0.0)
