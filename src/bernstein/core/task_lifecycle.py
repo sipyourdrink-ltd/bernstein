@@ -1821,88 +1821,88 @@ def process_completed_tasks(
 
             _skip_merge = False
             if janitor_passed and orch._approval_gate is not None:
-                _override_mode = None
-                _timeout_s = None
+                try:
+                    _override_mode = None
+                    _timeout_s = None
 
-                wf = getattr(orch._config, "approval_workflow", None)
-                if wf is not None and wf.enabled:
-                    risk = getattr(task, "risk_level", "low")
-                    mapping = {
-                        "low": wf.low_risk,
-                        "medium": wf.medium_risk,
-                        "high": wf.high_risk,
-                        "critical": getattr(wf, "critical_risk", wf.high_risk),
-                    }
-                    mode_str = mapping.get(risk, "auto")
+                    wf = getattr(orch._config, "approval_workflow", None)
+                    if wf is not None and wf.enabled:
+                        risk = getattr(task, "risk_level", "low")
+                        mapping = {
+                            "low": wf.low_risk,
+                            "medium": wf.medium_risk,
+                            "high": wf.high_risk,
+                            "critical": getattr(wf, "critical_risk", wf.high_risk),
+                        }
+                        mode_str = mapping.get(risk, "auto")
 
-                    from bernstein.core.approval import ApprovalMode
+                        from bernstein.core.approval import ApprovalMode
 
-                    _override_mode = ApprovalMode(mode_str)
-                    _timeout_s = float(wf.timeout_hours * 3600)
+                        _override_mode = ApprovalMode(mode_str)
+                        _timeout_s = float(wf.timeout_hours * 3600)
 
-                    if _override_mode in (ApprovalMode.REVIEW, ApprovalMode.PR):
-                        risk_str = risk.upper()
-                        orch._notify(
-                            event="task.approval_needed",
-                            title=f"Approval required ({risk_str} risk): {task.title}",
-                            body=f"Task {task.id} requires {mode_str} approval. Timeout: {wf.timeout_hours}h.",
-                            task_id=task.id,
-                            risk_level=risk,
-                        )
-
-                _approval_result = orch._approval_gate.evaluate(
-                    task,
-                    session_id=session.id,
-                    override_mode=_override_mode,
-                    timeout_s=_timeout_s,
-                )
-                if _approval_result.rejected:
-                    _skip_merge = True
-                    logger.warning(
-                        "Approval gate: task %s rejected -- skipping merge for agent %s",
-                        task.id,
-                        session.id,
-                    )
-                elif not _approval_result.approved:
-                    # PR mode -- create PR then skip local merge
-                    _skip_merge = True
-                    _worktree_path = orch._spawner.get_worktree_path(session.id)
-                    if _worktree_path is not None:
-                        # Gather metadata for the PR body
-                        _pr_collector = get_collector(orch._workdir / ".sdd" / "metrics")
-                        _pr_task_m = _pr_collector.task_metrics.get(task.id)
-                        _pr_cost_usd = _pr_task_m.cost_usd if _pr_task_m else 0.0
-                        _pr_completion = completion_data or {"files_modified": [], "test_results": {}}
-                        _pr_test_summary = _pr_completion.get("test_results", {}).get("summary", "")
-                        _pr_url = orch._approval_gate.create_pr(
-                            task,
-                            worktree_path=_worktree_path,
-                            session_id=session.id,
-                            labels=orch._config.pr_labels,
-                            role=session.role,
-                            model=session.model_config.model,
-                            cost_usd=_pr_cost_usd,
-                            test_summary=_pr_test_summary,
-                        )
-                        if _pr_url:
-                            logger.info(
-                                "Approval gate: PR created for task %s: %s",
-                                task.id,
-                                _pr_url,
+                        if _override_mode in (ApprovalMode.REVIEW, ApprovalMode.PR):
+                            risk_str = risk.upper()
+                            orch._notify(
+                                event="task.approval_needed",
+                                title=f"Approval required ({risk_str} risk): {task.title}",
+                                body=f"Task {task.id} requires {mode_str} approval. Timeout: {wf.timeout_hours}h.",
+                                task_id=task.id,
+                                risk_level=risk,
                             )
-                    else:
+
+                    _approval_result = orch._approval_gate.evaluate(
+                        task,
+                        session_id=session.id,
+                        override_mode=_override_mode,
+                        timeout_s=_timeout_s,
+                    )
+                    if _approval_result.rejected:
+                        _skip_merge = True
                         logger.warning(
-                            "Approval gate PR mode: no worktree for agent %s -- cannot create PR",
+                            "Approval gate: task %s rejected -- skipping merge for agent %s",
+                            task.id,
                             session.id,
                         )
-            # Reap the agent process and merge the worktree branch, but
-            # defer worktree cleanup so the approval gate, PR creation,
-            # and merge-result check can still access the worktree
-            # directory.  cleanup_worktree is called explicitly below
-            # after all post-merge checks complete (BUG-4 fix).
-            _merge_result: MergeResult | None = orch._spawner.reap_completed_agent(
-                session, skip_merge=_skip_merge, defer_cleanup=True
-            )
+                    elif not _approval_result.approved:
+                        # PR mode -- create PR then skip local merge
+                        _skip_merge = True
+                        _worktree_path = orch._spawner.get_worktree_path(session.id)
+                        if _worktree_path is not None:
+                            # Gather metadata for the PR body
+                            _pr_collector = get_collector(orch._workdir / ".sdd" / "metrics")
+                            _pr_task_m = _pr_collector.task_metrics.get(task.id)
+                            _pr_cost_usd = _pr_task_m.cost_usd if _pr_task_m else 0.0
+                            _pr_completion = completion_data or {"files_modified": [], "test_results": {}}
+                            _pr_test_summary = _pr_completion.get("test_results", {}).get("summary", "")
+                            _pr_url = orch._approval_gate.create_pr(
+                                task,
+                                worktree_path=_worktree_path,
+                                session_id=session.id,
+                                labels=orch._config.pr_labels,
+                                role=session.role,
+                                model=session.model_config.model,
+                                cost_usd=_pr_cost_usd,
+                                test_summary=_pr_test_summary,
+                            )
+                            if _pr_url:
+                                logger.info(
+                                    "Approval gate: PR created for task %s: %s",
+                                    task.id,
+                                    _pr_url,
+                                )
+                        else:
+                            logger.warning(
+                                "Approval gate PR mode: no worktree for agent %s -- cannot create PR",
+                                session.id,
+                            )
+                except Exception:
+                    logger.exception(
+                        "Approval gate failed for task %s -- defaulting to auto-merge",
+                        task.id,
+                    )
+                    _skip_merge = False
+            _merge_result: MergeResult | None = orch._spawner.reap_completed_agent(session, skip_merge=_skip_merge)
             if session.status != "dead":
                 transition_agent(session, "dead", actor="task_lifecycle", reason="task completed, process reaped")
             logger.info("Agent %s finished task %s, process reaped", session.id, task.id)

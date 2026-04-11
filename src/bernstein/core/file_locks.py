@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import asdict, dataclass
 from enum import Enum
@@ -68,6 +69,7 @@ class FileLockManager:
 
     def __init__(self, workdir: Path) -> None:
         self._path = workdir / ".sdd" / "runtime" / "file_locks.json"
+        self._lock = threading.Lock()
         self._locks: dict[str, FileLock] = {}
         self._load()
 
@@ -100,32 +102,33 @@ class FileLockManager:
         Returns:
             Empty list on success, or the paths of files with conflicting locks.
         """
-        self._evict_expired()
-        conflicts = [f for f in files if f in self._locks and self._locks[f].agent_id != agent_id]
-        if conflicts:
-            for f in conflicts:
-                existing = self._locks[f]
-                logger.debug(
-                    "Lock conflict: %s held by agent %s (task %s)",
-                    f,
-                    existing.agent_id,
-                    existing.task_id,
-                )
-            return conflicts
+        with self._lock:
+            self._evict_expired_unlocked()
+            conflicts = [f for f in files if f in self._locks and self._locks[f].agent_id != agent_id]
+            if conflicts:
+                for f in conflicts:
+                    existing = self._locks[f]
+                    logger.debug(
+                        "Lock conflict: %s held by agent %s (task %s)",
+                        f,
+                        existing.agent_id,
+                        existing.task_id,
+                    )
+                return conflicts
 
-        now = time.time()
-        for f in files:
-            self._locks[f] = FileLock(
-                file_path=f,
-                agent_id=agent_id,
-                task_id=task_id,
-                task_title=task_title,
-                locked_at=now,
-            )
-        if files:
-            self._save()
-            logger.debug("Acquired %d file lock(s) for agent %s", len(files), agent_id)
-        return []
+            now = time.time()
+            for f in files:
+                self._locks[f] = FileLock(
+                    file_path=f,
+                    agent_id=agent_id,
+                    task_id=task_id,
+                    task_title=task_title,
+                    locked_at=now,
+                )
+            if files:
+                self._save()
+                logger.debug("Acquired %d file lock(s) for agent %s", len(files), agent_id)
+            return []
 
     def release(self, agent_id: str) -> list[str]:
         """Release all locks held by *agent_id*.
@@ -136,13 +139,14 @@ class FileLockManager:
         Returns:
             Paths of the released files.
         """
-        released = [f for f, lock in self._locks.items() if lock.agent_id == agent_id]
-        for f in released:
-            del self._locks[f]
-        if released:
-            self._save()
-            logger.debug("Released %d file lock(s) for agent %s", len(released), agent_id)
-        return released
+        with self._lock:
+            released = [f for f, lock in self._locks.items() if lock.agent_id == agent_id]
+            for f in released:
+                del self._locks[f]
+            if released:
+                self._save()
+                logger.debug("Released %d file lock(s) for agent %s", len(released), agent_id)
+            return released
 
     def check_conflicts(self, files: list[str]) -> list[tuple[str, FileLock]]:
         """Return (path, lock) pairs for each *file* that is currently locked.
@@ -156,30 +160,39 @@ class FileLockManager:
         Returns:
             List of ``(path, FileLock)`` tuples for each conflicting file.
         """
-        self._evict_expired()
-        return [(f, self._locks[f]) for f in files if f in self._locks]
+        with self._lock:
+            self._evict_expired_unlocked()
+            return [(f, self._locks[f]) for f in files if f in self._locks]
 
     def is_locked(self, file_path: str) -> bool:
         """Return True if *file_path* currently has an active lock."""
-        self._evict_expired()
-        return file_path in self._locks
+        with self._lock:
+            self._evict_expired_unlocked()
+            return file_path in self._locks
 
     def all_locks(self) -> list[FileLock]:
         """Snapshot of all active (non-expired) locks, sorted by path."""
-        self._evict_expired()
-        return sorted(self._locks.values(), key=lambda lock: lock.file_path)
+        with self._lock:
+            self._evict_expired_unlocked()
+            return sorted(self._locks.values(), key=lambda lock: lock.file_path)
 
     def locks_for_agent(self, agent_id: str) -> list[FileLock]:
         """Return all locks held by the given agent."""
-        self._evict_expired()
-        return [lock for lock in self._locks.values() if lock.agent_id == agent_id]
+        with self._lock:
+            self._evict_expired_unlocked()
+            return [lock for lock in self._locks.values() if lock.agent_id == agent_id]
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     def _evict_expired(self) -> None:
-        """Remove locks whose TTL has elapsed."""
+        """Remove locks whose TTL has elapsed (acquires threading lock)."""
+        with self._lock:
+            self._evict_expired_unlocked()
+
+    def _evict_expired_unlocked(self) -> None:
+        """Remove expired locks. Caller must already hold ``self._lock``."""
         cutoff = time.time() - self.LOCK_TTL_SECONDS
         expired = [f for f, lock in self._locks.items() if lock.locked_at < cutoff]
         for f in expired:
