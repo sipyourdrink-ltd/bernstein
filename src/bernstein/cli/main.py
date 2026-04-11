@@ -51,6 +51,7 @@ from bernstein.cli.audit_cmd import audit_group
 from bernstein.cli.auth_cmd import auth_group, auth_login
 from bernstein.cli.cache_cmd import cache_group
 from bernstein.cli.changelog_cmd import changelog_cmd
+from bernstein.cli.run_changelog_cmd import run_changelog_cmd
 from bernstein.cli.chaos_cmd import chaos_group
 from bernstein.cli.checkpoint_cmd import checkpoint_cmd
 from bernstein.cli.ci_cmd import ci_group
@@ -139,6 +140,7 @@ __all__ = [
     "cache_group",
     "cancel",
     "changelog_cmd",
+    "run_changelog_cmd",
     "chaos_group",
     "checkpoint_cmd",
     "cleanup_cmd",
@@ -750,6 +752,7 @@ cli.add_command(worker, "worker")
 cli.add_command(diff_cmd, "diff")
 cli.add_command(merge_cmd, "merge")
 cli.add_command(changelog_cmd, "changelog")
+cli.add_command(run_changelog_cmd, "run-changelog")
 cli.add_command(dr_group, "dr")
 cli.add_command(incident_cmd, "incident")
 cli.add_command(profile_cmd, "profile")
