@@ -62,7 +62,7 @@ EMPTY_NAME_MD = textwrap.dedent("""\
 class TestParseFile:
     def test_parses_full_frontmatter(self, tmp_path: Path) -> None:
         f = tmp_path / "engineering-code-reviewer.md"
-        f.write_text(FULL_AGENT_MD)
+        f.write_text(FULL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert len(agents) == 1
         agent = agents[0]
@@ -72,34 +72,34 @@ class TestParseFile:
 
     def test_id_is_slugified_name_with_prefix(self, tmp_path: Path) -> None:
         f = tmp_path / "engineering-code-reviewer.md"
-        f.write_text(FULL_AGENT_MD)
+        f.write_text(FULL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents[0].id == "agency:code-reviewer"
 
     def test_source_is_agency(self, tmp_path: Path) -> None:
         f = tmp_path / "engineering-code-reviewer.md"
-        f.write_text(FULL_AGENT_MD)
+        f.write_text(FULL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents[0].source == "agency"
 
     def test_code_reviewer_inferred_as_reviewer(self, tmp_path: Path) -> None:
         """Smart role inference overrides division-based 'backend' for Code Reviewer."""
         f = tmp_path / "engineering-code-reviewer.md"
-        f.write_text(FULL_AGENT_MD)
+        f.write_text(FULL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents[0].role == "reviewer"
 
     def test_design_ui_specialist_inferred_as_frontend(self, tmp_path: Path) -> None:
         """Smart inference overrides design division's 'architect' for UI agents."""
         f = tmp_path / "design-ui-specialist.md"
-        f.write_text(MINIMAL_AGENT_MD.replace("Minimal Agent", "UI Specialist"))
+        f.write_text(MINIMAL_AGENT_MD.replace("Minimal Agent", "UI Specialist"), encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="design")
         assert agents[0].role == "frontend"
 
     def test_design_division_fallback_to_architect(self, tmp_path: Path) -> None:
         """Agents in design division with no strong signal keep 'architect' role."""
         f = tmp_path / "design-generic.md"
-        f.write_text(MINIMAL_AGENT_MD.replace("Minimal Agent", "Design Lead"))
+        f.write_text(MINIMAL_AGENT_MD.replace("Minimal Agent", "Design Lead"), encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="design")
         assert agents[0].role == "architect"
 
@@ -117,43 +117,43 @@ class TestParseFile:
             )
         )
         f = tmp_path / "engineering-backend-builder.md"
-        f.write_text(backend_md)
+        f.write_text(backend_md, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents[0].role == "backend"
 
     def test_unknown_division_kept_as_is(self, tmp_path: Path) -> None:
         f = tmp_path / "xr-spatial-agent.md"
-        f.write_text(MINIMAL_AGENT_MD)
+        f.write_text(MINIMAL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="xr")
         assert agents[0].role == "xr"
 
     def test_tools_extracted_from_frontmatter(self, tmp_path: Path) -> None:
         f = tmp_path / "engineering-code-reviewer.md"
-        f.write_text(FULL_AGENT_MD)
+        f.write_text(FULL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents[0].tools == ["ruff", "mypy", "pytest"]
 
     def test_tools_empty_when_not_in_frontmatter(self, tmp_path: Path) -> None:
         f = tmp_path / "general-minimal.md"
-        f.write_text(MINIMAL_AGENT_MD)
+        f.write_text(MINIMAL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="general")
         assert agents[0].tools == []
 
     def test_capabilities_extracted_from_frontmatter(self, tmp_path: Path) -> None:
         f = tmp_path / "engineering-code-reviewer.md"
-        f.write_text(FULL_AGENT_MD)
+        f.write_text(FULL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents[0].capabilities == ["code-review", "security-analysis", "static-analysis"]
 
     def test_capabilities_empty_when_not_in_frontmatter(self, tmp_path: Path) -> None:
         f = tmp_path / "general-minimal.md"
-        f.write_text(MINIMAL_AGENT_MD)
+        f.write_text(MINIMAL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="general")
         assert agents[0].capabilities == []
 
     def test_parses_minimal_frontmatter(self, tmp_path: Path) -> None:
         f = tmp_path / "general-minimal.md"
-        f.write_text(MINIMAL_AGENT_MD)
+        f.write_text(MINIMAL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="general")
         assert len(agents) == 1
         assert agents[0].name == "Minimal Agent"
@@ -161,19 +161,19 @@ class TestParseFile:
 
     def test_skips_file_without_frontmatter(self, tmp_path: Path) -> None:
         f = tmp_path / "bad.md"
-        f.write_text(NO_FRONTMATTER_MD)
+        f.write_text(NO_FRONTMATTER_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents == []
 
     def test_skips_file_with_empty_name(self, tmp_path: Path) -> None:
         f = tmp_path / "empty-name.md"
-        f.write_text(EMPTY_NAME_MD)
+        f.write_text(EMPTY_NAME_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents == []
 
     def test_returns_catalog_agent_instances(self, tmp_path: Path) -> None:
         f = tmp_path / "engineering-code-reviewer.md"
-        f.write_text(FULL_AGENT_MD)
+        f.write_text(FULL_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert all(isinstance(a, CatalogAgent) for a in agents)
 
@@ -211,7 +211,7 @@ class TestFetchAgents:
     def test_scans_subdirectories_for_md_files(self, tmp_path: Path) -> None:
         eng = tmp_path / "engineering"
         eng.mkdir()
-        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD)
+        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -220,8 +220,8 @@ class TestFetchAgents:
     def test_skips_non_md_files(self, tmp_path: Path) -> None:
         eng = tmp_path / "engineering"
         eng.mkdir()
-        (eng / "notes.txt").write_text("ignore me")
-        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD)
+        (eng / "notes.txt").write_text("ignore me", encoding="utf-8")
+        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -230,8 +230,8 @@ class TestFetchAgents:
     def test_loads_agents_from_multiple_divisions(self, tmp_path: Path) -> None:
         (tmp_path / "engineering").mkdir()
         (tmp_path / "design").mkdir()
-        (tmp_path / "engineering" / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD)
-        (tmp_path / "design" / "design-ui.md").write_text(MINIMAL_AGENT_MD)
+        (tmp_path / "engineering" / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD, encoding="utf-8")
+        (tmp_path / "design" / "design-ui.md").write_text(MINIMAL_AGENT_MD, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -240,7 +240,7 @@ class TestFetchAgents:
     def test_agent_id_uses_agency_prefix(self, tmp_path: Path) -> None:
         eng = tmp_path / "engineering"
         eng.mkdir()
-        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD)
+        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -249,7 +249,7 @@ class TestFetchAgents:
     def test_division_name_derived_from_directory(self, tmp_path: Path) -> None:
         qa = tmp_path / "qa_testing"
         qa.mkdir()
-        (qa / "qa_testing-tester.md").write_text(MINIMAL_AGENT_MD)
+        (qa / "qa_testing-tester.md").write_text(MINIMAL_AGENT_MD, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -265,7 +265,7 @@ class TestRefresh:
     def test_refresh_returns_agents_like_fetch(self, tmp_path: Path) -> None:
         eng = tmp_path / "engineering"
         eng.mkdir()
-        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD)
+        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.refresh())
@@ -278,7 +278,7 @@ class TestRefresh:
         provider = AgencyProvider(local_path=tmp_path)
         assert asyncio.run(provider.fetch_agents()) == []
 
-        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD)
+        (eng / "engineering-code-reviewer.md").write_text(FULL_AGENT_MD, encoding="utf-8")
         agents = asyncio.run(provider.refresh())
         assert len(agents) == 1
 
@@ -352,7 +352,7 @@ class TestCatalogRegistryIntegration:
 
         eng = tmp_path / "engineering"
         eng.mkdir()
-        (eng / "code-reviewer.md").write_text(FULL_AGENT_MD)
+        (eng / "code-reviewer.md").write_text(FULL_AGENT_MD, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -372,7 +372,7 @@ class TestCatalogRegistryIntegration:
 
         eng = tmp_path / "engineering"
         eng.mkdir()
-        (eng / "code-reviewer.md").write_text(FULL_AGENT_MD)
+        (eng / "code-reviewer.md").write_text(FULL_AGENT_MD, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -405,7 +405,7 @@ class TestCatalogRegistryIntegration:
                 "Backend API developer for REST microservices.",
             )
         )
-        (eng / "api-builder.md").write_text(api_md)
+        (eng / "api-builder.md").write_text(api_md, encoding="utf-8")
 
         db_md = (
             FULL_AGENT_MD.replace(
@@ -418,7 +418,7 @@ class TestCatalogRegistryIntegration:
                 "Backend database developer and optimizer.",
             )
         )
-        (eng / "db-specialist.md").write_text(db_md)
+        (eng / "db-specialist.md").write_text(db_md, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -437,7 +437,7 @@ class TestCatalogRegistryIntegration:
 
         eng = tmp_path / "engineering"
         eng.mkdir()
-        (eng / "code-reviewer.md").write_text(FULL_AGENT_MD)
+        (eng / "code-reviewer.md").write_text(FULL_AGENT_MD, encoding="utf-8")
 
         provider = AgencyProvider(local_path=tmp_path)
         agents = asyncio.run(provider.fetch_agents())
@@ -479,7 +479,7 @@ class TestModelPreferencesField:
     def test_model_preferences_field_does_not_cause_error(self, tmp_path: Path) -> None:
         """Agents with model_preferences in frontmatter are parsed without error."""
         f = tmp_path / "smart-planner.md"
-        f.write_text(MODEL_PREFS_AGENT_MD)
+        f.write_text(MODEL_PREFS_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert len(agents) == 1
         assert agents[0].name == "Smart Planner"
@@ -487,7 +487,7 @@ class TestModelPreferencesField:
     def test_capabilities_and_tools_extracted_alongside_model_preferences(self, tmp_path: Path) -> None:
         """Other fields are still parsed correctly when model_preferences is present."""
         f = tmp_path / "smart-planner.md"
-        f.write_text(MODEL_PREFS_AGENT_MD)
+        f.write_text(MODEL_PREFS_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert agents[0].capabilities == ["planning", "decomposition"]
         assert agents[0].tools == ["git"]
@@ -495,7 +495,7 @@ class TestModelPreferencesField:
     def test_system_prompt_populated_when_model_preferences_present(self, tmp_path: Path) -> None:
         """System prompt body is extracted correctly even with model_preferences in frontmatter."""
         f = tmp_path / "smart-planner.md"
-        f.write_text(MODEL_PREFS_AGENT_MD)
+        f.write_text(MODEL_PREFS_AGENT_MD, encoding="utf-8")
         agents = AgencyProvider._parse_file(f, division="engineering")
         assert "Smart Planner" in agents[0].system_prompt
         assert "expert task decomposer" in agents[0].system_prompt
