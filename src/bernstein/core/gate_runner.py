@@ -1976,6 +1976,56 @@ class GateRunner:
             metadata={},
         )
 
+    def _run_test_expansion_gate_sync(
+        self,
+        step: GatePipelineStep,
+        task: Any,
+        run_dir: Path,
+        changed_files: list[str],
+    ) -> GateResult:
+        """Check whether agent-modified source files have corresponding test coverage.
+
+        Identifies source files without matching test files and reports them
+        as uncovered. This is a non-blocking advisory gate.
+        """
+        source_files = [f for f in changed_files if not self._is_test_path(f) and f.endswith(".py")]
+        uncovered: list[str] = []
+        for src in source_files:
+            # Derive expected test path: src/foo/bar.py → tests/unit/test_bar.py
+            src_path = Path(src)
+            expected_test = Path("tests") / "unit" / f"test_{src_path.stem}.py"
+            if not (run_dir / expected_test).exists() and expected_test.as_posix() not in changed_files:
+                uncovered.append(src)
+
+        if not source_files:
+            return self._skipped(step, "No Python source files changed.")
+
+        # Always pass — this is an advisory gate. Record uncovered files in metadata
+        # and write needs_coverage.json for downstream consumers.
+        if uncovered:
+            import json as _json
+
+            coverage_file = run_dir / ".sdd" / "runtime" / "needs_coverage.json"
+            coverage_file.parent.mkdir(parents=True, exist_ok=True)
+            entries = [{"source_file": f, "expected_test": f"tests/unit/test_{Path(f).stem}.py"} for f in uncovered]
+            coverage_file.write_text(_json.dumps(entries, indent=2), encoding="utf-8")
+
+        details = (
+            f"{len(uncovered)} source file(s) without test coverage: {', '.join(uncovered[:5])}"
+            if uncovered
+            else f"All {len(source_files)} source file(s) have corresponding tests."
+        )
+        return GateResult(
+            name=step.name,
+            status="pass",
+            required=step.required,
+            blocked=False,
+            cached=False,
+            duration_ms=0,
+            details=details,
+            metadata={"uncovered_files": uncovered} if uncovered else {},
+        )
+
     def _is_test_path(self, path: str) -> bool:
         candidate = Path(path)
         return (
