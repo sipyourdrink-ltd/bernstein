@@ -100,6 +100,7 @@ bernstein -g "Add JWT auth with refresh tokens, tests, and API docs"
 | :material-puzzle: [Adapter Guide](ADAPTER_GUIDE.md) | Supported agents and how to add your own |
 | :material-api: [API Reference](openapi-reference.md) | Task server REST API |
 | :material-sitemap: [Architecture](ARCHITECTURE.md) | How Bernstein works under the hood |
+| :material-state-machine: [Lifecycle FSM](LIFECYCLE.md) | Task and agent state machines with transition tables |
 | :material-text-box-check: [Changelog](CHANGELOG.md) | What's new |
 
 ## Links
