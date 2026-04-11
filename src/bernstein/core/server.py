@@ -428,6 +428,33 @@ class TaskProgressRequest(BaseModel):
     last_command: str = ""
 
 
+class PartialMergeRequest(BaseModel):
+    """Body for POST /tasks/{task_id}/partial-merge.
+
+    Requests an incremental merge of specific files from the agent's branch
+    into the main branch before the task finishes.  Only files already
+    committed in the agent's worktree branch are processed.
+    """
+
+    files: list[str]
+    """Repo-relative file paths to merge (must be committed in the agent branch)."""
+
+    message: str = ""
+    """Optional commit message.  Auto-generated from session/file list if empty."""
+
+
+class PartialMergeResponse(BaseModel):
+    """Response for POST /tasks/{task_id}/partial-merge."""
+
+    success: bool
+    merged_files: list[str]
+    skipped_already_merged: list[str]
+    uncommitted_files: list[str]
+    conflicting_files: list[str]
+    commit_sha: str
+    error: str
+
+
 class TaskWaitForSubtasksRequest(BaseModel):
     """Body for POST /tasks/{task_id}/wait-for-subtasks."""
 

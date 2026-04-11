@@ -63,6 +63,8 @@ from bernstein.core.server import (
     TaskCountsResponse,
     TaskCreate,
     TaskFailRequest,
+    PartialMergeRequest,
+    PartialMergeResponse,
     TaskPatchRequest,
     TaskProgressRequest,
     TaskResponse,
@@ -943,6 +945,133 @@ async def progress_task(task_id: str, body: TaskProgressRequest, request: Reques
         json.dumps({"id": task.id, "message": body.message, "percent": body.percent}),
     )
     return task_to_response(task)
+
+
+@router.post(
+    "/tasks/{task_id}/partial-merge",
+    response_model=PartialMergeResponse,
+    responses={
+        404: {"description": "Task not found"},
+        409: {"description": "Task not in progress or has no active session"},
+    },
+)
+async def partial_merge_task(
+    task_id: str,
+    body: PartialMergeRequest,
+    request: Request,
+) -> PartialMergeResponse:
+    """Incrementally merge specific committed files from the agent's branch into main.
+
+    Allows a long-running agent to push a completed subset of its work (e.g.
+    the first 5 of 10 test files) while still writing the rest.  Reduces
+    wall-clock time by making partial results available downstream earlier.
+
+    Only files that are already **committed** in the agent's worktree branch
+    (``agent/<session_id>``) are merged.  Uncommitted files are returned in
+    ``uncommitted_files`` so the caller knows to commit them in the worktree
+    first.  Files that were already merged by a prior call are skipped and
+    returned in ``skipped_already_merged``.
+
+    Requires the task to be ``in_progress`` with a ``claimed_by_session`` set.
+    """
+    from bernstein.core.incremental_merge import incremental_merge_files
+
+    store = _get_store(request)
+    sse_bus = _get_sse_bus(request)
+
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    _require_task_access(task, request)
+
+    if task.status != "in_progress":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task '{task_id}' is not in_progress (status={task.status})",
+        )
+    session_id = task.claimed_by_session or ""
+    if not session_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task '{task_id}' has no active session (claimed_by_session is empty)",
+        )
+
+    workdir: Path = request.app.state.workdir
+    runtime_dir = _get_runtime_dir(request)
+
+    result = incremental_merge_files(
+        workdir=workdir,
+        runtime_dir=runtime_dir,
+        session_id=session_id,
+        files=body.files,
+        message=body.message,
+    )
+
+    # Publish SSE event so the dashboard can show incremental progress
+    if result.success and result.merged_files:
+        sse_bus.publish(
+            "task_partial_merge",
+            json.dumps(
+                {
+                    "id": task_id,
+                    "session_id": session_id,
+                    "merged_files": result.merged_files,
+                    "commit_sha": result.commit_sha,
+                }
+            ),
+        )
+
+    return PartialMergeResponse(
+        success=result.success,
+        merged_files=result.merged_files,
+        skipped_already_merged=result.skipped_already_merged,
+        uncommitted_files=result.uncommitted_files,
+        conflicting_files=result.conflicting_files,
+        commit_sha=result.commit_sha,
+        error=result.error,
+    )
+
+
+@router.get("/tasks/{task_id}/partial-merge", responses={404: {"description": "Task not found"}})
+def get_partial_merge_state(task_id: str, request: Request) -> PartialMergeResponse:
+    """Return the cumulative incremental-merge state for a task's active session.
+
+    Useful for monitoring how much of an in-progress task's output has already
+    been merged into the main branch.
+    """
+    from bernstein.core.incremental_merge import get_incremental_merge_state
+
+    store = _get_store(request)
+
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    _require_task_access(task, request)
+
+    session_id = task.claimed_by_session or ""
+    if not session_id:
+        return PartialMergeResponse(
+            success=True,
+            merged_files=[],
+            skipped_already_merged=[],
+            uncommitted_files=[],
+            conflicting_files=[],
+            commit_sha="",
+            error="",
+        )
+
+    runtime_dir = _get_runtime_dir(request)
+    state = get_incremental_merge_state(runtime_dir, session_id)
+
+    return PartialMergeResponse(
+        success=True,
+        merged_files=state.merged_files,
+        skipped_already_merged=[],
+        uncommitted_files=[],
+        conflicting_files=[],
+        commit_sha=state.merge_commits[-1] if state.merge_commits else "",
+        error="",
+    )
 
 
 @router.get("/tasks/{task_id}/snapshots", responses={404: {"description": "Task not found"}})
