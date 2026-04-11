@@ -1502,6 +1502,16 @@ def create_app(
 
     application.include_router(team_router)
 
+    # ROAD-155: Provider latency percentile tracker
+    from bernstein.core.routes.provider_latency import router as provider_latency_router
+
+    application.include_router(provider_latency_router)
+
+    # ROAD-157: Predictive alerting — forecast issues before they impact the run
+    from bernstein.core.routes.predictive import router as predictive_router
+
+    application.include_router(predictive_router)
+
     # WEB-007: API v1 versioned routes — mount all existing routers under /api/v1/
     from bernstein.core.routes.api_v1 import router as api_v1_router
 
