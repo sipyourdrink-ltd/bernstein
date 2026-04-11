@@ -3,6 +3,7 @@ and _parse_catalog_entry (catalog.py coverage improvement)."""
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -261,6 +262,7 @@ class TestLoadGenericEntry:
         assert result["security"]["model"] == "sonnet"
         assert result["security"]["effort"] == "high"
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="chmod 0o000 has no effect on Windows")
     def test_skips_unreadable_file(self, tmp_path, caplog):
         """Unreadable files are logged as warnings and skipped."""
         import logging

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import signal
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -117,6 +118,7 @@ class TestBasicEscalation:
         assert result.tier == EscalationTier.SIGTERM
         mock_kill.assert_called_with(1234, signal.SIGTERM)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL not available on Windows")
     @patch("bernstein.core.heartbeat_escalation.os.kill")
     def test_sigkill_at_threshold(self, mock_kill: MagicMock) -> None:
         ladder = HeartbeatEscalationLadder()
@@ -146,6 +148,7 @@ class TestIdempotency:
         assert result1.tier == EscalationTier.WARN
         assert result2 is None  # already warned
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL not available on Windows")
     def test_escalates_to_next_tier(self) -> None:
         ladder = HeartbeatEscalationLadder()
         ladder.register_agent("agent-1", pid=1234)
