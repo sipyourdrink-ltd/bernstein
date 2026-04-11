@@ -302,4 +302,5 @@ dev = [
     "ruff>=0.9",
     "pyright>=1.1",
     "scikit-learn>=1.5",
+    "mutmut>=2.4",
 ]
