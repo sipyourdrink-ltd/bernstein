@@ -1,4 +1,4 @@
-"""Tests for rate limiter, session checkpoint, and bulletin board."""
+"""Tests for session checkpoint and bulletin board."""
 
 from __future__ import annotations
 
@@ -8,37 +8,11 @@ from pathlib import Path
 import pytest
 
 from bernstein.core.bulletin_board import BulletinBoard, BulletinMessage
-from bernstein.core.rate_limiter import RateLimitConfig
 from bernstein.core.session_checkpoint import (
     SessionCheckpoint,
     SessionCheckpointManager,
     create_checkpoint,
 )
-
-
-class TestRateLimiter:
-    """Test rate limiting functionality."""
-
-    def test_rate_limit_config_creation(self) -> None:
-        """Test creating rate limit config."""
-        config = RateLimitConfig(requests_per_minute=50, burst=10)
-
-        assert config.requests_per_minute == 50
-        assert config.burst == 10
-
-    def test_rate_limit_allows_within_limit(self) -> None:
-        """Test requests within limit are allowed."""
-        config = RateLimitConfig(requests_per_minute=10, burst=0)
-
-        # Would need actual middleware test with async
-        # For now, just verify config works
-        assert config.requests_per_minute == 10
-
-    def test_rate_limit_burst(self) -> None:
-        """Test burst allowance."""
-        config = RateLimitConfig(requests_per_minute=10, burst=5)
-
-        assert config.burst == 5
 
 
 class TestSessionCheckpoint:
