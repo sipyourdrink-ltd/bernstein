@@ -128,10 +128,6 @@ def merge_with_conflict_detection(
 ) -> MergeResult:
     """Merge a branch with explicit conflict detection and safe abort on failure.
 
-    First attempts to rebase the *branch* onto HEAD to produce a clean
-    fast-forward history.  If the rebase fails (conflicts), it aborts and
-    falls back to the original merge-with-conflict-detection path.
-
     Performs ``git merge --no-commit --no-ff`` to stage the merge without
     committing.  If conflicts are detected, aborts the merge cleanly and
     returns the list of conflicting files so a resolver agent can act on them.
@@ -144,21 +140,6 @@ def merge_with_conflict_detection(
     Returns:
         MergeResult indicating success or listing conflicting files.
     """
-    # 0. Try to rebase the agent branch onto HEAD for cleaner history.
-    #    This fast-forwards the branch so the merge is trivial.
-    #    On failure (conflicts), abort and fall through to the merge path.
-    current_head = run_git(["rev-parse", "HEAD"], cwd, timeout=10).stdout.strip()
-    rebase_r = run_git(["rebase", current_head, branch], cwd, timeout=120)
-    if rebase_r.ok:
-        logger.info("Rebased %s onto %s before merge", branch, current_head[:12])
-    else:
-        run_git(["rebase", "--abort"], cwd, timeout=10)
-        logger.info(
-            "Rebase of %s onto HEAD failed, falling back to merge: %s",
-            branch,
-            rebase_r.stderr.strip()[:120],
-        )
-
     with start_span("task.merge_with_conflict_detection", {"branch": branch}):
         # 1. Attempt the merge without committing
         merge_r = run_git(

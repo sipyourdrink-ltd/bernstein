@@ -19,13 +19,6 @@ def test_merge_with_conflict_detection_aborts_and_reports_files(
 
     def _fake_run_git(args: list[str], cwd: Path, timeout: int = 30, **kwargs: object) -> GitResult:
         calls.append(args)
-        if args[:2] == ["rev-parse", "HEAD"]:
-            return GitResult(returncode=0, stdout="abc123\n", stderr="")
-        if args[0] == "rebase" and args[1] != "--abort":
-            # Rebase fails → triggers abort + fallback to merge path
-            return GitResult(returncode=1, stdout="", stderr="rebase conflict")
-        if args[:2] == ["rebase", "--abort"]:
-            return GitResult(returncode=0, stdout="", stderr="")
         if args[:3] == ["merge", "--no-commit", "--no-ff"]:
             return GitResult(returncode=1, stdout="", stderr="merge failed")
         if args[:2] == ["status", "--porcelain"]:
@@ -81,12 +74,6 @@ def test_merge_with_conflict_detection_returns_non_conflict_error(
     tmp_path: Path,
 ) -> None:
     def _fake_run_git(args: list[str], cwd: Path, timeout: int = 30, **kwargs: object) -> GitResult:
-        if args[:2] == ["rev-parse", "HEAD"]:
-            return GitResult(returncode=0, stdout="abc123\n", stderr="")
-        if args[0] == "rebase" and args[1] != "--abort":
-            return GitResult(returncode=1, stdout="", stderr="rebase conflict")
-        if args[:2] == ["rebase", "--abort"]:
-            return GitResult(returncode=0, stdout="", stderr="")
         if args[:3] == ["merge", "--no-commit", "--no-ff"]:
             return GitResult(returncode=1, stdout="", stderr="branch not found")
         if args[:2] == ["status", "--porcelain"]:
