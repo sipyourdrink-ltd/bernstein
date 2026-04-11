@@ -17,9 +17,7 @@ _VALID_PRESETS: frozenset[str] = frozenset({"focus", "balanced", "observability"
 
 _PRESET_PANELS: dict[str, frozenset[str]] = {
     "focus": frozenset({"task-list", "task-search", "task-context", "runtime-health", "agent-log"}),
-    "balanced": frozenset(
-        {"task-list", "task-search", "task-context", "runtime-health", "agent-log", "task-timeline"}
-    ),
+    "balanced": frozenset({"task-list", "task-search", "task-context", "runtime-health", "agent-log", "task-timeline"}),
     "observability": frozenset(
         {
             "task-list",
