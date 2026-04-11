@@ -1,0 +1,165 @@
+# OpenTelemetry Collector configuration for Bernstein
+#
+# Pipeline: Bernstein agents → OTel Collector → {Prometheus, Jaeger/Tempo, Loki}
+#
+# Usage (standalone):
+#   docker run --rm -p 4317:4317 -p 4318:4318 -p 8889:8889 \
+#     -v $(pwd)/deploy/otel-collector/otel-collector-config.yaml:/etc/otelcol/config.yaml \
+#     otel/opentelemetry-collector-contrib:latest
+#
+# Usage (Docker Compose):
+#   docker compose --profile otel up -d
+#
+# Bernstein exports via:
+#   OTLP gRPC → localhost:4317
+#   OTLP HTTP → localhost:4318
+#
+# Env vars consumed by this config:
+#   DATADOG_API_KEY     — forward traces/metrics to Datadog (optional)
+#   NEWRELIC_API_KEY    — forward traces/metrics to New Relic (optional)
+#   JAEGER_ENDPOINT     — Jaeger OTLP gRPC endpoint (default: jaeger:4317)
+
+receivers:
+  # Accept OTLP from Bernstein agents (gRPC)
+  otlp/grpc:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+
+  # Accept OTLP from Bernstein agents (HTTP — useful for browser/SDK agents)
+  otlp/http:
+    protocols:
+      http:
+        endpoint: "0.0.0.0:4318"
+
+  # Prometheus scrape receiver — scrapes Bernstein /metrics endpoint directly
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: "bernstein"
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["bernstein-server:8052"]
+          metrics_path: /metrics
+
+processors:
+  # Limit memory consumption under load bursts
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Batch spans/metrics for efficiency
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  # Enrich all signals with Bernstein service metadata
+  resource:
+    attributes:
+      - key: service.name
+        value: bernstein
+        action: upsert
+      - key: service.namespace
+        value: orchestration
+        action: upsert
+      - key: deployment.environment
+        from_attribute: BERNSTEIN_ENV
+        action: insert
+
+  # Filter out internal health-check spans to keep dashboards clean
+  filter/spans:
+    spans:
+      exclude:
+        match_type: regexp
+        attributes:
+          - key: http.target
+            value: "^/(health|metrics)$"
+
+exporters:
+  # Prometheus metrics endpoint — Grafana scrapes this
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: bernstein
+    const_labels:
+      collector: otel
+
+  # Jaeger / Grafana Tempo for distributed traces
+  otlp/jaeger:
+    endpoint: "${env:JAEGER_ENDPOINT:-jaeger:4317}"
+    tls:
+      insecure: true
+
+  # Debug exporter — writes a summary line per batch to stdout
+  debug:
+    verbosity: normal
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+  # Datadog — enabled only when DATADOG_API_KEY is set
+  # Uses Datadog's native OTLP intake (no agent required)
+  datadog:
+    api:
+      key: "${env:DATADOG_API_KEY}"
+      site: "${env:DD_SITE:-datadoghq.com}"
+    host_metadata:
+      enabled: true
+    metrics:
+      resource_attributes_as_tags: true
+    traces:
+      span_name_remappings:
+        "task.run": "bernstein.task.run"
+        "agent.spawn": "bernstein.agent.spawn"
+
+  # New Relic — enabled only when NEWRELIC_API_KEY is set
+  # Uses New Relic's OTLP endpoint
+  otlp/newrelic:
+    endpoint: "otlp.nr-data.net:4317"
+    headers:
+      api-key: "${env:NEWRELIC_API_KEY}"
+    tls:
+      insecure: false
+
+extensions:
+  # Health check endpoint for Docker/Kubernetes probes
+  health_check:
+    endpoint: "0.0.0.0:13133"
+    path: "/healthz"
+
+  # Performance profiling (disabled by default)
+  pprof:
+    endpoint: "0.0.0.0:1888"
+
+  # zPages for local debugging (http://localhost:55679/debug/tracez)
+  zpages:
+    endpoint: "0.0.0.0:55679"
+
+service:
+  extensions: [health_check, pprof, zpages]
+
+  pipelines:
+    # ── Traces pipeline ─────────────────────────────────────────────────────
+    traces:
+      receivers: [otlp/grpc, otlp/http]
+      processors: [memory_limiter, resource, filter/spans, batch]
+      exporters: [otlp/jaeger, debug]
+
+    # ── Metrics pipeline ────────────────────────────────────────────────────
+    metrics:
+      receivers: [otlp/grpc, otlp/http, prometheus]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, debug]
+
+    # ── Logs pipeline ───────────────────────────────────────────────────────
+    logs:
+      receivers: [otlp/grpc, otlp/http]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]
+
+  telemetry:
+    logs:
+      level: "info"
+    metrics:
+      address: "0.0.0.0:8888"
+      level: detailed

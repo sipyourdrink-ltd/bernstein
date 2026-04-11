@@ -112,6 +112,50 @@ services:
         condition: service_healthy
 
   # ── Monitoring ─────────────────────────────────────────────────────────────
+
+  # OTel Collector: receives OTLP from Bernstein agents, re-exports to Prometheus
+  # and optionally Jaeger/Datadog/New Relic.
+  # Profile: docker compose --profile otel up -d
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.100.0
+    profiles: [otel]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./deploy/otel-collector/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+      - "8888:8888"    # Collector internal metrics (Prometheus)
+      - "8889:8889"    # Bernstein metrics re-exported by collector
+      - "13133:13133"  # Health check
+      - "55679:55679"  # zPages debug UI
+    environment:
+      JAEGER_ENDPOINT: ${JAEGER_ENDPOINT:-jaeger:4317}
+      DATADOG_API_KEY: ${DATADOG_API_KEY:-}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      NEWRELIC_API_KEY: ${NEWRELIC_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:13133/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      bernstein-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Jaeger all-in-one: receives traces from OTel Collector (profile: otel)
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    profiles: [otel]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14317:4317"   # OTLP gRPC (host port 14317 to avoid conflict with otel-collector)
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:v2.52.0
     command:
@@ -140,6 +184,7 @@ services:
     volumes:
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deploy/grafana/dashboard.json:/var/lib/grafana/dashboards/bernstein.json:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards/extended:ro
       - grafana-data:/var/lib/grafana
     ports:
       - "3000:3000"

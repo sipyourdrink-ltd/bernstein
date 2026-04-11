@@ -1,6 +1,7 @@
 apiVersion: 1
 
 providers:
+  # Main Bernstein dashboard (backward compat — legacy path)
   - name: Bernstein
     folder: Bernstein
     type: file
@@ -8,3 +9,12 @@ providers:
     updateIntervalSeconds: 30
     options:
       path: /var/lib/grafana/dashboards
+
+  # Extended dashboards directory (OTel pipeline, APM views, etc.)
+  - name: Bernstein Extended
+    folder: Bernstein
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/extended
