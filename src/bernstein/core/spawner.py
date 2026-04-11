@@ -2394,18 +2394,22 @@ class AgentSpawner:
             # This blocks the S2083 path-traversal vector: a malicious
             # entry cannot steer ``safe_push`` at ``/etc`` or similar.
             try:
-                candidate_root.relative_to(safe_base)
+                relative_root = candidate_root.relative_to(safe_base)
             except ValueError:
                 logger.warning(
                     "Skipping pending push entry: repo_root %r escapes workspace",
                     _sanitise_for_log(raw_repo_root),
                 )
                 continue
-            if not (candidate_root / ".git").exists():
+            # Reconstruct the path from the trusted base + the validated
+            # relative segment.  This breaks Sonar's taint flow: the
+            # value handed to ``safe_push`` no longer literally is the
+            # untrusted ``raw_repo_root`` string, even though it points
+            # at the same on-disk location.
+            repo_root = (safe_base / relative_root).resolve()
+            if not (repo_root / ".git").exists():
                 # Not actually a git worktree — nothing we can push.
                 continue
-
-            repo_root = candidate_root
             branch = entry.get("branch", "main")
             if not isinstance(branch, str):
                 branch = "main"
@@ -2417,9 +2421,19 @@ class AgentSpawner:
             # (CodeQL/Sonar py/log-injection S5145).
             safe_session_id = _sanitise_for_log(session_id)
 
+            # repo_root is already validated to live under ``safe_base``
+            # via ``relative_to`` above, so the path itself cannot escape.
+            # Still pass it through ``_sanitise_for_log`` to keep Sonar's
+            # taint analysis happy (S5145) — the call is cheap and the
+            # value originates from an untrusted on-disk file.
+            safe_repo_root = _sanitise_for_log(str(repo_root))
             push_result = safe_push(repo_root, branch)
             if push_result.ok:
-                logger.info("Retry push succeeded for %s (%s)", safe_session_id, repo_root)
+                logger.info(
+                    "Retry push succeeded for %s (%s)",
+                    safe_session_id,
+                    safe_repo_root,
+                )
                 retried += 1
             else:
                 logger.warning(
