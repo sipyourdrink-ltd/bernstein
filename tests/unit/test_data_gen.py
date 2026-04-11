@@ -38,7 +38,10 @@ class TestGenerateTask:
         task = generate_task(template)
         assert task.complexity == "low"
         assert task.priority >= 7
-        assert len(task.scope) <= 3
+        # ``_generate_scope`` emits the main source file for each module
+        # plus (50% chance) a matching test file, so the upper bound is
+        # ``file_count_range[1] * 2 = 6`` entries for this template.
+        assert len(task.scope) <= 6
 
     def test_with_template_high_complexity(self) -> None:
         template = TaskTemplate(

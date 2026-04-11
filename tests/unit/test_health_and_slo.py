@@ -1,11 +1,17 @@
-"""Tests for health score, workload prediction, and SLO tracking."""
+"""Tests for health score and workload prediction.
+
+Historically this file also covered ``bernstein.core.slo_tracker``, but that
+module was removed in favour of ``bernstein.core.slo`` (which has a
+different API — ``SLOStatus`` is now a ``StrEnum`` and the tracker lives
+in ``SLOTracker`` with an ``ErrorBudget``). Coverage for the new API
+lives in ``test_slo.py``, ``test_slo_burndown.py``, and
+``test_slo_extended.py``; the old ``TestSLOTracker`` class was deleted
+from here rather than ported so as not to duplicate that coverage.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
-from bernstein.core.slo_tracker import SLOStatus, SLOTracker, format_slo_report
 
 from bernstein.core.health_score import (
     HealthScore,
@@ -104,51 +110,4 @@ class TestWorkloadPrediction:
         assert "10" in report
 
 
-class TestSLOTracker:
-    """Test SLO tracking."""
-
-    def test_slo_status_creation(self) -> None:
-        """Test creating SLO status."""
-        status = SLOStatus(
-            target_tasks_per_hour=10.0,
-            actual_tasks_per_hour=8.0,
-            is_meeting_slo=False,
-            deviation_percent=-20.0,
-            trend="stable",
-            hours_tracked=24,
-        )
-
-        assert status.target_tasks_per_hour == pytest.approx(10.0)
-        assert status.is_meeting_slo is False
-
-    def test_slo_tracker_no_data(self, tmp_path: Path) -> None:
-        """Test SLO tracker with no data."""
-        tracker = SLOTracker(tmp_path, target=10.0)
-        status = tracker.check_slo()
-
-        assert status.actual_tasks_per_hour == pytest.approx(0.0)
-        assert status.is_meeting_slo is False
-
-    def test_slo_tracker_record_completion(self, tmp_path: Path) -> None:
-        """Test recording task completion."""
-        tracker = SLOTracker(tmp_path, target=10.0)
-        tracker.record_completion("task-1", 30.0)
-
-        # Should have recorded
-        assert tracker._history_file.exists()
-
-    def test_format_slo_report(self) -> None:
-        """Test formatting SLO report."""
-        status = SLOStatus(
-            target_tasks_per_hour=10.0,
-            actual_tasks_per_hour=12.0,
-            is_meeting_slo=True,
-            deviation_percent=20.0,
-            trend="improving",
-            hours_tracked=24,
-        )
-
-        report = format_slo_report(status)
-
-        assert "SLO: Tasks Completed Per Hour" in report
-        assert "✓" in report  # Meeting SLO icon
+# TestSLOTracker intentionally removed — see module docstring.
