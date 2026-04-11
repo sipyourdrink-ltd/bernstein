@@ -29,7 +29,7 @@ server:
     accessMode: ReadWriteOnce
     size: 10Gi
 
-# ── Orchestrator ──────────────────────────────────────────────────────────────
+# ── Orchestrator (StatefulSet for stable identity) ────────────────────────────
 orchestrator:
   replicaCount: 1
   resources:
@@ -39,6 +39,11 @@ orchestrator:
     limits:
       cpu: 250m
       memory: 256Mi
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 5Gi
 
 # ── Workers ───────────────────────────────────────────────────────────────────
 worker:
@@ -66,6 +71,27 @@ worker:
     # Typical values: "2" (scale when 2+ tasks per replica), "5" (when 5+ tasks per replica)
     targetQueueDepth: "2"
     targetCPUUtilizationPercentage: 70
+
+# ── Operator (watches BernsteinPlan/BernsteinRun CRDs) ────────────────────────
+operator:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# ── gRPC (internal cluster communication) ─────────────────────────────────────
+grpc:
+  enabled: true
+  port: 50051
+  tls:
+    enabled: false
+    certSecret: ""
+    certKey: tls.crt
+    keyKey: tls.key
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 auth:

@@ -10,3 +10,9 @@ data:
   BERNSTEIN_CLUSTER_ENABLED: "true"
   BERNSTEIN_DATABASE_URL: {{ include "bernstein.databaseURL" . | quote }}
   BERNSTEIN_REDIS_URL: {{ include "bernstein.redisURL" . | quote }}
+  {{- if .Values.grpc.enabled }}
+  BERNSTEIN_GRPC_ENABLED: "true"
+  BERNSTEIN_GRPC_HOST: "0.0.0.0"
+  BERNSTEIN_GRPC_PORT: {{ .Values.grpc.port | quote }}
+  BERNSTEIN_GRPC_URL: {{ include "bernstein.grpcURL" . | quote }}
+  {{- end }}

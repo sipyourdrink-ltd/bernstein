@@ -1,0 +1,151 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: bernsteinplans.bernstein.io
+  labels:
+    app.kubernetes.io/name: bernstein
+    app.kubernetes.io/part-of: bernstein
+spec:
+  group: bernstein.io
+  names:
+    kind: BernsteinPlan
+    listKind: BernsteinPlanList
+    plural: bernsteinplans
+    singular: bernsteinplan
+    shortNames:
+      - bplan
+    categories:
+      - bernstein
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Stages
+          type: integer
+          jsonPath: .status.totalStages
+        - name: Status
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - stages
+              properties:
+                goal:
+                  type: string
+                  description: High-level goal for the plan.
+                seed:
+                  type: string
+                  description: Seed file or prompt for plan generation.
+                model:
+                  type: string
+                  description: Default LLM model for agents.
+                  default: claude-sonnet-4-20250514
+                effort:
+                  type: string
+                  description: Default effort level.
+                  enum: [low, medium, high]
+                  default: medium
+                cliAgent:
+                  type: string
+                  description: CLI agent adapter to use.
+                  default: claude
+                maxConcurrency:
+                  type: integer
+                  description: Maximum concurrent agent Jobs.
+                  minimum: 1
+                  default: 6
+                stages:
+                  type: array
+                  description: Ordered list of execution stages.
+                  items:
+                    type: object
+                    required:
+                      - name
+                      - steps
+                    properties:
+                      name:
+                        type: string
+                      dependsOn:
+                        type: array
+                        items:
+                          type: string
+                      steps:
+                        type: array
+                        items:
+                          type: object
+                          required:
+                            - goal
+                          properties:
+                            goal:
+                              type: string
+                            role:
+                              type: string
+                              default: backend
+                            priority:
+                              type: integer
+                              default: 3
+                            scope:
+                              type: array
+                              items:
+                                type: string
+                            complexity:
+                              type: string
+                              enum: [trivial, low, medium, high]
+                              default: medium
+                            model:
+                              type: string
+                            effort:
+                              type: string
+                              enum: [low, medium, high]
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum: [Pending, Validated, Running, Completed, Failed]
+                  default: Pending
+                totalStages:
+                  type: integer
+                totalSteps:
+                  type: integer
+                validationErrors:
+                  type: array
+                  items:
+                    type: string
+                activeRunRef:
+                  type: string
+                  description: Name of the active BernsteinRun for this plan.
+                lastTransitionTime:
+                  type: string
+                  format: date-time
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
