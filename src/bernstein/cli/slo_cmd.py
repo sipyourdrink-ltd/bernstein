@@ -226,8 +226,7 @@ def slo_cmd(
         data = _fetch()
         if data is None:
             console.print(
-                "[yellow]No SLO data available.[/yellow] "
-                "Start the task server or run ``bernstein run`` first."
+                "[yellow]No SLO data available.[/yellow] Start the task server or run ``bernstein run`` first."
             )
             raise SystemExit(1)
         _display(data)

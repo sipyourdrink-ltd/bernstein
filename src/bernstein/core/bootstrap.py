@@ -560,10 +560,7 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
         if server_pid is not None and _is_alive(server_pid):
             if server_alive_since is None:
                 server_alive_since = now
-            elif (
-                server_restarts > 0
-                and (now - server_alive_since) >= restart_reset_after_s
-            ):
+            elif server_restarts > 0 and (now - server_alive_since) >= restart_reset_after_s:
                 logger.info(
                     "Server has been healthy for %.0fs — resetting restart counter",
                     now - server_alive_since,
@@ -599,10 +596,7 @@ def run_watchdog(workdir: Path, port: int, poll_s: float = 5.0) -> None:
         if spawner_pid is not None and _is_alive(spawner_pid):
             if spawner_alive_since is None:
                 spawner_alive_since = now
-            elif (
-                spawner_restarts > 0
-                and (now - spawner_alive_since) >= restart_reset_after_s
-            ):
+            elif spawner_restarts > 0 and (now - spawner_alive_since) >= restart_reset_after_s:
                 logger.info(
                     "Orchestrator has been healthy for %.0fs — resetting restart counter",
                     now - spawner_alive_since,

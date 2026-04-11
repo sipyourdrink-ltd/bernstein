@@ -437,14 +437,14 @@ class PostMortemGenerator:
                 f"""<div class='trace-card'>
   <h3>Task <code>{html.escape(trace.task_id)}</code></h3>
   <table class='compact'>
-    <tr><th>Role</th><td>{html.escape(trace.role) or '—'}</td></tr>
-    <tr><th>Model</th><td>{html.escape(trace.model) or '—'}</td></tr>
-    <tr><th>Session</th><td><code>{html.escape(trace.session_id) or '—'}</code></td></tr>
-    <tr><th>Dominant failure</th><td><code>{html.escape(trace.dominant_failure) or 'unknown'}</code></td></tr>
+    <tr><th>Role</th><td>{html.escape(trace.role) or "—"}</td></tr>
+    <tr><th>Model</th><td>{html.escape(trace.model) or "—"}</td></tr>
+    <tr><th>Session</th><td><code>{html.escape(trace.session_id) or "—"}</code></td></tr>
+    <tr><th>Dominant failure</th><td><code>{html.escape(trace.dominant_failure) or "unknown"}</code></td></tr>
     <tr><th>Files touched</th><td>{files_html}</td></tr>
   </table>
   {snippets_html}
-  {f'<p><strong>Retry context:</strong> {html.escape(trace.retry_context)}</p>' if trace.retry_context else ''}
+  {f"<p><strong>Retry context:</strong> {html.escape(trace.retry_context)}</p>" if trace.retry_context else ""}
 </div>"""
             )
 
@@ -514,10 +514,13 @@ class PostMortemGenerator:
 <div class="meta">
   <span><strong>Run ID:</strong> <code>{html.escape(report.run_id)}</code></span>
   <span><strong>Generated:</strong> {ts}</span>
-  {f'<span><strong>Goal:</strong> {html.escape(report.goal)}</span>' if report.goal else ''}
+  {f"<span><strong>Goal:</strong> {html.escape(report.goal)}</span>" if report.goal else ""}
   <span><strong>Tasks:</strong> {report.total_tasks} total, {report.failed_tasks} failed</span>
-  {f'<span><strong>Success rate:</strong> <span class="stat">{report.success_rate_pct:.0f}%'
-   f'</span></span>' if report.total_tasks else ''}
+  {
+            f'<span><strong>Success rate:</strong> <span class="stat">{report.success_rate_pct:.0f}%</span></span>'
+            if report.total_tasks
+            else ""
+        }
 </div>
 
 <h2>Event Timeline</h2>
@@ -595,6 +598,7 @@ class PostMortemGenerator:
             pass
         finally:
             import os as _os
+
             with contextlib.suppress(Exception):
                 _os.unlink(tmp_path)
 

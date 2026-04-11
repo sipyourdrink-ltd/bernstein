@@ -359,8 +359,7 @@ def check_consistency(implementations: list[AgentImplementation]) -> Consistency
                     endpoint=endpoint,
                     method=", ".join(sorted(methods)),
                     description=(
-                        f"Endpoint '{endpoint}' has conflicting HTTP methods "
-                        f"across agents: {sorted(methods)}"
+                        f"Endpoint '{endpoint}' has conflicting HTTP methods across agents: {sorted(methods)}"
                     ),
                     agents_involved=agent_ids,
                 )

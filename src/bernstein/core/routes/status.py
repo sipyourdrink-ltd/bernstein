@@ -197,9 +197,7 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     # Fast path: return cached result if fresh
     if _runtime_cache and (now - _runtime_cache_ts) < _RUNTIME_CACHE_TTL:
         # Update only the cheap fields
-        _runtime_cache["last_completed"] = _safe_call(
-            "last_completed", lambda: _last_completion(store), None
-        )
+        _runtime_cache["last_completed"] = _safe_call("last_completed", lambda: _last_completion(store), None)
         return _runtime_cache
 
     sdd_dir = getattr(request.app.state, "sdd_dir", None)
@@ -211,22 +209,16 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
         snapshot = _safe_call("supervisor_state", lambda: read_supervisor_state(sdd_dir), None)
         if snapshot is not None:
             restart_count = getattr(snapshot, "restart_count", 0)
-        disk_usage_bytes = _safe_call(
-            "disk_usage_bytes", lambda: directory_size_bytes(sdd_dir), 0
-        )
+        disk_usage_bytes = _safe_call("disk_usage_bytes", lambda: directory_size_bytes(sdd_dir), 0)
         config_state = _safe_call("config_state", lambda: read_config_state(sdd_dir), None)
 
     _runtime_cache = {
         "git_branch": _safe_call("git_branch", lambda: current_git_branch(workdir), ""),
         "restart_count": restart_count,
         "memory_mb": _safe_call("memory_mb", memory_usage_mb, 0.0),
-        "active_worktrees": _safe_call(
-            "active_worktrees", lambda: _active_worktree_count(request), 0
-        ),
+        "active_worktrees": _safe_call("active_worktrees", lambda: _active_worktree_count(request), 0),
         "disk_usage_mb": round(disk_usage_bytes / (1024 * 1024), 2),
-        "last_completed": _safe_call(
-            "last_completed", lambda: _last_completion(store), None
-        ),
+        "last_completed": _safe_call("last_completed", lambda: _last_completion(store), None),
         "config_reloaded_at": float(config_state["reloaded_at"])
         if config_state and config_state.get("reloaded_at")
         else 0.0,
@@ -246,9 +238,7 @@ def _runtime_summary(request: Request, store: TaskStore) -> dict[str, Any]:
     # Expose config watcher file-level source chain if available
     config_watcher = getattr(request.app.state, "config_watcher", None)
     if config_watcher is not None:
-        _runtime_cache["config_source_chain"] = _safe_call(
-            "config_source_chain", config_watcher.source_chain, []
-        )
+        _runtime_cache["config_source_chain"] = _safe_call("config_source_chain", config_watcher.source_chain, [])
 
     _runtime_cache_ts = now
     return _runtime_cache
