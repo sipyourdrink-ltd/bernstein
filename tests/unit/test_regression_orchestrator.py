@@ -1148,7 +1148,7 @@ class TestProcessedDoneTasksCap:
 
         # Fill beyond max
         for i in range(Orchestrator._MAX_PROCESSED_DONE + 100):
-            orch._processed_done_tasks.add(f"T-done-{i}")
+            orch._processed_done_tasks[f"T-done-{i}"] = None
 
         assert len(orch._processed_done_tasks) > Orchestrator._MAX_PROCESSED_DONE
 

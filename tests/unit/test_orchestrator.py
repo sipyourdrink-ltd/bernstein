@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import json
 import subprocess
 import time
@@ -5361,7 +5362,7 @@ class TestOrchestratorBulletinIntegration:
         )
 
         orch, board = self._build_with_bulletin(tmp_path, transport)
-        orch._processed_done_tasks = set()  # ensure not pre-processed
+        orch._processed_done_tasks = collections.OrderedDict()  # ensure not pre-processed
 
         orch.tick()
 

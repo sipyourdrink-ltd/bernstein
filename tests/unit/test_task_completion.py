@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -53,7 +54,7 @@ def _orch(tmp_path: Path, session: AgentSession) -> Any:
     spawner._traces = {}
 
     return SimpleNamespace(
-        _processed_done_tasks=set(),
+        _processed_done_tasks=collections.OrderedDict(),
         _executor=MagicMock(),
         _find_session_for_task=_find_session_for_task,
         _spawner=spawner,

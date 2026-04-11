@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import collections
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -101,7 +102,7 @@ def _process_orch(tmp_path: Path, session: AgentSession) -> Any:
         return session if task_id in session.task_ids else None
 
     return SimpleNamespace(
-        _processed_done_tasks=set(),
+        _processed_done_tasks=collections.OrderedDict(),
         _executor=MagicMock(),
         _find_session_for_task=_find_session_for_task,
         _spawner=MagicMock(),
