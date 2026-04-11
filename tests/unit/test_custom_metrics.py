@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from bernstein.core.custom_metrics import (
     CustomMetricsEvaluator,
@@ -197,3 +202,132 @@ class TestCustomMetricsEvaluator:
         assert d["unit"] == "x"
         assert d["description"] == "desc"
         assert "error" not in d
+
+
+# ---------------------------------------------------------------------------
+# Seed file metrics parsing (OBS-148 — bernstein.yaml integration)
+# ---------------------------------------------------------------------------
+
+
+class TestSeedMetricsParsing:
+    def _write_seed(self, tmp_path: Path, content: str) -> Path:
+
+        p = tmp_path / "bernstein.yaml"
+        p.write_text(content, encoding="utf-8")
+        return p
+
+    def test_no_metrics_returns_empty_dict(self, tmp_path: Path) -> None:
+        from bernstein.core.seed import parse_seed
+
+        path = self._write_seed(tmp_path, 'goal: "test"\n')
+        cfg = parse_seed(path)
+        assert cfg.metrics == {}
+
+    def test_single_metric_parsed(self, tmp_path: Path) -> None:
+        from bernstein.core.seed import MetricSchema, parse_seed
+
+        yaml_content = (
+            'goal: "test"\n'
+            "metrics:\n"
+            "  code_per_dollar:\n"
+            '    formula: "lines_changed / total_cost"\n'
+            '    unit: "lines/$"\n'
+            '    description: "Code produced per dollar spent"\n'
+        )
+        path = self._write_seed(tmp_path, yaml_content)
+        cfg = parse_seed(path)
+        assert "code_per_dollar" in cfg.metrics
+        schema = cfg.metrics["code_per_dollar"]
+        assert isinstance(schema, MetricSchema)
+        assert schema.formula == "lines_changed / total_cost"
+        assert schema.unit == "lines/$"
+        assert schema.description == "Code produced per dollar spent"
+        assert schema.alert_above is None
+        assert schema.alert_below is None
+
+    def test_multiple_metrics_parsed(self, tmp_path: Path) -> None:
+        from bernstein.core.seed import parse_seed
+
+        yaml_content = (
+            'goal: "test"\n'
+            "metrics:\n"
+            "  m1:\n"
+            '    formula: "tasks_completed / (tasks_failed + 0.001)"\n'
+            '    unit: "ratio"\n'
+            "  m2:\n"
+            '    formula: "total_tokens / tasks_completed"\n'
+            '    unit: "tokens/task"\n'
+        )
+        path = self._write_seed(tmp_path, yaml_content)
+        cfg = parse_seed(path)
+        assert set(cfg.metrics.keys()) == {"m1", "m2"}
+
+    def test_alert_thresholds_parsed(self, tmp_path: Path) -> None:
+        from bernstein.core.seed import parse_seed
+
+        yaml_content = (
+            'goal: "test"\n'
+            "metrics:\n"
+            "  efficiency:\n"
+            '    formula: "tasks_completed / (tasks_completed + tasks_failed + 0.001)"\n'
+            "    alert_above: 0.95\n"
+            "    alert_below: 0.5\n"
+        )
+        path = self._write_seed(tmp_path, yaml_content)
+        cfg = parse_seed(path)
+        schema = cfg.metrics["efficiency"]
+        assert schema.alert_above == pytest.approx(0.95)
+        assert schema.alert_below == pytest.approx(0.5)
+
+    def test_missing_formula_raises_seed_error(self, tmp_path: Path) -> None:
+        from bernstein.core.seed import SeedError, parse_seed
+
+        yaml_content = 'goal: "test"\nmetrics:\n  bad_metric:\n    unit: "x"\n'
+        path = self._write_seed(tmp_path, yaml_content)
+        with pytest.raises(SeedError, match="formula"):
+            parse_seed(path)
+
+    def test_metrics_not_a_mapping_raises_seed_error(self, tmp_path: Path) -> None:
+        from bernstein.core.seed import SeedError, parse_seed
+
+        yaml_content = 'goal: "test"\nmetrics:\n  - "not a mapping"\n'
+        path = self._write_seed(tmp_path, yaml_content)
+        with pytest.raises(SeedError, match="metrics must be a mapping"):
+            parse_seed(path)
+
+    def test_metric_entry_not_a_mapping_raises_seed_error(self, tmp_path: Path) -> None:
+        from bernstein.core.seed import SeedError, parse_seed
+
+        yaml_content = 'goal: "test"\nmetrics:\n  my_metric: "not a dict"\n'
+        path = self._write_seed(tmp_path, yaml_content)
+        with pytest.raises(SeedError, match="must be a mapping"):
+            parse_seed(path)
+
+    def test_metric_schema_works_with_evaluator(self, tmp_path: Path) -> None:
+        """End-to-end: parsed MetricSchema feeds correctly into CustomMetricsEvaluator."""
+        from bernstein.core.seed import parse_seed
+
+        yaml_content = (
+            'goal: "test"\n'
+            "metrics:\n"
+            "  code_per_dollar:\n"
+            '    formula: "lines_changed / total_cost"\n'
+            '    unit: "lines/$"\n'
+        )
+        path = self._write_seed(tmp_path, yaml_content)
+        cfg = parse_seed(path)
+
+        definitions = [
+            {
+                "name": name,
+                "formula": schema.formula,
+                "unit": schema.unit,
+                "description": schema.description,
+            }
+            for name, schema in cfg.metrics.items()
+        ]
+        evaluator = CustomMetricsEvaluator(definitions=definitions)
+        results = evaluator.evaluate_all(extra_vars={"lines_changed": 1200.0, "total_cost": 4.0})
+        assert len(results) == 1
+        assert results[0].name == "code_per_dollar"
+        assert results[0].value == pytest.approx(300.0)
