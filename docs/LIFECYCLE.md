@@ -222,6 +222,41 @@ These classify abnormal agent terminations:
 
 ---
 
+## TUI Visual States (7 classifications)
+
+The Bernstein terminal dashboard classifies agents into **visual states** derived from session metadata — not from the FSM directly. These presentation-layer states help operators understand agent health at a glance.
+
+Source: `src/bernstein/tui/agent_states.py` (`AgentState`, `classify_agent_state`).
+
+| Visual State | Indicator | Color | Meaning |
+|-------------|-----------|-------|---------|
+| `SPAWNING` | ◔ | yellow | Agent process is launching. Timeout: 60 s before reclassified as `DEAD`. |
+| `RUNNING` | ● | green | Agent is actively working with a recent heartbeat (`in_progress`/`running` status). |
+| `STALLED` | ◐ | dark orange | Agent has a PID and active status but no heartbeat for > 5 minutes. |
+| `MERGING` | ⇄ | blue | Agent is committing, pushing, or merging results. |
+| `DEAD` | ○ | red | Session ended (`done`, `failed`, `cancelled`, `killed`), or spawn timed out, or no PID on a non-active status. |
+| `IDLE` | □ | gray | Agent is waiting for a new task (`idle`, `waiting`, or `paused` status). |
+| `UNKNOWN` | ◌ | dim | Unrecognized status string or unexpected metadata combination. |
+
+### Mapping to Core FSM States
+
+TUI visual states are derived from the core FSM state (`starting`, `working`, `idle`, `dead`) plus process-level metadata (PID presence, heartbeat timestamp, elapsed time). They do **not** correspond 1:1 to FSM states.
+
+| Core FSM State | TUI Visual State | Condition |
+|----------------|-----------------|-----------|
+| `starting` | `SPAWNING` | Spawn age < 60 s |
+| `starting` | `DEAD` | Spawn age ≥ 60 s (timeout) |
+| `working` | `RUNNING` | Last heartbeat < 5 min ago |
+| `working` | `STALLED` | Last heartbeat ≥ 5 min ago |
+| `working` | `MERGING` | Status string is `merging` / `committing` / `pushing` |
+| `idle` | `IDLE` | Agent awaiting next task |
+| `dead` | `DEAD` | Session ended |
+| (any) | `UNKNOWN` | Unclassified metadata combination |
+
+> **Thresholds** (configurable via `AgentStateThresholds`): stall threshold = 300 s (5 min), spawn timeout = 60 s.
+
+---
+
 ## Agent Turn States (10 states)
 
 The agent turn FSM operates at a finer granularity than the agent session FSM above.
