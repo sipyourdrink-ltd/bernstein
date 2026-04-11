@@ -943,6 +943,26 @@ class DirectChannel:
                 removed += 1
         return removed
 
+    def pending_summary(self, agent_id: str | None = None, role: str | None = None, limit: int = 5) -> str:
+        """Return a human-readable summary of pending queries for prompt injection.
+
+        Args:
+            agent_id: Filter for queries targeting this agent.
+            role: Filter for queries targeting this role.
+            limit: Maximum number of queries to include.
+
+        Returns:
+            Formatted string, or empty string if no pending queries.
+        """
+        pending = self.get_pending_queries(agent_id=agent_id, role=role)
+        if not pending:
+            return ""
+        lines = ["Pending questions for you:"]
+        for q in pending[:limit]:
+            source = f"from {q.sender_agent}" if q.sender_agent else ""
+            lines.append(f"  - [{q.topic}] {q.content} {source} (id: {q.id})")
+        return "\n".join(lines)
+
     def flush_to_disk(self, path: Path) -> int:
         """Append all queries and responses to a JSONL file.
 

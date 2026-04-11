@@ -15,8 +15,8 @@ tags:
 **Orchestrate any AI coding agent. Any model. One command.**
 
 <figure markdown>
-  ![Bernstein TUI — live task dashboard](assets/tui.svg){ loading=lazy width="700" }
-  <figcaption>Bernstein TUI — real-time task dashboard with agent status, logs, and metrics</figcaption>
+  ![Bernstein TUI — task dashboard layout (representative screenshot)](assets/tui.svg){ loading=lazy width="700" }
+  <figcaption>Bernstein TUI — task dashboard showing agent status, logs, and metrics (representative screenshot; actual appearance varies by terminal and theme)</figcaption>
 </figure>
 
 ---
